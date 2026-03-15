@@ -47,6 +47,16 @@ export class Multiplexer {
   private worktreeListActive = false;
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
+  /** The focused worktree path on the dashboard (undefined = main repo) */
+  private focusedWorktreePath: string | undefined = undefined;
+  /** Ordered list of worktree paths for navigation (undefined = main repo) */
+  private worktreeNavOrder: Array<string | undefined> = [];
+  /** Dashboard navigation level: worktrees (top) or sessions (inside a worktree) */
+  private dashboardLevel: "worktrees" | "sessions" = "sessions";
+  /** Index within sessions of the focused worktree */
+  private dashboardSessionIndex = 0;
+  /** Sessions in the currently focused worktree (for session-level nav) */
+  private dashboardWorktreeSessions: PtySession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
   private contextWatcher = new ContextWatcher();
   /** Maps session ID → toolConfigKey for state saving */
@@ -758,8 +768,9 @@ export class Multiplexer {
 
     const event = events[0];
     const key = event.name || event.char;
+    const hasWorktrees = this.worktreeNavOrder.length > 1;
 
-    // Digits 1-9: focus session
+    // Digits 1-9: always focus session directly (shortcut)
     if (key >= "1" && key <= "9") {
       const index = parseInt(key) - 1;
       if (index < this.sessions.length) {
@@ -768,58 +779,155 @@ export class Multiplexer {
       return;
     }
 
+    // Keys that work at any level
     switch (key) {
       case "c":
         this.showToolPicker();
-        break;
-      case "x":
-        if (this.sessions.length > 0) {
-          this.sessions[this.activeIndex].kill();
-        }
-        break;
+        return;
       case "q":
         this.resolveRun?.(0);
-        break;
-      case "d":
-      case "escape":
-        if (this.sessions.length > 0) {
-          this.focusSession(this.activeIndex);
-        }
-        break;
-      case "n":
-      case "down":
-      case "j":
-        if (this.sessions.length > 1) {
-          this.activeIndex = (this.activeIndex + 1) % this.sessions.length;
-          this.renderDashboard();
-        }
-        break;
-      case "p":
-      case "up":
-      case "k":
-        if (this.sessions.length > 1) {
-          this.activeIndex =
-            (this.activeIndex - 1 + this.sessions.length) % this.sessions.length;
-          this.renderDashboard();
-        }
-        break;
+        return;
       case "w":
         this.showWorktreeCreatePrompt();
-        break;
+        return;
       case "W":
         this.showWorktreeList();
-        break;
+        return;
+      case "x":
+        if (this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0) {
+          const session = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
+          if (session) session.kill();
+        }
+        return;
       case "m":
         if (this.sessions.length > 0) {
           this.showMigratePicker();
         }
-        break;
-      case "enter":
-        if (this.sessions.length > 0) {
-          this.focusSession(this.activeIndex);
-        }
-        break;
+        return;
     }
+
+    if (!hasWorktrees) {
+      // No worktrees — flat session navigation (simple mode)
+      switch (key) {
+        case "down":
+        case "j":
+        case "n":
+          if (this.sessions.length > 1) {
+            this.activeIndex = (this.activeIndex + 1) % this.sessions.length;
+            this.renderDashboard();
+          }
+          break;
+        case "up":
+        case "k":
+        case "p":
+          if (this.sessions.length > 1) {
+            this.activeIndex = (this.activeIndex - 1 + this.sessions.length) % this.sessions.length;
+            this.renderDashboard();
+          }
+          break;
+        case "enter":
+          if (this.sessions.length > 0) {
+            this.focusSession(this.activeIndex);
+          }
+          break;
+        case "d":
+        case "escape":
+          if (this.sessions.length > 0) {
+            this.focusSession(this.activeIndex);
+          }
+          break;
+      }
+      return;
+    }
+
+    // Two-level navigation with worktrees
+    if (this.dashboardLevel === "worktrees") {
+      switch (key) {
+        case "down":
+        case "j":
+        case "n": {
+          const curIdx = this.worktreeNavOrder.indexOf(this.focusedWorktreePath);
+          this.focusedWorktreePath = this.worktreeNavOrder[(curIdx + 1) % this.worktreeNavOrder.length];
+          this.renderDashboard();
+          break;
+        }
+        case "up":
+        case "k":
+        case "p": {
+          const curIdx = this.worktreeNavOrder.indexOf(this.focusedWorktreePath);
+          this.focusedWorktreePath = this.worktreeNavOrder[
+            (curIdx - 1 + this.worktreeNavOrder.length) % this.worktreeNavOrder.length
+          ];
+          this.renderDashboard();
+          break;
+        }
+        case "enter":
+        case "right":
+        case "l":
+          // Step into worktree to navigate its sessions
+          this.updateWorktreeSessions();
+          if (this.dashboardWorktreeSessions.length > 0) {
+            this.dashboardLevel = "sessions";
+            this.dashboardSessionIndex = 0;
+            this.renderDashboard();
+          }
+          break;
+        case "escape":
+        case "d":
+          // If a session exists, go back to focused agent view
+          if (this.sessions.length > 0) {
+            this.focusSession(this.activeIndex);
+          }
+          break;
+      }
+    } else {
+      // Session level — navigating agents within a worktree
+      switch (key) {
+        case "down":
+        case "j":
+        case "n":
+          if (this.dashboardWorktreeSessions.length > 1) {
+            this.dashboardSessionIndex = (this.dashboardSessionIndex + 1) % this.dashboardWorktreeSessions.length;
+            // Update activeIndex to match
+            const session = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
+            this.activeIndex = this.sessions.indexOf(session);
+            this.renderDashboard();
+          }
+          break;
+        case "up":
+        case "k":
+        case "p":
+          if (this.dashboardWorktreeSessions.length > 1) {
+            this.dashboardSessionIndex = (this.dashboardSessionIndex - 1 + this.dashboardWorktreeSessions.length) % this.dashboardWorktreeSessions.length;
+            const session = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
+            this.activeIndex = this.sessions.indexOf(session);
+            this.renderDashboard();
+          }
+          break;
+        case "enter":
+          if (this.dashboardWorktreeSessions.length > 0) {
+            const session = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
+            const idx = this.sessions.indexOf(session);
+            if (idx >= 0) this.focusSession(idx);
+          }
+          break;
+        case "escape":
+        case "left":
+        case "h":
+          // Step back to worktree level
+          this.dashboardLevel = "worktrees";
+          this.renderDashboard();
+          break;
+      }
+    }
+  }
+
+  /** Get sessions belonging to the focused worktree */
+  private updateWorktreeSessions(): void {
+    this.dashboardWorktreeSessions = this.sessions.filter(s => {
+      const wtPath = this.sessionWorktreePaths.get(s.id);
+      return wtPath === this.focusedWorktreePath;
+    });
   }
 
   private showToolPicker(): void {
@@ -829,7 +937,8 @@ export class Multiplexer {
     if (tools.length === 1) {
       // Only one tool — skip picker, spawn directly
       const [key, tool] = tools[0];
-      this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag);
+      const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
+      this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
       return;
     }
 
@@ -888,7 +997,8 @@ export class Multiplexer {
       const idx = parseInt(key) - 1;
       if (idx < tools.length) {
         const [key, tool] = tools[idx];
-        this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag);
+        const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
+        this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
         return;
       }
     }
@@ -932,7 +1042,26 @@ export class Multiplexer {
       // Not in a git repo or no worktrees — skip grouping
     }
 
-    this.dashboard.update(dashSessions, worktreeGroups);
+    // Build worktree navigation order: main repo first, then registered worktrees
+    const hasWorktrees = worktreeGroups.length > 0;
+    this.worktreeNavOrder = [undefined, ...worktreeGroups.map(wt => wt.path)];
+    // Ensure focusedWorktreePath is valid
+    if (!this.worktreeNavOrder.includes(this.focusedWorktreePath)) {
+      this.focusedWorktreePath = undefined;
+    }
+
+    // Determine selected session for session-level cursor
+    const selectedSession = this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
+      ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
+      : undefined;
+
+    this.dashboard.update(
+      dashSessions,
+      worktreeGroups,
+      this.focusedWorktreePath,
+      hasWorktrees ? this.dashboardLevel : "sessions",
+      selectedSession,
+    );
     process.stdout.write(this.dashboard.render(cols, rows));
   }
 

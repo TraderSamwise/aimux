@@ -37,12 +37,24 @@ export class Dashboard {
   private sessions: DashboardSession[] = [];
   private worktreeGroups: WorktreeGroup[] = [];
   private hasWorktrees = false;
+  private focusedWorktreePath: string | undefined = undefined;
+  private navLevel: "worktrees" | "sessions" = "sessions";
+  private selectedSessionId: string | undefined = undefined;
 
-  update(sessions: DashboardSession[], worktreeGroups?: WorktreeGroup[]): void {
+  update(
+    sessions: DashboardSession[],
+    worktreeGroups?: WorktreeGroup[],
+    focusedWorktreePath?: string,
+    navLevel?: "worktrees" | "sessions",
+    selectedSessionId?: string,
+  ): void {
     this.sessions = sessions;
     this.worktreeGroups = worktreeGroups ?? [];
     this.hasWorktrees = this.worktreeGroups.length > 0 ||
       sessions.some(s => s.worktreePath);
+    this.focusedWorktreePath = focusedWorktreePath;
+    this.navLevel = navLevel ?? "sessions";
+    this.selectedSessionId = selectedSessionId;
   }
 
   render(cols: number, rows: number): string {
@@ -88,21 +100,31 @@ export class Dashboard {
     return screen;
   }
 
+  private renderSession(session: DashboardSession, indent: string): string {
+    const num = session.index + 1;
+    const icon = STATUS_ICONS[session.status];
+    const label = STATUS_LABELS[session.status];
+    const isSelected = this.navLevel === "sessions" && session.id === this.selectedSessionId;
+    const marker = isSelected ? " \x1b[33m◀\x1b[0m" : "";
+    return `${indent}${icon} [${num}] ${session.command} — ${label}${marker}`;
+  }
+
   private renderWorktreeGrouped(lines: string[]): void {
+    const isFocused = (wtPath: string | undefined) => wtPath === this.focusedWorktreePath;
+    const wtCursor = "\x1b[33m▸\x1b[0m"; // yellow arrow for worktree level
+
     // Sessions in the main repo (no worktreePath)
     const mainSessions = this.sessions.filter(s => !s.worktreePath);
     if (mainSessions.length > 0 || this.worktreeGroups.length > 0) {
-      // Show main repo header
-      lines.push(`  \x1b[1m(main)\x1b[0m — active`);
+      const focused = isFocused(undefined);
+      const prefix = focused && this.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
+      const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
+      lines.push(`${prefix} ${highlight}(main)\x1b[0m — active`);
       if (mainSessions.length === 0) {
         lines.push("    (no agents)");
       } else {
         for (const session of mainSessions) {
-          const num = session.index + 1;
-          const icon = STATUS_ICONS[session.status];
-          const label = STATUS_LABELS[session.status];
-          const marker = session.active ? " \x1b[1m←\x1b[0m" : "";
-          lines.push(`    ${icon} [${num}] ${session.command} — ${label}${marker}`);
+          lines.push(this.renderSession(session, "    "));
         }
       }
       lines.push("");
@@ -122,16 +144,15 @@ export class Dashboard {
     for (const group of this.worktreeGroups) {
       const sessions = wtSessionMap.get(group.path) ?? [];
       const status = sessions.length > 0 ? "active" : group.status;
-      lines.push(`  \x1b[1m${group.name}\x1b[0m (${group.branch}) — ${status}`);
+      const focused = isFocused(group.path);
+      const prefix = focused && this.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
+      const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
+      lines.push(`${prefix} ${highlight}${group.name}\x1b[0m (${group.branch}) — ${status}`);
       if (sessions.length === 0) {
         lines.push("    (no agents)");
       } else {
         for (const session of sessions) {
-          const num = session.index + 1;
-          const icon = STATUS_ICONS[session.status];
-          const label = STATUS_LABELS[session.status];
-          const marker = session.active ? " \x1b[1m←\x1b[0m" : "";
-          lines.push(`    ${icon} [${num}] ${session.command} — ${label}${marker}`);
+          lines.push(this.renderSession(session, "    "));
         }
       }
       lines.push("");
@@ -139,17 +160,13 @@ export class Dashboard {
     }
 
     // Render any worktree sessions not covered by groups
-    for (const [path, sessions] of wtSessionMap) {
-      if (renderedPaths.has(path)) continue;
-      const name = sessions[0]?.worktreeName ?? path.split("/").pop() ?? "unknown";
+    for (const [, sessions] of wtSessionMap) {
+      if (sessions[0]?.worktreePath && renderedPaths.has(sessions[0].worktreePath)) continue;
+      const name = sessions[0]?.worktreeName ?? "unknown";
       const branch = sessions[0]?.worktreeBranch ?? "unknown";
       lines.push(`  \x1b[1m${name}\x1b[0m (${branch}) — active`);
       for (const session of sessions) {
-        const num = session.index + 1;
-        const icon = STATUS_ICONS[session.status];
-        const label = STATUS_LABELS[session.status];
-        const marker = session.active ? " \x1b[1m←\x1b[0m" : "";
-        lines.push(`    ${icon} [${num}] ${session.command} — ${label}${marker}`);
+        lines.push(this.renderSession(session, "    "));
       }
       lines.push("");
     }
@@ -159,10 +176,16 @@ export class Dashboard {
     if (this.sessions.length === 0 && !this.hasWorktrees) {
       return " [c] new  [q] quit ";
     }
-    if (this.hasWorktrees) {
-      return " [1-9] focus  [c] new  [w] worktree  [m] migrate  [x] kill  [q] quit ";
+    if (this.hasWorktrees && this.navLevel === "sessions") {
+      return " ↑↓ agents  Enter focus  Esc back  [c] new  [x] kill  [q] quit ";
     }
-    return " [1-9] focus  [c] new  [w] worktree  [x] kill  [q] quit  [d/Esc] back ";
+    if (this.hasWorktrees) {
+      return " ↑↓ worktrees  Enter step in  [c] new agent  [w] new worktree  [m] migrate  [q] quit ";
+    }
+    if (this.sessions.length > 0) {
+      return " ↑↓ select  Enter focus  [c] new  [x] kill  [q] quit ";
+    }
+    return " [c] new  [q] quit ";
   }
 }
 
