@@ -7,9 +7,9 @@ program
   .name("aimux")
   .description("Native CLI agent multiplexer")
   .version("0.1.0")
-  .argument("<tool>", "Tool to run (e.g. claude, codex, aider)")
+  .argument("[tool]", "Tool to run (e.g. claude, codex, aider)")
   .argument("[args...]", "Arguments to pass to the tool")
-  .action(async (tool: string, args: string[]) => {
+  .action(async (tool: string | undefined, args: string[]) => {
     const mux = new Multiplexer();
 
     // Graceful shutdown on signals
@@ -21,10 +21,12 @@ program
     process.on("SIGTERM", shutdown);
 
     try {
-      const exitCode = await mux.run({
-        command: tool,
-        args,
-      });
+      let exitCode: number;
+      if (tool) {
+        exitCode = await mux.run({ command: tool, args });
+      } else {
+        exitCode = await mux.runDashboard();
+      }
       process.exit(exitCode);
     } catch (err: unknown) {
       mux.cleanup();

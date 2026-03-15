@@ -2,6 +2,8 @@ import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
 import { Dashboard, type DashboardSession } from "./dashboard.js";
 import { captureGitContext } from "./context/context-bridge.js";
+import { parseKeys } from "./key-parser.js";
+import { loadConfig } from "./config.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -17,6 +19,8 @@ export class Multiplexer {
   private resolveRun: ((code: number) => void) | null = null;
   private defaultCommand: string = "claude";
   private defaultArgs: string[] = [];
+  private startedInDashboard = false;
+  private pickerActive = false;
 
   constructor() {
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
@@ -43,6 +47,11 @@ export class Multiplexer {
 
     // Forward stdin through hotkey handler → active PTY
     this.onStdinData = (data: Buffer) => {
+      if (this.pickerActive) {
+        this.handleToolPickerKey(data);
+        return;
+      }
+
       if (this.mode === "dashboard") {
         this.handleDashboardKey(data);
         return;
@@ -78,6 +87,64 @@ export class Multiplexer {
     return exitCode;
   }
 
+  async runDashboard(): Promise<number> {
+    this.startedInDashboard = true;
+
+    // Load config to set default tool for session creation
+    const config = loadConfig();
+    const defaultTool = config.tools[config.defaultTool];
+    if (defaultTool) {
+      this.defaultCommand = defaultTool.command;
+      this.defaultArgs = defaultTool.args;
+    }
+
+    this.enterRawMode();
+
+    // Forward stdin
+    this.onStdinData = (data: Buffer) => {
+      if (this.pickerActive) {
+        this.handleToolPickerKey(data);
+        return;
+      }
+
+      if (this.mode === "dashboard") {
+        this.handleDashboardKey(data);
+        return;
+      }
+
+      const passthrough = this.hotkeys.feed(data);
+      if (passthrough !== null) {
+        this.activeSession?.write(passthrough);
+      }
+    };
+    process.stdin.on("data", this.onStdinData);
+
+    // Forward terminal resize
+    this.onResize = () => {
+      const cols = process.stdout.columns ?? 80;
+      const rows = process.stdout.rows ?? 24;
+      for (const session of this.sessions) {
+        session.resize(cols, rows);
+      }
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      }
+    };
+    process.stdout.on("resize", this.onResize);
+
+    // Enter dashboard mode directly
+    this.mode = "dashboard";
+    process.stdout.write("\x1b[?1049h");
+    this.renderDashboard();
+
+    const exitCode = await new Promise<number>((resolve) => {
+      this.resolveRun = resolve;
+    });
+
+    this.teardown();
+    return exitCode;
+  }
+
   createSession(command: string, args: string[]): PtySession {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
@@ -102,6 +169,11 @@ export class Multiplexer {
       this.sessions.splice(idx, 1);
 
       if (this.sessions.length === 0) {
+        if (this.startedInDashboard) {
+          // Stay in dashboard with no sessions
+          this.setMode("dashboard");
+          return;
+        }
         this.resolveRun?.(_code);
         return;
       }
@@ -139,13 +211,8 @@ export class Multiplexer {
     this.activeIndex = index;
     this.setMode("focused");
 
-    // Clear screen and reset cursor
-    process.stdout.write("\x1b[2J\x1b[H");
-
-    // Trigger resize to make the tool redraw its TUI
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    this.sessions[index].resize(cols, rows);
+    // Restore the session's screen from its virtual terminal buffer
+    process.stdout.write(this.sessions[index].getScreenState());
   }
 
   private handleAction(action: HotkeyAction): void {
@@ -175,7 +242,7 @@ export class Multiplexer {
         break;
 
       case "create":
-        this.createSession(this.defaultCommand, this.defaultArgs);
+        this.showToolPicker();
         break;
 
       case "kill":
@@ -192,11 +259,15 @@ export class Multiplexer {
   }
 
   private handleDashboardKey(data: Buffer): void {
-    const key = data[0];
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
 
     // Digits 1-9: focus session
-    if (key >= 0x31 && key <= 0x39) {
-      const index = key - 0x31;
+    if (key >= "1" && key <= "9") {
+      const index = parseInt(key) - 1;
       if (index < this.sessions.length) {
         this.focusSession(index);
       }
@@ -204,36 +275,115 @@ export class Multiplexer {
     }
 
     switch (key) {
-      case 0x63: // 'c' — create
-        this.createSession(this.defaultCommand, this.defaultArgs);
+      case "c":
+        this.showToolPicker();
         break;
-      case 0x78: // 'x' — kill active session
+      case "x":
         if (this.sessions.length > 0) {
           this.sessions[this.activeIndex].kill();
         }
         break;
-      case 0x71: // 'q' — quit
+      case "q":
         this.resolveRun?.(0);
         break;
-      case 0x64: // 'd' — back to focused
-      case 0x1b: // Escape — back to focused
+      case "d":
+      case "escape":
         if (this.sessions.length > 0) {
           this.focusSession(this.activeIndex);
         }
         break;
-      case 0x6e: // 'n' — next
+      case "n":
         if (this.sessions.length > 1) {
           this.activeIndex = (this.activeIndex + 1) % this.sessions.length;
           this.renderDashboard();
         }
         break;
-      case 0x70: // 'p' — prev
+      case "p":
         if (this.sessions.length > 1) {
           this.activeIndex =
             (this.activeIndex - 1 + this.sessions.length) % this.sessions.length;
           this.renderDashboard();
         }
         break;
+    }
+  }
+
+  private showToolPicker(): void {
+    const config = loadConfig();
+    const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
+
+    if (tools.length === 1) {
+      // Only one tool — skip picker, spawn directly
+      const [, tool] = tools[0];
+      this.createSession(tool.command, tool.args);
+      return;
+    }
+
+    this.pickerActive = true;
+
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+
+    const lines = ["Select tool:"];
+    for (let i = 0; i < tools.length; i++) {
+      lines.push(`  [${i + 1}] ${tools[i][0]}`);
+    }
+    lines.push("");
+    lines.push("  [Esc] Cancel");
+
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7"; // save cursor
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1];
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8"; // restore cursor
+    process.stdout.write(output);
+  }
+
+  private handleToolPickerKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    this.pickerActive = false;
+
+    if (key === "escape") {
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (key >= "1" && key <= "9") {
+      const config = loadConfig();
+      const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
+      const idx = parseInt(key) - 1;
+      if (idx < tools.length) {
+        const [, tool] = tools[idx];
+        this.createSession(tool.command, tool.args);
+        return;
+      }
+    }
+
+    // Invalid key — redraw current view
+    if (this.mode === "dashboard") {
+      this.renderDashboard();
+    } else {
+      this.focusSession(this.activeIndex);
     }
   }
 
@@ -264,12 +414,6 @@ export class Multiplexer {
     } else if (mode === "focused" && prev === "dashboard") {
       // Leave alternate screen buffer
       process.stdout.write("\x1b[?1049l");
-      // Redraw the focused session
-      if (this.activeSession) {
-        const cols = process.stdout.columns ?? 80;
-        const rows = process.stdout.rows ?? 24;
-        this.activeSession.resize(cols, rows);
-      }
     }
   }
 
