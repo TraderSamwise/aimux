@@ -670,6 +670,8 @@ export class Multiplexer {
     session.kill();
 
     // Start new session in target worktree
+    // If target is the main repo (cwd), pass undefined so it's not treated as a worktree
+    const effectiveTarget = targetWorktreePath === process.cwd() ? undefined : targetWorktreePath;
     this.createSession(
       session.command,
       originalArgs,
@@ -677,7 +679,7 @@ export class Multiplexer {
       toolConfigKey,
       historyContext.trim() || undefined,
       toolCfg?.sessionIdFlag,
-      targetWorktreePath,
+      effectiveTarget,
     );
   }
 

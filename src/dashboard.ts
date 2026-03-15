@@ -177,15 +177,15 @@ export class Dashboard {
       return " [c] new  [q] quit ";
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
-      return " ↑↓ agents  Enter focus  Esc back  [c] new  [x] kill  [q] quit ";
+      return " ↑↓ agents  Enter focus  Esc back  [c] new  [m] migrate  [x] kill  [q] quit ";
     }
     if (this.hasWorktrees) {
       return " ↑↓ worktrees  Enter step in  [c] new agent  [w] new worktree  [m] migrate  [q] quit ";
     }
     if (this.sessions.length > 0) {
-      return " ↑↓ select  Enter focus  [c] new  [x] kill  [q] quit ";
+      return " ↑↓ select  Enter focus  [c] new  [w] worktree  [x] kill  [q] quit ";
     }
-    return " [c] new  [q] quit ";
+    return " [c] new  [w] worktree  [q] quit ";
   }
 }
 
