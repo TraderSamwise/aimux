@@ -149,7 +149,7 @@ export function saveGlobalConfig(config: Partial<AimuxConfig>): void {
 
 const GITIGNORE_CONTENTS = `# Ephemeral session state
 state.json
-state-trash.json
+graveyard.json
 sessions.json
 instances.json
 

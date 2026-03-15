@@ -842,24 +842,26 @@ export class Multiplexer {
         this.showWorktreeList();
         return;
       case "x": {
-        // Check if selected session is offline → trash it
         const allDs = this.getDashboardSessions();
         const selId = this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
           ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
           : undefined;
-        // In flat mode, use activeIndex
         const selEntry = selId
           ? allDs.find(d => d.id === selId)
           : (!hasWorktrees ? allDs[this.activeIndex] : undefined);
-        if (selEntry?.status === "offline") {
-          this.trashOfflineSession(selEntry.id);
+        if (!selEntry) return;
+
+        if (selEntry.status === "offline") {
+          // Second [x] on offline → move to graveyard
+          this.graveyardSession(selEntry.id);
           this.renderDashboard();
           return;
         }
-        // Kill live session
-        if (selEntry) {
-          const pty = this.sessions.find(s => s.id === selEntry.id);
-          if (pty) pty.kill();
+        // First [x] on running → stop PTY, keep as offline for resume
+        const pty = this.sessions.find(s => s.id === selEntry.id);
+        if (pty) {
+          this.stopSessionToOffline(pty);
+          this.renderDashboard();
         }
         return;
       }
@@ -1878,22 +1880,48 @@ export class Multiplexer {
   }
 
   /** Remove an offline session and move it to state-trash.json */
-  private trashOfflineSession(sessionId: string): void {
+  /** Stop a running session and move it to offline (first [x]) */
+  private stopSessionToOffline(session: PtySession): void {
+    // Save state before killing
+    const offlineEntry: SessionState = {
+      id: session.id,
+      tool: session.command,
+      toolConfigKey: this.sessionToolKeys.get(session.id) ?? session.command,
+      command: session.command,
+      args: this.sessionOriginalArgs.get(session.id) ?? [],
+      backendSessionId: (session as any)._backendSessionId as string | undefined,
+      worktreePath: this.sessionWorktreePaths.get(session.id),
+    };
+
+    // Add to offline list so it appears immediately
+    this.offlineSessions.push(offlineEntry);
+
+    // Prevent the onExit handler from exiting aimux if this was the last session
+    this.startedInDashboard = true;
+
+    // Kill the PTY (onExit handler will remove from this.sessions)
+    session.kill();
+
+    debug(`stopped session ${session.id} → offline`, "session");
+  }
+
+  /** Move an offline session to the graveyard (second [x]) */
+  private graveyardSession(sessionId: string): void {
     const session = this.offlineSessions.find(s => s.id === sessionId);
     if (!session) return;
 
     // Remove from offline list
     this.offlineSessions = this.offlineSessions.filter(s => s.id !== sessionId);
 
-    // Append to trash file
+    // Append to graveyard file
     const dir = getAimuxDir();
-    const trashPath = `${dir}/state-trash.json`;
-    let trash: SessionState[] = [];
-    if (existsSync(trashPath)) {
-      try { trash = JSON.parse(readFileSync(trashPath, "utf-8")); } catch {}
+    const graveyardPath = `${dir}/graveyard.json`;
+    let graveyard: SessionState[] = [];
+    if (existsSync(graveyardPath)) {
+      try { graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8")); } catch {}
     }
-    trash.push({ ...session, id: session.id });
-    writeFileSync(trashPath, JSON.stringify(trash, null, 2) + "\n");
+    graveyard.push({ ...session, id: session.id });
+    writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
 
     // Also remove from state.json
     const statePath = `${dir}/state.json`;
@@ -1905,7 +1933,7 @@ export class Multiplexer {
       } catch {}
     }
 
-    debug(`trashed offline session ${sessionId}`, "session");
+    debug(`graveyarded session ${sessionId}`, "session");
   }
 
   /** Resume a specific offline session */

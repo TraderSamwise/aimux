@@ -165,24 +165,24 @@ worktreeCmd
     }
   });
 
-const trashCmd = program
-  .command("trash")
-  .description("Manage trashed (killed) agents");
+const graveyardCmd = program
+  .command("graveyard")
+  .description("Manage killed agents (recoverable)");
 
-trashCmd
+graveyardCmd
   .command("list")
-  .description("List trashed agents")
+  .description("List agents in the graveyard")
   .action(() => {
-    const trashPath = `${getAimuxDir()}/state-trash.json`;
+    const graveyardPath = `${getAimuxDir()}/graveyard.json`;
     try {
-      const trash = JSON.parse(readFileSync(trashPath, "utf-8"));
-      if (!Array.isArray(trash) || trash.length === 0) {
-        console.log("No trashed agents.");
+      const graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8"));
+      if (!Array.isArray(graveyard) || graveyard.length === 0) {
+        console.log("Graveyard is empty.");
         return;
       }
       console.log("ID".padEnd(25) + "Tool".padEnd(15) + "Backend Session ID");
       console.log("-".repeat(70));
-      for (const s of trash) {
+      for (const s of graveyard) {
         console.log(
           (s.id ?? "?").padEnd(25) +
           (s.command ?? s.tool ?? "?").padEnd(15) +
@@ -190,29 +190,29 @@ trashCmd
         );
       }
     } catch {
-      console.log("No trashed agents.");
+      console.log("Graveyard is empty.");
     }
   });
 
-trashCmd
-  .command("restore <id>")
-  .description("Restore a trashed agent back to offline state")
+graveyardCmd
+  .command("resurrect <id>")
+  .description("Resurrect an agent from the graveyard back to offline state")
   .action((id: string) => {
     const dir = getAimuxDir();
-    const trashPath = `${dir}/state-trash.json`;
-    if (!existsSync(trashPath)) {
-      console.error("No trash file found.");
+    const graveyardPath = `${dir}/graveyard.json`;
+    if (!existsSync(graveyardPath)) {
+      console.error("Graveyard is empty.");
       process.exit(1);
     }
     try {
-      const trash = JSON.parse(readFileSync(trashPath, "utf-8")) as Array<Record<string, unknown>>;
-      const idx = trash.findIndex(s => s.id === id);
+      const graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8")) as Array<Record<string, unknown>>;
+      const idx = graveyard.findIndex(s => s.id === id);
       if (idx === -1) {
-        console.error(`Agent "${id}" not found in trash.`);
+        console.error(`Agent "${id}" not found in graveyard.`);
         process.exit(1);
       }
-      const restored = trash.splice(idx, 1)[0];
-      writeFileSync(trashPath, JSON.stringify(trash, null, 2) + "\n");
+      const restored = graveyard.splice(idx, 1)[0];
+      writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
 
       // Add back to state.json
       const statePath = `${dir}/state.json`;
@@ -222,7 +222,7 @@ trashCmd
       }
       state.sessions.push(restored);
       writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-      console.log(`Restored "${id}". It will appear as offline next time you start aimux.`);
+      console.log(`Resurrected "${id}". It will appear as offline next time you start aimux.`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);

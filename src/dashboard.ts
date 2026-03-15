@@ -182,17 +182,33 @@ export class Dashboard {
   }
 
   private buildHelpLine(): string {
+    // Context-aware [x] label based on selected session
+    const selected = this.selectedSessionId
+      ? this.sessions.find(s => s.id === this.selectedSessionId)
+      : undefined;
+    const xLabel = selected?.status === "offline" ? "[x] kill"
+      : selected?.remoteInstancePid ? ""
+      : selected ? "[x] stop"
+      : "";
+
+    // Context-aware Enter label
+    const enterLabel = selected?.remoteInstancePid ? "Enter takeover"
+      : selected?.status === "offline" ? "Enter resume"
+      : "Enter focus";
+
     if (this.sessions.length === 0 && !this.hasWorktrees) {
       return " [c] new  [q] quit ";
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
-      return " ↑↓ agents  Enter focus  Esc back  [c] new  [m] migrate  [x] kill  [q] quit ";
+      const xPart = xLabel ? `  ${xLabel}` : "";
+      return ` ↑↓ agents  ${enterLabel}  Esc back  [c] new  [m] migrate${xPart}  [q] quit `;
     }
     if (this.hasWorktrees) {
       return " ↑↓ worktrees  Enter step in  [c] new agent  [w] new worktree  [m] migrate  [q] quit ";
     }
     if (this.sessions.length > 0) {
-      return " ↑↓ select  Enter focus  [c] new  [w] worktree  [x] kill  [q] quit ";
+      const xPart = xLabel ? `  ${xLabel}` : "";
+      return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}  [q] quit `;
     }
     return " [c] new  [w] worktree  [q] quit ";
   }
