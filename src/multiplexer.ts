@@ -1980,7 +1980,7 @@ export class Multiplexer {
       toolCfg.preambleFlag,
       session.toolConfigKey,
       undefined,
-      toolCfg.sessionIdFlag,
+      undefined, // don't pass sessionIdFlag — we're resuming with existing backend ID
       session.worktreePath,
     );
   }
