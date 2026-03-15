@@ -45,7 +45,7 @@ export class PtySession {
 
     // Spawn via shell to handle wrapper scripts and ensure PATH resolution
     const shell = process.env.SHELL || "/bin/zsh";
-    const cmdStr = [opts.command, ...opts.args].map(a => a.includes(" ") ? `'${a}'` : a).join(" ");
+    const cmdStr = [opts.command, ...opts.args].map((a) => (a.includes(" ") ? `'${a}'` : a)).join(" ");
     this.process = pty.spawn(shell, ["-ilc", cmdStr], {
       name: "xterm-256color",
       cols: opts.cols,
@@ -138,13 +138,31 @@ export class PtySession {
         const underline = cell.isUnderline() !== 0;
         const dim = cell.isDim() !== 0;
         const inverse = cell.isInverse() !== 0;
-        const fgColorMode = cell.isFgRGB() ? "rgb" : cell.isFgPalette() ? "palette" : cell.isFgDefault() ? "default" : "default";
-        const bgColorMode = cell.isBgRGB() ? "rgb" : cell.isBgPalette() ? "palette" : cell.isBgDefault() ? "default" : "default";
+        const fgColorMode = cell.isFgRGB()
+          ? "rgb"
+          : cell.isFgPalette()
+            ? "palette"
+            : cell.isFgDefault()
+              ? "default"
+              : "default";
+        const bgColorMode = cell.isBgRGB()
+          ? "rgb"
+          : cell.isBgPalette()
+            ? "palette"
+            : cell.isBgDefault()
+              ? "default"
+              : "default";
 
         // Check if attributes changed
-        if (fg !== prevFg || bg !== prevBg || bold !== prevBold ||
-            italic !== prevItalic || underline !== prevUnderline ||
-            dim !== prevDim || inverse !== prevInverse) {
+        if (
+          fg !== prevFg ||
+          bg !== prevBg ||
+          bold !== prevBold ||
+          italic !== prevItalic ||
+          underline !== prevUnderline ||
+          dim !== prevDim ||
+          inverse !== prevInverse
+        ) {
           const sgr: number[] = [0]; // reset first
 
           if (bold) sgr.push(1);
@@ -184,7 +202,8 @@ export class PtySession {
       }
 
       output += "\x1b[0m"; // reset at end of line
-      prevFg = -1; prevBg = -1; // force re-emit on next line
+      prevFg = -1;
+      prevBg = -1; // force re-emit on next line
       if (y < rows - 1) output += "\r\n";
     }
 

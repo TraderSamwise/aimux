@@ -24,11 +24,11 @@ export interface WorktreeGroup {
 }
 
 const STATUS_ICONS: Record<SessionStatus, string> = {
-  running: "\x1b[33m●\x1b[0m",  // yellow
-  idle: "\x1b[32m●\x1b[0m",     // green
-  waiting: "\x1b[36m◉\x1b[0m",  // cyan
-  exited: "\x1b[31m○\x1b[0m",   // red
-  offline: "\x1b[2m○\x1b[0m",   // dim
+  running: "\x1b[33m●\x1b[0m", // yellow
+  idle: "\x1b[32m●\x1b[0m", // green
+  waiting: "\x1b[36m◉\x1b[0m", // cyan
+  exited: "\x1b[31m○\x1b[0m", // red
+  offline: "\x1b[2m○\x1b[0m", // dim
 };
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
@@ -56,8 +56,7 @@ export class Dashboard {
   ): void {
     this.sessions = sessions;
     this.worktreeGroups = worktreeGroups ?? [];
-    this.hasWorktrees = this.worktreeGroups.length > 0 ||
-      sessions.some(s => s.worktreePath);
+    this.hasWorktrees = this.worktreeGroups.length > 0 || sessions.some((s) => s.worktreePath);
     this.focusedWorktreePath = focusedWorktreePath;
     this.navLevel = navLevel ?? "sessions";
     this.selectedSessionId = selectedSessionId;
@@ -108,7 +107,7 @@ export class Dashboard {
 
     if (session.remoteInstancePid) {
       // Remote session — different icon and dimmed label
-      const icon = "\x1b[2;36m◈\x1b[0m";  // dim cyan diamond
+      const icon = "\x1b[2;36m◈\x1b[0m"; // dim cyan diamond
       const label = `\x1b[2mother tab (PID ${session.remoteInstancePid})\x1b[0m`;
       return `${indent}${icon} [${num}] ${session.command} — ${label}${marker}`;
     }
@@ -123,7 +122,7 @@ export class Dashboard {
     const wtCursor = "\x1b[33m▸\x1b[0m"; // yellow arrow for worktree level
 
     // Sessions in the main repo (no worktreePath)
-    const mainSessions = this.sessions.filter(s => !s.worktreePath);
+    const mainSessions = this.sessions.filter((s) => !s.worktreePath);
     if (mainSessions.length > 0 || this.worktreeGroups.length > 0) {
       const focused = isFocused(undefined);
       const prefix = focused && this.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
@@ -183,18 +182,16 @@ export class Dashboard {
 
   private buildHelpLine(): string {
     // Context-aware [x] label based on selected session
-    const selected = this.selectedSessionId
-      ? this.sessions.find(s => s.id === this.selectedSessionId)
-      : undefined;
-    const xLabel = selected?.status === "offline" ? "[x] kill"
-      : selected?.remoteInstancePid ? ""
-      : selected ? "[x] stop"
-      : "";
+    const selected = this.selectedSessionId ? this.sessions.find((s) => s.id === this.selectedSessionId) : undefined;
+    const xLabel =
+      selected?.status === "offline" ? "[x] kill" : selected?.remoteInstancePid ? "" : selected ? "[x] stop" : "";
 
     // Context-aware Enter label
-    const enterLabel = selected?.remoteInstancePid ? "Enter takeover"
-      : selected?.status === "offline" ? "Enter resume"
-      : "Enter focus";
+    const enterLabel = selected?.remoteInstancePid
+      ? "Enter takeover"
+      : selected?.status === "offline"
+        ? "Enter resume"
+        : "Enter focus";
 
     if (this.sessions.length === 0 && !this.hasWorktrees) {
       return " [c] new  [g] graveyard  [q] quit ";

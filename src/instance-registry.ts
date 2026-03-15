@@ -1,9 +1,4 @@
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-} from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import * as lockfile from "proper-lockfile";
 import { getAimuxDir } from "./config.js";
@@ -60,7 +55,10 @@ function pruneDeadEntries(instances: InstanceInfo[]): InstanceInfo[] {
     }
     const heartbeatAge = now - new Date(inst.heartbeat).getTime();
     if (heartbeatAge > HEARTBEAT_STALE_MS) {
-      debug(`pruning stale instance ${inst.instanceId} (heartbeat ${Math.round(heartbeatAge / 1000)}s old)`, "instance");
+      debug(
+        `pruning stale instance ${inst.instanceId} (heartbeat ${Math.round(heartbeatAge / 1000)}s old)`,
+        "instance",
+      );
       return false;
     }
     return true;
@@ -139,10 +137,7 @@ function getInstancesPaths(cwd: string): string[] {
 /**
  * Register this instance in instances.json.
  */
-export async function registerInstance(
-  instanceId: string,
-  cwd: string,
-): Promise<InstanceInfo[]> {
+export async function registerInstance(instanceId: string, cwd: string): Promise<InstanceInfo[]> {
   let remoteInstances: InstanceInfo[] = [];
 
   await withLockedInstances(cwd, (instances) => {
@@ -174,10 +169,7 @@ export async function registerInstance(
 /**
  * Unregister this instance from instances.json.
  */
-export async function unregisterInstance(
-  instanceId: string,
-  cwd: string,
-): Promise<void> {
+export async function unregisterInstance(instanceId: string, cwd: string): Promise<void> {
   await withLockedInstances(cwd, (instances) => {
     return instances.filter((i) => i.instanceId !== instanceId);
   });
@@ -187,11 +179,7 @@ export async function unregisterInstance(
 /**
  * Update heartbeat timestamp and sessions list. Also prunes dead instances.
  */
-export async function updateHeartbeat(
-  instanceId: string,
-  sessions: InstanceSessionRef[],
-  cwd: string,
-): Promise<void> {
+export async function updateHeartbeat(instanceId: string, sessions: InstanceSessionRef[], cwd: string): Promise<void> {
   await withLockedInstances(cwd, (instances) => {
     const pruned = pruneDeadEntries(instances);
     return pruned.map((inst) => {
@@ -207,10 +195,7 @@ export async function updateHeartbeat(
  * Get instances belonging to other aimux processes.
  * Reads from main repo's instances.json for cross-worktree visibility.
  */
-export function getRemoteInstances(
-  ownInstanceId: string,
-  cwd: string,
-): InstanceInfo[] {
+export function getRemoteInstances(ownInstanceId: string, cwd: string): InstanceInfo[] {
   const paths = getInstancesPaths(cwd);
   const seen = new Set<string>();
   const result: InstanceInfo[] = [];

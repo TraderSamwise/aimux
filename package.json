@@ -10,7 +10,17 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/main.js",
+    "lint": "eslint src/",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/",
+    "prepare": "husky",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
+  },
+  "lint-staged": {
+    "src/**/*.ts": [
+      "prettier --write",
+      "eslint --fix"
+    ]
   },
   "author": "Sam <sam@tealstreet.io>",
   "license": "MIT",
@@ -28,9 +38,16 @@
     "strip-ansi": "^7.1.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
     "@types/node-notifier": "^8.0.5",
     "@types/proper-lockfile": "^4.1.4",
-    "typescript": "^5.9.3"
+    "eslint": "^10.0.3",
+    "eslint-config-prettier": "^10.1.8",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.57.0"
   }
 }

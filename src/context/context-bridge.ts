@@ -5,7 +5,7 @@ import { appendEntry, type ContextEntry } from "./context-file.js";
 import { getAimuxDir, loadConfig } from "../config.js";
 import { appendTurn, readHistory, type HistoryTurn } from "./history.js";
 import { algorithmicCompact } from "./compactor.js";
-import { debug, debugTurn, debugGit, debugContext, debugCompact } from "../debug.js";
+import { debugTurn, debugGit, debugContext, debugCompact } from "../debug.js";
 
 const git = simpleGit();
 
@@ -14,11 +14,7 @@ const MAX_LIVE_MD_BYTES = 50 * 1024;
 /**
  * Capture git diff and write a context entry on session exit.
  */
-export async function captureGitContext(
-  sessionName: string,
-  tool: string,
-  cwd?: string
-): Promise<void> {
+export async function captureGitContext(sessionName: string, tool: string, cwd?: string): Promise<void> {
   try {
     const diff = await git.diff();
     const diffStat = await git.diffSummary();
@@ -219,7 +215,7 @@ export class ContextWatcher {
     if (!existsSync(baseDir)) mkdirSync(baseDir, { recursive: true });
 
     const turnsPerSession = loadConfig(this.cwd).liveWindowSize;
-    const sessionsToWrite = this.sessions.filter(s => this.dirtySessions.has(s.id));
+    const sessionsToWrite = this.sessions.filter((s) => this.dirtySessions.has(s.id));
     this.dirtySessions.clear();
 
     for (const session of sessionsToWrite) {
@@ -245,10 +241,7 @@ export class ContextWatcher {
   /**
    * Build live.md content for a single session from its history.
    */
-  private buildSessionLiveContent(
-    session: { id: string; command: string },
-    turnsPerSession: number
-  ): string {
+  private buildSessionLiveContent(session: { id: string; command: string }, turnsPerSession: number): string {
     const turns = readHistory(session.id, { lastN: turnsPerSession }, this.cwd);
     if (turns.length === 0) return "";
 
@@ -347,11 +340,7 @@ function parseConversationTurns(text: string, tool: string, turnPatterns?: RegEx
 }
 
 /** Get recent stripped output from a session's recording. */
-export function getRecentOutput(
-  sessionId: string,
-  maxLines: number = 20,
-  cwd?: string
-): string {
+export function getRecentOutput(sessionId: string, maxLines: number = 20, cwd?: string): string {
   const txtPath = join(getAimuxDir(cwd), "recordings", `${sessionId}.txt`);
   if (!existsSync(txtPath)) return "";
 
@@ -365,11 +354,7 @@ export function getRecentOutput(
 }
 
 /** Build a context preamble for a new session from other sessions' per-session context files. */
-export function buildContextPreamble(
-  otherSessionIds: string[],
-  maxLinesPerSession: number = 10,
-  cwd?: string
-): string {
+export function buildContextPreamble(otherSessionIds: string[], maxLinesPerSession: number = 10, cwd?: string): string {
   const contextDir = join(getAimuxDir(cwd), "context");
   const sections: string[] = [];
 
@@ -393,8 +378,7 @@ export function buildContextPreamble(
   }
 
   if (sections.length === 0) return "";
-  return "=== Context from other aimux sessions ===\n\n" +
-    sections.join("\n\n") + "\n\n=== End context ===\n";
+  return "=== Context from other aimux sessions ===\n\n" + sections.join("\n\n") + "\n\n=== End context ===\n";
 }
 
 function truncate(text: string, max: number): string {

@@ -1,4 +1,13 @@
-import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync, readdirSync, cpSync, copyFileSync } from "node:fs";
+import {
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  unlinkSync,
+  readFileSync,
+  readdirSync,
+  cpSync,
+  copyFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -9,9 +18,16 @@ import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboar
 import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
 import { readHistory } from "./context/history.js";
 import { parseKeys } from "./key-parser.js";
-import { loadConfig, getAimuxDir, initProject, type ToolConfig } from "./config.js";
+import { loadConfig, getAimuxDir, initProject } from "./config.js";
 import { debug, debugPreamble, closeDebug } from "./debug.js";
-import { findMainRepo, getRepoName, listWorktrees as listAllWorktrees, loadRegistry, createWorktree, removeWorktree, cleanWorktrees } from "./worktree.js";
+import {
+  findMainRepo,
+  listWorktrees as listAllWorktrees,
+  loadRegistry,
+  createWorktree,
+  removeWorktree,
+  cleanWorktrees,
+} from "./worktree.js";
 import { notifyPrompt, notifyComplete } from "./notify.js";
 import {
   registerInstance,
@@ -116,7 +132,14 @@ export class Multiplexer {
     this.writeInstructionFiles();
 
     // Create initial session
-    this.createSession(opts.command, opts.args, toolConfig?.preambleFlag, toolConfigKey, undefined, toolConfig?.sessionIdFlag);
+    this.createSession(
+      opts.command,
+      opts.args,
+      toolConfig?.preambleFlag,
+      toolConfigKey,
+      undefined,
+      toolConfig?.sessionIdFlag,
+    );
 
     // Enter raw mode and set up footer
     this.enterRawMode();
@@ -280,7 +303,7 @@ export class Multiplexer {
 
     const config = loadConfig();
     const sessionsToResume = toolFilter
-      ? state.sessions.filter(s => s.tool === toolFilter || s.toolConfigKey === toolFilter)
+      ? state.sessions.filter((s) => s.tool === toolFilter || s.toolConfigKey === toolFilter)
       : state.sessions;
 
     if (sessionsToResume.length === 0) {
@@ -315,16 +338,22 @@ export class Multiplexer {
       let resumeArgs: string[];
       if (bsid) {
         // Substitute backend session ID into resume args
-        resumeArgs = (toolCfg.resumeArgs ?? []).map(
-          (a: string) => a.replace("{sessionId}", bsid)
-        );
+        resumeArgs = (toolCfg.resumeArgs ?? []).map((a: string) => a.replace("{sessionId}", bsid));
       } else {
         // No backend session ID — use tool's configured fallback
         resumeArgs = toolCfg.resumeFallback ?? [];
       }
       const args = [...resumeArgs, ...saved.args];
       debug(`resuming ${saved.command} with backendSessionId=${bsid ?? "none (fallback)"}`, "session");
-      this.createSession(saved.command, args, toolCfg.preambleFlag, saved.toolConfigKey, undefined, undefined, saved.worktreePath);
+      this.createSession(
+        saved.command,
+        args,
+        toolCfg.preambleFlag,
+        saved.toolConfigKey,
+        undefined,
+        undefined,
+        saved.worktreePath,
+      );
     }
 
     // Enter raw mode and set up input handling
@@ -400,7 +429,7 @@ export class Multiplexer {
 
     const config = loadConfig();
     const sessionsToRestore = toolFilter
-      ? state.sessions.filter(s => s.tool === toolFilter || s.toolConfigKey === toolFilter)
+      ? state.sessions.filter((s) => s.tool === toolFilter || s.toolConfigKey === toolFilter)
       : state.sessions;
 
     if (sessionsToRestore.length === 0) {
@@ -417,7 +446,7 @@ export class Multiplexer {
       const turns = readHistory(saved.id, { lastN: 20 });
       let historyContext = "";
       if (turns.length > 0) {
-        const formattedTurns = turns.map(t => {
+        const formattedTurns = turns.map((t) => {
           const time = t.ts.slice(0, 16);
           if (t.type === "prompt") return `[${time}] User: ${t.content}`;
           if (t.type === "response") return `[${time}] Agent: ${t.content}`;
@@ -432,9 +461,7 @@ export class Multiplexer {
       }
 
       // Also include live.md for cross-agent context
-      const liveContext = buildContextPreamble(
-        sessionsToRestore.filter(s => s.id !== saved.id).map(s => s.id)
-      );
+      const liveContext = buildContextPreamble(sessionsToRestore.filter((s) => s.id !== saved.id).map((s) => s.id));
 
       const extraPreamble = historyContext + (liveContext ? "\n" + liveContext : "");
 
@@ -555,11 +582,11 @@ export class Multiplexer {
     if (worktreePath) {
       try {
         const registry = loadRegistry(worktreePath);
-        const wt = registry.worktrees.find(w => w.path === worktreePath);
+        const wt = registry.worktrees.find((w) => w.path === worktreePath);
         const branch = wt?.branch ?? "unknown";
         const siblings = registry.worktrees
-          .filter(w => w.path !== worktreePath)
-          .map(w => `${w.name} (${w.branch})`)
+          .filter((w) => w.path !== worktreePath)
+          .map((w) => `${w.name} (${w.branch})`)
           .join(", ");
         preamble +=
           `\n\nYou are working in git worktree '${wt?.name ?? "unknown"}' at ${worktreePath} on branch '${branch}'.` +
@@ -576,31 +603,40 @@ export class Multiplexer {
       preamble += "\n" + extraPreamble;
     }
 
-    let finalArgs = preambleFlag
-      ? [...args, ...preambleFlag, preamble]
-      : [...args];
+    let finalArgs = preambleFlag ? [...args, ...preambleFlag, preamble] : [...args];
 
     // Inject backend session ID flag (e.g. --session-id <uuid>)
     if (sessionIdFlag && backendSessionId) {
-      const expandedFlag = sessionIdFlag.map(a => a.replace("{sessionId}", backendSessionId));
+      const expandedFlag = sessionIdFlag.map((a) => a.replace("{sessionId}", backendSessionId));
       finalArgs = [...finalArgs, ...expandedFlag];
     }
 
     if (preambleFlag) {
       debugPreamble(command, Buffer.byteLength(preamble));
     }
-    debug(`creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"})`, "session");
+    debug(
+      `creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"})`,
+      "session",
+    );
 
     // Build prompt patterns from config for status detection
     let promptPatterns: RegExp[] | undefined;
     if (toolConfigKey) {
       const tc = loadConfig().tools[toolConfigKey];
       if (tc?.promptPatterns) {
-        promptPatterns = tc.promptPatterns.map(p => new RegExp(p, "m"));
+        promptPatterns = tc.promptPatterns.map((p) => new RegExp(p, "m"));
       }
     }
 
-    const session = new PtySession({ command, args: finalArgs, cols, rows: this.toolRows, id: sessionId, cwd: worktreePath, promptPatterns });
+    const session = new PtySession({
+      command,
+      args: finalArgs,
+      cols,
+      rows: this.toolRows,
+      id: sessionId,
+      cwd: worktreePath,
+      promptPatterns,
+    });
     // Store backend session ID for resume
     (session as any)._backendSessionId = backendSessionId;
 
@@ -631,15 +667,17 @@ export class Multiplexer {
 
       this.sessions.splice(idx, 1);
       this.writeSessionsFile();
-      this.contextWatcher.updateSessions(this.sessions.map(s => {
-        const key = this.sessionToolKeys.get(s.id);
-        const tc = key ? loadConfig().tools[key] : undefined;
-        return {
-          id: s.id,
-          command: s.command,
-          turnPatterns: tc?.turnPatterns?.map(p => new RegExp(p)),
-        };
-      }));
+      this.contextWatcher.updateSessions(
+        this.sessions.map((s) => {
+          const key = this.sessionToolKeys.get(s.id);
+          const tc = key ? loadConfig().tools[key] : undefined;
+          return {
+            id: s.id,
+            command: s.command,
+            turnPatterns: tc?.turnPatterns?.map((p) => new RegExp(p)),
+          };
+        }),
+      );
 
       if (this.sessions.length === 0) {
         if (this.startedInDashboard) {
@@ -675,15 +713,17 @@ export class Multiplexer {
 
     this.sessions.push(session);
     this.writeSessionsFile();
-    this.contextWatcher.updateSessions(this.sessions.map(s => {
+    this.contextWatcher.updateSessions(
+      this.sessions.map((s) => {
         const key = this.sessionToolKeys.get(s.id);
         const tc = key ? loadConfig().tools[key] : undefined;
         return {
           id: s.id,
           command: s.command,
-          turnPatterns: tc?.turnPatterns?.map(p => new RegExp(p)),
+          turnPatterns: tc?.turnPatterns?.map((p) => new RegExp(p)),
         };
-      }));
+      }),
+    );
     if (this.sessions.length === 1) this.contextWatcher.start();
 
     // Focus the new session
@@ -704,7 +744,7 @@ export class Multiplexer {
    * with injected prior history.
    */
   migrateAgent(sessionId: string, targetWorktreePath: string): void {
-    const session = this.sessions.find(s => s.id === sessionId);
+    const session = this.sessions.find((s) => s.id === sessionId);
     if (!session) {
       throw new Error(`Session "${sessionId}" not found`);
     }
@@ -737,7 +777,7 @@ export class Multiplexer {
     const turns = readHistory(sessionId, { lastN: 20 });
     let historyContext = "";
     if (turns.length > 0) {
-      const formattedTurns = turns.map(t => {
+      const formattedTurns = turns.map((t) => {
         const time = t.ts.slice(0, 16);
         if (t.type === "prompt") return `[${time}] User: ${t.content}`;
         if (t.type === "response") return `[${time}] Agent: ${t.content}`;
@@ -819,9 +859,7 @@ export class Multiplexer {
 
       case "prev":
         if (this.sessions.length > 1) {
-          this.focusSession(
-            (this.activeIndex - 1 + this.sessions.length) % this.sessions.length
-          );
+          this.focusSession((this.activeIndex - 1 + this.sessions.length) % this.sessions.length);
         }
         break;
 
@@ -886,12 +924,15 @@ export class Multiplexer {
         return;
       case "x": {
         const allDs = this.getDashboardSessions();
-        const selId = this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
-          ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
-          : undefined;
+        const selId =
+          this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
+            ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
+            : undefined;
         const selEntry = selId
-          ? allDs.find(d => d.id === selId)
-          : (!hasWorktrees ? allDs[this.activeIndex] : undefined);
+          ? allDs.find((d) => d.id === selId)
+          : !hasWorktrees
+            ? allDs[this.activeIndex]
+            : undefined;
         if (!selEntry) return;
 
         if (selEntry.status === "offline") {
@@ -902,7 +943,7 @@ export class Multiplexer {
           return;
         }
         // First [x] on running → stop PTY, keep as offline for resume
-        const pty = this.sessions.find(s => s.id === selEntry.id);
+        const pty = this.sessions.find((s) => s.id === selEntry.id);
         if (pty) {
           this.stopSessionToOffline(pty);
           this.renderDashboard();
@@ -944,7 +985,7 @@ export class Multiplexer {
             return;
           }
           if (entry?.status === "offline") {
-            const offline = this.offlineSessions.find(s => s.id === entry.id);
+            const offline = this.offlineSessions.find((s) => s.id === entry.id);
             if (offline) {
               this.resumeOfflineSession(offline);
               this.focusSession(this.sessions.length - 1);
@@ -981,9 +1022,8 @@ export class Multiplexer {
         case "k":
         case "p": {
           const curIdx = this.worktreeNavOrder.indexOf(this.focusedWorktreePath);
-          this.focusedWorktreePath = this.worktreeNavOrder[
-            (curIdx - 1 + this.worktreeNavOrder.length) % this.worktreeNavOrder.length
-          ];
+          this.focusedWorktreePath =
+            this.worktreeNavOrder[(curIdx - 1 + this.worktreeNavOrder.length) % this.worktreeNavOrder.length];
           this.renderDashboard();
           break;
         }
@@ -1021,7 +1061,9 @@ export class Multiplexer {
         case "k":
         case "p":
           if (this.dashboardWorktreeSessions.length > 1) {
-            this.dashboardSessionIndex = (this.dashboardSessionIndex - 1 + this.dashboardWorktreeSessions.length) % this.dashboardWorktreeSessions.length;
+            this.dashboardSessionIndex =
+              (this.dashboardSessionIndex - 1 + this.dashboardWorktreeSessions.length) %
+              this.dashboardWorktreeSessions.length;
             this.renderDashboard();
           }
           break;
@@ -1033,7 +1075,7 @@ export class Multiplexer {
             return;
           }
           if (dashEntry.status === "offline") {
-            const offline = this.offlineSessions.find(s => s.id === dashEntry.id);
+            const offline = this.offlineSessions.find((s) => s.id === dashEntry.id);
             if (offline) {
               this.resumeOfflineSession(offline);
               this.focusSession(this.sessions.length - 1);
@@ -1041,7 +1083,7 @@ export class Multiplexer {
             return;
           }
           // Focus live session
-          const ptyIdx = this.sessions.findIndex(s => s.id === dashEntry.id);
+          const ptyIdx = this.sessions.findIndex((s) => s.id === dashEntry.id);
           if (ptyIdx >= 0) this.focusSession(ptyIdx);
           break;
         }
@@ -1059,7 +1101,7 @@ export class Multiplexer {
   /** Get sessions belonging to the focused worktree (includes local, remote, offline) */
   private updateWorktreeSessions(): void {
     const allDash = this.getDashboardSessions();
-    this.dashboardWorktreeSessions = allDash.filter(s => {
+    this.dashboardWorktreeSessions = allDash.filter((s) => {
       return (s.worktreePath ?? undefined) === this.focusedWorktreePath;
     });
   }
@@ -1088,9 +1130,7 @@ export class Multiplexer {
     const lines = ["Select tool:"];
     for (let i = 0; i < tools.length; i++) {
       const available = isToolAvailable(tools[i][1].command);
-      const label = available
-        ? `  [${i + 1}] ${tools[i][0]}`
-        : `  [${i + 1}] ${tools[i][0]} (not installed)`;
+      const label = available ? `  [${i + 1}] ${tools[i][0]}` : `  [${i + 1}] ${tools[i][0]} (not installed)`;
       lines.push(label);
     }
     lines.push("");
@@ -1141,7 +1181,9 @@ export class Multiplexer {
         const [key, tool] = tools[idx];
         if (!isToolAvailable(tool.command)) {
           // Show brief error then redraw
-          process.stdout.write(`\x1b7\x1b[${(process.stdout.rows ?? 24) - 2};1H\x1b[41;97m "${tool.command}" is not installed. Install it first. \x1b[0m\x1b8`);
+          process.stdout.write(
+            `\x1b7\x1b[${(process.stdout.rows ?? 24) - 2};1H\x1b[41;97m "${tool.command}" is not installed. Install it first. \x1b[0m\x1b8`,
+          );
           setTimeout(() => {
             this.pickerActive = false;
             if (this.mode === "dashboard") this.renderDashboard();
@@ -1183,12 +1225,12 @@ export class Multiplexer {
     let worktreeGroups: WorktreeGroup[] = [];
     try {
       const worktrees = listAllWorktrees();
-      worktreeGroups = worktrees.map(wt => ({
+      worktreeGroups = worktrees.map((wt) => ({
         name: wt.name,
         branch: wt.branch,
         path: wt.path,
         status: wt.status,
-        sessions: dashSessions.filter(s => s.worktreePath === wt.path),
+        sessions: dashSessions.filter((s) => s.worktreePath === wt.path),
       }));
     } catch {
       // Not in a git repo or no worktrees — skip grouping
@@ -1196,7 +1238,7 @@ export class Multiplexer {
 
     // Build worktree navigation order: main repo first, then registered worktrees
     const hasWorktrees = worktreeGroups.length > 0;
-    this.worktreeNavOrder = [undefined, ...worktreeGroups.map(wt => wt.path)];
+    this.worktreeNavOrder = [undefined, ...worktreeGroups.map((wt) => wt.path)];
     // Ensure focusedWorktreePath is valid
     if (!this.worktreeNavOrder.includes(this.focusedWorktreePath)) {
       this.focusedWorktreePath = undefined;
@@ -1211,7 +1253,7 @@ export class Multiplexer {
       for (const inst of remote) {
         for (const rs of inst.sessions) {
           // Skip if we already own a session with same backendSessionId
-          const alreadyOwned = dashSessions.some(ds => ds.id === rs.id);
+          const alreadyOwned = dashSessions.some((ds) => ds.id === rs.id);
           if (alreadyOwned) continue;
           dashSessions.push({
             index: dashSessions.length,
@@ -1232,8 +1274,9 @@ export class Multiplexer {
 
     // Add offline sessions from previous runs
     for (const os of this.offlineSessions) {
-      const alreadyShown = dashSessions.some(ds => ds.id === os.id ||
-        (os.backendSessionId && ds.remoteBackendSessionId === os.backendSessionId));
+      const alreadyShown = dashSessions.some(
+        (ds) => ds.id === os.id || (os.backendSessionId && ds.remoteBackendSessionId === os.backendSessionId),
+      );
       if (alreadyShown) continue;
       dashSessions.push({
         index: dashSessions.length,
@@ -1281,7 +1324,7 @@ export class Multiplexer {
       "  [Enter] create  [Esc] cancel",
     ];
 
-    const boxWidth = Math.max(...lines.map(l => l.length)) + 4;
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
     const startRow = Math.floor((rows - lines.length - 2) / 2);
     const startCol = Math.floor((cols - boxWidth) / 2);
 
@@ -1360,7 +1403,7 @@ export class Multiplexer {
 
     let worktrees: Array<{ name: string; branch: string; status: string; path: string }> = [];
     try {
-      worktrees = listAllWorktrees().map(wt => ({
+      worktrees = listAllWorktrees().map((wt) => ({
         name: wt.name,
         branch: wt.branch,
         status: wt.status,
@@ -1380,7 +1423,7 @@ export class Multiplexer {
     lines.push("");
     lines.push("  [1-9] remove  [c] clean  [Esc] back");
 
-    const boxWidth = Math.max(...lines.map(l => l.length)) + 4;
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
     const startRow = Math.floor((rows - lines.length - 2) / 2);
     const startCol = Math.floor((cols - boxWidth) / 2);
 
@@ -1477,7 +1520,7 @@ export class Multiplexer {
     lines.push("");
     lines.push("  [1-9] resurrect  [Esc] back");
 
-    const boxWidth = Math.max(...lines.map(l => l.length)) + 4;
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
     const startRow = Math.floor((rows - lines.length - 2) / 2);
     const startCol = Math.floor((cols - boxWidth) / 2);
 
@@ -1558,7 +1601,7 @@ export class Multiplexer {
       const mainRepo = findMainRepo();
       this.migratePickerWorktrees = [
         { name: "(main)", path: mainRepo },
-        ...worktrees.map(wt => ({ name: wt.name, path: wt.path })),
+        ...worktrees.map((wt) => ({ name: wt.name, path: wt.path })),
       ];
     } catch {
       this.migratePickerWorktrees = [];
@@ -1583,14 +1626,14 @@ export class Multiplexer {
     const lines = [`Migrate "${session.id}" to:`, ""];
     for (let i = 0; i < this.migratePickerWorktrees.length; i++) {
       const wt = this.migratePickerWorktrees[i];
-      const isCurrent = (wt.path === currentWt) || (!currentWt && wt.name === "(main)");
+      const isCurrent = wt.path === currentWt || (!currentWt && wt.name === "(main)");
       const marker = isCurrent ? " (current)" : "";
       lines.push(`  [${i + 1}] ${wt.name}${marker}`);
     }
     lines.push("");
     lines.push("  [Esc] cancel");
 
-    const boxWidth = Math.max(...lines.map(l => l.length)) + 4;
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
     const startRow = Math.floor((rows - lines.length - 2) / 2);
     const startCol = Math.floor((cols - boxWidth) / 2);
 
@@ -1655,19 +1698,28 @@ export class Multiplexer {
     const dashSessions: DashboardSession[] = this.sessions.map((s, i) => {
       const wtPath = this.sessionWorktreePaths.get(s.id);
       return {
-        index: i, id: s.id, command: s.command, status: s.status,
-        active: i === this.activeIndex, worktreePath: wtPath,
+        index: i,
+        id: s.id,
+        command: s.command,
+        status: s.status,
+        active: i === this.activeIndex,
+        worktreePath: wtPath,
       };
     });
     try {
       const remote = getRemoteInstances(this.instanceId, process.cwd());
       for (const inst of remote) {
         for (const rs of inst.sessions) {
-          if (dashSessions.some(ds => ds.id === rs.id)) continue;
+          if (dashSessions.some((ds) => ds.id === rs.id)) continue;
           dashSessions.push({
-            index: dashSessions.length, id: rs.id, command: rs.tool,
-            status: "running", active: false, worktreePath: rs.worktreePath,
-            remoteInstancePid: inst.pid, remoteInstanceId: inst.instanceId,
+            index: dashSessions.length,
+            id: rs.id,
+            command: rs.tool,
+            status: "running",
+            active: false,
+            worktreePath: rs.worktreePath,
+            remoteInstancePid: inst.pid,
+            remoteInstanceId: inst.instanceId,
             remoteBackendSessionId: rs.backendSessionId,
           });
         }
@@ -1676,12 +1728,17 @@ export class Multiplexer {
 
     // Add offline sessions
     for (const os of this.offlineSessions) {
-      const alreadyShown = dashSessions.some(ds => ds.id === os.id ||
-        (os.backendSessionId && ds.remoteBackendSessionId === os.backendSessionId));
+      const alreadyShown = dashSessions.some(
+        (ds) => ds.id === os.id || (os.backendSessionId && ds.remoteBackendSessionId === os.backendSessionId),
+      );
       if (alreadyShown) continue;
       dashSessions.push({
-        index: dashSessions.length, id: os.id, command: os.command,
-        status: "offline" as const, active: false, worktreePath: os.worktreePath,
+        index: dashSessions.length,
+        id: os.id,
+        command: os.command,
+        status: "offline" as const,
+        active: false,
+        worktreePath: os.worktreePath,
       });
     }
 
@@ -1701,7 +1758,12 @@ export class Multiplexer {
     });
   }
 
-  private async takeoverSession(target: { id: string; tool: string; backendSessionId: string; fromInstanceId: string }): Promise<void> {
+  private async takeoverSession(target: {
+    id: string;
+    tool: string;
+    backendSessionId: string;
+    fromInstanceId: string;
+  }): Promise<void> {
     // Claim the session from the other instance
     const claimed = await claimSession(target.id, target.fromInstanceId, process.cwd());
     if (!claimed) {
@@ -1721,11 +1783,12 @@ export class Multiplexer {
     }
 
     // Build resume args with the backend session ID
-    const resumeArgs = toolCfg.resumeArgs.map(
-      (a: string) => a.replace("{sessionId}", target.backendSessionId)
-    );
+    const resumeArgs = toolCfg.resumeArgs.map((a: string) => a.replace("{sessionId}", target.backendSessionId));
 
-    debug(`taking over session ${target.id} (backend=${target.backendSessionId}) from instance ${target.fromInstanceId}`, "instance");
+    debug(
+      `taking over session ${target.id} (backend=${target.backendSessionId}) from instance ${target.fromInstanceId}`,
+      "instance",
+    );
     this.createSession(
       target.tool,
       resumeArgs,
@@ -1808,7 +1871,9 @@ export class Multiplexer {
   /** Remove instruction files we created */
   private removeInstructionFiles(): void {
     for (const filePath of this.writtenInstructionFiles) {
-      try { unlinkSync(filePath); } catch {}
+      try {
+        unlinkSync(filePath);
+      } catch {}
     }
     this.writtenInstructionFiles.clear();
   }
@@ -1836,7 +1901,7 @@ export class Multiplexer {
     const checkForNew = () => {
       try {
         const afterFiles = readdirSync(dir);
-        const newFiles = afterFiles.filter(f => !beforeFiles.includes(f));
+        const newFiles = afterFiles.filter((f) => !beforeFiles.includes(f));
         for (const file of newFiles) {
           const match = file.match(regex);
           if (match) {
@@ -1860,7 +1925,7 @@ export class Multiplexer {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     // Local sessions
-    const data: Array<Record<string, unknown>> = this.sessions.map(s => ({
+    const data: Array<Record<string, unknown>> = this.sessions.map((s) => ({
       id: s.id,
       tool: s.command,
       status: s.status,
@@ -1873,7 +1938,7 @@ export class Multiplexer {
       const remote = getRemoteInstances(this.instanceId, process.cwd());
       for (const inst of remote) {
         for (const rs of inst.sessions) {
-          if (data.some(d => d.id === rs.id)) continue;
+          if (data.some((d) => d.id === rs.id)) continue;
           data.push({
             id: rs.id,
             tool: rs.tool,
@@ -1886,15 +1951,14 @@ export class Multiplexer {
       }
     } catch {}
 
-    writeFileSync(
-      `${dir}/sessions.json`,
-      JSON.stringify(data, null, 2) + "\n"
-    );
+    writeFileSync(`${dir}/sessions.json`, JSON.stringify(data, null, 2) + "\n");
   }
 
   /** Remove sessions file on exit */
   private removeSessionsFile(): void {
-    try { unlinkSync(`${getAimuxDir()}/sessions.json`); } catch {}
+    try {
+      unlinkSync(`${getAimuxDir()}/sessions.json`);
+    } catch {}
   }
 
   /** Terminal rows available for the tool (total minus footer) */
@@ -1955,12 +2019,7 @@ export class Multiplexer {
     const footerContent = `\x1b[7m${left}${" ".repeat(padLen)}${right}\x1b[0m`;
 
     // Save cursor, move to footer row, draw, restore cursor
-    process.stdout.write(
-      `\x1b7` +
-      `\x1b[${rows};1H` +
-      footerContent +
-      `\x1b8`
-    );
+    process.stdout.write(`\x1b7` + `\x1b[${rows};1H` + footerContent + `\x1b8`);
   }
 
   /** Track previous statuses for notification on transition */
@@ -2015,7 +2074,7 @@ export class Multiplexer {
       if (bsid) ownedBackendIds.add(bsid);
     }
 
-    this.offlineSessions = state.sessions.filter(s => {
+    this.offlineSessions = state.sessions.filter((s) => {
       if (ownedIds.has(s.id)) return false;
       if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
       return true;
@@ -2072,18 +2131,20 @@ export class Multiplexer {
   }
 
   private graveyardSession(sessionId: string): void {
-    const session = this.offlineSessions.find(s => s.id === sessionId);
+    const session = this.offlineSessions.find((s) => s.id === sessionId);
     if (!session) return;
 
     // Remove from offline list
-    this.offlineSessions = this.offlineSessions.filter(s => s.id !== sessionId);
+    this.offlineSessions = this.offlineSessions.filter((s) => s.id !== sessionId);
 
     // Append to graveyard file
     const dir = getAimuxDir();
     const graveyardPath = `${dir}/graveyard.json`;
     let graveyard: SessionState[] = [];
     if (existsSync(graveyardPath)) {
-      try { graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8")); } catch {}
+      try {
+        graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8"));
+      } catch {}
     }
     graveyard.push({ ...session, id: session.id });
     writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
@@ -2093,7 +2154,7 @@ export class Multiplexer {
     if (existsSync(statePath)) {
       try {
         const state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
-        state.sessions = state.sessions.filter(s => s.id !== sessionId);
+        state.sessions = state.sessions.filter((s) => s.id !== sessionId);
         writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
       } catch {}
     }
@@ -2109,15 +2170,13 @@ export class Multiplexer {
 
     let args: string[];
     if (session.backendSessionId && toolCfg.resumeArgs) {
-      args = toolCfg.resumeArgs.map(
-        (a: string) => a.replace("{sessionId}", session.backendSessionId!)
-      );
+      args = toolCfg.resumeArgs.map((a: string) => a.replace("{sessionId}", session.backendSessionId!));
     } else {
       args = [...toolCfg.args];
     }
 
     // Remove from offline list
-    this.offlineSessions = this.offlineSessions.filter(s => s.id !== session.id);
+    this.offlineSessions = this.offlineSessions.filter((s) => s.id !== session.id);
 
     debug(`resuming offline session ${session.id} (backend=${session.backendSessionId ?? "none"})`, "session");
     this.createSession(
@@ -2182,7 +2241,7 @@ export class Multiplexer {
     const dir = getAimuxDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-    const mySessions = this.sessions.map(s => ({
+    const mySessions = this.sessions.map((s) => ({
       id: s.id,
       tool: s.command,
       toolConfigKey: this.sessionToolKeys.get(s.id) ?? s.command,
@@ -2200,11 +2259,9 @@ export class Multiplexer {
       try {
         const existing = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
         // Keep existing sessions that don't collide with ours (dedup by backendSessionId)
-        const myBackendIds = new Set(
-          mySessions.map(s => s.backendSessionId).filter(Boolean)
-        );
-        const myIds = new Set(mySessions.map(s => s.id));
-        const otherSessions = existing.sessions.filter(s => {
+        const myBackendIds = new Set(mySessions.map((s) => s.backendSessionId).filter(Boolean));
+        const myIds = new Set(mySessions.map((s) => s.id));
+        const otherSessions = existing.sessions.filter((s) => {
           if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return false;
           if (myIds.has(s.id)) return false;
           return true;

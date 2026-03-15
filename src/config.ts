@@ -211,16 +211,18 @@ export function initProject(cwd?: string): void {
 }
 
 /** Deep merge b into a (b values override a). Handles nested objects, not arrays. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function deepMerge(a: any, b: any): any {
   const result = { ...a };
   for (const key of Object.keys(b)) {
     const aVal = a[key];
     const bVal = b[key];
     if (
-      aVal && bVal &&
-      typeof aVal === "object" && typeof bVal === "object" &&
-      !Array.isArray(aVal) && !Array.isArray(bVal)
+      aVal &&
+      bVal &&
+      typeof aVal === "object" &&
+      typeof bVal === "object" &&
+      !Array.isArray(aVal) &&
+      !Array.isArray(bVal)
     ) {
       result[key] = deepMerge(aVal, bVal);
     } else if (bVal !== undefined) {

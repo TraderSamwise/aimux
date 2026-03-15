@@ -80,9 +80,7 @@ program
     console.log(`Done. Summary written to ${getAimuxDir()}/context/summary.md`);
   });
 
-const worktreeCmd = program
-  .command("worktree")
-  .description("Manage git worktrees");
+const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
 worktreeCmd
   .command("create <name>")
@@ -109,21 +107,15 @@ worktreeCmd
         console.log("No worktrees found.");
         return;
       }
-      console.log(
-        "Name".padEnd(20) +
-        "Branch".padEnd(20) +
-        "Status".padEnd(10) +
-        "Sessions".padEnd(10) +
-        "Path"
-      );
+      console.log("Name".padEnd(20) + "Branch".padEnd(20) + "Status".padEnd(10) + "Sessions".padEnd(10) + "Path");
       console.log("-".repeat(80));
       for (const wt of worktrees) {
         console.log(
           wt.name.padEnd(20) +
-          wt.branch.padEnd(20) +
-          wt.status.padEnd(10) +
-          String(wt.sessions.length).padEnd(10) +
-          wt.path
+            wt.branch.padEnd(20) +
+            wt.status.padEnd(10) +
+            String(wt.sessions.length).padEnd(10) +
+            wt.path,
         );
       }
     } catch (err: unknown) {
@@ -165,9 +157,7 @@ worktreeCmd
     }
   });
 
-const graveyardCmd = program
-  .command("graveyard")
-  .description("Manage killed agents (recoverable)");
+const graveyardCmd = program.command("graveyard").description("Manage killed agents (recoverable)");
 
 graveyardCmd
   .command("list")
@@ -184,9 +174,7 @@ graveyardCmd
       console.log("-".repeat(70));
       for (const s of graveyard) {
         console.log(
-          (s.id ?? "?").padEnd(25) +
-          (s.command ?? s.tool ?? "?").padEnd(15) +
-          (s.backendSessionId ?? "(none)")
+          (s.id ?? "?").padEnd(25) + (s.command ?? s.tool ?? "?").padEnd(15) + (s.backendSessionId ?? "(none)"),
         );
       }
     } catch {
@@ -206,7 +194,7 @@ graveyardCmd
     }
     try {
       const graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8")) as Array<Record<string, unknown>>;
-      const idx = graveyard.findIndex(s => s.id === id);
+      const idx = graveyard.findIndex((s) => s.id === id);
       if (idx === -1) {
         console.error(`Agent "${id}" not found in graveyard.`);
         process.exit(1);
@@ -216,9 +204,15 @@ graveyardCmd
 
       // Add back to state.json
       const statePath = `${dir}/state.json`;
-      let state = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] as Array<Record<string, unknown>> };
+      let state = {
+        savedAt: new Date().toISOString(),
+        cwd: process.cwd(),
+        sessions: [] as Array<Record<string, unknown>>,
+      };
       if (existsSync(statePath)) {
-        try { state = JSON.parse(readFileSync(statePath, "utf-8")); } catch {}
+        try {
+          state = JSON.parse(readFileSync(statePath, "utf-8"));
+        } catch {}
       }
       state.sessions.push(restored);
       writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");

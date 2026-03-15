@@ -32,11 +32,7 @@ function historyPath(sessionId: string, cwd?: string): string {
  * Append a single turn to the session's JSONL history file.
  * Creates the history directory if it doesn't exist.
  */
-export function appendTurn(
-  sessionId: string,
-  turn: HistoryTurn,
-  cwd?: string
-): void {
+export function appendTurn(sessionId: string, turn: HistoryTurn, cwd?: string): void {
   const dir = getHistoryDir(cwd);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
@@ -56,7 +52,7 @@ export function appendTurn(
 export function readHistory(
   sessionId: string,
   opts?: { lastN?: number; since?: string; maxBytes?: number },
-  cwd?: string
+  cwd?: string,
 ): HistoryTurn[] {
   const filePath = historyPath(sessionId, cwd);
   if (!existsSync(filePath)) return [];
@@ -133,7 +129,7 @@ export function listSessionIds(cwd?: string): string[] {
 export function readAllHistories(
   sessionIds: string[],
   opts?: { lastN?: number; since?: string; maxBytes?: number },
-  cwd?: string
+  cwd?: string,
 ): HistoryTurn[] {
   const all: HistoryTurn[] = [];
   for (const id of sessionIds) {

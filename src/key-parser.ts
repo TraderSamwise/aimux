@@ -85,9 +85,7 @@ export function parseKeys(data: Buffer | string): KeyEvent[] {
       if (str.startsWith("\x1b[200~", i)) {
         const pasteStart = i + 6; // skip ESC [200~
         const pasteEnd = str.indexOf("\x1b[201~", pasteStart);
-        const content = pasteEnd >= 0
-          ? str.slice(pasteStart, pasteEnd)
-          : str.slice(pasteStart); // no end marker yet — take everything
+        const content = pasteEnd >= 0 ? str.slice(pasteStart, pasteEnd) : str.slice(pasteStart); // no end marker yet — take everything
         if (content) {
           events.push({ char: content, name: "paste", shift: false, ctrl: false, alt: false, raw: content });
         }
@@ -119,7 +117,14 @@ export function parseKeys(data: Buffer | string): KeyEvent[] {
           // SS3 P-S = F1-F4
           if (ch >= "P" && ch <= "S") {
             const fNum = ch.charCodeAt(0) - "P".charCodeAt(0) + 1;
-            events.push({ char: "", name: `f${fNum}`, shift: false, ctrl: false, alt: false, raw: str.slice(i, i + 3) });
+            events.push({
+              char: "",
+              name: `f${fNum}`,
+              shift: false,
+              ctrl: false,
+              alt: false,
+              raw: str.slice(i, i + 3),
+            });
             i += 3;
             continue;
           }
@@ -131,11 +136,16 @@ export function parseKeys(data: Buffer | string): KeyEvent[] {
         const ch = str[i + 1];
         const code = ch.charCodeAt(0);
         // Map control characters to their names (e.g., 0x7F = backspace, 0x0D = enter)
-        const ctrlName = code === 127 || code === 8 ? "backspace"
-          : code === 13 || code === 10 ? "enter"
-          : code === 9 ? "tab"
-          : code < 32 ? String.fromCharCode(code + 96) // Ctrl+letter
-          : "";
+        const ctrlName =
+          code === 127 || code === 8
+            ? "backspace"
+            : code === 13 || code === 10
+              ? "enter"
+              : code === 9
+                ? "tab"
+                : code < 32
+                  ? String.fromCharCode(code + 96) // Ctrl+letter
+                  : "";
         events.push({
           char: ctrlName ? "" : ch,
           name: ctrlName || ch,
@@ -252,7 +262,7 @@ function parseCSI(str: string, start: number): { event: KeyEvent; consumed: numb
   const name = CSI_FINAL_NAMES[finalByte];
   if (name) {
     // Modifier is in the last param if there are two parts
-    const mod = parts.length >= 2 ? parts[1] ?? 1 : 1;
+    const mod = parts.length >= 2 ? (parts[1] ?? 1) : 1;
     const mods = parseModifier(mod);
     return {
       event: { char: "", name, ...mods, raw: "" },

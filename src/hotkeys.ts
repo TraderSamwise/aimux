@@ -108,10 +108,10 @@ export class HotkeyHandler {
     const label = " ^A → ? ";
     const col = cols - label.length;
     process.stdout.write(
-      `\x1b7` +                              // save cursor
-      `\x1b[1;${col}H` +                     // move to top-right
-      `\x1b[7;33m${label}\x1b[0m` +          // inverse yellow
-      `\x1b8`                                 // restore cursor
+      `\x1b7` + // save cursor
+        `\x1b[1;${col}H` + // move to top-right
+        `\x1b[7;33m${label}\x1b[0m` + // inverse yellow
+        `\x1b8`, // restore cursor
     );
   }
 
@@ -120,12 +120,7 @@ export class HotkeyHandler {
     const cols = process.stdout.columns ?? 80;
     const label = " ^A → ? ";
     const col = cols - label.length;
-    process.stdout.write(
-      `\x1b7` +
-      `\x1b[1;${col}H` +
-      `${" ".repeat(label.length)}` +
-      `\x1b8`
-    );
+    process.stdout.write(`\x1b7` + `\x1b[1;${col}H` + `${" ".repeat(label.length)}` + `\x1b8`);
   }
 
   private clearTimeout(): void {

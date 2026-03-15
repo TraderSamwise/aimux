@@ -1,15 +1,7 @@
 import { execSync } from "node:child_process";
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  readdirSync,
-  statSync,
-  rmSync,
-} from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync } from "node:fs";
 import { join, basename, dirname, resolve } from "node:path";
-import { initProject, getAimuxDir } from "./config.js";
+import { initProject } from "./config.js";
 import { debug } from "./debug.js";
 
 export interface WorktreeInfo {
@@ -101,21 +93,14 @@ export function saveRegistry(registry: WorktreeRegistry, cwd?: string): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(
-    join(dir, "worktrees.json"),
-    JSON.stringify(registry, null, 2) + "\n"
-  );
+  writeFileSync(join(dir, "worktrees.json"), JSON.stringify(registry, null, 2) + "\n");
 }
 
 /**
  * Create a new worktree as a sibling directory.
  * Naming convention: {repoName}-{name} in the parent directory.
  */
-export function createWorktree(
-  name: string,
-  branch?: string,
-  cwd?: string
-): WorktreeInfo {
+export function createWorktree(name: string, branch?: string, cwd?: string): WorktreeInfo {
   const effectiveCwd = cwd ?? process.cwd();
   const repoName = getRepoName(effectiveCwd);
   const mainRepo = findMainRepo(effectiveCwd);
@@ -135,7 +120,7 @@ export function createWorktree(
       encoding: "utf-8",
       stdio: "pipe",
     });
-  } catch (err: unknown) {
+  } catch {
     // Branch might already exist — try without -b
     try {
       execSync(`git worktree add "${worktreePath}" "${branchName}"`, {
@@ -145,7 +130,7 @@ export function createWorktree(
       });
     } catch (err2: unknown) {
       const msg = err2 instanceof Error ? err2.message : String(err2);
-      throw new Error(`Failed to create worktree: ${msg}`);
+      throw new Error(`Failed to create worktree: ${msg}`, { cause: err2 });
     }
   }
 
@@ -264,9 +249,7 @@ export function removeWorktree(name: string, cwd?: string): void {
   // Check for active sessions
   const sessions = readWorktreeSessions(wt.path);
   if (sessions.length > 0) {
-    throw new Error(
-      `Worktree "${name}" has ${sessions.length} active session(s). Kill them first.`
-    );
+    throw new Error(`Worktree "${name}" has ${sessions.length} active session(s). Kill them first.`);
   }
 
   // Remove via git
@@ -312,10 +295,7 @@ export function cleanWorktrees(cwd?: string): string[] {
         removeWorktree(wt.name, cwd);
         removed.push(wt.name);
       } catch (err) {
-        debug(
-          `failed to clean worktree ${wt.name}: ${err instanceof Error ? err.message : String(err)}`,
-          "worktree"
-        );
+        debug(`failed to clean worktree ${wt.name}: ${err instanceof Error ? err.message : String(err)}`, "worktree");
       }
     }
   }
@@ -326,11 +306,7 @@ export function cleanWorktrees(cwd?: string): string[] {
 /**
  * Update a worktree's status in the registry.
  */
-export function updateWorktreeStatus(
-  name: string,
-  status: "active" | "offline",
-  cwd?: string
-): void {
+export function updateWorktreeStatus(name: string, status: "active" | "offline", cwd?: string): void {
   const registry = loadRegistry(cwd);
   const wt = registry.worktrees.find((w) => w.name === name);
   if (!wt) {
