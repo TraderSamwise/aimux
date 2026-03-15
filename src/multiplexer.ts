@@ -1164,10 +1164,8 @@ export class Multiplexer {
       this.focusedWorktreePath = undefined;
     }
 
-    // Determine selected session for session-level cursor
-    const selectedSession = this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
-      ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
-      : undefined;
+    // Determine selected session for cursor (set after all sessions are merged below)
+    let selectedSession: string | undefined;
 
     // Merge remote sessions (from other aimux instances) into dashSessions
     try {
@@ -1207,6 +1205,14 @@ export class Multiplexer {
         active: false,
         worktreePath: os.worktreePath,
       });
+    }
+
+    // Determine selected session cursor
+    if (hasWorktrees && this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0) {
+      selectedSession = this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id;
+    } else if (!hasWorktrees && dashSessions.length > 0) {
+      // Flat mode — use activeIndex across all dash sessions
+      selectedSession = dashSessions[this.activeIndex]?.id;
     }
 
     this.dashboard.update(
