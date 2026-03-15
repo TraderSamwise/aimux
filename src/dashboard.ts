@@ -1,11 +1,4 @@
 import type { SessionStatus } from "./status-detector.js";
-import type { InstanceSessionRef } from "./instance-registry.js";
-
-export interface RemoteInstance {
-  instanceId: string;
-  pid: number;
-  sessions: InstanceSessionRef[];
-}
 
 export interface DashboardSession {
   index: number;
@@ -16,6 +9,10 @@ export interface DashboardSession {
   worktreePath?: string;
   worktreeName?: string;
   worktreeBranch?: string;
+  /** If set, this session belongs to another aimux instance */
+  remoteInstancePid?: number;
+  remoteInstanceId?: string;
+  remoteBackendSessionId?: string;
 }
 
 export interface WorktreeGroup {
@@ -43,8 +40,8 @@ const STATUS_LABELS: Record<SessionStatus, string> = {
 export class Dashboard {
   private sessions: DashboardSession[] = [];
   private worktreeGroups: WorktreeGroup[] = [];
-  private remoteInstances: RemoteInstance[] = [];
   private hasWorktrees = false;
+  private hasRemoteSessions = false;
   private focusedWorktreePath: string | undefined = undefined;
   private navLevel: "worktrees" | "sessions" = "sessions";
   private selectedSessionId: string | undefined = undefined;
@@ -55,13 +52,12 @@ export class Dashboard {
     focusedWorktreePath?: string,
     navLevel?: "worktrees" | "sessions",
     selectedSessionId?: string,
-    remoteInstances?: RemoteInstance[],
   ): void {
     this.sessions = sessions;
     this.worktreeGroups = worktreeGroups ?? [];
-    this.remoteInstances = remoteInstances ?? [];
     this.hasWorktrees = this.worktreeGroups.length > 0 ||
       sessions.some(s => s.worktreePath);
+    this.hasRemoteSessions = sessions.some(s => s.remoteInstancePid);
     this.focusedWorktreePath = focusedWorktreePath;
     this.navLevel = navLevel ?? "sessions";
     this.selectedSessionId = selectedSessionId;
@@ -84,18 +80,8 @@ export class Dashboard {
     } else {
       // Simple flat list (no worktrees)
       for (const session of this.sessions) {
-        const num = session.index + 1;
-        const icon = STATUS_ICONS[session.status];
-        const label = STATUS_LABELS[session.status];
-        const marker = session.active ? " \x1b[1m←\x1b[0m" : "";
-        const line = `  ${icon} [${num}] ${session.command} — ${label}${marker}`;
-        lines.push(line);
+        lines.push(this.renderSession(session, "  "));
       }
-    }
-
-    // Remote instances section
-    if (this.remoteInstances.length > 0) {
-      this.renderRemoteInstances(lines);
     }
 
     // Fill remaining space
@@ -117,10 +103,18 @@ export class Dashboard {
 
   private renderSession(session: DashboardSession, indent: string): string {
     const num = session.index + 1;
-    const icon = STATUS_ICONS[session.status];
-    const label = STATUS_LABELS[session.status];
     const isSelected = this.navLevel === "sessions" && session.id === this.selectedSessionId;
     const marker = isSelected ? " \x1b[33m◀\x1b[0m" : "";
+
+    if (session.remoteInstancePid) {
+      // Remote session — different icon and dimmed label
+      const icon = "\x1b[2;36m◈\x1b[0m";  // dim cyan diamond
+      const label = `\x1b[2mother tab (PID ${session.remoteInstancePid})\x1b[0m`;
+      return `${indent}${icon} [${num}] ${session.command} — ${label}${marker}`;
+    }
+
+    const icon = STATUS_ICONS[session.status];
+    const label = STATUS_LABELS[session.status];
     return `${indent}${icon} [${num}] ${session.command} — ${label}${marker}`;
   }
 
@@ -187,34 +181,20 @@ export class Dashboard {
     }
   }
 
-  private renderRemoteInstances(lines: string[]): void {
-    lines.push("");
-    lines.push("  \x1b[2m─── Other instances ───\x1b[0m");
-    for (const inst of this.remoteInstances) {
-      const count = inst.sessions.length;
-      lines.push(`  \x1b[2mInstance (PID ${inst.pid}) — ${count} agent${count !== 1 ? "s" : ""}\x1b[0m`);
-      for (const s of inst.sessions) {
-        lines.push(`    \x1b[36m◈\x1b[0m ${s.tool}:${s.id}`);
-      }
-    }
-  }
-
   private buildHelpLine(): string {
-    const hasRemote = this.remoteInstances.some(i => i.sessions.length > 0);
-    const takeover = hasRemote ? "  [t] takeover" : "";
     if (this.sessions.length === 0 && !this.hasWorktrees) {
-      return ` [c] new${takeover}  [q] quit `;
+      return " [c] new  [q] quit ";
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
-      return ` ↑↓ agents  Enter focus  Esc back  [c] new  [m] migrate  [x] kill${takeover}  [q] quit `;
+      return " ↑↓ agents  Enter focus  Esc back  [c] new  [m] migrate  [x] kill  [q] quit ";
     }
     if (this.hasWorktrees) {
-      return ` ↑↓ worktrees  Enter step in  [c] new agent  [w] new worktree  [m] migrate${takeover}  [q] quit `;
+      return " ↑↓ worktrees  Enter step in  [c] new agent  [w] new worktree  [m] migrate  [q] quit ";
     }
     if (this.sessions.length > 0) {
-      return ` ↑↓ select  Enter focus  [c] new  [w] worktree  [x] kill${takeover}  [q] quit `;
+      return " ↑↓ select  Enter focus  [c] new  [w] worktree  [x] kill  [q] quit ";
     }
-    return ` [c] new  [w] worktree${takeover}  [q] quit `;
+    return " [c] new  [w] worktree  [q] quit ";
   }
 }
 

@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
-import { Dashboard, type DashboardSession, type WorktreeGroup, type RemoteInstance } from "./dashboard.js";
+import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
 import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
 import { readHistory } from "./context/history.js";
 import { parseKeys } from "./key-parser.js";
@@ -59,8 +59,6 @@ export class Multiplexer {
   private worktreeListActive = false;
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
-  private takeoverPickerActive = false;
-  private takeoverPickerSessions: Array<{ id: string; tool: string; backendSessionId: string; fromInstanceId: string }> = [];
   /** The focused worktree path on the dashboard (undefined = main repo) */
   private focusedWorktreePath: string | undefined = undefined;
   /** Ordered list of worktree paths for navigation (undefined = main repo) */
@@ -138,10 +136,6 @@ export class Multiplexer {
         this.handleMigratePickerKey(data);
         return;
       }
-      if (this.takeoverPickerActive) {
-        this.handleTakeoverPickerKey(data);
-        return;
-      }
 
       if (this.mode === "dashboard") {
         this.handleDashboardKey(data);
@@ -213,10 +207,6 @@ export class Multiplexer {
       }
       if (this.migratePickerActive) {
         this.handleMigratePickerKey(data);
-        return;
-      }
-      if (this.takeoverPickerActive) {
-        this.handleTakeoverPickerKey(data);
         return;
       }
 
@@ -792,10 +782,6 @@ export class Multiplexer {
         this.showWorktreeList();
         break;
 
-      case "takeover":
-        this.showTakeoverPicker();
-        break;
-
       case "passthrough":
         this.activeSession?.write(action.data);
         break;
@@ -844,9 +830,6 @@ export class Multiplexer {
           this.showMigratePicker();
         }
         return;
-      case "t":
-        this.showTakeoverPicker();
-        return;
     }
 
     if (!hasWorktrees) {
@@ -869,6 +852,7 @@ export class Multiplexer {
           }
           break;
         case "enter":
+          if (this.tryTakeoverAtIndex(this.activeIndex)) return;
           if (this.sessions.length > 0) {
             this.focusSession(this.activeIndex);
           }
@@ -947,13 +931,22 @@ export class Multiplexer {
             this.renderDashboard();
           }
           break;
-        case "enter":
+        case "enter": {
+          // Check if selected session is a remote one needing takeover
+          const dashSessions = this.getDashboardSessions();
+          const selectedId = this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id;
+          const dashEntry = dashSessions.find(ds => ds.id === selectedId);
+          if (dashEntry?.remoteInstanceId) {
+            this.takeoverFromDashEntry(dashEntry);
+            return;
+          }
           if (this.dashboardWorktreeSessions.length > 0) {
             const session = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
             const idx = this.sessions.indexOf(session);
             if (idx >= 0) this.focusSession(idx);
           }
           break;
+        }
         case "escape":
         case "left":
         case "h":
@@ -1116,15 +1109,27 @@ export class Multiplexer {
       ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
       : undefined;
 
-    // Fetch remote instances for cross-instance visibility
-    let remoteInsts: RemoteInstance[] = [];
+    // Merge remote sessions (from other aimux instances) into dashSessions
     try {
       const remote = getRemoteInstances(this.instanceId, process.cwd());
-      remoteInsts = remote.map(r => ({
-        instanceId: r.instanceId,
-        pid: r.pid,
-        sessions: r.sessions,
-      }));
+      for (const inst of remote) {
+        for (const rs of inst.sessions) {
+          // Skip if we already own a session with same backendSessionId
+          const alreadyOwned = dashSessions.some(ds => ds.id === rs.id);
+          if (alreadyOwned) continue;
+          dashSessions.push({
+            index: dashSessions.length,
+            id: rs.id,
+            command: rs.tool,
+            status: "running" as const,
+            active: false,
+            worktreePath: rs.worktreePath,
+            remoteInstancePid: inst.pid,
+            remoteInstanceId: inst.instanceId,
+            remoteBackendSessionId: rs.backendSessionId,
+          });
+        }
+      }
     } catch {
       // Registry read failed — skip remote display
     }
@@ -1135,7 +1140,6 @@ export class Multiplexer {
       this.focusedWorktreePath,
       hasWorktrees ? this.dashboardLevel : "sessions",
       selectedSession,
-      remoteInsts,
     );
     process.stdout.write(this.dashboard.render(cols, rows));
   }
@@ -1424,103 +1428,52 @@ export class Multiplexer {
     }
   }
 
-  private showTakeoverPicker(): void {
-    // Collect remote sessions with backendSessionId
-    let remote;
+  /** Get the current dashboard sessions (local + remote merged) for lookup */
+  private getDashboardSessions(): DashboardSession[] {
+    const dashSessions: DashboardSession[] = this.sessions.map((s, i) => {
+      const wtPath = this.sessionWorktreePaths.get(s.id);
+      return {
+        index: i, id: s.id, command: s.command, status: s.status,
+        active: i === this.activeIndex, worktreePath: wtPath,
+      };
+    });
     try {
-      remote = getRemoteInstances(this.instanceId, process.cwd());
-    } catch {
-      return;
-    }
-
-    const sessions: typeof this.takeoverPickerSessions = [];
-    for (const inst of remote) {
-      for (const s of inst.sessions) {
-        if (s.backendSessionId) {
-          sessions.push({
-            id: s.id,
-            tool: s.tool,
-            backendSessionId: s.backendSessionId,
-            fromInstanceId: inst.instanceId,
+      const remote = getRemoteInstances(this.instanceId, process.cwd());
+      for (const inst of remote) {
+        for (const rs of inst.sessions) {
+          if (dashSessions.some(ds => ds.id === rs.id)) continue;
+          dashSessions.push({
+            index: dashSessions.length, id: rs.id, command: rs.tool,
+            status: "running", active: false, worktreePath: rs.worktreePath,
+            remoteInstancePid: inst.pid, remoteInstanceId: inst.instanceId,
+            remoteBackendSessionId: rs.backendSessionId,
           });
         }
       }
-    }
-
-    if (sessions.length === 0) {
-      // No remote sessions to take over
-      return;
-    }
-
-    this.takeoverPickerSessions = sessions;
-    this.takeoverPickerActive = true;
-    this.renderTakeoverPicker();
+    } catch {}
+    return dashSessions;
   }
 
-  private renderTakeoverPicker(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-
-    const lines = ["Take over remote agent:", ""];
-    for (let i = 0; i < this.takeoverPickerSessions.length; i++) {
-      const s = this.takeoverPickerSessions[i];
-      lines.push(`  [${i + 1}] ${s.tool}:${s.id}`);
-    }
-    lines.push("");
-    lines.push("  [Esc] cancel");
-
-    const boxWidth = Math.max(...lines.map(l => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1];
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+  /** Try to take over a remote session at the given dashboard index. Returns true if it was remote. */
+  private tryTakeoverAtIndex(index: number): boolean {
+    const dashSessions = this.getDashboardSessions();
+    const entry = dashSessions[index];
+    if (!entry?.remoteInstanceId) return false;
+    this.takeoverFromDashEntry(entry);
+    return true;
   }
 
-  private handleTakeoverPickerKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-
-    const event = events[0];
-    const key = event.name || event.char;
-
-    this.takeoverPickerActive = false;
-
-    if (key === "escape") {
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
-      return;
-    }
-
-    if (key >= "1" && key <= "9") {
-      const idx = parseInt(key) - 1;
-      if (idx < this.takeoverPickerSessions.length) {
-        const target = this.takeoverPickerSessions[idx];
-        this.takeoverSession(target).catch((err) => {
-          debug(`takeover failed: ${err instanceof Error ? err.message : String(err)}`, "instance");
-        });
-      }
-    }
-
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    } else if (this.sessions.length > 0) {
-      this.focusSession(this.activeIndex);
-    }
+  /** Take over a remote session from a DashboardSession entry */
+  private takeoverFromDashEntry(entry: DashboardSession): void {
+    if (!entry.remoteInstanceId || !entry.remoteBackendSessionId) return;
+    this.takeoverSession({
+      id: entry.id,
+      tool: entry.command,
+      backendSessionId: entry.remoteBackendSessionId,
+      fromInstanceId: entry.remoteInstanceId,
+    }).catch((err) => {
+      debug(`takeover failed: ${err instanceof Error ? err.message : String(err)}`, "instance");
+    });
   }
 
   private async takeoverSession(target: { id: string; tool: string; backendSessionId: string; fromInstanceId: string }): Promise<void> {
@@ -1680,13 +1633,34 @@ export class Multiplexer {
   private writeSessionsFile(): void {
     const dir = getAimuxDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const data = this.sessions.map(s => ({
+
+    // Local sessions
+    const data: Array<Record<string, unknown>> = this.sessions.map(s => ({
       id: s.id,
       tool: s.command,
       status: s.status,
       backendSessionId: (s as any)._backendSessionId as string | undefined,
       worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
+
+    // Include remote sessions so agents can discover cross-instance agents
+    try {
+      const remote = getRemoteInstances(this.instanceId, process.cwd());
+      for (const inst of remote) {
+        for (const rs of inst.sessions) {
+          if (data.some(d => d.id === rs.id)) continue;
+          data.push({
+            id: rs.id,
+            tool: rs.tool,
+            status: "running",
+            backendSessionId: rs.backendSessionId,
+            worktreePath: rs.worktreePath,
+            instance: `PID ${inst.pid}`,
+          });
+        }
+      }
+    } catch {}
+
     writeFileSync(
       `${dir}/sessions.json`,
       JSON.stringify(data, null, 2) + "\n"
