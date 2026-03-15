@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
-import { getAimuxDir } from "../config.js";
+import { getAimuxDir, loadConfig } from "../config.js";
 import { readHistory, type HistoryTurn } from "./history.js";
 
 const MAX_SUMMARY_BYTES = 30 * 1024;
@@ -159,7 +159,11 @@ export function llmCompact(
       history;
 
     try {
-      const output = execSync("claude --print --output-format text", {
+      // Find compactCommand from any tool that has one configured
+      const config = loadConfig(cwd);
+      const compactCmd = Object.values(config.tools).find(t => t.compactCommand)?.compactCommand
+        ?? "claude --print --output-format text";
+      const output = execSync(compactCmd, {
         input: prompt,
         encoding: "utf-8",
         timeout: 60_000,

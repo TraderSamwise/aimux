@@ -16,6 +16,8 @@ export interface PtySessionOptions {
   env?: Record<string, string>;
   record?: boolean;
   id?: string;
+  /** Regex patterns for idle/prompt detection */
+  promptPatterns?: RegExp[];
 }
 
 export class PtySession {
@@ -34,7 +36,7 @@ export class PtySession {
   constructor(opts: PtySessionOptions) {
     this.id = opts.id ?? `${opts.command}-${randomId()}`;
     this.command = opts.command;
-    this.statusDetector = new StatusDetector(opts.command);
+    this.statusDetector = new StatusDetector(opts.promptPatterns);
     this.vt = new Terminal({ cols: opts.cols, rows: opts.rows, allowProposedApi: true });
 
     if (opts.record !== false) {

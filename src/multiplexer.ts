@@ -50,7 +50,7 @@ export class Multiplexer {
   private onStdinData: ((data: Buffer) => void) | null = null;
   private onResize: (() => void) | null = null;
   private resolveRun: ((code: number) => void) | null = null;
-  private defaultCommand: string = "claude";
+  private defaultCommand: string = "";
   private defaultArgs: string[] = [];
   private startedInDashboard = false;
   private pickerActive = false;
@@ -309,14 +309,8 @@ export class Multiplexer {
           (a: string) => a.replace("{sessionId}", bsid)
         );
       } else {
-        // No backend session ID — fall back to --continue/--last
-        if (saved.command === "claude") {
-          resumeArgs = ["--continue"];
-        } else if (saved.command === "codex") {
-          resumeArgs = ["resume", "--last"];
-        } else {
-          resumeArgs = [];
-        }
+        // No backend session ID — use tool's configured fallback
+        resumeArgs = toolCfg.resumeFallback ?? [];
       }
       const args = [...resumeArgs, ...saved.args];
       debug(`resuming ${saved.command} with backendSessionId=${bsid ?? "none (fallback)"}`, "session");
@@ -579,13 +573,25 @@ export class Multiplexer {
     }
     debug(`creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"})`, "session");
 
-    const session = new PtySession({ command, args: finalArgs, cols, rows: this.toolRows, id: sessionId, cwd: worktreePath });
+    // Build prompt patterns from config for status detection
+    let promptPatterns: RegExp[] | undefined;
+    if (toolConfigKey) {
+      const tc = loadConfig().tools[toolConfigKey];
+      if (tc?.promptPatterns) {
+        promptPatterns = tc.promptPatterns.map(p => new RegExp(p, "m"));
+      }
+    }
+
+    const session = new PtySession({ command, args: finalArgs, cols, rows: this.toolRows, id: sessionId, cwd: worktreePath, promptPatterns });
     // Store backend session ID for resume
     (session as any)._backendSessionId = backendSessionId;
 
-    // For tools without sessionIdFlag (e.g. codex), try to capture the backend session ID after startup
-    if (!backendSessionId && command === "codex") {
-      this.captureCodexSessionId(session);
+    // For tools without sessionIdFlag, try to capture the backend session ID via filesystem
+    if (!backendSessionId && toolConfigKey) {
+      const toolCfg = loadConfig().tools[toolConfigKey];
+      if (toolCfg?.sessionCapture) {
+        this.captureSessionId(session, toolCfg.sessionCapture);
+      }
     }
 
     // Forward output to stdout only when this session is active and focused
@@ -607,7 +613,15 @@ export class Multiplexer {
 
       this.sessions.splice(idx, 1);
       this.writeSessionsFile();
-      this.contextWatcher.updateSessions(this.sessions.map(s => ({ id: s.id, command: s.command })));
+      this.contextWatcher.updateSessions(this.sessions.map(s => {
+        const key = this.sessionToolKeys.get(s.id);
+        const tc = key ? loadConfig().tools[key] : undefined;
+        return {
+          id: s.id,
+          command: s.command,
+          turnPatterns: tc?.turnPatterns?.map(p => new RegExp(p)),
+        };
+      }));
 
       if (this.sessions.length === 0) {
         if (this.startedInDashboard) {
@@ -643,7 +657,15 @@ export class Multiplexer {
 
     this.sessions.push(session);
     this.writeSessionsFile();
-    this.contextWatcher.updateSessions(this.sessions.map(s => ({ id: s.id, command: s.command })));
+    this.contextWatcher.updateSessions(this.sessions.map(s => {
+        const key = this.sessionToolKeys.get(s.id);
+        const tc = key ? loadConfig().tools[key] : undefined;
+        return {
+          id: s.id,
+          command: s.command,
+          turnPatterns: tc?.turnPatterns?.map(p => new RegExp(p)),
+        };
+      }));
     if (this.sessions.length === 1) this.contextWatcher.start();
 
     // Focus the new session
@@ -1669,34 +1691,33 @@ export class Multiplexer {
 
   /** Write active sessions to .aimux/sessions.json so agents can discover each other */
   /**
-   * Capture codex's backend session ID by watching its sessions directory
-   * for a new file that appears after spawning.
+   * Capture backend session ID by watching a directory for new files.
+   * Config-driven: uses sessionCapture.dir, .pattern, .delayMs from ToolConfig.
    */
-  private captureCodexSessionId(session: PtySession): void {
-    const homedir = process.env.HOME ?? "";
+  private captureSessionId(session: PtySession, capture: import("./config.js").SessionCaptureConfig): void {
     const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, "0");
-    const d = String(now.getDate()).padStart(2, "0");
-    const sessionsDir = join(homedir, ".codex", "sessions", String(y), m, d);
+    const dir = capture.dir
+      .replace("{home}", process.env.HOME ?? "")
+      .replace("{yyyy}", String(now.getFullYear()))
+      .replace("{mm}", String(now.getMonth() + 1).padStart(2, "0"))
+      .replace("{dd}", String(now.getDate()).padStart(2, "0"));
+    const regex = new RegExp(capture.pattern);
 
     // Snapshot current files
     let beforeFiles: string[] = [];
     try {
-      beforeFiles = readdirSync(sessionsDir);
+      beforeFiles = readdirSync(dir);
     } catch {}
 
-    // Check for new files after a delay
     const checkForNew = () => {
       try {
-        const afterFiles = readdirSync(sessionsDir);
+        const afterFiles = readdirSync(dir);
         const newFiles = afterFiles.filter(f => !beforeFiles.includes(f));
         for (const file of newFiles) {
-          // Extract UUID from filename: rollout-{timestamp}-{UUID}.jsonl
-          const match = file.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/);
+          const match = file.match(regex);
           if (match) {
             (session as any)._backendSessionId = match[1];
-            debug(`captured codex backendSessionId: ${match[1]}`, "session");
+            debug(`captured backendSessionId: ${match[1]}`, "session");
             return;
           }
         }
@@ -1704,9 +1725,10 @@ export class Multiplexer {
     };
 
     // Try a few times with increasing delays
-    setTimeout(checkForNew, 2000);
-    setTimeout(checkForNew, 5000);
-    setTimeout(checkForNew, 10000);
+    const delay = capture.delayMs;
+    setTimeout(checkForNew, delay);
+    setTimeout(checkForNew, delay * 2.5);
+    setTimeout(checkForNew, delay * 5);
   }
 
   private writeSessionsFile(): void {

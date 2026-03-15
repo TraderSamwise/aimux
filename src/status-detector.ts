@@ -1,25 +1,17 @@
 export type SessionStatus = "running" | "idle" | "waiting" | "exited" | "offline";
 
-// Tool-specific prompt patterns that indicate "waiting for input"
-const PROMPT_PATTERNS: Array<{ tool: RegExp; pattern: RegExp }> = [
-  { tool: /^claude/, pattern: /^> $/m },
-  { tool: /^claude/, pattern: /\$ $/m },
-  { tool: /^aider/, pattern: /^aider> $/m },
-  { tool: /^codex/, pattern: /^> $/m },
-];
-
 // Generic patterns that look like prompts
 const GENERIC_PROMPT = /[>$#%] $/m;
 
 export class StatusDetector {
   private lastOutputTime = 0;
   private lastStrippedLine = "";
-  private tool: string;
+  private patterns: RegExp[];
   private _status: SessionStatus = "running";
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(tool: string) {
-    this.tool = tool;
+  constructor(promptPatterns: RegExp[] = []) {
+    this.patterns = promptPatterns;
   }
 
   get status(): SessionStatus {
@@ -51,9 +43,9 @@ export class StatusDetector {
     const elapsed = Date.now() - this.lastOutputTime;
     if (elapsed < 2000) return;
 
-    // Check tool-specific prompts
-    for (const { tool, pattern } of PROMPT_PATTERNS) {
-      if (tool.test(this.tool) && pattern.test(this.lastStrippedLine)) {
+    // Check tool-specific prompts from config
+    for (const pattern of this.patterns) {
+      if (pattern.test(this.lastStrippedLine)) {
         this._status = "idle";
         return;
       }

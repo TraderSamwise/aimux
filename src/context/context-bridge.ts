@@ -58,7 +58,7 @@ function simpleHash(str: string): string {
  */
 export class ContextWatcher {
   private interval: ReturnType<typeof setInterval> | null = null;
-  private sessions: Array<{ id: string; command: string }> = [];
+  private sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[] }> = [];
   private cwd?: string;
   /** Track how far we've read into each session's recording */
   private readOffsets = new Map<string, number>();
@@ -75,7 +75,7 @@ export class ContextWatcher {
     this.cwd = cwd;
   }
 
-  updateSessions(sessions: Array<{ id: string; command: string }>): void {
+  updateSessions(sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[] }>): void {
     this.sessions = sessions;
   }
 
@@ -131,7 +131,7 @@ export class ContextWatcher {
    * Read new content from a session's recording since our last read offset.
    * Parse into turns and persist to JSONL history.
    */
-  private async extractNewContent(session: { id: string; command: string }): Promise<void> {
+  private async extractNewContent(session: { id: string; command: string; turnPatterns?: RegExp[] }): Promise<void> {
     const txtPath = this.recordingPath(session.id);
     if (!existsSync(txtPath)) return;
 
@@ -149,7 +149,7 @@ export class ContextWatcher {
       if (trimmed.length < 10) return;
 
       // Parse new content into turns
-      const turns = parseConversationTurns(newContent, session.command);
+      const turns = parseConversationTurns(newContent, session.command, session.turnPatterns);
 
       for (const turn of turns) {
         const prevType = this.lastTurnTypes.get(session.id);
@@ -285,18 +285,11 @@ interface ConversationTurn {
  * Parse raw terminal recording output into conversation turns.
  * Uses heuristics based on common CLI tool patterns.
  */
-function parseConversationTurns(text: string, tool: string): ConversationTurn[] {
+function parseConversationTurns(text: string, tool: string, turnPatterns?: RegExp[]): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   const lines = text.split("\n");
 
-  // Prompt patterns by tool
-  const promptPatterns: Record<string, RegExp[]> = {
-    claude: [/^[❯>]\s*(.+)/, /^❯\s*$/],
-    codex: [/^[>❯]\s*(.+)/],
-    aider: [/^aider>\s*(.+)/, /^>\s*(.+)/],
-  };
-
-  const patterns = promptPatterns[tool] ?? [/^[>❯$]\s*(.+)/];
+  const patterns = turnPatterns ?? [/^[>❯$]\s*(.+)/];
 
   let currentType: "prompt" | "response" | null = null;
   let currentContent: string[] = [];
