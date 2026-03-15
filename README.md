@@ -164,7 +164,7 @@ Worktrees are created at `../{repo-name}-{worktree-name}/` and each gets its own
 - macOS (Linux support planned)
 - Node.js >= 18
 - At least one supported AI tool installed: `claude`, `codex`, or `aider`
-- Optional: `terminal-notifier` for macOS notifications
+- Notifications work out of the box on macOS, Linux, and Windows
 
 ## License
 

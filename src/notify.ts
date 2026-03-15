@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import notifier from "node-notifier";
 import { loadConfig, type NotificationConfig } from "./config.js";
 import { debug } from "./debug.js";
 
@@ -20,23 +20,8 @@ function send(title: string, message: string): void {
   const config = getNotifyConfig();
   if (!config.enabled) return;
 
-  try {
-    execSync(
-      `terminal-notifier -title ${JSON.stringify(title)} -message ${JSON.stringify(message)} -sound default`,
-      { stdio: "ignore", timeout: 3000 }
-    );
-    debug(`notification: ${message}`, "notify");
-  } catch {
-    // terminal-notifier not installed or failed — try osascript fallback
-    try {
-      execSync(
-        `osascript -e 'display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)}'`,
-        { stdio: "ignore", timeout: 3000 }
-      );
-    } catch {
-      // No notification system available — skip silently
-    }
-  }
+  notifier.notify({ title, message, sound: true });
+  debug(`notification: ${message}`, "notify");
 }
 
 /** Notify that an agent is waiting for input */

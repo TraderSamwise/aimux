@@ -21,6 +21,7 @@
   "dependencies": {
     "@xterm/headless": "^6.0.0",
     "commander": "^14.0.0",
+    "node-notifier": "^10.0.1",
     "node-pty": "^1.0.0",
     "proper-lockfile": "^4.1.2",
     "simple-git": "^3.33.0",
@@ -28,6 +29,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/node-notifier": "^8.0.5",
     "@types/proper-lockfile": "^4.1.4",
     "typescript": "^5.9.3"
   }
