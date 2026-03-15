@@ -1,6 +1,7 @@
 import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync, readdirSync, cpSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { execSync } from "node:child_process";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
 import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
@@ -937,11 +938,15 @@ export class Multiplexer {
     const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
 
     if (tools.length === 1) {
-      // Only one tool — skip picker, spawn directly
       const [key, tool] = tools[0];
-      const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
-      this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
-      return;
+      if (!isToolAvailable(tool.command)) {
+        // Show all tools anyway so user sees what's supported
+      } else {
+        // Only one available tool — skip picker, spawn directly
+        const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
+        this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
+        return;
+      }
     }
 
     this.pickerActive = true;
@@ -951,7 +956,11 @@ export class Multiplexer {
 
     const lines = ["Select tool:"];
     for (let i = 0; i < tools.length; i++) {
-      lines.push(`  [${i + 1}] ${tools[i][0]}`);
+      const available = isToolAvailable(tools[i][1].command);
+      const label = available
+        ? `  [${i + 1}] ${tools[i][0]}`
+        : `  [${i + 1}] ${tools[i][0]} (not installed)`;
+      lines.push(label);
     }
     lines.push("");
     lines.push("  [Esc] Cancel");
@@ -999,6 +1008,16 @@ export class Multiplexer {
       const idx = parseInt(key) - 1;
       if (idx < tools.length) {
         const [key, tool] = tools[idx];
+        if (!isToolAvailable(tool.command)) {
+          // Show brief error then redraw
+          process.stdout.write(`\x1b7\x1b[${(process.stdout.rows ?? 24) - 2};1H\x1b[41;97m "${tool.command}" is not installed. Install it first. \x1b[0m\x1b8`);
+          setTimeout(() => {
+            this.pickerActive = false;
+            if (this.mode === "dashboard") this.renderDashboard();
+            else this.focusSession(this.activeIndex);
+          }, 2000);
+          return;
+        }
         const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
         this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
         return;
@@ -1650,5 +1669,15 @@ export class Multiplexer {
       session.destroy();
     }
     this.teardown();
+  }
+}
+
+/** Check if a command is available on PATH */
+function isToolAvailable(command: string): boolean {
+  try {
+    execSync(`which ${command}`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
   }
 }
