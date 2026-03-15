@@ -854,6 +854,7 @@ export class Multiplexer {
         if (selEntry.status === "offline") {
           // Second [x] on offline → move to graveyard
           this.graveyardSession(selEntry.id);
+          this.adjustAfterRemove(hasWorktrees);
           this.renderDashboard();
           return;
         }
@@ -1906,6 +1907,24 @@ export class Multiplexer {
   }
 
   /** Move an offline session to the graveyard (second [x]) */
+  /** After removing a session, adjust cursor to nearest sibling or step back to worktree level */
+  private adjustAfterRemove(hasWorktrees: boolean): void {
+    if (hasWorktrees && this.dashboardLevel === "sessions") {
+      this.updateWorktreeSessions();
+      if (this.dashboardWorktreeSessions.length === 0) {
+        // No more agents in this worktree — step back to worktree level
+        this.dashboardLevel = "worktrees";
+      } else if (this.dashboardSessionIndex >= this.dashboardWorktreeSessions.length) {
+        this.dashboardSessionIndex = this.dashboardWorktreeSessions.length - 1;
+      }
+    } else if (!hasWorktrees) {
+      const total = this.getDashboardSessions().length;
+      if (this.activeIndex >= total) {
+        this.activeIndex = Math.max(0, total - 1);
+      }
+    }
+  }
+
   private graveyardSession(sessionId: string): void {
     const session = this.offlineSessions.find(s => s.id === sessionId);
     if (!session) return;
