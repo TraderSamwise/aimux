@@ -8,12 +8,15 @@ aimux wraps tools like [Claude Code](https://github.com/anthropics/claude-code),
 
 - **Native TUI preservation** — each tool runs in its own PTY, keeping full color, scrollback, and interactivity
 - **Leader key switching** — `Ctrl+A` prefix (like GNU screen/tmux) to switch between agents, open dashboard, create/kill sessions
-- **Dashboard view** — see all running agents and their status at a glance
+- **Dashboard view** — see all running, offline, and remote agents at a glance
+- **Multi-instance** — run aimux in multiple terminal tabs; agents from other instances appear inline and can be taken over
+- **Agent lifecycle** — two-step kill (`[x]` stops → offline, `[x]` again → graveyard), with `aimux graveyard resurrect` for recovery
 - **Context sharing** — agents can read each other's conversation history via `.aimux/context/`
 - **Session resume** — resume previous sessions using each tool's native resume (`--resume`) or injected history (`--restore`)
 - **Git worktree support** — first-class worktree management for parallel feature work, with per-worktree agent isolation
-- **Configurable** — global (`~/.aimux/config.json`) and project-level (`.aimux/config.json`) configuration
-- **Notifications** — macOS notifications when agents need attention or complete tasks
+- **Fully config-driven** — all tool behavior (prompt detection, session capture, resume, compaction) is declarative config, not code
+- **Configurable** — global (`~/.aimux/config.json`) and project-level (`.aimux/config.json`) configuration with deep merge
+- **Notifications** — cross-platform notifications (macOS, Linux, Windows) when agents need attention or complete tasks
 - **Custom instructions** — `~/AIMUX.md` (global) and `./AIMUX.md` (project) are injected into every agent's preamble
 
 ## Install
@@ -34,7 +37,7 @@ Requires Node.js >= 18.
 ## Quick Start
 
 ```bash
-# Launch with tool picker
+# Launch dashboard (shows active, offline, and remote agents)
 aimux
 
 # Launch a specific tool
@@ -42,7 +45,7 @@ aimux claude
 aimux codex
 aimux aider
 
-# Resume previous sessions
+# Resume all offline sessions
 aimux --resume
 ```
 
@@ -56,7 +59,7 @@ All hotkeys use the `Ctrl+A` leader prefix:
 | `Ctrl+A n` | Next agent |
 | `Ctrl+A p` | Previous agent |
 | `Ctrl+A c` | Create new agent |
-| `Ctrl+A x` | Kill current agent |
+| `Ctrl+A x` | Stop agent (→ offline) or kill offline agent (→ graveyard) |
 | `Ctrl+A 1-9` | Focus agent by number |
 | `Ctrl+A w` | Create new worktree |
 | `Ctrl+A W` | Worktree management |
@@ -64,7 +67,7 @@ All hotkeys use the `Ctrl+A` leader prefix:
 
 ## Dashboard
 
-When you run `aimux` without arguments (or press `Ctrl+A d`), you get a dashboard showing all agents:
+When you run `aimux` without arguments (or press `Ctrl+A d`), you get a dashboard showing all agents across all states:
 
 ```
          aimux — agent multiplexer
@@ -72,10 +75,17 @@ When you run `aimux` without arguments (or press `Ctrl+A d`), you get a dashboar
 
   ● [1] claude — running ←
   ● [2] codex — idle
+  ○ [3] claude — offline
+  ◈ [4] claude — other tab (PID 54321)
 
 ──────────────────────────────────────
- ↑↓ select  Enter focus  [c] new  [q] quit
+ ↑↓ select  Enter focus  [c] new  [x] stop  [q] quit
 ```
+
+- **Enter** on a running agent focuses it
+- **Enter** on an offline agent resumes it
+- **Enter** on a remote agent (other tab) takes it over
+- **`[x]`** on running → stops to offline; **`[x]`** on offline → sends to graveyard
 
 With worktrees, agents are grouped:
 
@@ -85,6 +95,7 @@ With worktrees, agents are grouped:
 
    fix-auth (fix-auth) — active
     ● [2] claude — running
+    ○ [3] codex — offline
 
 ──────────────────────────────────────
  ↑↓ worktrees  Enter step in  [c] new  [w] worktree  [q] quit
@@ -138,6 +149,76 @@ This creates `.aimux/config.json`. You can also create a global config at `~/.ai
   }
 }
 ```
+
+### Tool Configuration
+
+All tool behavior is config-driven. No tool-specific code exists in the multiplexer — adding or customizing a tool only requires config:
+
+```json
+{
+  "tools": {
+    "my-tool": {
+      "command": "my-tool",
+      "args": ["--some-flag"],
+      "enabled": true,
+      "preambleFlag": ["--system-prompt"],
+      "resumeArgs": ["--resume", "{sessionId}"],
+      "resumeFallback": ["--continue"],
+      "sessionIdFlag": ["--session-id", "{sessionId}"],
+      "sessionCapture": {
+        "dir": "{home}/.my-tool/sessions/{yyyy}/{mm}/{dd}",
+        "pattern": "([0-9a-f-]+)\\.json$",
+        "delayMs": 2000
+      },
+      "promptPatterns": ["^> $", "^\\$ $"],
+      "turnPatterns": ["^[>❯]\\s*(.+)"],
+      "compactCommand": "claude --print --output-format text",
+      "instructionsFile": "AGENTS.md"
+    }
+  }
+}
+```
+
+| Field | Purpose |
+|---|---|
+| `preambleFlag` | Flag to inject system prompt (e.g. `["--append-system-prompt"]`) |
+| `resumeArgs` | Args to resume a session, with `{sessionId}` placeholder |
+| `resumeFallback` | Fallback resume args when session ID is unavailable |
+| `sessionIdFlag` | Flag to set session ID at spawn time |
+| `sessionCapture` | Filesystem-based session ID capture (dir, regex pattern, delay) |
+| `promptPatterns` | Regex patterns for idle/prompt detection in status bar |
+| `turnPatterns` | Regex patterns for extracting conversation turns from output |
+| `compactCommand` | Shell command for LLM-powered history compaction |
+| `instructionsFile` | File to write preamble to (for tools without system prompt flags) |
+
+## Multi-Instance
+
+Run aimux in multiple terminal tabs for the same project. Each instance registers in `.aimux/instances.json` with a heartbeat. Agents from other instances appear inline in the dashboard with a `◈` icon.
+
+- **Enter** on a remote agent takes it over (resumes in your instance)
+- `--resume` skips agents already owned by another live instance
+- When an instance exits, its agents become offline and visible to other instances
+- Dead instances are auto-pruned via PID checks and heartbeat staleness
+
+## Agent Lifecycle
+
+Agents have three states: **running**, **offline**, and **graveyarded**.
+
+```
+  running  ──[x]──▶  offline  ──[x]──▶  graveyard
+                      │                     │
+                      ◀──Enter──            ◀── aimux graveyard resurrect
+```
+
+```bash
+# List agents in the graveyard
+aimux graveyard list
+
+# Resurrect an agent back to offline state
+aimux graveyard resurrect <id>
+```
+
+Context files (`.aimux/context/`, `.aimux/history/`) are never deleted — only the agent's state changes.
 
 ## Worktrees
 
