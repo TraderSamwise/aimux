@@ -15,8 +15,10 @@ export interface ToolConfig {
   enabled: boolean;
   /** Flag/args to inject system prompt preamble, e.g. ["--append-system-prompt"] */
   preambleFlag?: string[];
-  /** Args to resume the last session natively, e.g. ["--continue"] for claude */
+  /** Args to resume a specific session, with {sessionId} placeholder, e.g. ["--resume", "{sessionId}"] */
   resumeArgs?: string[];
+  /** Flag to set a session ID when starting, with {sessionId} placeholder, e.g. ["--session-id", "{sessionId}"] */
+  sessionIdFlag?: string[];
   /** File to write preamble instructions to (created on start, removed on exit), e.g. "CODEX.md" */
   instructionsFile?: string;
 }
@@ -32,14 +34,15 @@ const DEFAULT_CONFIG: AimuxConfig = {
       args: ["--dangerously-skip-permissions"],
       enabled: true,
       preambleFlag: ["--append-system-prompt"],
-      resumeArgs: ["--continue"],
+      sessionIdFlag: ["--session-id", "{sessionId}"],
+      resumeArgs: ["--resume", "{sessionId}"],
     },
     codex: {
       command: "codex",
       args: [],
       enabled: true,
-      resumeArgs: ["resume", "--last"],
-      instructionsFile: "CODEX.md",
+      resumeArgs: ["resume", "{sessionId}"],
+      instructionsFile: "AGENTS.md",
     },
     aider: {
       command: "aider",

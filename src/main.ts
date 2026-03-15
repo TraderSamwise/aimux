@@ -3,7 +3,7 @@ import { readdirSync } from "node:fs";
 import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
 import { getHistoryDir } from "./context/history.js";
-import { getAimuxDir } from "./config.js";
+import { getAimuxDir, initProject } from "./config.js";
 
 const program = new Command();
 
@@ -44,6 +44,14 @@ program
       console.error(`aimux: failed to spawn "${tool}": ${msg}`);
       process.exit(1);
     }
+  });
+
+program
+  .command("init")
+  .description("Initialize .aimux directory with default config and gitignore")
+  .action(() => {
+    initProject();
+    console.log("Initialized .aimux/ with config.json and .gitignore");
   });
 
 program

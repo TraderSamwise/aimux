@@ -1,4 +1,5 @@
 import { parseKeys, matchKey, type KeyEvent } from "./key-parser.js";
+import { debug } from "./debug.js";
 
 const TIMEOUT_MS = 1000;
 
@@ -28,6 +29,7 @@ export class HotkeyHandler {
    */
   feed(data: Buffer): string | null {
     const events = parseKeys(data);
+    debug(`hotkey feed: ${events.length} events, waiting=${this.waitingForAction}, bytes=${data.length}`, "hotkey");
     if (events.length === 0) return data.toString();
 
     // If we're waiting for the action key after leader

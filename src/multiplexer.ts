@@ -1,5 +1,6 @@
-import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
 import { Dashboard, type DashboardSession } from "./dashboard.js";
@@ -75,7 +76,7 @@ export class Multiplexer {
     this.writeInstructionFiles();
 
     // Create initial session
-    this.createSession(opts.command, opts.args, toolConfig?.preambleFlag, toolConfigKey);
+    this.createSession(opts.command, opts.args, toolConfig?.preambleFlag, toolConfigKey, undefined, toolConfig?.sessionIdFlag);
 
     // Enter raw mode and set up footer
     this.enterRawMode();
@@ -210,12 +211,30 @@ export class Multiplexer {
       return this.runDashboard();
     }
 
-    // Spawn each session with resumeArgs
+    // Spawn each session with resumeArgs, substituting backend session ID
     for (const saved of sessionsToResume) {
       const toolCfg = config.tools[saved.toolConfigKey];
       if (!toolCfg) continue;
 
-      const args = [...(toolCfg.resumeArgs ?? []), ...saved.args];
+      const bsid = (saved as any).backendSessionId as string | undefined;
+      let resumeArgs: string[];
+      if (bsid) {
+        // Substitute backend session ID into resume args
+        resumeArgs = (toolCfg.resumeArgs ?? []).map(
+          (a: string) => a.replace("{sessionId}", bsid)
+        );
+      } else {
+        // No backend session ID — fall back to --continue/--last
+        if (saved.command === "claude") {
+          resumeArgs = ["--continue"];
+        } else if (saved.command === "codex") {
+          resumeArgs = ["resume", "--last"];
+        } else {
+          resumeArgs = [];
+        }
+      }
+      const args = [...resumeArgs, ...saved.args];
+      debug(`resuming ${saved.command} with backendSessionId=${bsid ?? "none (fallback)"}`, "session");
       this.createSession(saved.command, args, toolCfg.preambleFlag, saved.toolConfigKey);
     }
 
@@ -366,11 +385,21 @@ export class Multiplexer {
     return exitCode;
   }
 
-  createSession(command: string, args: string[], preambleFlag?: string[], toolConfigKey?: string, extraPreamble?: string): PtySession {
+  createSession(
+    command: string,
+    args: string[],
+    preambleFlag?: string[],
+    toolConfigKey?: string,
+    extraPreamble?: string,
+    sessionIdFlag?: string[],
+  ): PtySession {
     const cols = process.stdout.columns ?? 80;
 
     // Pre-generate session ID so we can reference it in the preamble
     const sessionId = `${command}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Generate a backend session UUID for tools that support it (e.g. claude --session-id)
+    const backendSessionId = sessionIdFlag ? randomUUID() : undefined;
 
     // Inject aimux preamble via tool-specific flag if available
     let preamble =
@@ -385,16 +414,30 @@ export class Multiplexer {
     if (extraPreamble) {
       preamble += "\n" + extraPreamble;
     }
-    const finalArgs = preambleFlag
+
+    let finalArgs = preambleFlag
       ? [...args, ...preambleFlag, preamble]
-      : args;
+      : [...args];
+
+    // Inject backend session ID flag (e.g. --session-id <uuid>)
+    if (sessionIdFlag && backendSessionId) {
+      const expandedFlag = sessionIdFlag.map(a => a.replace("{sessionId}", backendSessionId));
+      finalArgs = [...finalArgs, ...expandedFlag];
+    }
 
     if (preambleFlag) {
       debugPreamble(command, Buffer.byteLength(preamble));
     }
-    debug(`creating session: ${command} (configKey=${toolConfigKey ?? "cli"})`, "session");
+    debug(`creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"})`, "session");
 
     const session = new PtySession({ command, args: finalArgs, cols, rows: this.toolRows, id: sessionId });
+    // Store backend session ID for resume
+    (session as any)._backendSessionId = backendSessionId;
+
+    // For tools without sessionIdFlag (e.g. codex), try to capture the backend session ID after startup
+    if (!backendSessionId && command === "codex") {
+      this.captureCodexSessionId(session);
+    }
 
     // Forward output to stdout only when this session is active and focused
     session.onData((data) => {
@@ -584,7 +627,7 @@ export class Multiplexer {
     if (tools.length === 1) {
       // Only one tool — skip picker, spawn directly
       const [key, tool] = tools[0];
-      this.createSession(tool.command, tool.args, tool.preambleFlag, key);
+      this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag);
       return;
     }
 
@@ -643,7 +686,7 @@ export class Multiplexer {
       const idx = parseInt(key) - 1;
       if (idx < tools.length) {
         const [key, tool] = tools[idx];
-        this.createSession(tool.command, tool.args, tool.preambleFlag, key);
+        this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag);
         return;
       }
     }
@@ -729,6 +772,47 @@ export class Multiplexer {
   }
 
   /** Write active sessions to .aimux/sessions.json so agents can discover each other */
+  /**
+   * Capture codex's backend session ID by watching its sessions directory
+   * for a new file that appears after spawning.
+   */
+  private captureCodexSessionId(session: PtySession): void {
+    const homedir = process.env.HOME ?? "";
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    const sessionsDir = join(homedir, ".codex", "sessions", String(y), m, d);
+
+    // Snapshot current files
+    let beforeFiles: string[] = [];
+    try {
+      beforeFiles = readdirSync(sessionsDir);
+    } catch {}
+
+    // Check for new files after a delay
+    const checkForNew = () => {
+      try {
+        const afterFiles = readdirSync(sessionsDir);
+        const newFiles = afterFiles.filter(f => !beforeFiles.includes(f));
+        for (const file of newFiles) {
+          // Extract UUID from filename: rollout-{timestamp}-{UUID}.jsonl
+          const match = file.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/);
+          if (match) {
+            (session as any)._backendSessionId = match[1];
+            debug(`captured codex backendSessionId: ${match[1]}`, "session");
+            return;
+          }
+        }
+      } catch {}
+    };
+
+    // Try a few times with increasing delays
+    setTimeout(checkForNew, 2000);
+    setTimeout(checkForNew, 5000);
+    setTimeout(checkForNew, 10000);
+  }
+
   private writeSessionsFile(): void {
     const dir = getAimuxDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -861,6 +945,7 @@ export class Multiplexer {
         toolConfigKey: this.sessionToolKeys.get(s.id) ?? s.command,
         command: s.command,
         args: this.sessionOriginalArgs.get(s.id) ?? [],
+        backendSessionId: (s as any)._backendSessionId,
       })),
     };
 
