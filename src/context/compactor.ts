@@ -10,24 +10,28 @@ const DECISION_KEYWORDS = /\b(decided|chose|instead|approach|switched to|went wi
 const ERROR_KEYWORDS = /\b(error|failed|blocked|issue|broken|crash|exception)\b/i;
 
 /**
- * Algorithmic compaction: extract key signals from history and write a structured summary.
+ * Algorithmic compaction: extract key signals from history and write per-session summaries.
+ * Each session gets its own context/{session-id}/summary.md.
  */
 export function algorithmicCompact(
   sessionIds: string[],
   cwd?: string
 ): void {
-  const dir = join(getAimuxDir(cwd), "context");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-  const sections: string[] = [
-    "# aimux Session Summary",
-    `Generated: ${new Date().toISOString()}`,
-    "",
-  ];
+  const baseDir = join(getAimuxDir(cwd), "context");
+  if (!existsSync(baseDir)) mkdirSync(baseDir, { recursive: true });
 
   for (const sessionId of sessionIds) {
     const turns = readHistory(sessionId, undefined, cwd);
     if (turns.length === 0) continue;
+
+    const sessionDir = join(baseDir, sessionId);
+    if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
+
+    const sections: string[] = [
+      `# ${sessionId} — Session Summary`,
+      `Generated: ${new Date().toISOString()}`,
+      "",
+    ];
 
     const tasks: string[] = [];
     const fileCounts = new Map<string, number>();
@@ -40,7 +44,6 @@ export function algorithmicCompact(
       }
 
       if (turn.type === "response") {
-        // Extract key decisions and errors from response lines
         for (const line of turn.content.split("\n")) {
           const trimmed = line.trim();
           if (!trimmed) continue;
@@ -53,7 +56,6 @@ export function algorithmicCompact(
         }
       }
 
-      // Count file modifications from response and git turns
       if (turn.files) {
         for (const file of turn.files) {
           fileCounts.set(file, (fileCounts.get(file) ?? 0) + 1);
@@ -61,10 +63,9 @@ export function algorithmicCompact(
       }
     }
 
-    sections.push(`## ${sessionId} — ${turns.length} turns`);
+    sections.push(`${turns.length} turns`);
     sections.push("");
 
-    // Key tasks (deduplicated, truncated)
     if (tasks.length > 0) {
       sections.push("### Key tasks");
       const uniqueTasks = [...new Set(tasks)];
@@ -74,7 +75,6 @@ export function algorithmicCompact(
       sections.push("");
     }
 
-    // Files modified
     if (fileCounts.size > 0) {
       sections.push("### Files modified");
       const sorted = [...fileCounts.entries()].sort((a, b) => b[1] - a[1]);
@@ -84,7 +84,6 @@ export function algorithmicCompact(
       sections.push("");
     }
 
-    // Key decisions
     if (decisions.length > 0) {
       sections.push("### Key decisions");
       for (const d of decisions.slice(-10)) {
@@ -93,7 +92,6 @@ export function algorithmicCompact(
       sections.push("");
     }
 
-    // Errors/blockers
     if (errors.length > 0) {
       sections.push("### Errors & blockers");
       for (const e of errors.slice(-10)) {
@@ -102,48 +100,36 @@ export function algorithmicCompact(
       sections.push("");
     }
 
-    sections.push("---");
-    sections.push("");
-  }
+    let content = sections.join("\n");
 
-  let content = sections.join("\n");
-
-  // Enforce size limit: trim oldest session sections if too large
-  while (content.length > MAX_SUMMARY_BYTES) {
-    const firstSessionIdx = content.indexOf("\n## ", content.indexOf("\n## ") + 1);
-    if (firstSessionIdx === -1) break;
-    const headerEnd = content.indexOf("\n## ", 4); // find first session section
-    if (headerEnd === -1) break;
-    // Remove the first session section (between first ## and second ##)
-    const secondSection = content.indexOf("\n## ", headerEnd + 1);
-    if (secondSection === -1) {
-      // Only one section left, truncate content
+    // Enforce size limit
+    if (content.length > MAX_SUMMARY_BYTES) {
       content = content.slice(0, MAX_SUMMARY_BYTES);
-      break;
     }
-    content = content.slice(0, headerEnd) + content.slice(secondSection);
-  }
 
-  writeFileSync(join(dir, "summary.md"), content);
+    writeFileSync(join(sessionDir, "summary.md"), content);
+  }
 }
 
 /**
- * LLM-powered compaction: send history to claude for summarization.
+ * LLM-powered compaction: send each session's history to claude for summarization.
+ * Each session gets its own context/{session-id}/summary.md.
  */
 export function llmCompact(
   sessionIds: string[],
   cwd?: string
 ): void {
-  const dir = join(getAimuxDir(cwd), "context");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-  // Build conversation history text
-  const historyParts: string[] = [];
+  const baseDir = join(getAimuxDir(cwd), "context");
+  if (!existsSync(baseDir)) mkdirSync(baseDir, { recursive: true });
 
   for (const sessionId of sessionIds) {
     const turns = readHistory(sessionId, { lastN: 200 }, cwd);
     if (turns.length === 0) continue;
 
+    const sessionDir = join(baseDir, sessionId);
+    if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
+
+    const historyParts: string[] = [];
     historyParts.push(`=== Session: ${sessionId} (${turns.length} turns) ===`);
     for (const turn of turns) {
       const time = turn.ts.slice(11, 16);
@@ -161,38 +147,36 @@ export function llmCompact(
         }
       }
     }
-    historyParts.push("");
-  }
 
-  const history = historyParts.join("\n");
-  if (!history.trim()) return;
+    const history = historyParts.join("\n");
+    if (!history.trim()) continue;
 
-  const prompt =
-    "Summarize the following aimux agent session history. " +
-    "For each session, list: key tasks completed, files modified, " +
-    "important decisions made, and any errors or blockers encountered. " +
-    "Be concise but thorough. Output markdown.\n\n" +
-    history;
+    const prompt =
+      "Summarize the following agent session history. " +
+      "List: key tasks completed, files modified, " +
+      "important decisions made, and any errors or blockers encountered. " +
+      "Be concise but thorough. Output markdown.\n\n" +
+      history;
 
-  try {
-    const output = execSync("claude --print --output-format text", {
-      input: prompt,
-      encoding: "utf-8",
-      timeout: 60_000,
-      maxBuffer: 1024 * 1024,
-    });
+    try {
+      const output = execSync("claude --print --output-format text", {
+        input: prompt,
+        encoding: "utf-8",
+        timeout: 60_000,
+        maxBuffer: 1024 * 1024,
+      });
 
-    let summary = `# aimux Session Summary\nGenerated: ${new Date().toISOString()}\nSource: LLM compaction\n\n${output}`;
+      let summary = `# ${sessionId} — Session Summary\nGenerated: ${new Date().toISOString()}\nSource: LLM compaction\n\n${output}`;
 
-    // Enforce size limit
-    if (summary.length > MAX_SUMMARY_BYTES) {
-      summary = summary.slice(0, MAX_SUMMARY_BYTES);
+      if (summary.length > MAX_SUMMARY_BYTES) {
+        summary = summary.slice(0, MAX_SUMMARY_BYTES);
+      }
+
+      writeFileSync(join(sessionDir, "summary.md"), summary);
+    } catch {
+      // If claude CLI fails for this session, fall back to algorithmic for just this session
+      algorithmicCompact([sessionId], cwd);
     }
-
-    writeFileSync(join(dir, "summary.md"), summary);
-  } catch {
-    // If claude CLI fails, fall back to algorithmic
-    algorithmicCompact(sessionIds, cwd);
   }
 }
 

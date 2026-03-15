@@ -68,7 +68,8 @@ export class ContextWatcher {
   private lastDiffHash = "";
   /** Total turn count across all sessions, for compaction trigger */
   private totalTurnCount = 0;
-  private dirty = false;
+  /** Track which sessions have new turns since last write */
+  private dirtySessions = new Set<string>();
 
   constructor(cwd?: string) {
     this.cwd = cwd;
@@ -92,7 +93,10 @@ export class ContextWatcher {
       clearInterval(this.interval);
       this.interval = null;
     }
-    // Final live context write
+    // Mark all sessions dirty for final write
+    for (const session of this.sessions) {
+      this.dirtySessions.add(session.id);
+    }
     this.writeLiveContext();
   }
 
@@ -118,8 +122,7 @@ export class ContextWatcher {
       await this.extractNewContent(session);
     }
     // Only write live context when new turns were extracted
-    if (this.dirty) {
-      this.dirty = false;
+    if (this.dirtySessions.size > 0) {
       this.writeLiveContext();
     }
   }
@@ -164,7 +167,7 @@ export class ContextWatcher {
         };
         appendTurn(session.id, historyTurn, this.cwd);
         this.totalTurnCount++;
-        this.dirty = true;
+        this.dirtySessions.add(session.id);
         this.lastTurnTypes.set(session.id, turn.type);
         debugTurn(session.id, turn.type, turn.content.length);
 
@@ -208,60 +211,65 @@ export class ContextWatcher {
   }
 
   /**
-   * Write live context from history JSONL files.
-   * Sources from readHistory() instead of in-memory state.
+   * Write per-session live context from history JSONL files.
+   * Each session gets its own context/{session-id}/live.md.
    */
   private writeLiveContext(): void {
-    const dir = join(getAimuxDir(this.cwd), "context");
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const baseDir = join(getAimuxDir(this.cwd), "context");
+    if (!existsSync(baseDir)) mkdirSync(baseDir, { recursive: true });
 
-    let turnsPerSession = loadConfig(this.cwd).liveWindowSize;
+    const turnsPerSession = loadConfig(this.cwd).liveWindowSize;
+    const sessionsToWrite = this.sessions.filter(s => this.dirtySessions.has(s.id));
+    this.dirtySessions.clear();
 
-    // Try building content, reduce turns if it exceeds size limit
-    while (turnsPerSession >= 2) {
-      const content = this.buildLiveContent(turnsPerSession);
-      if (content.length <= MAX_LIVE_MD_BYTES || turnsPerSession <= 2) {
-        if (content.length > 2) {
-          const livePath = join(dir, "live.md");
-          writeFileSync(livePath, content);
-          debugContext("wrote", "live.md", content.length);
+    for (const session of sessionsToWrite) {
+      const sessionDir = join(baseDir, session.id);
+      if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
+
+      let windowSize = turnsPerSession;
+      while (windowSize >= 2) {
+        const content = this.buildSessionLiveContent(session, windowSize);
+        if (content.length <= MAX_LIVE_MD_BYTES || windowSize <= 2) {
+          if (content.length > 2) {
+            const livePath = join(sessionDir, "live.md");
+            writeFileSync(livePath, content);
+            debugContext("wrote", `${session.id}/live.md`, content.length);
+          }
+          break;
         }
-        return;
+        windowSize = Math.floor(windowSize * 0.7);
       }
-      turnsPerSession = Math.floor(turnsPerSession * 0.7);
     }
   }
 
   /**
-   * Build the live.md content string from history files.
+   * Build live.md content for a single session from its history.
    */
-  private buildLiveContent(turnsPerSession: number): string {
-    const sections: string[] = ["# aimux Live Context\n"];
+  private buildSessionLiveContent(
+    session: { id: string; command: string },
+    turnsPerSession: number
+  ): string {
+    const turns = readHistory(session.id, { lastN: turnsPerSession }, this.cwd);
+    if (turns.length === 0) return "";
+
+    const sections: string[] = [`# ${session.id} (${session.command}) — Live Context\n`];
     sections.push(`Updated: ${new Date().toISOString()}\n`);
 
-    for (const session of this.sessions) {
-      const turns = readHistory(session.id, { lastN: turnsPerSession }, this.cwd);
-      if (turns.length === 0) continue;
+    for (const turn of turns) {
+      const time = turn.ts.slice(11, 16); // HH:MM from ISO string
 
-      sections.push(`## ${session.id} (${session.command})\n`);
-
-      for (const turn of turns) {
-        const time = turn.ts.slice(11, 16); // HH:MM from ISO string
-
-        if (turn.type === "prompt") {
-          sections.push(`**[${time}] User:** ${truncate(turn.content, 200)}\n`);
-        } else if (turn.type === "response") {
-          sections.push(`**[${time}] Agent:** ${truncate(turn.content, 500)}\n`);
-          if (turn.files && turn.files.length > 0) {
-            sections.push(`  *Files: ${turn.files.join(", ")}*\n`);
-          }
-        } else if (turn.type === "git") {
-          if (turn.files && turn.files.length > 0) {
-            sections.push(`  *Files changed: ${turn.files.join(", ")}*\n`);
-          }
+      if (turn.type === "prompt") {
+        sections.push(`**[${time}] User:** ${truncate(turn.content, 200)}\n`);
+      } else if (turn.type === "response") {
+        sections.push(`**[${time}] Agent:** ${truncate(turn.content, 500)}\n`);
+        if (turn.files && turn.files.length > 0) {
+          sections.push(`  *Files: ${turn.files.join(", ")}*\n`);
+        }
+      } else if (turn.type === "git") {
+        if (turn.files && turn.files.length > 0) {
+          sections.push(`  *Files changed: ${turn.files.join(", ")}*\n`);
         }
       }
-      sections.push("---\n");
     }
 
     return sections.join("\n");
@@ -363,28 +371,34 @@ export function getRecentOutput(
   }
 }
 
-/** Build a context preamble for a new session. */
+/** Build a context preamble for a new session from other sessions' per-session context files. */
 export function buildContextPreamble(
   otherSessionIds: string[],
   maxLinesPerSession: number = 10,
   cwd?: string
 ): string {
-  // Try live context first
-  const livePath = join(getAimuxDir(cwd), "context", "live.md");
-  if (existsSync(livePath)) {
-    try {
-      return readFileSync(livePath, "utf-8");
-    } catch {}
-  }
-
-  // Fallback to recording snippets
+  const contextDir = join(getAimuxDir(cwd), "context");
   const sections: string[] = [];
+
   for (const id of otherSessionIds) {
+    // Try per-session live.md first
+    const sessionLivePath = join(contextDir, id, "live.md");
+    if (existsSync(sessionLivePath)) {
+      try {
+        const content = readFileSync(sessionLivePath, "utf-8");
+        if (content.trim()) {
+          sections.push(content);
+          continue;
+        }
+      } catch {}
+    }
+    // Fallback to recording snippets
     const output = getRecentOutput(id, maxLinesPerSession, cwd);
     if (output) {
       sections.push(`--- Recent output from ${id} ---\n${output}`);
     }
   }
+
   if (sections.length === 0) return "";
   return "=== Context from other aimux sessions ===\n\n" +
     sections.join("\n\n") + "\n\n=== End context ===\n";

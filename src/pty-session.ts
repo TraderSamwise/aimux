@@ -15,6 +15,7 @@ export interface PtySessionOptions {
   cwd?: string;
   env?: Record<string, string>;
   record?: boolean;
+  id?: string;
 }
 
 export class PtySession {
@@ -31,7 +32,7 @@ export class PtySession {
   private exitListeners: Array<(code: number) => void> = [];
 
   constructor(opts: PtySessionOptions) {
-    this.id = `${opts.command}-${randomId()}`;
+    this.id = opts.id ?? `${opts.command}-${randomId()}`;
     this.command = opts.command;
     this.statusDetector = new StatusDetector(opts.command);
     this.vt = new Terminal({ cols: opts.cols, rows: opts.rows, allowProposedApi: true });

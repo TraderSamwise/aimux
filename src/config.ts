@@ -86,13 +86,30 @@ export function saveConfig(config: AimuxConfig, cwd?: string): void {
   writeFileSync(getConfigPath(cwd), JSON.stringify(config, null, 2) + "\n");
 }
 
+const GITIGNORE_CONTENTS = `# Ephemeral session state
+state.json
+sessions.json
+
+# Live context (regenerated each session)
+context/live.md
+
+# Terminal recordings (large, machine-specific)
+recordings/
+`;
+
 export function initProject(cwd?: string): void {
   const dir = getAimuxDir(cwd);
   mkdirSync(dir, { recursive: true });
   mkdirSync(join(dir, "context"), { recursive: true });
   mkdirSync(join(dir, "recordings"), { recursive: true });
+  mkdirSync(join(dir, "history"), { recursive: true });
 
   if (!existsSync(getConfigPath(cwd))) {
     saveConfig(DEFAULT_CONFIG, cwd);
+  }
+
+  const gitignorePath = join(dir, ".gitignore");
+  if (!existsSync(gitignorePath)) {
+    writeFileSync(gitignorePath, GITIGNORE_CONTENTS);
   }
 }
