@@ -11,6 +11,7 @@ import { parseKeys } from "./key-parser.js";
 import { loadConfig, getAimuxDir, initProject, type ToolConfig } from "./config.js";
 import { debug, debugPreamble, closeDebug } from "./debug.js";
 import { findMainRepo, getRepoName, listWorktrees as listAllWorktrees, loadRegistry, createWorktree, removeWorktree, cleanWorktrees } from "./worktree.js";
+import { notifyPrompt, notifyComplete } from "./notify.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -554,6 +555,7 @@ export class Multiplexer {
     // Handle session exit
     session.onExit((_code) => {
       debug(`session exited: ${session.id} (code=${_code})`, "session");
+      notifyComplete(session.id);
       // Capture git context on session exit (fire-and-forget)
       captureGitContext(session.id, session.command).catch(() => {});
 
@@ -1566,12 +1568,26 @@ export class Multiplexer {
     );
   }
 
+  /** Track previous statuses for notification on transition */
+  private prevStatuses = new Map<string, string>();
+
   private startFooterRefresh(): void {
     if (this.footerInterval) return;
     this.renderFooter();
-    // Refresh every 2s to pick up status changes
+    // Refresh every 2s to pick up status changes + check for notifications
     this.footerInterval = setInterval(() => {
       if (this.mode === "focused") this.renderFooter();
+      // Check for status transitions that warrant notifications
+      for (const session of this.sessions) {
+        const prev = this.prevStatuses.get(session.id);
+        const curr = session.status;
+        if (prev && prev !== curr) {
+          if (curr === "idle" && prev === "running") {
+            notifyPrompt(session.id);
+          }
+        }
+        this.prevStatuses.set(session.id, curr);
+      }
     }, 2000);
   }
 

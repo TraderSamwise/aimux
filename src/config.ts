@@ -1,11 +1,23 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
+
+export interface NotificationConfig {
+  enabled: boolean;
+  /** Notify when an agent is waiting for input */
+  onPrompt: boolean;
+  /** Notify on errors */
+  onError: boolean;
+  /** Notify when an agent completes a task */
+  onComplete: boolean;
+}
 
 export interface AimuxConfig {
   defaultTool: string;
   contextMaxEntries: number;
   liveWindowSize: number;
   compactEveryNTurns: number;
+  notifications: NotificationConfig;
   tools: Record<string, ToolConfig>;
 }
 
@@ -19,7 +31,7 @@ export interface ToolConfig {
   resumeArgs?: string[];
   /** Flag to set a session ID when starting, with {sessionId} placeholder, e.g. ["--session-id", "{sessionId}"] */
   sessionIdFlag?: string[];
-  /** File to write preamble instructions to (created on start, removed on exit), e.g. "CODEX.md" */
+  /** File to write preamble instructions to (created on start, removed on exit), e.g. "AGENTS.md" */
   instructionsFile?: string;
 }
 
@@ -28,6 +40,12 @@ const DEFAULT_CONFIG: AimuxConfig = {
   contextMaxEntries: 20,
   liveWindowSize: 20,
   compactEveryNTurns: 50,
+  notifications: {
+    enabled: true,
+    onPrompt: true,
+    onError: true,
+    onComplete: true,
+  },
   tools: {
     claude: {
       command: "claude",
@@ -53,6 +71,17 @@ const DEFAULT_CONFIG: AimuxConfig = {
   },
 };
 
+/** Global config directory: ~/.aimux/ */
+export function getGlobalAimuxDir(): string {
+  return join(homedir(), ".aimux");
+}
+
+/** Global config path: ~/.aimux/config.json */
+export function getGlobalConfigPath(): string {
+  return join(getGlobalAimuxDir(), "config.json");
+}
+
+/** Project-level .aimux/ directory */
 export function getAimuxDir(cwd: string = process.cwd()): string {
   return join(cwd, ".aimux");
 }
@@ -72,21 +101,50 @@ export function getContextPathForDate(date: Date, cwd?: string): string {
   return join(getContextDir(cwd), `${yyyy}-${mm}-${dd}.md`);
 }
 
+/**
+ * Load config with hierarchy: defaults → global (~/.aimux/config.json) → project (.aimux/config.json)
+ * Project settings override global, global overrides defaults.
+ */
 export function loadConfig(cwd?: string): AimuxConfig {
-  const configPath = getConfigPath(cwd);
-  if (!existsSync(configPath)) {
-    return DEFAULT_CONFIG;
+  let config = structuredClone(DEFAULT_CONFIG);
+
+  // Layer 1: global config
+  const globalPath = getGlobalConfigPath();
+  if (existsSync(globalPath)) {
+    try {
+      const globalRaw = JSON.parse(readFileSync(globalPath, "utf-8"));
+      config = deepMerge(config, globalRaw) as AimuxConfig;
+    } catch {}
   }
-  const raw = readFileSync(configPath, "utf-8");
-  return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+
+  // Layer 2: project config
+  const projectPath = getConfigPath(cwd);
+  if (existsSync(projectPath)) {
+    try {
+      const projectRaw = JSON.parse(readFileSync(projectPath, "utf-8"));
+      config = deepMerge(config, projectRaw) as AimuxConfig;
+    } catch {}
+  }
+
+  return config;
 }
 
+/** Save config to project-level .aimux/config.json */
 export function saveConfig(config: AimuxConfig, cwd?: string): void {
   const dir = getAimuxDir(cwd);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
   writeFileSync(getConfigPath(cwd), JSON.stringify(config, null, 2) + "\n");
+}
+
+/** Save config to global ~/.aimux/config.json */
+export function saveGlobalConfig(config: Partial<AimuxConfig>): void {
+  const dir = getGlobalAimuxDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(getGlobalConfigPath(), JSON.stringify(config, null, 2) + "\n");
 }
 
 const GITIGNORE_CONTENTS = `# Ephemeral session state
@@ -115,4 +173,24 @@ export function initProject(cwd?: string): void {
   if (!existsSync(gitignorePath)) {
     writeFileSync(gitignorePath, GITIGNORE_CONTENTS);
   }
+}
+
+/** Deep merge b into a (b values override a). Handles nested objects, not arrays. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function deepMerge(a: any, b: any): any {
+  const result = { ...a };
+  for (const key of Object.keys(b)) {
+    const aVal = a[key];
+    const bVal = b[key];
+    if (
+      aVal && bVal &&
+      typeof aVal === "object" && typeof bVal === "object" &&
+      !Array.isArray(aVal) && !Array.isArray(bVal)
+    ) {
+      result[key] = deepMerge(aVal, bVal);
+    } else if (bVal !== undefined) {
+      result[key] = bVal;
+    }
+  }
+  return result;
 }
