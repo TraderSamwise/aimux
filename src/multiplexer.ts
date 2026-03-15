@@ -68,7 +68,7 @@ export class Multiplexer {
   /** Index within sessions of the focused worktree */
   private dashboardSessionIndex = 0;
   /** Sessions in the currently focused worktree (for session-level nav) */
-  private dashboardWorktreeSessions: PtySession[] = [];
+  private dashboardWorktreeSessions: DashboardSession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private instanceId = randomUUID();
@@ -856,9 +856,10 @@ export class Multiplexer {
           this.renderDashboard();
           return;
         }
-        if (this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0) {
-          const session = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
-          if (session) session.kill();
+        // Kill live session
+        if (selEntry) {
+          const pty = this.sessions.find(s => s.id === selEntry.id);
+          if (pty) pty.kill();
         }
         return;
       }
@@ -967,9 +968,6 @@ export class Multiplexer {
         case "n":
           if (this.dashboardWorktreeSessions.length > 1) {
             this.dashboardSessionIndex = (this.dashboardSessionIndex + 1) % this.dashboardWorktreeSessions.length;
-            // Update activeIndex to match
-            const session = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
-            this.activeIndex = this.sessions.indexOf(session);
             this.renderDashboard();
           }
           break;
@@ -978,21 +976,17 @@ export class Multiplexer {
         case "p":
           if (this.dashboardWorktreeSessions.length > 1) {
             this.dashboardSessionIndex = (this.dashboardSessionIndex - 1 + this.dashboardWorktreeSessions.length) % this.dashboardWorktreeSessions.length;
-            const session = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
-            this.activeIndex = this.sessions.indexOf(session);
             this.renderDashboard();
           }
           break;
         case "enter": {
-          // Check if selected session is remote or offline
-          const allDash = this.getDashboardSessions();
-          const selectedId = this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id;
-          const dashEntry = allDash.find(ds => ds.id === selectedId);
-          if (dashEntry?.remoteInstanceId) {
+          const dashEntry = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
+          if (!dashEntry) break;
+          if (dashEntry.remoteInstanceId) {
             this.takeoverFromDashEntry(dashEntry);
             return;
           }
-          if (dashEntry?.status === "offline") {
+          if (dashEntry.status === "offline") {
             const offline = this.offlineSessions.find(s => s.id === dashEntry.id);
             if (offline) {
               this.resumeOfflineSession(offline);
@@ -1000,11 +994,9 @@ export class Multiplexer {
             }
             return;
           }
-          if (this.dashboardWorktreeSessions.length > 0) {
-            const session = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
-            const idx = this.sessions.indexOf(session);
-            if (idx >= 0) this.focusSession(idx);
-          }
+          // Focus live session
+          const ptyIdx = this.sessions.findIndex(s => s.id === dashEntry.id);
+          if (ptyIdx >= 0) this.focusSession(ptyIdx);
           break;
         }
         case "escape":
@@ -1018,11 +1010,11 @@ export class Multiplexer {
     }
   }
 
-  /** Get sessions belonging to the focused worktree */
+  /** Get sessions belonging to the focused worktree (includes local, remote, offline) */
   private updateWorktreeSessions(): void {
-    this.dashboardWorktreeSessions = this.sessions.filter(s => {
-      const wtPath = this.sessionWorktreePaths.get(s.id);
-      return wtPath === this.focusedWorktreePath;
+    const allDash = this.getDashboardSessions();
+    this.dashboardWorktreeSessions = allDash.filter(s => {
+      return (s.worktreePath ?? undefined) === this.focusedWorktreePath;
     });
   }
 
