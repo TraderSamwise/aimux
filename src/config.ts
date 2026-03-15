@@ -11,6 +11,8 @@ export interface ToolConfig {
   command: string;
   args: string[];
   enabled: boolean;
+  /** Flag/args to inject system prompt preamble, e.g. ["--append-system-prompt"] */
+  preambleFlag?: string[];
 }
 
 const DEFAULT_CONFIG: AimuxConfig = {
@@ -21,6 +23,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
       command: "claude",
       args: [],
       enabled: true,
+      preambleFlag: ["--append-system-prompt"],
     },
     codex: {
       command: "codex",

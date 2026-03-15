@@ -48,7 +48,14 @@ export class PtySession {
       cols: opts.cols,
       rows: opts.rows,
       cwd: opts.cwd ?? process.cwd(),
-      env: { ...process.env, ...opts.env } as Record<string, string>,
+      env: {
+        ...process.env,
+        ...opts.env,
+        AIMUX: "1",
+        AIMUX_SESSION_ID: this.id,
+        AIMUX_CONTEXT_DIR: ".aimux/context",
+        AIMUX_RECORDINGS_DIR: ".aimux/recordings",
+      } as Record<string, string>,
     });
 
     this.process.onData((data) => {

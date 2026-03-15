@@ -1,9 +1,10 @@
+import { writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
 import { Dashboard, type DashboardSession } from "./dashboard.js";
-import { captureGitContext } from "./context/context-bridge.js";
+import { captureGitContext, ContextWatcher } from "./context/context-bridge.js";
 import { parseKeys } from "./key-parser.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, getAimuxDir } from "./config.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -21,6 +22,9 @@ export class Multiplexer {
   private defaultArgs: string[] = [];
   private startedInDashboard = false;
   private pickerActive = false;
+  private footerInterval: ReturnType<typeof setInterval> | null = null;
+  private contextWatcher = new ContextWatcher();
+  private static readonly FOOTER_HEIGHT = 1;
 
   constructor() {
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
@@ -39,11 +43,17 @@ export class Multiplexer {
     this.defaultCommand = opts.command;
     this.defaultArgs = opts.args;
 
-    // Create initial session
-    this.createSession(opts.command, opts.args);
+    // Look up preamble flag from config
+    const config = loadConfig();
+    const toolConfig = Object.values(config.tools).find(t => t.command === opts.command);
 
-    // Enter raw mode
+    // Create initial session
+    this.createSession(opts.command, opts.args, toolConfig?.preambleFlag);
+
+    // Enter raw mode and set up footer
     this.enterRawMode();
+    this.setupScrollRegion();
+    this.startFooterRefresh();
 
     // Forward stdin through hotkey handler → active PTY
     this.onStdinData = (data: Buffer) => {
@@ -64,15 +74,17 @@ export class Multiplexer {
     };
     process.stdin.on("data", this.onStdinData);
 
-    // Forward terminal resize → all PTYs + redraw dashboard
+    // Forward terminal resize → all PTYs + redraw footer/dashboard
     this.onResize = () => {
       const cols = process.stdout.columns ?? 80;
-      const rows = process.stdout.rows ?? 24;
       for (const session of this.sessions) {
-        session.resize(cols, rows);
+        session.resize(cols, this.toolRows);
       }
       if (this.mode === "dashboard") {
         this.renderDashboard();
+      } else {
+        this.setupScrollRegion();
+        this.renderFooter();
       }
     };
     process.stdout.on("resize", this.onResize);
@@ -122,12 +134,14 @@ export class Multiplexer {
     // Forward terminal resize
     this.onResize = () => {
       const cols = process.stdout.columns ?? 80;
-      const rows = process.stdout.rows ?? 24;
       for (const session of this.sessions) {
-        session.resize(cols, rows);
+        session.resize(cols, this.toolRows);
       }
       if (this.mode === "dashboard") {
         this.renderDashboard();
+      } else {
+        this.setupScrollRegion();
+        this.renderFooter();
       }
     };
     process.stdout.on("resize", this.onResize);
@@ -145,11 +159,21 @@ export class Multiplexer {
     return exitCode;
   }
 
-  createSession(command: string, args: string[]): PtySession {
+  createSession(command: string, args: string[], preambleFlag?: string[]): PtySession {
     const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
 
-    const session = new PtySession({ command, args, cols, rows });
+    // Inject aimux preamble via tool-specific flag if available
+    const preamble =
+      "You are running inside aimux, an agent multiplexer. " +
+      "Other agents may be working on this codebase simultaneously. " +
+      "Read .aimux/sessions.json to see all running agents. " +
+      "Read .aimux/context/live.md for a live summary of what other agents are doing. " +
+      "Full session transcripts are in .aimux/recordings/.";
+    const finalArgs = preambleFlag
+      ? [...args, ...preambleFlag, preamble]
+      : args;
+
+    const session = new PtySession({ command, args: finalArgs, cols, rows: this.toolRows });
 
     // Forward output to stdout only when this session is active and focused
     session.onData((data) => {
@@ -167,6 +191,8 @@ export class Multiplexer {
       if (idx === -1) return;
 
       this.sessions.splice(idx, 1);
+      this.writeSessionsFile();
+      this.contextWatcher.updateSessions(this.sessions.map(s => ({ id: s.id, command: s.command })));
 
       if (this.sessions.length === 0) {
         if (this.startedInDashboard) {
@@ -192,6 +218,9 @@ export class Multiplexer {
     });
 
     this.sessions.push(session);
+    this.writeSessionsFile();
+    this.contextWatcher.updateSessions(this.sessions.map(s => ({ id: s.id, command: s.command })));
+    if (this.sessions.length === 1) this.contextWatcher.start();
 
     // Focus the new session
     this.activeIndex = this.sessions.length - 1;
@@ -211,8 +240,11 @@ export class Multiplexer {
     this.activeIndex = index;
     this.setMode("focused");
 
-    // Restore the session's screen from its virtual terminal buffer
+    // Set up scroll region and restore screen
+    this.setupScrollRegion();
     process.stdout.write(this.sessions[index].getScreenState());
+    this.renderFooter();
+    this.startFooterRefresh();
   }
 
   private handleAction(action: HotkeyAction): void {
@@ -293,16 +325,25 @@ export class Multiplexer {
         }
         break;
       case "n":
+      case "down":
+      case "j":
         if (this.sessions.length > 1) {
           this.activeIndex = (this.activeIndex + 1) % this.sessions.length;
           this.renderDashboard();
         }
         break;
       case "p":
+      case "up":
+      case "k":
         if (this.sessions.length > 1) {
           this.activeIndex =
             (this.activeIndex - 1 + this.sessions.length) % this.sessions.length;
           this.renderDashboard();
+        }
+        break;
+      case "enter":
+        if (this.sessions.length > 0) {
+          this.focusSession(this.activeIndex);
         }
         break;
     }
@@ -315,7 +356,7 @@ export class Multiplexer {
     if (tools.length === 1) {
       // Only one tool — skip picker, spawn directly
       const [, tool] = tools[0];
-      this.createSession(tool.command, tool.args);
+      this.createSession(tool.command, tool.args, tool.preambleFlag);
       return;
     }
 
@@ -374,7 +415,7 @@ export class Multiplexer {
       const idx = parseInt(key) - 1;
       if (idx < tools.length) {
         const [, tool] = tools[idx];
-        this.createSession(tool.command, tool.args);
+        this.createSession(tool.command, tool.args, tool.preambleFlag);
         return;
       }
     }
@@ -408,12 +449,116 @@ export class Multiplexer {
     this.mode = mode;
 
     if (mode === "dashboard" && prev !== "dashboard") {
-      // Enter alternate screen buffer
+      // Stop footer, reset scroll region, enter alternate screen
+      this.stopFooterRefresh();
+      this.resetScrollRegion();
       process.stdout.write("\x1b[?1049h");
       this.renderDashboard();
     } else if (mode === "focused" && prev === "dashboard") {
       // Leave alternate screen buffer
       process.stdout.write("\x1b[?1049l");
+    }
+  }
+
+  /** Write active sessions to .aimux/sessions.json so agents can discover each other */
+  private writeSessionsFile(): void {
+    const dir = getAimuxDir();
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const data = this.sessions.map(s => ({
+      id: s.id,
+      tool: s.command,
+      status: s.status,
+    }));
+    writeFileSync(
+      `${dir}/sessions.json`,
+      JSON.stringify(data, null, 2) + "\n"
+    );
+  }
+
+  /** Remove sessions file on exit */
+  private removeSessionsFile(): void {
+    try { unlinkSync(`${getAimuxDir()}/sessions.json`); } catch {}
+  }
+
+  /** Terminal rows available for the tool (total minus footer) */
+  private get toolRows(): number {
+    const rows = process.stdout.rows ?? 24;
+    return this.mode === "focused" ? rows - Multiplexer.FOOTER_HEIGHT : rows;
+  }
+
+  /** Set scroll region to exclude footer row */
+  private setupScrollRegion(): void {
+    const rows = process.stdout.rows ?? 24;
+    const toolRows = rows - Multiplexer.FOOTER_HEIGHT;
+    // Set scroll region to top portion, leaving bottom row for footer
+    process.stdout.write(`\x1b[1;${toolRows}r`);
+    // Move cursor back into scroll region
+    process.stdout.write(`\x1b[${toolRows};1H`);
+  }
+
+  /** Reset scroll region to full terminal */
+  private resetScrollRegion(): void {
+    process.stdout.write("\x1b[r");
+  }
+
+  /** Render the status footer in the reserved bottom row */
+  private renderFooter(): void {
+    if (this.mode !== "focused") return;
+
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+
+    const STATUS_ICONS: Record<string, string> = {
+      running: "\x1b[33m●\x1b[0m",
+      idle: "\x1b[32m●\x1b[0m",
+      waiting: "\x1b[36m◉\x1b[0m",
+      exited: "\x1b[31m○\x1b[0m",
+    };
+
+    // Build session indicators
+    const parts: string[] = [];
+    for (let i = 0; i < this.sessions.length; i++) {
+      const s = this.sessions[i];
+      const icon = STATUS_ICONS[s.status] ?? "?";
+      const name = s.command;
+      const active = i === this.activeIndex ? "\x1b[1m" : "\x1b[2m";
+      const reset = "\x1b[0m";
+      parts.push(`${active}${icon} ${i + 1}:${name}${reset}`);
+    }
+
+    const left = ` ${parts.join("  ")}`;
+    const right = `^A ? help `;
+
+    // Calculate visible lengths (strip ANSI for padding)
+    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+    const leftLen = stripAnsi(left).length;
+    const rightLen = stripAnsi(right).length;
+    const padLen = Math.max(0, cols - leftLen - rightLen);
+
+    const footerContent = `\x1b[7m${left}${" ".repeat(padLen)}${right}\x1b[0m`;
+
+    // Save cursor, move to footer row, draw, restore cursor
+    process.stdout.write(
+      `\x1b7` +
+      `\x1b[${rows};1H` +
+      footerContent +
+      `\x1b8`
+    );
+  }
+
+  private startFooterRefresh(): void {
+    if (this.footerInterval) return;
+    this.renderFooter();
+    // Refresh every 2s to pick up status changes
+    this.footerInterval = setInterval(() => {
+      if (this.mode === "focused") this.renderFooter();
+    }, 2000);
+  }
+
+  private stopFooterRefresh(): void {
+    if (this.footerInterval) {
+      clearInterval(this.footerInterval);
+      this.footerInterval = null;
     }
   }
 
@@ -433,6 +578,10 @@ export class Multiplexer {
   }
 
   private teardown(): void {
+    this.stopFooterRefresh();
+    this.contextWatcher.stop();
+    this.resetScrollRegion();
+    this.removeSessionsFile();
     if (this.onStdinData) {
       process.stdin.removeListener("data", this.onStdinData);
     }
