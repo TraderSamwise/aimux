@@ -197,20 +197,20 @@ export class Dashboard {
       : "Enter focus";
 
     if (this.sessions.length === 0 && !this.hasWorktrees) {
-      return " [c] new  [q] quit ";
+      return " [c] new  [g] graveyard  [q] quit ";
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ agents  ${enterLabel}  Esc back  [c] new  [m] migrate${xPart}  [q] quit `;
+      return ` ↑↓ agents  ${enterLabel}  Esc back  [c] new  [m] migrate${xPart}  [g] graveyard  [q] quit `;
     }
     if (this.hasWorktrees) {
-      return " ↑↓ worktrees  Enter step in  [c] new agent  [w] new worktree  [m] migrate  [q] quit ";
+      return " ↑↓ worktrees  Enter step in  [c] new  [w] worktree  [m] migrate  [g] graveyard  [q] quit ";
     }
     if (this.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}  [g] graveyard  [q] quit `;
     }
-    return " [c] new  [w] worktree  [q] quit ";
+    return " [c] new  [w] worktree  [g] graveyard  [q] quit ";
   }
 }
 

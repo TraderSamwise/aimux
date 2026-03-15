@@ -59,6 +59,8 @@ export class Multiplexer {
   private worktreeListActive = false;
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
+  private graveyardActive = false;
+  private graveyardEntries: SessionState[] = [];
   /** The focused worktree path on the dashboard (undefined = main repo) */
   private focusedWorktreePath: string | undefined = undefined;
   /** Ordered list of worktree paths for navigation (undefined = main repo) */
@@ -139,6 +141,10 @@ export class Multiplexer {
         this.handleMigratePickerKey(data);
         return;
       }
+      if (this.graveyardActive) {
+        this.handleGraveyardKey(data);
+        return;
+      }
 
       if (this.mode === "dashboard") {
         this.handleDashboardKey(data);
@@ -211,6 +217,10 @@ export class Multiplexer {
       }
       if (this.migratePickerActive) {
         this.handleMigratePickerKey(data);
+        return;
+      }
+      if (this.graveyardActive) {
+        this.handleGraveyardKey(data);
         return;
       }
 
@@ -339,6 +349,10 @@ export class Multiplexer {
         this.handleMigratePickerKey(data);
         return;
       }
+      if (this.graveyardActive) {
+        this.handleGraveyardKey(data);
+        return;
+      }
       if (this.mode === "dashboard") {
         this.handleDashboardKey(data);
         return;
@@ -455,6 +469,10 @@ export class Multiplexer {
       }
       if (this.migratePickerActive) {
         this.handleMigratePickerKey(data);
+        return;
+      }
+      if (this.graveyardActive) {
+        this.handleGraveyardKey(data);
         return;
       }
       if (this.mode === "dashboard") {
@@ -862,6 +880,9 @@ export class Multiplexer {
         return;
       case "W":
         this.showWorktreeList();
+        return;
+      case "g":
+        this.showGraveyard();
         return;
       case "x": {
         const allDs = this.getDashboardSessions();
@@ -1423,6 +1444,109 @@ export class Multiplexer {
       }
       // Re-render the list
       this.renderWorktreeList();
+      return;
+    }
+  }
+
+  private showGraveyard(): void {
+    const dir = getAimuxDir();
+    const graveyardPath = `${dir}/graveyard.json`;
+    try {
+      this.graveyardEntries = JSON.parse(readFileSync(graveyardPath, "utf-8")) as SessionState[];
+    } catch {
+      this.graveyardEntries = [];
+    }
+    this.graveyardActive = true;
+    this.renderGraveyard();
+  }
+
+  private renderGraveyard(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+
+    const lines = ["Graveyard:", ""];
+    if (this.graveyardEntries.length === 0) {
+      lines.push("  (empty)");
+    } else {
+      for (let i = 0; i < this.graveyardEntries.length; i++) {
+        const s = this.graveyardEntries[i];
+        const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
+        lines.push(`  [${i + 1}] ${s.command}:${s.id}${bsid}`);
+      }
+    }
+    lines.push("");
+    lines.push("  [1-9] resurrect  [Esc] back");
+
+    const boxWidth = Math.max(...lines.map(l => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1];
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleGraveyardKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    if (key === "escape") {
+      this.graveyardActive = false;
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (key >= "1" && key <= "9") {
+      const idx = parseInt(key) - 1;
+      if (idx < this.graveyardEntries.length) {
+        const entry = this.graveyardEntries[idx];
+        // Resurrect: move from graveyard to offline
+        this.graveyardEntries.splice(idx, 1);
+        const dir = getAimuxDir();
+        writeFileSync(`${dir}/graveyard.json`, JSON.stringify(this.graveyardEntries, null, 2) + "\n");
+
+        // Add to offline sessions and state.json
+        this.offlineSessions.push(entry);
+        const statePath = `${dir}/state.json`;
+        try {
+          let state: SavedState = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] };
+          if (existsSync(statePath)) {
+            state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
+          }
+          state.sessions.push(entry);
+          writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+        } catch {}
+
+        debug(`resurrected ${entry.id} from graveyard`, "session");
+
+        if (this.graveyardEntries.length === 0) {
+          this.graveyardActive = false;
+          if (this.mode === "dashboard") {
+            this.renderDashboard();
+          } else {
+            this.focusSession(this.activeIndex);
+          }
+        } else {
+          this.renderGraveyard();
+        }
+      }
       return;
     }
   }
