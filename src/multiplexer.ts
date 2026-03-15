@@ -1524,6 +1524,18 @@ export class Multiplexer {
         }
       }
     } catch {}
+
+    // Add offline sessions
+    for (const os of this.offlineSessions) {
+      const alreadyShown = dashSessions.some(ds => ds.id === os.id ||
+        (os.backendSessionId && ds.remoteBackendSessionId === os.backendSessionId));
+      if (alreadyShown) continue;
+      dashSessions.push({
+        index: dashSessions.length, id: os.id, command: os.command,
+        status: "offline" as const, active: false, worktreePath: os.worktreePath,
+      });
+    }
+
     return dashSessions;
   }
 
