@@ -1,14 +1,15 @@
-import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync, readdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync, readdirSync, cpSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
-import { Dashboard, type DashboardSession } from "./dashboard.js";
+import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
 import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
 import { readHistory } from "./context/history.js";
 import { parseKeys } from "./key-parser.js";
 import { loadConfig, getAimuxDir, initProject, type ToolConfig } from "./config.js";
 import { debug, debugPreamble, closeDebug } from "./debug.js";
+import { findMainRepo, getRepoName, listWorktrees as listAllWorktrees, loadRegistry, createWorktree, removeWorktree, cleanWorktrees } from "./worktree.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -18,6 +19,7 @@ export interface SessionState {
   toolConfigKey: string;
   command: string;
   args: string[];
+  worktreePath?: string;
 }
 
 export interface SavedState {
@@ -40,12 +42,19 @@ export class Multiplexer {
   private defaultArgs: string[] = [];
   private startedInDashboard = false;
   private pickerActive = false;
+  private worktreeInputActive = false;
+  private worktreeInputBuffer = "";
+  private worktreeListActive = false;
+  private migratePickerActive = false;
+  private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
   private contextWatcher = new ContextWatcher();
   /** Maps session ID → toolConfigKey for state saving */
   private sessionToolKeys = new Map<string, string>();
   /** Maps session ID → original args (before preamble injection) */
   private sessionOriginalArgs = new Map<string, string[]>();
+  /** Maps session ID → worktree path (if session runs in a worktree) */
+  private sessionWorktreePaths = new Map<string, string>();
   private static readonly FOOTER_HEIGHT = 1;
 
   constructor() {
@@ -87,6 +96,18 @@ export class Multiplexer {
     this.onStdinData = (data: Buffer) => {
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
+        return;
+      }
+      if (this.worktreeInputActive) {
+        this.handleWorktreeInputKey(data);
+        return;
+      }
+      if (this.worktreeListActive) {
+        this.handleWorktreeListKey(data);
+        return;
+      }
+      if (this.migratePickerActive) {
+        this.handleMigratePickerKey(data);
         return;
       }
 
@@ -146,6 +167,18 @@ export class Multiplexer {
     this.onStdinData = (data: Buffer) => {
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
+        return;
+      }
+      if (this.worktreeInputActive) {
+        this.handleWorktreeInputKey(data);
+        return;
+      }
+      if (this.worktreeListActive) {
+        this.handleWorktreeListKey(data);
+        return;
+      }
+      if (this.migratePickerActive) {
+        this.handleMigratePickerKey(data);
         return;
       }
 
@@ -235,7 +268,7 @@ export class Multiplexer {
       }
       const args = [...resumeArgs, ...saved.args];
       debug(`resuming ${saved.command} with backendSessionId=${bsid ?? "none (fallback)"}`, "session");
-      this.createSession(saved.command, args, toolCfg.preambleFlag, saved.toolConfigKey);
+      this.createSession(saved.command, args, toolCfg.preambleFlag, saved.toolConfigKey, undefined, undefined, saved.worktreePath);
     }
 
     // Enter raw mode and set up input handling
@@ -246,6 +279,18 @@ export class Multiplexer {
     this.onStdinData = (data: Buffer) => {
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
+        return;
+      }
+      if (this.worktreeInputActive) {
+        this.handleWorktreeInputKey(data);
+        return;
+      }
+      if (this.worktreeListActive) {
+        this.handleWorktreeListKey(data);
+        return;
+      }
+      if (this.migratePickerActive) {
+        this.handleMigratePickerKey(data);
         return;
       }
       if (this.mode === "dashboard") {
@@ -339,6 +384,8 @@ export class Multiplexer {
         toolCfg.preambleFlag,
         saved.toolConfigKey,
         extraPreamble.trim() || undefined,
+        undefined,
+        saved.worktreePath,
       );
     }
 
@@ -350,6 +397,18 @@ export class Multiplexer {
     this.onStdinData = (data: Buffer) => {
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
+        return;
+      }
+      if (this.worktreeInputActive) {
+        this.handleWorktreeInputKey(data);
+        return;
+      }
+      if (this.worktreeListActive) {
+        this.handleWorktreeListKey(data);
+        return;
+      }
+      if (this.migratePickerActive) {
+        this.handleMigratePickerKey(data);
         return;
       }
       if (this.mode === "dashboard") {
@@ -392,6 +451,7 @@ export class Multiplexer {
     toolConfigKey?: string,
     extraPreamble?: string,
     sessionIdFlag?: string[],
+    worktreePath?: string,
   ): PtySession {
     const cols = process.stdout.columns ?? 80;
 
@@ -424,6 +484,27 @@ export class Multiplexer {
       } catch {}
     }
 
+    // Add worktree context to preamble
+    if (worktreePath) {
+      try {
+        const registry = loadRegistry(worktreePath);
+        const wt = registry.worktrees.find(w => w.path === worktreePath);
+        const branch = wt?.branch ?? "unknown";
+        const siblings = registry.worktrees
+          .filter(w => w.path !== worktreePath)
+          .map(w => `${w.name} (${w.branch})`)
+          .join(", ");
+        preamble +=
+          `\n\nYou are working in git worktree '${wt?.name ?? "unknown"}' at ${worktreePath} on branch '${branch}'.` +
+          `\nYour main repository is at ${registry.mainRepoPath}.` +
+          (siblings ? `\nSibling worktrees: ${siblings}` : "") +
+          `\nStay in your worktree directory — do not cd to other worktrees or the main repo.`;
+      } catch {
+        // If we can't load registry, add basic info
+        preamble += `\n\nYou are working in a git worktree at ${worktreePath}. Stay in this directory.`;
+      }
+    }
+
     if (extraPreamble) {
       preamble += "\n" + extraPreamble;
     }
@@ -443,7 +524,7 @@ export class Multiplexer {
     }
     debug(`creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"})`, "session");
 
-    const session = new PtySession({ command, args: finalArgs, cols, rows: this.toolRows, id: sessionId });
+    const session = new PtySession({ command, args: finalArgs, cols, rows: this.toolRows, id: sessionId, cwd: worktreePath });
     // Store backend session ID for resume
     (session as any)._backendSessionId = backendSessionId;
 
@@ -495,11 +576,14 @@ export class Multiplexer {
       }
     });
 
-    // Track toolConfigKey and original args for state saving
+    // Track toolConfigKey, original args, and worktree path for state saving
     if (toolConfigKey) {
       this.sessionToolKeys.set(session.id, toolConfigKey);
     }
     this.sessionOriginalArgs.set(session.id, args);
+    if (worktreePath) {
+      this.sessionWorktreePaths.set(session.id, worktreePath);
+    }
 
     this.sessions.push(session);
     this.writeSessionsFile();
@@ -516,6 +600,92 @@ export class Multiplexer {
     }
 
     return session;
+  }
+
+  /**
+   * Migrate an agent from its current worktree to a target worktree.
+   * Copies history and context, kills the old session, starts a new one
+   * with injected prior history.
+   */
+  migrateAgent(sessionId: string, targetWorktreePath: string): void {
+    const session = this.sessions.find(s => s.id === sessionId);
+    if (!session) {
+      throw new Error(`Session "${sessionId}" not found`);
+    }
+
+    const sourceWorktree = this.sessionWorktreePaths.get(sessionId);
+    const sourceCwd = sourceWorktree ?? process.cwd();
+
+    // Copy history file
+    const sourceHistoryPath = join(getAimuxDir(sourceCwd), "history", `${sessionId}.jsonl`);
+    const targetHistoryDir = join(getAimuxDir(targetWorktreePath), "history");
+    mkdirSync(targetHistoryDir, { recursive: true });
+    if (existsSync(sourceHistoryPath)) {
+      copyFileSync(sourceHistoryPath, join(targetHistoryDir, `${sessionId}.jsonl`));
+    }
+
+    // Copy context directory
+    const sourceContextDir = join(getAimuxDir(sourceCwd), "context", sessionId);
+    const targetContextDir = join(getAimuxDir(targetWorktreePath), "context", sessionId);
+    if (existsSync(sourceContextDir)) {
+      cpSync(sourceContextDir, targetContextDir, { recursive: true });
+    }
+
+    // Get tool config for the session
+    const toolConfigKey = this.sessionToolKeys.get(sessionId) ?? session.command;
+    const config = loadConfig();
+    const toolCfg = config.tools[toolConfigKey];
+    const originalArgs = this.sessionOriginalArgs.get(sessionId) ?? [];
+
+    // Build history preamble (same pattern as restoreSessions)
+    const turns = readHistory(sessionId, { lastN: 20 });
+    let historyContext = "";
+    if (turns.length > 0) {
+      const formattedTurns = turns.map(t => {
+        const time = t.ts.slice(0, 16);
+        if (t.type === "prompt") return `[${time}] User: ${t.content}`;
+        if (t.type === "response") return `[${time}] Agent: ${t.content}`;
+        if (t.type === "git") return `[${time}] Git: ${t.content}${t.files ? ` (${t.files.join(", ")})` : ""}`;
+        return `[${time}] ${t.content}`;
+      });
+      historyContext =
+        "\n\n=== Your previous session context ===\n" +
+        "You were previously working in a different worktree. Here's what happened:\n" +
+        formattedTurns.join("\n") +
+        "\n=== End previous context ===\n";
+    }
+
+    // Kill the old session
+    debug(`migrating session ${sessionId} from ${sourceCwd} to ${targetWorktreePath}`, "session");
+    session.kill();
+
+    // Start new session in target worktree
+    this.createSession(
+      session.command,
+      originalArgs,
+      toolCfg?.preambleFlag,
+      toolConfigKey,
+      historyContext.trim() || undefined,
+      toolCfg?.sessionIdFlag,
+      targetWorktreePath,
+    );
+  }
+
+  /** Get worktree path for a session */
+  getSessionWorktreePath(sessionId: string): string | undefined {
+    return this.sessionWorktreePaths.get(sessionId);
+  }
+
+  /** Get all sessions grouped by worktree path */
+  getSessionsByWorktree(): Map<string | undefined, PtySession[]> {
+    const groups = new Map<string | undefined, PtySession[]>();
+    for (const session of this.sessions) {
+      const wtPath = this.sessionWorktreePaths.get(session.id);
+      const group = groups.get(wtPath) ?? [];
+      group.push(session);
+      groups.set(wtPath, group);
+    }
+    return groups;
   }
 
   private focusSession(index: number): void {
@@ -566,6 +736,14 @@ export class Multiplexer {
           const session = this.sessions[this.activeIndex];
           session.kill();
         }
+        break;
+
+      case "worktree-create":
+        this.showWorktreeCreatePrompt();
+        break;
+
+      case "worktree-list":
+        this.showWorktreeList();
         break;
 
       case "passthrough":
@@ -623,6 +801,17 @@ export class Multiplexer {
           this.activeIndex =
             (this.activeIndex - 1 + this.sessions.length) % this.sessions.length;
           this.renderDashboard();
+        }
+        break;
+      case "w":
+        this.showWorktreeCreatePrompt();
+        break;
+      case "W":
+        this.showWorktreeList();
+        break;
+      case "m":
+        if (this.sessions.length > 0) {
+          this.showMigratePicker();
         }
         break;
       case "enter":
@@ -716,16 +905,319 @@ export class Multiplexer {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
 
-    const dashSessions: DashboardSession[] = this.sessions.map((s, i) => ({
-      index: i,
-      id: s.id,
-      command: s.command,
-      status: s.status,
-      active: i === this.activeIndex,
-    }));
+    const dashSessions: DashboardSession[] = this.sessions.map((s, i) => {
+      const wtPath = this.sessionWorktreePaths.get(s.id);
+      return {
+        index: i,
+        id: s.id,
+        command: s.command,
+        status: s.status,
+        active: i === this.activeIndex,
+        worktreePath: wtPath,
+      };
+    });
 
-    this.dashboard.update(dashSessions);
+    // Build worktree groups from registry (if available)
+    let worktreeGroups: WorktreeGroup[] = [];
+    try {
+      const worktrees = listAllWorktrees();
+      worktreeGroups = worktrees.map(wt => ({
+        name: wt.name,
+        branch: wt.branch,
+        path: wt.path,
+        status: wt.status,
+        sessions: dashSessions.filter(s => s.worktreePath === wt.path),
+      }));
+    } catch {
+      // Not in a git repo or no worktrees — skip grouping
+    }
+
+    this.dashboard.update(dashSessions, worktreeGroups);
     process.stdout.write(this.dashboard.render(cols, rows));
+  }
+
+  private showWorktreeCreatePrompt(): void {
+    this.worktreeInputActive = true;
+    this.worktreeInputBuffer = "";
+    this.renderWorktreeInput();
+  }
+
+  private renderWorktreeInput(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+
+    const lines = [
+      "Create worktree:",
+      "",
+      `  Name: ${this.worktreeInputBuffer}_`,
+      "",
+      "  [Enter] create  [Esc] cancel",
+    ];
+
+    const boxWidth = Math.max(...lines.map(l => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1];
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleWorktreeInputKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    if (key === "escape") {
+      this.worktreeInputActive = false;
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (key === "enter" || key === "return") {
+      this.worktreeInputActive = false;
+      const name = this.worktreeInputBuffer.trim();
+      if (name) {
+        try {
+          const info = createWorktree(name);
+          debug(`worktree created from UI: ${info.name} at ${info.path}`, "worktree");
+        } catch (err) {
+          debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
+        }
+      }
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (key === "backspace" || key === "delete") {
+      this.worktreeInputBuffer = this.worktreeInputBuffer.slice(0, -1);
+      this.renderWorktreeInput();
+      return;
+    }
+
+    // Append printable character
+    if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
+      this.worktreeInputBuffer += event.char;
+      this.renderWorktreeInput();
+    }
+  }
+
+  private showWorktreeList(): void {
+    this.worktreeListActive = true;
+    this.renderWorktreeList();
+  }
+
+  private renderWorktreeList(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+
+    let worktrees: Array<{ name: string; branch: string; status: string; path: string }> = [];
+    try {
+      worktrees = listAllWorktrees().map(wt => ({
+        name: wt.name,
+        branch: wt.branch,
+        status: wt.status,
+        path: wt.path,
+      }));
+    } catch {}
+
+    const lines = ["Worktree Management:", ""];
+    if (worktrees.length === 0) {
+      lines.push("  No worktrees found.");
+    } else {
+      for (let i = 0; i < worktrees.length; i++) {
+        const wt = worktrees[i];
+        lines.push(`  [${i + 1}] ${wt.name} (${wt.branch}) — ${wt.status}`);
+      }
+    }
+    lines.push("");
+    lines.push("  [1-9] remove  [c] clean  [Esc] back");
+
+    const boxWidth = Math.max(...lines.map(l => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1];
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleWorktreeListKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    if (key === "escape") {
+      this.worktreeListActive = false;
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (key === "c") {
+      // Clean worktrees
+      this.worktreeListActive = false;
+      try {
+        const removed = cleanWorktrees();
+        debug(`cleaned worktrees: ${removed.join(", ") || "none"}`, "worktree");
+      } catch {}
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (key >= "1" && key <= "9") {
+      try {
+        const worktrees = listAllWorktrees();
+        const idx = parseInt(key) - 1;
+        if (idx < worktrees.length) {
+          removeWorktree(worktrees[idx].name);
+          debug(`removed worktree from UI: ${worktrees[idx].name}`, "worktree");
+        }
+      } catch (err) {
+        debug(`worktree remove failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
+      }
+      // Re-render the list
+      this.renderWorktreeList();
+      return;
+    }
+  }
+
+  private showMigratePicker(): void {
+    // Collect available worktrees to migrate to
+    try {
+      const worktrees = listAllWorktrees();
+      const mainRepo = findMainRepo();
+      this.migratePickerWorktrees = [
+        { name: "(main)", path: mainRepo },
+        ...worktrees.map(wt => ({ name: wt.name, path: wt.path })),
+      ];
+    } catch {
+      this.migratePickerWorktrees = [];
+    }
+
+    if (this.migratePickerWorktrees.length <= 1) {
+      // No worktrees to migrate to
+      return;
+    }
+
+    this.migratePickerActive = true;
+    this.renderMigratePicker();
+  }
+
+  private renderMigratePicker(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const session = this.sessions[this.activeIndex];
+    if (!session) return;
+
+    const currentWt = this.sessionWorktreePaths.get(session.id);
+    const lines = [`Migrate "${session.id}" to:`, ""];
+    for (let i = 0; i < this.migratePickerWorktrees.length; i++) {
+      const wt = this.migratePickerWorktrees[i];
+      const isCurrent = (wt.path === currentWt) || (!currentWt && wt.name === "(main)");
+      const marker = isCurrent ? " (current)" : "";
+      lines.push(`  [${i + 1}] ${wt.name}${marker}`);
+    }
+    lines.push("");
+    lines.push("  [Esc] cancel");
+
+    const boxWidth = Math.max(...lines.map(l => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1];
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleMigratePickerKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    this.migratePickerActive = false;
+
+    if (key === "escape") {
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (key >= "1" && key <= "9") {
+      const idx = parseInt(key) - 1;
+      if (idx < this.migratePickerWorktrees.length) {
+        const target = this.migratePickerWorktrees[idx];
+        const session = this.sessions[this.activeIndex];
+        if (session) {
+          try {
+            this.migrateAgent(session.id, target.path);
+            debug(`migrated ${session.id} to ${target.name}`, "worktree");
+          } catch (err) {
+            debug(`migration failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
+          }
+        }
+      }
+    }
+
+    if (this.mode === "dashboard") {
+      this.renderDashboard();
+    } else if (this.sessions.length > 0) {
+      this.focusSession(this.activeIndex);
+    }
   }
 
   private setMode(mode: MuxMode): void {
@@ -845,6 +1337,7 @@ export class Multiplexer {
       id: s.id,
       tool: s.command,
       status: s.status,
+      worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
     writeFileSync(
       `${dir}/sessions.json`,
@@ -971,6 +1464,7 @@ export class Multiplexer {
         command: s.command,
         args: this.sessionOriginalArgs.get(s.id) ?? [],
         backendSessionId: (s as any)._backendSessionId,
+        worktreePath: this.sessionWorktreePaths.get(s.id),
       })),
     };
 

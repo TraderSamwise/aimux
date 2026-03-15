@@ -4,6 +4,7 @@ import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
 import { getHistoryDir } from "./context/history.js";
 import { getAimuxDir, initProject } from "./config.js";
+import { createWorktree, listWorktrees, cleanWorktrees, removeWorktree } from "./worktree.js";
 
 const program = new Command();
 
@@ -77,6 +78,91 @@ program
     console.log(`Compacting history for ${sessionIds.length} session(s)...`);
     llmCompact(sessionIds);
     console.log(`Done. Summary written to ${getAimuxDir()}/context/summary.md`);
+  });
+
+const worktreeCmd = program
+  .command("worktree")
+  .description("Manage git worktrees");
+
+worktreeCmd
+  .command("create <name>")
+  .description("Create a new worktree as a sibling directory")
+  .option("-b, --branch <branch>", "Branch name (defaults to worktree name)")
+  .action((name: string, opts: { branch?: string }) => {
+    try {
+      const info = createWorktree(name, opts.branch);
+      console.log(`Created worktree "${info.name}" at ${info.path} (branch: ${info.branch})`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command("list")
+  .description("List all known worktrees")
+  .action(() => {
+    try {
+      const worktrees = listWorktrees();
+      if (worktrees.length === 0) {
+        console.log("No worktrees found.");
+        return;
+      }
+      console.log(
+        "Name".padEnd(20) +
+        "Branch".padEnd(20) +
+        "Status".padEnd(10) +
+        "Sessions".padEnd(10) +
+        "Path"
+      );
+      console.log("-".repeat(80));
+      for (const wt of worktrees) {
+        console.log(
+          wt.name.padEnd(20) +
+          wt.branch.padEnd(20) +
+          wt.status.padEnd(10) +
+          String(wt.sessions.length).padEnd(10) +
+          wt.path
+        );
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command("clean")
+  .description("Remove offline worktrees with no active sessions")
+  .action(() => {
+    try {
+      const removed = cleanWorktrees();
+      if (removed.length === 0) {
+        console.log("No worktrees to clean.");
+      } else {
+        console.log(`Removed ${removed.length} worktree(s): ${removed.join(", ")}`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command("remove <name>")
+  .description("Remove a specific worktree")
+  .action((name: string) => {
+    try {
+      removeWorktree(name);
+      console.log(`Removed worktree "${name}".`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
   });
 
 program.parse();

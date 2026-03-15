@@ -10,6 +10,8 @@ export type HotkeyAction =
   | { type: "prev" }
   | { type: "create" }
   | { type: "kill" }
+  | { type: "worktree-create" }
+  | { type: "worktree-list" }
   | { type: "passthrough"; data: string };
 
 export type ActionCallback = (action: HotkeyAction) => void;
@@ -81,6 +83,12 @@ export class HotkeyHandler {
         return null;
       case "x":
         this.onAction({ type: "kill" });
+        return null;
+      case "w":
+        this.onAction({ type: "worktree-create" });
+        return null;
+      case "W":
+        this.onAction({ type: "worktree-list" });
         return null;
       default:
         // Check for digits 1-9
