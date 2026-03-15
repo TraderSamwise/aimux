@@ -1,4 +1,11 @@
 import type { SessionStatus } from "./status-detector.js";
+import type { InstanceSessionRef } from "./instance-registry.js";
+
+export interface RemoteInstance {
+  instanceId: string;
+  pid: number;
+  sessions: InstanceSessionRef[];
+}
 
 export interface DashboardSession {
   index: number;
@@ -36,6 +43,7 @@ const STATUS_LABELS: Record<SessionStatus, string> = {
 export class Dashboard {
   private sessions: DashboardSession[] = [];
   private worktreeGroups: WorktreeGroup[] = [];
+  private remoteInstances: RemoteInstance[] = [];
   private hasWorktrees = false;
   private focusedWorktreePath: string | undefined = undefined;
   private navLevel: "worktrees" | "sessions" = "sessions";
@@ -47,9 +55,11 @@ export class Dashboard {
     focusedWorktreePath?: string,
     navLevel?: "worktrees" | "sessions",
     selectedSessionId?: string,
+    remoteInstances?: RemoteInstance[],
   ): void {
     this.sessions = sessions;
     this.worktreeGroups = worktreeGroups ?? [];
+    this.remoteInstances = remoteInstances ?? [];
     this.hasWorktrees = this.worktreeGroups.length > 0 ||
       sessions.some(s => s.worktreePath);
     this.focusedWorktreePath = focusedWorktreePath;
@@ -81,6 +91,11 @@ export class Dashboard {
         const line = `  ${icon} [${num}] ${session.command} — ${label}${marker}`;
         lines.push(line);
       }
+    }
+
+    // Remote instances section
+    if (this.remoteInstances.length > 0) {
+      this.renderRemoteInstances(lines);
     }
 
     // Fill remaining space
@@ -172,20 +187,34 @@ export class Dashboard {
     }
   }
 
+  private renderRemoteInstances(lines: string[]): void {
+    lines.push("");
+    lines.push("  \x1b[2m─── Other instances ───\x1b[0m");
+    for (const inst of this.remoteInstances) {
+      const count = inst.sessions.length;
+      lines.push(`  \x1b[2mInstance (PID ${inst.pid}) — ${count} agent${count !== 1 ? "s" : ""}\x1b[0m`);
+      for (const s of inst.sessions) {
+        lines.push(`    \x1b[36m◈\x1b[0m ${s.tool}:${s.id}`);
+      }
+    }
+  }
+
   private buildHelpLine(): string {
+    const hasRemote = this.remoteInstances.some(i => i.sessions.length > 0);
+    const takeover = hasRemote ? "  [t] takeover" : "";
     if (this.sessions.length === 0 && !this.hasWorktrees) {
-      return " [c] new  [q] quit ";
+      return ` [c] new${takeover}  [q] quit `;
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
-      return " ↑↓ agents  Enter focus  Esc back  [c] new  [m] migrate  [x] kill  [q] quit ";
+      return ` ↑↓ agents  Enter focus  Esc back  [c] new  [m] migrate  [x] kill${takeover}  [q] quit `;
     }
     if (this.hasWorktrees) {
-      return " ↑↓ worktrees  Enter step in  [c] new agent  [w] new worktree  [m] migrate  [q] quit ";
+      return ` ↑↓ worktrees  Enter step in  [c] new agent  [w] new worktree  [m] migrate${takeover}  [q] quit `;
     }
     if (this.sessions.length > 0) {
-      return " ↑↓ select  Enter focus  [c] new  [w] worktree  [x] kill  [q] quit ";
+      return ` ↑↓ select  Enter focus  [c] new  [w] worktree  [x] kill${takeover}  [q] quit `;
     }
-    return " [c] new  [w] worktree  [q] quit ";
+    return ` [c] new  [w] worktree${takeover}  [q] quit `;
   }
 }
 

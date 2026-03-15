@@ -150,6 +150,7 @@ export function saveGlobalConfig(config: Partial<AimuxConfig>): void {
 const GITIGNORE_CONTENTS = `# Ephemeral session state
 state.json
 sessions.json
+instances.json
 
 # Live context (regenerated each session)
 context/live.md

@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
-import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
+import { Dashboard, type DashboardSession, type WorktreeGroup, type RemoteInstance } from "./dashboard.js";
 import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
 import { readHistory } from "./context/history.js";
 import { parseKeys } from "./key-parser.js";
@@ -13,6 +13,14 @@ import { loadConfig, getAimuxDir, initProject, type ToolConfig } from "./config.
 import { debug, debugPreamble, closeDebug } from "./debug.js";
 import { findMainRepo, getRepoName, listWorktrees as listAllWorktrees, loadRegistry, createWorktree, removeWorktree, cleanWorktrees } from "./worktree.js";
 import { notifyPrompt, notifyComplete } from "./notify.js";
+import {
+  registerInstance,
+  unregisterInstance,
+  updateHeartbeat,
+  getRemoteInstances,
+  claimSession,
+  type InstanceSessionRef,
+} from "./instance-registry.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -22,6 +30,7 @@ export interface SessionState {
   toolConfigKey: string;
   command: string;
   args: string[];
+  backendSessionId?: string;
   worktreePath?: string;
 }
 
@@ -50,6 +59,8 @@ export class Multiplexer {
   private worktreeListActive = false;
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
+  private takeoverPickerActive = false;
+  private takeoverPickerSessions: Array<{ id: string; tool: string; backendSessionId: string; fromInstanceId: string }> = [];
   /** The focused worktree path on the dashboard (undefined = main repo) */
   private focusedWorktreePath: string | undefined = undefined;
   /** Ordered list of worktree paths for navigation (undefined = main repo) */
@@ -61,6 +72,8 @@ export class Multiplexer {
   /** Sessions in the currently focused worktree (for session-level nav) */
   private dashboardWorktreeSessions: PtySession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher();
   /** Maps session ID → toolConfigKey for state saving */
   private sessionToolKeys = new Map<string, string>();
@@ -85,6 +98,8 @@ export class Multiplexer {
 
   async run(opts: Omit<PtySessionOptions, "cols" | "rows">): Promise<number> {
     initProject();
+    await registerInstance(this.instanceId, process.cwd());
+    this.startHeartbeat();
     this.defaultCommand = opts.command;
     this.defaultArgs = opts.args;
 
@@ -121,6 +136,10 @@ export class Multiplexer {
       }
       if (this.migratePickerActive) {
         this.handleMigratePickerKey(data);
+        return;
+      }
+      if (this.takeoverPickerActive) {
+        this.handleTakeoverPickerKey(data);
         return;
       }
 
@@ -163,6 +182,8 @@ export class Multiplexer {
 
   async runDashboard(): Promise<number> {
     initProject();
+    await registerInstance(this.instanceId, process.cwd());
+    this.startHeartbeat();
     this.startedInDashboard = true;
 
     // Load config to set default tool for session creation
@@ -192,6 +213,10 @@ export class Multiplexer {
       }
       if (this.migratePickerActive) {
         this.handleMigratePickerKey(data);
+        return;
+      }
+      if (this.takeoverPickerActive) {
+        this.handleTakeoverPickerKey(data);
         return;
       }
 
@@ -241,6 +266,8 @@ export class Multiplexer {
    */
   async resumeSessions(toolFilter?: string): Promise<number> {
     initProject();
+    await registerInstance(this.instanceId, process.cwd());
+    this.startHeartbeat();
     const state = Multiplexer.loadState();
     if (!state || state.sessions.length === 0) {
       console.error("No saved session state found (or state is stale). Starting fresh.");
@@ -262,7 +289,7 @@ export class Multiplexer {
       const toolCfg = config.tools[saved.toolConfigKey];
       if (!toolCfg) continue;
 
-      const bsid = (saved as any).backendSessionId as string | undefined;
+      const bsid = saved.backendSessionId;
       let resumeArgs: string[];
       if (bsid) {
         // Substitute backend session ID into resume args
@@ -765,6 +792,10 @@ export class Multiplexer {
         this.showWorktreeList();
         break;
 
+      case "takeover":
+        this.showTakeoverPicker();
+        break;
+
       case "passthrough":
         this.activeSession?.write(action.data);
         break;
@@ -812,6 +843,9 @@ export class Multiplexer {
         if (this.sessions.length > 0) {
           this.showMigratePicker();
         }
+        return;
+      case "t":
+        this.showTakeoverPicker();
         return;
     }
 
@@ -1082,12 +1116,26 @@ export class Multiplexer {
       ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
       : undefined;
 
+    // Fetch remote instances for cross-instance visibility
+    let remoteInsts: RemoteInstance[] = [];
+    try {
+      const remote = getRemoteInstances(this.instanceId, process.cwd());
+      remoteInsts = remote.map(r => ({
+        instanceId: r.instanceId,
+        pid: r.pid,
+        sessions: r.sessions,
+      }));
+    } catch {
+      // Registry read failed — skip remote display
+    }
+
     this.dashboard.update(
       dashSessions,
       worktreeGroups,
       this.focusedWorktreePath,
       hasWorktrees ? this.dashboardLevel : "sessions",
       selectedSession,
+      remoteInsts,
     );
     process.stdout.write(this.dashboard.render(cols, rows));
   }
@@ -1376,6 +1424,147 @@ export class Multiplexer {
     }
   }
 
+  private showTakeoverPicker(): void {
+    // Collect remote sessions with backendSessionId
+    let remote;
+    try {
+      remote = getRemoteInstances(this.instanceId, process.cwd());
+    } catch {
+      return;
+    }
+
+    const sessions: typeof this.takeoverPickerSessions = [];
+    for (const inst of remote) {
+      for (const s of inst.sessions) {
+        if (s.backendSessionId) {
+          sessions.push({
+            id: s.id,
+            tool: s.tool,
+            backendSessionId: s.backendSessionId,
+            fromInstanceId: inst.instanceId,
+          });
+        }
+      }
+    }
+
+    if (sessions.length === 0) {
+      // No remote sessions to take over
+      return;
+    }
+
+    this.takeoverPickerSessions = sessions;
+    this.takeoverPickerActive = true;
+    this.renderTakeoverPicker();
+  }
+
+  private renderTakeoverPicker(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+
+    const lines = ["Take over remote agent:", ""];
+    for (let i = 0; i < this.takeoverPickerSessions.length; i++) {
+      const s = this.takeoverPickerSessions[i];
+      lines.push(`  [${i + 1}] ${s.tool}:${s.id}`);
+    }
+    lines.push("");
+    lines.push("  [Esc] cancel");
+
+    const boxWidth = Math.max(...lines.map(l => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1];
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleTakeoverPickerKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    this.takeoverPickerActive = false;
+
+    if (key === "escape") {
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (key >= "1" && key <= "9") {
+      const idx = parseInt(key) - 1;
+      if (idx < this.takeoverPickerSessions.length) {
+        const target = this.takeoverPickerSessions[idx];
+        this.takeoverSession(target).catch((err) => {
+          debug(`takeover failed: ${err instanceof Error ? err.message : String(err)}`, "instance");
+        });
+      }
+    }
+
+    if (this.mode === "dashboard") {
+      this.renderDashboard();
+    } else if (this.sessions.length > 0) {
+      this.focusSession(this.activeIndex);
+    }
+  }
+
+  private async takeoverSession(target: { id: string; tool: string; backendSessionId: string; fromInstanceId: string }): Promise<void> {
+    // Claim the session from the other instance
+    const claimed = await claimSession(target.id, target.fromInstanceId, process.cwd());
+    if (!claimed) {
+      debug(`takeover: session ${target.id} not found in instance ${target.fromInstanceId}`, "instance");
+      return;
+    }
+
+    // Find the tool config for the claimed session's tool
+    const config = loadConfig();
+    const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === target.tool);
+    const toolCfg = toolEntry?.[1];
+    const toolConfigKey = toolEntry?.[0];
+
+    if (!toolCfg?.resumeArgs) {
+      debug(`takeover: no resumeArgs configured for tool ${target.tool}`, "instance");
+      return;
+    }
+
+    // Build resume args with the backend session ID
+    const resumeArgs = toolCfg.resumeArgs.map(
+      (a: string) => a.replace("{sessionId}", target.backendSessionId)
+    );
+
+    debug(`taking over session ${target.id} (backend=${target.backendSessionId}) from instance ${target.fromInstanceId}`, "instance");
+    this.createSession(
+      target.tool,
+      resumeArgs,
+      toolCfg.preambleFlag,
+      toolConfigKey,
+      undefined,
+      undefined,
+      claimed.worktreePath,
+    );
+
+    if (this.mode === "dashboard") {
+      this.renderDashboard();
+    } else {
+      this.focusSession(this.sessions.length - 1);
+    }
+  }
+
   private setMode(mode: MuxMode): void {
     const prev = this.mode;
     this.mode = mode;
@@ -1495,6 +1684,7 @@ export class Multiplexer {
       id: s.id,
       tool: s.command,
       status: s.status,
+      backendSessionId: (s as any)._backendSessionId as string | undefined,
       worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
     writeFileSync(
@@ -1604,6 +1794,35 @@ export class Multiplexer {
     }
   }
 
+  private startHeartbeat(): void {
+    if (this.heartbeatInterval) return;
+    this.heartbeatInterval = setInterval(() => {
+      const sessions = this.getInstanceSessionRefs();
+      updateHeartbeat(this.instanceId, sessions, process.cwd()).catch(() => {});
+      // Refresh dashboard to pick up remote instance changes
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      }
+    }, 5000);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
+  /** Build InstanceSessionRef[] from current sessions for heartbeat/registry updates. */
+  private getInstanceSessionRefs(): InstanceSessionRef[] {
+    return this.sessions.map((s) => ({
+      id: s.id,
+      tool: s.command,
+      backendSessionId: (s as any)._backendSessionId as string | undefined,
+      worktreePath: this.sessionWorktreePaths.get(s.id),
+    }));
+  }
+
   private enterRawMode(): void {
     if (process.stdin.isTTY) {
       this.rawModeWas = process.stdin.isRaw;
@@ -1619,31 +1838,53 @@ export class Multiplexer {
     }
   }
 
-  /** Save session state to .aimux/state.json for resume/restore */
+  /** Save session state to .aimux/state.json, merging with existing state from other instances. */
   private saveState(): void {
     if (this.sessions.length === 0) return;
 
     const dir = getAimuxDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
+    const mySessions = this.sessions.map(s => ({
+      id: s.id,
+      tool: s.command,
+      toolConfigKey: this.sessionToolKeys.get(s.id) ?? s.command,
+      command: s.command,
+      args: this.sessionOriginalArgs.get(s.id) ?? [],
+      backendSessionId: (s as any)._backendSessionId as string | undefined,
+      worktreePath: this.sessionWorktreePaths.get(s.id),
+    }));
+
+    // Merge with existing state (other instances may have written their sessions)
+    const statePath = `${dir}/state.json`;
+    let mergedSessions: SessionState[] = mySessions;
+
+    if (existsSync(statePath)) {
+      try {
+        const existing = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
+        // Keep existing sessions that don't collide with ours (dedup by backendSessionId)
+        const myBackendIds = new Set(
+          mySessions.map(s => s.backendSessionId).filter(Boolean)
+        );
+        const myIds = new Set(mySessions.map(s => s.id));
+        const otherSessions = existing.sessions.filter(s => {
+          if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return false;
+          if (myIds.has(s.id)) return false;
+          return true;
+        });
+        mergedSessions = [...otherSessions, ...mySessions];
+      } catch {
+        // Corrupt file — just overwrite with ours
+      }
+    }
+
     const state: SavedState = {
       savedAt: new Date().toISOString(),
       cwd: process.cwd(),
-      sessions: this.sessions.map(s => ({
-        id: s.id,
-        tool: s.command,
-        toolConfigKey: this.sessionToolKeys.get(s.id) ?? s.command,
-        command: s.command,
-        args: this.sessionOriginalArgs.get(s.id) ?? [],
-        backendSessionId: (s as any)._backendSessionId,
-        worktreePath: this.sessionWorktreePaths.get(s.id),
-      })),
+      sessions: mergedSessions,
     };
 
-    writeFileSync(
-      `${dir}/state.json`,
-      JSON.stringify(state, null, 2) + "\n"
-    );
+    writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
   }
 
   /** Load saved state from .aimux/state.json */
@@ -1667,6 +1908,8 @@ export class Multiplexer {
 
   private teardown(): void {
     debug("teardown started", "session");
+    this.stopHeartbeat();
+    unregisterInstance(this.instanceId, process.cwd()).catch(() => {});
     this.saveState();
     this.stopFooterRefresh();
     this.contextWatcher.stop();
