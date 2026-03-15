@@ -1,12 +1,29 @@
-import { writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
 import { Dashboard, type DashboardSession } from "./dashboard.js";
-import { captureGitContext, ContextWatcher } from "./context/context-bridge.js";
+import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
+import { readHistory } from "./context/history.js";
 import { parseKeys } from "./key-parser.js";
-import { loadConfig, getAimuxDir } from "./config.js";
+import { loadConfig, getAimuxDir, type ToolConfig } from "./config.js";
+import { debug, debugPreamble, closeDebug } from "./debug.js";
 
 export type MuxMode = "focused" | "dashboard";
+
+export interface SessionState {
+  id: string;
+  tool: string;
+  toolConfigKey: string;
+  command: string;
+  args: string[];
+}
+
+export interface SavedState {
+  savedAt: string;
+  cwd: string;
+  sessions: SessionState[];
+}
 
 export class Multiplexer {
   private sessions: PtySession[] = [];
@@ -24,6 +41,10 @@ export class Multiplexer {
   private pickerActive = false;
   private footerInterval: ReturnType<typeof setInterval> | null = null;
   private contextWatcher = new ContextWatcher();
+  /** Maps session ID → toolConfigKey for state saving */
+  private sessionToolKeys = new Map<string, string>();
+  /** Maps session ID → original args (before preamble injection) */
+  private sessionOriginalArgs = new Map<string, string[]>();
   private static readonly FOOTER_HEIGHT = 1;
 
   constructor() {
@@ -43,12 +64,17 @@ export class Multiplexer {
     this.defaultCommand = opts.command;
     this.defaultArgs = opts.args;
 
-    // Look up preamble flag from config
+    // Look up preamble flag and config key from config
     const config = loadConfig();
-    const toolConfig = Object.values(config.tools).find(t => t.command === opts.command);
+    const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === opts.command);
+    const toolConfig = toolEntry?.[1];
+    const toolConfigKey = toolEntry?.[0];
+
+    // Write instruction files for tools that need them (e.g. CODEX.md)
+    this.writeInstructionFiles();
 
     // Create initial session
-    this.createSession(opts.command, opts.args, toolConfig?.preambleFlag);
+    this.createSession(opts.command, opts.args, toolConfig?.preambleFlag, toolConfigKey);
 
     // Enter raw mode and set up footer
     this.enterRawMode();
@@ -110,6 +136,7 @@ export class Multiplexer {
       this.defaultArgs = defaultTool.args;
     }
 
+    this.writeInstructionFiles();
     this.enterRawMode();
 
     // Forward stdin
@@ -159,19 +186,204 @@ export class Multiplexer {
     return exitCode;
   }
 
-  createSession(command: string, args: string[], preambleFlag?: string[]): PtySession {
+  /**
+   * Resume previous sessions using each tool's native resume mechanism.
+   * Reads state.json and spawns sessions with resumeArgs instead of normal args.
+   */
+  async resumeSessions(toolFilter?: string): Promise<number> {
+    const state = Multiplexer.loadState();
+    if (!state || state.sessions.length === 0) {
+      console.error("No saved session state found (or state is stale). Starting fresh.");
+      return this.runDashboard();
+    }
+
+    const config = loadConfig();
+    const sessionsToResume = toolFilter
+      ? state.sessions.filter(s => s.tool === toolFilter || s.toolConfigKey === toolFilter)
+      : state.sessions;
+
+    if (sessionsToResume.length === 0) {
+      console.error(`No saved sessions found for tool "${toolFilter}". Starting fresh.`);
+      return this.runDashboard();
+    }
+
+    // Spawn each session with resumeArgs
+    for (const saved of sessionsToResume) {
+      const toolCfg = config.tools[saved.toolConfigKey];
+      if (!toolCfg) continue;
+
+      const args = [...(toolCfg.resumeArgs ?? []), ...saved.args];
+      this.createSession(saved.command, args, toolCfg.preambleFlag, saved.toolConfigKey);
+    }
+
+    // Enter raw mode and set up input handling
+    this.enterRawMode();
+    this.setupScrollRegion();
+    this.startFooterRefresh();
+
+    this.onStdinData = (data: Buffer) => {
+      if (this.pickerActive) {
+        this.handleToolPickerKey(data);
+        return;
+      }
+      if (this.mode === "dashboard") {
+        this.handleDashboardKey(data);
+        return;
+      }
+      const passthrough = this.hotkeys.feed(data);
+      if (passthrough !== null) {
+        this.activeSession?.write(passthrough);
+      }
+    };
+    process.stdin.on("data", this.onStdinData);
+
+    this.onResize = () => {
+      const cols = process.stdout.columns ?? 80;
+      for (const session of this.sessions) {
+        session.resize(cols, this.toolRows);
+      }
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.setupScrollRegion();
+        this.renderFooter();
+      }
+    };
+    process.stdout.on("resize", this.onResize);
+
+    const exitCode = await new Promise<number>((resolve) => {
+      this.resolveRun = resolve;
+    });
+
+    this.teardown();
+    return exitCode;
+  }
+
+  /**
+   * Restore previous sessions by injecting prior history into the preamble.
+   * Starts fresh sessions but with context from the previous conversation.
+   */
+  async restoreSessions(toolFilter?: string): Promise<number> {
+    const state = Multiplexer.loadState();
+    if (!state || state.sessions.length === 0) {
+      console.error("No saved session state found (or state is stale). Starting fresh.");
+      return this.runDashboard();
+    }
+
+    const config = loadConfig();
+    const sessionsToRestore = toolFilter
+      ? state.sessions.filter(s => s.tool === toolFilter || s.toolConfigKey === toolFilter)
+      : state.sessions;
+
+    if (sessionsToRestore.length === 0) {
+      console.error(`No saved sessions found for tool "${toolFilter}". Starting fresh.`);
+      return this.runDashboard();
+    }
+
+    // Spawn each session with extended preamble containing prior history
+    for (const saved of sessionsToRestore) {
+      const toolCfg = config.tools[saved.toolConfigKey];
+      if (!toolCfg) continue;
+
+      // Read last 20 turns from this session's history
+      const turns = readHistory(saved.id, { lastN: 20 });
+      let historyContext = "";
+      if (turns.length > 0) {
+        const formattedTurns = turns.map(t => {
+          const time = t.ts.slice(0, 16);
+          if (t.type === "prompt") return `[${time}] User: ${t.content}`;
+          if (t.type === "response") return `[${time}] Agent: ${t.content}`;
+          if (t.type === "git") return `[${time}] Git: ${t.content}${t.files ? ` (${t.files.join(", ")})` : ""}`;
+          return `[${time}] ${t.content}`;
+        });
+        historyContext =
+          "\n\n=== Your previous session context ===\n" +
+          "You were previously working in this codebase. Here's what happened:\n" +
+          formattedTurns.join("\n") +
+          "\n=== End previous context ===\n";
+      }
+
+      // Also include live.md for cross-agent context
+      const liveContext = buildContextPreamble(
+        sessionsToRestore.filter(s => s.id !== saved.id).map(s => s.id)
+      );
+
+      const extraPreamble = historyContext + (liveContext ? "\n" + liveContext : "");
+
+      this.createSession(
+        saved.command,
+        saved.args,
+        toolCfg.preambleFlag,
+        saved.toolConfigKey,
+        extraPreamble.trim() || undefined,
+      );
+    }
+
+    // Enter raw mode and set up input handling
+    this.enterRawMode();
+    this.setupScrollRegion();
+    this.startFooterRefresh();
+
+    this.onStdinData = (data: Buffer) => {
+      if (this.pickerActive) {
+        this.handleToolPickerKey(data);
+        return;
+      }
+      if (this.mode === "dashboard") {
+        this.handleDashboardKey(data);
+        return;
+      }
+      const passthrough = this.hotkeys.feed(data);
+      if (passthrough !== null) {
+        this.activeSession?.write(passthrough);
+      }
+    };
+    process.stdin.on("data", this.onStdinData);
+
+    this.onResize = () => {
+      const cols = process.stdout.columns ?? 80;
+      for (const session of this.sessions) {
+        session.resize(cols, this.toolRows);
+      }
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.setupScrollRegion();
+        this.renderFooter();
+      }
+    };
+    process.stdout.on("resize", this.onResize);
+
+    const exitCode = await new Promise<number>((resolve) => {
+      this.resolveRun = resolve;
+    });
+
+    this.teardown();
+    return exitCode;
+  }
+
+  createSession(command: string, args: string[], preambleFlag?: string[], toolConfigKey?: string, extraPreamble?: string): PtySession {
     const cols = process.stdout.columns ?? 80;
 
     // Inject aimux preamble via tool-specific flag if available
-    const preamble =
+    let preamble =
       "You are running inside aimux, an agent multiplexer. " +
-      "Other agents may be working on this codebase simultaneously. " +
-      "Read .aimux/sessions.json to see all running agents. " +
-      "Read .aimux/context/live.md for a live summary of what other agents are doing. " +
-      "Full session transcripts are in .aimux/recordings/.";
+      "Other agents may be working on this codebase simultaneously.\n" +
+      "- .aimux/sessions.json — currently running agents\n" +
+      "- .aimux/context/live.md — recent conversation from all agents (last 20 messages each)\n" +
+      "- .aimux/context/summary.md — compacted history of all agent activity\n" +
+      "- .aimux/history/ — full raw conversation history (JSONL)";
+    if (extraPreamble) {
+      preamble += "\n" + extraPreamble;
+    }
     const finalArgs = preambleFlag
       ? [...args, ...preambleFlag, preamble]
       : args;
+
+    if (preambleFlag) {
+      debugPreamble(command, Buffer.byteLength(preamble));
+    }
+    debug(`creating session: ${command} (configKey=${toolConfigKey ?? "cli"})`, "session");
 
     const session = new PtySession({ command, args: finalArgs, cols, rows: this.toolRows });
 
@@ -184,6 +396,7 @@ export class Multiplexer {
 
     // Handle session exit
     session.onExit((_code) => {
+      debug(`session exited: ${session.id} (code=${_code})`, "session");
       // Capture git context on session exit (fire-and-forget)
       captureGitContext(session.id, session.command).catch(() => {});
 
@@ -216,6 +429,12 @@ export class Multiplexer {
         this.focusSession(this.activeIndex);
       }
     });
+
+    // Track toolConfigKey and original args for state saving
+    if (toolConfigKey) {
+      this.sessionToolKeys.set(session.id, toolConfigKey);
+    }
+    this.sessionOriginalArgs.set(session.id, args);
 
     this.sessions.push(session);
     this.writeSessionsFile();
@@ -355,8 +574,8 @@ export class Multiplexer {
 
     if (tools.length === 1) {
       // Only one tool — skip picker, spawn directly
-      const [, tool] = tools[0];
-      this.createSession(tool.command, tool.args, tool.preambleFlag);
+      const [key, tool] = tools[0];
+      this.createSession(tool.command, tool.args, tool.preambleFlag, key);
       return;
     }
 
@@ -414,8 +633,8 @@ export class Multiplexer {
       const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
       const idx = parseInt(key) - 1;
       if (idx < tools.length) {
-        const [, tool] = tools[idx];
-        this.createSession(tool.command, tool.args, tool.preambleFlag);
+        const [key, tool] = tools[idx];
+        this.createSession(tool.command, tool.args, tool.preambleFlag, key);
         return;
       }
     }
@@ -458,6 +677,46 @@ export class Multiplexer {
       // Leave alternate screen buffer
       process.stdout.write("\x1b[?1049l");
     }
+  }
+
+  /** Instruction files we've written (to clean up on exit) */
+  private writtenInstructionFiles = new Set<string>();
+
+  /** Write tool instruction files (e.g. CODEX.md) for tools that don't support --append-system-prompt */
+  private writeInstructionFiles(): void {
+    const config = loadConfig();
+    const preamble =
+      "# aimux Agent Instructions\n\n" +
+      "You are running inside aimux, an agent multiplexer. " +
+      "Other agents may be working on this codebase simultaneously.\n\n" +
+      "## Context Files\n" +
+      "- `.aimux/sessions.json` — currently running agents\n" +
+      "- `.aimux/context/live.md` — recent conversation from all agents (last 20 messages each)\n" +
+      "- `.aimux/context/summary.md` — compacted history of all agent activity\n" +
+      "- `.aimux/history/` — full raw conversation history (JSONL)\n\n" +
+      "Check these files to understand what other agents are doing.\n" +
+      "This file is auto-generated by aimux and will be removed when aimux exits.\n";
+
+    for (const [, tool] of Object.entries(config.tools)) {
+      if (!tool.instructionsFile || !tool.enabled) continue;
+      const filePath = join(process.cwd(), tool.instructionsFile);
+      // Don't overwrite if it already exists and wasn't written by us
+      if (existsSync(filePath) && !this.writtenInstructionFiles.has(filePath)) {
+        debug(`skipping ${tool.instructionsFile} — already exists`, "context");
+        continue;
+      }
+      writeFileSync(filePath, preamble);
+      this.writtenInstructionFiles.add(filePath);
+      debug(`wrote ${tool.instructionsFile}`, "context");
+    }
+  }
+
+  /** Remove instruction files we created */
+  private removeInstructionFiles(): void {
+    for (const filePath of this.writtenInstructionFiles) {
+      try { unlinkSync(filePath); } catch {}
+    }
+    this.writtenInstructionFiles.clear();
   }
 
   /** Write active sessions to .aimux/sessions.json so agents can discover each other */
@@ -577,11 +836,59 @@ export class Multiplexer {
     }
   }
 
+  /** Save session state to .aimux/state.json for resume/restore */
+  private saveState(): void {
+    if (this.sessions.length === 0) return;
+
+    const dir = getAimuxDir();
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+    const state: SavedState = {
+      savedAt: new Date().toISOString(),
+      cwd: process.cwd(),
+      sessions: this.sessions.map(s => ({
+        id: s.id,
+        tool: s.command,
+        toolConfigKey: this.sessionToolKeys.get(s.id) ?? s.command,
+        command: s.command,
+        args: this.sessionOriginalArgs.get(s.id) ?? [],
+      })),
+    };
+
+    writeFileSync(
+      `${dir}/state.json`,
+      JSON.stringify(state, null, 2) + "\n"
+    );
+  }
+
+  /** Load saved state from .aimux/state.json */
+  static loadState(cwd?: string): SavedState | null {
+    const statePath = `${getAimuxDir(cwd)}/state.json`;
+    if (!existsSync(statePath)) return null;
+
+    try {
+      const raw = readFileSync(statePath, "utf-8");
+      const state = JSON.parse(raw) as SavedState;
+
+      // Check staleness (>24h)
+      const savedAt = new Date(state.savedAt).getTime();
+      if (Date.now() - savedAt > 24 * 60 * 60 * 1000) return null;
+
+      return state;
+    } catch {
+      return null;
+    }
+  }
+
   private teardown(): void {
+    debug("teardown started", "session");
+    this.saveState();
     this.stopFooterRefresh();
     this.contextWatcher.stop();
     this.resetScrollRegion();
     this.removeSessionsFile();
+    this.removeInstructionFiles();
+    closeDebug();
     if (this.onStdinData) {
       process.stdin.removeListener("data", this.onStdinData);
     }

@@ -2,9 +2,14 @@ import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync } from "no
 import { join } from "node:path";
 import { simpleGit } from "simple-git";
 import { appendEntry, type ContextEntry } from "./context-file.js";
-import { getAimuxDir } from "../config.js";
+import { getAimuxDir, loadConfig } from "../config.js";
+import { appendTurn, readHistory, type HistoryTurn } from "./history.js";
+import { algorithmicCompact } from "./compactor.js";
+import { debug, debugTurn, debugGit, debugContext, debugCompact } from "../debug.js";
 
 const git = simpleGit();
+
+const MAX_LIVE_MD_BYTES = 50 * 1024;
 
 /**
  * Capture git diff and write a context entry on session exit.
@@ -36,8 +41,20 @@ export async function captureGitContext(
 }
 
 /**
- * Live context watcher. Monitors recording files for new conversation turns
- * and writes context entries + maintains a compact summary for cross-agent sharing.
+ * Simple string hash for change detection.
+ */
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    hash = ((hash << 5) - hash + ch) | 0;
+  }
+  return hash.toString(36);
+}
+
+/**
+ * Live context watcher. Monitors recording files for new conversation turns,
+ * persists them to JSONL history, and maintains live.md for cross-agent sharing.
  */
 export class ContextWatcher {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -45,8 +62,13 @@ export class ContextWatcher {
   private cwd?: string;
   /** Track how far we've read into each session's recording */
   private readOffsets = new Map<string, number>();
-  /** Accumulated turns per session since last compaction */
-  private pendingTurns = new Map<string, ConversationTurn[]>();
+  /** Track last turn type per session to detect response→prompt transitions */
+  private lastTurnTypes = new Map<string, "prompt" | "response">();
+  /** Hash of last git diff output for change detection */
+  private lastDiffHash = "";
+  /** Total turn count across all sessions, for compaction trigger */
+  private totalTurnCount = 0;
+  private dirty = false;
 
   constructor(cwd?: string) {
     this.cwd = cwd;
@@ -70,8 +92,8 @@ export class ContextWatcher {
       clearInterval(this.interval);
       this.interval = null;
     }
-    // Final compaction
-    this.compact();
+    // Final live context write
+    this.writeLiveContext();
   }
 
   private initOffset(sessionId: string): void {
@@ -93,17 +115,20 @@ export class ContextWatcher {
       if (!this.readOffsets.has(session.id)) {
         this.initOffset(session.id);
       }
-      this.extractNewContent(session);
+      await this.extractNewContent(session);
     }
-    // Write compact summary
-    this.compact();
+    // Only write live context when new turns were extracted
+    if (this.dirty) {
+      this.dirty = false;
+      this.writeLiveContext();
+    }
   }
 
   /**
    * Read new content from a session's recording since our last read offset.
-   * Parse it into conversation turns and queue them.
+   * Parse into turns and persist to JSONL history.
    */
-  private extractNewContent(session: { id: string; command: string }): void {
+  private async extractNewContent(session: { id: string; command: string }): Promise<void> {
     const txtPath = this.recordingPath(session.id);
     if (!existsSync(txtPath)) return;
 
@@ -123,48 +148,123 @@ export class ContextWatcher {
       // Parse new content into turns
       const turns = parseConversationTurns(newContent, session.command);
 
-      if (turns.length > 0) {
-        const existing = this.pendingTurns.get(session.id) ?? [];
-        existing.push(...turns);
-        // Keep last 50 turns max
-        if (existing.length > 50) existing.splice(0, existing.length - 50);
-        this.pendingTurns.set(session.id, existing);
+      for (const turn of turns) {
+        const prevType = this.lastTurnTypes.get(session.id);
+
+        // When a prompt appears after a response, the agent finished — check git diff
+        if (turn.type === "prompt" && prevType === "response") {
+          await this.captureGitDiff(session.id);
+        }
+
+        // Persist to JSONL
+        const historyTurn: HistoryTurn = {
+          ts: new Date().toISOString(),
+          type: turn.type,
+          content: turn.content,
+        };
+        appendTurn(session.id, historyTurn, this.cwd);
+        this.totalTurnCount++;
+        this.dirty = true;
+        this.lastTurnTypes.set(session.id, turn.type);
+        debugTurn(session.id, turn.type, turn.content.length);
+
+        // Trigger algorithmic compaction periodically
+        const compactEvery = loadConfig(this.cwd).compactEveryNTurns;
+        if (this.totalTurnCount > 0 && this.totalTurnCount % compactEvery === 0) {
+          const sessionIds = this.sessions.map((s) => s.id);
+          debugCompact(sessionIds.length, this.totalTurnCount);
+          algorithmicCompact(sessionIds, this.cwd);
+        }
       }
     } catch {}
   }
 
   /**
-   * Write a compact context summary that other agents can read.
-   * This is the live-updated file at .aimux/context/live.md
+   * Check for git changes and append a git turn to history if files changed.
    */
-  private compact(): void {
+  private async captureGitDiff(sessionId: string): Promise<void> {
+    try {
+      const diff = await git.diff();
+      const hash = simpleHash(diff || "");
+
+      if (hash === this.lastDiffHash) return;
+      this.lastDiffHash = hash;
+
+      if (!diff) return;
+
+      const diffStat = await git.diffSummary();
+      if (diffStat.files.length === 0) return;
+
+      const gitTurn: HistoryTurn = {
+        ts: new Date().toISOString(),
+        type: "git",
+        content: `${diffStat.files.length} file(s) changed`,
+        files: diffStat.files.map((f: { file: string }) => f.file),
+        diff: diff.slice(0, 2000),
+      };
+      debugGit(diffStat.files.length, diff.length);
+      appendTurn(sessionId, gitTurn, this.cwd);
+    } catch {}
+  }
+
+  /**
+   * Write live context from history JSONL files.
+   * Sources from readHistory() instead of in-memory state.
+   */
+  private writeLiveContext(): void {
     const dir = join(getAimuxDir(this.cwd), "context");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
+    let turnsPerSession = loadConfig(this.cwd).liveWindowSize;
+
+    // Try building content, reduce turns if it exceeds size limit
+    while (turnsPerSession >= 2) {
+      const content = this.buildLiveContent(turnsPerSession);
+      if (content.length <= MAX_LIVE_MD_BYTES || turnsPerSession <= 2) {
+        if (content.length > 2) {
+          const livePath = join(dir, "live.md");
+          writeFileSync(livePath, content);
+          debugContext("wrote", "live.md", content.length);
+        }
+        return;
+      }
+      turnsPerSession = Math.floor(turnsPerSession * 0.7);
+    }
+  }
+
+  /**
+   * Build the live.md content string from history files.
+   */
+  private buildLiveContent(turnsPerSession: number): string {
     const sections: string[] = ["# aimux Live Context\n"];
     sections.push(`Updated: ${new Date().toISOString()}\n`);
 
     for (const session of this.sessions) {
-      const turns = this.pendingTurns.get(session.id);
-      if (!turns || turns.length === 0) continue;
+      const turns = readHistory(session.id, { lastN: turnsPerSession }, this.cwd);
+      if (turns.length === 0) continue;
 
       sections.push(`## ${session.id} (${session.command})\n`);
 
-      // Include last 10 turns for compactness
-      const recent = turns.slice(-10);
-      for (const turn of recent) {
+      for (const turn of turns) {
+        const time = turn.ts.slice(11, 16); // HH:MM from ISO string
+
         if (turn.type === "prompt") {
-          sections.push(`**User:** ${truncate(turn.content, 200)}\n`);
-        } else {
-          sections.push(`**Agent:** ${truncate(turn.content, 500)}\n`);
+          sections.push(`**[${time}] User:** ${truncate(turn.content, 200)}\n`);
+        } else if (turn.type === "response") {
+          sections.push(`**[${time}] Agent:** ${truncate(turn.content, 500)}\n`);
+          if (turn.files && turn.files.length > 0) {
+            sections.push(`  *Files: ${turn.files.join(", ")}*\n`);
+          }
+        } else if (turn.type === "git") {
+          if (turn.files && turn.files.length > 0) {
+            sections.push(`  *Files changed: ${turn.files.join(", ")}*\n`);
+          }
         }
       }
       sections.push("---\n");
     }
 
-    if (sections.length > 2) {
-      writeFileSync(join(dir, "live.md"), sections.join("\n"));
-    }
+    return sections.join("\n");
   }
 }
 

@@ -1,6 +1,6 @@
 import { parseKeys, matchKey, type KeyEvent } from "./key-parser.js";
 
-const TIMEOUT_MS = 500;
+const TIMEOUT_MS = 1000;
 
 export type HotkeyAction =
   | { type: "dashboard" }

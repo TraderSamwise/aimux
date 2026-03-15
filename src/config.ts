@@ -4,6 +4,8 @@ import { join } from "node:path";
 export interface AimuxConfig {
   defaultTool: string;
   contextMaxEntries: number;
+  liveWindowSize: number;
+  compactEveryNTurns: number;
   tools: Record<string, ToolConfig>;
 }
 
@@ -13,27 +15,37 @@ export interface ToolConfig {
   enabled: boolean;
   /** Flag/args to inject system prompt preamble, e.g. ["--append-system-prompt"] */
   preambleFlag?: string[];
+  /** Args to resume the last session natively, e.g. ["--continue"] for claude */
+  resumeArgs?: string[];
+  /** File to write preamble instructions to (created on start, removed on exit), e.g. "CODEX.md" */
+  instructionsFile?: string;
 }
 
 const DEFAULT_CONFIG: AimuxConfig = {
   defaultTool: "claude",
   contextMaxEntries: 20,
+  liveWindowSize: 20,
+  compactEveryNTurns: 50,
   tools: {
     claude: {
       command: "claude",
-      args: [],
+      args: ["--dangerously-skip-permissions"],
       enabled: true,
       preambleFlag: ["--append-system-prompt"],
+      resumeArgs: ["--continue"],
     },
     codex: {
       command: "codex",
       args: [],
       enabled: true,
+      resumeArgs: ["resume", "--last"],
+      instructionsFile: "CODEX.md",
     },
     aider: {
       command: "aider",
       args: [],
       enabled: true,
+      // aider auto-resumes via .aider.chat.history.md — no special args needed
     },
   },
 };

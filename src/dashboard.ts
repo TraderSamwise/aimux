@@ -53,7 +53,9 @@ export class Dashboard {
     }
 
     // Fill remaining space
-    const helpLine = " [1-9] focus  [c] new  [x] kill  [q] quit  [d/Esc] back ";
+    const helpLine = this.sessions.length > 0
+      ? " [1-9] focus  [c] new  [x] kill  [q] quit  [d/Esc] back "
+      : " [c] new  [q] quit ";
     const usedLines = lines.length + 2; // +2 for separator and help
     const remaining = Math.max(0, rows - usedLines);
     for (let i = 0; i < remaining; i++) {
