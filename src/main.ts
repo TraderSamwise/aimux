@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
 import { getHistoryDir } from "./context/history.js";
@@ -158,6 +158,71 @@ worktreeCmd
     try {
       removeWorktree(name);
       console.log(`Removed worktree "${name}".`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+const trashCmd = program
+  .command("trash")
+  .description("Manage trashed (killed) agents");
+
+trashCmd
+  .command("list")
+  .description("List trashed agents")
+  .action(() => {
+    const trashPath = `${getAimuxDir()}/state-trash.json`;
+    try {
+      const trash = JSON.parse(readFileSync(trashPath, "utf-8"));
+      if (!Array.isArray(trash) || trash.length === 0) {
+        console.log("No trashed agents.");
+        return;
+      }
+      console.log("ID".padEnd(25) + "Tool".padEnd(15) + "Backend Session ID");
+      console.log("-".repeat(70));
+      for (const s of trash) {
+        console.log(
+          (s.id ?? "?").padEnd(25) +
+          (s.command ?? s.tool ?? "?").padEnd(15) +
+          (s.backendSessionId ?? "(none)")
+        );
+      }
+    } catch {
+      console.log("No trashed agents.");
+    }
+  });
+
+trashCmd
+  .command("restore <id>")
+  .description("Restore a trashed agent back to offline state")
+  .action((id: string) => {
+    const dir = getAimuxDir();
+    const trashPath = `${dir}/state-trash.json`;
+    if (!existsSync(trashPath)) {
+      console.error("No trash file found.");
+      process.exit(1);
+    }
+    try {
+      const trash = JSON.parse(readFileSync(trashPath, "utf-8")) as Array<Record<string, unknown>>;
+      const idx = trash.findIndex(s => s.id === id);
+      if (idx === -1) {
+        console.error(`Agent "${id}" not found in trash.`);
+        process.exit(1);
+      }
+      const restored = trash.splice(idx, 1)[0];
+      writeFileSync(trashPath, JSON.stringify(trash, null, 2) + "\n");
+
+      // Add back to state.json
+      const statePath = `${dir}/state.json`;
+      let state = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] as Array<Record<string, unknown>> };
+      if (existsSync(statePath)) {
+        try { state = JSON.parse(readFileSync(statePath, "utf-8")); } catch {}
+      }
+      state.sessions.push(restored);
+      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+      console.log(`Restored "${id}". It will appear as offline next time you start aimux.`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);

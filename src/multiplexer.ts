@@ -79,6 +79,8 @@ export class Multiplexer {
   private sessionOriginalArgs = new Map<string, string[]>();
   /** Maps session ID → worktree path (if session runs in a worktree) */
   private sessionWorktreePaths = new Map<string, string>();
+  /** Offline sessions from previous runs (loaded from state.json) */
+  private offlineSessions: SessionState[] = [];
   private static readonly FOOTER_HEIGHT = 1;
 
   constructor() {
@@ -98,6 +100,7 @@ export class Multiplexer {
     initProject();
     await registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
+    this.loadOfflineSessions();
     this.defaultCommand = opts.command;
     this.defaultArgs = opts.args;
 
@@ -178,6 +181,7 @@ export class Multiplexer {
     initProject();
     await registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
+    this.loadOfflineSessions();
     this.startedInDashboard = true;
 
     // Load config to set default tool for session creation
@@ -274,8 +278,26 @@ export class Multiplexer {
       return this.runDashboard();
     }
 
+    // Collect session IDs owned by other live instances
+    const ownedByOthers = new Set<string>();
+    try {
+      const remote = getRemoteInstances(this.instanceId, process.cwd());
+      for (const inst of remote) {
+        for (const rs of inst.sessions) {
+          ownedByOthers.add(rs.id);
+          if (rs.backendSessionId) ownedByOthers.add(rs.backendSessionId);
+        }
+      }
+    } catch {}
+
     // Spawn each session with resumeArgs, substituting backend session ID
     for (const saved of sessionsToResume) {
+      // Skip sessions owned by another live instance
+      if (ownedByOthers.has(saved.id) || (saved.backendSessionId && ownedByOthers.has(saved.backendSessionId))) {
+        debug(`skipping resume of ${saved.id} — owned by another instance`, "session");
+        continue;
+      }
+
       const toolCfg = config.tools[saved.toolConfigKey];
       if (!toolCfg) continue;
 
@@ -819,12 +841,27 @@ export class Multiplexer {
       case "W":
         this.showWorktreeList();
         return;
-      case "x":
+      case "x": {
+        // Check if selected session is offline → trash it
+        const allDs = this.getDashboardSessions();
+        const selId = this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
+          ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
+          : undefined;
+        // In flat mode, use activeIndex
+        const selEntry = selId
+          ? allDs.find(d => d.id === selId)
+          : (!hasWorktrees ? allDs[this.activeIndex] : undefined);
+        if (selEntry?.status === "offline") {
+          this.trashOfflineSession(selEntry.id);
+          this.renderDashboard();
+          return;
+        }
         if (this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0) {
           const session = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
           if (session) session.kill();
         }
         return;
+      }
       case "m":
         if (this.sessions.length > 0) {
           this.showMigratePicker();
@@ -834,29 +871,44 @@ export class Multiplexer {
 
     if (!hasWorktrees) {
       // No worktrees — flat session navigation (simple mode)
+      const totalCount = this.getDashboardSessions().length;
       switch (key) {
         case "down":
         case "j":
         case "n":
-          if (this.sessions.length > 1) {
-            this.activeIndex = (this.activeIndex + 1) % this.sessions.length;
+          if (totalCount > 1) {
+            this.activeIndex = (this.activeIndex + 1) % totalCount;
             this.renderDashboard();
           }
           break;
         case "up":
         case "k":
         case "p":
-          if (this.sessions.length > 1) {
-            this.activeIndex = (this.activeIndex - 1 + this.sessions.length) % this.sessions.length;
+          if (totalCount > 1) {
+            this.activeIndex = (this.activeIndex - 1 + totalCount) % totalCount;
             this.renderDashboard();
           }
           break;
-        case "enter":
-          if (this.tryTakeoverAtIndex(this.activeIndex)) return;
+        case "enter": {
+          const ds = this.getDashboardSessions();
+          const entry = ds[this.activeIndex];
+          if (entry?.remoteInstanceId) {
+            this.takeoverFromDashEntry(entry);
+            return;
+          }
+          if (entry?.status === "offline") {
+            const offline = this.offlineSessions.find(s => s.id === entry.id);
+            if (offline) {
+              this.resumeOfflineSession(offline);
+              this.focusSession(this.sessions.length - 1);
+            }
+            return;
+          }
           if (this.sessions.length > 0) {
             this.focusSession(this.activeIndex);
           }
           break;
+        }
         case "d":
         case "escape":
           if (this.sessions.length > 0) {
@@ -932,12 +984,20 @@ export class Multiplexer {
           }
           break;
         case "enter": {
-          // Check if selected session is a remote one needing takeover
-          const dashSessions = this.getDashboardSessions();
+          // Check if selected session is remote or offline
+          const allDash = this.getDashboardSessions();
           const selectedId = this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id;
-          const dashEntry = dashSessions.find(ds => ds.id === selectedId);
+          const dashEntry = allDash.find(ds => ds.id === selectedId);
           if (dashEntry?.remoteInstanceId) {
             this.takeoverFromDashEntry(dashEntry);
+            return;
+          }
+          if (dashEntry?.status === "offline") {
+            const offline = this.offlineSessions.find(s => s.id === dashEntry.id);
+            if (offline) {
+              this.resumeOfflineSession(offline);
+              this.focusSession(this.sessions.length - 1);
+            }
             return;
           }
           if (this.dashboardWorktreeSessions.length > 0) {
@@ -1132,6 +1192,21 @@ export class Multiplexer {
       }
     } catch {
       // Registry read failed — skip remote display
+    }
+
+    // Add offline sessions from previous runs
+    for (const os of this.offlineSessions) {
+      const alreadyShown = dashSessions.some(ds => ds.id === os.id ||
+        (os.backendSessionId && ds.remoteBackendSessionId === os.backendSessionId));
+      if (alreadyShown) continue;
+      dashSessions.push({
+        index: dashSessions.length,
+        id: os.id,
+        command: os.command,
+        status: "offline" as const,
+        active: false,
+        worktreePath: os.worktreePath,
+      });
     }
 
     this.dashboard.update(
@@ -1454,15 +1529,6 @@ export class Multiplexer {
     return dashSessions;
   }
 
-  /** Try to take over a remote session at the given dashboard index. Returns true if it was remote. */
-  private tryTakeoverAtIndex(index: number): boolean {
-    const dashSessions = this.getDashboardSessions();
-    const entry = dashSessions[index];
-    if (!entry?.remoteInstanceId) return false;
-    this.takeoverFromDashEntry(entry);
-    return true;
-  }
-
   /** Take over a remote session from a DashboardSession entry */
   private takeoverFromDashEntry(entry: DashboardSession): void {
     if (!entry.remoteInstanceId || !entry.remoteBackendSessionId) return;
@@ -1766,6 +1832,100 @@ export class Multiplexer {
       clearInterval(this.footerInterval);
       this.footerInterval = null;
     }
+  }
+
+  /** Load offline sessions from state.json, excluding any that are owned by live instances */
+  private loadOfflineSessions(): void {
+    const state = Multiplexer.loadState();
+    if (!state || state.sessions.length === 0) return;
+
+    // Get all session IDs owned by live instances (including ourselves)
+    const ownedIds = new Set<string>();
+    for (const s of this.sessions) ownedIds.add(s.id);
+    try {
+      const remote = getRemoteInstances(this.instanceId, process.cwd());
+      for (const inst of remote) {
+        for (const rs of inst.sessions) ownedIds.add(rs.id);
+      }
+    } catch {}
+
+    // Also exclude by backendSessionId to catch resumed sessions with new IDs
+    const ownedBackendIds = new Set<string>();
+    for (const s of this.sessions) {
+      const bsid = (s as any)._backendSessionId as string | undefined;
+      if (bsid) ownedBackendIds.add(bsid);
+    }
+
+    this.offlineSessions = state.sessions.filter(s => {
+      if (ownedIds.has(s.id)) return false;
+      if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
+      return true;
+    });
+
+    if (this.offlineSessions.length > 0) {
+      debug(`loaded ${this.offlineSessions.length} offline session(s) from state.json`, "session");
+    }
+  }
+
+  /** Remove an offline session and move it to state-trash.json */
+  private trashOfflineSession(sessionId: string): void {
+    const session = this.offlineSessions.find(s => s.id === sessionId);
+    if (!session) return;
+
+    // Remove from offline list
+    this.offlineSessions = this.offlineSessions.filter(s => s.id !== sessionId);
+
+    // Append to trash file
+    const dir = getAimuxDir();
+    const trashPath = `${dir}/state-trash.json`;
+    let trash: SessionState[] = [];
+    if (existsSync(trashPath)) {
+      try { trash = JSON.parse(readFileSync(trashPath, "utf-8")); } catch {}
+    }
+    trash.push({ ...session, id: session.id });
+    writeFileSync(trashPath, JSON.stringify(trash, null, 2) + "\n");
+
+    // Also remove from state.json
+    const statePath = `${dir}/state.json`;
+    if (existsSync(statePath)) {
+      try {
+        const state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
+        state.sessions = state.sessions.filter(s => s.id !== sessionId);
+        writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+      } catch {}
+    }
+
+    debug(`trashed offline session ${sessionId}`, "session");
+  }
+
+  /** Resume a specific offline session */
+  private resumeOfflineSession(session: SessionState): void {
+    const config = loadConfig();
+    const toolCfg = config.tools[session.toolConfigKey];
+    if (!toolCfg) return;
+
+    let args: string[];
+    if (session.backendSessionId && toolCfg.resumeArgs) {
+      args = toolCfg.resumeArgs.map(
+        (a: string) => a.replace("{sessionId}", session.backendSessionId!)
+      );
+    } else {
+      args = [...toolCfg.args];
+    }
+
+    // Remove from offline list
+    this.offlineSessions = this.offlineSessions.filter(s => s.id !== session.id);
+
+    debug(`resuming offline session ${session.id} (backend=${session.backendSessionId ?? "none"})`, "session");
+    this.createSession(
+      session.command,
+      args,
+      toolCfg.preambleFlag,
+      session.toolConfigKey,
+      undefined,
+      toolCfg.sessionIdFlag,
+      session.worktreePath,
+    );
   }
 
   private startHeartbeat(): void {

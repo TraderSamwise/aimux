@@ -28,6 +28,7 @@ const STATUS_ICONS: Record<SessionStatus, string> = {
   idle: "\x1b[32m●\x1b[0m",     // green
   waiting: "\x1b[36m◉\x1b[0m",  // cyan
   exited: "\x1b[31m○\x1b[0m",   // red
+  offline: "\x1b[2m○\x1b[0m",   // dim
 };
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
@@ -35,13 +36,13 @@ const STATUS_LABELS: Record<SessionStatus, string> = {
   idle: "idle",
   waiting: "thinking",
   exited: "exited",
+  offline: "offline",
 };
 
 export class Dashboard {
   private sessions: DashboardSession[] = [];
   private worktreeGroups: WorktreeGroup[] = [];
   private hasWorktrees = false;
-  private hasRemoteSessions = false;
   private focusedWorktreePath: string | undefined = undefined;
   private navLevel: "worktrees" | "sessions" = "sessions";
   private selectedSessionId: string | undefined = undefined;
@@ -57,7 +58,6 @@ export class Dashboard {
     this.worktreeGroups = worktreeGroups ?? [];
     this.hasWorktrees = this.worktreeGroups.length > 0 ||
       sessions.some(s => s.worktreePath);
-    this.hasRemoteSessions = sessions.some(s => s.remoteInstancePid);
     this.focusedWorktreePath = focusedWorktreePath;
     this.navLevel = navLevel ?? "sessions";
     this.selectedSessionId = selectedSessionId;

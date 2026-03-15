@@ -1,4 +1,4 @@
-export type SessionStatus = "running" | "idle" | "waiting" | "exited";
+export type SessionStatus = "running" | "idle" | "waiting" | "exited" | "offline";
 
 // Tool-specific prompt patterns that indicate "waiting for input"
 const PROMPT_PATTERNS: Array<{ tool: RegExp; pattern: RegExp }> = [
