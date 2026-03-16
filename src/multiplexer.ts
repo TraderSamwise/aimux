@@ -2272,7 +2272,7 @@ export class Multiplexer {
   private startFooterRefresh(): void {
     if (this.footerInterval) return;
     this.renderFooter();
-    // Refresh every 2s to pick up status changes + check for notifications
+    // Refresh every 1s to pick up status changes, dispatch tasks, and check notifications
     this.footerInterval = setInterval(() => {
       if (this.mode === "focused") this.renderFooter();
       this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
@@ -2303,7 +2303,7 @@ export class Multiplexer {
         }
         this.prevStatuses.set(session.id, curr);
       }
-    }, 2000);
+    }, 1000);
   }
 
   private stopFooterRefresh(): void {
