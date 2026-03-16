@@ -196,14 +196,14 @@ export async function updateHeartbeat(
         const registeredIds = new Set(inst.sessions.map((s) => s.id));
         for (const s of sessions) {
           if (!registeredIds.has(s.id)) {
-            // This session was in our local state but not in registry — it was claimed
-            // (Only flag if the registry entry had sessions before, i.e. not first heartbeat)
             if (inst.sessions.length > 0 || registeredIds.size > 0) {
               claimedIds.push(s.id);
             }
           }
         }
-        return { ...inst, heartbeat: new Date().toISOString(), sessions };
+        // Write back only sessions that weren't claimed — don't re-register them
+        const remainingSessions = sessions.filter((s) => !claimedIds.includes(s.id));
+        return { ...inst, heartbeat: new Date().toISOString(), sessions: remainingSessions };
       }
       return inst;
     });

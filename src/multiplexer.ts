@@ -1969,6 +1969,7 @@ export class Multiplexer {
         status: "offline" as const,
         active: false,
         worktreePath: os.worktreePath,
+        remoteBackendSessionId: os.backendSessionId,
       });
     }
 
@@ -2533,12 +2534,21 @@ export class Multiplexer {
     }
   }
 
-  /** Save session state to .aimux/state.json, merging with existing state from other instances. */
+  /** Get the shared state.json path (in main repo for cross-worktree visibility). */
+  private static getSharedStatePath(): string {
+    try {
+      const mainRepo = findMainRepo();
+      const dir = join(mainRepo, ".aimux");
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      return join(dir, "state.json");
+    } catch {
+      return join(getAimuxDir(), "state.json");
+    }
+  }
+
+  /** Save session state to main repo's .aimux/state.json, merging with existing state. */
   private saveState(): void {
     if (this.sessions.length === 0) return;
-
-    const dir = getAimuxDir();
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     const mySessions = this.sessions.map((s) => ({
       id: s.id,
@@ -2551,7 +2561,7 @@ export class Multiplexer {
     }));
 
     // Merge with existing state (other instances may have written their sessions)
-    const statePath = `${dir}/state.json`;
+    const statePath = Multiplexer.getSharedStatePath();
     let mergedSessions: SessionState[] = mySessions;
 
     if (existsSync(statePath)) {
@@ -2580,9 +2590,15 @@ export class Multiplexer {
     writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
   }
 
-  /** Load saved state from .aimux/state.json */
+  /** Load saved state from main repo's .aimux/state.json */
   static loadState(cwd?: string): SavedState | null {
-    const statePath = `${getAimuxDir(cwd)}/state.json`;
+    let statePath: string;
+    try {
+      const mainRepo = findMainRepo(cwd);
+      statePath = join(mainRepo, ".aimux", "state.json");
+    } catch {
+      statePath = `${getAimuxDir(cwd)}/state.json`;
+    }
     if (!existsSync(statePath)) return null;
 
     try {
