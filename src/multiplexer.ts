@@ -84,6 +84,8 @@ export class Multiplexer {
   private switcherTimeout: ReturnType<typeof setTimeout> | null = null;
   /** MRU order of session IDs (most recent first) */
   private sessionMRU: string[] = [];
+  /** Sessions confirmed registered in the instance registry (for claim detection) */
+  private confirmedRegistered = new Set<string>();
   /** The focused worktree path on the dashboard (undefined = main repo) */
   private focusedWorktreePath: string | undefined = undefined;
   /** Ordered list of worktree paths for navigation (undefined = main repo) */
@@ -2455,9 +2457,20 @@ export class Multiplexer {
       const sessions = this.getInstanceSessionRefs();
       updateHeartbeat(this.instanceId, sessions, process.cwd())
         .then((claimedIds) => {
-          // Handle sessions that were taken over by another instance
+          // Only act on claims for sessions we previously confirmed as registered.
+          // This filters false positives on first heartbeat (new sessions look "claimed"
+          // because they weren't in the registry yet).
           for (const claimedId of claimedIds) {
-            this.handleSessionClaimed(claimedId);
+            if (this.confirmedRegistered.has(claimedId)) {
+              this.handleSessionClaimed(claimedId);
+              this.confirmedRegistered.delete(claimedId);
+            }
+          }
+          // Mark successfully registered sessions as confirmed
+          for (const s of sessions) {
+            if (!claimedIds.includes(s.id)) {
+              this.confirmedRegistered.add(s.id);
+            }
           }
         })
         .catch(() => {});

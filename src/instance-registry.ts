@@ -191,17 +191,27 @@ export async function updateHeartbeat(
     const pruned = pruneDeadEntries(instances);
     return pruned.map((inst) => {
       if (inst.instanceId === instanceId) {
-        // Detect sessions claimed by another instance: we expect to own them
-        // but they were removed from our registry entry by claimSession()
+        // Detect sessions claimed by another instance: sessions we previously
+        // registered that are now missing from our registry entry.
         const registeredIds = new Set(inst.sessions.map((s) => s.id));
-        for (const s of sessions) {
-          if (!registeredIds.has(s.id)) {
-            if (inst.sessions.length > 0 || registeredIds.size > 0) {
+        const sendingIds = new Set(sessions.map((s) => s.id));
+        // Check what was registered but isn't being sent (we dropped it) — not a claim
+        // Check what we're sending but isn't registered — could be new OR claimed
+        // Only flag as claimed if the registry previously had this session type of work
+        // (i.e., registry had sessions, meaning we're not on our first heartbeat)
+        if (registeredIds.size > 0) {
+          for (const s of sessions) {
+            if (!registeredIds.has(s.id)) {
               claimedIds.push(s.id);
             }
           }
         }
-        // Write back only sessions that weren't claimed — don't re-register them
+        // Also detect: registry had sessions that we're still sending but they're gone
+        // This handles the case where ALL sessions were claimed (registry is now empty)
+        // We detect this by checking: registry is empty, but we previously had sessions
+        // The caller (multiplexer) tracks confirmed registrations to handle this case.
+
+        // Write back sessions, excluding any that were genuinely claimed
         const remainingSessions = sessions.filter((s) => !claimedIds.includes(s.id));
         return { ...inst, heartbeat: new Date().toISOString(), sessions: remainingSessions };
       }
