@@ -2498,6 +2498,8 @@ export class Multiplexer {
           }
         })
         .catch(() => {});
+      // Refresh offline sessions from state.json (picks up cross-instance graveyard/kill)
+      this.loadOfflineSessions();
       // Refresh dashboard to pick up remote instance changes
       if (this.mode === "dashboard") {
         this.renderDashboard();
