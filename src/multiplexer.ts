@@ -37,6 +37,7 @@ import {
   claimSession,
   type InstanceSessionRef,
 } from "./instance-registry.js";
+import { TaskDispatcher } from "./task-dispatcher.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -91,6 +92,7 @@ export class Multiplexer {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher();
+  private taskDispatcher: TaskDispatcher | null = null;
   /** Maps session ID → toolConfigKey for state saving */
   private sessionToolKeys = new Map<string, string>();
   /** Maps session ID → original args (before preamble injection) */
@@ -118,6 +120,10 @@ export class Multiplexer {
     initProject();
     await registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
+    this.taskDispatcher = new TaskDispatcher(
+      (id) => this.sessions.find((s) => s.id === id),
+      (id) => this.sessionToolKeys.get(id),
+    );
     this.loadOfflineSessions();
     this.defaultCommand = opts.command;
     this.defaultArgs = opts.args;
@@ -598,6 +604,20 @@ export class Multiplexer {
         preamble += `\n\nYou are working in a git worktree at ${worktreePath}. Stay in this directory.`;
       }
     }
+
+    preamble +=
+      "\n\n## Task Delegation\n" +
+      "You can delegate tasks to other agents by creating JSON files in .aimux/tasks/.\n" +
+      "- Filename: .aimux/tasks/{uuid}.json\n" +
+      '- Required fields: id (same as filename without .json), status ("pending"), ' +
+      'assignedBy ("' +
+      sessionId +
+      '"), description, prompt, createdAt (ISO), updatedAt (ISO)\n' +
+      '- Optional: assignedTo (session ID from sessions.json), tool ("claude"/"codex"/"aider")\n' +
+      "- Aimux dispatches pending tasks to idle agents automatically\n" +
+      '- When you receive a task, update its .json file: set status to "done" with a result field, ' +
+      'or "failed" with an error field\n' +
+      "- Check .aimux/sessions.json for available agents and their session IDs";
 
     if (extraPreamble) {
       preamble += "\n" + extraPreamble;
@@ -2007,6 +2027,11 @@ export class Multiplexer {
       parts.push(`${active}${icon} ${i + 1}:${name}${reset}`);
     }
 
+    const counts = this.taskDispatcher?.getTaskCounts();
+    if (counts && (counts.pending > 0 || counts.assigned > 0)) {
+      parts.push(`\x1b[2m[T:${counts.pending}p/${counts.assigned}a]\x1b[0m`);
+    }
+
     const left = ` ${parts.join("  ")}`;
     const right = `^A ? help `;
 
@@ -2031,6 +2056,7 @@ export class Multiplexer {
     // Refresh every 2s to pick up status changes + check for notifications
     this.footerInterval = setInterval(() => {
       if (this.mode === "focused") this.renderFooter();
+      this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
       // Check for status transitions that warrant notifications
       for (const session of this.sessions) {
         const prev = this.prevStatuses.get(session.id);
@@ -2303,6 +2329,7 @@ export class Multiplexer {
   private teardown(): void {
     debug("teardown started", "session");
     this.stopHeartbeat();
+    this.taskDispatcher = null;
     unregisterInstance(this.instanceId, process.cwd()).catch(() => {});
     this.saveState();
     this.stopFooterRefresh();

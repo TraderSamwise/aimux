@@ -191,6 +191,9 @@ context/live.md
 
 # Terminal recordings (large, machine-specific)
 recordings/
+
+# Task delegation files
+tasks/
 `;
 
 export function initProject(cwd?: string): void {
@@ -199,6 +202,7 @@ export function initProject(cwd?: string): void {
   mkdirSync(join(dir, "context"), { recursive: true });
   mkdirSync(join(dir, "recordings"), { recursive: true });
   mkdirSync(join(dir, "history"), { recursive: true });
+  mkdirSync(join(dir, "tasks"), { recursive: true });
 
   if (!existsSync(getConfigPath(cwd))) {
     saveConfig(DEFAULT_CONFIG, cwd);
