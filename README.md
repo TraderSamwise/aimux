@@ -11,6 +11,7 @@ aimux wraps tools like [Claude Code](https://github.com/anthropics/claude-code),
 - **Dashboard view** — see all running, offline, and remote agents at a glance
 - **Multi-instance** — run aimux in multiple terminal tabs; agents from other instances appear inline and can be taken over
 - **Agent lifecycle** — two-step kill (`[x]` stops → offline, `[x]` again → graveyard), with `aimux graveyard resurrect` for recovery
+- **Task delegation** — agents can delegate work to each other via `.aimux/tasks/`, with automatic dispatch, completion notifications, and dashboard badges
 - **Context sharing** — agents can read each other's conversation history via `.aimux/context/`
 - **Session resume** — resume previous sessions using each tool's native resume (`--resume`) or injected history (`--restore`)
 - **Git worktree support** — first-class worktree management for parallel feature work, with per-worktree agent isolation
@@ -111,6 +112,57 @@ aimux records each agent's conversation and makes it available to other agents:
 - **`.aimux/sessions.json`** — all running agents (so agents can discover each other)
 
 Agents are told about these files in their startup preamble.
+
+## Task Delegation
+
+Agents can delegate work to each other through the aimux task system. This is a file-based protocol — agents create task files, aimux dispatches them, and agents report results.
+
+### How it works
+
+1. **Agent A** creates a task file in `.aimux/tasks/`:
+   ```json
+   {
+     "id": "add-login-form",
+     "status": "pending",
+     "assignedBy": "claude-abc123",
+     "description": "Add a login form component",
+     "prompt": "Create a React login form at src/components/LoginForm.tsx with email and password fields, validation, and submit handler.",
+     "createdAt": "2025-01-15T10:30:00Z",
+     "updatedAt": "2025-01-15T10:30:00Z"
+   }
+   ```
+
+2. **Aimux detects** the pending task (checks every 2s) and finds an idle agent to handle it
+
+3. **The task prompt is injected** into the target agent's stdin — the agent sees it as input and starts working
+
+4. **The agent completes the work** and updates the task file with `"status": "done"` and a `"result"` summary
+
+5. **Aimux notifies** the original agent that the task is complete
+
+### Targeting
+
+Tasks can be targeted in three ways:
+
+- **Specific agent**: set `assignedTo` to a session ID from `.aimux/sessions.json`
+- **By tool type**: set `tool` to `"claude"`, `"codex"`, or `"aider"` — dispatched to the first idle agent of that type
+- **Any idle agent**: omit both fields — dispatched to any available idle agent
+
+### Dashboard indicators
+
+- Sessions with active tasks show a purple `⧫` badge with the task description
+- The footer shows task counts: `[T:2p/1a]` (2 pending, 1 assigned)
+- Flash notifications appear when tasks are assigned, completed, or failed
+
+### Using it
+
+Just ask your agent to delegate. The preamble tells agents exactly how the protocol works. For example:
+
+> "Delegate the test writing to another agent"
+
+> "Hand off the CSS cleanup to the codex agent"
+
+The agent will create the task file, and aimux handles the rest. This is separate from any native task system in the underlying tools (like Claude Code's internal tasks).
 
 ## Custom Instructions
 
