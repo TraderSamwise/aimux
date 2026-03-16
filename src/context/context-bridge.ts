@@ -298,7 +298,8 @@ function parseConversationTurns(text: string, tool: string, turnPatterns?: RegEx
       const match = trimmed.match(pattern);
       if (match) {
         isPrompt = true;
-        promptContent = match[1] ?? trimmed;
+        // Use captured group if present; skip if no capture (bare prompt marker)
+        promptContent = match[1]?.trim() ?? "";
         break;
       }
     }
