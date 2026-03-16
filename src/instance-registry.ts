@@ -178,17 +178,37 @@ export async function unregisterInstance(instanceId: string, cwd: string): Promi
 
 /**
  * Update heartbeat timestamp and sessions list. Also prunes dead instances.
+ * Returns IDs of sessions that were claimed by another instance since last heartbeat
+ * (sessions we expected to own but were missing from our registry entry).
  */
-export async function updateHeartbeat(instanceId: string, sessions: InstanceSessionRef[], cwd: string): Promise<void> {
+export async function updateHeartbeat(
+  instanceId: string,
+  sessions: InstanceSessionRef[],
+  cwd: string,
+): Promise<string[]> {
+  const claimedIds: string[] = [];
   await withLockedInstances(cwd, (instances) => {
     const pruned = pruneDeadEntries(instances);
     return pruned.map((inst) => {
       if (inst.instanceId === instanceId) {
+        // Detect sessions claimed by another instance: we expect to own them
+        // but they were removed from our registry entry by claimSession()
+        const registeredIds = new Set(inst.sessions.map((s) => s.id));
+        for (const s of sessions) {
+          if (!registeredIds.has(s.id)) {
+            // This session was in our local state but not in registry — it was claimed
+            // (Only flag if the registry entry had sessions before, i.e. not first heartbeat)
+            if (inst.sessions.length > 0 || registeredIds.size > 0) {
+              claimedIds.push(s.id);
+            }
+          }
+        }
         return { ...inst, heartbeat: new Date().toISOString(), sessions };
       }
       return inst;
     });
   });
+  return claimedIds;
 }
 
 /**

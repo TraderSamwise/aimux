@@ -2452,12 +2452,53 @@ export class Multiplexer {
     if (this.heartbeatInterval) return;
     this.heartbeatInterval = setInterval(() => {
       const sessions = this.getInstanceSessionRefs();
-      updateHeartbeat(this.instanceId, sessions, process.cwd()).catch(() => {});
+      updateHeartbeat(this.instanceId, sessions, process.cwd())
+        .then((claimedIds) => {
+          // Handle sessions that were taken over by another instance
+          for (const claimedId of claimedIds) {
+            this.handleSessionClaimed(claimedId);
+          }
+        })
+        .catch(() => {});
       // Refresh dashboard to pick up remote instance changes
       if (this.mode === "dashboard") {
         this.renderDashboard();
       }
     }, 5000);
+  }
+
+  /**
+   * Handle a session that was claimed (taken over) by another aimux instance.
+   * Kill the local PTY and switch to dashboard if it was the focused session.
+   */
+  private handleSessionClaimed(sessionId: string): void {
+    const session = this.sessions.find((s) => s.id === sessionId);
+    if (!session) return;
+
+    const wasFocused = this.mode === "focused" && this.sessions[this.activeIndex] === session;
+    debug(`session ${sessionId} was claimed by another instance, killing local PTY`, "instance");
+
+    // Kill the local PTY without going through normal exit flow (no offline/state save)
+    session.kill();
+
+    // Remove from sessions array
+    const idx = this.sessions.indexOf(session);
+    if (idx >= 0) {
+      this.sessions.splice(idx, 1);
+      this.sessionToolKeys.delete(sessionId);
+      this.sessionOriginalArgs.delete(sessionId);
+      this.sessionWorktreePaths.delete(sessionId);
+    }
+
+    // Adjust active index
+    if (this.activeIndex >= this.sessions.length) {
+      this.activeIndex = Math.max(0, this.sessions.length - 1);
+    }
+
+    // If the claimed session was focused, switch to dashboard
+    if (wasFocused) {
+      this.setMode("dashboard");
+    }
   }
 
   private stopHeartbeat(): void {
