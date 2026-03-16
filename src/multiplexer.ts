@@ -78,6 +78,12 @@ export class Multiplexer {
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
   private graveyardActive = false;
   private graveyardEntries: SessionState[] = [];
+  /** Quick switcher overlay state */
+  private switcherActive = false;
+  private switcherIndex = 0;
+  private switcherTimeout: ReturnType<typeof setTimeout> | null = null;
+  /** MRU order of session IDs (most recent first) */
+  private sessionMRU: string[] = [];
   /** The focused worktree path on the dashboard (undefined = main repo) */
   private focusedWorktreePath: string | undefined = undefined;
   /** Ordered list of worktree paths for navigation (undefined = main repo) */
@@ -170,6 +176,10 @@ export class Multiplexer {
         this.handleMigratePickerKey(data);
         return;
       }
+      if (this.switcherActive) {
+        this.handleSwitcherKey(data);
+        return;
+      }
       if (this.graveyardActive) {
         this.handleGraveyardKey(data);
         return;
@@ -246,6 +256,10 @@ export class Multiplexer {
       }
       if (this.migratePickerActive) {
         this.handleMigratePickerKey(data);
+        return;
+      }
+      if (this.switcherActive) {
+        this.handleSwitcherKey(data);
         return;
       }
       if (this.graveyardActive) {
@@ -384,6 +398,10 @@ export class Multiplexer {
         this.handleMigratePickerKey(data);
         return;
       }
+      if (this.switcherActive) {
+        this.handleSwitcherKey(data);
+        return;
+      }
       if (this.graveyardActive) {
         this.handleGraveyardKey(data);
         return;
@@ -502,6 +520,10 @@ export class Multiplexer {
       }
       if (this.migratePickerActive) {
         this.handleMigratePickerKey(data);
+        return;
+      }
+      if (this.switcherActive) {
+        this.handleSwitcherKey(data);
         return;
       }
       if (this.graveyardActive) {
@@ -867,6 +889,10 @@ export class Multiplexer {
     this.activeIndex = index;
     this.setMode("focused");
 
+    // Update MRU: move focused session to front
+    const sid = this.sessions[index].id;
+    this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
+
     // Set up scroll region and restore screen
     this.setupScrollRegion();
     process.stdout.write(this.sessions[index].getScreenState());
@@ -906,6 +932,12 @@ export class Multiplexer {
         if (this.sessions.length > 0) {
           const session = this.sessions[this.activeIndex];
           session.kill();
+        }
+        break;
+
+      case "switcher":
+        if (this.sessions.length > 1) {
+          this.showSwitcher();
         }
         break;
 
@@ -1627,6 +1659,168 @@ export class Multiplexer {
       }
       return;
     }
+  }
+
+  // --- Quick Switcher (^A s) ---
+
+  /** Get sessions in MRU order (most recently used first), only running/alive sessions */
+  private getSwitcherList(): PtySession[] {
+    const alive = this.sessions.filter((s) => !s.exited);
+    // Build MRU-ordered list: known MRU order first, then any remaining
+    const ordered: PtySession[] = [];
+    for (const id of this.sessionMRU) {
+      const s = alive.find((a) => a.id === id);
+      if (s) ordered.push(s);
+    }
+    // Append any sessions not yet in MRU
+    for (const s of alive) {
+      if (!ordered.includes(s)) ordered.push(s);
+    }
+    return ordered;
+  }
+
+  private showSwitcher(): void {
+    const list = this.getSwitcherList();
+    if (list.length < 2) return;
+
+    this.switcherActive = true;
+    this.switcherIndex = 1; // Start on second item (most recent non-current)
+    this.renderSwitcher();
+    this.resetSwitcherTimeout();
+  }
+
+  private resetSwitcherTimeout(): void {
+    if (this.switcherTimeout) clearTimeout(this.switcherTimeout);
+    this.switcherTimeout = setTimeout(() => {
+      this.confirmSwitcher();
+    }, 1000);
+  }
+
+  private confirmSwitcher(): void {
+    if (this.switcherTimeout) {
+      clearTimeout(this.switcherTimeout);
+      this.switcherTimeout = null;
+    }
+    this.switcherActive = false;
+
+    const list = this.getSwitcherList();
+    const target = list[this.switcherIndex];
+    if (target) {
+      const idx = this.sessions.indexOf(target);
+      if (idx >= 0) this.focusSession(idx);
+    }
+  }
+
+  private dismissSwitcher(): void {
+    if (this.switcherTimeout) {
+      clearTimeout(this.switcherTimeout);
+      this.switcherTimeout = null;
+    }
+    this.switcherActive = false;
+    // Restore current screen
+    if (this.mode === "dashboard") {
+      this.renderDashboard();
+    } else {
+      this.setupScrollRegion();
+      if (this.sessions[this.activeIndex]) {
+        process.stdout.write(this.sessions[this.activeIndex].getScreenState());
+      }
+      this.renderFooter();
+    }
+  }
+
+  private renderSwitcher(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const list = this.getSwitcherList();
+
+    const lines: string[] = ["Switch Agent:"];
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      const wtPath = this.sessionWorktreePaths.get(s.id);
+      const wtLabel = wtPath ? ` \x1b[2m(${wtPath.split("/").pop()})\x1b[0m` : "";
+      const current = s.id === this.sessions[this.activeIndex]?.id ? " \x1b[2m(current)\x1b[0m" : "";
+      const pointer = i === this.switcherIndex ? "\x1b[33m▸\x1b[0m " : "  ";
+      const highlight = i === this.switcherIndex ? "\x1b[1m" : "";
+      const reset = "\x1b[0m";
+      lines.push(`${pointer}${highlight}${s.command}:${s.id}${reset}${wtLabel}${current}`);
+    }
+    lines.push("");
+    lines.push("  \x1b[2m[s] cycle  Enter confirm  [x] stop  Esc cancel\x1b[0m");
+
+    // Strip ANSI for width calculation
+    const strip = (str: string) => str.replace(/\x1b\[[0-9;]*m/g, "");
+    const boxWidth = Math.max(...lines.map((l) => strip(l).length)) + 4;
+    const startRow = Math.max(1, Math.floor((rows - lines.length - 2) / 2));
+    const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
+
+    let output = "\x1b7"; // save cursor
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1];
+        const stripped = strip(line);
+        const padLen = Math.max(0, boxWidth - 2 - stripped.length);
+        output += `\x1b[44;97m  ${line}${" ".repeat(padLen)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8"; // restore cursor
+    process.stdout.write(output);
+  }
+
+  private handleSwitcherKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    if (key === "s") {
+      // Cycle to next item
+      const list = this.getSwitcherList();
+      this.switcherIndex = (this.switcherIndex + 1) % list.length;
+      this.renderSwitcher();
+      this.resetSwitcherTimeout();
+      return;
+    }
+
+    if (key === "return" || key === "enter") {
+      this.confirmSwitcher();
+      return;
+    }
+
+    if (key === "escape") {
+      this.dismissSwitcher();
+      return;
+    }
+
+    if (key === "x") {
+      const list = this.getSwitcherList();
+      const target = list[this.switcherIndex];
+      if (!target) return;
+
+      // Stop the highlighted session (moves to offline)
+      this.stopSessionToOffline(target);
+
+      // Refresh the list — if < 2 alive, close switcher
+      const newList = this.getSwitcherList();
+      if (newList.length < 2) {
+        this.dismissSwitcher();
+        return;
+      }
+      if (this.switcherIndex >= newList.length) {
+        this.switcherIndex = newList.length - 1;
+      }
+      this.renderSwitcher();
+      this.resetSwitcherTimeout();
+      return;
+    }
+
+    // Any other key dismisses
+    this.dismissSwitcher();
   }
 
   private showMigratePicker(): void {

@@ -60,6 +60,7 @@ All hotkeys use the `Ctrl+A` leader prefix:
 | `Ctrl+A n` | Next agent |
 | `Ctrl+A p` | Previous agent |
 | `Ctrl+A c` | Create new agent |
+| `Ctrl+A s` | Quick-switch agents (MRU order, like Cmd+Tab) |
 | `Ctrl+A x` | Stop agent (→ offline) or kill offline agent (→ graveyard) |
 | `Ctrl+A 1-9` | Focus agent by number |
 | `Ctrl+A w` | Create new worktree |

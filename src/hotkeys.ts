@@ -10,6 +10,7 @@ export type HotkeyAction =
   | { type: "prev" }
   | { type: "create" }
   | { type: "kill" }
+  | { type: "switcher" }
   | { type: "worktree-create" }
   | { type: "worktree-list" }
   | { type: "passthrough"; data: string };
@@ -83,6 +84,9 @@ export class HotkeyHandler {
         return null;
       case "x":
         this.onAction({ type: "kill" });
+        return null;
+      case "s":
+        this.onAction({ type: "switcher" });
         return null;
       case "w":
         this.onAction({ type: "worktree-create" });
