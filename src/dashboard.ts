@@ -13,6 +13,8 @@ export interface DashboardSession {
   remoteInstancePid?: number;
   remoteInstanceId?: string;
   remoteBackendSessionId?: string;
+  /** Active task description assigned to this session */
+  taskDescription?: string;
 }
 
 export interface WorktreeGroup {
@@ -104,6 +106,7 @@ export class Dashboard {
     const num = session.index + 1;
     const isSelected = this.navLevel === "sessions" && session.id === this.selectedSessionId;
     const marker = isSelected ? " \x1b[33m◀\x1b[0m" : "";
+    const taskBadge = session.taskDescription ? ` \x1b[2;35m⧫ ${truncate(session.taskDescription, 40)}\x1b[0m` : "";
 
     if (session.remoteInstancePid) {
       // Remote session — different icon and dimmed label
@@ -114,7 +117,7 @@ export class Dashboard {
 
     const icon = STATUS_ICONS[session.status];
     const label = STATUS_LABELS[session.status];
-    return `${indent}${icon} [${num}] ${session.command} — ${label}${marker}`;
+    return `${indent}${icon} [${num}] ${session.command} — ${label}${taskBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {
@@ -216,4 +219,9 @@ function center(text: string, width: number): string {
   const stripped = text.replace(/\x1b\[[0-9;]*m/g, "");
   const pad = Math.max(0, Math.floor((width - stripped.length) / 2));
   return " ".repeat(pad) + text;
+}
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max) + "…";
 }

@@ -1,12 +1,23 @@
 import { type Task, readAllTasks, writeTask, cleanupTasks, hasActiveTask } from "./tasks.js";
 import type { PtySession } from "./pty-session.js";
 
+export interface TaskEvent {
+  type: "assigned" | "completed" | "failed";
+  taskId: string;
+  sessionId: string;
+  description: string;
+}
+
 export class TaskDispatcher {
   private getSession: (id: string) => PtySession | undefined;
   private getSessionTool: (id: string) => string | undefined;
   private cwd?: string;
   private tickCount = 0;
   private lastCounts = { pending: 0, assigned: 0 };
+  /** Per-session task info: sessionId → task description */
+  private sessionTasks = new Map<string, string>();
+  /** Recent events for flash notifications, drained by caller */
+  private pendingEvents: TaskEvent[] = [];
 
   constructor(
     getSession: (id: string) => PtySession | undefined,
@@ -25,12 +36,18 @@ export class TaskDispatcher {
     this.tickCount++;
     const tasks = readAllTasks(this.cwd);
 
-    // Update cached counts
+    // Update cached counts + per-session task map
     let pending = 0;
     let assigned = 0;
+    this.sessionTasks.clear();
     for (const task of tasks) {
       if (task.status === "pending") pending++;
-      else if (task.status === "assigned") assigned++;
+      else if (task.status === "assigned") {
+        assigned++;
+        if (task.assignedTo) {
+          this.sessionTasks.set(task.assignedTo, task.description);
+        }
+      }
     }
     this.lastCounts = { pending, assigned };
 
@@ -51,6 +68,12 @@ export class TaskDispatcher {
       const assignerSession = this.getSession(task.assignedBy);
       if (assignerSession && !assignerSession.exited && assignerSession.status === "idle") {
         this.notifyAssigner(assignerSession, task);
+        this.pendingEvents.push({
+          type: task.status === "done" ? "completed" : "failed",
+          taskId: task.id,
+          sessionId: task.assignedTo ?? "",
+          description: task.description,
+        });
       }
     }
 
@@ -123,6 +146,12 @@ export class TaskDispatcher {
     task.status = "assigned";
     task.assignedTo = session.id;
     writeTask(task, this.cwd);
+    this.pendingEvents.push({
+      type: "assigned",
+      taskId: task.id,
+      sessionId: session.id,
+      description: task.description,
+    });
   }
 
   /**
@@ -141,5 +170,21 @@ export class TaskDispatcher {
    */
   getTaskCounts(): { pending: number; assigned: number } {
     return this.lastCounts;
+  }
+
+  /**
+   * Get the task description assigned to a session, if any.
+   */
+  getSessionTask(sessionId: string): string | undefined {
+    return this.sessionTasks.get(sessionId);
+  }
+
+  /**
+   * Drain pending events (for flash notifications). Returns and clears the queue.
+   */
+  drainEvents(): TaskEvent[] {
+    const events = this.pendingEvents;
+    this.pendingEvents = [];
+    return events;
   }
 }

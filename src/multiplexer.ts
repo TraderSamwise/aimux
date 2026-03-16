@@ -606,18 +606,33 @@ export class Multiplexer {
     }
 
     preamble +=
-      "\n\n## Task Delegation\n" +
-      "You can delegate tasks to other agents by creating JSON files in .aimux/tasks/.\n" +
-      "- Filename: .aimux/tasks/{uuid}.json\n" +
-      '- Required fields: id (same as filename without .json), status ("pending"), ' +
-      'assignedBy ("' +
+      "\n\n## Aimux Cross-Agent Delegation\n" +
+      "IMPORTANT: This is the aimux delegation system for coordinating work across agents in this multiplexer. " +
+      "It is separate from any built-in task/todo features in your own tool.\n\n" +
+      "### Delegating work to another agent\n" +
+      "When asked to delegate, hand off, or assign work to another agent, create a JSON file:\n" +
+      "```\n" +
+      ".aimux/tasks/{short-descriptive-name}.json\n" +
+      "```\n" +
+      "Contents:\n" +
+      "```json\n" +
+      '{\n  "id": "{same as filename without .json}",\n  "status": "pending",\n' +
+      '  "assignedBy": "' +
       sessionId +
-      '"), description, prompt, createdAt (ISO), updatedAt (ISO)\n' +
-      '- Optional: assignedTo (session ID from sessions.json), tool ("claude"/"codex"/"aider")\n' +
-      "- Aimux dispatches pending tasks to idle agents automatically\n" +
-      '- When you receive a task, update its .json file: set status to "done" with a result field, ' +
-      'or "failed" with an error field\n' +
-      "- Check .aimux/sessions.json for available agents and their session IDs";
+      '",\n' +
+      '  "description": "Brief summary of the task",\n' +
+      '  "prompt": "Detailed instructions for the other agent",\n' +
+      '  "createdAt": "{ISO timestamp}",\n  "updatedAt": "{ISO timestamp}"\n}\n' +
+      "```\n" +
+      "Optional fields: `assignedTo` (target session ID), `tool` (preferred tool type).\n" +
+      "Aimux will automatically dispatch pending tasks to idle agents and inject the prompt.\n" +
+      "Check .aimux/sessions.json for available agents and their session IDs.\n\n" +
+      "### Receiving a delegated task\n" +
+      "When you see `[AIMUX TASK ...]` in your input, another agent delegated work to you.\n" +
+      "Complete the work, then update the task file:\n" +
+      '- Success: set `status` to `"done"` and add a `result` field with a summary\n' +
+      '- Failure: set `status` to `"failed"` and add an `error` field\n' +
+      "The delegating agent will be notified automatically.";
 
     if (extraPreamble) {
       preamble += "\n" + extraPreamble;
@@ -1724,6 +1739,7 @@ export class Multiplexer {
         status: s.status,
         active: i === this.activeIndex,
         worktreePath: wtPath,
+        taskDescription: this.taskDispatcher?.getSessionTask(s.id),
       };
     });
     try {
@@ -2031,6 +2047,9 @@ export class Multiplexer {
     if (counts && (counts.pending > 0 || counts.assigned > 0)) {
       parts.push(`\x1b[2m[T:${counts.pending}p/${counts.assigned}a]\x1b[0m`);
     }
+    if (this.footerFlash) {
+      parts.push(`\x1b[35m${this.footerFlash}\x1b[0m`);
+    }
 
     const left = ` ${parts.join("  ")}`;
     const right = `^A ? help `;
@@ -2049,6 +2068,9 @@ export class Multiplexer {
 
   /** Track previous statuses for notification on transition */
   private prevStatuses = new Map<string, string>();
+  /** Flash message shown temporarily in footer, cleared after a few renders */
+  private footerFlash: string | null = null;
+  private footerFlashTicks = 0;
 
   private startFooterRefresh(): void {
     if (this.footerInterval) return;
@@ -2057,6 +2079,22 @@ export class Multiplexer {
     this.footerInterval = setInterval(() => {
       if (this.mode === "focused") this.renderFooter();
       this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
+
+      // Drain task events for flash notifications
+      const events = this.taskDispatcher?.drainEvents() ?? [];
+      for (const ev of events) {
+        if (ev.type === "assigned") {
+          this.footerFlash = `⧫ Task assigned → ${ev.sessionId}`;
+        } else if (ev.type === "completed") {
+          this.footerFlash = `✓ Task done by ${ev.sessionId}`;
+        } else if (ev.type === "failed") {
+          this.footerFlash = `✗ Task failed: ${ev.sessionId}`;
+        }
+        this.footerFlashTicks = 3; // show for ~6s (3 ticks × 2s)
+      }
+      if (this.footerFlashTicks > 0) this.footerFlashTicks--;
+      if (this.footerFlashTicks === 0) this.footerFlash = null;
+
       // Check for status transitions that warrant notifications
       for (const session of this.sessions) {
         const prev = this.prevStatuses.get(session.id);
