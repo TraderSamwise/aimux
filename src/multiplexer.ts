@@ -658,7 +658,7 @@ export class Multiplexer {
       promptPatterns,
     });
     // Store backend session ID for resume
-    (session as any)._backendSessionId = backendSessionId;
+    session.backendSessionId = backendSessionId;
 
     // For tools without sessionIdFlag, try to capture the backend session ID via filesystem
     if (!backendSessionId && toolConfigKey) {
@@ -1925,7 +1925,7 @@ export class Multiplexer {
         for (const file of newFiles) {
           const match = file.match(regex);
           if (match) {
-            (session as any)._backendSessionId = match[1];
+            session.backendSessionId = match[1];
             debug(`captured backendSessionId: ${match[1]}`, "session");
             return;
           }
@@ -1949,7 +1949,7 @@ export class Multiplexer {
       id: s.id,
       tool: s.command,
       status: s.status,
-      backendSessionId: (s as any)._backendSessionId as string | undefined,
+      backendSessionId: s.backendSessionId,
       worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
 
@@ -2096,7 +2096,7 @@ export class Multiplexer {
     // Also exclude by backendSessionId to catch resumed sessions with new IDs
     const ownedBackendIds = new Set<string>();
     for (const s of this.sessions) {
-      const bsid = (s as any)._backendSessionId as string | undefined;
+      const bsid = s.backendSessionId;
       if (bsid) ownedBackendIds.add(bsid);
     }
 
@@ -2121,7 +2121,7 @@ export class Multiplexer {
       toolConfigKey: this.sessionToolKeys.get(session.id) ?? session.command,
       command: session.command,
       args: this.sessionOriginalArgs.get(session.id) ?? [],
-      backendSessionId: (session as any)._backendSessionId as string | undefined,
+      backendSessionId: session.backendSessionId as string | undefined,
       worktreePath: this.sessionWorktreePaths.get(session.id),
     };
 
@@ -2240,7 +2240,7 @@ export class Multiplexer {
     return this.sessions.map((s) => ({
       id: s.id,
       tool: s.command,
-      backendSessionId: (s as any)._backendSessionId as string | undefined,
+      backendSessionId: s.backendSessionId,
       worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
   }
@@ -2273,7 +2273,7 @@ export class Multiplexer {
       toolConfigKey: this.sessionToolKeys.get(s.id) ?? s.command,
       command: s.command,
       args: this.sessionOriginalArgs.get(s.id) ?? [],
-      backendSessionId: (s as any)._backendSessionId as string | undefined,
+      backendSessionId: s.backendSessionId,
       worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
 

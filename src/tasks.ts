@@ -90,23 +90,6 @@ export async function writeTask(task: Task, cwd?: string): Promise<void> {
 }
 
 /**
- * Return pending tasks targeting a specific session or matching tool type,
- * sorted by createdAt (oldest first).
- */
-export function pendingTasksFor(sessionId: string, tool?: string, cwd?: string): Task[] {
-  const all = readAllTasks(cwd);
-  return all
-    .filter((t) => {
-      if (t.status !== "pending") return false;
-      if (t.assignedTo === sessionId) return true;
-      if (!t.assignedTo && t.tool && tool && t.tool === tool) return true;
-      if (!t.assignedTo && !t.tool) return true;
-      return false;
-    })
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-}
-
-/**
  * Returns true if the session has an active (assigned) task.
  */
 export function hasActiveTask(sessionId: string, cwd?: string): boolean {

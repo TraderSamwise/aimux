@@ -23,6 +23,8 @@ export interface PtySessionOptions {
 export class PtySession {
   readonly id: string;
   readonly command: string;
+  /** Backend tool's native session ID (e.g. claude --session-id value) */
+  backendSessionId?: string;
   private process: pty.IPty;
   private _exited = false;
   private _exitCode: number | undefined;

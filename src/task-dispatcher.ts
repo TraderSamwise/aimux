@@ -6,6 +6,7 @@ export class TaskDispatcher {
   private getSessionTool: (id: string) => string | undefined;
   private cwd?: string;
   private tickCount = 0;
+  private lastCounts = { pending: 0, assigned: 0 };
 
   constructor(
     getSession: (id: string) => PtySession | undefined,
@@ -23,6 +24,15 @@ export class TaskDispatcher {
   tick(localSessionIds: string[]): void {
     this.tickCount++;
     const tasks = readAllTasks(this.cwd);
+
+    // Update cached counts
+    let pending = 0;
+    let assigned = 0;
+    for (const task of tasks) {
+      if (task.status === "pending") pending++;
+      else if (task.status === "assigned") assigned++;
+    }
+    this.lastCounts = { pending, assigned };
 
     // 1. Dispatch pending tasks to idle local sessions
     for (const task of tasks) {
@@ -127,16 +137,9 @@ export class TaskDispatcher {
   }
 
   /**
-   * Get counts of pending and assigned tasks for footer display.
+   * Get cached counts from last tick.
    */
   getTaskCounts(): { pending: number; assigned: number } {
-    const tasks = readAllTasks(this.cwd);
-    let pending = 0;
-    let assigned = 0;
-    for (const task of tasks) {
-      if (task.status === "pending") pending++;
-      else if (task.status === "assigned") assigned++;
-    }
-    return { pending, assigned };
+    return this.lastCounts;
   }
 }
