@@ -1926,8 +1926,15 @@ export class Multiplexer {
 
   /** Get the current dashboard sessions (local + remote merged) for lookup */
   private getDashboardSessions(): DashboardSession[] {
+    // Normalize worktreePath: if it equals the main repo, treat as undefined (not a worktree)
+    let mainRepoPath: string | undefined;
+    try {
+      mainRepoPath = findMainRepo();
+    } catch {}
+    const normalizeWtPath = (p?: string) => (p && mainRepoPath && p === mainRepoPath ? undefined : p);
+
     const dashSessions: DashboardSession[] = this.sessions.map((s, i) => {
-      const wtPath = this.sessionWorktreePaths.get(s.id);
+      const wtPath = normalizeWtPath(this.sessionWorktreePaths.get(s.id));
       return {
         index: i,
         id: s.id,
@@ -1949,7 +1956,7 @@ export class Multiplexer {
             command: rs.tool,
             status: "running",
             active: false,
-            worktreePath: rs.worktreePath,
+            worktreePath: normalizeWtPath(rs.worktreePath),
             remoteInstancePid: inst.pid,
             remoteInstanceId: inst.instanceId,
             remoteBackendSessionId: rs.backendSessionId,
@@ -1965,18 +1972,18 @@ export class Multiplexer {
       );
       if (alreadyShown) continue;
       // Resolve worktree name/branch for display
+      const osWtPath = normalizeWtPath(os.worktreePath);
       let worktreeName: string | undefined;
       let worktreeBranch: string | undefined;
-      if (os.worktreePath) {
+      if (osWtPath) {
         try {
-          const registry = loadRegistry(os.worktreePath);
-          const wt = registry.worktrees.find((w) => w.path === os.worktreePath);
+          const registry = loadRegistry(osWtPath);
+          const wt = registry.worktrees.find((w) => w.path === osWtPath);
           worktreeName = wt?.name;
           worktreeBranch = wt?.branch;
         } catch {}
         if (!worktreeName) {
-          // Fallback: extract name from path
-          worktreeName = os.worktreePath.split("/").pop();
+          worktreeName = osWtPath.split("/").pop();
         }
       }
       dashSessions.push({
@@ -1985,7 +1992,7 @@ export class Multiplexer {
         command: os.command,
         status: "offline" as const,
         active: false,
-        worktreePath: os.worktreePath,
+        worktreePath: osWtPath,
         worktreeName,
         worktreeBranch,
         remoteBackendSessionId: os.backendSessionId,
