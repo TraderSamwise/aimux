@@ -77,7 +77,7 @@ describe("instance-registry", () => {
       expect(instances[0].sessions[0].id).toBe("claude-123");
     });
 
-    it("detects sessions claimed by another instance", async () => {
+    it("returns previous session IDs for claim detection", async () => {
       await registerInstance("inst-a", tmpDir);
 
       // First heartbeat: register sessions
@@ -85,18 +85,17 @@ describe("instance-registry", () => {
         { id: "claude-123", tool: "claude", backendSessionId: "uuid-1" },
         { id: "claude-456", tool: "claude", backendSessionId: "uuid-2" },
       ];
-      await updateHeartbeat("inst-a", sessions, tmpDir);
+      const prev1 = await updateHeartbeat("inst-a", sessions, tmpDir);
+      // First heartbeat: registry was empty before
+      expect(prev1).toEqual([]);
 
-      // Simulate another instance claiming one session
-      await claimSession("claude-123", "inst-a", tmpDir);
-
-      // Next heartbeat: should detect the claimed session (registry still has claude-456)
-      const claimed = await updateHeartbeat("inst-a", sessions, tmpDir);
-      expect(claimed).toContain("claude-123");
-      expect(claimed).not.toContain("claude-456");
+      // Second heartbeat: registry had our sessions
+      const prev2 = await updateHeartbeat("inst-a", sessions, tmpDir);
+      expect(prev2).toContain("claude-123");
+      expect(prev2).toContain("claude-456");
     });
 
-    it("does not re-register claimed sessions", async () => {
+    it("caller can detect claims by comparing previousIds vs confirmed set", async () => {
       await registerInstance("inst-a", tmpDir);
 
       const sessions: InstanceSessionRef[] = [
@@ -105,16 +104,23 @@ describe("instance-registry", () => {
       ];
       await updateHeartbeat("inst-a", sessions, tmpDir);
 
-      // Claim one session
+      // Simulate claim
       await claimSession("claude-123", "inst-a", tmpDir);
 
-      // Heartbeat with same sessions list
-      await updateHeartbeat("inst-a", sessions, tmpDir);
+      // Next heartbeat returns what was in registry (only claude-456 remains)
+      const previousIds = await updateHeartbeat("inst-a", sessions, tmpDir);
+      expect(previousIds).toContain("claude-456");
+      expect(previousIds).not.toContain("claude-123");
 
-      // Registry should only have the unclaimed session
+      // Caller detects: "claude-123" was confirmed but not in previousIds → claimed
+      const confirmed = new Set(["claude-123", "claude-456"]);
+      const claimed = [...confirmed].filter((id) => !previousIds.includes(id));
+      expect(claimed).toEqual(["claude-123"]);
+
+      // Registry should have all sessions (updateHeartbeat writes what we send)
       const instances = readInstances(tmpDir);
       const instA = instances.find((i: { instanceId: string }) => i.instanceId === "inst-a");
-      expect(instA?.sessions?.map((s: InstanceSessionRef) => s.id)).toEqual(["claude-456"]);
+      expect(instA?.sessions).toHaveLength(2);
     });
   });
 

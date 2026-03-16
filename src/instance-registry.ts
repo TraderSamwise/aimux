@@ -178,47 +178,26 @@ export async function unregisterInstance(instanceId: string, cwd: string): Promi
 
 /**
  * Update heartbeat timestamp and sessions list. Also prunes dead instances.
- * Returns IDs of sessions that were claimed by another instance since last heartbeat
- * (sessions we expected to own but were missing from our registry entry).
+ * Returns the session IDs that were in the registry BEFORE this update
+ * (so the caller can detect which were claimed by comparing against expectations).
  */
 export async function updateHeartbeat(
   instanceId: string,
   sessions: InstanceSessionRef[],
   cwd: string,
 ): Promise<string[]> {
-  const claimedIds: string[] = [];
+  let previousSessionIds: string[] = [];
   await withLockedInstances(cwd, (instances) => {
     const pruned = pruneDeadEntries(instances);
     return pruned.map((inst) => {
       if (inst.instanceId === instanceId) {
-        // Detect sessions claimed by another instance: sessions we previously
-        // registered that are now missing from our registry entry.
-        const registeredIds = new Set(inst.sessions.map((s) => s.id));
-        const sendingIds = new Set(sessions.map((s) => s.id));
-        // Check what was registered but isn't being sent (we dropped it) — not a claim
-        // Check what we're sending but isn't registered — could be new OR claimed
-        // Only flag as claimed if the registry previously had this session type of work
-        // (i.e., registry had sessions, meaning we're not on our first heartbeat)
-        if (registeredIds.size > 0) {
-          for (const s of sessions) {
-            if (!registeredIds.has(s.id)) {
-              claimedIds.push(s.id);
-            }
-          }
-        }
-        // Also detect: registry had sessions that we're still sending but they're gone
-        // This handles the case where ALL sessions were claimed (registry is now empty)
-        // We detect this by checking: registry is empty, but we previously had sessions
-        // The caller (multiplexer) tracks confirmed registrations to handle this case.
-
-        // Write back sessions, excluding any that were genuinely claimed
-        const remainingSessions = sessions.filter((s) => !claimedIds.includes(s.id));
-        return { ...inst, heartbeat: new Date().toISOString(), sessions: remainingSessions };
+        previousSessionIds = inst.sessions.map((s) => s.id);
+        return { ...inst, heartbeat: new Date().toISOString(), sessions };
       }
       return inst;
     });
   });
-  return claimedIds;
+  return previousSessionIds;
 }
 
 /**

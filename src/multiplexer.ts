@@ -1964,6 +1964,21 @@ export class Multiplexer {
         (ds) => ds.id === os.id || (os.backendSessionId && ds.remoteBackendSessionId === os.backendSessionId),
       );
       if (alreadyShown) continue;
+      // Resolve worktree name/branch for display
+      let worktreeName: string | undefined;
+      let worktreeBranch: string | undefined;
+      if (os.worktreePath) {
+        try {
+          const registry = loadRegistry(os.worktreePath);
+          const wt = registry.worktrees.find((w) => w.path === os.worktreePath);
+          worktreeName = wt?.name;
+          worktreeBranch = wt?.branch;
+        } catch {}
+        if (!worktreeName) {
+          // Fallback: extract name from path
+          worktreeName = os.worktreePath.split("/").pop();
+        }
+      }
       dashSessions.push({
         index: dashSessions.length,
         id: os.id,
@@ -1971,6 +1986,8 @@ export class Multiplexer {
         status: "offline" as const,
         active: false,
         worktreePath: os.worktreePath,
+        worktreeName,
+        worktreeBranch,
         remoteBackendSessionId: os.backendSessionId,
       });
     }
@@ -2456,21 +2473,21 @@ export class Multiplexer {
     this.heartbeatInterval = setInterval(() => {
       const sessions = this.getInstanceSessionRefs();
       updateHeartbeat(this.instanceId, sessions, process.cwd())
-        .then((claimedIds) => {
-          // Only act on claims for sessions we previously confirmed as registered.
-          // This filters false positives on first heartbeat (new sessions look "claimed"
-          // because they weren't in the registry yet).
-          for (const claimedId of claimedIds) {
-            if (this.confirmedRegistered.has(claimedId)) {
-              this.handleSessionClaimed(claimedId);
-              this.confirmedRegistered.delete(claimedId);
+        .then((previousIds) => {
+          // Detect claimed sessions: we confirmed a session was registered,
+          // but it's no longer in the registry (claimSession removed it).
+          const previousSet = new Set(previousIds);
+          for (const id of this.confirmedRegistered) {
+            if (!previousSet.has(id)) {
+              // We confirmed this session was registered, but the registry
+              // no longer had it — another instance claimed it
+              this.handleSessionClaimed(id);
+              this.confirmedRegistered.delete(id);
             }
           }
-          // Mark successfully registered sessions as confirmed
+          // Mark all sessions we just wrote as confirmed
           for (const s of sessions) {
-            if (!claimedIds.includes(s.id)) {
-              this.confirmedRegistered.add(s.id);
-            }
+            this.confirmedRegistered.add(s.id);
           }
         })
         .catch(() => {});
