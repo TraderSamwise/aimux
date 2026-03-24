@@ -15,6 +15,8 @@ export interface DashboardSession {
   remoteBackendSessionId?: string;
   /** Active task description assigned to this session */
   taskDescription?: string;
+  /** Auto-derived or user-set label for offline agents */
+  label?: string;
 }
 
 export interface WorktreeGroup {
@@ -116,8 +118,10 @@ export class Dashboard {
     }
 
     const icon = STATUS_ICONS[session.status];
-    const label = STATUS_LABELS[session.status];
-    return `${indent}${icon} [${num}] ${session.command} — ${label}${taskBadge}${marker}`;
+    const statusLabel = STATUS_LABELS[session.status];
+    const labelText =
+      session.status === "offline" && session.label ? ` \x1b[2m${truncate(session.label, 50)}\x1b[0m` : "";
+    return `${indent}${icon} [${num}] ${session.command} — ${statusLabel}${labelText}${taskBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {
@@ -188,6 +192,7 @@ export class Dashboard {
     const selected = this.selectedSessionId ? this.sessions.find((s) => s.id === this.selectedSessionId) : undefined;
     const xLabel =
       selected?.status === "offline" ? "[x] kill" : selected?.remoteInstancePid ? "" : selected ? "[x] stop" : "";
+    const rLabel = selected?.status === "offline" ? "  [r] label" : "";
 
     // Context-aware Enter label
     const enterLabel = selected?.remoteInstancePid
@@ -201,14 +206,14 @@ export class Dashboard {
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ agents  ${enterLabel}  Esc back  [c] new  [m] migrate${xPart}  [g] graveyard  [q] quit `;
+      return ` ↑↓ agents  ${enterLabel}  Esc back  [c] new  [m] migrate${xPart}${rLabel}  [g] graveyard  [q] quit `;
     }
     if (this.hasWorktrees) {
       return " ↑↓ worktrees  Enter step in  [c] new  [w] worktree  [m] migrate  [g] graveyard  [q] quit ";
     }
     if (this.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}  [g] graveyard  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}${rLabel}  [g] graveyard  [q] quit `;
     }
     return " [c] new  [w] worktree  [g] graveyard  [q] quit ";
   }

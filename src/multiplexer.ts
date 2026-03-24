@@ -49,6 +49,7 @@ export interface SessionState {
   args: string[];
   backendSessionId?: string;
   worktreePath?: string;
+  label?: string;
 }
 
 export interface SavedState {
@@ -73,6 +74,9 @@ export class Multiplexer {
   private pickerActive = false;
   private worktreeInputActive = false;
   private worktreeInputBuffer = "";
+  private labelInputActive = false;
+  private labelInputBuffer = "";
+  private labelInputTarget: string | null = null;
   private worktreeListActive = false;
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
@@ -182,6 +186,10 @@ export class Multiplexer {
         this.handleSwitcherKey(data);
         return;
       }
+      if (this.labelInputActive) {
+        this.handleLabelInputKey(data);
+        return;
+      }
       if (this.graveyardActive) {
         this.handleGraveyardKey(data);
         return;
@@ -262,6 +270,10 @@ export class Multiplexer {
       }
       if (this.switcherActive) {
         this.handleSwitcherKey(data);
+        return;
+      }
+      if (this.labelInputActive) {
+        this.handleLabelInputKey(data);
         return;
       }
       if (this.graveyardActive) {
@@ -404,6 +416,10 @@ export class Multiplexer {
         this.handleSwitcherKey(data);
         return;
       }
+      if (this.labelInputActive) {
+        this.handleLabelInputKey(data);
+        return;
+      }
       if (this.graveyardActive) {
         this.handleGraveyardKey(data);
         return;
@@ -528,6 +544,10 @@ export class Multiplexer {
         this.handleSwitcherKey(data);
         return;
       }
+      if (this.labelInputActive) {
+        this.handleLabelInputKey(data);
+        return;
+      }
       if (this.graveyardActive) {
         this.handleGraveyardKey(data);
         return;
@@ -628,6 +648,16 @@ export class Multiplexer {
         preamble += `\n\nYou are working in a git worktree at ${worktreePath}. Stay in this directory.`;
       }
     }
+
+    preamble +=
+      "\n\n## Status\n" +
+      "Maintain a status file at .aimux/status/" +
+      sessionId +
+      ".md (3-5 lines max).\n" +
+      "Update it whenever your focus changes. Include:\n" +
+      "- What you're currently working on\n" +
+      "- Key files involved\n" +
+      "- Current state (investigating, implementing, testing, blocked, etc.)";
 
     preamble +=
       "\n\n## Aimux Cross-Agent Delegation\n" +
@@ -1024,6 +1054,25 @@ export class Multiplexer {
           this.showMigratePicker();
         }
         return;
+      case "r": {
+        const allDs2 = this.getDashboardSessions();
+        const selId2 =
+          this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
+            ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
+            : undefined;
+        const selEntry2 = selId2
+          ? allDs2.find((d) => d.id === selId2)
+          : !hasWorktrees
+            ? allDs2[this.activeIndex]
+            : undefined;
+        if (selEntry2?.status === "offline") {
+          this.labelInputActive = true;
+          this.labelInputBuffer = "";
+          this.labelInputTarget = selEntry2.id;
+          this.renderLabelInput();
+        }
+        return;
+      }
     }
 
     if (!hasWorktrees) {
@@ -1461,6 +1510,82 @@ export class Multiplexer {
     }
   }
 
+  private renderLabelInput(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+
+    const lines = ["Rename/label agent:", "", `  Label: ${this.labelInputBuffer}_`, "", "  [Enter] save  [Esc] cancel"];
+
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1];
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleLabelInputKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    if (key === "escape") {
+      this.labelInputActive = false;
+      this.labelInputTarget = null;
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (key === "enter" || key === "return") {
+      this.labelInputActive = false;
+      const label = this.labelInputBuffer.trim();
+      const targetId = this.labelInputTarget;
+      this.labelInputTarget = null;
+      if (targetId && label) {
+        const offline = this.offlineSessions.find((s) => s.id === targetId);
+        if (offline) {
+          offline.label = label;
+          this.saveState();
+        }
+      }
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (key === "backspace" || key === "delete") {
+      this.labelInputBuffer = this.labelInputBuffer.slice(0, -1);
+      this.renderLabelInput();
+      return;
+    }
+
+    // Append printable character
+    if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
+      this.labelInputBuffer += event.char;
+      this.renderLabelInput();
+    }
+  }
+
   private showWorktreeList(): void {
     this.worktreeListActive = true;
     this.renderWorktreeList();
@@ -1583,7 +1708,8 @@ export class Multiplexer {
       for (let i = 0; i < this.graveyardEntries.length; i++) {
         const s = this.graveyardEntries[i];
         const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
-        lines.push(`  [${i + 1}] ${s.command}:${s.id}${bsid}`);
+        const label = s.label ? ` — ${s.label}` : "";
+        lines.push(`  [${i + 1}] ${s.command}:${s.id}${bsid}${label}`);
       }
     }
     lines.push("");
@@ -1996,6 +2122,7 @@ export class Multiplexer {
         worktreeName,
         worktreeBranch,
         remoteBackendSessionId: os.backendSessionId,
+        label: os.label,
       });
     }
 
@@ -2384,6 +2511,26 @@ export class Multiplexer {
       worktreePath: this.sessionWorktreePaths.get(session.id),
     };
 
+    // Read status file for auto-label
+    try {
+      const statusPath = join(getAimuxDir(), "status", `${session.id}.md`);
+      if (existsSync(statusPath)) {
+        const status = readFileSync(statusPath, "utf-8").trim();
+        offlineEntry.label = status.split("\n")[0].slice(0, 80); // First line, max 80 chars
+      }
+    } catch {}
+
+    // Fallback: derive label from recent history
+    if (!offlineEntry.label) {
+      try {
+        const turns = readHistory(session.id, { lastN: 3 });
+        const lastPrompt = turns.filter((t) => t.type === "prompt").pop();
+        if (lastPrompt) {
+          offlineEntry.label = lastPrompt.content.slice(0, 80);
+        }
+      } catch {}
+    }
+
     // Add to offline list so it appears immediately
     this.offlineSessions.push(offlineEntry);
 
@@ -2643,10 +2790,6 @@ export class Multiplexer {
     try {
       const raw = readFileSync(statePath, "utf-8");
       const state = JSON.parse(raw) as SavedState;
-
-      // Check staleness (>24h)
-      const savedAt = new Date(state.savedAt).getTime();
-      if (Date.now() - savedAt > 24 * 60 * 60 * 1000) return null;
 
       return state;
     } catch {
