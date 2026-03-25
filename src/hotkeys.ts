@@ -1,6 +1,5 @@
 import { parseKeys, matchKey, type KeyEvent } from "./key-parser.js";
 import { debug } from "./debug.js";
-import type { TerminalIO } from "./terminal-io.js";
 
 const TIMEOUT_MS = 1000;
 
@@ -22,11 +21,9 @@ export class HotkeyHandler {
   private waitingForAction = false;
   private timeout: ReturnType<typeof setTimeout> | null = null;
   private onAction: ActionCallback;
-  private io: TerminalIO;
 
-  constructor(onAction: ActionCallback, io: TerminalIO) {
+  constructor(onAction: ActionCallback) {
     this.onAction = onAction;
-    this.io = io;
   }
 
   /**
@@ -111,10 +108,10 @@ export class HotkeyHandler {
 
   private showLeaderIndicator(): void {
     // Save cursor, move to top-right, show indicator, restore cursor
-    const cols = this.io.columns;
+    const cols = process.stdout.columns ?? 80;
     const label = " ^A → ? ";
     const col = cols - label.length;
-    this.io.write(
+    process.stdout.write(
       `\x1b7` + // save cursor
         `\x1b[1;${col}H` + // move to top-right
         `\x1b[7;33m${label}\x1b[0m` + // inverse yellow
@@ -124,10 +121,10 @@ export class HotkeyHandler {
 
   private hideLeaderIndicator(): void {
     // Save cursor, clear the indicator area, restore cursor
-    const cols = this.io.columns;
+    const cols = process.stdout.columns ?? 80;
     const label = " ^A → ? ";
     const col = cols - label.length;
-    this.io.write(`\x1b7` + `\x1b[1;${col}H` + `${" ".repeat(label.length)}` + `\x1b8`);
+    process.stdout.write(`\x1b7` + `\x1b[1;${col}H` + `${" ".repeat(label.length)}` + `\x1b8`);
   }
 
   private clearTimeout(): void {

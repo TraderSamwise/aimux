@@ -14,7 +14,6 @@ import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
-import { type TerminalIO, DirectTerminalIO } from "./terminal-io.js";
 import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
 import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
 import { readHistory } from "./context/history.js";
@@ -63,7 +62,7 @@ export class Multiplexer {
   private sessions: PtySession[] = [];
   private activeIndex = 0;
   private mode: MuxMode = "focused";
-  private io: TerminalIO;
+  private rawModeWas: boolean | undefined;
   private hotkeys: HotkeyHandler;
   private dashboard: Dashboard;
   private onStdinData: ((data: Buffer) => void) | null = null;
@@ -118,11 +117,9 @@ export class Multiplexer {
   private offlineSessions: SessionState[] = [];
   private static readonly FOOTER_HEIGHT = 1;
 
-  constructor(io?: TerminalIO) {
-    this.io = io ?? new DirectTerminalIO();
-    this.hotkeys = new HotkeyHandler((action) => this.handleAction(action), this.io);
+  constructor() {
+    this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
-    this.dashboard.serverMode = !(this.io instanceof DirectTerminalIO);
   }
 
   get activeSession(): PtySession | null {
@@ -131,41 +128,6 @@ export class Multiplexer {
 
   get sessionCount(): number {
     return this.sessions.length;
-  }
-
-  /** Get session status info for external APIs (tray app, etc.) */
-  getStatusInfo(): {
-    mode: string;
-    sessions: Array<{ id: string; tool: string; status: string; label?: string; worktreePath?: string }>;
-    offlineSessions: Array<{ id: string; tool: string; label?: string; worktreePath?: string }>;
-  } {
-    return {
-      mode: this.mode,
-      sessions: this.sessions.map((s) => {
-        let label: string | undefined;
-        try {
-          const statusCwd = this.sessionWorktreePaths.get(s.id);
-          const statusPath = join(getAimuxDir(statusCwd), "status", `${s.id}.md`);
-          if (existsSync(statusPath)) {
-            const content = readFileSync(statusPath, "utf-8").trim();
-            if (content) label = content.split("\n")[0].slice(0, 80);
-          }
-        } catch {}
-        return {
-          id: s.id,
-          tool: s.command,
-          status: s.status,
-          label,
-          worktreePath: this.sessionWorktreePaths.get(s.id),
-        };
-      }),
-      offlineSessions: this.offlineSessions.map((s) => ({
-        id: s.id,
-        tool: s.command,
-        label: s.label,
-        worktreePath: s.worktreePath,
-      })),
-    };
   }
 
   async run(opts: Omit<PtySessionOptions, "cols" | "rows">): Promise<number> {
@@ -245,11 +207,11 @@ export class Multiplexer {
         this.activeSession?.write(passthrough);
       }
     };
-    this.io.onInput(this.onStdinData);
+    process.stdin.on("data", this.onStdinData);
 
     // Forward terminal resize → all PTYs + redraw footer/dashboard
     this.onResize = () => {
-      const cols = this.io.columns;
+      const cols = process.stdout.columns ?? 80;
       for (const session of this.sessions) {
         session.resize(cols, this.toolRows);
       }
@@ -260,7 +222,7 @@ export class Multiplexer {
         this.renderFooter();
       }
     };
-    this.io.onResize(this.onResize);
+    process.stdout.on("resize", this.onResize);
 
     // Wait until all sessions exit or explicit quit
     const exitCode = await new Promise<number>((resolve) => {
@@ -331,11 +293,11 @@ export class Multiplexer {
         this.activeSession?.write(passthrough);
       }
     };
-    this.io.onInput(this.onStdinData);
+    process.stdin.on("data", this.onStdinData);
 
     // Forward terminal resize
     this.onResize = () => {
-      const cols = this.io.columns;
+      const cols = process.stdout.columns ?? 80;
       for (const session of this.sessions) {
         session.resize(cols, this.toolRows);
       }
@@ -346,11 +308,11 @@ export class Multiplexer {
         this.renderFooter();
       }
     };
-    this.io.onResize(this.onResize);
+    process.stdout.on("resize", this.onResize);
 
     // Enter dashboard mode directly
     this.mode = "dashboard";
-    this.io.write("\x1b[?1049h");
+    process.stdout.write("\x1b[?1049h");
     this.renderDashboard();
 
     const exitCode = await new Promise<number>((resolve) => {
@@ -473,10 +435,10 @@ export class Multiplexer {
         this.activeSession?.write(passthrough);
       }
     };
-    this.io.onInput(this.onStdinData);
+    process.stdin.on("data", this.onStdinData);
 
     this.onResize = () => {
-      const cols = this.io.columns;
+      const cols = process.stdout.columns ?? 80;
       for (const session of this.sessions) {
         session.resize(cols, this.toolRows);
       }
@@ -487,7 +449,7 @@ export class Multiplexer {
         this.renderFooter();
       }
     };
-    this.io.onResize(this.onResize);
+    process.stdout.on("resize", this.onResize);
 
     const exitCode = await new Promise<number>((resolve) => {
       this.resolveRun = resolve;
@@ -601,10 +563,10 @@ export class Multiplexer {
         this.activeSession?.write(passthrough);
       }
     };
-    this.io.onInput(this.onStdinData);
+    process.stdin.on("data", this.onStdinData);
 
     this.onResize = () => {
-      const cols = this.io.columns;
+      const cols = process.stdout.columns ?? 80;
       for (const session of this.sessions) {
         session.resize(cols, this.toolRows);
       }
@@ -615,7 +577,7 @@ export class Multiplexer {
         this.renderFooter();
       }
     };
-    this.io.onResize(this.onResize);
+    process.stdout.on("resize", this.onResize);
 
     const exitCode = await new Promise<number>((resolve) => {
       this.resolveRun = resolve;
@@ -634,7 +596,7 @@ export class Multiplexer {
     sessionIdFlag?: string[],
     worktreePath?: string,
   ): PtySession {
-    const cols = this.io.columns;
+    const cols = process.stdout.columns ?? 80;
 
     // Pre-generate session ID so we can reference it in the preamble
     const sessionId = `${command}-${Math.random().toString(36).slice(2, 8)}`;
@@ -786,7 +748,7 @@ export class Multiplexer {
     // Forward output to stdout only when this session is active and focused
     session.onData((data) => {
       if (this.mode === "focused" && this.sessions[this.activeIndex] === session) {
-        this.io.write(data);
+        process.stdout.write(data);
       }
     });
 
@@ -1005,7 +967,7 @@ export class Multiplexer {
 
     // Set up scroll region and restore screen
     this.setupScrollRegion();
-    this.io.write(this.sessions[index].getScreenState());
+    process.stdout.write(this.sessions[index].getScreenState());
     this.renderFooter();
     this.startFooterRefresh();
   }
@@ -1320,8 +1282,8 @@ export class Multiplexer {
 
     this.pickerActive = true;
 
-    const cols = this.io.columns;
-    const rows = this.io.rows;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
 
     const lines = ["Select tool:"];
     for (let i = 0; i < tools.length; i++) {
@@ -1348,7 +1310,7 @@ export class Multiplexer {
       }
     }
     output += "\x1b8"; // restore cursor
-    this.io.write(output);
+    process.stdout.write(output);
   }
 
   private handleToolPickerKey(data: Buffer): void {
@@ -1377,8 +1339,8 @@ export class Multiplexer {
         const [key, tool] = tools[idx];
         if (!isToolAvailable(tool.command)) {
           // Show brief error then redraw
-          this.io.write(
-            `\x1b7\x1b[${this.io.rows - 2};1H\x1b[41;97m "${tool.command}" is not installed. Install it first. \x1b[0m\x1b8`,
+          process.stdout.write(
+            `\x1b7\x1b[${(process.stdout.rows ?? 24) - 2};1H\x1b[41;97m "${tool.command}" is not installed. Install it first. \x1b[0m\x1b8`,
           );
           setTimeout(() => {
             this.pickerActive = false;
@@ -1402,8 +1364,8 @@ export class Multiplexer {
   }
 
   private renderDashboard(): void {
-    const cols = this.io.columns;
-    const rows = this.io.rows;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
 
     const dashSessions: DashboardSession[] = this.sessions.map((s, i) => {
       const wtPath = this.sessionWorktreePaths.get(s.id);
@@ -1499,7 +1461,7 @@ export class Multiplexer {
       hasWorktrees ? this.dashboardLevel : "sessions",
       selectedSession,
     );
-    this.io.write(this.dashboard.render(cols, rows));
+    process.stdout.write(this.dashboard.render(cols, rows));
   }
 
   private showWorktreeCreatePrompt(): void {
@@ -1509,8 +1471,8 @@ export class Multiplexer {
   }
 
   private renderWorktreeInput(): void {
-    const cols = this.io.columns;
-    const rows = this.io.rows;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
 
     const lines = [
       "Create worktree:",
@@ -1536,7 +1498,7 @@ export class Multiplexer {
       }
     }
     output += "\x1b8";
-    this.io.write(output);
+    process.stdout.write(output);
   }
 
   private handleWorktreeInputKey(data: Buffer): void {
@@ -1589,8 +1551,8 @@ export class Multiplexer {
   }
 
   private renderLabelInput(): void {
-    const cols = this.io.columns;
-    const rows = this.io.rows;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
 
     const lines = ["Rename/label agent:", "", `  Label: ${this.labelInputBuffer}_`, "", "  [Enter] save  [Esc] cancel"];
 
@@ -1610,7 +1572,7 @@ export class Multiplexer {
       }
     }
     output += "\x1b8";
-    this.io.write(output);
+    process.stdout.write(output);
   }
 
   private handleLabelInputKey(data: Buffer): void {
@@ -1670,8 +1632,8 @@ export class Multiplexer {
   }
 
   private renderWorktreeList(): void {
-    const cols = this.io.columns;
-    const rows = this.io.rows;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
 
     let worktrees: Array<{ name: string; branch: string; status: string; path: string }> = [];
     try {
@@ -1711,7 +1673,7 @@ export class Multiplexer {
       }
     }
     output += "\x1b8";
-    this.io.write(output);
+    process.stdout.write(output);
   }
 
   private handleWorktreeListKey(data: Buffer): void {
@@ -1776,8 +1738,8 @@ export class Multiplexer {
   }
 
   private renderGraveyard(): void {
-    const cols = this.io.columns;
-    const rows = this.io.rows;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
 
     const lines = ["Graveyard:", ""];
     if (this.graveyardEntries.length === 0) {
@@ -1809,7 +1771,7 @@ export class Multiplexer {
       }
     }
     output += "\x1b8";
-    this.io.write(output);
+    process.stdout.write(output);
   }
 
   private handleGraveyardKey(data: Buffer): void {
@@ -1929,15 +1891,15 @@ export class Multiplexer {
     } else {
       this.setupScrollRegion();
       if (this.sessions[this.activeIndex]) {
-        this.io.write(this.sessions[this.activeIndex].getScreenState());
+        process.stdout.write(this.sessions[this.activeIndex].getScreenState());
       }
       this.renderFooter();
     }
   }
 
   private renderSwitcher(): void {
-    const cols = this.io.columns;
-    const rows = this.io.rows;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
     const list = this.getSwitcherList();
 
     const lines: string[] = ["Switch Agent:"];
@@ -1974,7 +1936,7 @@ export class Multiplexer {
       }
     }
     output += "\x1b8"; // restore cursor
-    this.io.write(output);
+    process.stdout.write(output);
   }
 
   private handleSwitcherKey(data: Buffer): void {
@@ -2052,8 +2014,8 @@ export class Multiplexer {
   }
 
   private renderMigratePicker(): void {
-    const cols = this.io.columns;
-    const rows = this.io.rows;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
     const session = this.sessions[this.activeIndex];
     if (!session) return;
 
@@ -2084,7 +2046,7 @@ export class Multiplexer {
       }
     }
     output += "\x1b8";
-    this.io.write(output);
+    process.stdout.write(output);
   }
 
   private handleMigratePickerKey(data: Buffer): void {
@@ -2287,11 +2249,11 @@ export class Multiplexer {
       // Stop footer, reset scroll region, enter alternate screen
       this.stopFooterRefresh();
       this.resetScrollRegion();
-      this.io.write("\x1b[?1049h");
+      process.stdout.write("\x1b[?1049h");
       this.renderDashboard();
     } else if (mode === "focused" && prev === "dashboard") {
       // Leave alternate screen buffer
-      this.io.write("\x1b[?1049l");
+      process.stdout.write("\x1b[?1049l");
     }
   }
 
@@ -2436,31 +2398,31 @@ export class Multiplexer {
 
   /** Terminal rows available for the tool (total minus footer) */
   private get toolRows(): number {
-    const rows = this.io.rows;
+    const rows = process.stdout.rows ?? 24;
     return this.mode === "focused" ? rows - Multiplexer.FOOTER_HEIGHT : rows;
   }
 
   /** Set scroll region to exclude footer row */
   private setupScrollRegion(): void {
-    const rows = this.io.rows;
+    const rows = process.stdout.rows ?? 24;
     const toolRows = rows - Multiplexer.FOOTER_HEIGHT;
     // Set scroll region to top portion, leaving bottom row for footer
-    this.io.write(`\x1b[1;${toolRows}r`);
+    process.stdout.write(`\x1b[1;${toolRows}r`);
     // Move cursor back into scroll region
-    this.io.write(`\x1b[${toolRows};1H`);
+    process.stdout.write(`\x1b[${toolRows};1H`);
   }
 
   /** Reset scroll region to full terminal */
   private resetScrollRegion(): void {
-    this.io.write("\x1b[r");
+    process.stdout.write("\x1b[r");
   }
 
   /** Render the status footer in the reserved bottom row */
   private renderFooter(): void {
     if (this.mode !== "focused") return;
 
-    const cols = this.io.columns;
-    const rows = this.io.rows;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
 
     const STATUS_ICONS: Record<string, string> = {
       running: "\x1b[33m●\x1b[0m",
@@ -2500,7 +2462,7 @@ export class Multiplexer {
     const footerContent = `\x1b[7m${left}${" ".repeat(padLen)}${right}\x1b[0m`;
 
     // Save cursor, move to footer row, draw, restore cursor
-    this.io.write(`\x1b7` + `\x1b[${rows};1H` + footerContent + `\x1b8`);
+    process.stdout.write(`\x1b7` + `\x1b[${rows};1H` + footerContent + `\x1b8`);
   }
 
   /** Track previous statuses for notification on transition */
@@ -2804,11 +2766,18 @@ export class Multiplexer {
   }
 
   private enterRawMode(): void {
-    this.io.enterRawMode();
+    if (process.stdin.isTTY) {
+      this.rawModeWas = process.stdin.isRaw;
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+    }
   }
 
   private exitRawMode(): void {
-    this.io.exitRawMode();
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(this.rawModeWas ?? false);
+      process.stdin.pause();
+    }
   }
 
   /** Get the shared state.json path (in main repo for cross-worktree visibility). */
@@ -2900,12 +2869,16 @@ export class Multiplexer {
     this.removeSessionsFile();
     this.removeInstructionFiles();
     closeDebug();
-    this.io.removeInputHandler();
-    this.io.removeResizeHandler();
+    if (this.onStdinData) {
+      process.stdin.removeListener("data", this.onStdinData);
+    }
+    if (this.onResize) {
+      process.stdout.removeListener("resize", this.onResize);
+    }
     this.hotkeys.destroy();
     this.exitRawMode();
     // Ensure we leave alternate screen and restore cursor
-    this.io.write("\x1b[?1049l\x1b[?25h");
+    process.stdout.write("\x1b[?1049l\x1b[?25h");
   }
 
   cleanup(): void {

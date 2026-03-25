@@ -6,8 +6,7 @@ import { llmCompact } from "./context/compactor.js";
 import { getHistoryDir } from "./context/history.js";
 import { getAimuxDir, initProject } from "./config.js";
 import { createWorktree, listWorktrees, cleanWorktrees, removeWorktree } from "./worktree.js";
-import { startServerForeground, stopServer, getServerStatus, getSocketPath, isServerRunning } from "./server.js";
-import { attachToServer } from "./client.js";
+import { startServerForeground, stopServer, getServerStatus, isServerRunning } from "./server.js";
 
 const program = new Command();
 
@@ -205,7 +204,6 @@ graveyardCmd
       const restored = graveyard.splice(idx, 1)[0];
       writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
 
-      // Add back to state.json
       const statePath = `${dir}/state.json`;
       let state = {
         savedAt: new Date().toISOString(),
@@ -227,7 +225,7 @@ graveyardCmd
     }
   });
 
-const serverCmd = program.command("server").description("Manage aimux server (tmux-like persistent daemon)");
+const serverCmd = program.command("server").description("Manage aimux server (headless persistent agent host)");
 
 serverCmd
   .command("start")
@@ -244,15 +242,12 @@ serverCmd
       process.exit(0);
     }
 
-    // Spawn a detached child running with --foreground
-    // process.argv[0] = node, process.argv[1] = main.js script
     const child = spawn(process.argv[0], [process.argv[1], "server", "start", "--foreground"], {
       detached: true,
       stdio: "ignore",
     });
     child.unref();
     console.log(`Server started (PID ${child.pid}).`);
-    console.log("Attach with: aimux attach");
   });
 
 serverCmd
@@ -277,18 +272,6 @@ serverCmd
     } else {
       console.log("Server is not running.");
     }
-  });
-
-program
-  .command("attach")
-  .description("Attach to a running aimux server")
-  .action(() => {
-    const socketPath = getSocketPath();
-    if (!isServerRunning()) {
-      console.error("No running server found. Start one with: aimux server start");
-      process.exit(1);
-    }
-    attachToServer(socketPath);
   });
 
 program.parse();

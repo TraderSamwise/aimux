@@ -1,23 +1,13 @@
-import { createServer, type Server, type Socket } from "node:net";
-import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { Multiplexer } from "./multiplexer.js";
-import { RemoteTerminalIO } from "./terminal-io.js";
+import { PtySession, type PtySessionOptions } from "./pty-session.js";
+import { registerInstance, unregisterInstance, updateHeartbeat, type InstanceSessionRef } from "./instance-registry.js";
+import { initProject, loadConfig, getAimuxDir } from "./config.js";
+import { debug } from "./debug.js";
 
 const AIMUX_DIR = join(homedir(), ".aimux");
-const SOCKET_PATH = join(AIMUX_DIR, "aimux.sock");
-const API_SOCKET_PATH = join(AIMUX_DIR, "aimux-api.sock");
 const PID_PATH = join(AIMUX_DIR, "aimux.pid");
-
-export function getSocketPath(): string {
-  return SOCKET_PATH;
-}
-
-export function getApiSocketPath(): string {
-  return API_SOCKET_PATH;
-}
 
 export function getPidPath(): string {
   return PID_PATH;
@@ -28,157 +18,12 @@ export function isServerRunning(): boolean {
   if (!existsSync(PID_PATH)) return false;
   try {
     const pid = parseInt(readFileSync(PID_PATH, "utf-8").trim(), 10);
-    // Check if process is alive (signal 0 doesn't kill, just checks)
     process.kill(pid, 0);
     return true;
   } catch {
-    // Process not running — clean up stale files
     try {
       unlinkSync(PID_PATH);
     } catch {}
-    try {
-      unlinkSync(SOCKET_PATH);
-    } catch {}
-    return false;
-  }
-}
-
-export class AimuxServer {
-  private server: Server;
-  private apiServer: HttpServer;
-  private io: RemoteTerminalIO;
-  private mux: Multiplexer;
-  private currentClient: Socket | null = null;
-  private startedAt = Date.now();
-
-  constructor() {
-    this.io = new RemoteTerminalIO();
-    this.mux = new Multiplexer(this.io);
-    this.server = createServer((socket) => this.handleConnection(socket));
-    this.apiServer = createHttpServer((req, res) => this.handleApiRequest(req, res));
-  }
-
-  async start(): Promise<void> {
-    mkdirSync(AIMUX_DIR, { recursive: true });
-
-    // Check for stale sockets
-    if (existsSync(SOCKET_PATH)) {
-      if (isServerRunning()) {
-        throw new Error("Server is already running");
-      }
-      unlinkSync(SOCKET_PATH);
-    }
-    if (existsSync(API_SOCKET_PATH)) {
-      try {
-        unlinkSync(API_SOCKET_PATH);
-      } catch {}
-    }
-
-    // Write PID file
-    writeFileSync(PID_PATH, String(process.pid));
-
-    // Start PTY client socket
-    await new Promise<void>((resolve, reject) => {
-      this.server.on("error", reject);
-      this.server.listen(SOCKET_PATH, () => resolve());
-    });
-
-    // Start API socket
-    await new Promise<void>((resolve, reject) => {
-      this.apiServer.on("error", reject);
-      this.apiServer.listen(API_SOCKET_PATH, () => resolve());
-    });
-
-    // Set up signal handlers
-    const cleanup = () => {
-      this.shutdown();
-      process.exit(0);
-    };
-    process.on("SIGTERM", cleanup);
-    process.on("SIGINT", cleanup);
-
-    // Start the multiplexer in dashboard mode
-    try {
-      await this.mux.runDashboard();
-    } finally {
-      this.shutdown();
-    }
-  }
-
-  private handleConnection(socket: Socket): void {
-    if (this.currentClient && !this.currentClient.destroyed) {
-      // Reject additional clients — only one at a time
-      socket.end("Another client is already connected.\n");
-      return;
-    }
-
-    this.currentClient = socket;
-    this.io.bindSocket(socket);
-
-    socket.on("close", () => {
-      if (this.currentClient === socket) {
-        this.currentClient = null;
-      }
-    });
-
-    socket.on("error", () => {
-      if (this.currentClient === socket) {
-        this.currentClient = null;
-      }
-    });
-  }
-
-  private handleApiRequest(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse): void {
-    if (req.url === "/status" && req.method === "GET") {
-      const status = this.mux.getStatusInfo();
-      const body = JSON.stringify({
-        server: {
-          pid: process.pid,
-          uptime: Math.round((Date.now() - this.startedAt) / 1000),
-          clientConnected: this.currentClient !== null && !this.currentClient.destroyed,
-        },
-        ...status,
-      });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(body);
-    } else {
-      res.writeHead(404);
-      res.end("Not found");
-    }
-  }
-
-  private shutdown(): void {
-    this.mux.cleanup();
-    this.server.close();
-    this.apiServer.close();
-    try {
-      unlinkSync(SOCKET_PATH);
-    } catch {}
-    try {
-      unlinkSync(API_SOCKET_PATH);
-    } catch {}
-    try {
-      unlinkSync(PID_PATH);
-    } catch {}
-  }
-}
-
-/** Start the server in foreground mode (called by the spawned child process) */
-export async function startServerForeground(): Promise<void> {
-  const server = new AimuxServer();
-  await server.start();
-}
-
-/** Stop a running server by sending SIGTERM */
-export function stopServer(): boolean {
-  if (!existsSync(PID_PATH)) {
-    return false;
-  }
-  try {
-    const pid = parseInt(readFileSync(PID_PATH, "utf-8").trim(), 10);
-    process.kill(pid, "SIGTERM");
-    return true;
-  } catch {
     return false;
   }
 }
@@ -193,4 +38,153 @@ export function getServerStatus(): { running: boolean; pid?: number } {
   } catch {
     return { running: false };
   }
+}
+
+/** Stop a running server by sending SIGTERM */
+export function stopServer(): boolean {
+  if (!existsSync(PID_PATH)) return false;
+  try {
+    const pid = parseInt(readFileSync(PID_PATH, "utf-8").trim(), 10);
+    process.kill(pid, "SIGTERM");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Headless aimux server — owns PTY sessions without a terminal.
+ * Participates in the same file-based coordination system (instances.json,
+ * state.json, sessions.json) as direct-mode aimux.
+ *
+ * Sessions on the server persist until explicitly killed. Direct-mode
+ * aimux sees server sessions as "remote" and can take them over.
+ */
+export class AimuxServer {
+  private sessions: PtySession[] = [];
+  private instanceId = `server-${Math.random().toString(36).slice(2, 8)}`;
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private startedAt = Date.now();
+
+  async start(): Promise<void> {
+    mkdirSync(AIMUX_DIR, { recursive: true });
+
+    if (isServerRunning()) {
+      throw new Error("Server is already running");
+    }
+
+    writeFileSync(PID_PATH, String(process.pid));
+    debug(`server started (PID ${process.pid})`, "server");
+
+    // Register in the instance registry (same as direct-mode aimux)
+    await registerInstance(this.instanceId, process.cwd());
+
+    // Heartbeat — same 5s interval as direct mode
+    this.heartbeatInterval = setInterval(() => {
+      const refs = this.getSessionRefs();
+      updateHeartbeat(this.instanceId, refs, process.cwd()).catch(() => {});
+    }, 5000);
+
+    // Signal handlers
+    const cleanup = () => this.shutdown();
+    process.on("SIGTERM", cleanup);
+    process.on("SIGINT", cleanup);
+
+    // Keep the process alive
+    await new Promise<void>(() => {
+      // Never resolves — server runs until killed
+    });
+  }
+
+  /** Spawn a new agent session on the server */
+  spawnSession(tool: string, args: string[], cwd?: string): PtySession {
+    const effectiveCwd = cwd ?? process.cwd();
+    initProject(effectiveCwd);
+
+    const config = loadConfig(effectiveCwd);
+    const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === tool);
+    const toolCfg = toolEntry?.[1];
+
+    const sessionId = `${tool}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Build prompt patterns from config
+    let promptPatterns: RegExp[] | undefined;
+    if (toolCfg?.promptPatterns) {
+      promptPatterns = toolCfg.promptPatterns.map((p) => new RegExp(p, "m"));
+    }
+
+    const session = new PtySession({
+      command: tool,
+      args,
+      cols: 120, // headless — use reasonable defaults
+      rows: 40,
+      id: sessionId,
+      cwd: effectiveCwd,
+      promptPatterns,
+    });
+
+    session.onExit((code) => {
+      debug(`server session exited: ${session.id} (code=${code})`, "server");
+      const idx = this.sessions.indexOf(session);
+      if (idx >= 0) this.sessions.splice(idx, 1);
+    });
+
+    this.sessions.push(session);
+    debug(`server spawned session: ${session.id} (${tool})`, "server");
+    return session;
+  }
+
+  private getSessionRefs(): InstanceSessionRef[] {
+    return this.sessions.map((s) => ({
+      id: s.id,
+      tool: s.command,
+      backendSessionId: s.backendSessionId,
+    }));
+  }
+
+  private shutdown(): void {
+    debug("server shutting down", "server");
+
+    // Kill all sessions
+    for (const session of this.sessions) {
+      session.kill();
+    }
+    this.sessions = [];
+
+    // Stop heartbeat
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+
+    // Unregister
+    unregisterInstance(this.instanceId, process.cwd()).catch(() => {});
+
+    // Clean up PID file
+    try {
+      unlinkSync(PID_PATH);
+    } catch {}
+
+    process.exit(0);
+  }
+
+  /** Get status for external consumers (tray app, CLI) */
+  getStatus() {
+    return {
+      pid: process.pid,
+      uptime: Math.round((Date.now() - this.startedAt) / 1000),
+      sessions: this.sessions.map((s) => ({
+        id: s.id,
+        tool: s.command,
+        status: s.status,
+        backendSessionId: s.backendSessionId,
+      })),
+    };
+  }
+}
+
+/** Start the server in foreground mode */
+export async function startServerForeground(): Promise<void> {
+  const server = new AimuxServer();
+  await server.start();
 }
