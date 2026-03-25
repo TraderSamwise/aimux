@@ -231,6 +231,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if totalRunning > 0 {
                 button.title = " \(totalRunning)"
                 button.image = createDot(color: .systemGreen)
+            } else if serverRunning {
+                button.title = ""
+                button.image = createDot(color: .systemGreen)
             } else if totalOffline > 0 {
                 button.title = " \(totalOffline)"
                 button.image = createDot(color: .systemGray)
