@@ -639,7 +639,7 @@ export class Multiplexer {
           .map((w) => `${w.name} (${w.branch})`)
           .join(", ");
         preamble +=
-          `\n\nYou are working in git worktree '${wt?.name ?? "unknown"}' at ${worktreePath} on branch '${branch}'.` +
+          `\n\nYou are working in git worktree "${wt?.name ?? "unknown"}" at ${worktreePath} on branch "${branch}".` +
           `\nYour main repository is at ${registry.mainRepoPath}.` +
           (siblings ? `\nSibling worktrees: ${siblings}` : "") +
           `\nStay in your worktree directory — do not cd to other worktrees or the main repo.`;
@@ -2628,16 +2628,24 @@ export class Multiplexer {
       const sessions = this.getInstanceSessionRefs();
       updateHeartbeat(this.instanceId, sessions, process.cwd())
         .then((previousIds) => {
-          // Detect claimed sessions: we confirmed a session was registered,
-          // but it's no longer in the registry (claimSession removed it).
-          const previousSet = new Set(previousIds);
-          for (const id of this.confirmedRegistered) {
-            if (!previousSet.has(id)) {
-              // We confirmed this session was registered, but the registry
-              // no longer had it — another instance claimed it
-              this.handleSessionClaimed(id);
-              this.confirmedRegistered.delete(id);
+          // Only detect claims if we got a valid response (previousIds is non-empty
+          // OR we have no sessions to confirm). If previousIds is empty but we have
+          // confirmed sessions, our registry entry may have been pruned/lost — skip
+          // claim detection this cycle to avoid false positives.
+          if (previousIds.length > 0 || this.confirmedRegistered.size === 0) {
+            const previousSet = new Set(previousIds);
+            for (const id of this.confirmedRegistered) {
+              if (!previousSet.has(id)) {
+                debug(`session ${id} claimed: was in confirmedRegistered but not in previousIds`, "instance");
+                this.handleSessionClaimed(id);
+                this.confirmedRegistered.delete(id);
+              }
             }
+          } else if (this.confirmedRegistered.size > 0) {
+            debug(
+              `skipping claim detection: previousIds empty but ${this.confirmedRegistered.size} confirmed sessions (registry entry may have been pruned)`,
+              "instance",
+            );
           }
           // Mark all sessions we just wrote as confirmed
           for (const s of sessions) {

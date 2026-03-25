@@ -186,18 +186,22 @@ export async function updateHeartbeat(
   sessions: InstanceSessionRef[],
   cwd: string,
 ): Promise<string[]> {
-  let previousSessionIds: string[] = [];
+  // Collect previous session IDs across ALL instances.json files (local + main repo).
+  // withLockedInstances calls the callback once per file, so we merge results.
+  const allPreviousIds = new Set<string>();
   await withLockedInstances(cwd, (instances) => {
-    const pruned = pruneDeadEntries(instances);
-    return pruned.map((inst) => {
-      if (inst.instanceId === instanceId) {
-        previousSessionIds = inst.sessions.map((s) => s.id);
-        return { ...inst, heartbeat: new Date().toISOString(), sessions };
-      }
-      return inst;
-    });
+    // Prune dead instances, but never prune ourselves — we know we're alive
+    const pruned = pruneDeadEntries(instances.filter((i) => i.instanceId !== instanceId));
+    const self = instances.find((i) => i.instanceId === instanceId);
+
+    const result = pruned.map((inst) => inst);
+    if (self) {
+      for (const s of self.sessions) allPreviousIds.add(s.id);
+      result.push({ ...self, heartbeat: new Date().toISOString(), sessions });
+    }
+    return result;
   });
-  return previousSessionIds;
+  return [...allPreviousIds];
 }
 
 /**

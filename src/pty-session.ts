@@ -47,7 +47,12 @@ export class PtySession {
 
     // Spawn via shell to handle wrapper scripts and ensure PATH resolution
     const shell = process.env.SHELL || "/bin/zsh";
-    const cmdStr = [opts.command, ...opts.args].map((a) => (a.includes(" ") ? `'${a}'` : a)).join(" ");
+    // Shell-escape args: wrap in single quotes, escaping any embedded single quotes
+    const shellEscape = (s: string) => {
+      if (!s.includes(" ") && !s.includes("'") && !s.includes('"') && !s.includes("`")) return s;
+      return "'" + s.replace(/'/g, "'\\''") + "'";
+    };
+    const cmdStr = [opts.command, ...opts.args].map(shellEscape).join(" ");
     this.process = pty.spawn(shell, ["-ilc", cmdStr], {
       name: "xterm-256color",
       cols: opts.cols,
