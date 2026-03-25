@@ -1,10 +1,13 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
 import { getHistoryDir } from "./context/history.js";
 import { getAimuxDir, initProject } from "./config.js";
 import { createWorktree, listWorktrees, cleanWorktrees, removeWorktree } from "./worktree.js";
+import { startServerForeground, stopServer, getServerStatus, getSocketPath, isServerRunning } from "./server.js";
+import { attachToServer } from "./client.js";
 
 const program = new Command();
 
@@ -222,6 +225,69 @@ graveyardCmd
       console.error(`Error: ${msg}`);
       process.exit(1);
     }
+  });
+
+const serverCmd = program.command("server").description("Manage aimux server (tmux-like persistent daemon)");
+
+serverCmd
+  .command("start")
+  .description("Start the aimux server as a background daemon")
+  .option("--foreground", "Run in foreground (used internally)")
+  .action(async (opts: { foreground?: boolean }) => {
+    if (opts.foreground) {
+      await startServerForeground();
+      return;
+    }
+
+    if (isServerRunning()) {
+      console.log("Server is already running.");
+      process.exit(0);
+    }
+
+    // Spawn a detached child running with --foreground
+    const child = spawn(process.argv[0], [...process.argv.slice(1, -1), "server", "start", "--foreground"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    console.log(`Server started (PID ${child.pid}).`);
+    console.log("Attach with: aimux attach");
+  });
+
+serverCmd
+  .command("stop")
+  .description("Stop the running aimux server")
+  .action(() => {
+    if (stopServer()) {
+      console.log("Server stopped.");
+    } else {
+      console.error("No running server found.");
+      process.exit(1);
+    }
+  });
+
+serverCmd
+  .command("status")
+  .description("Check if the aimux server is running")
+  .action(() => {
+    const status = getServerStatus();
+    if (status.running) {
+      console.log(`Server is running (PID ${status.pid}).`);
+    } else {
+      console.log("Server is not running.");
+    }
+  });
+
+program
+  .command("attach")
+  .description("Attach to a running aimux server")
+  .action(() => {
+    const socketPath = getSocketPath();
+    if (!isServerRunning()) {
+      console.error("No running server found. Start one with: aimux server start");
+      process.exit(1);
+    }
+    attachToServer(socketPath);
   });
 
 program.parse();
