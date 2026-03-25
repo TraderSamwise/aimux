@@ -20,6 +20,43 @@ struct AimuxProject {
 
 // MARK: - File Scanner
 
+/// Resolve aimux binary path — GUI apps don't inherit shell PATH
+func findAimuxBinary() -> String {
+    let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+    // Check ~/bin/aimux symlink first
+    let binLink = "\(homeDir)/bin/aimux"
+    if FileManager.default.fileExists(atPath: binLink) {
+        return binLink
+    }
+    // Check common nvm locations
+    let nvmDir = "\(homeDir)/.nvm/versions/node"
+    if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmDir) {
+        for ver in versions.sorted().reversed() {
+            let path = "\(nvmDir)/\(ver)/bin/aimux"
+            if FileManager.default.fileExists(atPath: path) { return path }
+        }
+    }
+    // Fallback
+    return "aimux"
+}
+
+/// Resolve node binary path for GUI context
+func findNodeBinary() -> String {
+    let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+    let nvmDir = "\(homeDir)/.nvm/versions/node"
+    if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmDir) {
+        for ver in versions.sorted().reversed() {
+            let path = "\(nvmDir)/\(ver)/bin/node"
+            if FileManager.default.fileExists(atPath: path) { return path }
+        }
+    }
+    // Check homebrew
+    if FileManager.default.fileExists(atPath: "/opt/homebrew/bin/node") {
+        return "/opt/homebrew/bin/node"
+    }
+    return "/usr/local/bin/node"
+}
+
 class AimuxScanner {
     private let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
 
@@ -285,29 +322,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func startServer() {
+        let node = findNodeBinary()
+        let aimux = findAimuxBinary()
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        task.arguments = ["aimux", "server", "start"]
+        task.executableURL = URL(fileURLWithPath: node)
+        task.arguments = [aimux, "server", "start"]
+        task.environment = ProcessInfo.processInfo.environment
         try? task.run()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.updateMenu()
         }
     }
 
     @objc func stopServer() {
+        let node = findNodeBinary()
+        let aimux = findAimuxBinary()
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        task.arguments = ["aimux", "server", "stop"]
+        task.executableURL = URL(fileURLWithPath: node)
+        task.arguments = [aimux, "server", "stop"]
+        task.environment = ProcessInfo.processInfo.environment
         try? task.run()
         task.waitUntilExit()
         updateMenu()
     }
 
     @objc func attachInTerminal() {
+        let aimux = findAimuxBinary()
         let script = """
         tell application "Terminal"
             activate
-            do script "aimux attach"
+            do script "\(aimux) attach"
         end tell
         """
         if let appleScript = NSAppleScript(source: script) {
@@ -318,10 +362,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openTerminal(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
+        let aimux = findAimuxBinary()
         let script = """
         tell application "Terminal"
             activate
-            do script "cd '\(path)' && aimux"
+            do script "cd '\(path)' && \(aimux)"
         end tell
         """
         if let appleScript = NSAppleScript(source: script) {
