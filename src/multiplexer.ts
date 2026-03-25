@@ -109,6 +109,8 @@ export class Multiplexer {
   private sessionToolKeys = new Map<string, string>();
   /** Maps session ID → original args (before preamble injection) */
   private sessionOriginalArgs = new Map<string, string[]>();
+  /** Track session spawn time for quick-crash detection */
+  private sessionStartTimes = new Map<string, number>();
   /** Maps session ID → worktree path (if session runs in a worktree) */
   private sessionWorktreePaths = new Map<string, string>();
   /** Offline sessions from previous runs (loaded from state.json) */
@@ -726,8 +728,9 @@ export class Multiplexer {
       cwd: worktreePath,
       promptPatterns,
     });
-    // Store backend session ID for resume
+    // Store backend session ID and start time
     session.backendSessionId = backendSessionId;
+    this.sessionStartTimes.set(session.id, Date.now());
 
     // For tools without sessionIdFlag, try to capture the backend session ID via filesystem
     if (!backendSessionId && toolConfigKey) {
@@ -747,6 +750,34 @@ export class Multiplexer {
     // Handle session exit
     session.onExit((_code) => {
       debug(`session exited: ${session.id} (code=${_code})`, "session");
+
+      // Detect quick crash: non-zero exit within 10s of spawn
+      const startTime = this.sessionStartTimes.get(session.id);
+      const uptime = startTime ? Date.now() - startTime : Infinity;
+      if (_code !== 0 && uptime < 10_000) {
+        // Try to extract error from raw recording
+        let errorHint = "";
+        try {
+          const logPath = join(getAimuxDir(), "recordings", `${session.id}.log`);
+          if (existsSync(logPath)) {
+            const raw = readFileSync(logPath, "utf-8");
+            // Look for common error patterns in raw output
+            const lines = raw
+              .split("\n")
+              .map((l) => l.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim())
+              .filter(Boolean);
+            const errorLine = lines.find(
+              (l) => l.includes("Error") || l.includes("error") || l.includes("unmatched") || l.includes("not found"),
+            );
+            if (errorLine) errorHint = `: ${errorLine.slice(0, 60)}`;
+          }
+        } catch {}
+        this.footerFlash = `\x1b[31m✗ ${session.id} crashed (code ${_code})${errorHint}\x1b[0m`;
+        this.footerFlashTicks = 8; // show for ~8s
+        debug(`quick crash detected: ${session.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
+      }
+      this.sessionStartTimes.delete(session.id);
+
       notifyComplete(session.id);
       // Capture git context on session exit (fire-and-forget)
       captureGitContext(session.id, session.command).catch(() => {});
@@ -2683,6 +2714,7 @@ export class Multiplexer {
       this.sessionToolKeys.delete(sessionId);
       this.sessionOriginalArgs.delete(sessionId);
       this.sessionWorktreePaths.delete(sessionId);
+      this.sessionStartTimes.delete(sessionId);
     }
 
     // Adjust active index
