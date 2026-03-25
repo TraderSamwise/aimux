@@ -10,6 +10,8 @@ struct AimuxSession {
     let label: String?
     let worktreePath: String?
     let projectPath: String
+    let ownerPid: Int?
+    let isServer: Bool
 }
 
 // MARK: - File Scanner
@@ -38,19 +40,30 @@ class AimuxScanner {
                     guard let pid = inst["pid"] as? Int, isAlive(pid),
                           let instSessions = inst["sessions"] as? [[String: Any]] else { continue }
 
+                    let instId = inst["instanceId"] as? String ?? ""
+                    let isServer = instId.hasPrefix("server-")
+
                     for s in instSessions {
                         let sid = s["id"] as? String ?? "unknown"
                         if seenIds.contains(sid) { continue }
                         seenIds.insert(sid)
 
-                        let label = readStatusFile(aimuxDir: aimuxDir, sessionId: sid)
+                        // Try status file from worktree dir first, then project dir
+                        let wtPath = s["worktreePath"] as? String
+                        var label = wtPath != nil ? readStatusFile(aimuxDir: "\(wtPath!)/.aimux", sessionId: sid) : nil
+                        if label == nil {
+                            label = readStatusFile(aimuxDir: aimuxDir, sessionId: sid)
+                        }
+
                         sessions.append(AimuxSession(
                             id: sid,
                             tool: s["tool"] as? String ?? "unknown",
                             status: "running",
                             label: label,
-                            worktreePath: s["worktreePath"] as? String,
-                            projectPath: projectPath
+                            worktreePath: wtPath,
+                            projectPath: projectPath,
+                            ownerPid: pid,
+                            isServer: isServer
                         ))
                     }
                 }
@@ -72,7 +85,9 @@ class AimuxScanner {
                         status: "offline",
                         label: s["label"] as? String,
                         worktreePath: s["worktreePath"] as? String,
-                        projectPath: projectPath
+                        projectPath: projectPath,
+                        ownerPid: nil,
+                        isServer: false
                     ))
                 }
             }
@@ -245,8 +260,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     case "waiting": icon = "\u{1F535}"
                     default: icon = "\u{26AA}"
                     }
-                    let detail = session.label != nil ? "\(session.tool) — \(session.label!)" : session.tool
-                    let title = "  \(icon) \(detail)"
+                    var parts = [session.tool]
+                    if let label = session.label, !label.isEmpty {
+                        parts.append(label)
+                    }
+                    if session.isServer {
+                        parts.append("[server]")
+                    } else if let pid = session.ownerPid {
+                        parts.append("[PID \(pid)]")
+                    }
+                    let title = "  \(icon) \(parts.joined(separator: " — "))"
                     let item = NSMenuItem(title: title, action: #selector(openProject(_:)), keyEquivalent: "")
                     item.target = self
                     item.representedObject = session.projectPath
