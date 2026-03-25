@@ -2101,6 +2101,16 @@ export class Multiplexer {
 
     const dashSessions: DashboardSession[] = this.sessions.map((s, i) => {
       const wtPath = normalizeWtPath(this.sessionWorktreePaths.get(s.id));
+      // Read status file for live session label
+      let label: string | undefined;
+      try {
+        const statusCwd = this.sessionWorktreePaths.get(s.id);
+        const statusPath = join(getAimuxDir(statusCwd), "status", `${s.id}.md`);
+        if (existsSync(statusPath)) {
+          const content = readFileSync(statusPath, "utf-8").trim();
+          if (content) label = content.split("\n")[0].slice(0, 80);
+        }
+      } catch {}
       return {
         index: i,
         id: s.id,
@@ -2108,6 +2118,7 @@ export class Multiplexer {
         status: s.status,
         active: i === this.activeIndex,
         worktreePath: wtPath,
+        label,
         taskDescription: this.taskDispatcher?.getSessionTask(s.id),
       };
     });

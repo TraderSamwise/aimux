@@ -119,8 +119,7 @@ export class Dashboard {
 
     const icon = STATUS_ICONS[session.status];
     const statusLabel = STATUS_LABELS[session.status];
-    const labelText =
-      session.status === "offline" && session.label ? ` \x1b[2m${truncate(session.label, 50)}\x1b[0m` : "";
+    const labelText = session.label ? ` \x1b[2m${truncate(session.label, 50)}\x1b[0m` : "";
     return `${indent}${icon} [${num}] ${session.command} — ${statusLabel}${labelText}${taskBadge}${marker}`;
   }
 
