@@ -17,6 +17,8 @@ export interface DashboardSession {
   taskDescription?: string;
   /** Auto-derived or user-set label for offline agents */
   label?: string;
+  /** Whether this session is owned by the headless server */
+  isServer?: boolean;
 }
 
 export interface WorktreeGroup {
@@ -110,11 +112,14 @@ export class Dashboard {
     const marker = isSelected ? " \x1b[33m◀\x1b[0m" : "";
     const taskBadge = session.taskDescription ? ` \x1b[2;35m⧫ ${truncate(session.taskDescription, 40)}\x1b[0m` : "";
 
-    if (session.remoteInstancePid) {
-      // Remote session — different icon and dimmed label
+    if (session.remoteInstancePid || session.isServer) {
+      // Remote session — different icon and dimmed ownership label
       const icon = "\x1b[2;36m◈\x1b[0m"; // dim cyan diamond
-      const label = `\x1b[2mother tab (PID ${session.remoteInstancePid})\x1b[0m`;
-      return `${indent}${icon} [${num}] ${session.command} — ${label}${marker}`;
+      const ownerTag = session.isServer
+        ? "\x1b[2;32m[server]\x1b[0m"
+        : `\x1b[2mother tab (PID ${session.remoteInstancePid})\x1b[0m`;
+      const remoteLabelText = session.label ? ` \x1b[2m${truncate(session.label, 40)}\x1b[0m` : "";
+      return `${indent}${icon} [${num}] ${session.command}${remoteLabelText} — ${ownerTag}${marker}`;
     }
 
     const icon = STATUS_ICONS[session.status];

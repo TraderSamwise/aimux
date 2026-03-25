@@ -2125,8 +2125,19 @@ export class Multiplexer {
     try {
       const remote = getRemoteInstances(this.instanceId, process.cwd());
       for (const inst of remote) {
+        const isServer = inst.instanceId.startsWith("server-");
         for (const rs of inst.sessions) {
           if (dashSessions.some((ds) => ds.id === rs.id)) continue;
+          // Read status file for remote session label
+          let remoteLabel: string | undefined;
+          try {
+            const rsCwd = rs.worktreePath;
+            const statusPath = join(getAimuxDir(rsCwd), "status", `${rs.id}.md`);
+            if (existsSync(statusPath)) {
+              const content = readFileSync(statusPath, "utf-8").trim();
+              if (content) remoteLabel = content.split("\n")[0].slice(0, 80);
+            }
+          } catch {}
           dashSessions.push({
             index: dashSessions.length,
             id: rs.id,
@@ -2134,9 +2145,11 @@ export class Multiplexer {
             status: "running",
             active: false,
             worktreePath: normalizeWtPath(rs.worktreePath),
-            remoteInstancePid: inst.pid,
+            remoteInstancePid: isServer ? undefined : inst.pid,
             remoteInstanceId: inst.instanceId,
             remoteBackendSessionId: rs.backendSessionId,
+            label: remoteLabel,
+            isServer,
           });
         }
       }
