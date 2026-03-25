@@ -321,28 +321,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return image
     }
 
-    @objc func startServer() {
+    /// Run an aimux command using node directly (bypasses shebang PATH issues)
+    private func runAimux(_ args: [String], wait: Bool = false) {
         let node = findNodeBinary()
-        let aimux = findAimuxBinary()
+        let mainJs = "\(FileManager.default.homeDirectoryForCurrentUser.path)/cs/aimux/dist/main.js"
         let task = Process()
         task.executableURL = URL(fileURLWithPath: node)
-        task.arguments = [aimux, "server", "start"]
+        task.arguments = [mainJs] + args
         task.environment = ProcessInfo.processInfo.environment
         try? task.run()
+        if wait { task.waitUntilExit() }
+    }
+
+    @objc func startServer() {
+        runAimux(["server", "start"])
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.updateMenu()
         }
     }
 
     @objc func stopServer() {
-        let node = findNodeBinary()
-        let aimux = findAimuxBinary()
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: node)
-        task.arguments = [aimux, "server", "stop"]
-        task.environment = ProcessInfo.processInfo.environment
-        try? task.run()
-        task.waitUntilExit()
+        runAimux(["server", "stop"], wait: true)
         updateMenu()
     }
 
