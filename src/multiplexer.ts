@@ -38,6 +38,7 @@ import {
   type InstanceSessionRef,
 } from "./instance-registry.js";
 import { TaskDispatcher } from "./task-dispatcher.js";
+import { scanAllProjects, type ProjectInfo } from "./project-scanner.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -82,6 +83,7 @@ export class Multiplexer {
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
   private graveyardActive = false;
   private graveyardEntries: SessionState[] = [];
+  private metaDashboardActive = false;
   /** Quick switcher overlay state */
   private switcherActive = false;
   private switcherIndex = 0;
@@ -192,6 +194,10 @@ export class Multiplexer {
         this.handleLabelInputKey(data);
         return;
       }
+      if (this.metaDashboardActive) {
+        this.handleMetaDashboardKey(data);
+        return;
+      }
       if (this.graveyardActive) {
         this.handleGraveyardKey(data);
         return;
@@ -276,6 +282,10 @@ export class Multiplexer {
       }
       if (this.labelInputActive) {
         this.handleLabelInputKey(data);
+        return;
+      }
+      if (this.metaDashboardActive) {
+        this.handleMetaDashboardKey(data);
         return;
       }
       if (this.graveyardActive) {
@@ -422,6 +432,10 @@ export class Multiplexer {
         this.handleLabelInputKey(data);
         return;
       }
+      if (this.metaDashboardActive) {
+        this.handleMetaDashboardKey(data);
+        return;
+      }
       if (this.graveyardActive) {
         this.handleGraveyardKey(data);
         return;
@@ -548,6 +562,10 @@ export class Multiplexer {
       }
       if (this.labelInputActive) {
         this.handleLabelInputKey(data);
+        return;
+      }
+      if (this.metaDashboardActive) {
+        this.handleMetaDashboardKey(data);
         return;
       }
       if (this.graveyardActive) {
@@ -1060,6 +1078,9 @@ export class Multiplexer {
         return;
       case "g":
         this.showGraveyard();
+        return;
+      case "a":
+        this.showMetaDashboard();
         return;
       case "x": {
         const allDs = this.getDashboardSessions();
@@ -1989,6 +2010,99 @@ export class Multiplexer {
 
     // Any other key dismisses
     this.dismissSwitcher();
+  }
+
+  // --- Meta Dashboard (all projects) ---
+
+  private showMetaDashboard(): void {
+    this.metaDashboardActive = true;
+    this.renderMetaDashboard();
+  }
+
+  private renderMetaDashboard(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const projects = scanAllProjects();
+
+    const lines: string[] = ["All Projects:", ""];
+
+    if (projects.length === 0) {
+      lines.push("  (no aimux projects found)");
+    } else {
+      for (const project of projects) {
+        const running = project.sessions.filter((s) => s.status !== "offline").length;
+        const offline = project.sessions.filter((s) => s.status === "offline").length;
+        const counts: string[] = [];
+        if (running > 0) counts.push(`${running} running`);
+        if (offline > 0) counts.push(`${offline} offline`);
+        const countStr = counts.length > 0 ? ` (${counts.join(", ")})` : "";
+
+        lines.push(`  \x1b[1m${project.name}\x1b[0m${countStr}`);
+
+        for (const session of project.sessions) {
+          const icon =
+            session.status === "running"
+              ? "\x1b[33m●\x1b[0m"
+              : session.status === "idle"
+                ? "\x1b[32m●\x1b[0m"
+                : session.status === "waiting"
+                  ? "\x1b[36m◉\x1b[0m"
+                  : "\x1b[2m○\x1b[0m";
+
+          const label = session.label ? ` \x1b[2m${session.label.slice(0, 40)}\x1b[0m` : "";
+          const owner = session.isServer
+            ? " \x1b[2;32m[server]\x1b[0m"
+            : session.ownerPid
+              ? ` \x1b[2m[PID ${session.ownerPid}]\x1b[0m`
+              : "";
+
+          lines.push(`    ${icon} ${session.tool}${label}${owner}`);
+        }
+        lines.push("");
+      }
+    }
+
+    lines.push("  [Esc] back");
+
+    // Render as centered overlay (same pattern as graveyard)
+    const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+    const boxWidth = Math.min(cols - 4, Math.max(...lines.map((l) => strip(l).length)) + 4);
+    const startRow = Math.max(1, Math.floor((rows - lines.length - 2) / 2));
+    const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1];
+        const stripped = strip(line);
+        const padLen = Math.max(0, boxWidth - 2 - stripped.length);
+        output += `\x1b[44;97m  ${line}${" ".repeat(padLen)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleMetaDashboardKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    if (key === "escape" || key === "a") {
+      this.metaDashboardActive = false;
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
   }
 
   private showMigratePicker(): void {

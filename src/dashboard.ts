@@ -206,7 +206,7 @@ export class Dashboard {
         : "Enter focus";
 
     if (this.sessions.length === 0 && !this.hasWorktrees) {
-      return " [c] new  [g] graveyard  [q] quit ";
+      return " [c] new  [a] all projects  [g] graveyard  [q] quit ";
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
@@ -217,9 +217,9 @@ export class Dashboard {
     }
     if (this.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}${rLabel}  [g] graveyard  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}${rLabel}  [a] all  [g] graveyard  [q] quit `;
     }
-    return " [c] new  [w] worktree  [g] graveyard  [q] quit ";
+    return " [c] new  [w] worktree  [a] all projects  [g] graveyard  [q] quit ";
   }
 }
 
