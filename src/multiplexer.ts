@@ -706,7 +706,12 @@ export class Multiplexer {
       debugPreamble(command, Buffer.byteLength(preamble));
     }
     debug(
-      `creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"})`,
+      `creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"}, cwd=${worktreePath ?? process.cwd()}, args=${finalArgs.length})`,
+      "session",
+    );
+    // Log full args for debugging spawn failures
+    debug(
+      `spawn args: ${JSON.stringify(finalArgs.map((a) => (a.length > 100 ? a.slice(0, 100) + "..." : a)))}`,
       "session",
     );
 
@@ -755,26 +760,30 @@ export class Multiplexer {
       const startTime = this.sessionStartTimes.get(session.id);
       const uptime = startTime ? Date.now() - startTime : Infinity;
       if (_code !== 0 && uptime < 10_000) {
-        // Try to extract error from raw recording
+        // Try to extract error from raw recording — check both project cwd and worktree cwd
         let errorHint = "";
-        try {
-          const logPath = join(getAimuxDir(), "recordings", `${session.id}.log`);
-          if (existsSync(logPath)) {
-            const raw = readFileSync(logPath, "utf-8");
-            // Look for common error patterns in raw output
-            const lines = raw
-              .split("\n")
-              .map((l) => l.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim())
-              .filter(Boolean);
-            const errorLine = lines.find(
-              (l) => l.includes("Error") || l.includes("error") || l.includes("unmatched") || l.includes("not found"),
-            );
-            if (errorLine) errorHint = `: ${errorLine.slice(0, 60)}`;
-          }
-        } catch {}
+        const sessionCwd = this.sessionWorktreePaths.get(session.id);
+        const searchDirs = [getAimuxDir(), sessionCwd ? getAimuxDir(sessionCwd) : null].filter(Boolean) as string[];
+        for (const dir of searchDirs) {
+          if (errorHint) break;
+          try {
+            const logPath = join(dir, "recordings", `${session.id}.log`);
+            if (existsSync(logPath)) {
+              const raw = readFileSync(logPath, "utf-8");
+              const lines = raw
+                .split("\n")
+                .map((l) => l.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim())
+                .filter(Boolean);
+              const errorLine = lines.find(
+                (l) => l.includes("Error") || l.includes("error") || l.includes("unmatched") || l.includes("not found"),
+              );
+              if (errorLine) errorHint = `: ${errorLine.slice(0, 60)}`;
+            }
+          } catch {}
+        }
         this.footerFlash = `\x1b[31m✗ ${session.id} crashed (code ${_code})${errorHint}\x1b[0m`;
         this.footerFlashTicks = 8; // show for ~8s
-        debug(`quick crash detected: ${session.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
+        debug(`quick crash: ${session.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
       }
       this.sessionStartTimes.delete(session.id);
 
