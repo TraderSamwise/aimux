@@ -303,8 +303,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: node)
         task.arguments = [mainJs] + args
+
+        // Set PATH so spawned children can find git, node, etc.
+        var env = ProcessInfo.processInfo.environment
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+        let extraPaths = [
+            "\(homeDir)/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "\(homeDir)/.nvm/versions/node/v22.13.0/bin",
+        ]
+        env["PATH"] = (extraPaths + [env["PATH"] ?? ""]).joined(separator: ":")
+        task.environment = env
+        task.currentDirectoryURL = URL(fileURLWithPath: homeDir)
+
+        let pipe = Pipe()
+        task.standardError = pipe
         try? task.run()
-        if wait { task.waitUntilExit() }
+        if wait {
+            task.waitUntilExit()
+        } else {
+            // Wait briefly for the parent to spawn the child and exit
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                if task.isRunning { task.terminate() }
+            }
+        }
     }
 
     @objc func startServer() {
