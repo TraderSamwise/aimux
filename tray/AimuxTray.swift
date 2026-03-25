@@ -222,6 +222,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 menu.addItem(item)
             } else {
                 // Running sessions
+                if !status.sessions.isEmpty {
+                    let runningHeader = NSMenuItem(title: "Running", action: nil, keyEquivalent: "")
+                    runningHeader.isEnabled = false
+                    runningHeader.attributedTitle = NSAttributedString(
+                        string: "Running",
+                        attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+                    )
+                    menu.addItem(runningHeader)
+                }
                 for session in status.sessions {
                     let title = "  \(session.statusIcon) \(session.displayLabel)"
                     let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -230,9 +239,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 // Offline sessions
+                if !status.offlineSessions.isEmpty {
+                    let offlineHeader = NSMenuItem(title: "Offline", action: nil, keyEquivalent: "")
+                    offlineHeader.isEnabled = false
+                    offlineHeader.attributedTitle = NSAttributedString(
+                        string: "Offline",
+                        attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+                    )
+                    menu.addItem(offlineHeader)
+                }
                 for session in status.offlineSessions {
-                    let label = session.label ?? session.tool
-                    let title = "  \u{26AA} \(label)"
+                    let detail = session.label != nil ? "\(session.tool) — \(session.label!)" : session.tool
+                    let title = "  \u{26AA} \(detail)"
                     let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
                     item.isEnabled = false
                     menu.addItem(item)

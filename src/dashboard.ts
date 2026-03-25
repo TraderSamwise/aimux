@@ -50,6 +50,7 @@ export class Dashboard {
   private focusedWorktreePath: string | undefined = undefined;
   private navLevel: "worktrees" | "sessions" = "sessions";
   private selectedSessionId: string | undefined = undefined;
+  serverMode = false;
 
   update(
     sessions: DashboardSession[],
@@ -71,7 +72,8 @@ export class Dashboard {
 
     // Title
     lines.push("");
-    lines.push(center("\x1b[1maimux\x1b[0m — agent multiplexer", cols));
+    const modeTag = this.serverMode ? " \x1b[32m[server]\x1b[0m" : " \x1b[2m[direct]\x1b[0m";
+    lines.push(center(`\x1b[1maimux\x1b[0m — agent multiplexer${modeTag}`, cols));
     lines.push(center("─".repeat(Math.min(50, cols - 4)), cols));
     lines.push("");
 

@@ -122,6 +122,7 @@ export class Multiplexer {
     this.io = io ?? new DirectTerminalIO();
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action), this.io);
     this.dashboard = new Dashboard();
+    this.dashboard.serverMode = !(this.io instanceof DirectTerminalIO);
   }
 
   get activeSession(): PtySession | null {
