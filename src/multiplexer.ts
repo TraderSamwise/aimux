@@ -2024,10 +2024,23 @@ export class Multiplexer {
     const rows = process.stdout.rows ?? 24;
     const projects = scanAllProjects();
 
-    const lines: string[] = ["All Projects:", ""];
+    const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+    const center = (text: string) => {
+      const pad = Math.max(0, Math.floor((cols - strip(text).length) / 2));
+      return " ".repeat(pad) + text;
+    };
+
+    const lines: string[] = [];
+
+    // Title
+    lines.push("");
+    lines.push(center("\x1b[1maimux\x1b[0m — all projects"));
+    lines.push(center("─".repeat(Math.min(50, cols - 4))));
+    lines.push("");
 
     if (projects.length === 0) {
-      lines.push("  (no aimux projects found)");
+      lines.push(center("No aimux projects found."));
     } else {
       for (const project of projects) {
         const running = project.sessions.filter((s) => s.status !== "offline").length;
@@ -2062,29 +2075,20 @@ export class Multiplexer {
       }
     }
 
-    lines.push("  [Esc] back");
-
-    // Render as centered overlay (same pattern as graveyard)
-    const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
-    const boxWidth = Math.min(cols - 4, Math.max(...lines.map((l) => strip(l).length)) + 4);
-    const startRow = Math.max(1, Math.floor((rows - lines.length - 2) / 2));
-    const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1];
-        const stripped = strip(line);
-        const padLen = Math.max(0, boxWidth - 2 - stripped.length);
-        output += `\x1b[44;97m  ${line}${" ".repeat(padLen)}\x1b[0m`;
-      }
+    // Fill remaining space
+    const helpLine = " [a] back  [q] quit ";
+    const usedLines = lines.length + 2;
+    const remaining = Math.max(0, rows - usedLines);
+    for (let i = 0; i < remaining; i++) {
+      lines.push("");
     }
-    output += "\x1b8";
-    process.stdout.write(output);
+
+    lines.push(center("─".repeat(Math.min(cols - 4, strip(helpLine).length + 4))));
+    lines.push(center(helpLine));
+
+    // Full screen render (same as dashboard)
+    const screen = "\x1b[2J\x1b[H" + lines.join("\r\n");
+    process.stdout.write(screen);
   }
 
   private handleMetaDashboardKey(data: Buffer): void {
@@ -2833,8 +2837,8 @@ export class Multiplexer {
         .catch(() => {});
       // Refresh offline sessions from state.json (picks up cross-instance graveyard/kill)
       this.loadOfflineSessions();
-      // Refresh dashboard to pick up remote instance changes
-      if (this.mode === "dashboard") {
+      // Refresh dashboard to pick up remote instance changes (skip if overlay is active)
+      if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive) {
         this.renderDashboard();
       }
     }, 5000);
