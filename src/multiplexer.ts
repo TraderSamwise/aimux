@@ -132,6 +132,41 @@ export class Multiplexer {
     return this.sessions.length;
   }
 
+  /** Get session status info for external APIs (tray app, etc.) */
+  getStatusInfo(): {
+    mode: string;
+    sessions: Array<{ id: string; tool: string; status: string; label?: string; worktreePath?: string }>;
+    offlineSessions: Array<{ id: string; tool: string; label?: string; worktreePath?: string }>;
+  } {
+    return {
+      mode: this.mode,
+      sessions: this.sessions.map((s) => {
+        let label: string | undefined;
+        try {
+          const statusCwd = this.sessionWorktreePaths.get(s.id);
+          const statusPath = join(getAimuxDir(statusCwd), "status", `${s.id}.md`);
+          if (existsSync(statusPath)) {
+            const content = readFileSync(statusPath, "utf-8").trim();
+            if (content) label = content.split("\n")[0].slice(0, 80);
+          }
+        } catch {}
+        return {
+          id: s.id,
+          tool: s.command,
+          status: s.status,
+          label,
+          worktreePath: this.sessionWorktreePaths.get(s.id),
+        };
+      }),
+      offlineSessions: this.offlineSessions.map((s) => ({
+        id: s.id,
+        tool: s.command,
+        label: s.label,
+        worktreePath: s.worktreePath,
+      })),
+    };
+  }
+
   async run(opts: Omit<PtySessionOptions, "cols" | "rows">): Promise<number> {
     initProject();
     await registerInstance(this.instanceId, process.cwd());

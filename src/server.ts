@@ -1,4 +1,5 @@
 import { createServer, type Server, type Socket } from "node:net";
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -7,10 +8,15 @@ import { RemoteTerminalIO } from "./terminal-io.js";
 
 const AIMUX_DIR = join(homedir(), ".aimux");
 const SOCKET_PATH = join(AIMUX_DIR, "aimux.sock");
+const API_SOCKET_PATH = join(AIMUX_DIR, "aimux-api.sock");
 const PID_PATH = join(AIMUX_DIR, "aimux.pid");
 
 export function getSocketPath(): string {
   return SOCKET_PATH;
+}
+
+export function getApiSocketPath(): string {
+  return API_SOCKET_PATH;
 }
 
 export function getPidPath(): string {
@@ -39,35 +45,48 @@ export function isServerRunning(): boolean {
 
 export class AimuxServer {
   private server: Server;
+  private apiServer: HttpServer;
   private io: RemoteTerminalIO;
   private mux: Multiplexer;
   private currentClient: Socket | null = null;
+  private startedAt = Date.now();
 
   constructor() {
     this.io = new RemoteTerminalIO();
     this.mux = new Multiplexer(this.io);
     this.server = createServer((socket) => this.handleConnection(socket));
+    this.apiServer = createHttpServer((req, res) => this.handleApiRequest(req, res));
   }
 
   async start(): Promise<void> {
     mkdirSync(AIMUX_DIR, { recursive: true });
 
-    // Check for stale socket
+    // Check for stale sockets
     if (existsSync(SOCKET_PATH)) {
       if (isServerRunning()) {
         throw new Error("Server is already running");
       }
-      // Stale socket — remove it
       unlinkSync(SOCKET_PATH);
+    }
+    if (existsSync(API_SOCKET_PATH)) {
+      try {
+        unlinkSync(API_SOCKET_PATH);
+      } catch {}
     }
 
     // Write PID file
     writeFileSync(PID_PATH, String(process.pid));
 
-    // Start Unix socket server
+    // Start PTY client socket
     await new Promise<void>((resolve, reject) => {
       this.server.on("error", reject);
       this.server.listen(SOCKET_PATH, () => resolve());
+    });
+
+    // Start API socket
+    await new Promise<void>((resolve, reject) => {
+      this.apiServer.on("error", reject);
+      this.apiServer.listen(API_SOCKET_PATH, () => resolve());
     });
 
     // Set up signal handlers
@@ -109,11 +128,34 @@ export class AimuxServer {
     });
   }
 
+  private handleApiRequest(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse): void {
+    if (req.url === "/status" && req.method === "GET") {
+      const status = this.mux.getStatusInfo();
+      const body = JSON.stringify({
+        server: {
+          pid: process.pid,
+          uptime: Math.round((Date.now() - this.startedAt) / 1000),
+          clientConnected: this.currentClient !== null && !this.currentClient.destroyed,
+        },
+        ...status,
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(body);
+    } else {
+      res.writeHead(404);
+      res.end("Not found");
+    }
+  }
+
   private shutdown(): void {
     this.mux.cleanup();
     this.server.close();
+    this.apiServer.close();
     try {
       unlinkSync(SOCKET_PATH);
+    } catch {}
+    try {
+      unlinkSync(API_SOCKET_PATH);
     } catch {}
     try {
       unlinkSync(PID_PATH);
