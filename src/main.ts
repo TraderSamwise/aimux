@@ -245,7 +245,8 @@ serverCmd
     }
 
     // Spawn a detached child running with --foreground
-    const child = spawn(process.argv[0], [...process.argv.slice(1, -1), "server", "start", "--foreground"], {
+    // process.argv[0] = node, process.argv[1] = main.js script
+    const child = spawn(process.argv[0], [process.argv[1], "server", "start", "--foreground"], {
       detached: true,
       stdio: "ignore",
     });
