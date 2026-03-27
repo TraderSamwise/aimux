@@ -80,7 +80,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
     },
     codex: {
       command: "codex",
-      args: [],
+      args: ["--full-auto"],
       enabled: true,
       resumeArgs: ["resume", "{sessionId}"],
       resumeFallback: ["resume", "--last"],
