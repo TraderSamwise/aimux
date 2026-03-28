@@ -122,6 +122,8 @@ export class AimuxServer {
   private sessions = new Map<string, ServerSessionRecord>();
   private clients = new Set<net.Socket>();
   private socketServer: net.Server | null = null;
+  private skipPersistOnExit = new Set<string>();
+  private shuttingDown = false;
   private instanceId = `server-${Math.random().toString(36).slice(2, 8)}`;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private cwd: string;
@@ -267,6 +269,11 @@ export class AimuxServer {
 
       session.onExit((code) => {
         debug(`session exited: ${session.id} (code=${code})`, "server");
+        const shouldPersist = !this.shuttingDown && !this.skipPersistOnExit.has(session.id);
+        this.skipPersistOnExit.delete(session.id);
+        if (shouldPersist) {
+          this.persistSessionState(record.state);
+        }
         this.broadcast({ type: "exit", id: session.id, code });
         this.sessions.delete(session.id);
       });
@@ -310,6 +317,7 @@ export class AimuxServer {
   private handleKill(msg: KillMsg): void {
     const record = this.sessions.get(msg.id);
     if (record) {
+      this.skipPersistOnExit.add(msg.id);
       record.pty.destroy();
       this.sessions.delete(msg.id);
       debug(`killed session: ${msg.id}`, "server");
@@ -356,6 +364,7 @@ export class AimuxServer {
 
   private shutdown(): void {
     debug("server shutting down", "server");
+    this.shuttingDown = true;
 
     // Save state (same format as TUI exit) so sessions appear as offline/resumable
     this.saveState();
@@ -404,47 +413,52 @@ export class AimuxServer {
     if (this.sessions.size === 0) return;
 
     try {
-      const statePath = getStatePath();
-
-      // Read existing state and merge
-      let state: { savedAt: string; cwd: string; sessions: SavedSessionState[] } = {
-        savedAt: new Date().toISOString(),
-        cwd: this.cwd,
-        sessions: [],
-      };
-      if (existsSync(statePath)) {
-        try {
-          state = JSON.parse(readFileSync(statePath, "utf-8"));
-        } catch {}
-      }
-
-      const currentSessions = [...this.sessions.values()].map(({ state }) => ({ ...state }));
-      const currentIds = new Set(currentSessions.map((session) => session.id));
-      const currentBackendIds = new Set(currentSessions.map((session) => session.backendSessionId).filter(Boolean));
-      const retainedSessions = state.sessions.filter((session) => {
-        if (currentIds.has(session.id)) return false;
-        if (session.backendSessionId && currentBackendIds.has(session.backendSessionId)) return false;
-        return true;
-      });
-
-      state.sessions = [...retainedSessions, ...currentSessions];
-
-      for (const session of currentSessions) {
-        if (!session.toolConfigKey) {
-          session.toolConfigKey = session.command;
-        }
-        if (!Array.isArray(session.args)) {
-          session.args = [];
-        }
-      }
-
-      state.savedAt = new Date().toISOString();
-      mkdirSync(join(statePath, ".."), { recursive: true });
-      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+      const currentSessions = [...this.sessions.values()].map(({ state }) => state);
+      this.persistSessionsState(currentSessions);
       debug(`saved ${this.sessions.size} session(s) to state.json`, "server");
     } catch (err) {
       debug(`failed to save state: ${err}`, "server");
     }
+  }
+
+  private persistSessionState(session: SavedSessionState): void {
+    this.persistSessionsState([session]);
+  }
+
+  private persistSessionsState(sessions: SavedSessionState[]): void {
+    if (sessions.length === 0) return;
+
+    const normalized = sessions.map((session) => ({
+      ...session,
+      toolConfigKey: session.toolConfigKey || session.command,
+      args: Array.isArray(session.args) ? [...session.args] : [],
+    }));
+
+    const statePath = getStatePath();
+
+    let state: { savedAt: string; cwd: string; sessions: SavedSessionState[] } = {
+      savedAt: new Date().toISOString(),
+      cwd: this.cwd,
+      sessions: [],
+    };
+    if (existsSync(statePath)) {
+      try {
+        state = JSON.parse(readFileSync(statePath, "utf-8"));
+      } catch {}
+    }
+
+    const incomingIds = new Set(normalized.map((session) => session.id));
+    const incomingBackendIds = new Set(normalized.map((session) => session.backendSessionId).filter(Boolean));
+    const retainedSessions = state.sessions.filter((session) => {
+      if (incomingIds.has(session.id)) return false;
+      if (session.backendSessionId && incomingBackendIds.has(session.backendSessionId)) return false;
+      return true;
+    });
+
+    state.sessions = [...retainedSessions, ...normalized];
+    state.savedAt = new Date().toISOString();
+    mkdirSync(join(statePath, ".."), { recursive: true });
+    writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
   }
 }
 

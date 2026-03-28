@@ -1,9 +1,53 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync, realpathSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 let tmpDir: string;
+const mockPtys = new Map<string, MockPtySession>();
+
+class MockPtySession {
+  id: string;
+  command: string;
+  status = "running";
+  exited = false;
+  backendSessionId?: string;
+  private exitListeners: Array<(code: number) => void> = [];
+
+  constructor(opts: { command: string; id: string }) {
+    this.command = opts.command;
+    this.id = opts.id;
+    mockPtys.set(this.id, this);
+  }
+
+  onData(_cb: (data: string) => void): void {}
+
+  onExit(cb: (code: number) => void): void {
+    this.exitListeners.push(cb);
+  }
+
+  resize(_cols: number, _rows: number): void {}
+
+  write(_data: string): void {}
+
+  getScreenState(): string {
+    return "";
+  }
+
+  destroy(): void {
+    this.emitExit(0);
+  }
+
+  emitExit(code: number): void {
+    this.exited = true;
+    this.status = "exited";
+    for (const cb of this.exitListeners) cb(code);
+  }
+}
+
+vi.mock("./pty-session.js", () => ({
+  PtySession: MockPtySession,
+}));
 
 vi.mock("./paths.js", () => ({
   getProjectStateDir: () => tmpDir,
@@ -22,6 +66,7 @@ describe("server", () => {
   beforeEach(() => {
     tmpDir = makeTmpDir();
     mkdirSync(tmpDir, { recursive: true });
+    mockPtys.clear();
   });
 
   afterEach(() => {
@@ -107,5 +152,69 @@ describe("server", () => {
       ]),
     );
     expect(saved.sessions.find((session: { id: string }) => session.id === "replace-me")).toBeUndefined();
+  });
+
+  it("persists a server-backed session when the tool exits naturally", async () => {
+    const { AimuxServer } = await import("./server.js");
+
+    const server = new AimuxServer("/repo");
+    (server as any).handleSpawn(
+      { write: vi.fn() },
+      {
+        type: "spawn",
+        id: "codex-live",
+        command: "codex",
+        args: ["--dangerously-bypass-approvals-and-sandbox"],
+        toolConfigKey: "codex",
+        backendSessionId: "backend-123",
+        worktreePath: "/repo/worktrees/feature-a",
+        label: "Feature A",
+        cols: 120,
+        rows: 40,
+      },
+    );
+
+    mockPtys.get("codex-live")!.emitExit(0);
+
+    const saved = JSON.parse(readFileSync(join(tmpDir, "state.json"), "utf-8"));
+    expect(saved.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "codex-live",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: ["--dangerously-bypass-approvals-and-sandbox"],
+          backendSessionId: "backend-123",
+          worktreePath: "/repo/worktrees/feature-a",
+          label: "Feature A",
+        }),
+      ]),
+    );
+    expect((server as any).sessions.has("codex-live")).toBe(false);
+  });
+
+  it("does not persist a killed server-backed session", async () => {
+    const { AimuxServer } = await import("./server.js");
+
+    const server = new AimuxServer("/repo");
+    (server as any).handleSpawn(
+      { write: vi.fn() },
+      {
+        type: "spawn",
+        id: "codex-killed",
+        command: "codex",
+        args: ["--dangerously-bypass-approvals-and-sandbox"],
+        toolConfigKey: "codex",
+        backendSessionId: "backend-killed",
+        cols: 120,
+        rows: 40,
+      },
+    );
+
+    (server as any).handleKill({ type: "kill", id: "codex-killed" });
+
+    expect((server as any).sessions.has("codex-killed")).toBe(false);
+    expect(existsSync(join(tmpDir, "state.json"))).toBe(false);
   });
 });
