@@ -28,7 +28,7 @@ import {
   getLocalAimuxDir,
 } from "./paths.js";
 import { debug, debugPreamble, closeDebug } from "./debug.js";
-import { findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
+import { createWorktree, findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
 import { notifyPrompt, notifyComplete } from "./notify.js";
 import {
   registerInstance,
@@ -1717,12 +1717,7 @@ export class Multiplexer {
       const name = this.worktreeInputBuffer.trim();
       if (name) {
         try {
-          const mainRepo = findMainRepo();
-          execSync(`git worktree add "../${basename(mainRepo)}-${name}" -b "${name}"`, {
-            cwd: mainRepo,
-            encoding: "utf-8",
-            stdio: "pipe",
-          });
+          createWorktree(name);
           debug(`worktree created from UI: ${name}`, "worktree");
         } catch (err) {
           debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");

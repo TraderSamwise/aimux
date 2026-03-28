@@ -9,7 +9,7 @@ import { llmCompact } from "./context/compactor.js";
 import { initProject } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
-import { listWorktrees } from "./worktree.js";
+import { createWorktree, listWorktrees } from "./worktree.js";
 import { startServerForeground, stopServer, getServerStatus, isServerRunning } from "./server.js";
 
 const program = new Command();
@@ -89,21 +89,45 @@ program
     console.log(`Done. Summary written to ${getContextDir()}/summary.md`);
   });
 
-program
-  .command("worktree")
+function printWorktrees(): void {
+  try {
+    const worktrees = listWorktrees();
+    if (worktrees.length === 0) {
+      console.log("No worktrees found.");
+      return;
+    }
+    console.log("Name".padEnd(30) + "Branch".padEnd(35) + "Path");
+    console.log("-".repeat(95));
+    for (const wt of worktrees) {
+      console.log(wt.name.padEnd(30) + wt.branch.padEnd(35) + wt.path);
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`Error: ${msg}`);
+    process.exit(1);
+  }
+}
+
+const worktreeCmd = program.command("worktree").description("Manage git worktrees");
+
+worktreeCmd.action(() => {
+  printWorktrees();
+});
+
+worktreeCmd
+  .command("list")
   .description("List all git worktrees")
   .action(() => {
+    printWorktrees();
+  });
+
+worktreeCmd
+  .command("create <name>")
+  .description("Create a git worktree")
+  .action((name: string) => {
     try {
-      const worktrees = listWorktrees();
-      if (worktrees.length === 0) {
-        console.log("No worktrees found.");
-        return;
-      }
-      console.log("Name".padEnd(30) + "Branch".padEnd(35) + "Path");
-      console.log("-".repeat(95));
-      for (const wt of worktrees) {
-        console.log(wt.name.padEnd(30) + wt.branch.padEnd(35) + wt.path);
-      }
+      const path = createWorktree(name);
+      console.log(`Created worktree "${name}" at ${path}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);

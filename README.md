@@ -276,7 +276,7 @@ Context files (`.aimux/context/`, `.aimux/history/`) are never deleted — only 
 
 ## Worktrees
 
-aimux manages git worktrees as sibling directories:
+aimux manages git worktrees and, by default, creates them inside `.aimux/worktrees/` in the main repo:
 
 ```bash
 # Create a worktree
@@ -284,15 +284,19 @@ aimux worktree create fix-auth
 
 # List worktrees
 aimux worktree list
-
-# Clean up offline worktrees
-aimux worktree clean
-
-# Remove a specific worktree
-aimux worktree remove fix-auth
 ```
 
-Worktrees are created at `../{repo-name}-{worktree-name}/` and each gets its own `.aimux/` directory.
+The create location is configurable via `.aimux/config.json` or `~/.aimux/config.json`:
+
+```json
+{
+  "worktrees": {
+    "baseDir": ".aimux/worktrees"
+  }
+}
+```
+
+Relative `baseDir` values are resolved from the main repo root. Absolute paths are also supported.
 
 ## Requirements
 

@@ -1,5 +1,7 @@
 import { execSync } from "node:child_process";
-import { basename } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { loadConfig } from "./config.js";
 
 export interface WorktreeInfo {
   name: string;
@@ -86,4 +88,26 @@ export function listWorktrees(cwd?: string): WorktreeInfo[] {
  */
 export function getRepoName(cwd?: string): string {
   return basename(findMainRepo(cwd));
+}
+
+export function getWorktreeBaseDir(cwd?: string): string {
+  const mainRepo = findMainRepo(cwd);
+  const baseDir = loadConfig().worktrees.baseDir;
+  return isAbsolute(baseDir) ? baseDir : resolve(mainRepo, baseDir);
+}
+
+export function getWorktreeCreatePath(name: string, cwd?: string): string {
+  return join(getWorktreeBaseDir(cwd), name);
+}
+
+export function createWorktree(name: string, cwd?: string): string {
+  const mainRepo = findMainRepo(cwd);
+  const targetPath = getWorktreeCreatePath(name, cwd);
+  mkdirSync(dirname(targetPath), { recursive: true });
+  execSync(`git worktree add "${targetPath}" -b "${name}"`, {
+    cwd: mainRepo,
+    encoding: "utf-8",
+    stdio: "pipe",
+  });
+  return targetPath;
 }
