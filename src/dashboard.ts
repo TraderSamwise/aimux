@@ -19,6 +19,8 @@ export interface DashboardSession {
   label?: string;
   /** Whether this session is owned by the headless server */
   isServer?: boolean;
+  /** Agent's team role (e.g. "coder", "reviewer") */
+  role?: string;
 }
 
 export interface WorktreeGroup {
@@ -52,6 +54,7 @@ export class Dashboard {
   private focusedWorktreePath: string | undefined = undefined;
   private navLevel: "worktrees" | "sessions" = "sessions";
   private selectedSessionId: string | undefined = undefined;
+  private scrollOffset = 0;
 
   update(
     sessions: DashboardSession[],
@@ -68,42 +71,72 @@ export class Dashboard {
     this.selectedSessionId = selectedSessionId;
   }
 
+  /** Scroll the viewport (called from multiplexer key handler) */
+  scroll(delta: number): void {
+    this.scrollOffset = Math.max(0, this.scrollOffset + delta);
+  }
+
   render(cols: number, rows: number): string {
-    const lines: string[] = [];
+    // Header (fixed)
+    const header: string[] = [];
+    header.push("");
+    header.push(center("\x1b[1maimux\x1b[0m — agent multiplexer", cols));
+    header.push(center("─".repeat(Math.min(50, cols - 4)), cols));
+    header.push("");
 
-    // Title
-    lines.push("");
-    lines.push(center("\x1b[1maimux\x1b[0m — agent multiplexer", cols));
-    lines.push(center("─".repeat(Math.min(50, cols - 4)), cols));
-    lines.push("");
-
+    // Content (scrollable)
+    const content: string[] = [];
     if (this.sessions.length === 0 && this.worktreeGroups.length === 0) {
-      lines.push(center("No sessions. Press [c] to create one.", cols));
+      content.push(center("No sessions. Press [c] to create one.", cols));
     } else if (this.hasWorktrees) {
-      // Group sessions by worktree
-      this.renderWorktreeGrouped(lines);
+      this.renderWorktreeGrouped(content);
     } else {
-      // Simple flat list (no worktrees)
       for (const session of this.sessions) {
-        lines.push(this.renderSession(session, "  "));
+        content.push(this.renderSession(session, "  "));
       }
     }
 
-    // Fill remaining space
+    // Footer (fixed)
     const helpLine = this.buildHelpLine();
-    const usedLines = lines.length + 2; // +2 for separator and help
-    const remaining = Math.max(0, rows - usedLines);
-    for (let i = 0; i < remaining; i++) {
-      lines.push("");
+    const footer: string[] = [];
+    footer.push(center("─".repeat(Math.min(cols - 4, helpLine.length + 4)), cols));
+    footer.push(center(helpLine, cols));
+
+    // Viewport: how many content lines fit between header and footer
+    const viewportHeight = rows - header.length - footer.length;
+
+    // Auto-scroll to keep focused worktree or selected session visible
+    const focusLine = this.findFocusLine(content);
+    const maxScroll = Math.max(0, content.length - viewportHeight);
+    if (focusLine >= 0) {
+      if (focusLine < this.scrollOffset + 1) {
+        this.scrollOffset = Math.max(0, focusLine - 1);
+      } else if (focusLine >= this.scrollOffset + viewportHeight - 1) {
+        this.scrollOffset = Math.min(maxScroll, focusLine - viewportHeight + 2);
+      }
+    }
+    this.scrollOffset = Math.min(this.scrollOffset, maxScroll);
+
+    // Slice visible content
+    const visibleContent = content.slice(this.scrollOffset, this.scrollOffset + viewportHeight);
+
+    // Scroll indicators
+    const canScrollUp = this.scrollOffset > 0;
+    const canScrollDown = this.scrollOffset < maxScroll;
+    if (canScrollUp) {
+      visibleContent[0] = center("\x1b[2m▲ more ▲\x1b[0m", cols);
+    }
+    if (canScrollDown && visibleContent.length > 0) {
+      visibleContent[visibleContent.length - 1] = center("\x1b[2m▼ more ▼\x1b[0m", cols);
     }
 
-    // Bottom help bar
-    lines.push(center("─".repeat(Math.min(cols - 4, helpLine.length + 4)), cols));
-    lines.push(center(helpLine, cols));
+    // Pad if content is shorter than viewport
+    while (visibleContent.length < viewportHeight) {
+      visibleContent.push("");
+    }
 
-    // Build full screen: clear + position cursor at top
-    const screen = "\x1b[2J\x1b[H" + lines.join("\r\n");
-    return screen;
+    const lines = [...header, ...visibleContent, ...footer];
+    return "\x1b[2J\x1b[H" + lines.join("\r\n");
   }
 
   private renderSession(session: DashboardSession, indent: string): string {
@@ -119,76 +152,94 @@ export class Dashboard {
         ? "\x1b[2;32m[server]\x1b[0m"
         : `\x1b[2mother tab (PID ${session.remoteInstancePid})\x1b[0m`;
       const remoteLabelText = session.label ? ` \x1b[2m${truncate(session.label, 40)}\x1b[0m` : "";
-      return `${indent}${icon} [${num}] ${session.command}${remoteLabelText} — ${ownerTag}${marker}`;
+      const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
+      return `${indent}${icon} [${num}] ${session.command}${remoteRoleTag}${remoteLabelText} — ${ownerTag}${marker}`;
     }
 
     const icon = STATUS_ICONS[session.status];
     const statusLabel = STATUS_LABELS[session.status];
+    const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const labelText = session.label ? ` \x1b[2m${truncate(session.label, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${session.command} — ${statusLabel}${labelText}${taskBadge}${marker}`;
+    return `${indent}${icon} [${num}] ${session.command}${roleTag} — ${statusLabel}${labelText}${taskBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {
     const isFocused = (wtPath: string | undefined) => wtPath === this.focusedWorktreePath;
-    const wtCursor = "\x1b[33m▸\x1b[0m"; // yellow arrow for worktree level
+    const wtCursor = "\x1b[33m▸\x1b[0m";
 
-    // Sessions in the main repo (no worktreePath)
-    const mainSessions = this.sessions.filter((s) => !s.worktreePath);
-    if (mainSessions.length > 0 || this.worktreeGroups.length > 0) {
-      const focused = isFocused(undefined);
-      const prefix = focused && this.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
-      const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
-      lines.push(`${prefix} ${highlight}(main)\x1b[0m — active`);
-      if (mainSessions.length === 0) {
-        lines.push("    (no agents)");
+    // Build session map by worktree path
+    const wtSessionMap = new Map<string, DashboardSession[]>();
+    const mainSessions: DashboardSession[] = [];
+    for (const session of this.sessions) {
+      if (!session.worktreePath) {
+        mainSessions.push(session);
       } else {
-        for (const session of mainSessions) {
-          lines.push(this.renderSession(session, "    "));
-        }
+        const group = wtSessionMap.get(session.worktreePath) ?? [];
+        group.push(session);
+        wtSessionMap.set(session.worktreePath, group);
+      }
+    }
+
+    // Main repo
+    const focused = isFocused(undefined);
+    const prefix = focused && this.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
+    const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
+    if (mainSessions.length > 0) {
+      lines.push(`${prefix} ${highlight}(main)\x1b[0m`);
+      for (const session of mainSessions) {
+        lines.push(this.renderSession(session, "    "));
       }
       lines.push("");
+    } else {
+      lines.push(`${prefix} ${highlight}(main)\x1b[0m`);
     }
 
-    // Group worktree sessions
-    const wtSessionMap = new Map<string, DashboardSession[]>();
-    for (const session of this.sessions) {
-      if (!session.worktreePath) continue;
-      const group = wtSessionMap.get(session.worktreePath) ?? [];
-      group.push(session);
-      wtSessionMap.set(session.worktreePath, group);
-    }
-
-    // Render worktree groups (from registry and active sessions)
+    // Worktree groups — compact for empty, expanded for active
     const renderedPaths = new Set<string>();
     for (const group of this.worktreeGroups) {
       const sessions = wtSessionMap.get(group.path) ?? [];
-      const status = sessions.length > 0 ? "active" : group.status;
-      const focused = isFocused(group.path);
-      const prefix = focused && this.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
-      const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
-      lines.push(`${prefix} ${highlight}${group.name}\x1b[0m (${group.branch}) — ${status}`);
-      if (sessions.length === 0) {
-        lines.push("    (no agents)");
-      } else {
+      const gFocused = isFocused(group.path);
+      const gPrefix = gFocused && this.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
+      const gHighlight = gFocused ? "\x1b[1;33m" : "";
+      const gReset = gFocused ? "\x1b[0m" : "";
+
+      if (sessions.length > 0) {
+        // Expanded: show worktree header + agents
+        lines.push(`${gPrefix} ${gHighlight}\x1b[1m${group.name}\x1b[0m${gReset} \x1b[2m${group.branch}\x1b[0m`);
         for (const session of sessions) {
           lines.push(this.renderSession(session, "    "));
         }
+        lines.push("");
+      } else {
+        // Compact: single dim line
+        lines.push(`${gPrefix} \x1b[2m${gHighlight}${group.name}\x1b[0m \x1b[2m${group.branch}\x1b[0m`);
       }
-      lines.push("");
       renderedPaths.add(group.path);
     }
 
-    // Render any worktree sessions not covered by groups
+    // Any orphan worktree sessions not covered by groups
     for (const [, sessions] of wtSessionMap) {
       if (sessions[0]?.worktreePath && renderedPaths.has(sessions[0].worktreePath)) continue;
       const name = sessions[0]?.worktreeName ?? "unknown";
       const branch = sessions[0]?.worktreeBranch ?? "unknown";
-      lines.push(`  \x1b[1m${name}\x1b[0m (${branch}) — active`);
+      lines.push(`  \x1b[1m${name}\x1b[0m \x1b[2m${branch}\x1b[0m`);
       for (const session of sessions) {
         lines.push(this.renderSession(session, "    "));
       }
       lines.push("");
     }
+  }
+
+  /** Find which content line has the cursor/focus indicator for auto-scroll */
+  private findFocusLine(content: string[]): number {
+    // Look for the selected session marker (◀) or worktree cursor (▸)
+    for (let i = 0; i < content.length; i++) {
+      const stripped = content[i].replace(/\x1b\[[0-9;]*m/g, "");
+      if (stripped.includes("◀") || stripped.includes("▸")) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   private buildHelpLine(): string {

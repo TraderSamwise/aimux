@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
-import { getAimuxDir, loadConfig } from "../config.js";
+import { loadConfig } from "../config.js";
+import { getContextDir } from "../paths.js";
 import { readHistory } from "./history.js";
 
 const MAX_SUMMARY_BYTES = 30 * 1024;
@@ -13,12 +14,12 @@ const ERROR_KEYWORDS = /\b(error|failed|blocked|issue|broken|crash|exception)\b/
  * Algorithmic compaction: extract key signals from history and write per-session summaries.
  * Each session gets its own context/{session-id}/summary.md.
  */
-export function algorithmicCompact(sessionIds: string[], cwd?: string): void {
-  const baseDir = join(getAimuxDir(cwd), "context");
+export function algorithmicCompact(sessionIds: string[]): void {
+  const baseDir = getContextDir();
   if (!existsSync(baseDir)) mkdirSync(baseDir, { recursive: true });
 
   for (const sessionId of sessionIds) {
-    const turns = readHistory(sessionId, undefined, cwd);
+    const turns = readHistory(sessionId);
     if (turns.length === 0) continue;
 
     const sessionDir = join(baseDir, sessionId);
@@ -108,12 +109,12 @@ export function algorithmicCompact(sessionIds: string[], cwd?: string): void {
  * LLM-powered compaction: send each session's history to claude for summarization.
  * Each session gets its own context/{session-id}/summary.md.
  */
-export function llmCompact(sessionIds: string[], cwd?: string): void {
-  const baseDir = join(getAimuxDir(cwd), "context");
+export function llmCompact(sessionIds: string[]): void {
+  const baseDir = getContextDir();
   if (!existsSync(baseDir)) mkdirSync(baseDir, { recursive: true });
 
   for (const sessionId of sessionIds) {
-    const turns = readHistory(sessionId, { lastN: 200 }, cwd);
+    const turns = readHistory(sessionId, { lastN: 200 });
     if (turns.length === 0) continue;
 
     const sessionDir = join(baseDir, sessionId);
@@ -150,7 +151,7 @@ export function llmCompact(sessionIds: string[], cwd?: string): void {
 
     try {
       // Find compactCommand from any tool that has one configured
-      const config = loadConfig(cwd);
+      const config = loadConfig();
       const compactCmd =
         Object.values(config.tools).find((t) => t.compactCommand)?.compactCommand ??
         "claude --print --output-format text";
@@ -170,7 +171,7 @@ export function llmCompact(sessionIds: string[], cwd?: string): void {
       writeFileSync(join(sessionDir, "summary.md"), summary);
     } catch {
       // If claude CLI fails for this session, fall back to algorithmic for just this session
-      algorithmicCompact([sessionId], cwd);
+      algorithmicCompact([sessionId]);
     }
   }
 }

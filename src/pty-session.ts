@@ -42,7 +42,7 @@ export class PtySession {
     this.vt = new Terminal({ cols: opts.cols, rows: opts.rows, allowProposedApi: true });
 
     if (opts.record !== false) {
-      this.recorder = new Recorder(this.id, opts.cwd);
+      this.recorder = new Recorder(this.id);
     }
 
     // Spawn via shell to handle wrapper scripts and ensure PATH resolution

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as lockfile from "proper-lockfile";
-import { getContextDir, getContextPathForDate } from "../config.js";
+import { getContextDir, getContextPathForDate } from "../paths.js";
 
 export interface ContextEntry {
   sessionName: string;
@@ -67,9 +67,9 @@ function ensureDayFile(filePath: string, date: Date): void {
   }
 }
 
-export async function appendEntry(entry: ContextEntry, cwd?: string): Promise<void> {
+export async function appendEntry(entry: ContextEntry): Promise<void> {
   const now = entry.timestamp;
-  const filePath = getContextPathForDate(now, cwd);
+  const filePath = getContextPathForDate(now);
   ensureDayFile(filePath, now);
 
   let release: (() => Promise<void>) | undefined;
@@ -86,8 +86,8 @@ export async function appendEntry(entry: ContextEntry, cwd?: string): Promise<vo
   }
 }
 
-export function readContext(cwd?: string, maxEntries: number = 20): string {
-  const contextDir = getContextDir(cwd);
+export function readContext(maxEntries: number = 20): string {
+  const contextDir = getContextDir();
   if (!existsSync(contextDir)) return "";
 
   const files = readdirSync(contextDir)

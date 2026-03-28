@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { registerInstance, unregisterInstance, updateHeartbeat, type InstanceSessionRef } from "./instance-registry.js";
-import { initProject, loadConfig, getAimuxDir } from "./config.js";
+import { initProject, loadConfig } from "./config.js";
+import { getLocalAimuxDir } from "./paths.js";
 import { debug } from "./debug.js";
 
 const AIMUX_DIR = join(homedir(), ".aimux");
@@ -98,10 +99,9 @@ export class AimuxServer {
 
   /** Spawn a new agent session on the server */
   spawnSession(tool: string, args: string[], cwd?: string): PtySession {
-    const effectiveCwd = cwd ?? process.cwd();
-    initProject(effectiveCwd);
+    initProject();
 
-    const config = loadConfig(effectiveCwd);
+    const config = loadConfig();
     const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === tool);
     const toolCfg = toolEntry?.[1];
 
@@ -119,7 +119,7 @@ export class AimuxServer {
       cols: 120, // headless — use reasonable defaults
       rows: 40,
       id: sessionId,
-      cwd: effectiveCwd,
+      cwd: cwd ?? process.cwd(),
       promptPatterns,
     });
 

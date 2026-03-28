@@ -1,13 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+// Mock paths module so tasks read/write to tmpDir
+let tmpDir: string;
+vi.mock("./paths.js", () => ({
+  getTasksDir: () => join(tmpDir, "tasks"),
+}));
+
 import { TaskDispatcher } from "./task-dispatcher.js";
 import { writeTask, readTask, type Task } from "./tasks.js";
 
 function makeTmpDir(): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "aimux-test-")));
-  mkdirSync(join(dir, ".aimux", "tasks"), { recursive: true });
+  mkdirSync(join(dir, "tasks"), { recursive: true });
   return dir;
 }
 
@@ -50,8 +57,6 @@ function makeMockSession(id: string, status: string, exited = false) {
 }
 
 describe("TaskDispatcher", () => {
-  let tmpDir: string;
-
   beforeEach(() => {
     tmpDir = makeTmpDir();
   });
@@ -67,17 +72,16 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
-        tmpDir,
       );
 
-      await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }), tmpDir);
+      await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }));
       dispatcher.tick(["claude-worker"]);
       await flush();
 
       expect(session.written.length).toBe(1);
       expect(session.written[0]).toContain("[AIMUX TASK t1");
 
-      const task = readTask("t1", tmpDir);
+      const task = readTask("t1");
       expect(task?.status).toBe("assigned");
       expect(task?.assignedTo).toBe("claude-worker");
     });
@@ -87,15 +91,14 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
-        tmpDir,
       );
 
-      await writeTask(makeTask({ id: "t1" }), tmpDir);
+      await writeTask(makeTask({ id: "t1" }));
       dispatcher.tick(["claude-worker"]);
       await flush();
 
       expect(session.written.length).toBe(0);
-      expect(readTask("t1", tmpDir)?.status).toBe("pending");
+      expect(readTask("t1")?.status).toBe("pending");
     });
 
     it("does not inject task into assigner (no self-delegation)", async () => {
@@ -103,10 +106,9 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-leader" ? (session as any) : undefined),
         () => "claude",
-        tmpDir,
       );
 
-      await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }), tmpDir);
+      await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }));
       dispatcher.tick(["claude-leader"]);
       await flush();
 
@@ -123,10 +125,9 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => sessions.get(id) as any,
         () => "claude",
-        tmpDir,
       );
 
-      await writeTask(makeTask({ id: "t1", assignedBy: "leader", assignedTo: "worker-2" }), tmpDir);
+      await writeTask(makeTask({ id: "t1", assignedBy: "leader", assignedTo: "worker-2" }));
       dispatcher.tick(["worker-1", "worker-2"]);
       await flush();
 
@@ -139,14 +140,10 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
-        tmpDir,
       );
 
-      await writeTask(
-        makeTask({ id: "t1", assignedBy: "leader", status: "assigned", assignedTo: "claude-worker" }),
-        tmpDir,
-      );
-      await writeTask(makeTask({ id: "t2", assignedBy: "leader" }), tmpDir);
+      await writeTask(makeTask({ id: "t1", assignedBy: "leader", status: "assigned", assignedTo: "claude-worker" }));
+      await writeTask(makeTask({ id: "t2", assignedBy: "leader" }));
       dispatcher.tick(["claude-worker"]);
       await flush();
 
@@ -160,7 +157,6 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-leader" ? (leader as any) : undefined),
         () => "claude",
-        tmpDir,
       );
 
       await writeTask(
@@ -171,7 +167,6 @@ describe("TaskDispatcher", () => {
           status: "done",
           result: "All tests pass",
         }),
-        tmpDir,
       );
       dispatcher.tick(["claude-leader"]);
       await flush();
@@ -180,7 +175,7 @@ describe("TaskDispatcher", () => {
       expect(leader.written[0]).toContain("[AIMUX TASK COMPLETE t1]");
       expect(leader.written[0]).toContain("All tests pass");
 
-      const task = readTask("t1", tmpDir);
+      const task = readTask("t1");
       expect(task?.notifiedAt).toBeDefined();
     });
 
@@ -189,7 +184,6 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-leader" ? (leader as any) : undefined),
         () => "claude",
-        tmpDir,
       );
 
       await writeTask(
@@ -200,7 +194,6 @@ describe("TaskDispatcher", () => {
           result: "Done",
           notifiedAt: new Date().toISOString(),
         }),
-        tmpDir,
       );
       dispatcher.tick(["claude-leader"]);
       await flush();
@@ -215,17 +208,13 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
-        tmpDir,
       );
 
-      await writeTask(
-        makeTask({ id: "t1", assignedBy: "leader", status: "assigned", assignedTo: "claude-worker" }),
-        tmpDir,
-      );
+      await writeTask(makeTask({ id: "t1", assignedBy: "leader", status: "assigned", assignedTo: "claude-worker" }));
       dispatcher.tick(["claude-worker"]);
       await flush();
 
-      const task = readTask("t1", tmpDir);
+      const task = readTask("t1");
       expect(task?.status).toBe("failed");
       expect(task?.error).toContain("exited");
     });
@@ -236,12 +225,11 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         () => undefined,
         () => "claude",
-        tmpDir,
       );
 
-      await writeTask(makeTask({ id: "t1", status: "pending" }), tmpDir);
-      await writeTask(makeTask({ id: "t2", status: "pending" }), tmpDir);
-      await writeTask(makeTask({ id: "t3", status: "assigned", assignedTo: "x" }), tmpDir);
+      await writeTask(makeTask({ id: "t1", status: "pending" }));
+      await writeTask(makeTask({ id: "t2", status: "pending" }));
+      await writeTask(makeTask({ id: "t3", status: "assigned", assignedTo: "x" }));
 
       dispatcher.tick([]);
       await flush();
@@ -258,10 +246,9 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
-        tmpDir,
       );
 
-      await writeTask(makeTask({ id: "t1", assignedBy: "leader" }), tmpDir);
+      await writeTask(makeTask({ id: "t1", assignedBy: "leader" }));
       dispatcher.tick(["claude-worker"]);
       await flush();
 

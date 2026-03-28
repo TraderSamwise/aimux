@@ -65,6 +65,7 @@ All hotkeys use the `Ctrl+A` leader prefix:
 | `Ctrl+A 1-9` | Focus agent by number |
 | `Ctrl+A w` | Create new worktree |
 | `Ctrl+A W` | Worktree management |
+| `Ctrl+A v` | Request code review for active agent |
 | `Ctrl+A Ctrl+A` | Send literal Ctrl+A |
 
 ## Dashboard

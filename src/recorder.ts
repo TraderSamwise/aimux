@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, createWriteStream, type WriteStream } from "node:fs";
 import { join } from "node:path";
-import { getAimuxDir } from "./config.js";
+import { getRecordingsDir } from "./paths.js";
 
 /**
  * Strip all terminal escape sequences from PTY output, not just colors.
@@ -109,8 +109,8 @@ export class Recorder {
   private _rawPath: string;
   private _txtPath: string;
 
-  constructor(sessionId: string, cwd?: string) {
-    const recordingsDir = join(getAimuxDir(cwd), "recordings");
+  constructor(sessionId: string) {
+    const recordingsDir = getRecordingsDir();
     if (!existsSync(recordingsDir)) {
       mkdirSync(recordingsDir, { recursive: true });
     }

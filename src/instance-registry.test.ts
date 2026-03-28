@@ -1,8 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
+
+// Mock paths module so instances.json lives in tmpDir
+let tmpDir: string;
+vi.mock("./paths.js", () => ({
+  getInstancesPath: () => join(tmpDir, "instances.json"),
+  getAimuxDirFor: (cwd: string) => join(cwd, ".aimux"),
+}));
+
 import {
   registerInstance,
   unregisterInstance,
@@ -18,18 +26,16 @@ function makeTmpRepo(): string {
   execSync("git init", { cwd: dir, stdio: "pipe" });
   execSync("git commit --allow-empty -m init", { cwd: dir, stdio: "pipe" });
   mkdirSync(join(dir, ".aimux"), { recursive: true });
-  writeFileSync(join(dir, ".aimux", "instances.json"), "[]");
+  writeFileSync(join(dir, "instances.json"), "[]");
   return dir;
 }
 
-function readInstances(cwd: string): Array<{ instanceId: string; sessions: InstanceSessionRef[] }> {
-  const raw = readFileSync(join(cwd, ".aimux", "instances.json"), "utf-8");
+function readInstances(): Array<{ instanceId: string; sessions: InstanceSessionRef[] }> {
+  const raw = readFileSync(join(tmpDir, "instances.json"), "utf-8");
   return JSON.parse(raw);
 }
 
 describe("instance-registry", () => {
-  let tmpDir: string;
-
   beforeEach(() => {
     tmpDir = makeTmpRepo();
   });
@@ -42,7 +48,7 @@ describe("instance-registry", () => {
     it("registers an instance with current PID", async () => {
       await registerInstance("inst-a", tmpDir);
 
-      const instances = readInstances(tmpDir);
+      const instances = readInstances();
       expect(instances).toHaveLength(1);
       expect(instances[0].instanceId).toBe("inst-a");
     });
@@ -60,7 +66,7 @@ describe("instance-registry", () => {
       await registerInstance("inst-a", tmpDir);
       await unregisterInstance("inst-a", tmpDir);
 
-      const instances = readInstances(tmpDir);
+      const instances = readInstances();
       expect(instances).toHaveLength(0);
     });
   });
@@ -72,7 +78,7 @@ describe("instance-registry", () => {
       const sessions: InstanceSessionRef[] = [{ id: "claude-123", tool: "claude" }];
       await updateHeartbeat("inst-a", sessions, tmpDir);
 
-      const instances = readInstances(tmpDir);
+      const instances = readInstances();
       expect(instances[0].sessions).toHaveLength(1);
       expect(instances[0].sessions[0].id).toBe("claude-123");
     });
@@ -118,7 +124,7 @@ describe("instance-registry", () => {
       expect(claimed).toEqual(["claude-123"]);
 
       // Registry should have all sessions (updateHeartbeat writes what we send)
-      const instances = readInstances(tmpDir);
+      const instances = readInstances();
       const instA = instances.find((i: { instanceId: string }) => i.instanceId === "inst-a");
       expect(instA?.sessions).toHaveLength(2);
     });
@@ -136,7 +142,7 @@ describe("instance-registry", () => {
       expect(claimed!.backendSessionId).toBe("uuid-1");
 
       // Session should be removed from inst-a
-      const instances = readInstances(tmpDir);
+      const instances = readInstances();
       const instA = instances.find((i: { instanceId: string }) => i.instanceId === "inst-a");
       expect(instA?.sessions ?? []).toHaveLength(0);
     });

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import * as lockfile from "proper-lockfile";
-import { getAimuxDir } from "./config.js";
+import { getInstancesPath, getAimuxDirFor } from "./paths.js";
 import { findMainRepo } from "./worktree.js";
 import { debug } from "./debug.js";
 
@@ -23,13 +23,6 @@ export interface InstanceInfo {
 
 const HEARTBEAT_STALE_MS = 15_000;
 const LOCK_RETRIES = { retries: 5, minTimeout: 50 };
-
-/**
- * Get the path to instances.json for a given directory.
- */
-export function getInstancesPath(cwd: string): string {
-  return join(getAimuxDir(cwd), "instances.json");
-}
 
 /**
  * Check if a PID is alive.
@@ -92,7 +85,7 @@ function ensureInstancesFile(filePath: string): void {
 
 /**
  * Run an operation against instances.json with locking.
- * Operates on both the local cwd and the main repo (for cross-worktree discovery).
+ * Operates on both the global project state dir and the main repo (for cross-worktree discovery).
  */
 async function withLockedInstances(
   cwd: string,
@@ -115,20 +108,22 @@ async function withLockedInstances(
 }
 
 /**
- * Get all instances.json paths to update (local + main repo if different).
+ * Get all instances.json paths to update (global project state + main repo .aimux/ if different).
+ * The global path is primary; the in-repo path is for cross-worktree discovery by older instances.
  */
 function getInstancesPaths(cwd: string): string[] {
-  const localPath = getInstancesPath(cwd);
-  const paths = [localPath];
+  const globalPath = getInstancesPath();
+  const paths = [globalPath];
 
+  // Also write to in-repo .aimux/ for backward compat with older instances
   try {
     const mainRepo = findMainRepo(cwd);
-    const mainPath = getInstancesPath(mainRepo);
-    if (mainPath !== localPath) {
-      paths.push(mainPath);
+    const inRepoPath = join(getAimuxDirFor(mainRepo), "instances.json");
+    if (inRepoPath !== globalPath) {
+      paths.push(inRepoPath);
     }
   } catch {
-    // Not in a git repo or worktree detection failed — local only
+    // Not in a git repo or worktree detection failed — global only
   }
 
   return paths;
@@ -186,7 +181,7 @@ export async function updateHeartbeat(
   sessions: InstanceSessionRef[],
   cwd: string,
 ): Promise<string[]> {
-  // Collect previous session IDs across ALL instances.json files (local + main repo).
+  // Collect previous session IDs across ALL instances.json files (global + in-repo).
   // withLockedInstances calls the callback once per file, so we merge results.
   const allPreviousIds = new Set<string>();
   await withLockedInstances(cwd, (instances) => {
@@ -206,7 +201,7 @@ export async function updateHeartbeat(
 
 /**
  * Get instances belonging to other aimux processes.
- * Reads from main repo's instances.json for cross-worktree visibility.
+ * Reads from all known instances.json files for cross-worktree visibility.
  */
 export function getRemoteInstances(ownInstanceId: string, cwd: string): InstanceInfo[] {
   const paths = getInstancesPaths(cwd);

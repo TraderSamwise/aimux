@@ -10,7 +10,7 @@ import {
   closeSync,
 } from "node:fs";
 import { join } from "node:path";
-import { getAimuxDir } from "../config.js";
+import { getHistoryDir } from "../paths.js";
 
 export interface HistoryTurn {
   ts: string;
@@ -20,24 +20,20 @@ export interface HistoryTurn {
   diff?: string;
 }
 
-export function getHistoryDir(cwd?: string): string {
-  return join(getAimuxDir(cwd), "history");
-}
-
-function historyPath(sessionId: string, cwd?: string): string {
-  return join(getHistoryDir(cwd), `${sessionId}.jsonl`);
+function historyPath(sessionId: string): string {
+  return join(getHistoryDir(), `${sessionId}.jsonl`);
 }
 
 /**
  * Append a single turn to the session's JSONL history file.
  * Creates the history directory if it doesn't exist.
  */
-export function appendTurn(sessionId: string, turn: HistoryTurn, cwd?: string): void {
-  const dir = getHistoryDir(cwd);
+export function appendTurn(sessionId: string, turn: HistoryTurn): void {
+  const dir = getHistoryDir();
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  appendFileSync(historyPath(sessionId, cwd), JSON.stringify(turn) + "\n");
+  appendFileSync(historyPath(sessionId), JSON.stringify(turn) + "\n");
 }
 
 /**
@@ -52,9 +48,8 @@ export function appendTurn(sessionId: string, turn: HistoryTurn, cwd?: string): 
 export function readHistory(
   sessionId: string,
   opts?: { lastN?: number; since?: string; maxBytes?: number },
-  cwd?: string,
 ): HistoryTurn[] {
-  const filePath = historyPath(sessionId, cwd);
+  const filePath = historyPath(sessionId);
   if (!existsSync(filePath)) return [];
 
   const maxBytes = opts?.maxBytes ?? 100 * 1024;
@@ -108,10 +103,10 @@ export function readHistory(
 
 /**
  * List all session IDs that have history files.
- * Scans .aimux/history/ for .jsonl files and returns IDs (filename without extension).
+ * Scans history dir for .jsonl files and returns IDs (filename without extension).
  */
-export function listSessionIds(cwd?: string): string[] {
-  const dir = getHistoryDir(cwd);
+export function listSessionIds(): string[] {
+  const dir = getHistoryDir();
   if (!existsSync(dir)) return [];
   try {
     return readdirSync(dir)
@@ -129,11 +124,10 @@ export function listSessionIds(cwd?: string): string[] {
 export function readAllHistories(
   sessionIds: string[],
   opts?: { lastN?: number; since?: string; maxBytes?: number },
-  cwd?: string,
 ): HistoryTurn[] {
   const all: HistoryTurn[] = [];
   for (const id of sessionIds) {
-    all.push(...readHistory(id, opts, cwd));
+    all.push(...readHistory(id, opts));
   }
   all.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
   return all;

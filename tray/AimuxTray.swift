@@ -3,176 +3,177 @@ import Foundation
 
 // MARK: - Data Models
 
-struct AimuxSession {
+struct AgentSession {
     let id: String
     let tool: String
-    let status: String
-    let label: String?
-    let worktreePath: String?
+    let name: String
+    let status: String       // "idle", "running", "waiting", "error", "offline"
+    let role: String?        // "coder", "reviewer", etc.
+    let projectName: String
     let projectPath: String
-    let ownerPid: Int?
-    let isServer: Bool
 }
 
 // MARK: - File Scanner
 
-class AimuxScanner {
+class ProjectScanner {
     private let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-    private var knownProjects = Set<String>()
 
-    /// Scan all known aimux state from file-based coordination files
-    func scan() -> (sessions: [AimuxSession], serverPid: Int?) {
-        var sessions: [AimuxSession] = []
-        var seenIds = Set<String>()
+    func scan() -> [AgentSession] {
+        var sessions: [AgentSession] = []
 
-        // Discover projects from known list + recent scans
-        discoverProjects()
+        // Primary: read ~/.aimux/projects.json registry
+        sessions.append(contentsOf: scanRegisteredProjects())
 
-        // Scan each project's .aimux/ for instances.json + state.json
-        for projectPath in knownProjects {
-            let aimuxDir = "\(projectPath)/.aimux"
+        // Fallback: scan old .aimux/ dirs for projects not yet migrated
+        sessions.append(contentsOf: scanLegacyAimux(excluding: Set(sessions.map { $0.projectPath })))
 
-            // Running sessions from instances.json
-            let instancesPath = "\(aimuxDir)/instances.json"
-            if let data = try? Data(contentsOf: URL(fileURLWithPath: instancesPath)),
-               let instances = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                for inst in instances {
-                    guard let pid = inst["pid"] as? Int, isAlive(pid),
-                          let instSessions = inst["sessions"] as? [[String: Any]] else { continue }
-
-                    let instId = inst["instanceId"] as? String ?? ""
-                    let isServer = instId.hasPrefix("server-")
-
-                    for s in instSessions {
-                        let sid = s["id"] as? String ?? "unknown"
-                        if seenIds.contains(sid) { continue }
-                        seenIds.insert(sid)
-
-                        // Try status file from worktree dir first, then project dir
-                        let wtPath = s["worktreePath"] as? String
-                        var label = wtPath != nil ? readStatusFile(aimuxDir: "\(wtPath!)/.aimux", sessionId: sid) : nil
-                        if label == nil {
-                            label = readStatusFile(aimuxDir: aimuxDir, sessionId: sid)
-                        }
-
-                        sessions.append(AimuxSession(
-                            id: sid,
-                            tool: s["tool"] as? String ?? "unknown",
-                            status: "running",
-                            label: label,
-                            worktreePath: wtPath,
-                            projectPath: projectPath,
-                            ownerPid: pid,
-                            isServer: isServer
-                        ))
-                    }
-                }
-            }
-
-            // Offline sessions from state.json
-            let statePath = "\(aimuxDir)/state.json"
-            if let data = try? Data(contentsOf: URL(fileURLWithPath: statePath)),
-               let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let stateSessions = state["sessions"] as? [[String: Any]] {
-                for s in stateSessions {
-                    let sid = s["id"] as? String ?? "unknown"
-                    if seenIds.contains(sid) { continue }
-                    seenIds.insert(sid)
-
-                    sessions.append(AimuxSession(
-                        id: sid,
-                        tool: s["command"] as? String ?? s["tool"] as? String ?? "unknown",
-                        status: "offline",
-                        label: s["label"] as? String,
-                        worktreePath: s["worktreePath"] as? String,
-                        projectPath: projectPath,
-                        ownerPid: nil,
-                        isServer: false
-                    ))
-                }
-            }
-        }
-
-        let serverPid = getServerPid()
-        return (sessions, serverPid)
+        return sessions
     }
 
-    private func discoverProjects() {
-        // Check global ~/.aimux/ for a known-projects breadcrumb
-        let knownPath = "\(homeDir)/.aimux/known-projects.txt"
-        if let content = try? String(contentsOfFile: knownPath, encoding: .utf8) {
-            for line in content.components(separatedBy: "\n") {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty && FileManager.default.fileExists(atPath: "\(trimmed)/.aimux") {
-                    knownProjects.insert(trimmed)
+    // MARK: - Registered projects (new centralized layout)
+
+    private func scanRegisteredProjects() -> [AgentSession] {
+        let registryPath = "\(homeDir)/.aimux/projects.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: registryPath)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let projects = json["projects"] as? [[String: Any]] else {
+            return []
+        }
+
+        var sessions: [AgentSession] = []
+
+        for project in projects {
+            guard let id = project["id"] as? String,
+                  let name = project["name"] as? String,
+                  let repoRoot = project["repoRoot"] as? String else { continue }
+
+            // Try statusline.json first (freshest, written every ~1s by multiplexer)
+            let statuslinePath = "\(homeDir)/.aimux/projects/\(id)/statusline.json"
+            if let slData = try? Data(contentsOf: URL(fileURLWithPath: statuslinePath)),
+               let sl = try? JSONSerialization.jsonObject(with: slData) as? [String: Any],
+               let slSessions = sl["sessions"] as? [[String: Any]],
+               isRecentlyActive(statuslinePath, maxAge: 10) {
+                for s in slSessions {
+                    let sid = s["id"] as? String ?? "unknown"
+                    let tool = s["tool"] as? String ?? "unknown"
+                    let status = s["status"] as? String ?? "idle"
+                    let role = s["role"] as? String
+                    let active = s["active"] as? Bool ?? false
+
+                    sessions.append(AgentSession(
+                        id: sid,
+                        tool: tool,
+                        name: active ? "\(tool)*" : tool,
+                        status: status,
+                        role: role,
+                        projectName: name,
+                        projectPath: repoRoot
+                    ))
                 }
+                continue
+            }
+
+            // Fall back to state.json (persisted on exit)
+            let statePath = "\(homeDir)/.aimux/projects/\(id)/state.json"
+            guard let stateData = try? Data(contentsOf: URL(fileURLWithPath: statePath)),
+                  let state = try? JSONSerialization.jsonObject(with: stateData) as? [String: Any],
+                  let stateSessions = state["sessions"] as? [[String: Any]] else { continue }
+
+            let isActive = isRecentlyActive(statePath, maxAge: 120)
+
+            for s in stateSessions {
+                // state.json may have sessions at top level or nested under "session"
+                let session = s["session"] as? [String: Any] ?? s
+                let sid = session["id"] as? String ?? "unknown"
+                let tool = session["tool"] as? String ?? session["command"] as? String ?? "unknown"
+                let rawStatus = session["status"] as? String ?? "idle"
+                let role = session["role"] as? String
+
+                let status = isActive ? rawStatus : "offline"
+
+                sessions.append(AgentSession(
+                    id: sid,
+                    tool: tool,
+                    name: tool,
+                    status: status,
+                    role: role,
+                    projectName: name,
+                    projectPath: repoRoot
+                ))
             }
         }
 
-        // Also scan common dev dirs for .aimux/
+        return sessions
+    }
+
+    /// Check if a file was modified within maxAge seconds
+    private func isRecentlyActive(_ path: String, maxAge: TimeInterval) -> Bool {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let modDate = attrs[.modificationDate] as? Date else { return false }
+        return Date().timeIntervalSince(modDate) < maxAge
+    }
+
+    // MARK: - Legacy .aimux/ scanning
+
+    private func scanLegacyAimux(excluding excludedPaths: Set<String>) -> [AgentSession] {
+        var sessions: [AgentSession] = []
+        var projectPaths = Set<String>()
+
+        // Auto-discover in common dirs
         let scanDirs = ["\(homeDir)/cs", "\(homeDir)/projects", "\(homeDir)/dev", "\(homeDir)/src"]
         for scanDir in scanDirs {
             guard let entries = try? FileManager.default.contentsOfDirectory(atPath: scanDir) else { continue }
             for entry in entries {
-                let projectPath = "\(scanDir)/\(entry)"
-                if FileManager.default.fileExists(atPath: "\(projectPath)/.aimux/instances.json") ||
-                   FileManager.default.fileExists(atPath: "\(projectPath)/.aimux/state.json") {
-                    knownProjects.insert(projectPath)
+                let path = "\(scanDir)/\(entry)"
+                if FileManager.default.fileExists(atPath: "\(path)/.aimux/state.json") {
+                    projectPaths.insert(path)
                 }
             }
         }
-    }
 
-    private func readStatusFile(aimuxDir: String, sessionId: String) -> String? {
-        let path = "\(aimuxDir)/status/\(sessionId).md"
-        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
-        let firstLine = content.trimmingCharacters(in: .whitespacesAndNewlines)
-            .components(separatedBy: "\n").first ?? ""
-        return firstLine.isEmpty ? nil : String(firstLine.prefix(60))
-    }
+        // Remove projects already covered by registry
+        projectPaths.subtract(excludedPaths)
 
-    func isServerRunning() -> Bool {
-        return getServerPid() != nil
-    }
+        for projectPath in projectPaths {
+            let projectName = URL(fileURLWithPath: projectPath).lastPathComponent
+            let statePath = "\(projectPath)/.aimux/state.json"
 
-    func getServerPid() -> Int? {
-        let pidPath = "\(homeDir)/.aimux/aimux.pid"
-        guard let pidStr = try? String(contentsOfFile: pidPath, encoding: .utf8),
-              let pid = Int(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)),
-              isAlive(pid) else { return nil }
-        return pid
-    }
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: statePath)),
+                  let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let stateSessions = state["sessions"] as? [[String: Any]] else { continue }
 
-    private func isAlive(_ pid: Int) -> Bool {
-        kill(Int32(pid), 0) == 0
+            for s in stateSessions {
+                let sid = s["id"] as? String ?? "unknown"
+                let tool = s["command"] as? String ?? s["tool"] as? String ?? "unknown"
+
+                sessions.append(AgentSession(
+                    id: sid,
+                    tool: tool,
+                    name: tool,
+                    status: "offline",
+                    role: nil,
+                    projectName: projectName,
+                    projectPath: projectPath
+                ))
+            }
+        }
+
+        return sessions
     }
 }
 
 // MARK: - Path Resolution
 
-func findNodeBinary() -> String {
-    let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-    let nvmDir = "\(homeDir)/.nvm/versions/node"
-    if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmDir) {
-        for ver in versions.sorted().reversed() {
-            let path = "\(nvmDir)/\(ver)/bin/node"
-            if FileManager.default.fileExists(atPath: path) { return path }
-        }
-    }
-    if FileManager.default.fileExists(atPath: "/opt/homebrew/bin/node") {
-        return "/opt/homebrew/bin/node"
-    }
-    return "/usr/local/bin/node"
-}
-
-func findAimuxMain() -> String {
-    return "\(FileManager.default.homeDirectoryForCurrentUser.path)/cs/aimux/dist/main.js"
-}
-
 func findAimuxBinary() -> String {
-    let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-    let binLink = "\(homeDir)/bin/aimux"
-    if FileManager.default.fileExists(atPath: binLink) { return binLink }
+    // Check common locations
+    let paths = [
+        "\(FileManager.default.homeDirectoryForCurrentUser.path)/.nvm/versions/node/v22.13.0/bin/aimux",
+        "/usr/local/bin/aimux",
+        "/opt/homebrew/bin/aimux",
+    ]
+    for p in paths {
+        if FileManager.default.fileExists(atPath: p) { return p }
+    }
     return "aimux"
 }
 
@@ -180,7 +181,7 @@ func findAimuxBinary() -> String {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var scanner = AimuxScanner()
+    private var scanner = ProjectScanner()
     private var timer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -192,10 +193,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func updateMenu() {
-        let (sessions, serverPid) = scanner.scan()
-        let serverRunning = serverPid != nil
-        let running = sessions.filter { $0.status != "offline" }
-        let offline = sessions.filter { $0.status == "offline" }
+        let allSessions = scanner.scan()
+        // Only show sessions from active TUIs — hide stale/offline
+        let sessions = allSessions.filter { $0.status != "offline" }
+        let running = sessions.filter { $0.status == "running" || $0.status == "waiting" }
         let menu = NSMenu()
 
         // Icon
@@ -203,11 +204,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if !running.isEmpty {
                 button.title = " \(running.count)"
                 button.image = createDot(color: .systemGreen)
-            } else if serverRunning {
+            } else if !sessions.isEmpty {
                 button.title = ""
-                button.image = createDot(color: .systemGreen)
-            } else if !offline.isEmpty {
-                button.title = " \(offline.count)"
                 button.image = createDot(color: .systemGray)
             } else {
                 button.title = ""
@@ -216,27 +214,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.image?.isTemplate = false
         }
 
-        // Server
-        if serverRunning {
-            let item = NSMenuItem(title: "Server running (PID \(serverPid!))", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
-            let stop = NSMenuItem(title: "Stop Server", action: #selector(stopServer), keyEquivalent: "")
-            stop.target = self
-            menu.addItem(stop)
-        } else {
-            let item = NSMenuItem(title: "Server not running", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
-            let start = NSMenuItem(title: "Start Server", action: #selector(startServer), keyEquivalent: "")
-            start.target = self
-            menu.addItem(start)
-        }
-
-        menu.addItem(NSMenuItem.separator())
-
         // Group by project
-        let grouped = Dictionary(grouping: sessions) { URL(fileURLWithPath: $0.projectPath).lastPathComponent }
+        let grouped = Dictionary(grouping: sessions) { $0.projectName }
         if grouped.isEmpty {
             let item = NSMenuItem(title: "No agents", action: nil, keyEquivalent: "")
             item.isEnabled = false
@@ -255,21 +234,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 for session in projectSessions {
                     let icon: String
                     switch session.status {
-                    case "running": icon = "\u{1F7E1}"
-                    case "idle": icon = "\u{1F7E2}"
-                    case "waiting": icon = "\u{1F535}"
-                    default: icon = "\u{26AA}"
+                    case "running": icon = "\u{1F7E1}"   // yellow
+                    case "waiting": icon = "\u{1F535}"   // blue
+                    case "idle":    icon = "\u{1F7E2}"   // green
+                    case "error":   icon = "\u{1F534}"   // red
+                    default:        icon = "\u{26AA}"    // white/gray
                     }
-                    var parts = [session.tool]
-                    if let label = session.label, !label.isEmpty {
-                        parts.append(label)
+
+                    var parts = [session.name]
+                    if let role = session.role {
+                        parts.append("(\(role))")
                     }
-                    if session.isServer {
-                        parts.append("[server]")
-                    } else if let pid = session.ownerPid {
-                        parts.append("[PID \(pid)]")
+                    if session.status != "idle" && session.status != "offline" {
+                        parts.append("— \(session.status)")
                     }
-                    let title = "  \(icon) \(parts.joined(separator: " — "))"
+
+                    let title = "  \(icon) \(parts.joined(separator: " "))"
                     let item = NSMenuItem(title: title, action: #selector(openProject(_:)), keyEquivalent: "")
                     item.target = self
                     item.representedObject = session.projectPath
@@ -297,56 +277,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return image
     }
 
-    private func runAimux(_ args: [String], wait: Bool = false) {
-        let node = findNodeBinary()
-        let mainJs = findAimuxMain()
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: node)
-        task.arguments = [mainJs] + args
-
-        // Set PATH so spawned children can find git, node, etc.
-        var env = ProcessInfo.processInfo.environment
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-        let extraPaths = [
-            "\(homeDir)/bin",
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "\(homeDir)/.nvm/versions/node/v22.13.0/bin",
-        ]
-        env["PATH"] = (extraPaths + [env["PATH"] ?? ""]).joined(separator: ":")
-        task.environment = env
-        task.currentDirectoryURL = URL(fileURLWithPath: homeDir)
-
-        let pipe = Pipe()
-        task.standardError = pipe
-        try? task.run()
-        if wait {
-            task.waitUntilExit()
-        } else {
-            // Wait briefly for the parent to spawn the child and exit
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                if task.isRunning { task.terminate() }
-            }
-        }
-    }
-
-    @objc func startServer() {
-        runAimux(["server", "start"])
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.updateMenu() }
-    }
-
-    @objc func stopServer() {
-        runAimux(["server", "stop"], wait: true)
-        updateMenu()
-    }
-
     @objc func openProject(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
-        let aimux = findAimuxBinary()
+        let binary = findAimuxBinary()
         let script = """
         tell application "Terminal"
             activate
-            do script "cd '\(path)' && \(aimux)"
+            do script "cd '\(path)' && \(binary)"
         end tell
         """
         if let appleScript = NSAppleScript(source: script) {

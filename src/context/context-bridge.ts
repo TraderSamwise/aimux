@@ -2,7 +2,8 @@ import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync } from "no
 import { join } from "node:path";
 import { simpleGit } from "simple-git";
 import { appendEntry, type ContextEntry } from "./context-file.js";
-import { getAimuxDir, loadConfig } from "../config.js";
+import { loadConfig } from "../config.js";
+import { getRecordingsDir, getContextDir } from "../paths.js";
 import { appendTurn, readHistory, type HistoryTurn } from "./history.js";
 import { algorithmicCompact } from "./compactor.js";
 import { debugTurn, debugGit, debugContext, debugCompact } from "../debug.js";
@@ -14,13 +15,13 @@ const MAX_LIVE_MD_BYTES = 50 * 1024;
 /**
  * Capture git diff and write a context entry on session exit.
  */
-export async function captureGitContext(sessionName: string, tool: string, cwd?: string): Promise<void> {
+export async function captureGitContext(sessionName: string, tool: string): Promise<void> {
   try {
     const diff = await git.diff();
     const diffStat = await git.diffSummary();
     if (diffStat.files.length === 0 && !diff) return;
 
-    const recentOutput = getRecentOutput(sessionName, 30, cwd);
+    const recentOutput = getRecentOutput(sessionName, 30);
 
     const entry: ContextEntry = {
       sessionName,
@@ -32,7 +33,7 @@ export async function captureGitContext(sessionName: string, tool: string, cwd?:
       diff: diff ? diff.slice(0, 2000) : undefined,
     };
 
-    await appendEntry(entry, cwd);
+    await appendEntry(entry);
   } catch {}
 }
 
@@ -55,7 +56,6 @@ function simpleHash(str: string): string {
 export class ContextWatcher {
   private interval: ReturnType<typeof setInterval> | null = null;
   private sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[] }> = [];
-  private cwd?: string;
   /** Track how far we've read into each session's recording */
   private readOffsets = new Map<string, number>();
   /** Track last turn type per session to detect response→prompt transitions */
@@ -66,10 +66,6 @@ export class ContextWatcher {
   private totalTurnCount = 0;
   /** Track which sessions have new turns since last write */
   private dirtySessions = new Set<string>();
-
-  constructor(cwd?: string) {
-    this.cwd = cwd;
-  }
 
   updateSessions(sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[] }>): void {
     this.sessions = sessions;
@@ -107,7 +103,7 @@ export class ContextWatcher {
   }
 
   private recordingPath(sessionId: string): string {
-    return join(getAimuxDir(this.cwd), "recordings", `${sessionId}.txt`);
+    return join(getRecordingsDir(), `${sessionId}.txt`);
   }
 
   private async tick(): Promise<void> {
@@ -161,18 +157,18 @@ export class ContextWatcher {
           type: turn.type,
           content: turn.content,
         };
-        appendTurn(session.id, historyTurn, this.cwd);
+        appendTurn(session.id, historyTurn);
         this.totalTurnCount++;
         this.dirtySessions.add(session.id);
         this.lastTurnTypes.set(session.id, turn.type);
         debugTurn(session.id, turn.type, turn.content.length);
 
         // Trigger algorithmic compaction periodically
-        const compactEvery = loadConfig(this.cwd).compactEveryNTurns;
+        const compactEvery = loadConfig().compactEveryNTurns;
         if (this.totalTurnCount > 0 && this.totalTurnCount % compactEvery === 0) {
           const sessionIds = this.sessions.map((s) => s.id);
           debugCompact(sessionIds.length, this.totalTurnCount);
-          algorithmicCompact(sessionIds, this.cwd);
+          algorithmicCompact(sessionIds);
         }
       }
     } catch {}
@@ -202,7 +198,7 @@ export class ContextWatcher {
         diff: diff.slice(0, 2000),
       };
       debugGit(diffStat.files.length, diff.length);
-      appendTurn(sessionId, gitTurn, this.cwd);
+      appendTurn(sessionId, gitTurn);
     } catch {}
   }
 
@@ -211,10 +207,10 @@ export class ContextWatcher {
    * Each session gets its own context/{session-id}/live.md.
    */
   private writeLiveContext(): void {
-    const baseDir = join(getAimuxDir(this.cwd), "context");
+    const baseDir = getContextDir();
     if (!existsSync(baseDir)) mkdirSync(baseDir, { recursive: true });
 
-    const turnsPerSession = loadConfig(this.cwd).liveWindowSize;
+    const turnsPerSession = loadConfig().liveWindowSize;
     const sessionsToWrite = this.sessions.filter((s) => this.dirtySessions.has(s.id));
     this.dirtySessions.clear();
 
@@ -242,7 +238,7 @@ export class ContextWatcher {
    * Build live.md content for a single session from its history.
    */
   private buildSessionLiveContent(session: { id: string; command: string }, turnsPerSession: number): string {
-    const turns = readHistory(session.id, { lastN: turnsPerSession }, this.cwd);
+    const turns = readHistory(session.id, { lastN: turnsPerSession });
     if (turns.length === 0) return "";
 
     const sections: string[] = [`# ${session.id} (${session.command}) — Live Context\n`];
@@ -341,8 +337,8 @@ function parseConversationTurns(text: string, tool: string, turnPatterns?: RegEx
 }
 
 /** Get recent stripped output from a session's recording. */
-export function getRecentOutput(sessionId: string, maxLines: number = 20, cwd?: string): string {
-  const txtPath = join(getAimuxDir(cwd), "recordings", `${sessionId}.txt`);
+export function getRecentOutput(sessionId: string, maxLines: number = 20): string {
+  const txtPath = join(getRecordingsDir(), `${sessionId}.txt`);
   if (!existsSync(txtPath)) return "";
 
   try {
@@ -355,8 +351,8 @@ export function getRecentOutput(sessionId: string, maxLines: number = 20, cwd?: 
 }
 
 /** Build a context preamble for a new session from other sessions' per-session context files. */
-export function buildContextPreamble(otherSessionIds: string[], maxLinesPerSession: number = 10, cwd?: string): string {
-  const contextDir = join(getAimuxDir(cwd), "context");
+export function buildContextPreamble(otherSessionIds: string[], maxLinesPerSession: number = 10): string {
+  const contextDir = getContextDir();
   const sections: string[] = [];
 
   for (const id of otherSessionIds) {
@@ -372,7 +368,7 @@ export function buildContextPreamble(otherSessionIds: string[], maxLinesPerSessi
       } catch {}
     }
     // Fallback to recording snippets
-    const output = getRecentOutput(id, maxLinesPerSession, cwd);
+    const output = getRecentOutput(id, maxLinesPerSession);
     if (output) {
       sections.push(`--- Recent output from ${id} ---\n${output}`);
     }

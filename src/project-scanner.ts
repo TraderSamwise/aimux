@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
-import { getAimuxDir } from "./config.js";
+import { getStatusDir, getAimuxDirFor, listProjects } from "./paths.js";
 
 export interface GlobalSession {
   id: string;
@@ -20,14 +20,21 @@ export interface ProjectInfo {
 }
 
 /**
- * Discover all projects with .aimux/ directories.
- * Scans common dev directories and any previously seen projects.
+ * Discover all projects with aimux state.
+ * Uses the global projects registry plus filesystem scanning as fallback.
  */
 export function discoverProjects(): string[] {
-  const home = homedir();
   const found = new Set<string>();
 
-  // Scan common dev directories
+  // Primary: projects registry
+  for (const entry of listProjects()) {
+    if (existsSync(entry.repoRoot)) {
+      found.add(entry.repoRoot);
+    }
+  }
+
+  // Fallback: scan common dev directories for old-style in-repo .aimux/
+  const home = homedir();
   const scanDirs = [
     join(home, "cs"),
     join(home, "projects"),
@@ -60,13 +67,24 @@ export function discoverProjects(): string[] {
  * Scan a single project for all sessions (running + offline).
  */
 export function scanProject(projectPath: string): ProjectInfo {
-  const aimuxDir = join(projectPath, ".aimux");
   const sessions: GlobalSession[] = [];
   const seenIds = new Set<string>();
 
-  // Running sessions from instances.json
-  const instancesPath = join(aimuxDir, "instances.json");
-  if (existsSync(instancesPath)) {
+  // Check both global state dir and in-repo .aimux/ for instances
+  const instancesPaths = [join(getAimuxDirFor(projectPath), "instances.json")];
+
+  // Also check global project state dirs for registered projects
+  for (const entry of listProjects()) {
+    if (entry.repoRoot === projectPath) {
+      const globalInstances = join(homedir(), ".aimux", "projects", entry.id, "instances.json");
+      if (!instancesPaths.includes(globalInstances)) {
+        instancesPaths.unshift(globalInstances);
+      }
+    }
+  }
+
+  for (const instancesPath of instancesPaths) {
+    if (!existsSync(instancesPath)) continue;
     try {
       const instances = JSON.parse(readFileSync(instancesPath, "utf-8")) as Array<{
         instanceId: string;
@@ -91,8 +109,7 @@ export function scanProject(projectPath: string): ProjectInfo {
           // Read status file
           let label: string | undefined;
           try {
-            const statusCwd = s.worktreePath ?? projectPath;
-            const statusPath = join(getAimuxDir(statusCwd), "status", `${s.id}.md`);
+            const statusPath = join(getStatusDir(), `${s.id}.md`);
             if (existsSync(statusPath)) {
               const content = readFileSync(statusPath, "utf-8").trim();
               if (content) label = content.split("\n")[0].slice(0, 80);
@@ -113,9 +130,19 @@ export function scanProject(projectPath: string): ProjectInfo {
     } catch {}
   }
 
-  // Offline sessions from state.json
-  const statePath = join(aimuxDir, "state.json");
-  if (existsSync(statePath)) {
+  // Offline sessions — check both global state and in-repo
+  const statePaths = [join(getAimuxDirFor(projectPath), "state.json")];
+  for (const entry of listProjects()) {
+    if (entry.repoRoot === projectPath) {
+      const globalState = join(homedir(), ".aimux", "projects", entry.id, "state.json");
+      if (!statePaths.includes(globalState)) {
+        statePaths.unshift(globalState);
+      }
+    }
+  }
+
+  for (const statePath of statePaths) {
+    if (!existsSync(statePath)) continue;
     try {
       const state = JSON.parse(readFileSync(statePath, "utf-8")) as {
         sessions: Array<{

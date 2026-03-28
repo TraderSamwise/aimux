@@ -8,7 +8,7 @@ import {
   cpSync,
   copyFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
@@ -18,16 +18,17 @@ import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboar
 import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
 import { readHistory } from "./context/history.js";
 import { parseKeys } from "./key-parser.js";
-import { loadConfig, getAimuxDir, initProject } from "./config.js";
-import { debug, debugPreamble, closeDebug } from "./debug.js";
+import { loadConfig, initProject } from "./config.js";
 import {
-  findMainRepo,
-  listWorktrees as listAllWorktrees,
-  loadRegistry,
-  createWorktree,
-  removeWorktree,
-  cleanWorktrees,
-} from "./worktree.js";
+  getProjectStateDir,
+  getGraveyardPath,
+  getStatePath,
+  getStatusDir,
+  getAimuxDirFor,
+  getLocalAimuxDir,
+} from "./paths.js";
+import { debug, debugPreamble, closeDebug } from "./debug.js";
+import { findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
 import { notifyPrompt, notifyComplete } from "./notify.js";
 import {
   registerInstance,
@@ -37,7 +38,8 @@ import {
   claimSession,
   type InstanceSessionRef,
 } from "./instance-registry.js";
-import { TaskDispatcher } from "./task-dispatcher.js";
+import { TaskDispatcher, requestReview } from "./task-dispatcher.js";
+import { loadTeamConfig } from "./team.js";
 import { scanAllProjects, type ProjectInfo } from "./project-scanner.js";
 
 export type MuxMode = "focused" | "dashboard";
@@ -79,6 +81,7 @@ export class Multiplexer {
   private labelInputBuffer = "";
   private labelInputTarget: string | null = null;
   private worktreeListActive = false;
+  private worktreeRemoveConfirm: { path: string; name: string } | null = null;
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
   private graveyardActive = false;
@@ -97,7 +100,7 @@ export class Multiplexer {
   /** Ordered list of worktree paths for navigation (undefined = main repo) */
   private worktreeNavOrder: Array<string | undefined> = [];
   /** Dashboard navigation level: worktrees (top) or sessions (inside a worktree) */
-  private dashboardLevel: "worktrees" | "sessions" = "sessions";
+  private dashboardLevel: "worktrees" | "sessions" = "worktrees";
   /** Index within sessions of the focused worktree */
   private dashboardSessionIndex = 0;
   /** Sessions in the currently focused worktree (for session-level nav) */
@@ -115,6 +118,8 @@ export class Multiplexer {
   private sessionStartTimes = new Map<string, number>();
   /** Maps session ID → worktree path (if session runs in a worktree) */
   private sessionWorktreePaths = new Map<string, string>();
+  /** Maps session ID → team role (e.g. "coder", "reviewer") */
+  private sessionRoles = new Map<string, string>();
   /** Offline sessions from previous runs (loaded from state.json) */
   private offlineSessions: SessionState[] = [];
   private static readonly FOOTER_HEIGHT = 1;
@@ -139,6 +144,7 @@ export class Multiplexer {
     this.taskDispatcher = new TaskDispatcher(
       (id) => this.sessions.find((s) => s.id === id),
       (id) => this.sessionToolKeys.get(id),
+      (id) => this.sessionRoles.get(id),
     );
     this.loadOfflineSessions();
     this.defaultCommand = opts.command;
@@ -172,6 +178,10 @@ export class Multiplexer {
     this.onStdinData = (data: Buffer) => {
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
+        return;
+      }
+      if (this.worktreeRemoveConfirm) {
+        this.handleWorktreeRemoveConfirmKey(data);
         return;
       }
       if (this.worktreeInputActive) {
@@ -262,6 +272,10 @@ export class Multiplexer {
     this.onStdinData = (data: Buffer) => {
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
+        return;
+      }
+      if (this.worktreeRemoveConfirm) {
+        this.handleWorktreeRemoveConfirmKey(data);
         return;
       }
       if (this.worktreeInputActive) {
@@ -412,6 +426,10 @@ export class Multiplexer {
         this.handleToolPickerKey(data);
         return;
       }
+      if (this.worktreeRemoveConfirm) {
+        this.handleWorktreeRemoveConfirmKey(data);
+        return;
+      }
       if (this.worktreeInputActive) {
         this.handleWorktreeInputKey(data);
         return;
@@ -544,6 +562,10 @@ export class Multiplexer {
         this.handleToolPickerKey(data);
         return;
       }
+      if (this.worktreeRemoveConfirm) {
+        this.handleWorktreeRemoveConfirmKey(data);
+        return;
+      }
       if (this.worktreeInputActive) {
         this.handleWorktreeInputKey(data);
         return;
@@ -651,20 +673,19 @@ export class Multiplexer {
     // Add worktree context to preamble
     if (worktreePath) {
       try {
-        const registry = loadRegistry(worktreePath);
-        const wt = registry.worktrees.find((w) => w.path === worktreePath);
-        const branch = wt?.branch ?? "unknown";
-        const siblings = registry.worktrees
+        const allWt = listAllWorktrees(worktreePath);
+        const thisWt = allWt.find((w) => w.path === worktreePath);
+        const mainWt = allWt[0]; // first entry is always the main worktree
+        const siblings = allWt
           .filter((w) => w.path !== worktreePath)
           .map((w) => `${w.name} (${w.branch})`)
           .join(", ");
         preamble +=
-          `\n\nYou are working in git worktree "${wt?.name ?? "unknown"}" at ${worktreePath} on branch "${branch}".` +
-          `\nYour main repository is at ${registry.mainRepoPath}.` +
+          `\n\nYou are working in git worktree "${thisWt?.name ?? basename(worktreePath)}" at ${worktreePath} on branch "${thisWt?.branch ?? "unknown"}".` +
+          `\nMain repository: ${mainWt?.path ?? "unknown"}.` +
           (siblings ? `\nSibling worktrees: ${siblings}` : "") +
-          `\nStay in your worktree directory — do not cd to other worktrees or the main repo.`;
+          `\nStay in your worktree directory.`;
       } catch {
-        // If we can't load registry, add basic info
         preamble += `\n\nYou are working in a git worktree at ${worktreePath}. Stay in this directory.`;
       }
     }
@@ -781,7 +802,9 @@ export class Multiplexer {
         // Try to extract error from raw recording — check both project cwd and worktree cwd
         let errorHint = "";
         const sessionCwd = this.sessionWorktreePaths.get(session.id);
-        const searchDirs = [getAimuxDir(), sessionCwd ? getAimuxDir(sessionCwd) : null].filter(Boolean) as string[];
+        const searchDirs = [getProjectStateDir(), sessionCwd ? getAimuxDirFor(sessionCwd) : null].filter(
+          Boolean,
+        ) as string[];
         for (const dir of searchDirs) {
           if (errorHint) break;
           try {
@@ -849,7 +872,7 @@ export class Multiplexer {
       }
     });
 
-    // Track toolConfigKey, original args, and worktree path for state saving
+    // Track toolConfigKey, original args, worktree path, and role for state saving
     if (toolConfigKey) {
       this.sessionToolKeys.set(session.id, toolConfigKey);
     }
@@ -857,6 +880,11 @@ export class Multiplexer {
     if (worktreePath) {
       this.sessionWorktreePaths.set(session.id, worktreePath);
     }
+    // Assign team role from config
+    try {
+      const teamConfig = loadTeamConfig();
+      this.sessionRoles.set(session.id, teamConfig.defaultRole);
+    } catch {}
 
     this.sessions.push(session);
     this.writeSessionsFile();
@@ -900,16 +928,16 @@ export class Multiplexer {
     const sourceCwd = sourceWorktree ?? process.cwd();
 
     // Copy history file
-    const sourceHistoryPath = join(getAimuxDir(sourceCwd), "history", `${sessionId}.jsonl`);
-    const targetHistoryDir = join(getAimuxDir(targetWorktreePath), "history");
+    const sourceHistoryPath = join(getProjectStateDir(), "history", `${sessionId}.jsonl`);
+    const targetHistoryDir = join(getAimuxDirFor(targetWorktreePath), "history");
     mkdirSync(targetHistoryDir, { recursive: true });
     if (existsSync(sourceHistoryPath)) {
       copyFileSync(sourceHistoryPath, join(targetHistoryDir, `${sessionId}.jsonl`));
     }
 
     // Copy context directory
-    const sourceContextDir = join(getAimuxDir(sourceCwd), "context", sessionId);
-    const targetContextDir = join(getAimuxDir(targetWorktreePath), "context", sessionId);
+    const sourceContextDir = join(getProjectStateDir(), "context", sessionId);
+    const targetContextDir = join(getAimuxDirFor(targetWorktreePath), "context", sessionId);
     if (existsSync(sourceContextDir)) {
       cpSync(sourceContextDir, targetContextDir, { recursive: true });
     }
@@ -1039,6 +1067,10 @@ export class Multiplexer {
         this.showWorktreeList();
         break;
 
+      case "review":
+        this.handleReviewRequest();
+        break;
+
       case "passthrough":
         this.activeSession?.write(action.data);
         break;
@@ -1083,6 +1115,14 @@ export class Multiplexer {
         this.showMetaDashboard();
         return;
       case "x": {
+        // At worktree level, [x] removes the focused worktree
+        if (hasWorktrees && this.dashboardLevel === "worktrees" && this.focusedWorktreePath) {
+          const wtName = this.focusedWorktreePath.split("/").pop() ?? this.focusedWorktreePath;
+          this.worktreeRemoveConfirm = { path: this.focusedWorktreePath, name: wtName };
+          this.renderWorktreeRemoveConfirm();
+          return;
+        }
+
         const allDs = this.getDashboardSessions();
         const selId =
           this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
@@ -1400,17 +1440,22 @@ export class Multiplexer {
       };
     });
 
-    // Build worktree groups from registry (if available)
+    // Build worktree groups from git
     let worktreeGroups: WorktreeGroup[] = [];
     try {
       const worktrees = listAllWorktrees();
-      worktreeGroups = worktrees.map((wt) => ({
-        name: wt.name,
-        branch: wt.branch,
-        path: wt.path,
-        status: wt.status,
-        sessions: dashSessions.filter((s) => s.worktreePath === wt.path),
-      }));
+      worktreeGroups = worktrees
+        .filter((wt) => !wt.isBare)
+        .map((wt) => {
+          const wtSessions = dashSessions.filter((s) => s.worktreePath === wt.path);
+          return {
+            name: wt.name,
+            branch: wt.branch,
+            path: wt.path,
+            status: (wtSessions.length > 0 ? "active" : "offline") as "active" | "offline",
+            sessions: wtSessions,
+          };
+        });
     } catch {
       // Not in a git repo or no worktrees — skip grouping
     }
@@ -1544,8 +1589,13 @@ export class Multiplexer {
       const name = this.worktreeInputBuffer.trim();
       if (name) {
         try {
-          const info = createWorktree(name);
-          debug(`worktree created from UI: ${info.name} at ${info.path}`, "worktree");
+          const mainRepo = findMainRepo();
+          execSync(`git worktree add "../${basename(mainRepo)}-${name}" -b "${name}"`, {
+            cwd: mainRepo,
+            encoding: "utf-8",
+            stdio: "pipe",
+          });
+          debug(`worktree created from UI: ${name}`, "worktree");
         } catch (err) {
           debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
         }
@@ -1652,18 +1702,36 @@ export class Multiplexer {
     this.renderWorktreeList();
   }
 
+  private handleReviewRequest(): void {
+    const session = this.activeSession;
+    if (!session) return;
+
+    const role = this.sessionRoles.get(session.id) ?? "coder";
+
+    // Try to get a recent git diff for the review
+    let diff: string | undefined;
+    try {
+      diff = execSync("git diff HEAD", { encoding: "utf-8", timeout: 5000 }).slice(0, 5000) || undefined;
+    } catch {}
+
+    const reviewTask = requestReview(session.id, role, diff, `Review ${session.command} agent's recent work`);
+
+    if (reviewTask) {
+      this.footerFlash = `⧫ Review requested → ${reviewTask.assignee ?? "reviewer"}`;
+      this.footerFlashTicks = 3;
+    } else {
+      this.footerFlash = `No reviewer role configured`;
+      this.footerFlashTicks = 3;
+    }
+  }
+
   private renderWorktreeList(): void {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
 
-    let worktrees: Array<{ name: string; branch: string; status: string; path: string }> = [];
+    let worktrees: Array<{ name: string; branch: string; path: string }> = [];
     try {
-      worktrees = listAllWorktrees().map((wt) => ({
-        name: wt.name,
-        branch: wt.branch,
-        status: wt.status,
-        path: wt.path,
-      }));
+      worktrees = listAllWorktrees().filter((wt) => !wt.isBare);
     } catch {}
 
     const lines = ["Worktree Management:", ""];
@@ -1672,11 +1740,12 @@ export class Multiplexer {
     } else {
       for (let i = 0; i < worktrees.length; i++) {
         const wt = worktrees[i];
-        lines.push(`  [${i + 1}] ${wt.name} (${wt.branch}) — ${wt.status}`);
+        const isMain = i === 0 ? " \x1b[2m(main)\x1b[0m" : "";
+        lines.push(`  [${i + 1}] ${wt.name} (${wt.branch})${isMain}`);
       }
     }
     lines.push("");
-    lines.push("  [1-9] remove  [c] clean  [Esc] back");
+    lines.push("  [1-9] remove  [Esc] back");
 
     const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
     const startRow = Math.floor((rows - lines.length - 2) / 2);
@@ -1697,6 +1766,94 @@ export class Multiplexer {
     process.stdout.write(output);
   }
 
+  private renderWorktreeRemoveConfirm(): void {
+    const confirm = this.worktreeRemoveConfirm;
+    if (!confirm) return;
+
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const lines = [
+      `Remove worktree "${confirm.name}"?`,
+      "",
+      `  Path: ${confirm.path}`,
+      `  This runs: git worktree remove --force`,
+      "",
+      "  [y] yes  [n/Esc] cancel",
+    ];
+
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[41;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        output += `\x1b[41;97m  ${lines[i - 1].padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleWorktreeRemoveConfirmKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const key = events[0].name || events[0].char;
+
+    if (key === "y") {
+      const confirm = this.worktreeRemoveConfirm;
+      if (confirm) {
+        // Show progress immediately
+        this.worktreeRemoveConfirm = null;
+        this.footerFlash = `Removing ${confirm.name}...`;
+        this.footerFlashTicks = 10;
+        this.renderDashboard();
+
+        // Remember position in nav order before removal
+        const oldIdx = this.worktreeNavOrder.indexOf(confirm.path);
+
+        // Run removal (can be slow for large worktrees)
+        try {
+          execSync(`git worktree remove "${confirm.path}" --force`, {
+            cwd: findMainRepo(),
+            encoding: "utf-8",
+            stdio: "pipe",
+            timeout: 30_000,
+          });
+          this.footerFlash = `Removed: ${confirm.name}`;
+          this.footerFlashTicks = 3;
+          debug(`removed worktree: ${confirm.name}`, "worktree");
+        } catch (err) {
+          this.footerFlash = `Failed: ${err instanceof Error ? err.message : String(err)}`;
+          this.footerFlashTicks = 5;
+          this.renderDashboard();
+          return;
+        }
+
+        // Keep cursor at same list position (move to next, or up if at end)
+        const newWorktrees = listAllWorktrees().filter((wt) => !wt.isBare);
+        this.worktreeNavOrder = [undefined, ...newWorktrees.map((wt) => wt.path)];
+        if (oldIdx >= 0 && oldIdx < this.worktreeNavOrder.length) {
+          this.focusedWorktreePath = this.worktreeNavOrder[oldIdx];
+        } else if (this.worktreeNavOrder.length > 1) {
+          this.focusedWorktreePath = this.worktreeNavOrder[this.worktreeNavOrder.length - 1];
+        } else {
+          this.focusedWorktreePath = undefined;
+        }
+      }
+      this.renderDashboard();
+      return;
+    }
+
+    // Any other key cancels
+    this.worktreeRemoveConfirm = null;
+    this.renderDashboard();
+  }
+
   private handleWorktreeListKey(data: Buffer): void {
     const events = parseKeys(data);
     if (events.length === 0) return;
@@ -1714,27 +1871,17 @@ export class Multiplexer {
       return;
     }
 
-    if (key === "c") {
-      // Clean worktrees
-      this.worktreeListActive = false;
-      try {
-        const removed = cleanWorktrees();
-        debug(`cleaned worktrees: ${removed.join(", ") || "none"}`, "worktree");
-      } catch {}
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
-      return;
-    }
-
     if (key >= "1" && key <= "9") {
       try {
         const worktrees = listAllWorktrees();
         const idx = parseInt(key) - 1;
-        if (idx < worktrees.length) {
-          removeWorktree(worktrees[idx].name);
+        if (idx < worktrees.length && idx > 0) {
+          // skip main worktree (index 0)
+          execSync(`git worktree remove "${worktrees[idx].path}" --force`, {
+            cwd: findMainRepo(),
+            encoding: "utf-8",
+            stdio: "pipe",
+          });
           debug(`removed worktree from UI: ${worktrees[idx].name}`, "worktree");
         }
       } catch (err) {
@@ -1747,8 +1894,7 @@ export class Multiplexer {
   }
 
   private showGraveyard(): void {
-    const dir = getAimuxDir();
-    const graveyardPath = `${dir}/graveyard.json`;
+    const graveyardPath = getGraveyardPath();
     try {
       this.graveyardEntries = JSON.parse(readFileSync(graveyardPath, "utf-8")) as SessionState[];
     } catch {
@@ -1818,12 +1964,11 @@ export class Multiplexer {
         const entry = this.graveyardEntries[idx];
         // Resurrect: move from graveyard to offline
         this.graveyardEntries.splice(idx, 1);
-        const dir = getAimuxDir();
-        writeFileSync(`${dir}/graveyard.json`, JSON.stringify(this.graveyardEntries, null, 2) + "\n");
+        writeFileSync(getGraveyardPath(), JSON.stringify(this.graveyardEntries, null, 2) + "\n");
 
         // Add to offline sessions and state.json
         this.offlineSessions.push(entry);
-        const statePath = `${dir}/state.json`;
+        const statePath = getStatePath();
         try {
           let state: SavedState = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] };
           if (existsSync(statePath)) {
@@ -2222,8 +2367,7 @@ export class Multiplexer {
       // Read status file for live session label
       let label: string | undefined;
       try {
-        const statusCwd = this.sessionWorktreePaths.get(s.id);
-        const statusPath = join(getAimuxDir(statusCwd), "status", `${s.id}.md`);
+        const statusPath = join(getStatusDir(), `${s.id}.md`);
         if (existsSync(statusPath)) {
           const content = readFileSync(statusPath, "utf-8").trim();
           if (content) label = content.split("\n")[0].slice(0, 80);
@@ -2238,6 +2382,7 @@ export class Multiplexer {
         worktreePath: wtPath,
         label,
         taskDescription: this.taskDispatcher?.getSessionTask(s.id),
+        role: this.sessionRoles.get(s.id),
       };
     });
     try {
@@ -2249,8 +2394,7 @@ export class Multiplexer {
           // Read status file for remote session label
           let remoteLabel: string | undefined;
           try {
-            const rsCwd = rs.worktreePath;
-            const statusPath = join(getAimuxDir(rsCwd), "status", `${rs.id}.md`);
+            const statusPath = join(getStatusDir(), `${rs.id}.md`);
             if (existsSync(statusPath)) {
               const content = readFileSync(statusPath, "utf-8").trim();
               if (content) remoteLabel = content.split("\n")[0].slice(0, 80);
@@ -2285,8 +2429,8 @@ export class Multiplexer {
       let worktreeBranch: string | undefined;
       if (osWtPath) {
         try {
-          const registry = loadRegistry(osWtPath);
-          const wt = registry.worktrees.find((w) => w.path === osWtPath);
+          const allWt = listAllWorktrees(osWtPath);
+          const wt = allWt.find((w) => w.path === osWtPath);
           worktreeName = wt?.name;
           worktreeBranch = wt?.branch;
         } catch {}
@@ -2487,7 +2631,7 @@ export class Multiplexer {
   }
 
   private writeSessionsFile(): void {
-    const dir = getAimuxDir();
+    const dir = getLocalAimuxDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     // Local sessions
@@ -2520,10 +2664,31 @@ export class Multiplexer {
     writeFileSync(`${dir}/sessions.json`, JSON.stringify(data, null, 2) + "\n");
   }
 
+  /** Write statusline state for Claude Code's statusline script to read */
+  private writeStatuslineFile(): void {
+    try {
+      const dir = getProjectStateDir();
+      const data = {
+        project: basename(process.cwd()),
+        sessions: this.sessions.map((s, i) => ({
+          id: s.id,
+          tool: s.command,
+          status: s.status,
+          role: this.sessionRoles.get(s.id),
+          active: i === this.activeIndex,
+        })),
+        tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
+        flash: this.footerFlash,
+        updatedAt: new Date().toISOString(),
+      };
+      writeFileSync(join(dir, "statusline.json"), JSON.stringify(data) + "\n");
+    } catch {}
+  }
+
   /** Remove sessions file on exit */
   private removeSessionsFile(): void {
     try {
-      unlinkSync(`${getAimuxDir()}/sessions.json`);
+      unlinkSync(`${getLocalAimuxDir()}/sessions.json`);
     } catch {}
   }
 
@@ -2582,7 +2747,8 @@ export class Multiplexer {
     }
 
     const left = ` ${parts.join("  ")}`;
-    const right = `^A ? help `;
+    const cwd = process.cwd().replace(homedir(), "~");
+    const right = `${cwd}  ^A ? help `;
 
     // Calculate visible lengths (strip ANSI for padding)
     const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -2609,6 +2775,7 @@ export class Multiplexer {
     this.footerInterval = setInterval(() => {
       if (this.mode === "focused") this.renderFooter();
       this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
+      this.writeStatuslineFile();
 
       // Drain task events for flash notifications
       const events = this.taskDispatcher?.drainEvents() ?? [];
@@ -2619,6 +2786,12 @@ export class Multiplexer {
           this.footerFlash = `✓ Task done by ${ev.sessionId}`;
         } else if (ev.type === "failed") {
           this.footerFlash = `✗ Task failed: ${ev.sessionId}`;
+        } else if (ev.type === "review_created") {
+          this.footerFlash = `⧫ Review created: ${ev.description}`;
+        } else if (ev.type === "review_approved") {
+          this.footerFlash = `✓ Review approved: ${ev.description}`;
+        } else if (ev.type === "changes_requested") {
+          this.footerFlash = `↻ Changes requested: ${ev.description}`;
         }
         this.footerFlashTicks = 3; // show for ~6s (3 ticks × 2s)
       }
@@ -2695,7 +2868,7 @@ export class Multiplexer {
 
     // Read status file for auto-label
     try {
-      const statusPath = join(getAimuxDir(), "status", `${session.id}.md`);
+      const statusPath = join(getStatusDir(), `${session.id}.md`);
       if (existsSync(statusPath)) {
         const status = readFileSync(statusPath, "utf-8").trim();
         offlineEntry.label = status.split("\n")[0].slice(0, 80); // First line, max 80 chars
@@ -2752,8 +2925,7 @@ export class Multiplexer {
     this.offlineSessions = this.offlineSessions.filter((s) => s.id !== sessionId);
 
     // Append to graveyard file
-    const dir = getAimuxDir();
-    const graveyardPath = `${dir}/graveyard.json`;
+    const graveyardPath = getGraveyardPath();
     let graveyard: SessionState[] = [];
     if (existsSync(graveyardPath)) {
       try {
@@ -2764,7 +2936,7 @@ export class Multiplexer {
     writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
 
     // Also remove from state.json
-    const statePath = `${dir}/state.json`;
+    const statePath = getStatePath();
     if (existsSync(statePath)) {
       try {
         const state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
@@ -2913,14 +3085,7 @@ export class Multiplexer {
 
   /** Get the shared state.json path (in main repo for cross-worktree visibility). */
   private static getSharedStatePath(): string {
-    try {
-      const mainRepo = findMainRepo();
-      const dir = join(mainRepo, ".aimux");
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      return join(dir, "state.json");
-    } catch {
-      return join(getAimuxDir(), "state.json");
-    }
+    return getStatePath();
   }
 
   /** Save session state to main repo's .aimux/state.json, merging with existing state. */
@@ -2967,15 +3132,9 @@ export class Multiplexer {
     writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
   }
 
-  /** Load saved state from main repo's .aimux/state.json */
-  static loadState(cwd?: string): SavedState | null {
-    let statePath: string;
-    try {
-      const mainRepo = findMainRepo(cwd);
-      statePath = join(mainRepo, ".aimux", "state.json");
-    } catch {
-      statePath = `${getAimuxDir(cwd)}/state.json`;
-    }
+  /** Load saved state from global project state dir */
+  static loadState(): SavedState | null {
+    const statePath = getStatePath();
     if (!existsSync(statePath)) return null;
 
     try {

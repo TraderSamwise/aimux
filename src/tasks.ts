@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import * as lockfile from "proper-lockfile";
-import { getAimuxDir } from "./config.js";
+import { getTasksDir } from "./paths.js";
 
 export interface Task {
   id: string;
@@ -16,6 +16,22 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   notifiedAt?: string;
+  /** Role name of the intended assignee (e.g. "coder", "reviewer") */
+  assignee?: string;
+  /** Role name of the task creator */
+  assigner?: string;
+  /** Task type: regular task or code review */
+  type?: "task" | "review";
+  /** Review verdict */
+  reviewStatus?: "pending" | "approved" | "changes_requested";
+  /** Reviewer feedback text */
+  reviewFeedback?: string;
+  /** Git diff associated with the task */
+  diff?: string;
+  /** Revision iteration count (incremented on each review round-trip) */
+  iteration?: number;
+  /** ID of the task this review refers to */
+  reviewOf?: string;
 }
 
 const LOCK_RETRIES = { retries: 5, minTimeout: 50 };
@@ -23,8 +39,8 @@ const LOCK_RETRIES = { retries: 5, minTimeout: 50 };
 /**
  * Get the tasks directory path, creating it if needed.
  */
-export function getTasksDir(cwd?: string): string {
-  const dir = join(getAimuxDir(cwd), "tasks");
+function ensureTasksDir(): string {
+  const dir = getTasksDir();
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
@@ -34,8 +50,8 @@ export function getTasksDir(cwd?: string): string {
 /**
  * Read a single task by ID.
  */
-export function readTask(id: string, cwd?: string): Task | undefined {
-  const filePath = join(getTasksDir(cwd), `${id}.json`);
+export function readTask(id: string): Task | undefined {
+  const filePath = join(ensureTasksDir(), `${id}.json`);
   if (!existsSync(filePath)) return undefined;
   try {
     return JSON.parse(readFileSync(filePath, "utf-8")) as Task;
@@ -47,8 +63,8 @@ export function readTask(id: string, cwd?: string): Task | undefined {
 /**
  * Read all tasks from the tasks directory.
  */
-export function readAllTasks(cwd?: string): Task[] {
-  const dir = getTasksDir(cwd);
+export function readAllTasks(): Task[] {
+  const dir = ensureTasksDir();
   const tasks: Task[] = [];
   let files: string[];
   try {
@@ -70,8 +86,8 @@ export function readAllTasks(cwd?: string): Task[] {
 /**
  * Write a task to disk with file locking.
  */
-export async function writeTask(task: Task, cwd?: string): Promise<void> {
-  const dir = getTasksDir(cwd);
+export async function writeTask(task: Task): Promise<void> {
+  const dir = ensureTasksDir();
   const filePath = join(dir, `${task.id}.json`);
 
   // Ensure the file exists for proper-lockfile (it locks existing files)
@@ -92,16 +108,16 @@ export async function writeTask(task: Task, cwd?: string): Promise<void> {
 /**
  * Returns true if the session has an active (assigned) task.
  */
-export function hasActiveTask(sessionId: string, cwd?: string): boolean {
-  const all = readAllTasks(cwd);
+export function hasActiveTask(sessionId: string): boolean {
+  const all = readAllTasks();
   return all.some((t) => t.status === "assigned" && t.assignedTo === sessionId);
 }
 
 /**
  * Remove done/failed tasks older than maxAgeMs.
  */
-export function cleanupTasks(maxAgeMs: number, cwd?: string): void {
-  const dir = getTasksDir(cwd);
+export function cleanupTasks(maxAgeMs: number): void {
+  const dir = ensureTasksDir();
   const now = Date.now();
   let files: string[];
   try {
@@ -120,4 +136,20 @@ export function cleanupTasks(maxAgeMs: number, cwd?: string): void {
       // skip
     }
   }
+}
+
+/**
+ * List pending review tasks assigned to a given role.
+ */
+export function listPendingReviews(role: string): Task[] {
+  return readAllTasks().filter(
+    (t) => t.type === "review" && t.assignee === role && t.status === "pending" && t.reviewStatus === "pending",
+  );
+}
+
+/**
+ * List active tasks assigned to a given role (pending or assigned, not done/failed).
+ */
+export function listTasksForRole(role: string): Task[] {
+  return readAllTasks().filter((t) => t.assignee === role && t.status !== "done" && t.status !== "failed");
 }

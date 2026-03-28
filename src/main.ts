@@ -1,11 +1,15 @@
 import { Command } from "commander";
-import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, copyFileSync, mkdirSync, chmodSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { join as pathJoin, resolve as pathResolve, dirname as pathDirname } from "node:path";
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
-import { getHistoryDir } from "./context/history.js";
-import { getAimuxDir, initProject } from "./config.js";
-import { createWorktree, listWorktrees, cleanWorktrees, removeWorktree } from "./worktree.js";
+import { initProject } from "./config.js";
+import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
+import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
+import { listWorktrees } from "./worktree.js";
 import { startServerForeground, stopServer, getServerStatus, isServerRunning } from "./server.js";
 
 const program = new Command();
@@ -18,6 +22,9 @@ program
   .argument("[args...]", "Arguments to pass to the tool")
   .option("--resume", "Resume previous sessions using native tool resume")
   .option("--restore", "Start fresh sessions with injected history context")
+  .hook("preAction", async () => {
+    await initPaths();
+  })
   .action(async (tool: string | undefined, args: string[], opts: { resume?: boolean; restore?: boolean }) => {
     const mux = new Multiplexer();
 
@@ -79,29 +86,12 @@ program
 
     console.log(`Compacting history for ${sessionIds.length} session(s)...`);
     llmCompact(sessionIds);
-    console.log(`Done. Summary written to ${getAimuxDir()}/context/summary.md`);
+    console.log(`Done. Summary written to ${getContextDir()}/summary.md`);
   });
 
-const worktreeCmd = program.command("worktree").description("Manage git worktrees");
-
-worktreeCmd
-  .command("create <name>")
-  .description("Create a new worktree as a sibling directory")
-  .option("-b, --branch <branch>", "Branch name (defaults to worktree name)")
-  .action((name: string, opts: { branch?: string }) => {
-    try {
-      const info = createWorktree(name, opts.branch);
-      console.log(`Created worktree "${info.name}" at ${info.path} (branch: ${info.branch})`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-worktreeCmd
-  .command("list")
-  .description("List all known worktrees")
+program
+  .command("worktree")
+  .description("List all git worktrees")
   .action(() => {
     try {
       const worktrees = listWorktrees();
@@ -109,49 +99,11 @@ worktreeCmd
         console.log("No worktrees found.");
         return;
       }
-      console.log("Name".padEnd(20) + "Branch".padEnd(20) + "Status".padEnd(10) + "Sessions".padEnd(10) + "Path");
-      console.log("-".repeat(80));
+      console.log("Name".padEnd(30) + "Branch".padEnd(35) + "Path");
+      console.log("-".repeat(95));
       for (const wt of worktrees) {
-        console.log(
-          wt.name.padEnd(20) +
-            wt.branch.padEnd(20) +
-            wt.status.padEnd(10) +
-            String(wt.sessions.length).padEnd(10) +
-            wt.path,
-        );
+        console.log(wt.name.padEnd(30) + wt.branch.padEnd(35) + wt.path);
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-worktreeCmd
-  .command("clean")
-  .description("Remove offline worktrees with no active sessions")
-  .action(() => {
-    try {
-      const removed = cleanWorktrees();
-      if (removed.length === 0) {
-        console.log("No worktrees to clean.");
-      } else {
-        console.log(`Removed ${removed.length} worktree(s): ${removed.join(", ")}`);
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-worktreeCmd
-  .command("remove <name>")
-  .description("Remove a specific worktree")
-  .action((name: string) => {
-    try {
-      removeWorktree(name);
-      console.log(`Removed worktree "${name}".`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);
@@ -165,7 +117,7 @@ graveyardCmd
   .command("list")
   .description("List agents in the graveyard")
   .action(() => {
-    const graveyardPath = `${getAimuxDir()}/graveyard.json`;
+    const graveyardPath = getGraveyardPath();
     try {
       const graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8"));
       if (!Array.isArray(graveyard) || graveyard.length === 0) {
@@ -188,8 +140,7 @@ graveyardCmd
   .command("resurrect <id>")
   .description("Resurrect an agent from the graveyard back to offline state")
   .action((id: string) => {
-    const dir = getAimuxDir();
-    const graveyardPath = `${dir}/graveyard.json`;
+    const graveyardPath = getGraveyardPath();
     if (!existsSync(graveyardPath)) {
       console.error("Graveyard is empty.");
       process.exit(1);
@@ -204,7 +155,7 @@ graveyardCmd
       const restored = graveyard.splice(idx, 1)[0];
       writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
 
-      const statePath = `${dir}/state.json`;
+      const statePath = getStatePath();
       let state = {
         savedAt: new Date().toISOString(),
         cwd: process.cwd(),
@@ -224,6 +175,173 @@ graveyardCmd
       process.exit(1);
     }
   });
+
+// ── Statusline commands ────────────────────────────────────────────
+
+const statuslineCmd = program.command("statusline").description("Manage Claude Code statusline integration");
+
+statuslineCmd
+  .command("install")
+  .description("Install aimux statusline into Claude Code")
+  .action(() => {
+    const home = homedir();
+    const aimuxDir = pathJoin(home, ".aimux");
+    const targetScript = pathJoin(aimuxDir, "statusline.sh");
+
+    // Resolve source script relative to compiled JS location
+    const thisFile = fileURLToPath(import.meta.url);
+    const sourceScript = pathResolve(pathDirname(thisFile), "..", "scripts", "statusline.sh");
+
+    if (!existsSync(sourceScript)) {
+      console.error(`Source script not found: ${sourceScript}`);
+      process.exit(1);
+    }
+    mkdirSync(aimuxDir, { recursive: true });
+    copyFileSync(sourceScript, targetScript);
+    chmodSync(targetScript, 0o755);
+    console.log(`Copied statusline script to ${targetScript}`);
+
+    // Update Claude Code settings
+    const claudeDir = pathJoin(home, ".claude");
+    const settingsPath = pathJoin(claudeDir, "settings.json");
+    let settings: Record<string, any> = {};
+    if (existsSync(settingsPath)) {
+      try {
+        settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+      } catch {}
+    }
+
+    const newCommand = `bash ${targetScript}`;
+    const oldCommand = settings.statusLine?.command;
+    if (oldCommand && oldCommand !== newCommand) {
+      const backupPath = pathJoin(aimuxDir, "statusline-previous.txt");
+      writeFileSync(backupPath, oldCommand + "\n");
+      console.log(`Backed up previous statusline command to ${backupPath}`);
+    }
+
+    settings.statusLine = { type: "command", command: newCommand };
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+    console.log(`Updated ${settingsPath} → statusLine points to aimux script`);
+    console.log("Restart Claude Code to see aimux agent status in the toolbar.");
+  });
+
+statuslineCmd
+  .command("uninstall")
+  .description("Restore previous Claude Code statusline")
+  .action(() => {
+    const home = homedir();
+    const aimuxDir = pathJoin(home, ".aimux");
+    const settingsPath = pathJoin(home, ".claude", "settings.json");
+    const backupPath = pathJoin(aimuxDir, "statusline-previous.txt");
+
+    if (!existsSync(settingsPath)) {
+      console.error("No Claude Code settings found.");
+      process.exit(1);
+    }
+
+    let settings: Record<string, any> = {};
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    } catch {
+      console.error("Could not parse settings.json");
+      process.exit(1);
+    }
+
+    if (existsSync(backupPath)) {
+      const prev = readFileSync(backupPath, "utf-8").trim();
+      settings.statusLine = { type: "command", command: prev };
+      console.log(`Restored previous statusline: ${prev}`);
+    } else {
+      delete settings.statusLine;
+      console.log("Removed aimux statusline (no previous config to restore).");
+    }
+
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+    console.log("Restart Claude Code for changes to take effect.");
+  });
+
+// ── Team commands ──────────────────────────────────────────────────
+
+const teamCmd = program.command("team").description("Manage agent team roles");
+
+teamCmd
+  .command("show")
+  .description("Show current team config")
+  .action(() => {
+    const config = loadTeamConfig();
+    console.log("Team Roles:");
+    for (const [name, role] of Object.entries(config.roles) as [string, any][]) {
+      const flags: string[] = [];
+      if (role.reviewedBy) flags.push(`reviewed by: ${role.reviewedBy}`);
+      if (role.canEdit) flags.push("can edit");
+      const flagStr = flags.length > 0 ? ` (${flags.join(", ")})` : "";
+      console.log(`  ${name}: ${role.description}${flagStr}`);
+    }
+    console.log(`\nDefault role: ${config.defaultRole}`);
+  });
+
+teamCmd
+  .command("add <role>")
+  .description("Add or update a role")
+  .option("-d, --description <desc>", "Role description")
+  .option("--reviewed-by <role>", "Role that reviews this role's work")
+  .option("--can-edit", "Whether this role can edit code directly")
+  .action((role: string, options: { description?: string; reviewedBy?: string; canEdit?: boolean }) => {
+    const config = loadTeamConfig();
+    config.roles[role] = {
+      description: options.description ?? config.roles[role]?.description ?? `${role} agent`,
+      ...(options.reviewedBy && { reviewedBy: options.reviewedBy }),
+      ...(options.canEdit && { canEdit: true }),
+    };
+    saveTeamConfig(config);
+    console.log(`Role "${role}" saved.`);
+  });
+
+teamCmd
+  .command("remove <role>")
+  .description("Remove a role")
+  .action((role: string) => {
+    const config = loadTeamConfig();
+    if (!config.roles[role]) {
+      console.error(`Role "${role}" not found.`);
+      process.exit(1);
+    }
+    delete config.roles[role];
+    if (config.defaultRole === role) {
+      config.defaultRole = Object.keys(config.roles)[0] ?? "coder";
+    }
+    saveTeamConfig(config);
+    console.log(`Role "${role}" removed.`);
+  });
+
+teamCmd
+  .command("default <role>")
+  .description("Set the default role for new agents")
+  .action((role: string) => {
+    const config = loadTeamConfig();
+    if (!config.roles[role]) {
+      console.error(`Role "${role}" not found. Add it first with: aimux team add ${role}`);
+      process.exit(1);
+    }
+    config.defaultRole = role;
+    saveTeamConfig(config);
+    console.log(`Default role set to "${role}".`);
+  });
+
+teamCmd
+  .command("init")
+  .description("Initialize project with default team structure")
+  .action(() => {
+    const config = getDefaultTeamConfig();
+    saveTeamConfig(config);
+    console.log("Team config initialized with default roles:");
+    for (const [name, role] of Object.entries(config.roles) as [string, any][]) {
+      console.log(`  ${name}: ${role.description}`);
+    }
+  });
+
+// ── Server commands ────────────────────────────────────────────────
 
 const serverCmd = program.command("server").description("Manage aimux server (headless persistent agent host)");
 
