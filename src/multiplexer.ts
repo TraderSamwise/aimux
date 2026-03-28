@@ -1583,9 +1583,15 @@ export class Multiplexer {
   private renderDashboard(): void {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
+    let mainRepoPath: string | undefined;
+    let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
+    try {
+      mainRepoPath = findMainRepo();
+    } catch {}
 
     const dashSessions: DashboardSession[] = this.sessions.map((s, i) => {
-      const wtPath = this.sessionWorktreePaths.get(s.id);
+      const rawWtPath = this.sessionWorktreePaths.get(s.id);
+      const wtPath = rawWtPath && mainRepoPath && rawWtPath === mainRepoPath ? undefined : rawWtPath;
       return {
         index: i,
         id: s.id,
@@ -1601,8 +1607,16 @@ export class Multiplexer {
     let worktreeGroups: WorktreeGroup[] = [];
     try {
       const worktrees = listAllWorktrees();
+      const mainWorktree =
+        (mainRepoPath ? worktrees.find((wt) => wt.path === mainRepoPath) : worktrees[0]) ?? worktrees[0];
+      if (mainWorktree) {
+        mainCheckoutInfo = {
+          name: "Main Checkout",
+          branch: mainWorktree.branch,
+        };
+      }
       worktreeGroups = worktrees
-        .filter((wt) => !wt.isBare)
+        .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
         .map((wt) => {
           const wtSessions = dashSessions.filter((s) => s.worktreePath === wt.path);
           return {
@@ -1642,7 +1656,8 @@ export class Multiplexer {
             command: rs.tool,
             status: "running" as const,
             active: false,
-            worktreePath: rs.worktreePath,
+            worktreePath:
+              rs.worktreePath && mainRepoPath && rs.worktreePath === mainRepoPath ? undefined : rs.worktreePath,
             remoteInstancePid: inst.pid,
             remoteInstanceId: inst.instanceId,
             remoteBackendSessionId: rs.backendSessionId,
@@ -1665,7 +1680,7 @@ export class Multiplexer {
         command: os.command,
         status: "offline" as const,
         active: false,
-        worktreePath: os.worktreePath,
+        worktreePath: os.worktreePath && mainRepoPath && os.worktreePath === mainRepoPath ? undefined : os.worktreePath,
       });
     }
 
@@ -1684,6 +1699,7 @@ export class Multiplexer {
       hasWorktrees ? this.dashboardLevel : "sessions",
       selectedSession,
       this.serverClient?.connected ?? false,
+      mainCheckoutInfo,
     );
     process.stdout.write(this.dashboard.render(cols, rows));
     if (this.worktreeRemovalJob) {
@@ -2565,7 +2581,7 @@ export class Multiplexer {
       const mainRepo = findMainRepo();
       this.migratePickerWorktrees = [
         { name: "(main)", path: mainRepo },
-        ...worktrees.map((wt) => ({ name: wt.name, path: wt.path })),
+        ...worktrees.filter((wt) => wt.path !== mainRepo).map((wt) => ({ name: wt.name, path: wt.path })),
       ];
     } catch {
       this.migratePickerWorktrees = [];

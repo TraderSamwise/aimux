@@ -33,6 +33,11 @@ export interface WorktreeGroup {
   sessions: DashboardSession[];
 }
 
+export interface MainCheckoutInfo {
+  name: string;
+  branch: string;
+}
+
 const STATUS_ICONS: Record<SessionStatus, string> = {
   running: "\x1b[33m●\x1b[0m", // yellow
   idle: "\x1b[32m●\x1b[0m", // green
@@ -58,6 +63,7 @@ export class Dashboard {
   private selectedSessionId: string | undefined = undefined;
   private scrollOffset = 0;
   private serverRunning = false;
+  private mainCheckout: MainCheckoutInfo = { name: "Main Checkout", branch: "" };
 
   update(
     sessions: DashboardSession[],
@@ -66,6 +72,7 @@ export class Dashboard {
     navLevel?: "worktrees" | "sessions",
     selectedSessionId?: string,
     serverRunning?: boolean,
+    mainCheckout?: MainCheckoutInfo,
   ): void {
     this.sessions = sessions;
     this.worktreeGroups = worktreeGroups ?? [];
@@ -74,6 +81,7 @@ export class Dashboard {
     this.navLevel = navLevel ?? "sessions";
     this.selectedSessionId = selectedSessionId;
     this.serverRunning = serverRunning ?? false;
+    this.mainCheckout = mainCheckout ?? { name: "Main Checkout", branch: "" };
   }
 
   /** Scroll the viewport (called from multiplexer key handler) */
@@ -193,14 +201,16 @@ export class Dashboard {
     const focused = isFocused(undefined);
     const prefix = focused && this.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
     const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
+    const mainBranch = this.mainCheckout.branch ? ` \x1b[2m${this.mainCheckout.branch}\x1b[0m` : "";
+    const mainLabel = `${this.mainCheckout.name}${mainBranch}`;
     if (mainSessions.length > 0) {
-      lines.push(`${prefix} ${highlight}(main)\x1b[0m`);
+      lines.push(`${prefix} ${highlight}${mainLabel}\x1b[0m`);
       for (const session of mainSessions) {
         lines.push(this.renderSession(session, "    "));
       }
       lines.push("");
     } else {
-      lines.push(`${prefix} ${highlight}(main)\x1b[0m`);
+      lines.push(`${prefix} ${highlight}${mainLabel}\x1b[0m`);
     }
 
     // Worktree groups — compact for empty, expanded for active
