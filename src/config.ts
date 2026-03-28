@@ -86,7 +86,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
     },
     codex: {
       command: "codex",
-      args: ["--full-auto"],
+      args: ["--dangerously-bypass-approvals-and-sandbox"],
       enabled: true,
       resumeArgs: ["resume", "{sessionId}"],
       resumeFallback: ["resume", "--last"],
