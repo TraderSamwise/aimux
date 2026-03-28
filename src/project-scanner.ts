@@ -8,6 +8,7 @@ export interface GlobalSession {
   tool: string;
   status: "running" | "idle" | "waiting" | "offline";
   label?: string;
+  headline?: string;
   worktreePath?: string;
   ownerPid?: number;
   isServer: boolean;
@@ -108,15 +109,14 @@ export function scanProject(projectPath: string): ProjectInfo {
           if (seenIds.has(s.id)) continue;
           seenIds.add(s.id);
 
-          // Read status file
-          let label: string | undefined;
+          let headline: string | undefined;
           for (const statusDir of statusDirs) {
             try {
               const statusPath = join(statusDir, `${s.id}.md`);
               if (existsSync(statusPath)) {
                 const content = readFileSync(statusPath, "utf-8").trim();
                 if (content) {
-                  label = content.split("\n")[0].slice(0, 80);
+                  headline = content.split("\n")[0].slice(0, 80);
                   break;
                 }
               }
@@ -129,7 +129,7 @@ export function scanProject(projectPath: string): ProjectInfo {
             id: s.id,
             tool: s.tool,
             status: "running",
-            label,
+            headline,
             worktreePath: s.worktreePath,
             ownerPid: inst.pid,
             isServer,
@@ -157,6 +157,7 @@ export function scanProject(projectPath: string): ProjectInfo {
           command: string;
           tool?: string;
           label?: string;
+          headline?: string;
           worktreePath?: string;
         }>;
       };
@@ -170,6 +171,7 @@ export function scanProject(projectPath: string): ProjectInfo {
           tool: s.command ?? s.tool ?? "unknown",
           status: "offline",
           label: s.label,
+          headline: s.headline,
           worktreePath: s.worktreePath,
           isServer: false,
         });

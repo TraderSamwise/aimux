@@ -59,15 +59,15 @@ describe("project-scanner", () => {
         },
       ]),
     );
-    writeFileSync(join(tmpHome, ".aimux", "projects", "proj-a", "status", "session-a.md"), "Alpha label\n");
-    writeFileSync(join(tmpHome, ".aimux", "projects", "proj-b", "status", "session-b.md"), "Beta label\n");
+    writeFileSync(join(tmpHome, ".aimux", "projects", "proj-a", "status", "session-a.md"), "Alpha headline\n");
+    writeFileSync(join(tmpHome, ".aimux", "projects", "proj-b", "status", "session-b.md"), "Beta headline\n");
   });
 
   afterEach(() => {
     rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  it("reads status labels from the scanned project's own status directory", async () => {
+  it("reads status headlines from the scanned project's own status directory", async () => {
     const { scanProject } = await import("./project-scanner.js");
 
     const resultA = scanProject(projectA);
@@ -77,7 +77,7 @@ describe("project-scanner", () => {
     expect(resultA.sessions[0]).toEqual(
       expect.objectContaining({
         id: "session-a",
-        label: "Alpha label",
+        headline: "Alpha headline",
         isServer: true,
       }),
     );
@@ -86,7 +86,7 @@ describe("project-scanner", () => {
     expect(resultB.sessions[0]).toEqual(
       expect.objectContaining({
         id: "session-b",
-        label: "Beta label",
+        headline: "Beta headline",
         isServer: true,
       }),
     );

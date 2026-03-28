@@ -54,6 +54,7 @@ export interface SessionState {
   backendSessionId?: string;
   worktreePath?: string;
   label?: string;
+  headline?: string;
 }
 
 export interface SavedState {
@@ -121,6 +122,8 @@ export class Multiplexer {
   private sessionWorktreePaths = new Map<string, string>();
   /** Maps session ID → team role (e.g. "coder", "reviewer") */
   private sessionRoles = new Map<string, string>();
+  /** Maps session ID → user-provided stable label */
+  private sessionLabels = new Map<string, string>();
   /** Offline sessions from previous runs (loaded from state.json) */
   private offlineSessions: SessionState[] = [];
   /** Server client for persistent PTY ownership */
@@ -140,6 +143,38 @@ export class Multiplexer {
 
   get sessionCount(): number {
     return this.sessions.length;
+  }
+
+  private getSessionLabel(sessionId: string): string | undefined {
+    return this.sessionLabels.get(sessionId) ?? this.offlineSessions.find((session) => session.id === sessionId)?.label;
+  }
+
+  private readStatusHeadline(sessionId: string): string | undefined {
+    try {
+      const statusPath = join(getStatusDir(), `${sessionId}.md`);
+      if (!existsSync(statusPath)) return undefined;
+      const content = readFileSync(statusPath, "utf-8").trim();
+      if (!content) return undefined;
+      return content.split("\n")[0].slice(0, 80);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private deriveHeadline(sessionId: string): string | undefined {
+    const taskDescription = this.taskDispatcher?.getSessionTask(sessionId);
+    if (taskDescription) return taskDescription.slice(0, 80);
+
+    const statusHeadline = this.readStatusHeadline(sessionId);
+    if (statusHeadline) return statusHeadline;
+
+    try {
+      const turns = readHistory(sessionId, { lastN: 3 });
+      const lastPrompt = turns.filter((turn) => turn.type === "prompt").pop();
+      if (lastPrompt) return lastPrompt.content.slice(0, 80);
+    } catch {}
+
+    return undefined;
   }
 
   private registerManagedSession(
@@ -244,6 +279,10 @@ export class Multiplexer {
         this.sessionRoles.set(session.id, teamConfig.defaultRole);
       } catch {}
     }
+    const label = this.offlineSessions.find((offline) => offline.id === session.id)?.label;
+    if (label) {
+      this.sessionLabels.set(session.id, label);
+    }
 
     this.sessions.push(session);
     this.writeSessionsFile();
@@ -303,6 +342,7 @@ export class Multiplexer {
         if (info.label) {
           const state = this.offlineSessions.find((s) => s.id === info.id);
           if (state) state.label = info.label;
+          this.sessionLabels.set(info.id, info.label);
         }
         debug(`reconnected to server session: ${info.id}`, "server-client");
       }
@@ -1252,9 +1292,9 @@ export class Multiplexer {
           : !hasWorktrees
             ? allDs2[this.activeIndex]
             : undefined;
-        if (selEntry2?.status === "offline") {
+        if (selEntry2 && !selEntry2.remoteInstancePid) {
           this.labelInputActive = true;
-          this.labelInputBuffer = "";
+          this.labelInputBuffer = this.getSessionLabel(selEntry2.id) ?? "";
           this.labelInputTarget = selEntry2.id;
           this.renderLabelInput();
         }
@@ -1713,7 +1753,7 @@ export class Multiplexer {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
 
-    const lines = ["Rename/label agent:", "", `  Label: ${this.labelInputBuffer}_`, "", "  [Enter] save  [Esc] cancel"];
+    const lines = ["Name agent:", "", `  Name: ${this.labelInputBuffer}_`, "", "  [Enter] save  [Esc] cancel"];
 
     const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
     const startRow = Math.floor((rows - lines.length - 2) / 2);
@@ -1757,12 +1797,16 @@ export class Multiplexer {
       const label = this.labelInputBuffer.trim();
       const targetId = this.labelInputTarget;
       this.labelInputTarget = null;
-      if (targetId && label) {
+      if (targetId) {
+        if (label) this.sessionLabels.set(targetId, label);
+        else this.sessionLabels.delete(targetId);
         const offline = this.offlineSessions.find((s) => s.id === targetId);
-        if (offline) {
+        if (offline && label) {
           offline.label = label;
-          this.saveState();
+        } else if (offline) {
+          delete offline.label;
         }
+        this.saveState();
       }
       if (this.mode === "dashboard") {
         this.renderDashboard();
@@ -2003,8 +2047,9 @@ export class Multiplexer {
       for (let i = 0; i < this.graveyardEntries.length; i++) {
         const s = this.graveyardEntries[i];
         const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
-        const label = s.label ? ` — ${s.label}` : "";
-        lines.push(`  [${i + 1}] ${s.command}:${s.id}${bsid}${label}`);
+        const identity = s.label ? ` — ${s.label}` : "";
+        const headline = s.headline ? ` · ${s.headline}` : "";
+        lines.push(`  [${i + 1}] ${s.command}:${s.id}${bsid}${identity}${headline}`);
       }
     }
     lines.push("");
@@ -2295,14 +2340,15 @@ export class Multiplexer {
                   ? "\x1b[36m◉\x1b[0m"
                   : "\x1b[2m○\x1b[0m";
 
-          const label = session.label ? ` \x1b[2m${session.label.slice(0, 40)}\x1b[0m` : "";
+          const identity = session.label ?? session.tool;
+          const headline = session.headline ? ` \x1b[2m· ${session.headline.slice(0, 40)}\x1b[0m` : "";
           const owner = session.isServer
             ? " \x1b[2;32m[server]\x1b[0m"
             : session.ownerPid
               ? ` \x1b[2m[PID ${session.ownerPid}]\x1b[0m`
               : "";
 
-          lines.push(`    ${icon} ${session.tool}${label}${owner}`);
+          lines.push(`    ${icon} ${identity}${headline}${owner}`);
         }
         lines.push("");
       }
@@ -2452,15 +2498,8 @@ export class Multiplexer {
 
     const dashSessions: DashboardSession[] = this.sessions.map((s, i) => {
       const wtPath = normalizeWtPath(this.sessionWorktreePaths.get(s.id));
-      // Read status file for live session label
-      let label: string | undefined;
-      try {
-        const statusPath = join(getStatusDir(), `${s.id}.md`);
-        if (existsSync(statusPath)) {
-          const content = readFileSync(statusPath, "utf-8").trim();
-          if (content) label = content.split("\n")[0].slice(0, 80);
-        }
-      } catch {}
+      const label = this.getSessionLabel(s.id);
+      const headline = this.deriveHeadline(s.id);
       return {
         index: i,
         id: s.id,
@@ -2469,6 +2508,7 @@ export class Multiplexer {
         active: i === this.activeIndex,
         worktreePath: wtPath,
         label,
+        headline,
         taskDescription: this.taskDispatcher?.getSessionTask(s.id),
         role: this.sessionRoles.get(s.id),
       };
@@ -2479,15 +2519,8 @@ export class Multiplexer {
         const isServer = inst.instanceId.startsWith("server-");
         for (const rs of inst.sessions) {
           if (dashSessions.some((ds) => ds.id === rs.id)) continue;
-          // Read status file for remote session label
-          let remoteLabel: string | undefined;
-          try {
-            const statusPath = join(getStatusDir(), `${rs.id}.md`);
-            if (existsSync(statusPath)) {
-              const content = readFileSync(statusPath, "utf-8").trim();
-              if (content) remoteLabel = content.split("\n")[0].slice(0, 80);
-            }
-          } catch {}
+          const remoteLabel = this.getSessionLabel(rs.id);
+          const remoteHeadline = this.readStatusHeadline(rs.id);
           dashSessions.push({
             index: dashSessions.length,
             id: rs.id,
@@ -2499,6 +2532,7 @@ export class Multiplexer {
             remoteInstanceId: inst.instanceId,
             remoteBackendSessionId: rs.backendSessionId,
             label: remoteLabel,
+            headline: remoteHeadline,
             isServer,
           });
         }
@@ -2537,6 +2571,7 @@ export class Multiplexer {
         worktreeBranch,
         remoteBackendSessionId: os.backendSessionId,
         label: os.label,
+        headline: os.headline,
       });
     }
 
@@ -2761,6 +2796,8 @@ export class Multiplexer {
         sessions: this.sessions.map((s, i) => ({
           id: s.id,
           tool: s.command,
+          label: this.getSessionLabel(s.id),
+          headline: this.deriveHeadline(s.id),
           status: s.status,
           role: this.sessionRoles.get(s.id),
           active: i === this.activeIndex,
@@ -2820,10 +2857,18 @@ export class Multiplexer {
     for (let i = 0; i < this.sessions.length; i++) {
       const s = this.sessions[i];
       const icon = STATUS_ICONS[s.status] ?? "?";
-      const name = s.command;
+      const name = this.getSessionLabel(s.id) ?? s.command;
       const active = i === this.activeIndex ? "\x1b[1m" : "\x1b[2m";
       const reset = "\x1b[0m";
       parts.push(`${active}${icon} ${i + 1}:${name}${reset}`);
+    }
+
+    const activeSession = this.sessions[this.activeIndex];
+    if (activeSession) {
+      const headline = this.deriveHeadline(activeSession.id);
+      if (headline) {
+        parts.push(`\x1b[2m${headline}\x1b[0m`);
+      }
     }
 
     const counts = this.taskDispatcher?.getTaskCounts();
@@ -2952,27 +2997,9 @@ export class Multiplexer {
       args: this.sessionOriginalArgs.get(session.id) ?? [],
       backendSessionId: session.backendSessionId as string | undefined,
       worktreePath: this.sessionWorktreePaths.get(session.id),
+      label: this.getSessionLabel(session.id),
+      headline: this.deriveHeadline(session.id),
     };
-
-    // Read status file for auto-label
-    try {
-      const statusPath = join(getStatusDir(), `${session.id}.md`);
-      if (existsSync(statusPath)) {
-        const status = readFileSync(statusPath, "utf-8").trim();
-        offlineEntry.label = status.split("\n")[0].slice(0, 80); // First line, max 80 chars
-      }
-    } catch {}
-
-    // Fallback: derive label from recent history
-    if (!offlineEntry.label) {
-      try {
-        const turns = readHistory(session.id, { lastN: 3 });
-        const lastPrompt = turns.filter((t) => t.type === "prompt").pop();
-        if (lastPrompt) {
-          offlineEntry.label = lastPrompt.content.slice(0, 80);
-        }
-      } catch {}
-    }
 
     // Add to offline list so it appears immediately
     this.offlineSessions.push(offlineEntry);
@@ -3178,11 +3205,8 @@ export class Multiplexer {
 
   /** Save session state to main repo's .aimux/state.json, merging with existing state. */
   private saveState(): void {
-    // Only save direct-PTY sessions (server sessions persist on the server)
     const localSessions = this.sessions.filter((s) => !this.serverSessionIds.has(s.id));
-    if (localSessions.length === 0) return;
-
-    const mySessions = localSessions.map((s) => ({
+    const liveSessions = localSessions.map((s) => ({
       id: s.id,
       tool: s.command,
       toolConfigKey: this.sessionToolKeys.get(s.id) ?? s.command,
@@ -3190,7 +3214,11 @@ export class Multiplexer {
       args: this.sessionOriginalArgs.get(s.id) ?? [],
       backendSessionId: s.backendSessionId,
       worktreePath: this.sessionWorktreePaths.get(s.id),
+      label: this.getSessionLabel(s.id),
+      headline: this.deriveHeadline(s.id),
     }));
+    const mySessions = [...this.offlineSessions, ...liveSessions];
+    if (mySessions.length === 0) return;
 
     // Merge with existing state (other instances may have written their sessions)
     const statePath = Multiplexer.getSharedStatePath();

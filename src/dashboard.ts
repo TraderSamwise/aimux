@@ -17,6 +17,8 @@ export interface DashboardSession {
   taskDescription?: string;
   /** Auto-derived or user-set label for offline agents */
   label?: string;
+  /** Short current-work summary */
+  headline?: string;
   /** Whether this session is owned by the headless server */
   isServer?: boolean;
   /** Agent's team role (e.g. "coder", "reviewer") */
@@ -155,17 +157,19 @@ export class Dashboard {
       const ownerTag = session.isServer
         ? "\x1b[2;32m[server]\x1b[0m"
         : `\x1b[2mother tab (PID ${session.remoteInstancePid})\x1b[0m`;
-      const remoteLabelText = session.label ? ` \x1b[2m${truncate(session.label, 40)}\x1b[0m` : "";
+      const identity = session.label ?? session.command;
+      const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      return `${indent}${icon} [${num}] ${session.command}${remoteRoleTag}${remoteLabelText} — ${ownerTag}${marker}`;
+      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText} — ${ownerTag}${marker}`;
     }
 
     const icon = STATUS_ICONS[session.status];
     const statusLabel = STATUS_LABELS[session.status];
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const serverTag = session.isServer && !session.remoteInstancePid ? " \x1b[32m⬡\x1b[0m" : "";
-    const labelText = session.label ? ` \x1b[2m${truncate(session.label, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${session.command}${roleTag}${serverTag} — ${statusLabel}${labelText}${taskBadge}${marker}`;
+    const identity = session.label ?? session.command;
+    const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
+    return `${indent}${icon} [${num}] ${identity}${roleTag}${serverTag} — ${statusLabel}${headlineText}${taskBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {
@@ -252,7 +256,7 @@ export class Dashboard {
     const selected = this.selectedSessionId ? this.sessions.find((s) => s.id === this.selectedSessionId) : undefined;
     const xLabel =
       selected?.status === "offline" ? "[x] kill" : selected?.remoteInstancePid ? "" : selected ? "[x] stop" : "";
-    const rLabel = selected?.status === "offline" ? "  [r] label" : "";
+    const rLabel = selected && !selected.remoteInstancePid ? "  [r] name" : "";
 
     // Context-aware Enter label
     const enterLabel = selected?.remoteInstancePid

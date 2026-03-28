@@ -6,7 +6,8 @@ import Foundation
 struct AgentSession {
     let id: String
     let tool: String
-    let name: String
+    let label: String?
+    let headline: String?
     let status: String       // "idle", "running", "waiting", "error", "offline"
     let role: String?        // "coder", "reviewer", etc.
     let isServer: Bool       // owned by headless server vs direct TUI
@@ -69,7 +70,8 @@ class ProjectScanner {
                         sessions.append(AgentSession(
                             id: sid,
                             tool: s["tool"] as? String ?? "unknown",
-                            name: s["tool"] as? String ?? "unknown",
+                            label: nil,
+                            headline: nil,
                             status: "running",
                             role: nil,
                             isServer: serverOwned,
@@ -94,7 +96,8 @@ class ProjectScanner {
                         sessions[idx] = AgentSession(
                             id: sid,
                             tool: existing.tool,
-                            name: (s["active"] as? Bool == true) ? "\(existing.tool)*" : existing.tool,
+                            label: s["label"] as? String ?? existing.label,
+                            headline: s["headline"] as? String ?? existing.headline,
                             status: s["status"] as? String ?? existing.status,
                             role: s["role"] as? String,
                             isServer: existing.isServer,
@@ -107,7 +110,8 @@ class ProjectScanner {
                         sessions.append(AgentSession(
                             id: sid,
                             tool: s["tool"] as? String ?? "unknown",
-                            name: s["tool"] as? String ?? "unknown",
+                            label: s["label"] as? String,
+                            headline: s["headline"] as? String,
                             status: s["status"] as? String ?? "idle",
                             role: s["role"] as? String,
                             isServer: false,
@@ -132,7 +136,8 @@ class ProjectScanner {
                     sessions.append(AgentSession(
                         id: sid,
                         tool: session["tool"] as? String ?? session["command"] as? String ?? "unknown",
-                        name: session["tool"] as? String ?? session["command"] as? String ?? "unknown",
+                        label: session["label"] as? String,
+                        headline: session["headline"] as? String,
                         status: "offline",
                         role: session["role"] as? String,
                         isServer: false,
@@ -193,7 +198,8 @@ class ProjectScanner {
                 sessions.append(AgentSession(
                     id: sid,
                     tool: tool,
-                    name: tool,
+                    label: s["label"] as? String,
+                    headline: s["headline"] as? String,
                     status: "offline",
                     role: nil,
                     isServer: false,
@@ -312,12 +318,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     default:        icon = "\u{26AA}"    // white/gray
                     }
 
-                    var parts = [session.name]
+                    let identity = session.label ?? session.tool
+                    var parts = [identity]
                     if let role = session.role {
                         parts.append("(\(role))")
                     }
                     if session.isServer {
                         parts.append("[server]")
+                    }
+                    if let headline = session.headline, !headline.isEmpty {
+                        parts.append("· \(headline)")
                     }
                     if session.status != "idle" && session.status != "offline" {
                         parts.append("— \(session.status)")
