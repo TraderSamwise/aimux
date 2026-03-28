@@ -9,6 +9,7 @@ struct AgentSession {
     let name: String
     let status: String       // "idle", "running", "waiting", "error", "offline"
     let role: String?        // "coder", "reviewer", etc.
+    let isServer: Bool       // owned by headless server vs direct TUI
     let projectName: String
     let projectPath: String
 }
@@ -41,69 +42,112 @@ class ProjectScanner {
         }
 
         var sessions: [AgentSession] = []
+        var seenIds = Set<String>()
 
         for project in projects {
             guard let id = project["id"] as? String,
                   let name = project["name"] as? String,
                   let repoRoot = project["repoRoot"] as? String else { continue }
 
-            // Try statusline.json first (freshest, written every ~1s by multiplexer)
-            let statuslinePath = "\(homeDir)/.aimux/projects/\(id)/statusline.json"
+            let projectDir = "\(homeDir)/.aimux/projects/\(id)"
+
+            // 1. Live sessions from instances.json (has instanceId for server detection)
+            let instancesPath = "\(projectDir)/instances.json"
+            if let instData = try? Data(contentsOf: URL(fileURLWithPath: instancesPath)),
+               let instances = try? JSONSerialization.jsonObject(with: instData) as? [[String: Any]] {
+                for inst in instances {
+                    guard let pid = inst["pid"] as? Int, isProcessAlive(Int32(pid)),
+                          let instSessions = inst["sessions"] as? [[String: Any]] else { continue }
+                    let instanceId = inst["instanceId"] as? String ?? ""
+                    let serverOwned = instanceId.hasPrefix("server-")
+
+                    for s in instSessions {
+                        let sid = s["id"] as? String ?? "unknown"
+                        if seenIds.contains(sid) { continue }
+                        seenIds.insert(sid)
+
+                        sessions.append(AgentSession(
+                            id: sid,
+                            tool: s["tool"] as? String ?? "unknown",
+                            name: s["tool"] as? String ?? "unknown",
+                            status: "running",
+                            role: nil,
+                            isServer: serverOwned,
+                            projectName: name,
+                            projectPath: repoRoot
+                        ))
+                    }
+                }
+            }
+
+            // 2. Enrich live sessions with statusline.json (has role, status, active)
+            let statuslinePath = "\(projectDir)/statusline.json"
             if let slData = try? Data(contentsOf: URL(fileURLWithPath: statuslinePath)),
                let sl = try? JSONSerialization.jsonObject(with: slData) as? [String: Any],
                let slSessions = sl["sessions"] as? [[String: Any]],
                isRecentlyActive(statuslinePath, maxAge: 10) {
                 for s in slSessions {
                     let sid = s["id"] as? String ?? "unknown"
-                    let tool = s["tool"] as? String ?? "unknown"
-                    let status = s["status"] as? String ?? "idle"
-                    let role = s["role"] as? String
-                    let active = s["active"] as? Bool ?? false
+                    // Update existing session with richer info
+                    if let idx = sessions.firstIndex(where: { $0.id == sid }) {
+                        let existing = sessions[idx]
+                        sessions[idx] = AgentSession(
+                            id: sid,
+                            tool: existing.tool,
+                            name: (s["active"] as? Bool == true) ? "\(existing.tool)*" : existing.tool,
+                            status: s["status"] as? String ?? existing.status,
+                            role: s["role"] as? String,
+                            isServer: existing.isServer,
+                            projectName: name,
+                            projectPath: repoRoot
+                        )
+                    } else if !seenIds.contains(sid) {
+                        // Session in statusline but not in instances (shouldn't happen, but handle it)
+                        seenIds.insert(sid)
+                        sessions.append(AgentSession(
+                            id: sid,
+                            tool: s["tool"] as? String ?? "unknown",
+                            name: s["tool"] as? String ?? "unknown",
+                            status: s["status"] as? String ?? "idle",
+                            role: s["role"] as? String,
+                            isServer: false,
+                            projectName: name,
+                            projectPath: repoRoot
+                        ))
+                    }
+                }
+            }
+
+            // 3. Offline sessions from state.json
+            let statePath = "\(projectDir)/state.json"
+            if let stateData = try? Data(contentsOf: URL(fileURLWithPath: statePath)),
+               let state = try? JSONSerialization.jsonObject(with: stateData) as? [String: Any],
+               let stateSessions = state["sessions"] as? [[String: Any]] {
+                for s in stateSessions {
+                    let session = s["session"] as? [String: Any] ?? s
+                    let sid = session["id"] as? String ?? "unknown"
+                    if seenIds.contains(sid) { continue }
+                    seenIds.insert(sid)
 
                     sessions.append(AgentSession(
                         id: sid,
-                        tool: tool,
-                        name: active ? "\(tool)*" : tool,
-                        status: status,
-                        role: role,
+                        tool: session["tool"] as? String ?? session["command"] as? String ?? "unknown",
+                        name: session["tool"] as? String ?? session["command"] as? String ?? "unknown",
+                        status: "offline",
+                        role: session["role"] as? String,
+                        isServer: false,
                         projectName: name,
                         projectPath: repoRoot
                     ))
                 }
-                continue
-            }
-
-            // Fall back to state.json (persisted on exit)
-            let statePath = "\(homeDir)/.aimux/projects/\(id)/state.json"
-            guard let stateData = try? Data(contentsOf: URL(fileURLWithPath: statePath)),
-                  let state = try? JSONSerialization.jsonObject(with: stateData) as? [String: Any],
-                  let stateSessions = state["sessions"] as? [[String: Any]] else { continue }
-
-            let isActive = isRecentlyActive(statePath, maxAge: 120)
-
-            for s in stateSessions {
-                // state.json may have sessions at top level or nested under "session"
-                let session = s["session"] as? [String: Any] ?? s
-                let sid = session["id"] as? String ?? "unknown"
-                let tool = session["tool"] as? String ?? session["command"] as? String ?? "unknown"
-                let rawStatus = session["status"] as? String ?? "idle"
-                let role = session["role"] as? String
-
-                let status = isActive ? rawStatus : "offline"
-
-                sessions.append(AgentSession(
-                    id: sid,
-                    tool: tool,
-                    name: tool,
-                    status: status,
-                    role: role,
-                    projectName: name,
-                    projectPath: repoRoot
-                ))
             }
         }
 
         return sessions
+    }
+
+    private func isProcessAlive(_ pid: Int32) -> Bool {
+        return kill(pid, 0) == 0
     }
 
     /// Check if a file was modified within maxAge seconds
@@ -152,6 +196,7 @@ class ProjectScanner {
                     name: tool,
                     status: "offline",
                     role: nil,
+                    isServer: false,
                     projectName: projectName,
                     projectPath: projectPath
                 ))
@@ -160,6 +205,18 @@ class ProjectScanner {
 
         return sessions
     }
+}
+
+// MARK: - Server Status
+
+func isServerRunning() -> Bool {
+    let pidPath = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.aimux/aimux.pid"
+    guard let content = try? String(contentsOfFile: pidPath, encoding: .utf8),
+          let pid = Int32(content.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        return false
+    }
+    // Check if process is alive (signal 0 = no signal, just check)
+    return kill(pid, 0) == 0
 }
 
 // MARK: - Path Resolution
@@ -245,6 +302,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     if let role = session.role {
                         parts.append("(\(role))")
                     }
+                    if session.isServer {
+                        parts.append("[server]")
+                    }
                     if session.status != "idle" && session.status != "offline" {
                         parts.append("— \(session.status)")
                     }
@@ -256,6 +316,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     menu.addItem(item)
                 }
             }
+        }
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Server controls
+        let serverRunning = isServerRunning()
+        if serverRunning {
+            let serverItem = NSMenuItem(title: "● Server running", action: nil, keyEquivalent: "")
+            serverItem.isEnabled = false
+            serverItem.attributedTitle = NSAttributedString(
+                string: "● Server running",
+                attributes: [.foregroundColor: NSColor.systemGreen, .font: NSFont.systemFont(ofSize: 13)]
+            )
+            menu.addItem(serverItem)
+
+            let stopItem = NSMenuItem(title: "  Stop Server", action: #selector(stopServer), keyEquivalent: "")
+            stopItem.target = self
+            menu.addItem(stopItem)
+        } else {
+            let serverItem = NSMenuItem(title: "○ Server stopped", action: nil, keyEquivalent: "")
+            serverItem.isEnabled = false
+            menu.addItem(serverItem)
+
+            let startItem = NSMenuItem(title: "  Start Server", action: #selector(startServer), keyEquivalent: "")
+            startItem.target = self
+            menu.addItem(startItem)
         }
 
         menu.addItem(NSMenuItem.separator())
@@ -275,6 +361,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSBezierPath(ovalIn: NSRect(x: 4, y: 4, width: 8, height: 8)).fill()
         image.unlockFocus()
         return image
+    }
+
+    @objc func startServer() {
+        let binary = findAimuxBinary()
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = ["-c", "\(binary) server start"]
+        task.environment = ProcessInfo.processInfo.environment
+        try? task.run()
+        // Refresh menu after a short delay to pick up new state
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.updateMenu()
+        }
+    }
+
+    @objc func stopServer() {
+        let binary = findAimuxBinary()
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/bash")
+        task.arguments = ["-c", "\(binary) server stop"]
+        task.environment = ProcessInfo.processInfo.environment
+        try? task.run()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.updateMenu()
+        }
     }
 
     @objc func openProject(_ sender: NSMenuItem) {

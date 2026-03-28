@@ -55,6 +55,7 @@ export class Dashboard {
   private navLevel: "worktrees" | "sessions" = "sessions";
   private selectedSessionId: string | undefined = undefined;
   private scrollOffset = 0;
+  private serverRunning = false;
 
   update(
     sessions: DashboardSession[],
@@ -62,6 +63,7 @@ export class Dashboard {
     focusedWorktreePath?: string,
     navLevel?: "worktrees" | "sessions",
     selectedSessionId?: string,
+    serverRunning?: boolean,
   ): void {
     this.sessions = sessions;
     this.worktreeGroups = worktreeGroups ?? [];
@@ -69,6 +71,7 @@ export class Dashboard {
     this.focusedWorktreePath = focusedWorktreePath;
     this.navLevel = navLevel ?? "sessions";
     this.selectedSessionId = selectedSessionId;
+    this.serverRunning = serverRunning ?? false;
   }
 
   /** Scroll the viewport (called from multiplexer key handler) */
@@ -80,7 +83,8 @@ export class Dashboard {
     // Header (fixed)
     const header: string[] = [];
     header.push("");
-    header.push(center("\x1b[1maimux\x1b[0m — agent multiplexer", cols));
+    const serverTag = this.serverRunning ? "  \x1b[32m● server\x1b[0m" : "";
+    header.push(center(`\x1b[1maimux\x1b[0m — agent multiplexer${serverTag}`, cols));
     header.push(center("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
 
@@ -159,8 +163,9 @@ export class Dashboard {
     const icon = STATUS_ICONS[session.status];
     const statusLabel = STATUS_LABELS[session.status];
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
+    const serverTag = session.isServer && !session.remoteInstancePid ? " \x1b[32m⬡\x1b[0m" : "";
     const labelText = session.label ? ` \x1b[2m${truncate(session.label, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${session.command}${roleTag} — ${statusLabel}${labelText}${taskBadge}${marker}`;
+    return `${indent}${icon} [${num}] ${session.command}${roleTag}${serverTag} — ${statusLabel}${labelText}${taskBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {

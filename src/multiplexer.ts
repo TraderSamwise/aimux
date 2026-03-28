@@ -40,7 +40,8 @@ import {
 } from "./instance-registry.js";
 import { TaskDispatcher, requestReview } from "./task-dispatcher.js";
 import { loadTeamConfig } from "./team.js";
-import { scanAllProjects, type ProjectInfo } from "./project-scanner.js";
+import { scanAllProjects } from "./project-scanner.js";
+import { ServerClient } from "./server-client.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -122,6 +123,10 @@ export class Multiplexer {
   private sessionRoles = new Map<string, string>();
   /** Offline sessions from previous runs (loaded from state.json) */
   private offlineSessions: SessionState[] = [];
+  /** Server client for persistent PTY ownership */
+  private serverClient: ServerClient | null = null;
+  /** Session IDs owned by the server (don't kill on TUI exit) */
+  private serverSessionIds = new Set<string>();
   private static readonly FOOTER_HEIGHT = 1;
 
   constructor() {
@@ -137,10 +142,44 @@ export class Multiplexer {
     return this.sessions.length;
   }
 
+  /** Try to connect to a running aimux server for persistent PTY ownership */
+  private async connectToServer(): Promise<void> {
+    if (!ServerClient.isAvailable()) return;
+    try {
+      this.serverClient = new ServerClient();
+      await this.serverClient.connect();
+      debug("connected to aimux server", "server-client");
+
+      // Reconnect to existing server sessions
+      const serverSessions = await this.serverClient.listSessions();
+      const cols = process.stdout.columns ?? 80;
+      const rows = this.toolRows;
+      for (const info of serverSessions) {
+        if (info.exited) continue;
+        // Build prompt patterns from config
+        let promptPatterns: RegExp[] | undefined;
+        const config = loadConfig();
+        const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === info.command);
+        if (toolEntry?.[1]?.promptPatterns) {
+          promptPatterns = toolEntry[1].promptPatterns.map((p: string) => new RegExp(p, "m"));
+        }
+        const session = this.serverClient.registerSession(info.id, info.command, cols, rows, promptPatterns);
+        session.backendSessionId = info.backendSessionId;
+        this.sessions.push(session as any);
+        this.serverSessionIds.add(info.id);
+        debug(`reconnected to server session: ${info.id}`, "server-client");
+      }
+    } catch {
+      debug("could not connect to server, using direct PTY mode", "server-client");
+      this.serverClient = null;
+    }
+  }
+
   async run(opts: Omit<PtySessionOptions, "cols" | "rows">): Promise<number> {
     initProject();
     await registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
+    await this.connectToServer();
     this.taskDispatcher = new TaskDispatcher(
       (id) => this.sessions.find((s) => s.id === id),
       (id) => this.sessionToolKeys.get(id),
@@ -254,6 +293,7 @@ export class Multiplexer {
     initProject();
     await registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
+    await this.connectToServer();
     this.loadOfflineSessions();
     this.startedInDashboard = true;
 
@@ -763,15 +803,36 @@ export class Multiplexer {
       }
     }
 
-    const session = new PtySession({
-      command,
-      args: finalArgs,
-      cols,
-      rows: this.toolRows,
-      id: sessionId,
-      cwd: worktreePath,
-      promptPatterns,
-    });
+    let session: PtySession;
+
+    // If server is connected, spawn on server for persistent ownership
+    if (this.serverClient?.connected) {
+      const serverSession = this.serverClient.registerSession(sessionId, command, cols, this.toolRows, promptPatterns);
+      // Fire off the spawn request (async, but session is immediately usable for I/O)
+      this.serverClient.send({
+        type: "spawn",
+        id: sessionId,
+        command,
+        args: finalArgs,
+        cwd: worktreePath ?? process.cwd(),
+        cols,
+        rows: this.toolRows,
+      });
+      session = serverSession as any;
+      this.serverSessionIds.add(sessionId);
+      debug(`spawned session on server: ${sessionId}`, "server-client");
+    } else {
+      session = new PtySession({
+        command,
+        args: finalArgs,
+        cols,
+        rows: this.toolRows,
+        id: sessionId,
+        cwd: worktreePath,
+        promptPatterns,
+      });
+    }
+
     // Store backend session ID and start time
     session.backendSessionId = backendSessionId;
     this.sessionStartTimes.set(session.id, Date.now());
@@ -1437,6 +1498,7 @@ export class Multiplexer {
         status: s.status,
         active: i === this.activeIndex,
         worktreePath: wtPath,
+        isServer: this.serverSessionIds.has(s.id),
       };
     });
 
@@ -1526,6 +1588,7 @@ export class Multiplexer {
       this.focusedWorktreePath,
       hasWorktrees ? this.dashboardLevel : "sessions",
       selectedSession,
+      this.serverClient?.connected ?? false,
     );
     process.stdout.write(this.dashboard.render(cols, rows));
   }
@@ -3090,9 +3153,11 @@ export class Multiplexer {
 
   /** Save session state to main repo's .aimux/state.json, merging with existing state. */
   private saveState(): void {
-    if (this.sessions.length === 0) return;
+    // Only save direct-PTY sessions (server sessions persist on the server)
+    const localSessions = this.sessions.filter((s) => !this.serverSessionIds.has(s.id));
+    if (localSessions.length === 0) return;
 
-    const mySessions = this.sessions.map((s) => ({
+    const mySessions = localSessions.map((s) => ({
       id: s.id,
       tool: s.command,
       toolConfigKey: this.sessionToolKeys.get(s.id) ?? s.command,
@@ -3173,7 +3238,14 @@ export class Multiplexer {
 
   cleanup(): void {
     for (const session of this.sessions) {
+      // Don't kill server-owned sessions — they persist after TUI exits
+      if (this.serverSessionIds.has(session.id)) continue;
       session.destroy();
+    }
+    // Disconnect from server (sessions keep running)
+    if (this.serverClient) {
+      this.serverClient.disconnect();
+      this.serverClient = null;
     }
     this.teardown();
   }
