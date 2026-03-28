@@ -12,9 +12,11 @@
     "start": "node dist/main.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ --max-warnings=0",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
+    "verify": "yarn typecheck && yarn lint && yarn test",
     "prepare": "husky",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
   },

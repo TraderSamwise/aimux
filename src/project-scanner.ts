@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
-import { getStatusDir, getAimuxDirFor, listProjects } from "./paths.js";
+import { getAimuxDirFor, getProjectStateDirById, listProjects } from "./paths.js";
 
 export interface GlobalSession {
   id: string;
@@ -69,18 +69,20 @@ export function discoverProjects(): string[] {
 export function scanProject(projectPath: string): ProjectInfo {
   const sessions: GlobalSession[] = [];
   const seenIds = new Set<string>();
+  const registryEntry = listProjects().find((entry) => entry.repoRoot === projectPath);
 
   // Check both global state dir and in-repo .aimux/ for instances
   const instancesPaths = [join(getAimuxDirFor(projectPath), "instances.json")];
+  const statusDirs = [join(getAimuxDirFor(projectPath), "status")];
 
   // Also check global project state dirs for registered projects
-  for (const entry of listProjects()) {
-    if (entry.repoRoot === projectPath) {
-      const globalInstances = join(homedir(), ".aimux", "projects", entry.id, "instances.json");
-      if (!instancesPaths.includes(globalInstances)) {
-        instancesPaths.unshift(globalInstances);
-      }
+  if (registryEntry) {
+    const projectStateDir = getProjectStateDirById(registryEntry.id);
+    const globalInstances = join(projectStateDir, "instances.json");
+    if (!instancesPaths.includes(globalInstances)) {
+      instancesPaths.unshift(globalInstances);
     }
+    statusDirs.unshift(join(projectStateDir, "status"));
   }
 
   for (const instancesPath of instancesPaths) {
@@ -108,13 +110,20 @@ export function scanProject(projectPath: string): ProjectInfo {
 
           // Read status file
           let label: string | undefined;
-          try {
-            const statusPath = join(getStatusDir(), `${s.id}.md`);
-            if (existsSync(statusPath)) {
-              const content = readFileSync(statusPath, "utf-8").trim();
-              if (content) label = content.split("\n")[0].slice(0, 80);
+          for (const statusDir of statusDirs) {
+            try {
+              const statusPath = join(statusDir, `${s.id}.md`);
+              if (existsSync(statusPath)) {
+                const content = readFileSync(statusPath, "utf-8").trim();
+                if (content) {
+                  label = content.split("\n")[0].slice(0, 80);
+                  break;
+                }
+              }
+            } catch {
+              // Try the next candidate directory.
             }
-          } catch {}
+          }
 
           sessions.push({
             id: s.id,
@@ -132,12 +141,10 @@ export function scanProject(projectPath: string): ProjectInfo {
 
   // Offline sessions — check both global state and in-repo
   const statePaths = [join(getAimuxDirFor(projectPath), "state.json")];
-  for (const entry of listProjects()) {
-    if (entry.repoRoot === projectPath) {
-      const globalState = join(homedir(), ".aimux", "projects", entry.id, "state.json");
-      if (!statePaths.includes(globalState)) {
-        statePaths.unshift(globalState);
-      }
+  if (registryEntry) {
+    const globalState = join(getProjectStateDirById(registryEntry.id), "state.json");
+    if (!statePaths.includes(globalState)) {
+      statePaths.unshift(globalState);
     }
   }
 

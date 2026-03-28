@@ -312,6 +312,20 @@ export class ServerClient {
         }
         break;
       }
+      case "spawn_failed": {
+        const session = this.sessions.get(msg.id);
+        if (session && !session.exited) {
+          session._receiveExit(-1);
+          this.sessions.delete(msg.id);
+        }
+        const cb = this.pendingCallbacks.get(`spawn:${msg.id}`);
+        if (cb) {
+          this.pendingCallbacks.delete(`spawn:${msg.id}`);
+          cb(false);
+        }
+        debug(`server spawn failed for ${msg.id}: ${msg.message}`, "server-client");
+        break;
+      }
       case "error": {
         debug(`server error: ${msg.message}`, "server-client");
         break;
@@ -382,7 +396,16 @@ export class ServerClient {
 
   /** List live sessions on the server */
   async listSessions(): Promise<
-    Array<{ id: string; command: string; status: string; exited?: boolean; backendSessionId?: string }>
+    Array<{
+      id: string;
+      command: string;
+      status: string;
+      exited?: boolean;
+      toolConfigKey?: string;
+      backendSessionId?: string;
+      worktreePath?: string;
+      label?: string;
+    }>
   > {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {

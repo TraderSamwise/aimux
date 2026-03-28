@@ -209,14 +209,28 @@ class ProjectScanner {
 
 // MARK: - Server Status
 
-func isServerRunning() -> Bool {
-    let pidPath = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.aimux/aimux.pid"
-    guard let content = try? String(contentsOfFile: pidPath, encoding: .utf8),
-          let pid = Int32(content.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-        return false
+func runningProjectServerCount() -> Int {
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let projectsDir = home.appendingPathComponent(".aimux/projects")
+    guard let entries = try? FileManager.default.contentsOfDirectory(
+        at: projectsDir,
+        includingPropertiesForKeys: nil
+    ) else {
+        return 0
     }
-    // Check if process is alive (signal 0 = no signal, just check)
-    return kill(pid, 0) == 0
+
+    var count = 0
+    for entry in entries {
+        let pidURL = entry.appendingPathComponent("aimux.pid")
+        guard let content = try? String(contentsOf: pidURL, encoding: .utf8),
+              let pid = Int32(content.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            continue
+        }
+        if kill(pid, 0) == 0 {
+            count += 1
+        }
+    }
+    return count
 }
 
 // MARK: - Path Resolution
@@ -320,28 +334,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Server controls
-        let serverRunning = isServerRunning()
-        if serverRunning {
-            let serverItem = NSMenuItem(title: "● Server running", action: nil, keyEquivalent: "")
+        // Project-scoped server status
+        let serverCount = runningProjectServerCount()
+        if serverCount > 0 {
+            let serverLabel = serverCount == 1 ? "● 1 project server" : "● \(serverCount) project servers"
+            let serverItem = NSMenuItem(title: serverLabel, action: nil, keyEquivalent: "")
             serverItem.isEnabled = false
             serverItem.attributedTitle = NSAttributedString(
-                string: "● Server running",
+                string: serverLabel,
                 attributes: [.foregroundColor: NSColor.systemGreen, .font: NSFont.systemFont(ofSize: 13)]
             )
             menu.addItem(serverItem)
-
-            let stopItem = NSMenuItem(title: "  Stop Server", action: #selector(stopServer), keyEquivalent: "")
-            stopItem.target = self
-            menu.addItem(stopItem)
         } else {
-            let serverItem = NSMenuItem(title: "○ Server stopped", action: nil, keyEquivalent: "")
+            let serverItem = NSMenuItem(title: "○ No project servers", action: nil, keyEquivalent: "")
             serverItem.isEnabled = false
             menu.addItem(serverItem)
-
-            let startItem = NSMenuItem(title: "  Start Server", action: #selector(startServer), keyEquivalent: "")
-            startItem.target = self
-            menu.addItem(startItem)
         }
 
         menu.addItem(NSMenuItem.separator())
@@ -361,31 +368,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSBezierPath(ovalIn: NSRect(x: 4, y: 4, width: 8, height: 8)).fill()
         image.unlockFocus()
         return image
-    }
-
-    @objc func startServer() {
-        let binary = findAimuxBinary()
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = ["-c", "\(binary) server start"]
-        task.environment = ProcessInfo.processInfo.environment
-        try? task.run()
-        // Refresh menu after a short delay to pick up new state
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.updateMenu()
-        }
-    }
-
-    @objc func stopServer() {
-        let binary = findAimuxBinary()
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = ["-c", "\(binary) server stop"]
-        task.environment = ProcessInfo.processInfo.environment
-        try? task.run()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.updateMenu()
-        }
     }
 
     @objc func openProject(_ sender: NSMenuItem) {

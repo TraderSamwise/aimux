@@ -1,36 +1,50 @@
 import * as net from "node:net";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { PtySession } from "./pty-session.js";
 import { registerInstance, unregisterInstance, updateHeartbeat, type InstanceSessionRef } from "./instance-registry.js";
 import { debug } from "./debug.js";
+import { getProjectStateDir, getStatePath } from "./paths.js";
 
-const AIMUX_DIR = join(homedir(), ".aimux");
-const PID_PATH = join(AIMUX_DIR, "aimux.pid");
-const SOCK_PATH = join(AIMUX_DIR, "aimux.sock");
+interface SavedSessionState {
+  id: string;
+  tool: string;
+  toolConfigKey: string;
+  command: string;
+  args: string[];
+  backendSessionId?: string;
+  worktreePath?: string;
+  label?: string;
+}
+
+interface ServerSessionRecord {
+  pty: PtySession;
+  state: SavedSessionState;
+}
 
 export function getPidPath(): string {
-  return PID_PATH;
+  return join(getProjectStateDir(), "aimux.pid");
 }
 
 export function getSocketPath(): string {
-  return SOCK_PATH;
+  return join(getProjectStateDir(), "aimux.sock");
 }
 
 /** Check if a server is already running */
 export function isServerRunning(): boolean {
-  if (!existsSync(PID_PATH)) return false;
+  const pidPath = getPidPath();
+  const socketPath = getSocketPath();
+  if (!existsSync(pidPath)) return false;
   try {
-    const pid = parseInt(readFileSync(PID_PATH, "utf-8").trim(), 10);
+    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
     process.kill(pid, 0);
     return true;
   } catch {
     try {
-      unlinkSync(PID_PATH);
+      unlinkSync(pidPath);
     } catch {}
     try {
-      unlinkSync(SOCK_PATH);
+      unlinkSync(socketPath);
     } catch {}
     return false;
   }
@@ -38,9 +52,10 @@ export function isServerRunning(): boolean {
 
 /** Get server status info */
 export function getServerStatus(): { running: boolean; pid?: number } {
-  if (!existsSync(PID_PATH)) return { running: false };
+  const pidPath = getPidPath();
+  if (!existsSync(pidPath)) return { running: false };
   try {
-    const pid = parseInt(readFileSync(PID_PATH, "utf-8").trim(), 10);
+    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
     process.kill(pid, 0);
     return { running: true, pid };
   } catch {
@@ -50,9 +65,10 @@ export function getServerStatus(): { running: boolean; pid?: number } {
 
 /** Stop a running server by sending SIGTERM */
 export function stopServer(): boolean {
-  if (!existsSync(PID_PATH)) return false;
+  const pidPath = getPidPath();
+  if (!existsSync(pidPath)) return false;
   try {
-    const pid = parseInt(readFileSync(PID_PATH, "utf-8").trim(), 10);
+    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
     process.kill(pid, "SIGTERM");
     return true;
   } catch {
@@ -67,6 +83,10 @@ interface SpawnMsg {
   id: string;
   command: string;
   args: string[];
+  toolConfigKey?: string;
+  backendSessionId?: string;
+  worktreePath?: string;
+  label?: string;
   cwd?: string;
   cols: number;
   rows: number;
@@ -99,20 +119,22 @@ type ClientMessage = SpawnMsg | WriteMsg | ResizeMsg | ScreenMsg | KillMsg | Lis
 // ── Server ─────────────────────────────────────────────────────────
 
 export class AimuxServer {
-  private sessions = new Map<string, PtySession>();
+  private sessions = new Map<string, ServerSessionRecord>();
   private clients = new Set<net.Socket>();
   private socketServer: net.Server | null = null;
   private instanceId = `server-${Math.random().toString(36).slice(2, 8)}`;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private cwd: string;
-  private _paths: { getStatePath: () => string } | null = null;
 
   constructor(cwd?: string) {
     this.cwd = cwd ?? process.cwd();
   }
 
   async start(): Promise<void> {
-    mkdirSync(AIMUX_DIR, { recursive: true });
+    const projectDir = getProjectStateDir();
+    const pidPath = getPidPath();
+    const socketPath = getSocketPath();
+    mkdirSync(projectDir, { recursive: true });
 
     if (isServerRunning()) {
       throw new Error("Server is already running");
@@ -120,16 +142,11 @@ export class AimuxServer {
 
     // Clean up stale socket
     try {
-      unlinkSync(SOCK_PATH);
+      unlinkSync(socketPath);
     } catch {}
 
-    writeFileSync(PID_PATH, String(process.pid));
+    writeFileSync(pidPath, String(process.pid));
     debug(`server started (PID ${process.pid})`, "server");
-
-    // Cache paths module for saveState
-    try {
-      this._paths = await importPaths();
-    } catch {}
 
     // Register in instance registry
     await registerInstance(this.instanceId, this.cwd);
@@ -142,8 +159,8 @@ export class AimuxServer {
 
     // Start Unix socket server
     this.socketServer = net.createServer((client) => this.handleClient(client));
-    this.socketServer.listen(SOCK_PATH, () => {
-      debug(`socket listening at ${SOCK_PATH}`, "server");
+    this.socketServer.listen(socketPath, () => {
+      debug(`socket listening at ${socketPath}`, "server");
     });
 
     // Signal handlers
@@ -226,6 +243,21 @@ export class AimuxServer {
         cwd: msg.cwd ?? this.cwd,
         id: msg.id,
       });
+      session.backendSessionId = msg.backendSessionId;
+
+      const record: ServerSessionRecord = {
+        pty: session,
+        state: {
+          id: msg.id,
+          tool: msg.command,
+          toolConfigKey: msg.toolConfigKey ?? msg.command,
+          command: msg.command,
+          args: [...msg.args],
+          backendSessionId: msg.backendSessionId,
+          worktreePath: msg.worktreePath,
+          label: msg.label,
+        },
+      };
 
       // Broadcast PTY output to all connected clients
       session.onData((data) => {
@@ -239,32 +271,36 @@ export class AimuxServer {
         this.sessions.delete(session.id);
       });
 
-      this.sessions.set(session.id, session);
+      this.sessions.set(session.id, record);
       debug(`spawned session: ${session.id} (${msg.command})`, "server");
       this.send(client, { type: "spawned", id: session.id });
     } catch (err) {
-      this.send(client, { type: "error", message: `Spawn failed: ${err}` });
+      this.send(client, {
+        type: "spawn_failed",
+        id: msg.id,
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
   private handleWrite(msg: WriteMsg): void {
-    const session = this.sessions.get(msg.id);
-    if (session) {
-      session.write(Buffer.from(msg.data, "base64").toString());
+    const record = this.sessions.get(msg.id);
+    if (record) {
+      record.pty.write(Buffer.from(msg.data, "base64").toString());
     }
   }
 
   private handleResize(msg: ResizeMsg): void {
-    const session = this.sessions.get(msg.id);
-    if (session) {
-      session.resize(msg.cols, msg.rows);
+    const record = this.sessions.get(msg.id);
+    if (record) {
+      record.pty.resize(msg.cols, msg.rows);
     }
   }
 
   private handleScreen(client: net.Socket, msg: ScreenMsg): void {
-    const session = this.sessions.get(msg.id);
-    if (session) {
-      const screen = session.getScreenState();
+    const record = this.sessions.get(msg.id);
+    if (record) {
+      const screen = record.pty.getScreenState();
       this.send(client, { type: "screen", id: msg.id, data: Buffer.from(screen).toString("base64") });
     } else {
       this.send(client, { type: "error", message: `Session ${msg.id} not found` });
@@ -272,21 +308,24 @@ export class AimuxServer {
   }
 
   private handleKill(msg: KillMsg): void {
-    const session = this.sessions.get(msg.id);
-    if (session) {
-      session.destroy();
+    const record = this.sessions.get(msg.id);
+    if (record) {
+      record.pty.destroy();
       this.sessions.delete(msg.id);
       debug(`killed session: ${msg.id}`, "server");
     }
   }
 
   private handleList(client: net.Socket): void {
-    const sessions = [...this.sessions.values()].map((s) => ({
-      id: s.id,
-      command: s.command,
-      status: s.status,
-      exited: s.exited,
-      backendSessionId: s.backendSessionId,
+    const sessions = [...this.sessions.values()].map(({ pty, state }) => ({
+      id: pty.id,
+      command: pty.command,
+      status: pty.status,
+      exited: pty.exited,
+      toolConfigKey: state.toolConfigKey,
+      backendSessionId: state.backendSessionId,
+      worktreePath: state.worktreePath,
+      label: state.label,
     }));
     this.send(client, { type: "sessions", sessions });
   }
@@ -307,10 +346,11 @@ export class AimuxServer {
   }
 
   private getSessionRefs(): InstanceSessionRef[] {
-    return [...this.sessions.values()].map((s) => ({
-      id: s.id,
-      tool: s.command,
-      backendSessionId: s.backendSessionId,
+    return [...this.sessions.values()].map(({ pty, state }) => ({
+      id: pty.id,
+      tool: pty.command,
+      backendSessionId: state.backendSessionId,
+      worktreePath: state.worktreePath,
     }));
   }
 
@@ -322,7 +362,7 @@ export class AimuxServer {
 
     // Kill all sessions
     for (const session of this.sessions.values()) {
-      session.destroy();
+      session.pty.destroy();
     }
     this.sessions.clear();
 
@@ -348,11 +388,13 @@ export class AimuxServer {
     unregisterInstance(this.instanceId, this.cwd).catch(() => {});
 
     // Clean up files
+    const pidPath = getPidPath();
+    const socketPath = getSocketPath();
     try {
-      unlinkSync(PID_PATH);
+      unlinkSync(pidPath);
     } catch {}
     try {
-      unlinkSync(SOCK_PATH);
+      unlinkSync(socketPath);
     } catch {}
 
     process.exit(0);
@@ -362,12 +404,10 @@ export class AimuxServer {
     if (this.sessions.size === 0) return;
 
     try {
-      const { getStatePath } = this._paths ?? {};
-      if (!getStatePath) return;
       const statePath = getStatePath();
 
       // Read existing state and merge
-      let state: { savedAt: string; cwd: string; sessions: any[] } = {
+      let state: { savedAt: string; cwd: string; sessions: SavedSessionState[] } = {
         savedAt: new Date().toISOString(),
         cwd: this.cwd,
         sessions: [],
@@ -378,15 +418,23 @@ export class AimuxServer {
         } catch {}
       }
 
-      const existingIds = new Set(state.sessions.map((s: any) => s.id));
-      for (const session of this.sessions.values()) {
-        if (!existingIds.has(session.id)) {
-          state.sessions.push({
-            id: session.id,
-            tool: session.command,
-            command: session.command,
-            backendSessionId: session.backendSessionId,
-          });
+      const currentSessions = [...this.sessions.values()].map(({ state }) => ({ ...state }));
+      const currentIds = new Set(currentSessions.map((session) => session.id));
+      const currentBackendIds = new Set(currentSessions.map((session) => session.backendSessionId).filter(Boolean));
+      const retainedSessions = state.sessions.filter((session) => {
+        if (currentIds.has(session.id)) return false;
+        if (session.backendSessionId && currentBackendIds.has(session.backendSessionId)) return false;
+        return true;
+      });
+
+      state.sessions = [...retainedSessions, ...currentSessions];
+
+      for (const session of currentSessions) {
+        if (!session.toolConfigKey) {
+          session.toolConfigKey = session.command;
+        }
+        if (!Array.isArray(session.args)) {
+          session.args = [];
         }
       }
 
@@ -400,14 +448,9 @@ export class AimuxServer {
   }
 }
 
-// Lazy import to avoid circular dependency with paths.ts at module load
-async function importPaths() {
-  return import("./paths.js");
-}
-
 /** Start the server in foreground mode */
 export async function startServerForeground(): Promise<void> {
-  const { initPaths } = await importPaths();
+  const { initPaths } = await import("./paths.js");
   await initPaths();
 
   const server = new AimuxServer();

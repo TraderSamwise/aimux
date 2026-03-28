@@ -167,6 +167,10 @@ export class Multiplexer {
         session.backendSessionId = info.backendSessionId;
         this.sessions.push(session as any);
         this.serverSessionIds.add(info.id);
+        this.sessionToolKeys.set(info.id, info.toolConfigKey ?? info.command);
+        if (info.worktreePath) {
+          this.sessionWorktreePaths.set(info.id, info.worktreePath);
+        }
         debug(`reconnected to server session: ${info.id}`, "server-client");
       }
     } catch {
@@ -814,6 +818,9 @@ export class Multiplexer {
         id: sessionId,
         command,
         args: finalArgs,
+        toolConfigKey: toolConfigKey ?? command,
+        backendSessionId,
+        worktreePath,
         cwd: worktreePath ?? process.cwd(),
         cols,
         rows: this.toolRows,
@@ -3021,7 +3028,7 @@ export class Multiplexer {
     if (session.backendSessionId && toolCfg.resumeArgs) {
       args = toolCfg.resumeArgs.map((a: string) => a.replace("{sessionId}", session.backendSessionId!));
     } else {
-      args = [...toolCfg.args];
+      args = [...(toolCfg.resumeFallback ?? toolCfg.args)];
     }
 
     // Remove from offline list

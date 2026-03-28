@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { getLocalAimuxDir, getProjectTeamPath, getGlobalTeamPath, getGlobalAimuxDir } from "./paths.js";
 
 export interface RoleConfig {

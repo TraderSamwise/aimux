@@ -83,6 +83,18 @@ export function getProjectId(): string {
   return _projectId!;
 }
 
+export function getProjectIdFor(cwd: string): string {
+  return computeProjectId(resolveRepoRoot(cwd));
+}
+
+export function getProjectStateDirFor(cwd: string): string {
+  return join(getGlobalAimuxDir(), "projects", getProjectIdFor(cwd));
+}
+
+export function getProjectStateDirById(projectId: string): string {
+  return join(getGlobalAimuxDir(), "projects", projectId);
+}
+
 // ── Global paths (~/.aimux/...) ────────────────────────────────────
 
 const HOME = homedir();
