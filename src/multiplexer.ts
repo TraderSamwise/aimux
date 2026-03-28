@@ -11,7 +11,7 @@ import {
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
 import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
@@ -63,6 +63,22 @@ export interface SavedState {
   sessions: SessionState[];
 }
 
+interface WorktreeRemovalJob {
+  path: string;
+  name: string;
+  startedAt: number;
+  oldIdx: number;
+  stderr: string;
+  spinnerFrame: number;
+}
+
+interface WorktreeRemovalError {
+  name: string;
+  path: string;
+  message: string;
+  details: string[];
+}
+
 export class Multiplexer {
   private sessions: PtySession[] = [];
   private activeIndex = 0;
@@ -84,6 +100,9 @@ export class Multiplexer {
   private labelInputTarget: string | null = null;
   private worktreeListActive = false;
   private worktreeRemoveConfirm: { path: string; name: string } | null = null;
+  private worktreeRemovalJob: WorktreeRemovalJob | null = null;
+  private worktreeRemovalSpinner: ReturnType<typeof setInterval> | null = null;
+  private worktreeRemovalError: WorktreeRemovalError | null = null;
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
   private graveyardActive = false;
@@ -1211,6 +1230,17 @@ export class Multiplexer {
     const key = event.name || event.char;
     const hasWorktrees = this.worktreeNavOrder.length > 1;
 
+    if (this.worktreeRemovalJob) {
+      return;
+    }
+
+    if (this.worktreeRemovalError) {
+      if (key === "escape" || key === "enter" || key === "return") {
+        this.dismissWorktreeRemovalError();
+      }
+      return;
+    }
+
     // Digits 1-9: always focus session directly (shortcut)
     if (key >= "1" && key <= "9") {
       const index = parseInt(key) - 1;
@@ -1656,6 +1686,11 @@ export class Multiplexer {
       this.serverClient?.connected ?? false,
     );
     process.stdout.write(this.dashboard.render(cols, rows));
+    if (this.worktreeRemovalJob) {
+      this.renderWorktreeRemovalProgress();
+    } else if (this.worktreeRemovalError) {
+      this.renderWorktreeRemovalError();
+    }
   }
 
   private showWorktreeCreatePrompt(): void {
@@ -1926,6 +1961,181 @@ export class Multiplexer {
     process.stdout.write(output);
   }
 
+  private renderWorktreeRemovalProgress(): void {
+    const job = this.worktreeRemovalJob;
+    if (!job) return;
+
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][job.spinnerFrame % 10];
+    const elapsed = ((Date.now() - job.startedAt) / 1000).toFixed(1);
+    const detail = job.stderr
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1);
+    const lines = [
+      `${spinner} Removing worktree "${job.name}"`,
+      "",
+      `  Path: ${job.path}`,
+      `  Elapsed: ${elapsed}s`,
+      detail ? `  Git: ${detail.slice(0, 80)}` : "  Cleaning up checkout and metadata...",
+      "",
+      "  Please wait",
+    ];
+
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        output += `\x1b[44;97m  ${lines[i - 1].padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private renderWorktreeRemovalError(): void {
+    const error = this.worktreeRemovalError;
+    if (!error) return;
+
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const lines = [
+      `Failed to remove "${error.name}"`,
+      "",
+      `  Path: ${error.path}`,
+      `  Error: ${error.message}`,
+      ...error.details.slice(0, 4).map((line) => `  ${line}`),
+      "",
+      "  [Esc/Enter] dismiss",
+    ];
+
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[41;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        output += `\x1b[41;97m  ${lines[i - 1].padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private dismissWorktreeRemovalError(): void {
+    this.worktreeRemovalError = null;
+    this.renderDashboard();
+  }
+
+  private beginWorktreeRemoval(path: string, name: string, oldIdx: number): void {
+    if (this.worktreeRemovalJob) return;
+
+    let child;
+    try {
+      child = spawn("git", ["worktree", "remove", path, "--force"], {
+        cwd: findMainRepo(),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.worktreeRemovalError = { name, path, message, details: [] };
+      this.renderDashboard();
+      return;
+    }
+
+    this.worktreeRemovalJob = {
+      path,
+      name,
+      startedAt: Date.now(),
+      oldIdx,
+      stderr: "",
+      spinnerFrame: 0,
+    };
+    this.footerFlash = null;
+    this.footerFlashTicks = 0;
+    this.worktreeRemovalSpinner = setInterval(() => {
+      if (!this.worktreeRemovalJob) return;
+      this.worktreeRemovalJob.spinnerFrame = (this.worktreeRemovalJob.spinnerFrame + 1) % 10;
+      if (this.mode === "dashboard") this.renderDashboard();
+    }, 120);
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (!this.worktreeRemovalJob) return;
+      this.worktreeRemovalJob.stderr += chunk.toString();
+      if (this.mode === "dashboard") this.renderDashboard();
+    });
+
+    child.on("close", (code: number | null) => {
+      this.finishWorktreeRemoval(code ?? 1);
+    });
+
+    child.on("error", (err: Error) => {
+      if (!this.worktreeRemovalJob) return;
+      this.worktreeRemovalJob.stderr += `\n${err.message}`;
+      this.finishWorktreeRemoval(1);
+    });
+
+    this.renderDashboard();
+  }
+
+  private finishWorktreeRemoval(code: number): void {
+    const job = this.worktreeRemovalJob;
+    if (!job) return;
+
+    if (this.worktreeRemovalSpinner) {
+      clearInterval(this.worktreeRemovalSpinner);
+      this.worktreeRemovalSpinner = null;
+    }
+
+    this.worktreeRemovalJob = null;
+    const details = job.stderr
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (code === 0) {
+      this.footerFlash = `Removed: ${job.name}`;
+      this.footerFlashTicks = 3;
+      debug(`removed worktree: ${job.name}`, "worktree");
+
+      const newWorktrees = listAllWorktrees().filter((wt) => !wt.isBare);
+      this.worktreeNavOrder = [undefined, ...newWorktrees.map((wt) => wt.path)];
+      if (job.oldIdx >= 0 && job.oldIdx < this.worktreeNavOrder.length) {
+        this.focusedWorktreePath = this.worktreeNavOrder[job.oldIdx];
+      } else if (this.worktreeNavOrder.length > 1) {
+        this.focusedWorktreePath = this.worktreeNavOrder[this.worktreeNavOrder.length - 1];
+      } else {
+        this.focusedWorktreePath = undefined;
+      }
+    } else {
+      const message = details[0] ?? `git worktree remove exited with code ${code}`;
+      this.footerFlash = `Failed: ${message}`;
+      this.footerFlashTicks = 5;
+      this.worktreeRemovalError = {
+        name: job.name,
+        path: job.path,
+        message,
+        details,
+      };
+    }
+
+    this.renderDashboard();
+  }
+
   private handleWorktreeRemoveConfirmKey(data: Buffer): void {
     const events = parseKeys(data);
     if (events.length === 0) return;
@@ -1934,46 +2144,11 @@ export class Multiplexer {
     if (key === "y") {
       const confirm = this.worktreeRemoveConfirm;
       if (confirm) {
-        // Show progress immediately
         this.worktreeRemoveConfirm = null;
-        this.footerFlash = `Removing ${confirm.name}...`;
-        this.footerFlashTicks = 10;
-        this.renderDashboard();
-
-        // Remember position in nav order before removal
         const oldIdx = this.worktreeNavOrder.indexOf(confirm.path);
-
-        // Run removal (can be slow for large worktrees)
-        try {
-          execSync(`git worktree remove "${confirm.path}" --force`, {
-            cwd: findMainRepo(),
-            encoding: "utf-8",
-            stdio: "pipe",
-            timeout: 30_000,
-          });
-          this.footerFlash = `Removed: ${confirm.name}`;
-          this.footerFlashTicks = 3;
-          debug(`removed worktree: ${confirm.name}`, "worktree");
-        } catch (err) {
-          this.footerFlash = `Failed: ${err instanceof Error ? err.message : String(err)}`;
-          this.footerFlashTicks = 5;
-          this.renderDashboard();
-          return;
-        }
-
-        // Keep cursor at same list position (move to next, or up if at end)
-        const newWorktrees = listAllWorktrees().filter((wt) => !wt.isBare);
-        this.worktreeNavOrder = [undefined, ...newWorktrees.map((wt) => wt.path)];
-        if (oldIdx >= 0 && oldIdx < this.worktreeNavOrder.length) {
-          this.focusedWorktreePath = this.worktreeNavOrder[oldIdx];
-        } else if (this.worktreeNavOrder.length > 1) {
-          this.focusedWorktreePath = this.worktreeNavOrder[this.worktreeNavOrder.length - 1];
-        } else {
-          this.focusedWorktreePath = undefined;
-        }
+        this.beginWorktreeRemoval(confirm.path, confirm.name, oldIdx);
+        return;
       }
-      this.renderDashboard();
-      return;
     }
 
     // Any other key cancels
@@ -3262,6 +3437,10 @@ export class Multiplexer {
 
   private teardown(): void {
     debug("teardown started", "session");
+    if (this.worktreeRemovalSpinner) {
+      clearInterval(this.worktreeRemovalSpinner);
+      this.worktreeRemovalSpinner = null;
+    }
     this.stopHeartbeat();
     this.taskDispatcher = null;
     unregisterInstance(this.instanceId, process.cwd()).catch(() => {});
