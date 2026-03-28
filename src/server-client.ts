@@ -57,6 +57,12 @@ export class ServerSession {
     for (const cb of this.exitListeners) cb(code);
   }
 
+  /** Rebuild the local VT mirror from a server-provided screen snapshot. */
+  _hydrateScreen(screen: string): void {
+    this.vt.write(screen);
+    this.statusDetector.feed(stripAnsi(screen));
+  }
+
   get exited(): boolean {
     return this._exited;
   }

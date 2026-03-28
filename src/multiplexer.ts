@@ -142,6 +142,129 @@ export class Multiplexer {
     return this.sessions.length;
   }
 
+  private registerManagedSession(
+    session: PtySession,
+    args: string[],
+    toolConfigKey?: string,
+    worktreePath?: string,
+    role?: string,
+    startTime?: number,
+  ): void {
+    if (this.sessions.includes(session)) return;
+
+    if (startTime !== undefined) {
+      this.sessionStartTimes.set(session.id, startTime);
+    }
+
+    // Forward output to stdout only when this session is active and focused
+    session.onData((data) => {
+      if (this.mode === "focused" && this.sessions[this.activeIndex] === session) {
+        process.stdout.write(data);
+      }
+    });
+
+    // Handle session exit
+    session.onExit((_code) => {
+      debug(`session exited: ${session.id} (code=${_code})`, "session");
+
+      // Detect quick crash: non-zero exit within 10s of spawn
+      const start = this.sessionStartTimes.get(session.id);
+      const uptime = start ? Date.now() - start : Infinity;
+      if (_code !== 0 && uptime < 10_000) {
+        let errorHint = "";
+        const sessionCwd = this.sessionWorktreePaths.get(session.id);
+        const searchDirs = [getProjectStateDir(), sessionCwd ? getAimuxDirFor(sessionCwd) : null].filter(
+          Boolean,
+        ) as string[];
+        for (const dir of searchDirs) {
+          if (errorHint) break;
+          try {
+            const logPath = join(dir, "recordings", `${session.id}.log`);
+            if (existsSync(logPath)) {
+              const raw = readFileSync(logPath, "utf-8");
+              const lines = raw
+                .split("\n")
+                .map((l) => l.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim())
+                .filter(Boolean);
+              const errorLine = lines.find(
+                (l) => l.includes("Error") || l.includes("error") || l.includes("unmatched") || l.includes("not found"),
+              );
+              if (errorLine) errorHint = `: ${errorLine.slice(0, 60)}`;
+            }
+          } catch {}
+        }
+        this.footerFlash = `\x1b[31m✗ ${session.id} crashed (code ${_code})${errorHint}\x1b[0m`;
+        this.footerFlashTicks = 8;
+        debug(`quick crash: ${session.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
+      }
+      this.sessionStartTimes.delete(session.id);
+
+      notifyComplete(session.id);
+      captureGitContext(session.id, session.command).catch(() => {});
+
+      const idx = this.sessions.indexOf(session);
+      if (idx === -1) return;
+
+      this.sessions.splice(idx, 1);
+      this.writeSessionsFile();
+      this.updateContextWatcherSessions();
+
+      if (this.sessions.length === 0) {
+        if (this.startedInDashboard) {
+          this.setMode("dashboard");
+          return;
+        }
+        this.resolveRun?.(_code);
+        return;
+      }
+
+      if (this.activeIndex >= this.sessions.length) {
+        this.activeIndex = this.sessions.length - 1;
+      }
+
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+    });
+
+    if (toolConfigKey) {
+      this.sessionToolKeys.set(session.id, toolConfigKey);
+    }
+    this.sessionOriginalArgs.set(session.id, args);
+    if (worktreePath) {
+      this.sessionWorktreePaths.set(session.id, worktreePath);
+    }
+    if (role) {
+      this.sessionRoles.set(session.id, role);
+    } else if (!this.sessionRoles.has(session.id)) {
+      try {
+        const teamConfig = loadTeamConfig();
+        this.sessionRoles.set(session.id, teamConfig.defaultRole);
+      } catch {}
+    }
+
+    this.sessions.push(session);
+    this.writeSessionsFile();
+    this.updateContextWatcherSessions();
+    if (this.sessions.length === 1) this.contextWatcher.start();
+  }
+
+  private updateContextWatcherSessions(): void {
+    this.contextWatcher.updateSessions(
+      this.sessions.map((s) => {
+        const key = this.sessionToolKeys.get(s.id);
+        const tc = key ? loadConfig().tools[key] : undefined;
+        return {
+          id: s.id,
+          command: s.command,
+          turnPatterns: tc?.turnPatterns?.map((p) => new RegExp(p)),
+        };
+      }),
+    );
+  }
+
   /** Try to connect to a running aimux server for persistent PTY ownership */
   private async connectToServer(): Promise<void> {
     if (!ServerClient.isAvailable()) return;
@@ -165,11 +288,21 @@ export class Multiplexer {
         }
         const session = this.serverClient.registerSession(info.id, info.command, cols, rows, promptPatterns);
         session.backendSessionId = info.backendSessionId;
-        this.sessions.push(session as any);
         this.serverSessionIds.add(info.id);
-        this.sessionToolKeys.set(info.id, info.toolConfigKey ?? info.command);
-        if (info.worktreePath) {
-          this.sessionWorktreePaths.set(info.id, info.worktreePath);
+        try {
+          const screen = await this.serverClient.requestScreen(info.id);
+          session._hydrateScreen(screen);
+        } catch {}
+        this.registerManagedSession(
+          session as any,
+          [],
+          info.toolConfigKey ?? info.command,
+          info.worktreePath,
+          undefined,
+        );
+        if (info.label) {
+          const state = this.offlineSessions.find((s) => s.id === info.id);
+          if (state) state.label = info.label;
         }
         debug(`reconnected to server session: ${info.id}`, "server-client");
       }
@@ -842,7 +975,7 @@ export class Multiplexer {
 
     // Store backend session ID and start time
     session.backendSessionId = backendSessionId;
-    this.sessionStartTimes.set(session.id, Date.now());
+    const sessionStartTime = Date.now();
 
     // For tools without sessionIdFlag, try to capture the backend session ID via filesystem
     if (!backendSessionId && toolConfigKey) {
@@ -852,122 +985,7 @@ export class Multiplexer {
       }
     }
 
-    // Forward output to stdout only when this session is active and focused
-    session.onData((data) => {
-      if (this.mode === "focused" && this.sessions[this.activeIndex] === session) {
-        process.stdout.write(data);
-      }
-    });
-
-    // Handle session exit
-    session.onExit((_code) => {
-      debug(`session exited: ${session.id} (code=${_code})`, "session");
-
-      // Detect quick crash: non-zero exit within 10s of spawn
-      const startTime = this.sessionStartTimes.get(session.id);
-      const uptime = startTime ? Date.now() - startTime : Infinity;
-      if (_code !== 0 && uptime < 10_000) {
-        // Try to extract error from raw recording — check both project cwd and worktree cwd
-        let errorHint = "";
-        const sessionCwd = this.sessionWorktreePaths.get(session.id);
-        const searchDirs = [getProjectStateDir(), sessionCwd ? getAimuxDirFor(sessionCwd) : null].filter(
-          Boolean,
-        ) as string[];
-        for (const dir of searchDirs) {
-          if (errorHint) break;
-          try {
-            const logPath = join(dir, "recordings", `${session.id}.log`);
-            if (existsSync(logPath)) {
-              const raw = readFileSync(logPath, "utf-8");
-              const lines = raw
-                .split("\n")
-                .map((l) => l.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim())
-                .filter(Boolean);
-              const errorLine = lines.find(
-                (l) => l.includes("Error") || l.includes("error") || l.includes("unmatched") || l.includes("not found"),
-              );
-              if (errorLine) errorHint = `: ${errorLine.slice(0, 60)}`;
-            }
-          } catch {}
-        }
-        this.footerFlash = `\x1b[31m✗ ${session.id} crashed (code ${_code})${errorHint}\x1b[0m`;
-        this.footerFlashTicks = 8; // show for ~8s
-        debug(`quick crash: ${session.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
-      }
-      this.sessionStartTimes.delete(session.id);
-
-      notifyComplete(session.id);
-      // Capture git context on session exit (fire-and-forget)
-      captureGitContext(session.id, session.command).catch(() => {});
-
-      const idx = this.sessions.indexOf(session);
-      if (idx === -1) return;
-
-      this.sessions.splice(idx, 1);
-      this.writeSessionsFile();
-      this.contextWatcher.updateSessions(
-        this.sessions.map((s) => {
-          const key = this.sessionToolKeys.get(s.id);
-          const tc = key ? loadConfig().tools[key] : undefined;
-          return {
-            id: s.id,
-            command: s.command,
-            turnPatterns: tc?.turnPatterns?.map((p) => new RegExp(p)),
-          };
-        }),
-      );
-
-      if (this.sessions.length === 0) {
-        if (this.startedInDashboard) {
-          // Stay in dashboard with no sessions
-          this.setMode("dashboard");
-          return;
-        }
-        this.resolveRun?.(_code);
-        return;
-      }
-
-      // Adjust active index
-      if (this.activeIndex >= this.sessions.length) {
-        this.activeIndex = this.sessions.length - 1;
-      }
-
-      // Refresh view
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
-    });
-
-    // Track toolConfigKey, original args, worktree path, and role for state saving
-    if (toolConfigKey) {
-      this.sessionToolKeys.set(session.id, toolConfigKey);
-    }
-    this.sessionOriginalArgs.set(session.id, args);
-    if (worktreePath) {
-      this.sessionWorktreePaths.set(session.id, worktreePath);
-    }
-    // Assign team role from config
-    try {
-      const teamConfig = loadTeamConfig();
-      this.sessionRoles.set(session.id, teamConfig.defaultRole);
-    } catch {}
-
-    this.sessions.push(session);
-    this.writeSessionsFile();
-    this.contextWatcher.updateSessions(
-      this.sessions.map((s) => {
-        const key = this.sessionToolKeys.get(s.id);
-        const tc = key ? loadConfig().tools[key] : undefined;
-        return {
-          id: s.id,
-          command: s.command,
-          turnPatterns: tc?.turnPatterns?.map((p) => new RegExp(p)),
-        };
-      }),
-    );
-    if (this.sessions.length === 1) this.contextWatcher.start();
+    this.registerManagedSession(session, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
 
     // Focus the new session
     this.activeIndex = this.sessions.length - 1;
