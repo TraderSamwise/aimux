@@ -15,6 +15,23 @@ struct AgentSession {
     let projectPath: String
 }
 
+struct ProjectEntry {
+    let id: String
+    let name: String
+    let repoRoot: String
+    let serverRunning: Bool
+}
+
+final class ProjectActionTarget: NSObject {
+    let project: ProjectEntry
+    let shouldStart: Bool
+
+    init(project: ProjectEntry, shouldStart: Bool) {
+        self.project = project
+        self.shouldStart = shouldStart
+    }
+}
+
 // MARK: - File Scanner
 
 class ProjectScanner {
@@ -30,6 +47,28 @@ class ProjectScanner {
         sessions.append(contentsOf: scanLegacyAimux(excluding: Set(sessions.map { $0.projectPath })))
 
         return sessions
+    }
+
+    func scanProjects() -> [ProjectEntry] {
+        let registryPath = "\(homeDir)/.aimux/projects.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: registryPath)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let projects = json["projects"] as? [[String: Any]] else {
+            return []
+        }
+
+        return projects.compactMap { project in
+            guard let id = project["id"] as? String,
+                  let name = project["name"] as? String,
+                  let repoRoot = project["repoRoot"] as? String else { return nil }
+            let pidPath = "\(homeDir)/.aimux/projects/\(id)/aimux.pid"
+            return ProjectEntry(
+                id: id,
+                name: name,
+                repoRoot: repoRoot,
+                serverRunning: isServerRunning(pidPath: pidPath)
+            )
+        }
     }
 
     // MARK: - Registered projects (new centralized layout)
@@ -155,6 +194,14 @@ class ProjectScanner {
         return kill(pid, 0) == 0
     }
 
+    private func isServerRunning(pidPath: String) -> Bool {
+        guard let content = try? String(contentsOfFile: pidPath, encoding: .utf8),
+              let pid = Int32(content.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return false
+        }
+        return isProcessAlive(pid)
+    }
+
     /// Check if a file was modified within maxAge seconds
     private func isRecentlyActive(_ path: String, maxAge: TimeInterval) -> Bool {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
@@ -242,14 +289,37 @@ func runningProjectServerCount() -> Int {
 // MARK: - Path Resolution
 
 func findAimuxBinary() -> String {
-    // Check common locations
-    let paths = [
-        "\(FileManager.default.homeDirectoryForCurrentUser.path)/.nvm/versions/node/v22.13.0/bin/aimux",
+    let fileManager = FileManager.default
+    let home = fileManager.homeDirectoryForCurrentUser.path
+
+    let directPaths = [
+        "\(home)/.local/bin/aimux",
+        "\(home)/bin/aimux",
         "/usr/local/bin/aimux",
         "/opt/homebrew/bin/aimux",
     ]
-    for p in paths {
-        if FileManager.default.fileExists(atPath: p) { return p }
+    for path in directPaths where fileManager.isExecutableFile(atPath: path) {
+        return path
+    }
+
+    let nvmRoot = "\(home)/.nvm/versions/node"
+    if let versions = try? fileManager.contentsOfDirectory(atPath: nvmRoot).sorted(by: >) {
+        for version in versions {
+            let candidate = "\(nvmRoot)/\(version)/bin/aimux"
+            if fileManager.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+    }
+
+    let pathEntries = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+        .split(separator: ":")
+        .map(String.init)
+    for entry in pathEntries {
+        let candidate = "\(entry)/aimux"
+        if fileManager.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
     }
     return "aimux"
 }
@@ -260,6 +330,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var scanner = ProjectScanner()
     private var timer: Timer?
+    private var flashMessage: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -271,10 +342,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func updateMenu() {
         let allSessions = scanner.scan()
+        let projects = scanner.scanProjects()
         // Only show sessions from active TUIs — hide stale/offline
         let sessions = allSessions.filter { $0.status != "offline" }
         let running = sessions.filter { $0.status == "running" || $0.status == "waiting" }
         let menu = NSMenu()
+
+        if let flashMessage {
+            let item = NSMenuItem(title: flashMessage, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            menu.addItem(NSMenuItem.separator())
+        }
 
         // Icon
         if let button = statusItem.button {
@@ -293,20 +372,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Group by project
         let grouped = Dictionary(grouping: sessions) { $0.projectName }
-        if grouped.isEmpty {
-            let item = NSMenuItem(title: "No agents", action: nil, keyEquivalent: "")
+        if projects.isEmpty && grouped.isEmpty {
+            let item = NSMenuItem(title: "No projects", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         } else {
-            for (project, projectSessions) in grouped.sorted(by: { $0.key < $1.key }) {
+            for project in projects.sorted(by: { $0.name < $1.name }) {
+                let projectSessions = grouped[project.name] ?? []
                 // Project header
-                let header = NSMenuItem(title: project, action: nil, keyEquivalent: "")
+                let headerTitle = project.serverRunning ? "\(project.name)  ●" : project.name
+                let header = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
                 header.isEnabled = false
                 header.attributedTitle = NSAttributedString(
-                    string: project,
+                    string: headerTitle,
                     attributes: [.font: NSFont.boldSystemFont(ofSize: 13)]
                 )
                 menu.addItem(header)
+
+                let serverAction = NSMenuItem(
+                    title: project.serverRunning ? "  Stop Project Server" : "  Start Project Server",
+                    action: #selector(toggleProjectServer(_:)),
+                    keyEquivalent: ""
+                )
+                serverAction.target = self
+                serverAction.representedObject = ProjectActionTarget(project: project, shouldStart: !project.serverRunning)
+                menu.addItem(serverAction)
 
                 for session in projectSessions {
                     let icon: String
@@ -339,10 +429,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     item.representedObject = session.projectPath
                     menu.addItem(item)
                 }
+
+                if projectSessions.isEmpty {
+                    let empty = NSMenuItem(title: "  No active agents", action: nil, keyEquivalent: "")
+                    empty.isEnabled = false
+                    menu.addItem(empty)
+                }
+
+                menu.addItem(NSMenuItem.separator())
             }
         }
-
-        menu.addItem(NSMenuItem.separator())
 
         // Project-scoped server status
         let serverCount = runningProjectServerCount()
@@ -393,6 +489,80 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             var error: NSDictionary?
             appleScript.executeAndReturnError(&error)
         }
+    }
+
+    @objc func toggleProjectServer(_ sender: NSMenuItem) {
+        guard let action = sender.representedObject as? ProjectActionTarget else { return }
+        let binary = findAimuxBinary()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = ["server", action.shouldStart ? "start" : "stop"]
+        process.currentDirectoryURL = URL(fileURLWithPath: action.project.repoRoot)
+        process.environment = mergedEnvironment()
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+        } catch {
+            setFlashMessage("\(action.shouldStart ? "Start" : "Stop") failed: \(error.localizedDescription)")
+            return
+        }
+
+        process.terminationHandler = { [weak self] process in
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            DispatchQueue.main.async {
+                if process.terminationStatus == 0 {
+                    let verb = action.shouldStart ? "Started" : "Stopped"
+                    self?.setFlashMessage("\(verb) server for \(action.project.name)")
+                } else {
+                    let fallback = action.shouldStart ? "Failed to start server" : "Failed to stop server"
+                    self?.setFlashMessage(output?.isEmpty == false ? output! : fallback)
+                }
+                self?.updateMenu()
+            }
+        }
+    }
+
+    private func setFlashMessage(_ message: String) {
+        flashMessage = message
+        updateMenu()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            if self?.flashMessage == message {
+                self?.flashMessage = nil
+                self?.updateMenu()
+            }
+        }
+    }
+
+    private func mergedEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let rawEntries = [
+            "\(home)/.local/bin",
+            "\(home)/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            env["PATH"] ?? "",
+        ].filter { !$0.isEmpty }
+        var seen = Set<String>()
+        let pathEntries = rawEntries
+            .joined(separator: ":")
+            .split(separator: ":")
+            .map(String.init)
+            .filter { entry in
+                if seen.contains(entry) { return false }
+                seen.insert(entry)
+                return true
+            }
+        env["PATH"] = pathEntries.joined(separator: ":")
+        return env
     }
 
     @objc func quitApp() {
