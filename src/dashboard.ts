@@ -1,10 +1,12 @@
 import type { SessionStatus } from "./status-detector.js";
 
+export type DashboardSessionStatus = SessionStatus | "hydrating";
+
 export interface DashboardSession {
   index: number;
   id: string;
   command: string;
-  status: SessionStatus;
+  status: DashboardSessionStatus;
   active: boolean;
   worktreePath?: string;
   worktreeName?: string;
@@ -38,20 +40,22 @@ export interface MainCheckoutInfo {
   branch: string;
 }
 
-const STATUS_ICONS: Record<SessionStatus, string> = {
+const STATUS_ICONS: Record<DashboardSessionStatus, string> = {
   running: "\x1b[33m●\x1b[0m", // yellow
   idle: "\x1b[32m●\x1b[0m", // green
   waiting: "\x1b[36m◉\x1b[0m", // cyan
   exited: "\x1b[31m○\x1b[0m", // red
   offline: "\x1b[2m○\x1b[0m", // dim
+  hydrating: "\x1b[2;36m◌\x1b[0m", // dim cyan
 };
 
-const STATUS_LABELS: Record<SessionStatus, string> = {
+const STATUS_LABELS: Record<DashboardSessionStatus, string> = {
   running: "running",
   idle: "idle",
   waiting: "thinking",
   exited: "exited",
   offline: "offline",
+  hydrating: "hydrating",
 };
 
 export class Dashboard {

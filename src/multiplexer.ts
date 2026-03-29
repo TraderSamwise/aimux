@@ -46,6 +46,7 @@ import { FooterPluginManager, type FooterPluginContext } from "./footer-plugins.
 import { TerminalHost } from "./terminal-host.js";
 import { FocusedRenderer } from "./focused-renderer.js";
 import { FooterController } from "./footer-controller.js";
+import type { SessionTerminalSnapshot } from "./session-terminal-state.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -164,6 +165,8 @@ export class Multiplexer {
   private serverClient: ServerClient | null = null;
   /** Session IDs owned by the server (don't kill on TUI exit) */
   private serverSessionIds = new Set<string>();
+  /** Server sessions discovered before their terminal snapshot has hydrated locally */
+  private hydratingSessionIds = new Set<string>();
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -419,10 +422,6 @@ export class Multiplexer {
         const session = this.serverClient.registerSession(info.id, info.command, cols, rows, promptPatterns);
         session.backendSessionId = info.backendSessionId;
         this.serverSessionIds.add(info.id);
-        try {
-          const snapshot = await this.serverClient.requestScreen(info.id);
-          session._hydrateSnapshot(snapshot);
-        } catch {}
         this.registerManagedSession(
           session as any,
           [],
@@ -435,11 +434,41 @@ export class Multiplexer {
           if (state) state.label = info.label;
           this.sessionLabels.set(info.id, info.label);
         }
+        this.hydratingSessionIds.add(info.id);
+        void this.hydrateServerSession(info.id, session);
         debug(`reconnected to server session: ${info.id}`, "server-client");
       }
     } catch {
       debug("could not connect to server, using direct PTY mode", "server-client");
       this.serverClient = null;
+    }
+  }
+
+  private async hydrateServerSession(
+    sessionId: string,
+    session: { id: string; _hydrateSnapshot?: (snapshot: SessionTerminalSnapshot) => void },
+  ): Promise<void> {
+    if (!this.serverClient) {
+      this.hydratingSessionIds.delete(sessionId);
+      return;
+    }
+
+    try {
+      const snapshot = await this.serverClient.requestScreen(sessionId);
+      if (!this.sessions.some((s) => s.id === sessionId)) {
+        this.hydratingSessionIds.delete(sessionId);
+        return;
+      }
+      if (typeof (session as any)._hydrateSnapshot === "function") {
+        (session as any)._hydrateSnapshot(snapshot);
+      }
+    } catch {}
+
+    this.hydratingSessionIds.delete(sessionId);
+    if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
+      this.renderDashboard();
+    } else if (this.mode === "focused" && this.sessions[this.activeIndex]?.id === sessionId) {
+      this.renderFocusedView(true);
     }
   }
 
@@ -1247,7 +1276,30 @@ export class Multiplexer {
   }
 
   private renderFocusedView(forceFooter = true): void {
-    this.focusedRenderer.renderSession(this.sessions[this.activeIndex], forceFooter);
+    const activeSession = this.sessions[this.activeIndex];
+    if (activeSession && this.hydratingSessionIds.has(activeSession.id)) {
+      this.renderHydratingSession(activeSession.command, forceFooter);
+      return;
+    }
+    this.focusedRenderer.renderSession(activeSession, forceFooter);
+  }
+
+  private renderHydratingSession(command: string, forceFooter = true): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = this.toolRows;
+    const title = "Loading session state...";
+    const subtitle = `Reconnecting ${command}`;
+    const titleRow = Math.max(1, Math.floor(rows / 2) - 1);
+    const subtitleRow = Math.min(rows, titleRow + 2);
+    const lines = Array.from({ length: rows }, (_, i) => {
+      const row = i + 1;
+      if (row === titleRow) return this.centerInWidth(`\x1b[1m${title}\x1b[0m`, cols);
+      if (row === subtitleRow) return this.centerInWidth(`\x1b[2m${subtitle}\x1b[0m`, cols);
+      return "";
+    });
+    this.terminalHost.setupScrollRegion(this.footerHeight);
+    process.stdout.write("\x1b[2J\x1b[H" + lines.join("\r\n"));
+    this.renderFooter(forceFooter);
   }
 
   private focusSession(index: number): void {
@@ -2999,7 +3051,7 @@ export class Multiplexer {
         index: i,
         id: s.id,
         command: s.command,
-        status: s.status,
+        status: this.hydratingSessionIds.has(s.id) ? "hydrating" : s.status,
         active: i === this.activeIndex,
         worktreePath: wtPath,
         label,
@@ -3313,6 +3365,15 @@ export class Multiplexer {
   /** Terminal rows available for the tool (total minus footer) */
   private get toolRows(): number {
     return this.terminalHost.getToolRows(this.mode, this.footerHeight);
+  }
+
+  private stripAnsi(text: string): string {
+    return text.replace(/\x1b\[[0-9;]*m/g, "");
+  }
+
+  private centerInWidth(text: string, width: number): string {
+    const pad = Math.max(0, Math.floor((width - this.stripAnsi(text).length) / 2));
+    return " ".repeat(pad) + text;
   }
 
   private get footerHeight(): number {
