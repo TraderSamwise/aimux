@@ -118,6 +118,10 @@ export class ServerSession {
     return this.terminalState.getViewportAsync();
   }
 
+  getViewportFrame(): SessionTerminalViewport {
+    return this.terminalState.getViewport();
+  }
+
   getDebugState(): SessionTerminalDebugState {
     return this.terminalState.getDebugState();
   }

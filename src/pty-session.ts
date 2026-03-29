@@ -135,6 +135,10 @@ export class PtySession {
     return this.terminalState.getViewportAsync();
   }
 
+  getViewportFrame(): SessionTerminalViewport {
+    return this.terminalState.getViewport();
+  }
+
   onData(cb: (data: string) => void): void {
     this.dataListeners.push(cb);
   }

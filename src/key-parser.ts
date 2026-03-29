@@ -11,7 +11,7 @@
 export interface KeyEvent {
   /** The printable character, or empty for special keys */
   char: string;
-  /** Named key: "enter", "tab", "backspace", "escape", "up", "down", "left", "right", "home", "end", "delete", "pageup", "pagedown", "f1"-"f12" */
+  /** Named key: "enter", "tab", "backspace", "escape", "up", "down", "left", "right", "home", "end", "delete", "pageup", "pagedown", "f1"-"f12", "focusin", "focusout" */
   name: string;
   shift: boolean;
   ctrl: boolean;
@@ -259,6 +259,19 @@ function parseCSI(str: string, start: number): { event: KeyEvent; consumed: numb
 
   // Standard CSI arrow/nav: ESC [ (modifier ;)? final
   // e.g., ESC [ 1 ; 2 A = Shift+Up
+  if (finalByte === "I") {
+    return {
+      event: { char: "", name: "focusin", shift: false, ctrl: false, alt: false, raw: "" },
+      consumed,
+    };
+  }
+  if (finalByte === "O") {
+    return {
+      event: { char: "", name: "focusout", shift: false, ctrl: false, alt: false, raw: "" },
+      consumed,
+    };
+  }
+
   const name = CSI_FINAL_NAMES[finalByte];
   if (name) {
     // Modifier is in the last param if there are two parts

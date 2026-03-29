@@ -1476,6 +1476,14 @@ export class Multiplexer {
       this.renderHydratingSession(activeSession.command, forceFooter);
       return;
     }
+    if (activeSession && this.shouldRenderStartupLoading(activeSession)) {
+      this.renderLoadingSession(
+        `Starting ${activeSession.command}...`,
+        "Waiting for the first terminal frame",
+        forceFooter,
+      );
+      return;
+    }
     const debugState = activeSession ? this.getTerminalDebugState(activeSession) : undefined;
     if (activeSession && debugState) {
       debug(this.formatDebugState(`render focused ${activeSession.id}`, debugState), "reconnect");
@@ -1486,11 +1494,13 @@ export class Multiplexer {
   }
 
   private renderHydratingSession(command: string, forceFooter = true): void {
+    this.renderLoadingSession("Loading session state...", `Reconnecting ${command}`, forceFooter);
+  }
+
+  private renderLoadingSession(title: string, subtitle: string, forceFooter = true): void {
     this.focusedRenderer.invalidate();
     const cols = process.stdout.columns ?? 80;
     const rows = this.toolRows;
-    const title = "Loading session state...";
-    const subtitle = `Reconnecting ${command}`;
     const titleRow = Math.max(1, Math.floor(rows / 2) - 1);
     const subtitleRow = Math.min(rows, titleRow + 2);
     const lines = Array.from({ length: rows }, (_, i) => {
@@ -1505,6 +1515,14 @@ export class Multiplexer {
     }
     process.stdout.write(output);
     this.renderFooter(forceFooter);
+  }
+
+  private shouldRenderStartupLoading(session: ManagedSession): boolean {
+    const startedAt = this.sessionStartTimes.get(session.id);
+    if (startedAt === undefined) return false;
+    if (Date.now() - startedAt > 15_000) return false;
+    const viewport = session.getViewportFrame();
+    return !viewport.visibleLines.some((line) => line.cells.some((cell) => cell.chars.replace(/\s+/g, "").length > 0));
   }
 
   private handleFocusedResize(): void {
