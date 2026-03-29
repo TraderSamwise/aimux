@@ -1432,10 +1432,8 @@ export class Multiplexer {
 
     // Digits 1-9: always focus session directly (shortcut)
     if (key >= "1" && key <= "9") {
-      const index = parseInt(key) - 1;
-      if (index < this.sessions.length) {
-        this.focusSession(index);
-      }
+      const index = parseInt(key, 10) - 1;
+      void this.activateDashboardEntryByNumber(index);
       return;
     }
 
@@ -1657,6 +1655,29 @@ export class Multiplexer {
           this.renderDashboard();
           break;
       }
+    }
+  }
+
+  private async activateDashboardEntryByNumber(index: number): Promise<void> {
+    const entry = this.getDashboardSessionsInVisualOrder()[index];
+    if (!entry) return;
+
+    if (entry.remoteInstanceId) {
+      await this.takeoverFromDashEntryWithFeedback(entry);
+      return;
+    }
+
+    if (entry.status === "offline") {
+      const offline = this.offlineSessions.find((session) => session.id === entry.id);
+      if (offline) {
+        await this.resumeOfflineSessionWithFeedback(offline);
+      }
+      return;
+    }
+
+    const ptyIdx = this.sessions.findIndex((session) => session.id === entry.id);
+    if (ptyIdx >= 0) {
+      this.focusSession(ptyIdx);
     }
   }
 
@@ -3147,6 +3168,53 @@ export class Multiplexer {
     }
 
     return dashSessions;
+  }
+
+  private getDashboardSessionsInVisualOrder(): DashboardSession[] {
+    const allDash = this.getDashboardSessions();
+
+    let mainRepoPath: string | undefined;
+    try {
+      mainRepoPath = findMainRepo();
+    } catch {}
+
+    const normalizeWtPath = (path?: string) => (path && mainRepoPath && path === mainRepoPath ? undefined : path);
+
+    let worktreePaths: Array<string | undefined> = [];
+    try {
+      const worktrees = listAllWorktrees();
+      worktreePaths = [
+        undefined,
+        ...worktrees.filter((wt) => !wt.isBare && wt.path !== mainRepoPath).map((wt) => wt.path),
+      ];
+    } catch {
+      return allDash;
+    }
+
+    if (worktreePaths.length <= 1) {
+      return allDash;
+    }
+
+    const ordered: DashboardSession[] = [];
+    const seen = new Set<string>();
+
+    for (const worktreePath of worktreePaths) {
+      for (const session of allDash) {
+        if (seen.has(session.id)) continue;
+        if (normalizeWtPath(session.worktreePath) === worktreePath) {
+          ordered.push(session);
+          seen.add(session.id);
+        }
+      }
+    }
+
+    for (const session of allDash) {
+      if (!seen.has(session.id)) {
+        ordered.push(session);
+      }
+    }
+
+    return ordered;
   }
 
   /** Take over a remote session from a DashboardSession entry */
