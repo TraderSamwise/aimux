@@ -5,6 +5,7 @@ const TIMEOUT_MS = 1000;
 
 export type HotkeyAction =
   | { type: "dashboard" }
+  | { type: "help" }
   | { type: "focus"; index: number }
   | { type: "next" }
   | { type: "prev" }
@@ -73,6 +74,9 @@ export class HotkeyHandler {
     switch (key) {
       case "d":
         this.onAction({ type: "dashboard" });
+        return null;
+      case "?":
+        this.onAction({ type: "help" });
         return null;
       case "n":
         this.onAction({ type: "next" });

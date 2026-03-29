@@ -114,6 +114,7 @@ export class Multiplexer {
   private graveyardActive = false;
   private graveyardEntries: SessionState[] = [];
   private metaDashboardActive = false;
+  private helpActive = false;
   /** Quick switcher overlay state */
   private switcherActive = false;
   private switcherIndex = 0;
@@ -501,6 +502,10 @@ export class Multiplexer {
         this.handleMetaDashboardKey(data);
         return;
       }
+      if (this.helpActive) {
+        this.handleHelpKey(data);
+        return;
+      }
       if (this.graveyardActive) {
         this.handleGraveyardKey(data);
         return;
@@ -594,6 +599,10 @@ export class Multiplexer {
       }
       if (this.metaDashboardActive) {
         this.handleMetaDashboardKey(data);
+        return;
+      }
+      if (this.helpActive) {
+        this.handleHelpKey(data);
         return;
       }
       if (this.graveyardActive) {
@@ -748,6 +757,10 @@ export class Multiplexer {
         this.handleMetaDashboardKey(data);
         return;
       }
+      if (this.helpActive) {
+        this.handleHelpKey(data);
+        return;
+      }
       if (this.graveyardActive) {
         this.handleGraveyardKey(data);
         return;
@@ -882,6 +895,10 @@ export class Multiplexer {
       }
       if (this.metaDashboardActive) {
         this.handleMetaDashboardKey(data);
+        return;
+      }
+      if (this.helpActive) {
+        this.handleHelpKey(data);
         return;
       }
       if (this.graveyardActive) {
@@ -1243,6 +1260,10 @@ export class Multiplexer {
         this.setMode("dashboard");
         break;
 
+      case "help":
+        this.showHelp();
+        break;
+
       case "focus":
         if (action.index < this.getScopedSessionEntries().length) {
           this.focusSession(this.getScopedSessionEntries()[action.index].index);
@@ -1334,6 +1355,9 @@ export class Multiplexer {
 
     // Keys that work at any level
     switch (key) {
+      case "?":
+        this.showHelp();
+        return;
       case "c":
         this.showToolPicker();
         return;
@@ -2460,6 +2484,96 @@ export class Multiplexer {
         process.stdout.write(this.sessions[this.activeIndex].getScreenState());
       }
       this.renderFooter();
+    }
+  }
+
+  private redrawCurrentView(): void {
+    if (this.mode === "dashboard") {
+      this.renderDashboard();
+      return;
+    }
+
+    this.setupScrollRegion();
+    if (this.sessions[this.activeIndex]) {
+      process.stdout.write(this.sessions[this.activeIndex].getScreenState());
+    }
+    this.renderFooter();
+  }
+
+  private showHelp(): void {
+    this.helpActive = true;
+    this.renderHelp();
+  }
+
+  private dismissHelp(): void {
+    this.helpActive = false;
+    this.redrawCurrentView();
+  }
+
+  private renderHelp(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const lines = [
+      "Help",
+      "",
+      "Focused mode",
+      "  Ctrl+A ?  show help",
+      "  Ctrl+A d  dashboard",
+      "  Ctrl+A n  next agent",
+      "  Ctrl+A p  previous agent",
+      "  Ctrl+A 1-9  focus numbered agent",
+      "  Ctrl+A s  switch agent",
+      "  Ctrl+A c  new agent",
+      "  Ctrl+A x  stop active agent",
+      "  Ctrl+A w  create worktree",
+      "  Ctrl+A W  list worktrees",
+      "  Ctrl+A v  request review",
+      "",
+      "Dashboard mode",
+      "  ?  show help",
+      "  arrows / j k n p  navigate",
+      "  Enter  focus, resume, or takeover",
+      "  Esc / d  back to focused session",
+      "  c  new agent",
+      "  w  create worktree",
+      "  W  worktree list",
+      "  x  stop agent or remove worktree",
+      "  r  name agent",
+      "  m  migrate agent",
+      "  g  graveyard",
+      "  a  all projects",
+      "  q  quit",
+      "",
+      "Esc, Enter, or ? to close",
+    ];
+
+    const contentWidth = Math.max(36, Math.min(cols - 6, Math.max(...lines.map((line) => line.length))));
+    const boxWidth = contentWidth + 4;
+    const boxHeight = lines.length + 2;
+    const startRow = Math.max(1, Math.floor((rows - boxHeight) / 2));
+    const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
+    let output = "\x1b7";
+    for (let i = 0; i < boxHeight; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === boxHeight - 1) {
+        output += `\x1b[44;97m${" ".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1] ?? "";
+        output += `\x1b[44;97m  ${line.padEnd(contentWidth)}  \x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleHelpKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const event = events[0];
+    const key = event.name || event.char;
+    if (key === "escape" || key === "enter" || key === "return" || key === "?") {
+      this.dismissHelp();
     }
   }
 
