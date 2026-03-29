@@ -134,6 +134,7 @@ export class Multiplexer {
   /** Sessions in the currently focused worktree (for session-level nav) */
   private dashboardWorktreeSessions: DashboardSession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
+  private footerRecoveryTimeout: ReturnType<typeof setTimeout> | null = null;
   private lastFooterSignature: string | null = null;
   private footerPlugins: FooterPluginManager;
   private footerSessionScope: "worktree" | "project";
@@ -265,6 +266,7 @@ export class Multiplexer {
     session.onData((data) => {
       if (this.mode === "focused" && this.sessions[this.activeIndex] === session) {
         process.stdout.write(data);
+        this.scheduleFooterRecovery();
       }
     });
 
@@ -3486,6 +3488,19 @@ export class Multiplexer {
   private footerFlash: string | null = null;
   private footerFlashTicks = 0;
 
+  private scheduleFooterRecovery(): void {
+    if (this.footerRecoveryTimeout) {
+      clearTimeout(this.footerRecoveryTimeout);
+    }
+
+    this.footerRecoveryTimeout = setTimeout(() => {
+      this.footerRecoveryTimeout = null;
+      if (this.mode === "focused" && this.sessions[this.activeIndex]) {
+        this.renderFooter(true);
+      }
+    }, 150);
+  }
+
   private startFooterRefresh(): void {
     if (this.footerInterval) return;
     this.renderFooter();
@@ -3535,6 +3550,10 @@ export class Multiplexer {
     if (this.footerInterval) {
       clearInterval(this.footerInterval);
       this.footerInterval = null;
+    }
+    if (this.footerRecoveryTimeout) {
+      clearTimeout(this.footerRecoveryTimeout);
+      this.footerRecoveryTimeout = null;
     }
   }
 
