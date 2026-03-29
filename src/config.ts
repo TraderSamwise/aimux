@@ -26,6 +26,8 @@ export interface WorktreeConfig {
 export interface FooterConfig {
   /** Ordered built-in footer plugins to render in the focused TUI footer. */
   plugins: string[];
+  /** Scope footer agent tabs and focused-session switching controls. */
+  sessionScope: "worktree" | "project";
 }
 
 export interface AimuxConfig {
@@ -85,6 +87,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
   },
   footer: {
     plugins: ["location", "github-pr"],
+    sessionScope: "worktree",
   },
   worktrees: {
     baseDir: ".aimux/worktrees",

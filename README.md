@@ -189,7 +189,8 @@ This creates `.aimux/config.json`. You can also create a global config at `~/.ai
 {
   "defaultTool": "claude",
   "footer": {
-    "plugins": ["location", "github-pr"]
+    "plugins": ["location", "github-pr"],
+    "sessionScope": "worktree"
   },
   "notifications": {
     "enabled": true,
@@ -211,6 +212,11 @@ Built-in footer plugins:
 
 - `location` — shows the active session's main checkout or worktree context
 - `github-pr` — if `gh` is installed and authenticated, shows the PR URL for the active branch
+
+Footer session scope:
+
+- `worktree` — footer agent tabs and focused-mode agent switching only show agents in the current worktree
+- `project` — footer agent tabs and focused-mode agent switching span the whole project
 
 ### Tool Configuration
 

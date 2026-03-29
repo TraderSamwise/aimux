@@ -134,6 +134,7 @@ export class Multiplexer {
   private dashboardWorktreeSessions: DashboardSession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
   private footerPlugins: FooterPluginManager;
+  private footerSessionScope: "worktree" | "project";
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher();
@@ -160,7 +161,9 @@ export class Multiplexer {
   constructor() {
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
-    this.footerPlugins = new FooterPluginManager(loadConfig().footer.plugins, () => {
+    const footerConfig = loadConfig().footer;
+    this.footerSessionScope = footerConfig.sessionScope;
+    this.footerPlugins = new FooterPluginManager(footerConfig.plugins, () => {
       if (this.mode === "focused") this.renderFooter();
     });
   }
@@ -1200,6 +1203,22 @@ export class Multiplexer {
     return groups;
   }
 
+  private getScopedSessionEntries(): Array<{ session: PtySession; index: number }> {
+    if (this.footerSessionScope === "project") {
+      return this.sessions.map((session, index) => ({ session, index }));
+    }
+
+    const activeSession = this.sessions[this.activeIndex];
+    if (!activeSession) {
+      return this.sessions.map((session, index) => ({ session, index }));
+    }
+
+    const activeWorktreePath = this.sessionWorktreePaths.get(activeSession.id);
+    return this.sessions
+      .map((session, index) => ({ session, index }))
+      .filter(({ session }) => this.sessionWorktreePaths.get(session.id) === activeWorktreePath);
+  }
+
   private focusSession(index: number): void {
     if (index < 0 || index >= this.sessions.length) return;
 
@@ -1224,20 +1243,28 @@ export class Multiplexer {
         break;
 
       case "focus":
-        if (action.index < this.sessions.length) {
-          this.focusSession(action.index);
+        if (action.index < this.getScopedSessionEntries().length) {
+          this.focusSession(this.getScopedSessionEntries()[action.index].index);
         }
         break;
 
       case "next":
-        if (this.sessions.length > 1) {
-          this.focusSession((this.activeIndex + 1) % this.sessions.length);
+        if (this.getScopedSessionEntries().length > 1) {
+          const scoped = this.getScopedSessionEntries();
+          const currentPos = scoped.findIndex(({ index }) => index === this.activeIndex);
+          if (currentPos >= 0) {
+            this.focusSession(scoped[(currentPos + 1) % scoped.length].index);
+          }
         }
         break;
 
       case "prev":
-        if (this.sessions.length > 1) {
-          this.focusSession((this.activeIndex - 1 + this.sessions.length) % this.sessions.length);
+        if (this.getScopedSessionEntries().length > 1) {
+          const scoped = this.getScopedSessionEntries();
+          const currentPos = scoped.findIndex(({ index }) => index === this.activeIndex);
+          if (currentPos >= 0) {
+            this.focusSession(scoped[(currentPos - 1 + scoped.length) % scoped.length].index);
+          }
         }
         break;
 
@@ -1253,7 +1280,7 @@ export class Multiplexer {
         break;
 
       case "switcher":
-        if (this.sessions.length > 1) {
+        if (this.getScopedSessionEntries().length > 1) {
           this.showSwitcher();
         }
         break;
@@ -2369,7 +2396,9 @@ export class Multiplexer {
 
   /** Get sessions in MRU order (most recently used first), only running/alive sessions */
   private getSwitcherList(): PtySession[] {
-    const alive = this.sessions.filter((s) => !s.exited);
+    const alive = this.getScopedSessionEntries()
+      .map(({ session }) => session)
+      .filter((s) => !s.exited);
     // Build MRU-ordered list: known MRU order first, then any remaining
     const ordered: PtySession[] = [];
     for (const id of this.sessionMRU) {
@@ -2438,23 +2467,27 @@ export class Multiplexer {
     const rows = process.stdout.rows ?? 24;
     const list = this.getSwitcherList();
 
+    const ellipsizeEnd = (s: string, max: number) => {
+      if (max <= 0) return "";
+      if (s.length <= max) return s;
+      if (max <= 1) return "…";
+      return `${s.slice(0, max - 1)}…`;
+    };
+
     const lines: string[] = ["Switch Agent:"];
     for (let i = 0; i < list.length; i++) {
       const s = list[i];
       const wtPath = this.sessionWorktreePaths.get(s.id);
-      const wtLabel = wtPath ? ` \x1b[2m(${wtPath.split("/").pop()})\x1b[0m` : "";
-      const current = s.id === this.sessions[this.activeIndex]?.id ? " \x1b[2m(current)\x1b[0m" : "";
-      const pointer = i === this.switcherIndex ? "\x1b[33m▸\x1b[0m " : "  ";
-      const highlight = i === this.switcherIndex ? "\x1b[1m" : "";
-      const reset = "\x1b[0m";
-      lines.push(`${pointer}${highlight}${s.command}:${s.id}${reset}${wtLabel}${current}`);
+      const wtLabel = wtPath ? ` (${wtPath.split("/").pop()})` : "";
+      const current = s.id === this.sessions[this.activeIndex]?.id ? " (current)" : "";
+      const pointer = i === this.switcherIndex ? "▸ " : "  ";
+      lines.push(`${pointer}${s.command}:${s.id}${wtLabel}${current}`);
     }
     lines.push("");
-    lines.push("  \x1b[2m[s] cycle  Enter confirm  [x] stop  Esc cancel\x1b[0m");
+    lines.push("  [s] cycle  Enter confirm  [x] stop  Esc cancel");
 
-    // Strip ANSI for width calculation
-    const strip = (str: string) => str.replace(/\x1b\[[0-9;]*m/g, "");
-    const boxWidth = Math.max(...lines.map((l) => strip(l).length)) + 4;
+    const contentWidth = Math.max(20, Math.min(cols - 6, Math.max(...lines.map((l) => l.length))));
+    const boxWidth = contentWidth + 4;
     const startRow = Math.max(1, Math.floor((rows - lines.length - 2) / 2));
     const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
 
@@ -2465,10 +2498,8 @@ export class Multiplexer {
       if (i === 0 || i === lines.length + 1) {
         output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
       } else {
-        const line = lines[i - 1];
-        const stripped = strip(line);
-        const padLen = Math.max(0, boxWidth - 2 - stripped.length);
-        output += `\x1b[44;97m  ${line}${" ".repeat(padLen)}\x1b[0m`;
+        const line = ellipsizeEnd(lines[i - 1], contentWidth);
+        output += `\x1b[44;97m  ${line.padEnd(contentWidth)}  \x1b[0m`;
       }
     }
     output += "\x1b8"; // restore cursor
@@ -3192,11 +3223,12 @@ export class Multiplexer {
 
     // Build session indicators
     const parts: string[] = [];
-    for (let i = 0; i < this.sessions.length; i++) {
-      const s = this.sessions[i];
+    const scopedSessions = this.getScopedSessionEntries();
+    for (let i = 0; i < scopedSessions.length; i++) {
+      const { session: s, index } = scopedSessions[i];
       const icon = STATUS_ICONS[s.status] ?? "?";
       const name = this.getSessionLabel(s.id) ?? s.command;
-      const activePrefix = i === this.activeIndex ? "*" : "";
+      const activePrefix = index === this.activeIndex ? "*" : "";
       parts.push(`${activePrefix}${icon} ${i + 1}:${name}`);
     }
 
