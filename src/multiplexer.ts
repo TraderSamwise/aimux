@@ -160,6 +160,7 @@ export class Multiplexer {
   private focusedResizeSettleTimeout: ReturnType<typeof setTimeout> | null = null;
   private focusedRepaintTimeout: ReturnType<typeof setTimeout> | null = null;
   private focusedRenderTimeout: ReturnType<typeof setTimeout> | null = null;
+  private terminalResizeTimeout: ReturnType<typeof setTimeout> | null = null;
   private footerWatchdogTicks = 0;
   private focusedRenderInFlight = false;
   private focusedRenderQueued = false;
@@ -554,6 +555,9 @@ export class Multiplexer {
 
     // Forward stdin through hotkey handler → active PTY
     this.onStdinData = (data: Buffer) => {
+      if (this.handleTerminalFocusEvent(data)) {
+        return;
+      }
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
         return;
@@ -616,14 +620,7 @@ export class Multiplexer {
       const cols = process.stdout.columns ?? 80;
       const rows = process.stdout.rows ?? 24;
       debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
-      for (const session of this.sessions) {
-        session.resize(cols, this.toolRows);
-      }
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.handleFocusedResize();
-      }
+      this.scheduleTerminalResize();
     };
     process.stdout.on("resize", this.onResize);
 
@@ -658,6 +655,9 @@ export class Multiplexer {
 
     // Forward stdin
     this.onStdinData = (data: Buffer) => {
+      if (this.handleTerminalFocusEvent(data)) {
+        return;
+      }
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
         return;
@@ -720,14 +720,7 @@ export class Multiplexer {
       const cols = process.stdout.columns ?? 80;
       const rows = process.stdout.rows ?? 24;
       debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
-      for (const session of this.sessions) {
-        session.resize(cols, this.toolRows);
-      }
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.handleFocusedResize();
-      }
+      this.scheduleTerminalResize();
     };
     process.stdout.on("resize", this.onResize);
 
@@ -821,6 +814,9 @@ export class Multiplexer {
     this.scheduleFocusedRepaint();
 
     this.onStdinData = (data: Buffer) => {
+      if (this.handleTerminalFocusEvent(data)) {
+        return;
+      }
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
         return;
@@ -880,14 +876,7 @@ export class Multiplexer {
       const cols = process.stdout.columns ?? 80;
       const rows = process.stdout.rows ?? 24;
       debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
-      for (const session of this.sessions) {
-        session.resize(cols, this.toolRows);
-      }
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.handleFocusedResize();
-      }
+      this.scheduleTerminalResize();
     };
     process.stdout.on("resize", this.onResize);
 
@@ -967,6 +956,9 @@ export class Multiplexer {
     this.scheduleFocusedRepaint();
 
     this.onStdinData = (data: Buffer) => {
+      if (this.handleTerminalFocusEvent(data)) {
+        return;
+      }
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
         return;
@@ -1026,14 +1018,7 @@ export class Multiplexer {
       const cols = process.stdout.columns ?? 80;
       const rows = process.stdout.rows ?? 24;
       debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
-      for (const session of this.sessions) {
-        session.resize(cols, this.toolRows);
-      }
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.handleFocusedResize();
-      }
+      this.scheduleTerminalResize();
     };
     process.stdout.on("resize", this.onResize);
 
@@ -1420,6 +1405,7 @@ export class Multiplexer {
   }
 
   private renderHydratingSession(command: string, forceFooter = true): void {
+    this.focusedRenderer.invalidate();
     const cols = process.stdout.columns ?? 80;
     const rows = this.toolRows;
     const title = "Loading session state...";
@@ -1461,7 +1447,25 @@ export class Multiplexer {
         debug(`focused resize settled: active=${activeSession.id}`, "focus-repaint");
         this.scheduleFocusedRender(true);
       }
-    }, 120);
+    }, 24);
+  }
+
+  private scheduleTerminalResize(): void {
+    if (this.terminalResizeTimeout) {
+      clearTimeout(this.terminalResizeTimeout);
+    }
+    this.terminalResizeTimeout = setTimeout(() => {
+      this.terminalResizeTimeout = null;
+      const cols = process.stdout.columns ?? 80;
+      for (const session of this.sessions) {
+        session.resize(cols, this.toolRows);
+      }
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.handleFocusedResize();
+      }
+    }, 24);
   }
 
   private scheduleFocusedRender(forceFooter = true, delayMs = 0): void {
@@ -1472,6 +1476,24 @@ export class Multiplexer {
       this.focusedRenderTimeout = null;
       void this.flushFocusedRender();
     }, delayMs);
+  }
+
+  private handleTerminalFocusEvent(data: Buffer): boolean {
+    const events = parseKeys(data);
+    if (events.length !== 1) return false;
+    const event = events[0];
+    if (event.name === "focusin") {
+      if (this.mode === "focused") {
+        this.scheduleFocusedRender(true);
+        this.scheduleFocusedRepaint(32);
+        this.scheduleFocusedRepaint(96);
+      }
+      return true;
+    }
+    if (event.name === "focusout") {
+      return true;
+    }
+    return false;
   }
 
   private async flushFocusedRender(): Promise<void> {
@@ -3662,11 +3684,13 @@ export class Multiplexer {
     if (mode === "dashboard" && prev !== "dashboard") {
       // Stop footer, reset scroll region, enter alternate screen
       this.stopFooterRefresh();
+      this.focusedRenderer.invalidate();
       this.terminalHost.resetScrollRegion();
       process.stdout.write("\x1b[?1049h");
       this.renderDashboard();
     } else if (mode === "focused" && prev === "dashboard") {
       // Leave alternate screen buffer
+      this.focusedRenderer.invalidate();
       process.stdout.write("\x1b[?1049l");
     }
   }
@@ -4084,6 +4108,10 @@ export class Multiplexer {
     if (this.focusedResizeSettleTimeout) {
       clearTimeout(this.focusedResizeSettleTimeout);
       this.focusedResizeSettleTimeout = null;
+    }
+    if (this.terminalResizeTimeout) {
+      clearTimeout(this.terminalResizeTimeout);
+      this.terminalResizeTimeout = null;
     }
     if (this.focusedRenderTimeout) {
       clearTimeout(this.focusedRenderTimeout);
