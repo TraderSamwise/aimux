@@ -9,6 +9,7 @@ export interface GlobalSession {
   status: "running" | "idle" | "waiting" | "offline";
   label?: string;
   headline?: string;
+  role?: string;
   worktreePath?: string;
   ownerPid?: number;
   isServer: boolean;
@@ -71,6 +72,7 @@ export function scanProject(projectPath: string): ProjectInfo {
   const sessions: GlobalSession[] = [];
   const seenIds = new Set<string>();
   const registryEntry = listProjects().find((entry) => entry.repoRoot === projectPath);
+  const sessionById = new Map<string, GlobalSession>();
 
   // Check both global state dir and in-repo .aimux/ for instances
   const instancesPaths = [join(getAimuxDirFor(projectPath), "instances.json")];
@@ -134,8 +136,62 @@ export function scanProject(projectPath: string): ProjectInfo {
             ownerPid: inst.pid,
             isServer,
           });
+          sessionById.set(s.id, sessions[sessions.length - 1]);
         }
       }
+    } catch {}
+  }
+
+  // Enrich live sessions with statusline.json when available.
+  const statuslinePaths = [join(getAimuxDirFor(projectPath), "statusline.json")];
+  if (registryEntry) {
+    const globalStatusline = join(getProjectStateDirById(registryEntry.id), "statusline.json");
+    if (!statuslinePaths.includes(globalStatusline)) {
+      statuslinePaths.unshift(globalStatusline);
+    }
+  }
+
+  for (const statuslinePath of statuslinePaths) {
+    if (!existsSync(statuslinePath)) continue;
+    try {
+      const stat = statSync(statuslinePath);
+      if (Date.now() - stat.mtimeMs > 10_000) continue;
+      const statusline = JSON.parse(readFileSync(statuslinePath, "utf-8")) as {
+        sessions?: Array<{
+          id: string;
+          tool?: string;
+          label?: string;
+          headline?: string;
+          status?: "running" | "idle" | "waiting" | "offline";
+          role?: string;
+        }>;
+      };
+
+      for (const s of statusline.sessions ?? []) {
+        const existing = sessionById.get(s.id);
+        if (existing) {
+          existing.tool = s.tool ?? existing.tool;
+          existing.label = s.label ?? existing.label;
+          existing.headline = s.headline ?? existing.headline;
+          existing.status = s.status ?? existing.status;
+          existing.role = s.role ?? existing.role;
+          continue;
+        }
+
+        const session: GlobalSession = {
+          id: s.id,
+          tool: s.tool ?? "unknown",
+          label: s.label,
+          headline: s.headline,
+          status: s.status ?? "idle",
+          role: s.role,
+          isServer: false,
+        };
+        sessions.push(session);
+        sessionById.set(s.id, session);
+        seenIds.add(s.id);
+      }
+      break;
     } catch {}
   }
 

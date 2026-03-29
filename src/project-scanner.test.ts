@@ -91,4 +91,36 @@ describe("project-scanner", () => {
       }),
     );
   });
+
+  it("enriches live sessions from fresh statusline data", async () => {
+    writeFileSync(
+      join(tmpHome, ".aimux", "projects", "proj-a", "statusline.json"),
+      JSON.stringify({
+        sessions: [
+          {
+            id: "session-a",
+            tool: "codex",
+            label: "chart-fix",
+            headline: "auditing meta dashboard",
+            status: "waiting",
+            role: "coder",
+          },
+        ],
+      }),
+    );
+
+    const { scanProject } = await import("./project-scanner.js");
+    const result = scanProject(projectA);
+
+    expect(result.sessions[0]).toEqual(
+      expect.objectContaining({
+        id: "session-a",
+        label: "chart-fix",
+        headline: "auditing meta dashboard",
+        status: "waiting",
+        role: "coder",
+        isServer: true,
+      }),
+    );
+  });
 });

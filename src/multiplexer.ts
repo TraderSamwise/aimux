@@ -2713,15 +2713,16 @@ export class Multiplexer {
                   ? "\x1b[36m◉\x1b[0m"
                   : "\x1b[2m○\x1b[0m";
 
-          const identity = session.label ?? session.tool;
-          const headline = session.headline ? ` \x1b[2m· ${session.headline.slice(0, 40)}\x1b[0m` : "";
+          const identity = session.label ? `${session.label} \x1b[2m(${session.tool})\x1b[0m` : session.tool;
+          const role = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
+          const headline = session.headline ? ` \x1b[2m· ${session.headline.slice(0, 48)}\x1b[0m` : "";
           const owner = session.isServer
             ? " \x1b[2;32m[server]\x1b[0m"
             : session.ownerPid
               ? ` \x1b[2m[PID ${session.ownerPid}]\x1b[0m`
               : "";
 
-          lines.push(`    ${icon} ${identity}${headline}${owner}`);
+          lines.push(`    ${icon} ${identity}${role}${headline}${owner}`);
         }
         lines.push("");
       }
@@ -2749,6 +2750,11 @@ export class Multiplexer {
 
     const event = events[0];
     const key = event.name || event.char;
+
+    if (key === "q") {
+      this.resolveRun?.(0);
+      return;
+    }
 
     if (key === "escape" || key === "a") {
       this.metaDashboardActive = false;
