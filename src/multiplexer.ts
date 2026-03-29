@@ -156,6 +156,7 @@ export class Multiplexer {
   private dashboardWorktreeSessions: DashboardSession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
   private footerRecoveryTimeout: ReturnType<typeof setTimeout> | null = null;
+  private focusedResizeSettleTimeout: ReturnType<typeof setTimeout> | null = null;
   private focusedRepaintTimeout: ReturnType<typeof setTimeout> | null = null;
   private footerWatchdogTicks = 0;
   private footerPlugins: FooterPluginManager;
@@ -463,7 +464,11 @@ export class Multiplexer {
 
   private async hydrateServerSession(
     sessionId: string,
-    session: { id: string; _hydrateSnapshot?: (snapshot: SessionTerminalSnapshot) => Promise<void> | void },
+    session: {
+      id: string;
+      resize: (cols: number, rows: number) => void;
+      _hydrateSnapshot?: (snapshot: SessionTerminalSnapshot) => Promise<void> | void;
+    },
   ): Promise<void> {
     if (!this.serverClient) {
       this.hydratingSessionIds.delete(sessionId);
@@ -471,7 +476,15 @@ export class Multiplexer {
     }
 
     try {
-      const snapshot = await this.serverClient.requestScreen(sessionId);
+      let snapshot = await this.serverClient.requestScreen(sessionId);
+      if (snapshot.lines.length === 0 && this.serverClient) {
+        const cols = process.stdout.columns ?? 80;
+        const rows = this.toolRows;
+        debug(`hydrate retry resize ${sessionId}: empty snapshot, nudging ${cols}x${rows}`, "reconnect");
+        session.resize(cols, rows);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        snapshot = await this.serverClient.requestScreen(sessionId);
+      }
       debug(
         `hydrate start ${sessionId}: viewport=${snapshot.viewportY} base=${snapshot.baseY} start=${snapshot.startLine} ` +
           `cursor=${snapshot.cursor.row},${snapshot.cursor.col} lines=${snapshot.lines.length}`,
@@ -601,13 +614,15 @@ export class Multiplexer {
     // Forward terminal resize → all PTYs + redraw footer/dashboard
     this.onResize = () => {
       const cols = process.stdout.columns ?? 80;
+      const rows = process.stdout.rows ?? 24;
+      debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
       for (const session of this.sessions) {
         session.resize(cols, this.toolRows);
       }
       if (this.mode === "dashboard") {
         this.renderDashboard();
       } else {
-        this.renderFocusedView();
+        this.handleFocusedResize();
       }
     };
     process.stdout.on("resize", this.onResize);
@@ -703,13 +718,15 @@ export class Multiplexer {
     // Forward terminal resize
     this.onResize = () => {
       const cols = process.stdout.columns ?? 80;
+      const rows = process.stdout.rows ?? 24;
+      debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
       for (const session of this.sessions) {
         session.resize(cols, this.toolRows);
       }
       if (this.mode === "dashboard") {
         this.renderDashboard();
       } else {
-        this.renderFocusedView();
+        this.handleFocusedResize();
       }
     };
     process.stdout.on("resize", this.onResize);
@@ -862,13 +879,15 @@ export class Multiplexer {
 
     this.onResize = () => {
       const cols = process.stdout.columns ?? 80;
+      const rows = process.stdout.rows ?? 24;
+      debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
       for (const session of this.sessions) {
         session.resize(cols, this.toolRows);
       }
       if (this.mode === "dashboard") {
         this.renderDashboard();
       } else {
-        this.renderFocusedView();
+        this.handleFocusedResize();
       }
     };
     process.stdout.on("resize", this.onResize);
@@ -1007,13 +1026,15 @@ export class Multiplexer {
 
     this.onResize = () => {
       const cols = process.stdout.columns ?? 80;
+      const rows = process.stdout.rows ?? 24;
+      debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
       for (const session of this.sessions) {
         session.resize(cols, this.toolRows);
       }
       if (this.mode === "dashboard") {
         this.renderDashboard();
       } else {
-        this.renderFocusedView();
+        this.handleFocusedResize();
       }
     };
     process.stdout.on("resize", this.onResize);
@@ -1381,6 +1402,12 @@ export class Multiplexer {
 
   private renderFocusedView(forceFooter = true): void {
     const activeSession = this.sessions[this.activeIndex];
+    debug(
+      `renderFocusedView: session=${activeSession?.id ?? "none"} forceFooter=${forceFooter} hydrating=${
+        activeSession ? this.hydratingSessionIds.has(activeSession.id) : false
+      }`,
+      "focus-repaint",
+    );
     if (activeSession && this.hydratingSessionIds.has(activeSession.id)) {
       this.renderHydratingSession(activeSession.command, forceFooter);
       return;
@@ -1410,6 +1437,31 @@ export class Multiplexer {
     this.terminalHost.setupScrollRegion(this.footerHeight);
     process.stdout.write("\x1b[2J\x1b[H" + lines.join("\r\n"));
     this.renderFooter(forceFooter);
+  }
+
+  private handleFocusedResize(): void {
+    const activeSession = this.sessions[this.activeIndex];
+    if (!activeSession) {
+      this.renderFocusedView();
+      return;
+    }
+
+    if (this.hydratingSessionIds.has(activeSession.id)) {
+      this.renderHydratingSession(activeSession.command, true);
+      return;
+    }
+
+    this.terminalHost.setupScrollRegion(this.footerHeight);
+    if (this.focusedResizeSettleTimeout) {
+      clearTimeout(this.focusedResizeSettleTimeout);
+    }
+    this.focusedResizeSettleTimeout = setTimeout(() => {
+      this.focusedResizeSettleTimeout = null;
+      if (this.mode === "focused" && this.sessions[this.activeIndex] === activeSession) {
+        debug(`focused resize settled: active=${activeSession.id}`, "focus-repaint");
+        void this.renderFooterAfterFlush(true);
+      }
+    }, 120);
   }
 
   private focusSession(index: number): void {
@@ -3800,6 +3852,10 @@ export class Multiplexer {
 
   private renderFooterWithCursor(cursor: { row: number; col: number }, force = true): void {
     if (this.mode !== "focused") return;
+    debug(
+      `renderFooter: force=${force} cursor=${cursor.row},${cursor.col} active=${this.sessions[this.activeIndex]?.id ?? "none"}`,
+      "focus-repaint",
+    );
     const scopedSessions = this.getScopedSessionEntries();
     const sessionChips = scopedSessions.map(({ session, index }, i) => ({
       index: i + 1,
@@ -3920,9 +3976,11 @@ export class Multiplexer {
       clearTimeout(this.footerRecoveryTimeout);
     }
 
+    debug(`scheduleFooterRecovery: active=${this.sessions[this.activeIndex]?.id ?? "none"}`, "focus-repaint");
     this.footerRecoveryTimeout = setTimeout(() => {
       this.footerRecoveryTimeout = null;
       if (this.mode === "focused" && this.sessions[this.activeIndex]) {
+        debug(`footerRecoveryTimeout fired: active=${this.sessions[this.activeIndex].id}`, "focus-repaint");
         void this.renderFooterAfterFlush(true);
       }
     }, 150);
@@ -3936,8 +3994,8 @@ export class Multiplexer {
     this.focusedRepaintTimeout = setTimeout(() => {
       this.focusedRepaintTimeout = null;
       if (this.mode === "focused" && this.sessions[this.activeIndex]) {
-        debug(`deferred focused repaint for ${this.sessions[this.activeIndex].id}`, "reconnect");
-        this.renderFocusedView(true);
+        debug(`deferred focused footer settle for ${this.sessions[this.activeIndex].id}`, "reconnect");
+        void this.renderFooterAfterFlush(true);
       }
     }, delayMs);
   }
@@ -3987,6 +4045,12 @@ export class Multiplexer {
 
       if (this.mode === "focused") {
         const forceWatchdogRepaint = this.footerWatchdogTicks % 3 === 0;
+        if (forceWatchdogRepaint) {
+          debug(
+            `footerWatchdog repaint: active=${this.sessions[this.activeIndex]?.id ?? "none"} tick=${this.footerWatchdogTicks}`,
+            "focus-repaint",
+          );
+        }
         void this.renderFooterAfterFlush(forceWatchdogRepaint);
       }
     }, 1000);
@@ -4001,6 +4065,10 @@ export class Multiplexer {
     if (this.footerRecoveryTimeout) {
       clearTimeout(this.footerRecoveryTimeout);
       this.footerRecoveryTimeout = null;
+    }
+    if (this.focusedResizeSettleTimeout) {
+      clearTimeout(this.focusedResizeSettleTimeout);
+      this.focusedResizeSettleTimeout = null;
     }
   }
 
