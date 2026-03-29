@@ -3164,8 +3164,7 @@ export class Multiplexer {
     }
 
     const left = ` ${parts.join("  ")}`;
-    const cwd = process.cwd().replace(homedir(), "~");
-    const right = `${cwd}  ^A ? help `;
+    const right = `${this.getActiveSessionLocationLabel()}  ^A ? help `;
 
     // Calculate visible lengths (strip ANSI for padding)
     const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -3177,6 +3176,41 @@ export class Multiplexer {
 
     // Save cursor, move to footer row, draw, restore cursor
     process.stdout.write(`\x1b7` + `\x1b[${rows};1H` + footerContent + `\x1b8`);
+  }
+
+  private getActiveSessionLocationLabel(): string {
+    const activeSession = this.sessions[this.activeIndex];
+    if (!activeSession) {
+      return `${process.cwd().replace(homedir(), "~")}`;
+    }
+
+    const worktreePath = this.sessionWorktreePaths.get(activeSession.id);
+    let mainRepoPath: string | undefined;
+    try {
+      mainRepoPath = findMainRepo();
+    } catch {}
+
+    if (!worktreePath || (mainRepoPath && worktreePath === mainRepoPath)) {
+      try {
+        const worktrees = listAllWorktrees();
+        const mainWorktree =
+          (mainRepoPath ? worktrees.find((wt) => wt.path === mainRepoPath) : worktrees[0]) ?? worktrees[0];
+        if (mainWorktree) {
+          return `Main Checkout · ${mainWorktree.branch}`;
+        }
+      } catch {}
+      return `Main Checkout · ${process.cwd().replace(homedir(), "~")}`;
+    }
+
+    try {
+      const worktrees = listAllWorktrees(worktreePath);
+      const current = worktrees.find((wt) => wt.path === worktreePath);
+      if (current) {
+        return `Worktree · ${current.name} · ${current.branch}`;
+      }
+    } catch {}
+
+    return `Worktree · ${worktreePath.replace(homedir(), "~")}`;
   }
 
   /** Track previous statuses for notification on transition */
