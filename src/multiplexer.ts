@@ -133,6 +133,7 @@ export class Multiplexer {
   /** Sessions in the currently focused worktree (for session-level nav) */
   private dashboardWorktreeSessions: DashboardSession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
+  private lastFooterSignature: string | null = null;
   private footerPlugins: FooterPluginManager;
   private footerSessionScope: "worktree" | "project";
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -164,7 +165,7 @@ export class Multiplexer {
     const footerConfig = loadConfig().footer;
     this.footerSessionScope = footerConfig.sessionScope;
     this.footerPlugins = new FooterPluginManager(footerConfig.plugins, () => {
-      if (this.mode === "focused") this.renderFooter();
+      if (this.mode === "focused") this.renderFooter(false);
     });
   }
 
@@ -3195,7 +3196,7 @@ export class Multiplexer {
   }
 
   /** Render the status footer in the reserved bottom row */
-  private renderFooter(): void {
+  private renderFooter(force = true): void {
     if (this.mode !== "focused") return;
 
     const cols = process.stdout.columns ?? 80;
@@ -3267,6 +3268,20 @@ export class Multiplexer {
       usedPluginWidth += separatorWidth + fitted.length;
     }
     const pluginRow = renderedPluginParts.join("  ");
+    const signature = JSON.stringify({
+      cols,
+      rows,
+      footerHeight,
+      tabsRow,
+      pluginParts: renderedPluginParts.map((part) => stripTerminalCodes(part)),
+      cursor,
+    });
+
+    if (!force && signature === this.lastFooterSignature) {
+      return;
+    }
+
+    this.lastFooterSignature = signature;
 
     // Draw footer rows, then restore the tool cursor explicitly.
     if (footerHeight === 1) {
@@ -3355,7 +3370,6 @@ export class Multiplexer {
     this.renderFooter();
     // Refresh every 1s to pick up status changes, dispatch tasks, and check notifications
     this.footerInterval = setInterval(() => {
-      if (this.mode === "focused") this.renderFooter();
       this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
       this.writeStatuslineFile();
 
@@ -3391,6 +3405,8 @@ export class Multiplexer {
         }
         this.prevStatuses.set(session.id, curr);
       }
+
+      if (this.mode === "focused") this.renderFooter(false);
     }, 1000);
   }
 
