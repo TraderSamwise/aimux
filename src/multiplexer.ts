@@ -26,6 +26,7 @@ import {
   getStatusDir,
   getAimuxDirFor,
   getLocalAimuxDir,
+  getPlansDir,
 } from "./paths.js";
 import { debug, debugPreamble, closeDebug } from "./debug.js";
 import { createWorktree, findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
@@ -1021,8 +1022,10 @@ export class Multiplexer {
       `Your session ID is ${sessionId}.\n` +
       `- .aimux/context/${sessionId}/live.md — your recent conversation history\n` +
       `- .aimux/context/${sessionId}/summary.md — your compacted history\n` +
+      `- .aimux/plans/${sessionId}.md — your shared working plan\n` +
       "- .aimux/sessions.json — all running agents\n" +
       "- Other agent contexts are in .aimux/context/{their-session-id}/. Check sessions.json for the list.\n" +
+      "- Other agent plans are in .aimux/plans/{their-session-id}.md.\n" +
       "- .aimux/history/ — full raw conversation history (JSONL)";
 
     // Append user preamble from AIMUX.md: global (~/) then project (./)
@@ -1059,6 +1062,19 @@ export class Multiplexer {
         preamble += `\n\nYou are working in a git worktree at ${worktreePath}. Stay in this directory.`;
       }
     }
+
+    preamble +=
+      "\n\n## Planning\n" +
+      "Maintain a plan file at .aimux/plans/" +
+      sessionId +
+      ".md.\n" +
+      "Keep it current enough that other agents can audit, annotate, or continue your work.\n" +
+      "Use this structure:\n" +
+      "- Goal\n" +
+      "- Current Status\n" +
+      "- Steps\n" +
+      "- Notes\n" +
+      "Update it when your plan materially changes or when you complete a step.";
 
     preamble +=
       "\n\n## Status\n" +
@@ -1102,6 +1118,8 @@ export class Multiplexer {
     if (extraPreamble) {
       preamble += "\n" + extraPreamble;
     }
+
+    this.ensurePlanFile(sessionId, command, worktreePath);
 
     let finalArgs = preambleFlag ? [...args, ...preambleFlag, preamble] : [...args];
 
@@ -1190,6 +1208,33 @@ export class Multiplexer {
     }
 
     return session;
+  }
+
+  private ensurePlanFile(sessionId: string, command: string, worktreePath?: string): void {
+    try {
+      const plansDir = getPlansDir();
+      mkdirSync(plansDir, { recursive: true });
+      const planPath = join(plansDir, `${sessionId}.md`);
+      if (existsSync(planPath)) return;
+
+      const worktreeLabel = worktreePath ? worktreePath : "main";
+      const content =
+        `---\n` +
+        `sessionId: ${sessionId}\n` +
+        `tool: ${command}\n` +
+        `worktree: ${worktreeLabel}\n` +
+        `updatedAt: ${new Date().toISOString()}\n` +
+        `---\n\n` +
+        `# Goal\n\n` +
+        `TBD\n\n` +
+        `# Current Status\n\n` +
+        `TBD\n\n` +
+        `# Steps\n\n` +
+        `- [ ] TBD\n\n` +
+        `# Notes\n\n` +
+        `- None yet.\n`;
+      writeFileSync(planPath, content);
+    } catch {}
   }
 
   private composeToolArgs(toolCfg: { args: string[] }, actionArgs: string[], savedArgs: string[] = []): string[] {

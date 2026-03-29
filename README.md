@@ -111,9 +111,25 @@ aimux records each agent's conversation and makes it available to other agents:
 - **`.aimux/context/{session-id}/live.md`** — rolling window of recent turns
 - **`.aimux/context/{session-id}/summary.md`** — compacted history
 - **`.aimux/history/{session-id}.jsonl`** — full raw conversation log
+- **`.aimux/plans/{session-id}.md`** — canonical shared plan for that agent
 - **`.aimux/sessions.json`** — all running agents (so agents can discover each other)
 
 Agents are told about these files in their startup preamble.
+
+## Shared Plans
+
+Aimux standardizes planning per agent/session:
+
+- **Canonical path:** `.aimux/plans/{session-id}.md`
+- **Primary key:** session ID, not worktree
+- **Purpose:** lets agents read, audit, annotate, and continue each other's plans without main-checkout/worktree edge cases
+
+Each new session gets a stub plan file. Agents are instructed to keep it current using:
+
+- `Goal`
+- `Current Status`
+- `Steps`
+- `Notes`
 
 ## Task Delegation
 

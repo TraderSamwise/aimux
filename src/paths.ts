@@ -162,6 +162,10 @@ export function getProjectTeamPath(): string {
   return join(getLocalAimuxDir(), "team.json");
 }
 
+export function getPlansDir(): string {
+  return join(getLocalAimuxDir(), "plans");
+}
+
 /**
  * Escape hatch for cross-worktree operations.
  * Used by instance-registry (cross-worktree instance files) and multiplexer
