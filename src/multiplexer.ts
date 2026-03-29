@@ -2516,7 +2516,7 @@ export class Multiplexer {
   private renderHelp(): void {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    const lines = [
+    const allLines = [
       "Help",
       "",
       "Focused mode",
@@ -2550,10 +2550,26 @@ export class Multiplexer {
       "Esc, Enter, or ? to close",
     ];
 
+    const visibleRows = this.mode === "focused" ? Math.max(1, rows - this.footerHeight) : rows;
+    const maxContentRows = Math.max(6, visibleRows - 2);
+    let lines = [...allLines];
+    if (lines.length > maxContentRows) {
+      const closeLine = lines[lines.length - 1];
+      const available = Math.max(4, maxContentRows - 2);
+      lines = [...lines.slice(0, available), "...", closeLine];
+    }
+
+    const ellipsizeEnd = (s: string, max: number) => {
+      if (max <= 0) return "";
+      if (s.length <= max) return s;
+      if (max <= 1) return "…";
+      return `${s.slice(0, max - 1)}…`;
+    };
+
     const contentWidth = Math.max(36, Math.min(cols - 6, Math.max(...lines.map((line) => line.length))));
     const boxWidth = contentWidth + 4;
     const boxHeight = lines.length + 2;
-    const startRow = Math.max(1, Math.floor((rows - boxHeight) / 2));
+    const startRow = Math.max(1, Math.floor((visibleRows - boxHeight) / 2));
     const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
     let output = "\x1b7";
     for (let i = 0; i < boxHeight; i++) {
@@ -2562,7 +2578,7 @@ export class Multiplexer {
       if (i === 0 || i === boxHeight - 1) {
         output += `\x1b[44;97m${" ".repeat(boxWidth)}\x1b[0m`;
       } else {
-        const line = lines[i - 1] ?? "";
+        const line = ellipsizeEnd(lines[i - 1] ?? "", contentWidth);
         output += `\x1b[44;97m  ${line.padEnd(contentWidth)}  \x1b[0m`;
       }
     }
