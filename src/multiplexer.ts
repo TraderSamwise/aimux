@@ -139,6 +139,7 @@ export class Multiplexer {
   private footerSessionScope: "worktree" | "project";
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private instanceId = randomUUID();
+  private terminalRestored = false;
   private contextWatcher = new ContextWatcher();
   private taskDispatcher: TaskDispatcher | null = null;
   /** Maps session ID → toolConfigKey for state saving */
@@ -3783,6 +3784,26 @@ export class Multiplexer {
     }
   }
 
+  private restoreTerminalState(): void {
+    if (this.terminalRestored) return;
+    this.terminalRestored = true;
+
+    try {
+      this.resetScrollRegion();
+      this.exitRawMode();
+      // Restore common terminal modes that child TUIs may have enabled.
+      process.stdout.write(
+        "\x1b[0m" + // reset attributes
+          "\x1b[?25h" + // show cursor
+          "\x1b[?1l" + // normal cursor keys
+          "\x1b>" + // normal keypad mode
+          "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l" + // mouse/focus
+          "\x1b[?2004l" + // bracketed paste
+          "\x1b[?1049l", // leave alt screen
+      );
+    } catch {}
+  }
+
   /** Get the shared state.json path (in main repo for cross-worktree visibility). */
   private static getSharedStatePath(): string {
     return getStatePath();
@@ -3870,9 +3891,7 @@ export class Multiplexer {
       process.stdout.removeListener("resize", this.onResize);
     }
     this.hotkeys.destroy();
-    this.exitRawMode();
-    // Ensure we leave alternate screen and restore cursor
-    process.stdout.write("\x1b[?1049l\x1b[?25h");
+    this.restoreTerminalState();
   }
 
   cleanup(): void {
@@ -3887,6 +3906,10 @@ export class Multiplexer {
       this.serverClient = null;
     }
     this.teardown();
+  }
+
+  cleanupTerminalOnly(): void {
+    this.restoreTerminalState();
   }
 }
 

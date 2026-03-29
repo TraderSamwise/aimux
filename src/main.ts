@@ -27,14 +27,32 @@ program
   })
   .action(async (tool: string | undefined, args: string[], opts: { resume?: boolean; restore?: boolean }) => {
     const mux = new Multiplexer();
+    let cleanedUp = false;
+    const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
+    const cleanupAll = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      mux.cleanup();
+    };
 
     // Graceful shutdown on signals
     const shutdown = () => {
-      mux.cleanup();
+      cleanupAll();
       process.exit(0);
     };
+    process.on("exit", ensureTerminalRestored);
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
+    process.on("uncaughtException", (err) => {
+      cleanupAll();
+      console.error(err);
+      process.exit(1);
+    });
+    process.on("unhandledRejection", (reason) => {
+      cleanupAll();
+      console.error(reason);
+      process.exit(1);
+    });
 
     try {
       let exitCode: number;
@@ -47,9 +65,10 @@ program
       } else {
         exitCode = await mux.runDashboard();
       }
+      cleanupAll();
       process.exit(exitCode);
     } catch (err: unknown) {
-      mux.cleanup();
+      cleanupAll();
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`aimux: failed to spawn "${tool}": ${msg}`);
       process.exit(1);
