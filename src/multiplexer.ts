@@ -49,6 +49,9 @@ import { FocusedRenderer } from "./focused-renderer.js";
 import { FooterController } from "./footer-controller.js";
 import type { SessionTerminalDebugState } from "./session-terminal-state.js";
 import type { SessionTerminalSnapshot } from "./session-terminal-state.js";
+import { TerminalQueryResponder } from "./terminal-query-responder.js";
+import { SessionOutputPipeline } from "./session-output-pipeline.js";
+import { SessionRuntime, type SessionTransport } from "./session-runtime.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -70,7 +73,7 @@ export interface SavedState {
   sessions: SessionState[];
 }
 
-type ManagedSession = PtySession | ServerSession;
+type ManagedSession = SessionRuntime;
 
 interface WorktreeRemovalJob {
   path: string;
@@ -161,10 +164,18 @@ export class Multiplexer {
   private focusedRepaintTimeout: ReturnType<typeof setTimeout> | null = null;
   private focusedRenderTimeout: ReturnType<typeof setTimeout> | null = null;
   private terminalResizeTimeout: ReturnType<typeof setTimeout> | null = null;
+  private focusedWakeTimeout: ReturnType<typeof setTimeout> | null = null;
   private footerWatchdogTicks = 0;
   private focusedRenderInFlight = false;
   private focusedRenderQueued = false;
   private focusedRenderPendingForce = false;
+  private focusedInputTrace: {
+    sessionId: string;
+    writtenAt: number;
+    firstOutputAt?: number;
+  } | null = null;
+  private terminalQueryResponder = new TerminalQueryResponder();
+  private sessionOutputPipeline = new SessionOutputPipeline(this.terminalQueryResponder);
   private footerPlugins: FooterPluginManager;
   private footerSessionScope: "worktree" | "project";
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -284,115 +295,124 @@ export class Multiplexer {
   }
 
   private registerManagedSession(
-    session: ManagedSession,
+    session: SessionTransport,
     args: string[],
     toolConfigKey?: string,
     worktreePath?: string,
     role?: string,
     startTime?: number,
-  ): void {
-    if (this.sessions.includes(session)) return;
+  ): ManagedSession {
+    const existing = this.sessions.find((runtime) => runtime.transport === session);
+    if (existing) return existing;
 
     if (startTime !== undefined) {
       this.sessionStartTimes.set(session.id, startTime);
     }
 
-    session.onData((data) => {
-      if (this.mode === "focused" && this.sessions[this.activeIndex] === session) {
-        this.scheduleFocusedRender(true);
-      }
-    });
-
-    // Handle session exit
-    session.onExit((_code) => {
-      debug(`session exited: ${session.id} (code=${_code})`, "session");
-
-      // Detect quick crash: non-zero exit within 10s of spawn
-      const start = this.sessionStartTimes.get(session.id);
-      const uptime = start ? Date.now() - start : Infinity;
-      if (_code !== 0 && uptime < 10_000) {
-        let errorHint = "";
-        const sessionCwd = this.sessionWorktreePaths.get(session.id);
-        const searchDirs = [getProjectStateDir(), sessionCwd ? getAimuxDirFor(sessionCwd) : null].filter(
-          Boolean,
-        ) as string[];
-        for (const dir of searchDirs) {
-          if (errorHint) break;
-          try {
-            const logPath = join(dir, "recordings", `${session.id}.log`);
-            if (existsSync(logPath)) {
-              const raw = readFileSync(logPath, "utf-8");
-              const lines = raw
-                .split("\n")
-                .map((l) => l.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim())
-                .filter(Boolean);
-              const errorLine = lines.find(
-                (l) => l.includes("Error") || l.includes("error") || l.includes("unmatched") || l.includes("not found"),
-              );
-              if (errorLine) errorHint = `: ${errorLine.slice(0, 60)}`;
-            }
-          } catch {}
+    const runtime = new SessionRuntime(session, this.sessionOutputPipeline, startTime, {
+      onOutput: (data) => {
+        if (this.mode === "focused" && this.sessions[this.activeIndex] === runtime) {
+          if (this.focusedInputTrace?.sessionId === runtime.id && this.focusedInputTrace.firstOutputAt === undefined) {
+            this.focusedInputTrace.firstOutputAt = Date.now();
+            debug(
+              `input-trace output: session=${runtime.id} dt=${this.focusedInputTrace.firstOutputAt - this.focusedInputTrace.writtenAt}ms bytes=${data.length}`,
+              "focus-repaint",
+            );
+          }
+          this.scheduleFocusedRender(true);
         }
-        this.footerFlash = `\x1b[31m✗ ${session.id} crashed (code ${_code})${errorHint}\x1b[0m`;
-        this.footerFlashTicks = 8;
-        debug(`quick crash: ${session.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
-      }
-      this.sessionStartTimes.delete(session.id);
+      },
+      onExit: (_code) => {
+        debug(`session exited: ${runtime.id} (code=${_code})`, "session");
 
-      notifyComplete(session.id);
-      captureGitContext(session.id, session.command).catch(() => {});
+        const start = this.sessionStartTimes.get(runtime.id);
+        const uptime = start ? Date.now() - start : Infinity;
+        if (_code !== 0 && uptime < 10_000) {
+          let errorHint = "";
+          const sessionCwd = this.sessionWorktreePaths.get(runtime.id);
+          const searchDirs = [getProjectStateDir(), sessionCwd ? getAimuxDirFor(sessionCwd) : null].filter(
+            Boolean,
+          ) as string[];
+          for (const dir of searchDirs) {
+            if (errorHint) break;
+            try {
+              const logPath = join(dir, "recordings", `${runtime.id}.log`);
+              if (existsSync(logPath)) {
+                const raw = readFileSync(logPath, "utf-8");
+                const lines = raw
+                  .split("\n")
+                  .map((l) => l.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim())
+                  .filter(Boolean);
+                const errorLine = lines.find(
+                  (l) =>
+                    l.includes("Error") || l.includes("error") || l.includes("unmatched") || l.includes("not found"),
+                );
+                if (errorLine) errorHint = `: ${errorLine.slice(0, 60)}`;
+              }
+            } catch {}
+          }
+          this.footerFlash = `\x1b[31m✗ ${runtime.id} crashed (code ${_code})${errorHint}\x1b[0m`;
+          this.footerFlashTicks = 8;
+          debug(`quick crash: ${runtime.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
+        }
+        this.sessionStartTimes.delete(runtime.id);
 
-      const idx = this.sessions.indexOf(session);
-      if (idx === -1) return;
+        notifyComplete(runtime.id);
+        captureGitContext(runtime.id, runtime.command).catch(() => {});
 
-      this.sessions.splice(idx, 1);
-      this.writeSessionsFile();
-      this.updateContextWatcherSessions();
+        const idx = this.sessions.indexOf(runtime);
+        if (idx === -1) return;
 
-      if (this.sessions.length === 0) {
-        if (this.startedInDashboard) {
-          this.setMode("dashboard");
+        this.sessions.splice(idx, 1);
+        this.writeSessionsFile();
+        this.updateContextWatcherSessions();
+
+        if (this.sessions.length === 0) {
+          if (this.startedInDashboard) {
+            this.setMode("dashboard");
+            return;
+          }
+          this.resolveRun?.(_code);
           return;
         }
-        this.resolveRun?.(_code);
-        return;
-      }
 
-      if (this.activeIndex >= this.sessions.length) {
-        this.activeIndex = this.sessions.length - 1;
-      }
+        if (this.activeIndex >= this.sessions.length) {
+          this.activeIndex = this.sessions.length - 1;
+        }
 
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
+        if (this.mode === "dashboard") {
+          this.renderDashboard();
+        } else {
+          this.focusSession(this.activeIndex);
+        }
+      },
     });
 
     if (toolConfigKey) {
-      this.sessionToolKeys.set(session.id, toolConfigKey);
+      this.sessionToolKeys.set(runtime.id, toolConfigKey);
     }
-    this.sessionOriginalArgs.set(session.id, args);
+    this.sessionOriginalArgs.set(runtime.id, args);
     if (worktreePath) {
-      this.sessionWorktreePaths.set(session.id, worktreePath);
+      this.sessionWorktreePaths.set(runtime.id, worktreePath);
     }
     if (role) {
-      this.sessionRoles.set(session.id, role);
-    } else if (!this.sessionRoles.has(session.id)) {
+      this.sessionRoles.set(runtime.id, role);
+    } else if (!this.sessionRoles.has(runtime.id)) {
       try {
         const teamConfig = loadTeamConfig();
-        this.sessionRoles.set(session.id, teamConfig.defaultRole);
+        this.sessionRoles.set(runtime.id, teamConfig.defaultRole);
       } catch {}
     }
-    const label = this.offlineSessions.find((offline) => offline.id === session.id)?.label;
+    const label = this.offlineSessions.find((offline) => offline.id === runtime.id)?.label;
     if (label) {
-      this.sessionLabels.set(session.id, label);
+      this.sessionLabels.set(runtime.id, label);
     }
 
-    this.sessions.push(session);
+    this.sessions.push(runtime);
     this.writeSessionsFile();
     this.updateContextWatcherSessions();
     if (this.sessions.length === 1) this.contextWatcher.start();
+    return runtime;
   }
 
   private updateContextWatcherSessions(): void {
@@ -610,6 +630,16 @@ export class Multiplexer {
 
       const passthrough = this.hotkeys.feed(data);
       if (passthrough !== null) {
+        if (this.mode === "focused" && this.activeSession) {
+          this.focusedInputTrace = {
+            sessionId: this.activeSession.id,
+            writtenAt: Date.now(),
+          };
+          debug(
+            `input-trace write: session=${this.activeSession.id} bytes=${Buffer.byteLength(passthrough)}`,
+            "focus-repaint",
+          );
+        }
         this.activeSession?.write(passthrough);
       }
     };
@@ -710,6 +740,16 @@ export class Multiplexer {
 
       const passthrough = this.hotkeys.feed(data);
       if (passthrough !== null) {
+        if (this.mode === "focused" && this.activeSession) {
+          this.focusedInputTrace = {
+            sessionId: this.activeSession.id,
+            writtenAt: Date.now(),
+          };
+          debug(
+            `input-trace write: session=${this.activeSession.id} bytes=${Buffer.byteLength(passthrough)}`,
+            "focus-repaint",
+          );
+        }
         this.activeSession?.write(passthrough);
       }
     };
@@ -867,6 +907,16 @@ export class Multiplexer {
       }
       const passthrough = this.hotkeys.feed(data);
       if (passthrough !== null) {
+        if (this.mode === "focused" && this.activeSession) {
+          this.focusedInputTrace = {
+            sessionId: this.activeSession.id,
+            writtenAt: Date.now(),
+          };
+          debug(
+            `input-trace write: session=${this.activeSession.id} bytes=${Buffer.byteLength(passthrough)}`,
+            "focus-repaint",
+          );
+        }
         this.activeSession?.write(passthrough);
       }
     };
@@ -1009,6 +1059,16 @@ export class Multiplexer {
       }
       const passthrough = this.hotkeys.feed(data);
       if (passthrough !== null) {
+        if (this.mode === "focused" && this.activeSession) {
+          this.focusedInputTrace = {
+            sessionId: this.activeSession.id,
+            writtenAt: Date.now(),
+          };
+          debug(
+            `input-trace write: session=${this.activeSession.id} bytes=${Buffer.byteLength(passthrough)}`,
+            "focus-repaint",
+          );
+        }
         this.activeSession?.write(passthrough);
       }
     };
@@ -1186,11 +1246,27 @@ export class Multiplexer {
 
     let session: PtySession;
 
+    // If server is connected, register the proxy locally first so onData/onExit
+    // listeners are attached before the server can emit initial output.
+    let pendingServerSpawn:
+      | {
+          type: "spawn";
+          id: string;
+          command: string;
+          args: string[];
+          toolConfigKey: string;
+          backendSessionId?: string;
+          worktreePath?: string;
+          cwd: string;
+          cols: number;
+          rows: number;
+        }
+      | undefined;
+
     // If server is connected, spawn on server for persistent ownership
     if (this.serverClient?.connected) {
       const serverSession = this.serverClient.registerSession(sessionId, command, cols, this.toolRows, promptPatterns);
-      // Fire off the spawn request (async, but session is immediately usable for I/O)
-      this.serverClient.send({
+      pendingServerSpawn = {
         type: "spawn",
         id: sessionId,
         command,
@@ -1201,10 +1277,9 @@ export class Multiplexer {
         cwd: worktreePath ?? process.cwd(),
         cols,
         rows: this.toolRows,
-      });
+      };
       session = serverSession as any;
       this.serverSessionIds.add(sessionId);
-      debug(`spawned session on server: ${sessionId}`, "server-client");
     } else {
       session = new PtySession({
         command,
@@ -1220,6 +1295,7 @@ export class Multiplexer {
     // Store backend session ID and start time
     session.backendSessionId = backendSessionId;
     const sessionStartTime = Date.now();
+    this.sessionOutputPipeline.trackSessionStart(session.id, sessionStartTime);
 
     // For tools without sessionIdFlag, try to capture the backend session ID via filesystem
     if (!backendSessionId && toolConfigKey) {
@@ -1230,6 +1306,11 @@ export class Multiplexer {
     }
 
     this.registerManagedSession(session, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
+
+    if (pendingServerSpawn) {
+      this.serverClient!.send(pendingServerSpawn);
+      debug(`spawned session on server: ${sessionId}`, "server-client");
+    }
 
     // Focus the new session
     this.activeIndex = this.sessions.length - 1;
@@ -1484,6 +1565,22 @@ export class Multiplexer {
     const event = events[0];
     if (event.name === "focusin") {
       if (this.mode === "focused") {
+        const activeSession = this.sessions[this.activeIndex];
+        if (activeSession?.command === "codex") {
+          if (this.focusedWakeTimeout) {
+            clearTimeout(this.focusedWakeTimeout);
+          }
+          this.focusedWakeTimeout = setTimeout(() => {
+            this.focusedWakeTimeout = null;
+            if (this.mode !== "focused" || this.sessions[this.activeIndex] !== activeSession) return;
+            const cols = process.stdout.columns ?? 80;
+            debug(
+              `focus-wake resize nudge: active=${activeSession.id} cols=${cols} rows=${this.toolRows}`,
+              "focus-repaint",
+            );
+            activeSession.resize(cols, this.toolRows);
+          }, 32);
+        }
         this.scheduleFocusedRender(true);
         this.scheduleFocusedRepaint(32);
         this.scheduleFocusedRepaint(96);
@@ -1508,6 +1605,15 @@ export class Multiplexer {
     this.focusedRenderPendingForce = false;
     try {
       await this.renderFocusedView(forceFooter);
+      if (this.focusedInputTrace?.sessionId === this.sessions[this.activeIndex]?.id) {
+        debug(
+          `input-trace render: session=${this.focusedInputTrace.sessionId} ` +
+            `writeToRender=${Date.now() - this.focusedInputTrace.writtenAt}ms ` +
+            `writeToOutput=${this.focusedInputTrace.firstOutputAt ? this.focusedInputTrace.firstOutputAt - this.focusedInputTrace.writtenAt : -1}ms`,
+          "focus-repaint",
+        );
+        this.focusedInputTrace = null;
+      }
     } finally {
       this.focusedRenderInFlight = false;
       if (this.focusedRenderQueued || this.focusedRenderPendingForce) {
@@ -4108,6 +4214,10 @@ export class Multiplexer {
     if (this.focusedResizeSettleTimeout) {
       clearTimeout(this.focusedResizeSettleTimeout);
       this.focusedResizeSettleTimeout = null;
+    }
+    if (this.focusedWakeTimeout) {
+      clearTimeout(this.focusedWakeTimeout);
+      this.focusedWakeTimeout = null;
     }
     if (this.terminalResizeTimeout) {
       clearTimeout(this.terminalResizeTimeout);
