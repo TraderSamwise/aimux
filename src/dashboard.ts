@@ -6,6 +6,7 @@ export interface DashboardSession {
   index: number;
   id: string;
   command: string;
+  backendSessionId?: string;
   status: DashboardSessionStatus;
   active: boolean;
   worktreePath?: string;

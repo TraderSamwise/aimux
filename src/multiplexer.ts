@@ -1002,6 +1002,7 @@ export class Multiplexer {
     extraPreamble?: string,
     sessionIdFlag?: string[],
     worktreePath?: string,
+    backendSessionIdOverride?: string,
   ): PtySession {
     const cols = process.stdout.columns ?? 80;
 
@@ -1009,7 +1010,7 @@ export class Multiplexer {
     const sessionId = `${command}-${Math.random().toString(36).slice(2, 8)}`;
 
     // Generate a backend session UUID for tools that support it (e.g. claude --session-id)
-    const backendSessionId = sessionIdFlag ? randomUUID() : undefined;
+    const backendSessionId = backendSessionIdOverride ?? (sessionIdFlag ? randomUUID() : undefined);
 
     // Inject aimux preamble via tool-specific flag if available
     let preamble =
@@ -1804,6 +1805,7 @@ export class Multiplexer {
         index: i,
         id: s.id,
         command: s.command,
+        backendSessionId: s.backendSessionId,
         status: s.status,
         active: i === this.activeIndex,
         worktreePath: wtPath,
@@ -1862,6 +1864,7 @@ export class Multiplexer {
             index: dashSessions.length,
             id: rs.id,
             command: rs.tool,
+            backendSessionId: rs.backendSessionId,
             status: "running" as const,
             active: false,
             worktreePath:
@@ -1879,13 +1882,14 @@ export class Multiplexer {
     // Add offline sessions from previous runs
     for (const os of this.offlineSessions) {
       const alreadyShown = dashSessions.some(
-        (ds) => ds.id === os.id || (os.backendSessionId && ds.remoteBackendSessionId === os.backendSessionId),
+        (ds) => ds.id === os.id || (os.backendSessionId && ds.backendSessionId === os.backendSessionId),
       );
       if (alreadyShown) continue;
       dashSessions.push({
         index: dashSessions.length,
         id: os.id,
         command: os.command,
+        backendSessionId: os.backendSessionId,
         status: "offline" as const,
         active: false,
         worktreePath: os.worktreePath && mainRepoPath && os.worktreePath === mainRepoPath ? undefined : os.worktreePath,
@@ -3096,6 +3100,7 @@ export class Multiplexer {
         index: i,
         id: s.id,
         command: s.command,
+        backendSessionId: s.backendSessionId,
         status: this.hydratingSessionIds.has(s.id) ? "hydrating" : s.status,
         active: i === this.activeIndex,
         worktreePath: wtPath,
@@ -3117,6 +3122,7 @@ export class Multiplexer {
             index: dashSessions.length,
             id: rs.id,
             command: rs.tool,
+            backendSessionId: rs.backendSessionId,
             status: "running",
             active: false,
             worktreePath: normalizeWtPath(rs.worktreePath),
@@ -3134,7 +3140,7 @@ export class Multiplexer {
     // Add offline sessions
     for (const os of this.offlineSessions) {
       const alreadyShown = dashSessions.some(
-        (ds) => ds.id === os.id || (os.backendSessionId && ds.remoteBackendSessionId === os.backendSessionId),
+        (ds) => ds.id === os.id || (os.backendSessionId && ds.backendSessionId === os.backendSessionId),
       );
       if (alreadyShown) continue;
       // Resolve worktree name/branch for display
@@ -3156,6 +3162,7 @@ export class Multiplexer {
         index: dashSessions.length,
         id: os.id,
         command: os.command,
+        backendSessionId: os.backendSessionId,
         status: "offline" as const,
         active: false,
         worktreePath: osWtPath,
@@ -3820,6 +3827,7 @@ export class Multiplexer {
       undefined,
       undefined, // don't pass sessionIdFlag — we're resuming with existing backend ID
       session.worktreePath,
+      session.backendSessionId,
     );
   }
 
