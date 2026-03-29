@@ -11,7 +11,7 @@ import {
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { execSync, spawn } from "node:child_process";
+import { execSync, spawn, spawnSync } from "node:child_process";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
 import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
@@ -90,6 +90,16 @@ interface DashboardErrorState {
   lines: string[];
 }
 
+interface PlanEntry {
+  sessionId: string;
+  tool?: string;
+  label?: string;
+  worktree?: string;
+  updatedAt?: string;
+  path: string;
+  content: string;
+}
+
 export class Multiplexer {
   private sessions: PtySession[] = [];
   private activeIndex = 0;
@@ -122,6 +132,9 @@ export class Multiplexer {
   private graveyardActive = false;
   private graveyardEntries: SessionState[] = [];
   private metaDashboardActive = false;
+  private plansActive = false;
+  private planEntries: PlanEntry[] = [];
+  private planIndex = 0;
   private helpActive = false;
   /** Quick switcher overlay state */
   private switcherActive = false;
@@ -560,6 +573,10 @@ export class Multiplexer {
         this.handleMetaDashboardKey(data);
         return;
       }
+      if (this.plansActive) {
+        this.handlePlansKey(data);
+        return;
+      }
       if (this.helpActive) {
         this.handleHelpKey(data);
         return;
@@ -656,6 +673,10 @@ export class Multiplexer {
       }
       if (this.metaDashboardActive) {
         this.handleMetaDashboardKey(data);
+        return;
+      }
+      if (this.plansActive) {
+        this.handlePlansKey(data);
         return;
       }
       if (this.helpActive) {
@@ -816,6 +837,10 @@ export class Multiplexer {
         this.handleMetaDashboardKey(data);
         return;
       }
+      if (this.plansActive) {
+        this.handlePlansKey(data);
+        return;
+      }
       if (this.helpActive) {
         this.handleHelpKey(data);
         return;
@@ -955,6 +980,10 @@ export class Multiplexer {
       }
       if (this.metaDashboardActive) {
         this.handleMetaDashboardKey(data);
+        return;
+      }
+      if (this.plansActive) {
+        this.handlePlansKey(data);
         return;
       }
       if (this.helpActive) {
@@ -1513,6 +1542,9 @@ export class Multiplexer {
         return;
       case "g":
         this.showGraveyard();
+        return;
+      case "p":
+        this.showPlans();
         return;
       case "a":
         this.showMetaDashboard();
@@ -2584,6 +2616,201 @@ export class Multiplexer {
     }
   }
 
+  private showPlans(): void {
+    this.loadPlanEntries();
+    this.plansActive = true;
+    if (this.planIndex >= this.planEntries.length) {
+      this.planIndex = Math.max(0, this.planEntries.length - 1);
+    }
+    this.renderPlans();
+  }
+
+  private loadPlanEntries(): void {
+    const plansDir = getPlansDir();
+    const entries: PlanEntry[] = [];
+    try {
+      mkdirSync(plansDir, { recursive: true });
+      const files = readdirSync(plansDir)
+        .filter((file) => file.endsWith(".md"))
+        .sort();
+      for (const file of files) {
+        const path = join(plansDir, file);
+        const content = readFileSync(path, "utf-8");
+        const sessionId = file.replace(/\.md$/, "");
+        const frontmatter = this.parsePlanFrontmatter(content);
+        entries.push({
+          sessionId,
+          tool: frontmatter.tool,
+          label: this.getSessionLabel(sessionId),
+          worktree: frontmatter.worktree,
+          updatedAt: frontmatter.updatedAt,
+          path,
+          content,
+        });
+      }
+    } catch {}
+    entries.sort((a, b) => {
+      const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+      const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+      return bTime - aTime || a.sessionId.localeCompare(b.sessionId);
+    });
+    this.planEntries = entries;
+  }
+
+  private parsePlanFrontmatter(content: string): Record<string, string> {
+    const lines = content.split(/\r?\n/);
+    if (lines[0] !== "---") return {};
+    const data: Record<string, string> = {};
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (line === "---") break;
+      const idx = line.indexOf(":");
+      if (idx <= 0) continue;
+      data[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    }
+    return data;
+  }
+
+  private renderPlans(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const lines: string[] = [];
+    lines.push("");
+    lines.push(this.centerInWidth("\x1b[1maimux\x1b[0m — plans", cols));
+    lines.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
+    lines.push("");
+
+    if (this.planEntries.length === 0) {
+      lines.push("  No plan files found in .aimux/plans/");
+    } else {
+      lines.push("  Plans");
+      for (let i = 0; i < this.planEntries.length; i++) {
+        const plan = this.planEntries[i];
+        const selected = i === this.planIndex;
+        const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
+        const identity = plan.label ?? plan.tool ?? "unknown";
+        const worktree = plan.worktree ?? "main";
+        const updated = plan.updatedAt ? ` · ${plan.updatedAt.replace("T", " ").slice(0, 16)}` : "";
+        lines.push(`${marker}[${i + 1}] ${identity} \x1b[2m(${plan.sessionId})\x1b[0m · ${worktree}${updated}`);
+      }
+
+      const selectedPlan = this.planEntries[this.planIndex];
+      if (selectedPlan) {
+        lines.push("");
+        lines.push("  Details");
+        lines.push(`    Agent: ${selectedPlan.label ?? selectedPlan.tool ?? "unknown"} (${selectedPlan.sessionId})`);
+        lines.push(`    Tool: ${selectedPlan.tool ?? "unknown"}`);
+        lines.push(`    Worktree: ${selectedPlan.worktree ?? "main"}`);
+        if (selectedPlan.updatedAt) {
+          lines.push(`    Updated: ${selectedPlan.updatedAt}`);
+        }
+        lines.push(`    File: .aimux/plans/${selectedPlan.sessionId}.md`);
+        lines.push("");
+        lines.push("  Preview");
+        for (const previewLine of this.buildPlanPreview(selectedPlan.content, cols - 4, 10)) {
+          lines.push(`    ${previewLine}`);
+        }
+      }
+    }
+
+    lines.push("");
+    lines.push(this.centerInWidth("[↑↓] select  [e/Enter] edit  [r] refresh  [Esc] back", cols));
+    process.stdout.write("\x1b[2J\x1b[H" + lines.slice(0, rows).join("\r\n"));
+  }
+
+  private buildPlanPreview(content: string, width: number, maxLines: number): string[] {
+    const body = content.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+    const rawLines = body.length > 0 ? body.split(/\r?\n/) : ["(empty)"];
+    const preview: string[] = [];
+    for (const line of rawLines) {
+      if (preview.length >= maxLines) break;
+      const normalized = line.length > width ? `${line.slice(0, Math.max(0, width - 1))}…` : line;
+      preview.push(normalized);
+    }
+    return preview;
+  }
+
+  private handlePlansKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const key = events[0].name || events[0].char;
+
+    if (key === "escape") {
+      this.plansActive = false;
+      this.renderDashboard();
+      return;
+    }
+
+    if (key === "r") {
+      this.loadPlanEntries();
+      if (this.planIndex >= this.planEntries.length) {
+        this.planIndex = Math.max(0, this.planEntries.length - 1);
+      }
+      this.renderPlans();
+      return;
+    }
+
+    if (key === "down" || key === "j" || key === "n") {
+      if (this.planEntries.length > 1) {
+        this.planIndex = (this.planIndex + 1) % this.planEntries.length;
+        this.renderPlans();
+      }
+      return;
+    }
+
+    if (key === "up" || key === "k" || key === "p") {
+      if (this.planEntries.length > 1) {
+        this.planIndex = (this.planIndex - 1 + this.planEntries.length) % this.planEntries.length;
+        this.renderPlans();
+      }
+      return;
+    }
+
+    if (key >= "1" && key <= "9") {
+      const idx = parseInt(key, 10) - 1;
+      if (idx < this.planEntries.length) {
+        this.planIndex = idx;
+        this.renderPlans();
+      }
+      return;
+    }
+
+    if (key === "e" || key === "enter" || key === "return") {
+      const selectedPlan = this.planEntries[this.planIndex];
+      if (!selectedPlan) return;
+      this.openPlanInEditor(selectedPlan.path);
+    }
+  }
+
+  private openPlanInEditor(path: string): void {
+    const editor = process.env.VISUAL || process.env.EDITOR || "vim";
+    const shell = process.env.SHELL || "/bin/zsh";
+    const shellEscape = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+
+    this.terminalHost.resetScrollRegion();
+    this.terminalHost.exitRawMode();
+    process.stdout.write("\x1b[?1049l");
+
+    const result = spawnSync(shell, ["-lc", `${editor} ${shellEscape(path)}`], { stdio: "inherit" });
+
+    this.terminalHost.enterRawMode();
+    process.stdout.write("\x1b[?1049h");
+
+    if (result.error) {
+      this.dashboardErrorState = {
+        title: `Failed to open editor "${editor}"`,
+        lines: [result.error.message],
+      };
+    }
+
+    this.loadPlanEntries();
+    this.planIndex = Math.min(this.planIndex, Math.max(0, this.planEntries.length - 1));
+    this.renderPlans();
+    if (this.dashboardErrorState) {
+      this.renderDashboardErrorOverlay();
+    }
+  }
+
   // --- Quick Switcher (^A s) ---
 
   /** Get sessions in MRU order (most recently used first), only running/alive sessions */
@@ -2696,6 +2923,7 @@ export class Multiplexer {
       "  c  new agent",
       "  w  create worktree",
       "  W  worktree list",
+      "  p  plans",
       "  x  stop agent or remove worktree",
       "  r  name agent",
       "  m  migrate agent",
