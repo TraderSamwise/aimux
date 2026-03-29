@@ -760,7 +760,7 @@ export class Multiplexer {
         // No backend session ID — use tool's configured fallback
         resumeArgs = toolCfg.resumeFallback ?? [];
       }
-      const args = [...resumeArgs, ...saved.args];
+      const args = this.composeToolArgs(toolCfg, resumeArgs, saved.args);
       debug(`resuming ${saved.command} with backendSessionId=${bsid ?? "none (fallback)"}`, "session");
       this.createSession(
         saved.command,
@@ -770,6 +770,7 @@ export class Multiplexer {
         undefined,
         undefined,
         saved.worktreePath,
+        saved.backendSessionId,
       );
     }
 
@@ -1188,6 +1189,15 @@ export class Multiplexer {
     }
 
     return session;
+  }
+
+  private composeToolArgs(toolCfg: { args: string[] }, actionArgs: string[], savedArgs: string[] = []): string[] {
+    const baseArgs = [...(toolCfg.args ?? [])];
+    const trailingArgs =
+      baseArgs.length > 0 && savedArgs.length >= baseArgs.length && baseArgs.every((arg, idx) => savedArgs[idx] === arg)
+        ? savedArgs.slice(baseArgs.length)
+        : [...savedArgs];
+    return [...baseArgs, ...actionArgs, ...trailingArgs];
   }
 
   /**
@@ -3261,6 +3271,7 @@ export class Multiplexer {
 
     // Build resume args with the backend session ID
     const resumeArgs = toolCfg.resumeArgs.map((a: string) => a.replace("{sessionId}", target.backendSessionId));
+    const args = this.composeToolArgs(toolCfg, resumeArgs);
 
     debug(
       `taking over session ${target.id} (backend=${target.backendSessionId}) from instance ${target.fromInstanceId}`,
@@ -3268,12 +3279,13 @@ export class Multiplexer {
     );
     this.createSession(
       target.tool,
-      resumeArgs,
+      args,
       toolCfg.preambleFlag,
       toolConfigKey,
       undefined,
       undefined,
       claimed.worktreePath,
+      target.backendSessionId,
     );
 
     if (this.mode === "dashboard") {
@@ -3808,12 +3820,13 @@ export class Multiplexer {
     const toolCfg = config.tools[session.toolConfigKey];
     if (!toolCfg) return;
 
-    let args: string[];
+    let actionArgs: string[];
     if (session.backendSessionId && toolCfg.resumeArgs) {
-      args = toolCfg.resumeArgs.map((a: string) => a.replace("{sessionId}", session.backendSessionId!));
+      actionArgs = toolCfg.resumeArgs.map((a: string) => a.replace("{sessionId}", session.backendSessionId!));
     } else {
-      args = [...(toolCfg.resumeFallback ?? toolCfg.args)];
+      actionArgs = [...(toolCfg.resumeFallback ?? [])];
     }
+    const args = this.composeToolArgs(toolCfg, actionArgs, session.args);
 
     // Remove from offline list
     this.offlineSessions = this.offlineSessions.filter((s) => s.id !== session.id);
