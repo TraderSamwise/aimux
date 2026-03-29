@@ -1,11 +1,10 @@
 import * as net from "node:net";
 import { existsSync } from "node:fs";
-import pkg from "@xterm/headless";
-const { Terminal } = pkg;
 import { StatusDetector, type SessionStatus } from "./status-detector.js";
 import { getSocketPath } from "./server.js";
 import { debug } from "./debug.js";
 import stripAnsi from "strip-ansi";
+import { SessionTerminalState, type SessionTerminalSnapshot } from "./session-terminal-state.js";
 
 export { type SessionStatus } from "./status-detector.js";
 
@@ -21,7 +20,7 @@ export class ServerSession {
   private _exited = false;
   private _exitCode: number | undefined;
   private statusDetector: StatusDetector;
-  private vt: InstanceType<typeof Terminal>;
+  private terminalState: SessionTerminalState;
   private client: ServerClient;
 
   private dataListeners: Array<(data: string) => void> = [];
@@ -39,12 +38,12 @@ export class ServerSession {
     this.command = command;
     this.client = client;
     this.statusDetector = new StatusDetector(promptPatterns);
-    this.vt = new Terminal({ cols, rows, allowProposedApi: true });
+    this.terminalState = new SessionTerminalState(cols, rows);
   }
 
   /** Called by ServerClient when data arrives for this session */
   _receiveData(data: string): void {
-    this.vt.write(data);
+    this.terminalState.write(data);
     this.statusDetector.feed(stripAnsi(data));
     for (const cb of this.dataListeners) cb(data);
   }
@@ -59,8 +58,13 @@ export class ServerSession {
 
   /** Rebuild the local VT mirror from a server-provided screen snapshot. */
   _hydrateScreen(screen: string): void {
-    this.vt.write(screen);
+    this.terminalState.write(screen);
     this.statusDetector.feed(stripAnsi(screen));
+  }
+
+  _hydrateSnapshot(snapshot: SessionTerminalSnapshot): void {
+    this.terminalState.hydrateSnapshot(snapshot);
+    this.statusDetector.feed(stripAnsi(this.terminalState.getScreenState()));
   }
 
   get exited(): boolean {
@@ -88,99 +92,17 @@ export class ServerSession {
   resize(cols: number, rows: number): void {
     if (!this._exited) {
       this.client.send({ type: "resize", id: this.id, cols, rows });
-      this.vt.resize(cols, rows);
     }
+    this.terminalState.resize(cols, rows);
   }
 
   /** Reconstruct screen from local vt mirror (same as PtySession.getScreenState) */
   getScreenState(): string {
-    const buffer = this.vt.buffer.active;
-    const cols = this.vt.cols;
-    const rows = this.vt.rows;
-    let output = "\x1b[2J\x1b[H\x1b[0m";
-
-    for (let y = 0; y < rows; y++) {
-      const line = buffer.getLine(y);
-      if (!line) {
-        output += "\r\n";
-        continue;
-      }
-
-      let prevFg = -1,
-        prevBg = -1;
-      let prevBold = false,
-        prevDim = false,
-        prevItalic = false,
-        prevUnderline = false,
-        prevInverse = false;
-
-      for (let x = 0; x < cols; x++) {
-        const cell = line.getCell(x);
-        if (!cell) break;
-        const fg = cell.getFgColor(),
-          bg = cell.getBgColor();
-        const bold = cell.isBold() !== 0,
-          dim = cell.isDim() !== 0;
-        const italic = cell.isItalic() !== 0,
-          underline = cell.isUnderline() !== 0;
-        const inverse = cell.isInverse() !== 0;
-        const fgMode = cell.isFgRGB() ? "rgb" : cell.isFgPalette() ? "palette" : "default";
-        const bgMode = cell.isBgRGB() ? "rgb" : cell.isBgPalette() ? "palette" : "default";
-
-        if (
-          fg !== prevFg ||
-          bg !== prevBg ||
-          bold !== prevBold ||
-          dim !== prevDim ||
-          italic !== prevItalic ||
-          underline !== prevUnderline ||
-          inverse !== prevInverse
-        ) {
-          const sgr: number[] = [0];
-          if (bold) sgr.push(1);
-          if (dim) sgr.push(2);
-          if (italic) sgr.push(3);
-          if (underline) sgr.push(4);
-          if (inverse) sgr.push(7);
-          if (fgMode === "palette") {
-            if (fg < 8) sgr.push(30 + fg);
-            else if (fg < 16) sgr.push(90 + fg - 8);
-            else sgr.push(38, 5, fg);
-          } else if (fgMode === "rgb") sgr.push(38, 2, (fg >> 16) & 0xff, (fg >> 8) & 0xff, fg & 0xff);
-          if (bgMode === "palette") {
-            if (bg < 8) sgr.push(40 + bg);
-            else if (bg < 16) sgr.push(100 + bg - 8);
-            else sgr.push(48, 5, bg);
-          } else if (bgMode === "rgb") sgr.push(48, 2, (bg >> 16) & 0xff, (bg >> 8) & 0xff, bg & 0xff);
-          output += `\x1b[${sgr.join(";")}m`;
-          prevFg = fg;
-          prevBg = bg;
-          prevBold = bold;
-          prevDim = dim;
-          prevItalic = italic;
-          prevUnderline = underline;
-          prevInverse = inverse;
-        }
-        output += cell.getChars() || " ";
-      }
-      output += "\x1b[0m";
-      prevFg = -1;
-      prevBg = -1;
-      if (y < rows - 1) output += "\r\n";
-    }
-
-    const cursorY = buffer.cursorY + 1;
-    const cursorX = buffer.cursorX + 1;
-    output += `\x1b[${cursorY};${cursorX}H`;
-    return output;
+    return this.terminalState.getScreenState();
   }
 
   getCursorPosition(): { row: number; col: number } {
-    const buffer = this.vt.buffer.active;
-    return {
-      row: buffer.cursorY + 1,
-      col: buffer.cursorX + 1,
-    };
+    return this.terminalState.getCursorPosition();
   }
 
   onData(cb: (data: string) => void): void {
@@ -197,7 +119,7 @@ export class ServerSession {
 
   destroy(): void {
     this.statusDetector.destroy();
-    this.vt.dispose();
+    this.terminalState.dispose();
     this.kill();
   }
 }
@@ -307,7 +229,7 @@ export class ServerClient {
         const cb = this.pendingCallbacks.get(`screen:${msg.id}`);
         if (cb) {
           this.pendingCallbacks.delete(`screen:${msg.id}`);
-          cb(Buffer.from(msg.data, "base64").toString());
+          cb(JSON.parse(Buffer.from(msg.data, "base64").toString()));
         }
         break;
       }
@@ -405,11 +327,19 @@ export class ServerClient {
   }
 
   /** Request screen state for a session (async, waits for server response) */
-  async requestScreen(id: string): Promise<string> {
+  async requestScreen(id: string): Promise<SessionTerminalSnapshot> {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.pendingCallbacks.delete(`screen:${id}`);
-        resolve("\x1b[2J\x1b[H"); // fallback: blank screen
+        resolve({
+          cols: process.stdout.columns ?? 80,
+          rows: process.stdout.rows ?? 24,
+          cursor: { row: 1, col: 1 },
+          viewportY: 0,
+          baseY: 0,
+          startLine: 0,
+          lines: [],
+        });
       }, 3000);
 
       this.pendingCallbacks.set(`screen:${id}`, (data) => {

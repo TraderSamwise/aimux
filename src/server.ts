@@ -315,8 +315,8 @@ export class AimuxServer {
   private handleScreen(client: net.Socket, msg: ScreenMsg): void {
     const record = this.sessions.get(msg.id);
     if (record) {
-      const screen = record.pty.getScreenState();
-      this.send(client, { type: "screen", id: msg.id, data: Buffer.from(screen).toString("base64") });
+      const snapshot = record.pty.getTerminalSnapshot();
+      this.send(client, { type: "screen", id: msg.id, data: Buffer.from(JSON.stringify(snapshot)).toString("base64") });
     } else {
       this.send(client, { type: "error", message: `Session ${msg.id} not found` });
     }

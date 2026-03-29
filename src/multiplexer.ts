@@ -43,6 +43,9 @@ import { loadTeamConfig } from "./team.js";
 import { scanAllProjects } from "./project-scanner.js";
 import { ServerClient } from "./server-client.js";
 import { FooterPluginManager, type FooterPluginContext } from "./footer-plugins.js";
+import { TerminalHost } from "./terminal-host.js";
+import { FocusedRenderer } from "./focused-renderer.js";
+import { FooterController } from "./footer-controller.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -88,9 +91,11 @@ export class Multiplexer {
   private sessions: PtySession[] = [];
   private activeIndex = 0;
   private mode: MuxMode = "focused";
-  private rawModeWas: boolean | undefined;
   private hotkeys: HotkeyHandler;
   private dashboard: Dashboard;
+  private terminalHost: TerminalHost;
+  private focusedRenderer: FocusedRenderer;
+  private footerController: FooterController;
   private onStdinData: ((data: Buffer) => void) | null = null;
   private onResize: (() => void) | null = null;
   private resolveRun: ((code: number) => void) | null = null;
@@ -135,12 +140,10 @@ export class Multiplexer {
   private dashboardWorktreeSessions: DashboardSession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
   private footerRecoveryTimeout: ReturnType<typeof setTimeout> | null = null;
-  private lastFooterSignature: string | null = null;
   private footerPlugins: FooterPluginManager;
   private footerSessionScope: "worktree" | "project";
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private instanceId = randomUUID();
-  private terminalRestored = false;
   private contextWatcher = new ContextWatcher();
   private taskDispatcher: TaskDispatcher | null = null;
   /** Maps session ID → toolConfigKey for state saving */
@@ -163,6 +166,8 @@ export class Multiplexer {
   private serverSessionIds = new Set<string>();
 
   constructor() {
+    this.terminalHost = new TerminalHost();
+    this.footerController = new FooterController();
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
     const footerConfig = loadConfig().footer;
@@ -170,6 +175,11 @@ export class Multiplexer {
     this.footerPlugins = new FooterPluginManager(footerConfig.plugins, () => {
       if (this.mode === "focused") this.renderFooter(false);
     });
+    this.focusedRenderer = new FocusedRenderer(
+      this.terminalHost,
+      () => this.footerHeight,
+      (force = true) => this.renderFooter(force),
+    );
   }
 
   get activeSession(): PtySession | null {
@@ -388,7 +398,7 @@ export class Multiplexer {
         if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive) {
           this.renderDashboard();
         } else if (this.mode === "focused") {
-          this.renderFooter();
+          this.renderFocusedView(false);
         }
       });
       debug("connected to aimux server", "server-client");
@@ -410,8 +420,8 @@ export class Multiplexer {
         session.backendSessionId = info.backendSessionId;
         this.serverSessionIds.add(info.id);
         try {
-          const screen = await this.serverClient.requestScreen(info.id);
-          session._hydrateScreen(screen);
+          const snapshot = await this.serverClient.requestScreen(info.id);
+          session._hydrateSnapshot(snapshot);
         } catch {}
         this.registerManagedSession(
           session as any,
@@ -467,8 +477,8 @@ export class Multiplexer {
     );
 
     // Enter raw mode and set up footer
-    this.enterRawMode();
-    this.setupScrollRegion();
+    this.terminalHost.enterRawMode();
+    this.terminalHost.setupScrollRegion(this.footerHeight);
     this.startFooterRefresh();
 
     // Forward stdin through hotkey handler → active PTY
@@ -535,8 +545,7 @@ export class Multiplexer {
       if (this.mode === "dashboard") {
         this.renderDashboard();
       } else {
-        this.setupScrollRegion();
-        this.renderFooter();
+        this.renderFocusedView();
       }
     };
     process.stdout.on("resize", this.onResize);
@@ -568,7 +577,7 @@ export class Multiplexer {
     }
 
     this.writeInstructionFiles();
-    this.enterRawMode();
+    this.terminalHost.enterRawMode();
 
     // Forward stdin
     this.onStdinData = (data: Buffer) => {
@@ -634,8 +643,7 @@ export class Multiplexer {
       if (this.mode === "dashboard") {
         this.renderDashboard();
       } else {
-        this.setupScrollRegion();
-        this.renderFooter();
+        this.renderFocusedView();
       }
     };
     process.stdout.on("resize", this.onResize);
@@ -723,8 +731,8 @@ export class Multiplexer {
     }
 
     // Enter raw mode and set up input handling
-    this.enterRawMode();
-    this.setupScrollRegion();
+    this.terminalHost.enterRawMode();
+    this.terminalHost.setupScrollRegion(this.footerHeight);
     this.startFooterRefresh();
 
     this.onStdinData = (data: Buffer) => {
@@ -787,8 +795,7 @@ export class Multiplexer {
       if (this.mode === "dashboard") {
         this.renderDashboard();
       } else {
-        this.setupScrollRegion();
-        this.renderFooter();
+        this.renderFocusedView();
       }
     };
     process.stdout.on("resize", this.onResize);
@@ -863,8 +870,8 @@ export class Multiplexer {
     }
 
     // Enter raw mode and set up input handling
-    this.enterRawMode();
-    this.setupScrollRegion();
+    this.terminalHost.enterRawMode();
+    this.terminalHost.setupScrollRegion(this.footerHeight);
     this.startFooterRefresh();
 
     this.onStdinData = (data: Buffer) => {
@@ -927,8 +934,7 @@ export class Multiplexer {
       if (this.mode === "dashboard") {
         this.renderDashboard();
       } else {
-        this.setupScrollRegion();
-        this.renderFooter();
+        this.renderFocusedView();
       }
     };
     process.stdout.on("resize", this.onResize);
@@ -1240,6 +1246,10 @@ export class Multiplexer {
       .filter(({ session }) => this.sessionWorktreePaths.get(session.id) === activeWorktreePath);
   }
 
+  private renderFocusedView(forceFooter = true): void {
+    this.focusedRenderer.renderSession(this.sessions[this.activeIndex], forceFooter);
+  }
+
   private focusSession(index: number): void {
     if (index < 0 || index >= this.sessions.length) return;
 
@@ -1250,10 +1260,7 @@ export class Multiplexer {
     const sid = this.sessions[index].id;
     this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
 
-    // Set up scroll region and restore screen
-    this.setupScrollRegion();
-    process.stdout.write(this.sessions[index].getScreenState());
-    this.renderFooter();
+    this.renderFocusedView();
     this.startFooterRefresh();
   }
 
@@ -2482,11 +2489,7 @@ export class Multiplexer {
     if (this.mode === "dashboard") {
       this.renderDashboard();
     } else {
-      this.setupScrollRegion();
-      if (this.sessions[this.activeIndex]) {
-        process.stdout.write(this.sessions[this.activeIndex].getScreenState());
-      }
-      this.renderFooter();
+      this.renderFocusedView();
     }
   }
 
@@ -2496,11 +2499,7 @@ export class Multiplexer {
       return;
     }
 
-    this.setupScrollRegion();
-    if (this.sessions[this.activeIndex]) {
-      process.stdout.write(this.sessions[this.activeIndex].getScreenState());
-    }
-    this.renderFooter();
+    this.renderFocusedView();
   }
 
   private showHelp(): void {
@@ -3140,7 +3139,7 @@ export class Multiplexer {
     if (mode === "dashboard" && prev !== "dashboard") {
       // Stop footer, reset scroll region, enter alternate screen
       this.stopFooterRefresh();
-      this.resetScrollRegion();
+      this.terminalHost.resetScrollRegion();
       process.stdout.write("\x1b[?1049h");
       this.renderDashboard();
     } else if (mode === "focused" && prev === "dashboard") {
@@ -3313,121 +3312,44 @@ export class Multiplexer {
 
   /** Terminal rows available for the tool (total minus footer) */
   private get toolRows(): number {
-    const rows = process.stdout.rows ?? 24;
-    return this.mode === "focused" ? rows - this.footerHeight : rows;
+    return this.terminalHost.getToolRows(this.mode, this.footerHeight);
   }
 
   private get footerHeight(): number {
-    return this.footerPlugins.enabledCount > 0 ? 2 : 1;
-  }
-
-  /** Set scroll region to exclude footer row */
-  private setupScrollRegion(): void {
-    const rows = process.stdout.rows ?? 24;
-    const toolRows = rows - this.footerHeight;
-    process.stdout.write(`\x1b[1;${toolRows}r`);
-    process.stdout.write(`\x1b[${toolRows};1H`);
-  }
-
-  /** Reset scroll region to full terminal */
-  private resetScrollRegion(): void {
-    process.stdout.write("\x1b[r");
+    return this.footerController.getFooterHeight(this.footerPlugins.enabledCount);
   }
 
   /** Render the status footer in the reserved bottom row */
   private renderFooter(force = true): void {
     if (this.mode !== "focused") return;
-
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const stripTerminalCodes = (s: string) =>
-      s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\x1b]8;;.*?(?:\x07|\x1b\\)/g, "");
-    const ellipsizeEnd = (s: string, max: number) => {
-      if (max <= 0) return "";
-      if (s.length <= max) return s;
-      if (max <= 1) return "…";
-      return `${s.slice(0, max - 1)}…`;
-    };
-    const formatHyperlink = (text: string, href?: string) => (href ? `\x1b]8;;${href}\x07${text}\x1b]8;;\x07` : text);
-    const fitPlainText = (text: string) => ellipsizeEnd(text, cols);
-    const drawRow = (row: number, content: string) => `\x1b[${row};1H\x1b[2K${content}`;
     const activeSession = this.sessions[this.activeIndex];
     const cursor =
       activeSession && typeof (activeSession as any).getCursorPosition === "function"
         ? (activeSession as any).getCursorPosition()
         : { row: 1, col: 1 };
-
-    const STATUS_ICONS: Record<string, string> = {
-      running: "●",
-      idle: "●",
-      waiting: "◉",
-      exited: "○",
-    };
-
-    // Build session indicators
-    const parts: string[] = [];
     const scopedSessions = this.getScopedSessionEntries();
-    for (let i = 0; i < scopedSessions.length; i++) {
-      const { session: s, index } = scopedSessions[i];
-      const icon = STATUS_ICONS[s.status] ?? "?";
-      const name = this.getSessionLabel(s.id) ?? s.command;
-      const activePrefix = index === this.activeIndex ? "*" : "";
-      parts.push(`${activePrefix}${icon} ${i + 1}:${name}`);
-    }
+    const sessionChips = scopedSessions.map(({ session, index }, i) => ({
+      index: i + 1,
+      name: this.getSessionLabel(session.id) ?? session.command,
+      status: session.status,
+      active: index === this.activeIndex,
+    }));
 
     const activeSessionForHeadline = this.sessions[this.activeIndex];
-    if (activeSessionForHeadline) {
-      const headline = this.deriveHeadline(activeSessionForHeadline.id);
-      if (headline) {
-        parts.push(headline);
-      }
-    }
-
-    const counts = this.taskDispatcher?.getTaskCounts();
-    if (counts && (counts.pending > 0 || counts.assigned > 0)) {
-      parts.push(`[T:${counts.pending}p/${counts.assigned}a]`);
-    }
-    if (this.footerFlash) {
-      parts.push(stripTerminalCodes(this.footerFlash));
-    }
-
-    const footerHeight = this.footerHeight;
-    const tabsRow = fitPlainText(` ${parts.join("  ")}`.replace(/\s+/g, " ").trimStart());
+    const headline = activeSessionForHeadline ? this.deriveHeadline(activeSessionForHeadline.id) : undefined;
     const pluginParts = this.footerPlugins.render(this.getActiveSessionFooterContext());
-    const helpText = "";
-    const renderedPluginParts: string[] = [];
-    let usedPluginWidth = helpText.length;
-    for (const plugin of pluginParts) {
-      const separatorWidth = renderedPluginParts.length > 0 ? 2 : 0;
-      const remaining = cols - usedPluginWidth - separatorWidth;
-      if (remaining <= 1) break;
-      const fitted = ellipsizeEnd(plugin.text, remaining);
-      if (!fitted) break;
-      renderedPluginParts.push(formatHyperlink(fitted, plugin.href));
-      usedPluginWidth += separatorWidth + fitted.length;
-    }
-    const pluginRow = renderedPluginParts.join("  ");
-    const signature = JSON.stringify({
-      cols,
-      rows,
-      footerHeight,
-      tabsRow,
-      pluginParts: renderedPluginParts.map((part) => stripTerminalCodes(part)),
-      cursor,
-    });
-
-    if (!force && signature === this.lastFooterSignature) {
-      return;
-    }
-
-    this.lastFooterSignature = signature;
-
-    // Draw footer rows, then restore the tool cursor explicitly.
-    if (footerHeight === 1) {
-      process.stdout.write(`${drawRow(rows, tabsRow)}\x1b[${cursor.row};${cursor.col}H`);
-      return;
-    }
-    process.stdout.write(`${drawRow(rows - 1, tabsRow)}${drawRow(rows, pluginRow)}\x1b[${cursor.row};${cursor.col}H`);
+    this.footerController.render(
+      {
+        enabledPluginCount: this.footerPlugins.enabledCount,
+        cursor,
+        sessionChips,
+        headline,
+        taskCounts: this.taskDispatcher?.getTaskCounts(),
+        flash: this.footerFlash,
+        pluginItems: pluginParts,
+      },
+      force,
+    );
   }
 
   private getActiveSessionFooterContext(): FooterPluginContext {
@@ -3804,41 +3726,6 @@ export class Multiplexer {
     }));
   }
 
-  private enterRawMode(): void {
-    if (process.stdin.isTTY) {
-      this.rawModeWas = process.stdin.isRaw;
-      process.stdin.setRawMode(true);
-      process.stdin.resume();
-    }
-  }
-
-  private exitRawMode(): void {
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(this.rawModeWas ?? false);
-      process.stdin.pause();
-    }
-  }
-
-  private restoreTerminalState(): void {
-    if (this.terminalRestored) return;
-    this.terminalRestored = true;
-
-    try {
-      this.resetScrollRegion();
-      this.exitRawMode();
-      // Restore common terminal modes that child TUIs may have enabled.
-      process.stdout.write(
-        "\x1b[0m" + // reset attributes
-          "\x1b[?25h" + // show cursor
-          "\x1b[?1l" + // normal cursor keys
-          "\x1b>" + // normal keypad mode
-          "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l" + // mouse/focus
-          "\x1b[?2004l" + // bracketed paste
-          "\x1b[?1049l", // leave alt screen
-      );
-    } catch {}
-  }
-
   /** Get the shared state.json path (in main repo for cross-worktree visibility). */
   private static getSharedStatePath(): string {
     return getStatePath();
@@ -3915,7 +3802,7 @@ export class Multiplexer {
     this.saveState();
     this.stopFooterRefresh();
     this.contextWatcher.stop();
-    this.resetScrollRegion();
+    this.terminalHost.resetScrollRegion();
     this.removeSessionsFile();
     this.removeInstructionFiles();
     closeDebug();
@@ -3926,7 +3813,7 @@ export class Multiplexer {
       process.stdout.removeListener("resize", this.onResize);
     }
     this.hotkeys.destroy();
-    this.restoreTerminalState();
+    this.terminalHost.restoreTerminalState();
   }
 
   cleanup(): void {
@@ -3944,7 +3831,7 @@ export class Multiplexer {
   }
 
   cleanupTerminalOnly(): void {
-    this.restoreTerminalState();
+    this.terminalHost.restoreTerminalState();
   }
 }
 

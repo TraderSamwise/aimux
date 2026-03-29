@@ -34,6 +34,26 @@ class MockPtySession {
     return "";
   }
 
+  getTerminalSnapshot(): {
+    cols: number;
+    rows: number;
+    cursor: { row: number; col: number };
+    viewportY: number;
+    baseY: number;
+    startLine: number;
+    lines: string[];
+  } {
+    return {
+      cols: 120,
+      rows: 40,
+      cursor: { row: 1, col: 1 },
+      viewportY: 0,
+      baseY: 0,
+      startLine: 0,
+      lines: [],
+    };
+  }
+
   destroy(): void {
     this.emitExit(0);
   }
