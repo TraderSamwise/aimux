@@ -42,7 +42,6 @@ import {
 import { TaskDispatcher, requestReview } from "./task-dispatcher.js";
 import { loadTeamConfig } from "./team.js";
 import { scanAllProjects } from "./project-scanner.js";
-import { ServerSession } from "./server-client.js";
 import { FooterPluginManager, type FooterPluginContext } from "./footer-plugins.js";
 import { TerminalHost } from "./terminal-host.js";
 import { FocusedRenderer } from "./focused-renderer.js";
