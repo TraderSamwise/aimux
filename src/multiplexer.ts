@@ -1499,16 +1499,19 @@ export class Multiplexer {
   private handleFocusedResize(): void {
     const activeSession = this.sessions[this.activeIndex];
     if (!activeSession) {
+      this.focusedRenderer.invalidate();
       this.scheduleFocusedRender();
       return;
     }
 
     const loadingScreen = activeSession.getLoadingScreen();
     if (loadingScreen) {
+      this.focusedRenderer.invalidate();
       this.renderLoadingSession(loadingScreen.title, loadingScreen.subtitle, true);
       return;
     }
 
+    this.focusedRenderer.invalidate();
     activeSession.handleFocusedResize(
       () => this.mode === "focused" && this.sessions[this.activeIndex] === activeSession,
     );
@@ -1573,6 +1576,7 @@ export class Multiplexer {
       if (this.mode === "focused") {
         const activeSession = this.sessions[this.activeIndex];
         if (activeSession) {
+          this.focusedRenderer.invalidate();
           activeSession.handleFocusIn(process.stdout.columns ?? 80, this.toolRows, () => {
             return this.mode === "focused" && this.sessions[this.activeIndex] === activeSession;
           });
