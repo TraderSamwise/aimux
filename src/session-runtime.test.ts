@@ -58,6 +58,10 @@ describe("SessionRuntime", () => {
     const transport = createTransport({ viewport: makeViewport("   ") });
     const runtime = new SessionRuntime(transport, new SessionOutputPipeline(new TerminalQueryResponder()), Date.now());
     expect(runtime.shouldRenderStartupLoading()).toBe(true);
+    expect(runtime.getLoadingScreen()).toEqual({
+      title: "Starting codex...",
+      subtitle: "Waiting for the first terminal frame",
+    });
   });
 
   it("stops reporting startup loading once visible content exists", () => {
@@ -100,5 +104,44 @@ describe("SessionRuntime", () => {
     await vi.advanceTimersByTimeAsync(32);
     expect(resize).toHaveBeenCalledWith(120, 40);
     vi.useRealTimers();
+  });
+
+  it("tracks hydration state and emits hydration events", () => {
+    const onEvent = vi.fn<(event: SessionRuntimeEvent) => void>();
+    const transport = createTransport();
+    const runtime = new SessionRuntime(transport, new SessionOutputPipeline(new TerminalQueryResponder()), Date.now(), {
+      onEvent,
+    });
+
+    expect(runtime.isHydrating).toBe(false);
+    runtime.setHydrating(true);
+    expect(runtime.isHydrating).toBe(true);
+    expect(runtime.getLoadingScreen()).toEqual({
+      title: "Loading session state...",
+      subtitle: "Reconnecting codex",
+    });
+    expect(onEvent).toHaveBeenCalledWith({ type: "hydrationChanged", hydrating: true });
+
+    runtime.setHydrating(false);
+    expect(runtime.isHydrating).toBe(false);
+    expect(onEvent).toHaveBeenCalledWith({ type: "hydrationChanged", hydrating: false });
+  });
+
+  it("emits frameReady when the first real frame appears", () => {
+    const onEvent = vi.fn<(event: SessionRuntimeEvent) => void>();
+    let viewport = makeViewport("   ");
+    const transport = createTransport({
+      getViewportFrame: () => viewport,
+    }) as SessionTransport & { emitData: (data: string) => void };
+    const runtime = new SessionRuntime(transport, new SessionOutputPipeline(new TerminalQueryResponder()), Date.now(), {
+      onEvent,
+    });
+
+    expect(runtime.getLoadingScreen()).not.toBeNull();
+    viewport = makeViewport("OpenAI Codex");
+    transport.emitData("screen");
+
+    expect(onEvent).toHaveBeenCalledWith({ type: "loadingChanged", loading: null });
+    expect(onEvent).toHaveBeenCalledWith({ type: "frameReady" });
   });
 });

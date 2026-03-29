@@ -28,12 +28,22 @@ export type SessionRuntimeEvent =
   | { type: "output"; data: string }
   | { type: "exit"; code: number }
   | { type: "renderRequested"; forceFooter?: boolean; delayMs?: number }
-  | { type: "repaintRequested"; delayMs?: number };
+  | { type: "repaintRequested"; delayMs?: number }
+  | { type: "hydrationChanged"; hydrating: boolean }
+  | { type: "loadingChanged"; loading: SessionLoadingScreen | null }
+  | { type: "frameReady" };
+
+export interface SessionLoadingScreen {
+  title: string;
+  subtitle: string;
+}
 
 export class SessionRuntime {
   private readonly startedAt?: number;
   private focusedResizeSettleTimeout: ReturnType<typeof setTimeout> | null = null;
   private focusedWakeTimeout: ReturnType<typeof setTimeout> | null = null;
+  private hydrating = false;
+  private loadingKey: string | null = null;
 
   constructor(
     readonly transport: SessionTransport,
@@ -45,6 +55,7 @@ export class SessionRuntime {
     if (startTime !== undefined) {
       pipeline.trackSessionStart(transport.id, startTime);
     }
+    this.loadingKey = this.getLoadingKey(this.getLoadingScreen());
 
     transport.onData((data) => {
       pipeline.handleOutput(
@@ -57,6 +68,7 @@ export class SessionRuntime {
         data,
       );
       hooks.onEvent?.({ type: "output", data });
+      this.refreshLoadingState();
     });
 
     transport.onExit((code) => {
@@ -97,6 +109,10 @@ export class SessionRuntime {
     return this.startedAt;
   }
 
+  get isHydrating(): boolean {
+    return this.hydrating;
+  }
+
   write(data: string): void {
     this.transport.write(data);
   }
@@ -113,7 +129,24 @@ export class SessionRuntime {
     return this.transport.getViewportFrame();
   }
 
+  getLoadingScreen(now = Date.now()): SessionLoadingScreen | null {
+    if (this.hydrating) {
+      return {
+        title: "Loading session state...",
+        subtitle: `Reconnecting ${this.command}`,
+      };
+    }
+    if (this.shouldRenderStartupLoading(now)) {
+      return {
+        title: `Starting ${this.command}...`,
+        subtitle: "Waiting for the first terminal frame",
+      };
+    }
+    return null;
+  }
+
   shouldRenderStartupLoading(now = Date.now()): boolean {
+    if (this.hydrating) return false;
     if (this.startedAt === undefined) return false;
     if (now - this.startedAt > 15_000) return false;
     const viewport = this.transport.getViewportFrame();
@@ -158,6 +191,29 @@ export class SessionRuntime {
       clearTimeout(this.focusedWakeTimeout);
       this.focusedWakeTimeout = null;
     }
+  }
+
+  setHydrating(hydrating: boolean): void {
+    if (this.hydrating === hydrating) return;
+    this.hydrating = hydrating;
+    this.hooks.onEvent?.({ type: "hydrationChanged", hydrating });
+    this.refreshLoadingState();
+  }
+
+  private refreshLoadingState(): void {
+    const loading = this.getLoadingScreen();
+    const nextKey = this.getLoadingKey(loading);
+    if (nextKey === this.loadingKey) return;
+    const previousLoading = this.loadingKey !== null;
+    this.loadingKey = nextKey;
+    this.hooks.onEvent?.({ type: "loadingChanged", loading });
+    if (previousLoading && loading === null) {
+      this.hooks.onEvent?.({ type: "frameReady" });
+    }
+  }
+
+  private getLoadingKey(loading: SessionLoadingScreen | null): string | null {
+    return loading ? `${loading.title}\u0000${loading.subtitle}` : null;
   }
 
   onExit(cb: (code: number) => void): void {

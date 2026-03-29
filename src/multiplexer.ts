@@ -42,16 +42,16 @@ import {
 import { TaskDispatcher, requestReview } from "./task-dispatcher.js";
 import { loadTeamConfig } from "./team.js";
 import { scanAllProjects } from "./project-scanner.js";
-import { ServerClient, ServerSession } from "./server-client.js";
+import { ServerSession } from "./server-client.js";
 import { FooterPluginManager, type FooterPluginContext } from "./footer-plugins.js";
 import { TerminalHost } from "./terminal-host.js";
 import { FocusedRenderer } from "./focused-renderer.js";
 import { FooterController } from "./footer-controller.js";
 import type { SessionTerminalDebugState } from "./session-terminal-state.js";
-import type { SessionTerminalSnapshot } from "./session-terminal-state.js";
 import { TerminalQueryResponder } from "./terminal-query-responder.js";
 import { SessionOutputPipeline } from "./session-output-pipeline.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "./session-runtime.js";
+import { ServerRuntimeManager } from "./server-runtime-manager.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -192,12 +192,8 @@ export class Multiplexer {
   private sessionLabels = new Map<string, string>();
   /** Offline sessions from previous runs (loaded from state.json) */
   private offlineSessions: SessionState[] = [];
-  /** Server client for persistent PTY ownership */
-  private serverClient: ServerClient | null = null;
-  /** Session IDs owned by the server (don't kill on TUI exit) */
-  private serverSessionIds = new Set<string>();
-  /** Server sessions discovered before their terminal snapshot has hydrated locally */
-  private hydratingSessionIds = new Set<string>();
+  /** Server-backed runtime ownership and reconnect state */
+  private serverRuntime = new ServerRuntimeManager();
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -244,8 +240,8 @@ export class Multiplexer {
   private async updateSessionLabel(sessionId: string, label?: string): Promise<void> {
     this.applySessionLabel(sessionId, label);
 
-    if (this.serverSessionIds.has(sessionId) && this.serverClient?.connected) {
-      const ok = await this.serverClient.renameSession(sessionId, label?.trim() || undefined);
+    if (this.serverRuntime.isServerSession(sessionId) && this.serverRuntime.connected) {
+      const ok = await this.serverRuntime.renameSession(sessionId, label?.trim() || undefined);
       if (!ok) {
         this.footerFlash = `Failed to rename ${sessionId}`;
         this.footerFlashTicks = 3;
@@ -358,6 +354,37 @@ export class Multiplexer {
       return;
     }
 
+    if (event.type === "hydrationChanged") {
+      if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
+        this.renderDashboard();
+      } else if (this.mode === "focused" && this.sessions[this.activeIndex] === runtime) {
+        this.scheduleFocusedRender(true);
+        if (!event.hydrating) {
+          this.scheduleFocusedRepaint();
+        }
+      }
+      return;
+    }
+
+    if (event.type === "loadingChanged") {
+      if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
+        this.renderDashboard();
+      } else if (this.mode === "focused" && this.sessions[this.activeIndex] === runtime) {
+        this.scheduleFocusedRender(true);
+      }
+      return;
+    }
+
+    if (event.type === "frameReady") {
+      if (this.mode === "focused" && this.sessions[this.activeIndex] === runtime) {
+        this.scheduleFocusedRender(true);
+        this.scheduleFocusedRepaint(32);
+      } else if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
+        this.renderDashboard();
+      }
+      return;
+    }
+
     if (event.type !== "exit") return;
     const _code = event.code;
 
@@ -438,11 +465,8 @@ export class Multiplexer {
 
   /** Try to connect to a running aimux server for persistent PTY ownership */
   private async connectToServer(): Promise<void> {
-    if (!ServerClient.isAvailable()) return;
     try {
-      this.serverClient = new ServerClient();
-      await this.serverClient.connect();
-      this.serverClient.onSessionUpdated(({ id, label }) => {
+      await this.serverRuntime.connect(({ id, label }) => {
         this.applySessionLabel(id, label);
         this.writeStatuslineFile();
         if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive) {
@@ -451,93 +475,40 @@ export class Multiplexer {
           this.scheduleFocusedRender(false);
         }
       });
-      debug("connected to aimux server", "server-client");
-
-      // Reconnect to existing server sessions
-      const serverSessions = await this.serverClient.listSessions();
       const cols = process.stdout.columns ?? 80;
       const rows = this.toolRows;
-      for (const info of serverSessions) {
-        if (info.exited) continue;
-        // Build prompt patterns from config
-        let promptPatterns: RegExp[] | undefined;
-        const config = loadConfig();
-        const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === info.command);
-        if (toolEntry?.[1]?.promptPatterns) {
-          promptPatterns = toolEntry[1].promptPatterns.map((p: string) => new RegExp(p, "m"));
-        }
-        const session = this.serverClient.registerSession(info.id, info.command, cols, rows, promptPatterns);
-        session.backendSessionId = info.backendSessionId;
-        this.serverSessionIds.add(info.id);
-        this.registerManagedSession(
-          session as any,
-          [],
-          info.toolConfigKey ?? info.command,
-          info.worktreePath,
-          undefined,
-        );
-        if (info.label) {
-          const state = this.offlineSessions.find((s) => s.id === info.id);
-          if (state) state.label = info.label;
-          this.sessionLabels.set(info.id, info.label);
-        }
-        this.hydratingSessionIds.add(info.id);
-        void this.hydrateServerSession(info.id, session);
-        debug(`reconnected to server session: ${info.id}`, "server-client");
-      }
+      await this.serverRuntime.reconnectExistingSessions(cols, rows, {
+        resolvePromptPatterns: (command) => {
+          const config = loadConfig();
+          const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === command);
+          if (!toolEntry?.[1]?.promptPatterns) return undefined;
+          return toolEntry[1].promptPatterns.map((p: string) => new RegExp(p, "m"));
+        },
+        onDiscovered: (info, session) => {
+          const runtime = this.registerManagedSession(
+            session as any,
+            [],
+            info.toolConfigKey ?? info.command,
+            info.worktreePath,
+            undefined,
+          );
+          if (info.label) {
+            const state = this.offlineSessions.find((s) => s.id === info.id);
+            if (state) state.label = info.label;
+            this.sessionLabels.set(info.id, info.label);
+          }
+          return runtime;
+        },
+        onHydrated: (runtime) => {
+          const debugState = this.getTerminalDebugState(runtime);
+          if (debugState) {
+            debug(this.formatDebugState(`hydrate done ${runtime.id}`, debugState), "reconnect");
+          }
+        },
+      });
     } catch {
       debug("could not connect to server, using direct PTY mode", "server-client");
-      this.serverClient = null;
-    }
-  }
-
-  private async hydrateServerSession(
-    sessionId: string,
-    session: {
-      id: string;
-      resize: (cols: number, rows: number) => void;
-      _hydrateSnapshot?: (snapshot: SessionTerminalSnapshot) => Promise<void> | void;
-    },
-  ): Promise<void> {
-    if (!this.serverClient) {
-      this.hydratingSessionIds.delete(sessionId);
-      return;
-    }
-
-    try {
-      let snapshot = await this.serverClient.requestScreen(sessionId);
-      if (snapshot.lines.length === 0 && this.serverClient) {
-        const cols = process.stdout.columns ?? 80;
-        const rows = this.toolRows;
-        debug(`hydrate retry resize ${sessionId}: empty snapshot, nudging ${cols}x${rows}`, "reconnect");
-        session.resize(cols, rows);
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        snapshot = await this.serverClient.requestScreen(sessionId);
-      }
-      debug(
-        `hydrate start ${sessionId}: viewport=${snapshot.viewportY} base=${snapshot.baseY} start=${snapshot.startLine} ` +
-          `cursor=${snapshot.cursor.row},${snapshot.cursor.col} lines=${snapshot.lines.length}`,
-        "reconnect",
-      );
-      if (!this.sessions.some((s) => s.id === sessionId)) {
-        this.hydratingSessionIds.delete(sessionId);
-        return;
-      }
-      if (typeof (session as any)._hydrateSnapshot === "function") {
-        await (session as any)._hydrateSnapshot(snapshot);
-        const debugState = this.getTerminalDebugState(session);
-        if (debugState) {
-          debug(this.formatDebugState(`hydrate done ${sessionId}`, debugState), "reconnect");
-        }
-      }
-    } catch {}
-
-    this.hydratingSessionIds.delete(sessionId);
-    if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
-      this.renderDashboard();
-    } else if (this.mode === "focused" && this.sessions[this.activeIndex]?.id === sessionId) {
-      this.scheduleFocusedRender(true);
-      this.scheduleFocusedRepaint();
+      this.serverRuntime.disconnect();
     }
   }
 
@@ -1271,8 +1242,8 @@ export class Multiplexer {
       | undefined;
 
     // If server is connected, spawn on server for persistent ownership
-    if (this.serverClient?.connected) {
-      const serverSession = this.serverClient.registerSession(sessionId, command, cols, this.toolRows, promptPatterns);
+    if (this.serverRuntime.connected) {
+      const serverSession = this.serverRuntime.registerSession(sessionId, command, cols, this.toolRows, promptPatterns);
       pendingServerSpawn = {
         type: "spawn",
         id: sessionId,
@@ -1286,7 +1257,6 @@ export class Multiplexer {
         rows: this.toolRows,
       };
       session = serverSession as any;
-      this.serverSessionIds.add(sessionId);
     } else {
       session = new PtySession({
         command,
@@ -1314,7 +1284,7 @@ export class Multiplexer {
     this.registerManagedSession(session, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
 
     if (pendingServerSpawn) {
-      this.serverClient!.send(pendingServerSpawn);
+      this.serverRuntime.send(pendingServerSpawn);
       debug(`spawned session on server: ${sessionId}`, "server-client");
     }
 
@@ -1474,20 +1444,13 @@ export class Multiplexer {
     const activeSession = this.sessions[this.activeIndex];
     debug(
       `renderFocusedView: session=${activeSession?.id ?? "none"} forceFooter=${forceFooter} hydrating=${
-        activeSession ? this.hydratingSessionIds.has(activeSession.id) : false
+        activeSession ? activeSession.isHydrating : false
       }`,
       "focus-repaint",
     );
-    if (activeSession && this.hydratingSessionIds.has(activeSession.id)) {
-      this.renderHydratingSession(activeSession.command, forceFooter);
-      return;
-    }
-    if (activeSession && activeSession.shouldRenderStartupLoading()) {
-      this.renderLoadingSession(
-        `Starting ${activeSession.command}...`,
-        "Waiting for the first terminal frame",
-        forceFooter,
-      );
+    const loadingScreen = activeSession?.getLoadingScreen();
+    if (loadingScreen) {
+      this.renderLoadingSession(loadingScreen.title, loadingScreen.subtitle, forceFooter);
       return;
     }
     const debugState = activeSession ? this.getTerminalDebugState(activeSession) : undefined;
@@ -1498,11 +1461,6 @@ export class Multiplexer {
     }
     await this.focusedRenderer.renderSession(activeSession, forceFooter);
   }
-
-  private renderHydratingSession(command: string, forceFooter = true): void {
-    this.renderLoadingSession("Loading session state...", `Reconnecting ${command}`, forceFooter);
-  }
-
   private renderLoadingSession(title: string, subtitle: string, forceFooter = true): void {
     this.focusedRenderer.invalidate();
     const cols = process.stdout.columns ?? 80;
@@ -1530,8 +1488,9 @@ export class Multiplexer {
       return;
     }
 
-    if (this.hydratingSessionIds.has(activeSession.id)) {
-      this.renderHydratingSession(activeSession.command, true);
+    const loadingScreen = activeSession.getLoadingScreen();
+    if (loadingScreen) {
+      this.renderLoadingSession(loadingScreen.title, loadingScreen.subtitle, true);
       return;
     }
 
@@ -2103,7 +2062,7 @@ export class Multiplexer {
         status: s.status,
         active: i === this.activeIndex,
         worktreePath: wtPath,
-        isServer: this.serverSessionIds.has(s.id),
+        isServer: this.serverRuntime.isServerSession(s.id),
       };
     });
 
@@ -2204,7 +2163,7 @@ export class Multiplexer {
       this.focusedWorktreePath,
       hasWorktrees ? this.dashboardLevel : "sessions",
       selectedSession,
-      this.serverClient?.connected ?? false,
+      this.serverRuntime.connected ?? false,
       mainCheckoutInfo,
     );
     process.stdout.write(this.dashboard.render(cols, rows));
@@ -3595,7 +3554,7 @@ export class Multiplexer {
         id: s.id,
         command: s.command,
         backendSessionId: s.backendSessionId,
-        status: this.hydratingSessionIds.has(s.id) ? "hydrating" : s.status,
+        status: s.isHydrating ? "hydrating" : s.status,
         active: i === this.activeIndex,
         worktreePath: wtPath,
         label,
@@ -4459,7 +4418,7 @@ export class Multiplexer {
 
   /** Save session state to main repo's .aimux/state.json, merging with existing state. */
   private saveState(): void {
-    const localSessions = this.sessions.filter((s) => !this.serverSessionIds.has(s.id));
+    const localSessions = this.sessions.filter((s) => !this.serverRuntime.isServerSession(s.id));
     const liveSessions = localSessions.map((s) => ({
       id: s.id,
       tool: s.command,
@@ -4545,14 +4504,11 @@ export class Multiplexer {
   cleanup(): void {
     for (const session of this.sessions) {
       // Don't kill server-owned sessions — they persist after TUI exits
-      if (this.serverSessionIds.has(session.id)) continue;
+      if (this.serverRuntime.isServerSession(session.id)) continue;
       session.destroy();
     }
     // Disconnect from server (sessions keep running)
-    if (this.serverClient) {
-      this.serverClient.disconnect();
-      this.serverClient = null;
-    }
+    this.serverRuntime.disconnect();
     this.teardown();
   }
 
