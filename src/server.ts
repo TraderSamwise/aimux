@@ -224,7 +224,7 @@ export class AimuxServer {
         this.handleResize(msg);
         break;
       case "screen":
-        this.handleScreen(client, msg);
+        void this.handleScreen(client, msg);
         break;
       case "kill":
         this.handleKill(msg);
@@ -312,10 +312,10 @@ export class AimuxServer {
     }
   }
 
-  private handleScreen(client: net.Socket, msg: ScreenMsg): void {
+  private async handleScreen(client: net.Socket, msg: ScreenMsg): Promise<void> {
     const record = this.sessions.get(msg.id);
     if (record) {
-      const snapshot = record.pty.getTerminalSnapshot();
+      const snapshot = await record.pty.getTerminalSnapshot();
       this.send(client, { type: "screen", id: msg.id, data: Buffer.from(JSON.stringify(snapshot)).toString("base64") });
     } else {
       this.send(client, { type: "error", message: `Session ${msg.id} not found` });

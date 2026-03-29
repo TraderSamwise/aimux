@@ -4,7 +4,11 @@ import { StatusDetector, type SessionStatus } from "./status-detector.js";
 import { getSocketPath } from "./server.js";
 import { debug } from "./debug.js";
 import stripAnsi from "strip-ansi";
-import { SessionTerminalState, type SessionTerminalSnapshot } from "./session-terminal-state.js";
+import {
+  SessionTerminalState,
+  type SessionTerminalDebugState,
+  type SessionTerminalSnapshot,
+} from "./session-terminal-state.js";
 
 export { type SessionStatus } from "./status-detector.js";
 
@@ -62,8 +66,8 @@ export class ServerSession {
     this.statusDetector.feed(stripAnsi(screen));
   }
 
-  _hydrateSnapshot(snapshot: SessionTerminalSnapshot): void {
-    this.terminalState.hydrateSnapshot(snapshot);
+  async _hydrateSnapshot(snapshot: SessionTerminalSnapshot): Promise<void> {
+    await this.terminalState.hydrateSnapshot(snapshot);
     this.statusDetector.feed(stripAnsi(this.terminalState.getScreenState()));
   }
 
@@ -103,6 +107,10 @@ export class ServerSession {
 
   getCursorPosition(): { row: number; col: number } {
     return this.terminalState.getCursorPosition();
+  }
+
+  getDebugState(): SessionTerminalDebugState {
+    return this.terminalState.getDebugState();
   }
 
   onData(cb: (data: string) => void): void {

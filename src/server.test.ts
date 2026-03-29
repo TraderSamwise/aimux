@@ -34,7 +34,7 @@ class MockPtySession {
     return "";
   }
 
-  getTerminalSnapshot(): {
+  async getTerminalSnapshot(): Promise<{
     cols: number;
     rows: number;
     cursor: { row: number; col: number };
@@ -42,7 +42,7 @@ class MockPtySession {
     baseY: number;
     startLine: number;
     lines: string[];
-  } {
+  }> {
     return {
       cols: 120,
       rows: 40,

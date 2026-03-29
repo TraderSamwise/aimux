@@ -115,8 +115,8 @@ export class PtySession {
     return this.terminalState.getScreenState();
   }
 
-  getTerminalSnapshot(): SessionTerminalSnapshot {
-    return this.terminalState.exportSnapshot();
+  async getTerminalSnapshot(): Promise<SessionTerminalSnapshot> {
+    return this.terminalState.exportSnapshotAsync();
   }
 
   getCursorPosition(): { row: number; col: number } {

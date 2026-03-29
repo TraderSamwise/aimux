@@ -46,6 +46,7 @@ import { FooterPluginManager, type FooterPluginContext } from "./footer-plugins.
 import { TerminalHost } from "./terminal-host.js";
 import { FocusedRenderer } from "./focused-renderer.js";
 import { FooterController } from "./footer-controller.js";
+import type { SessionTerminalDebugState } from "./session-terminal-state.js";
 import type { SessionTerminalSnapshot } from "./session-terminal-state.js";
 
 export type MuxMode = "focused" | "dashboard";
@@ -141,6 +142,7 @@ export class Multiplexer {
   private dashboardWorktreeSessions: DashboardSession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
   private footerRecoveryTimeout: ReturnType<typeof setTimeout> | null = null;
+  private focusedRepaintTimeout: ReturnType<typeof setTimeout> | null = null;
   private footerPlugins: FooterPluginManager;
   private footerSessionScope: "worktree" | "project";
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -446,7 +448,7 @@ export class Multiplexer {
 
   private async hydrateServerSession(
     sessionId: string,
-    session: { id: string; _hydrateSnapshot?: (snapshot: SessionTerminalSnapshot) => void },
+    session: { id: string; _hydrateSnapshot?: (snapshot: SessionTerminalSnapshot) => Promise<void> | void },
   ): Promise<void> {
     if (!this.serverClient) {
       this.hydratingSessionIds.delete(sessionId);
@@ -455,12 +457,21 @@ export class Multiplexer {
 
     try {
       const snapshot = await this.serverClient.requestScreen(sessionId);
+      debug(
+        `hydrate start ${sessionId}: viewport=${snapshot.viewportY} base=${snapshot.baseY} start=${snapshot.startLine} ` +
+          `cursor=${snapshot.cursor.row},${snapshot.cursor.col} lines=${snapshot.lines.length}`,
+        "reconnect",
+      );
       if (!this.sessions.some((s) => s.id === sessionId)) {
         this.hydratingSessionIds.delete(sessionId);
         return;
       }
       if (typeof (session as any)._hydrateSnapshot === "function") {
-        (session as any)._hydrateSnapshot(snapshot);
+        await (session as any)._hydrateSnapshot(snapshot);
+        const debugState = this.getTerminalDebugState(session);
+        if (debugState) {
+          debug(this.formatDebugState(`hydrate done ${sessionId}`, debugState), "reconnect");
+        }
       }
     } catch {}
 
@@ -469,6 +480,7 @@ export class Multiplexer {
       this.renderDashboard();
     } else if (this.mode === "focused" && this.sessions[this.activeIndex]?.id === sessionId) {
       this.renderFocusedView(true);
+      this.scheduleFocusedRepaint();
     }
   }
 
@@ -509,6 +521,8 @@ export class Multiplexer {
     this.terminalHost.enterRawMode();
     this.terminalHost.setupScrollRegion(this.footerHeight);
     this.startFooterRefresh();
+    this.renderFocusedView(true);
+    this.scheduleFocusedRepaint();
 
     // Forward stdin through hotkey handler → active PTY
     this.onStdinData = (data: Buffer) => {
@@ -763,6 +777,8 @@ export class Multiplexer {
     this.terminalHost.enterRawMode();
     this.terminalHost.setupScrollRegion(this.footerHeight);
     this.startFooterRefresh();
+    this.renderFocusedView(true);
+    this.scheduleFocusedRepaint();
 
     this.onStdinData = (data: Buffer) => {
       if (this.pickerActive) {
@@ -902,6 +918,8 @@ export class Multiplexer {
     this.terminalHost.enterRawMode();
     this.terminalHost.setupScrollRegion(this.footerHeight);
     this.startFooterRefresh();
+    this.renderFocusedView(true);
+    this.scheduleFocusedRepaint();
 
     this.onStdinData = (data: Buffer) => {
       if (this.pickerActive) {
@@ -1280,6 +1298,12 @@ export class Multiplexer {
     if (activeSession && this.hydratingSessionIds.has(activeSession.id)) {
       this.renderHydratingSession(activeSession.command, forceFooter);
       return;
+    }
+    const debugState = activeSession ? this.getTerminalDebugState(activeSession) : undefined;
+    if (activeSession && debugState) {
+      debug(this.formatDebugState(`render focused ${activeSession.id}`, debugState), "reconnect");
+    } else if (activeSession) {
+      debug(`render focused ${activeSession.id}: no terminal debug state`, "reconnect");
     }
     this.focusedRenderer.renderSession(activeSession, forceFooter);
   }
@@ -3380,6 +3404,28 @@ export class Multiplexer {
     return this.footerController.getFooterHeight(this.footerPlugins.enabledCount);
   }
 
+  private getTerminalDebugState(session: unknown): SessionTerminalDebugState | undefined {
+    if (!session || typeof session !== "object") return undefined;
+    const maybe = session as { getDebugState?: () => SessionTerminalDebugState };
+    if (typeof maybe.getDebugState !== "function") return undefined;
+    try {
+      return maybe.getDebugState();
+    } catch {
+      return undefined;
+    }
+  }
+
+  private formatDebugState(prefix: string, state: SessionTerminalDebugState): string {
+    const visiblePreview = state.visibleLines
+      .slice(0, 3)
+      .map((line) => JSON.stringify(line.trimEnd()))
+      .join(" | ");
+    return (
+      `${prefix}: viewport=${state.viewportY} base=${state.baseY} cursor=${state.cursor.row},${state.cursor.col} ` +
+      `rows=${state.rows} cols=${state.cols} visible=${visiblePreview || "(empty)"}`
+    );
+  }
+
   /** Render the status footer in the reserved bottom row */
   private renderFooter(force = true): void {
     if (this.mode !== "focused") return;
@@ -3498,6 +3544,20 @@ export class Multiplexer {
         this.renderFooter(true);
       }
     }, 150);
+  }
+
+  private scheduleFocusedRepaint(delayMs = 75): void {
+    if (this.focusedRepaintTimeout) {
+      clearTimeout(this.focusedRepaintTimeout);
+    }
+
+    this.focusedRepaintTimeout = setTimeout(() => {
+      this.focusedRepaintTimeout = null;
+      if (this.mode === "focused" && this.sessions[this.activeIndex]) {
+        debug(`deferred focused repaint for ${this.sessions[this.activeIndex].id}`, "reconnect");
+        this.renderFocusedView(true);
+      }
+    }, delayMs);
   }
 
   private startFooterRefresh(): void {
