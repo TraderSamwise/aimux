@@ -42,6 +42,13 @@ export interface SessionTerminalDebugState {
   visibleLines: string[];
 }
 
+export interface SessionTerminalViewport {
+  cols: number;
+  rows: number;
+  cursor: { row: number; col: number };
+  visibleLines: SessionTerminalSnapshotLine[];
+}
+
 export class SessionTerminalState {
   private vt: InstanceType<typeof Terminal>;
   private pendingWrites = 0;
@@ -154,6 +161,25 @@ export class SessionTerminalState {
   async getCursorPositionAsync(): Promise<{ row: number; col: number }> {
     await this.flush();
     return this.getCursorPosition();
+  }
+
+  getViewport(): SessionTerminalViewport {
+    const buffer = this.vt.buffer.active;
+    const visibleLines: SessionTerminalSnapshotLine[] = [];
+    for (let y = buffer.viewportY; y < buffer.viewportY + this.vt.rows; y++) {
+      visibleLines.push(this.snapshotBufferLine(y));
+    }
+    return {
+      cols: this.vt.cols,
+      rows: this.vt.rows,
+      cursor: this.getCursorPosition(),
+      visibleLines,
+    };
+  }
+
+  async getViewportAsync(): Promise<SessionTerminalViewport> {
+    await this.flush();
+    return this.getViewport();
   }
 
   dispose(): void {
@@ -303,4 +329,63 @@ export class SessionTerminalState {
 
     return `${output}\x1b[0m`;
   }
+}
+
+export function renderTerminalSnapshotLine(line: SessionTerminalSnapshotLine): string {
+  let output = "";
+  let prevFg = -1;
+  let prevBg = -1;
+  let prevBold = false;
+  let prevDim = false;
+  let prevItalic = false;
+  let prevUnderline = false;
+  let prevInverse = false;
+
+  for (const cell of line.cells) {
+    const { fg, bg, bold, dim, italic, underline, inverse, fgMode, bgMode } = cell;
+
+    if (
+      fg !== prevFg ||
+      bg !== prevBg ||
+      bold !== prevBold ||
+      dim !== prevDim ||
+      italic !== prevItalic ||
+      underline !== prevUnderline ||
+      inverse !== prevInverse
+    ) {
+      const sgr: number[] = [0];
+      if (bold) sgr.push(1);
+      if (dim) sgr.push(2);
+      if (italic) sgr.push(3);
+      if (underline) sgr.push(4);
+      if (inverse) sgr.push(7);
+      if (fgMode === "palette") {
+        if (fg < 8) sgr.push(30 + fg);
+        else if (fg < 16) sgr.push(90 + fg - 8);
+        else sgr.push(38, 5, fg);
+      } else if (fgMode === "rgb") {
+        sgr.push(38, 2, (fg >> 16) & 0xff, (fg >> 8) & 0xff, fg & 0xff);
+      }
+      if (bgMode === "palette") {
+        if (bg < 8) sgr.push(40 + bg);
+        else if (bg < 16) sgr.push(100 + bg - 8);
+        else sgr.push(48, 5, bg);
+      } else if (bgMode === "rgb") {
+        sgr.push(48, 2, (bg >> 16) & 0xff, (bg >> 8) & 0xff, bg & 0xff);
+      }
+      output += `\x1b[${sgr.join(";")}m`;
+      prevFg = fg;
+      prevBg = bg;
+      prevBold = bold;
+      prevDim = dim;
+      prevItalic = italic;
+      prevUnderline = underline;
+      prevInverse = inverse;
+    }
+
+    if (cell.width === 0) continue;
+    output += cell.chars || " ";
+  }
+
+  return `${output}\x1b[0m`;
 }

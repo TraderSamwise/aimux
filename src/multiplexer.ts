@@ -42,7 +42,7 @@ import {
 import { TaskDispatcher, requestReview } from "./task-dispatcher.js";
 import { loadTeamConfig } from "./team.js";
 import { scanAllProjects } from "./project-scanner.js";
-import { ServerClient } from "./server-client.js";
+import { ServerClient, ServerSession } from "./server-client.js";
 import { FooterPluginManager, type FooterPluginContext } from "./footer-plugins.js";
 import { TerminalHost } from "./terminal-host.js";
 import { FocusedRenderer } from "./focused-renderer.js";
@@ -69,6 +69,8 @@ export interface SavedState {
   cwd: string;
   sessions: SessionState[];
 }
+
+type ManagedSession = PtySession | ServerSession;
 
 interface WorktreeRemovalJob {
   path: string;
@@ -101,7 +103,7 @@ interface PlanEntry {
 }
 
 export class Multiplexer {
-  private sessions: PtySession[] = [];
+  private sessions: ManagedSession[] = [];
   private activeIndex = 0;
   private mode: MuxMode = "focused";
   private hotkeys: HotkeyHandler;
@@ -155,10 +157,13 @@ export class Multiplexer {
   /** Sessions in the currently focused worktree (for session-level nav) */
   private dashboardWorktreeSessions: DashboardSession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
-  private footerRecoveryTimeout: ReturnType<typeof setTimeout> | null = null;
   private focusedResizeSettleTimeout: ReturnType<typeof setTimeout> | null = null;
   private focusedRepaintTimeout: ReturnType<typeof setTimeout> | null = null;
+  private focusedRenderTimeout: ReturnType<typeof setTimeout> | null = null;
   private footerWatchdogTicks = 0;
+  private focusedRenderInFlight = false;
+  private focusedRenderQueued = false;
+  private focusedRenderPendingForce = false;
   private footerPlugins: FooterPluginManager;
   private footerSessionScope: "worktree" | "project";
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -196,14 +201,12 @@ export class Multiplexer {
     this.footerPlugins = new FooterPluginManager(footerConfig.plugins, () => {
       if (this.mode === "focused") this.renderFooter(false);
     });
-    this.focusedRenderer = new FocusedRenderer(
-      this.terminalHost,
-      () => this.footerHeight,
-      (force = true) => this.renderFooter(force),
+    this.focusedRenderer = new FocusedRenderer(this.terminalHost, (cursor, force = true) =>
+      this.renderFooterWithCursor(cursor, force),
     );
   }
 
-  get activeSession(): PtySession | null {
+  get activeSession(): ManagedSession | null {
     return this.sessions[this.activeIndex] ?? null;
   }
 
@@ -280,7 +283,7 @@ export class Multiplexer {
   }
 
   private registerManagedSession(
-    session: PtySession,
+    session: ManagedSession,
     args: string[],
     toolConfigKey?: string,
     worktreePath?: string,
@@ -293,11 +296,9 @@ export class Multiplexer {
       this.sessionStartTimes.set(session.id, startTime);
     }
 
-    // Forward output to stdout only when this session is active and focused
     session.onData((data) => {
       if (this.mode === "focused" && this.sessions[this.activeIndex] === session) {
-        process.stdout.write(data);
-        this.scheduleFooterRecovery();
+        this.scheduleFocusedRender(true);
       }
     });
 
@@ -419,7 +420,7 @@ export class Multiplexer {
         if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive) {
           this.renderDashboard();
         } else if (this.mode === "focused") {
-          this.renderFocusedView(false);
+          this.scheduleFocusedRender(false);
         }
       });
       debug("connected to aimux server", "server-client");
@@ -507,7 +508,7 @@ export class Multiplexer {
     if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
       this.renderDashboard();
     } else if (this.mode === "focused" && this.sessions[this.activeIndex]?.id === sessionId) {
-      this.renderFocusedView(true);
+      this.scheduleFocusedRender(true);
       this.scheduleFocusedRepaint();
     }
   }
@@ -547,9 +548,8 @@ export class Multiplexer {
 
     // Enter raw mode and set up footer
     this.terminalHost.enterRawMode();
-    this.terminalHost.setupScrollRegion(this.footerHeight);
     this.startFooterRefresh();
-    this.renderFocusedView(true);
+    void this.renderFocusedView(true);
     this.scheduleFocusedRepaint();
 
     // Forward stdin through hotkey handler → active PTY
@@ -816,9 +816,8 @@ export class Multiplexer {
 
     // Enter raw mode and set up input handling
     this.terminalHost.enterRawMode();
-    this.terminalHost.setupScrollRegion(this.footerHeight);
     this.startFooterRefresh();
-    this.renderFocusedView(true);
+    void this.renderFocusedView(true);
     this.scheduleFocusedRepaint();
 
     this.onStdinData = (data: Buffer) => {
@@ -963,9 +962,8 @@ export class Multiplexer {
 
     // Enter raw mode and set up input handling
     this.terminalHost.enterRawMode();
-    this.terminalHost.setupScrollRegion(this.footerHeight);
     this.startFooterRefresh();
-    this.renderFocusedView(true);
+    void this.renderFocusedView(true);
     this.scheduleFocusedRepaint();
 
     this.onStdinData = (data: Buffer) => {
@@ -1373,8 +1371,8 @@ export class Multiplexer {
   }
 
   /** Get all sessions grouped by worktree path */
-  getSessionsByWorktree(): Map<string | undefined, PtySession[]> {
-    const groups = new Map<string | undefined, PtySession[]>();
+  getSessionsByWorktree(): Map<string | undefined, ManagedSession[]> {
+    const groups = new Map<string | undefined, ManagedSession[]>();
     for (const session of this.sessions) {
       const wtPath = this.sessionWorktreePaths.get(session.id);
       const group = groups.get(wtPath) ?? [];
@@ -1384,7 +1382,7 @@ export class Multiplexer {
     return groups;
   }
 
-  private getScopedSessionEntries(): Array<{ session: PtySession; index: number }> {
+  private getScopedSessionEntries(): Array<{ session: ManagedSession; index: number }> {
     if (this.footerSessionScope === "project") {
       return this.sessions.map((session, index) => ({ session, index }));
     }
@@ -1400,7 +1398,7 @@ export class Multiplexer {
       .filter(({ session }) => this.sessionWorktreePaths.get(session.id) === activeWorktreePath);
   }
 
-  private renderFocusedView(forceFooter = true): void {
+  private async renderFocusedView(forceFooter = true): Promise<void> {
     const activeSession = this.sessions[this.activeIndex];
     debug(
       `renderFocusedView: session=${activeSession?.id ?? "none"} forceFooter=${forceFooter} hydrating=${
@@ -1418,7 +1416,7 @@ export class Multiplexer {
     } else if (activeSession) {
       debug(`render focused ${activeSession.id}: no terminal debug state`, "reconnect");
     }
-    this.focusedRenderer.renderSession(activeSession, forceFooter);
+    await this.focusedRenderer.renderSession(activeSession, forceFooter);
   }
 
   private renderHydratingSession(command: string, forceFooter = true): void {
@@ -1434,15 +1432,18 @@ export class Multiplexer {
       if (row === subtitleRow) return this.centerInWidth(`\x1b[2m${subtitle}\x1b[0m`, cols);
       return "";
     });
-    this.terminalHost.setupScrollRegion(this.footerHeight);
-    process.stdout.write("\x1b[2J\x1b[H" + lines.join("\r\n"));
+    let output = "\x1b[r";
+    for (let i = 0; i < rows; i++) {
+      output += `\x1b[${i + 1};1H\x1b[2K${lines[i]}`;
+    }
+    process.stdout.write(output);
     this.renderFooter(forceFooter);
   }
 
   private handleFocusedResize(): void {
     const activeSession = this.sessions[this.activeIndex];
     if (!activeSession) {
-      this.renderFocusedView();
+      this.scheduleFocusedRender();
       return;
     }
 
@@ -1451,7 +1452,6 @@ export class Multiplexer {
       return;
     }
 
-    this.terminalHost.setupScrollRegion(this.footerHeight);
     if (this.focusedResizeSettleTimeout) {
       clearTimeout(this.focusedResizeSettleTimeout);
     }
@@ -1459,9 +1459,39 @@ export class Multiplexer {
       this.focusedResizeSettleTimeout = null;
       if (this.mode === "focused" && this.sessions[this.activeIndex] === activeSession) {
         debug(`focused resize settled: active=${activeSession.id}`, "focus-repaint");
-        void this.renderFooterAfterFlush(true);
+        this.scheduleFocusedRender(true);
       }
     }, 120);
+  }
+
+  private scheduleFocusedRender(forceFooter = true, delayMs = 0): void {
+    this.focusedRenderQueued = true;
+    this.focusedRenderPendingForce = this.focusedRenderPendingForce || forceFooter;
+    if (this.focusedRenderTimeout) return;
+    this.focusedRenderTimeout = setTimeout(() => {
+      this.focusedRenderTimeout = null;
+      void this.flushFocusedRender();
+    }, delayMs);
+  }
+
+  private async flushFocusedRender(): Promise<void> {
+    if (this.focusedRenderInFlight) {
+      this.scheduleFocusedRender(this.focusedRenderPendingForce, 16);
+      return;
+    }
+    if (!this.focusedRenderQueued) return;
+    this.focusedRenderInFlight = true;
+    this.focusedRenderQueued = false;
+    const forceFooter = this.focusedRenderPendingForce;
+    this.focusedRenderPendingForce = false;
+    try {
+      await this.renderFocusedView(forceFooter);
+    } finally {
+      this.focusedRenderInFlight = false;
+      if (this.focusedRenderQueued || this.focusedRenderPendingForce) {
+        this.scheduleFocusedRender(this.focusedRenderPendingForce, 16);
+      }
+    }
   }
 
   private focusSession(index: number): void {
@@ -1474,7 +1504,7 @@ export class Multiplexer {
     const sid = this.sessions[index].id;
     this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
 
-    this.renderFocusedView();
+    this.scheduleFocusedRender();
     this.startFooterRefresh();
   }
 
@@ -2866,12 +2896,12 @@ export class Multiplexer {
   // --- Quick Switcher (^A s) ---
 
   /** Get sessions in MRU order (most recently used first), only running/alive sessions */
-  private getSwitcherList(): PtySession[] {
+  private getSwitcherList(): ManagedSession[] {
     const alive = this.getScopedSessionEntries()
       .map(({ session }) => session)
       .filter((s) => !s.exited);
     // Build MRU-ordered list: known MRU order first, then any remaining
-    const ordered: PtySession[] = [];
+    const ordered: ManagedSession[] = [];
     for (const id of this.sessionMRU) {
       const s = alive.find((a) => a.id === id);
       if (s) ordered.push(s);
@@ -2925,7 +2955,7 @@ export class Multiplexer {
     if (this.mode === "dashboard") {
       this.renderDashboard();
     } else {
-      this.renderFocusedView();
+      this.scheduleFocusedRender();
     }
   }
 
@@ -2935,7 +2965,7 @@ export class Multiplexer {
       return;
     }
 
-    this.renderFocusedView();
+    this.scheduleFocusedRender();
   }
 
   private showHelp(): void {
@@ -3280,7 +3310,7 @@ export class Multiplexer {
     process.stdout.write(output);
   }
 
-  private waitForSessionExit(session: PtySession, timeoutMs = 15_000): Promise<void> {
+  private waitForSessionExit(session: ManagedSession, timeoutMs = 15_000): Promise<void> {
     if (session.exited) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${session.id} to exit`)), timeoutMs);
@@ -3315,7 +3345,7 @@ export class Multiplexer {
     }
   }
 
-  private async stopSessionToOfflineWithFeedback(session: PtySession): Promise<void> {
+  private async stopSessionToOfflineWithFeedback(session: ManagedSession): Promise<void> {
     const label = this.getSessionLabel(session.id) ?? session.command;
     await this.runDashboardOperation(
       `Stopping "${label}"`,
@@ -3368,7 +3398,11 @@ export class Multiplexer {
     );
   }
 
-  private async migrateSessionWithFeedback(session: PtySession, targetPath: string, targetName: string): Promise<void> {
+  private async migrateSessionWithFeedback(
+    session: ManagedSession,
+    targetPath: string,
+    targetName: string,
+  ): Promise<void> {
     const label = this.getSessionLabel(session.id) ?? session.command;
     await this.runDashboardOperation(
       `Migrating "${label}"`,
@@ -3971,21 +4005,6 @@ export class Multiplexer {
   private footerFlash: string | null = null;
   private footerFlashTicks = 0;
 
-  private scheduleFooterRecovery(): void {
-    if (this.footerRecoveryTimeout) {
-      clearTimeout(this.footerRecoveryTimeout);
-    }
-
-    debug(`scheduleFooterRecovery: active=${this.sessions[this.activeIndex]?.id ?? "none"}`, "focus-repaint");
-    this.footerRecoveryTimeout = setTimeout(() => {
-      this.footerRecoveryTimeout = null;
-      if (this.mode === "focused" && this.sessions[this.activeIndex]) {
-        debug(`footerRecoveryTimeout fired: active=${this.sessions[this.activeIndex].id}`, "focus-repaint");
-        void this.renderFooterAfterFlush(true);
-      }
-    }, 150);
-  }
-
   private scheduleFocusedRepaint(delayMs = 75): void {
     if (this.focusedRepaintTimeout) {
       clearTimeout(this.focusedRepaintTimeout);
@@ -3994,8 +4013,8 @@ export class Multiplexer {
     this.focusedRepaintTimeout = setTimeout(() => {
       this.focusedRepaintTimeout = null;
       if (this.mode === "focused" && this.sessions[this.activeIndex]) {
-        debug(`deferred focused footer settle for ${this.sessions[this.activeIndex].id}`, "reconnect");
-        void this.renderFooterAfterFlush(true);
+        debug(`deferred focused repaint for ${this.sessions[this.activeIndex].id}`, "reconnect");
+        this.scheduleFocusedRender(true);
       }
     }, delayMs);
   }
@@ -4062,13 +4081,13 @@ export class Multiplexer {
       this.footerInterval = null;
     }
     this.footerWatchdogTicks = 0;
-    if (this.footerRecoveryTimeout) {
-      clearTimeout(this.footerRecoveryTimeout);
-      this.footerRecoveryTimeout = null;
-    }
     if (this.focusedResizeSettleTimeout) {
       clearTimeout(this.focusedResizeSettleTimeout);
       this.focusedResizeSettleTimeout = null;
+    }
+    if (this.focusedRenderTimeout) {
+      clearTimeout(this.focusedRenderTimeout);
+      this.focusedRenderTimeout = null;
     }
   }
 
@@ -4107,7 +4126,7 @@ export class Multiplexer {
 
   /** Remove an offline session and move it to state-trash.json */
   /** Stop a running session and move it to offline (first [x]) */
-  private stopSessionToOffline(session: PtySession): void {
+  private stopSessionToOffline(session: ManagedSession): void {
     // Save state before killing
     const offlineEntry: SessionState = {
       id: session.id,

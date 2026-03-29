@@ -2,7 +2,11 @@ import * as pty from "node-pty";
 import { StatusDetector, type SessionStatus } from "./status-detector.js";
 import { Recorder } from "./recorder.js";
 import stripAnsi from "strip-ansi";
-import { SessionTerminalState, type SessionTerminalSnapshot } from "./session-terminal-state.js";
+import {
+  SessionTerminalState,
+  type SessionTerminalSnapshot,
+  type SessionTerminalViewport,
+} from "./session-terminal-state.js";
 
 export { type SessionStatus } from "./status-detector.js";
 
@@ -125,6 +129,10 @@ export class PtySession {
 
   async getCursorPositionAsync(): Promise<{ row: number; col: number }> {
     return this.terminalState.getCursorPositionAsync();
+  }
+
+  async getViewportFrameAsync(): Promise<SessionTerminalViewport> {
+    return this.terminalState.getViewportAsync();
   }
 
   onData(cb: (data: string) => void): void {

@@ -8,6 +8,7 @@ import {
   SessionTerminalState,
   type SessionTerminalDebugState,
   type SessionTerminalSnapshot,
+  type SessionTerminalViewport,
 } from "./session-terminal-state.js";
 
 export { type SessionStatus } from "./status-detector.js";
@@ -111,6 +112,10 @@ export class ServerSession {
 
   async getCursorPositionAsync(): Promise<{ row: number; col: number }> {
     return this.terminalState.getCursorPositionAsync();
+  }
+
+  async getViewportFrameAsync(): Promise<SessionTerminalViewport> {
+    return this.terminalState.getViewportAsync();
   }
 
   getDebugState(): SessionTerminalDebugState {

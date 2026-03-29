@@ -1,6 +1,12 @@
 import { type Task, readAllTasks, writeTask, cleanupTasks, hasActiveTask } from "./tasks.js";
 import { loadTeamConfig } from "./team.js";
-import type { PtySession } from "./pty-session.js";
+
+interface DispatchSession {
+  id: string;
+  exited: boolean;
+  status: string;
+  write(data: string): void;
+}
 
 export interface TaskEvent {
   type: "assigned" | "completed" | "failed" | "review_created" | "review_approved" | "changes_requested";
@@ -10,7 +16,7 @@ export interface TaskEvent {
 }
 
 export class TaskDispatcher {
-  private getSession: (id: string) => PtySession | undefined;
+  private getSession: (id: string) => DispatchSession | undefined;
   private getSessionTool: (id: string) => string | undefined;
   private getSessionRole: (id: string) => string | undefined;
   private tickCount = 0;
@@ -21,7 +27,7 @@ export class TaskDispatcher {
   private pendingEvents: TaskEvent[] = [];
 
   constructor(
-    getSession: (id: string) => PtySession | undefined,
+    getSession: (id: string) => DispatchSession | undefined,
     getSessionTool: (id: string) => string | undefined,
     getSessionRole?: (id: string) => string | undefined,
   ) {
@@ -202,8 +208,8 @@ export class TaskDispatcher {
    * Find an idle local session matching the task's targeting criteria.
    * Priority: assignedTo (specific session) > assignee (role) > tool > any idle.
    */
-  private findIdleSession(task: Task, localSessionIds: string[]): PtySession | undefined {
-    const isEligible = (id: string): PtySession | undefined => {
+  private findIdleSession(task: Task, localSessionIds: string[]): DispatchSession | undefined {
+    const isEligible = (id: string): DispatchSession | undefined => {
       if (id === task.assignedBy) return undefined; // don't delegate to self
       if (hasActiveTask(id)) return undefined; // already working a task
       const session = this.getSession(id);
@@ -249,7 +255,7 @@ export class TaskDispatcher {
   /**
    * Inject a task prompt into a session's PTY.
    */
-  private inject(session: PtySession, task: Task): void {
+  private inject(session: DispatchSession, task: Task): void {
     const prefix =
       task.type === "review"
         ? `[AIMUX REVIEW ${task.id} from ${task.assignedBy}]`
@@ -286,7 +292,7 @@ export class TaskDispatcher {
   /**
    * Notify the assigning session that a task has completed.
    */
-  private notifyAssigner(session: PtySession, task: Task): void {
+  private notifyAssigner(session: DispatchSession, task: Task): void {
     session.write(
       `[AIMUX TASK COMPLETE ${task.id}] Agent ${task.assignedTo} finished: ${task.result ?? task.error ?? "no details"}\r`,
     );
