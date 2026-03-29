@@ -24,7 +24,7 @@ export class SessionOutputPipeline {
     this.terminalQueryResponder.clearSession(sessionId);
   }
 
-  handleOutput(session: SessionOutputContext, data: string): void {
+  async handleOutput(session: SessionOutputContext, data: string): Promise<void> {
     if (session.command === "codex") {
       const count = this.codexOutputTraceCounts.get(session.id) ?? 0;
       if (count < 12) {
@@ -36,7 +36,7 @@ export class SessionOutputPipeline {
       }
     }
 
-    const queryReply = this.terminalQueryResponder.handleOutput(
+    const queryReply = await this.terminalQueryResponder.handleOutput(
       { sessionId: session.id, cursor: session.getCursorPosition() },
       data,
     );

@@ -49,6 +49,7 @@ import { FocusedRenderer } from "./focused-renderer.js";
 import { FooterController } from "./footer-controller.js";
 import type { SessionTerminalDebugState } from "./session-terminal-state.js";
 import { TerminalQueryResponder } from "./terminal-query-responder.js";
+import { HostTerminalQueryFallback } from "./terminal-query-fallback.js";
 import { SessionOutputPipeline } from "./session-output-pipeline.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "./session-runtime.js";
 import { ServerRuntimeManager } from "./server-runtime-manager.js";
@@ -172,8 +173,8 @@ export class Multiplexer {
     writtenAt: number;
     firstOutputAt?: number;
   } | null = null;
-  private terminalQueryResponder = new TerminalQueryResponder();
-  private sessionOutputPipeline = new SessionOutputPipeline(this.terminalQueryResponder);
+  private terminalQueryResponder!: TerminalQueryResponder;
+  private sessionOutputPipeline!: SessionOutputPipeline;
   private footerPlugins: FooterPluginManager;
   private footerSessionScope: "worktree" | "project";
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -197,6 +198,13 @@ export class Multiplexer {
 
   constructor() {
     this.terminalHost = new TerminalHost();
+    this.terminalQueryResponder = new TerminalQueryResponder(
+      undefined,
+      new HostTerminalQueryFallback(this.terminalHost, {
+        canForward: (context) => this.canForwardTerminalQuery(context.sessionId),
+      }),
+    );
+    this.sessionOutputPipeline = new SessionOutputPipeline(this.terminalQueryResponder);
     this.footerController = new FooterController();
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
@@ -553,6 +561,9 @@ export class Multiplexer {
 
     // Forward stdin through hotkey handler → active PTY
     this.onStdinData = (data: Buffer) => {
+      if (this.terminalHost.consumeResponse(data)) {
+        return;
+      }
       if (this.handleTerminalFocusEvent(data)) {
         return;
       }
@@ -646,9 +657,10 @@ export class Multiplexer {
     initProject();
     await registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
+    this.startedInDashboard = true;
+    this.mode = "dashboard";
     await this.connectToServer();
     this.loadOfflineSessions();
-    this.startedInDashboard = true;
 
     // Load config to set default tool for session creation
     const config = loadConfig();
@@ -663,6 +675,9 @@ export class Multiplexer {
 
     // Forward stdin
     this.onStdinData = (data: Buffer) => {
+      if (this.terminalHost.consumeResponse(data)) {
+        return;
+      }
       if (this.handleTerminalFocusEvent(data)) {
         return;
       }
@@ -1525,6 +1540,29 @@ export class Multiplexer {
       this.focusedRenderTimeout = null;
       void this.flushFocusedRender();
     }, delayMs);
+  }
+
+  private canForwardTerminalQuery(sessionId: string): boolean {
+    if (this.mode !== "focused") return false;
+    const activeSession = this.sessions[this.activeIndex];
+    if (!activeSession || activeSession.id !== sessionId) return false;
+    if (
+      this.pickerActive ||
+      this.worktreeInputActive ||
+      this.worktreeListActive ||
+      this.labelInputActive ||
+      this.metaDashboardActive ||
+      this.plansActive ||
+      this.helpActive ||
+      this.graveyardActive ||
+      this.switcherActive ||
+      this.migratePickerActive ||
+      this.dashboardBusyState ||
+      this.dashboardErrorState
+    ) {
+      return false;
+    }
+    return true;
   }
 
   private handleTerminalFocusEvent(data: Buffer): boolean {

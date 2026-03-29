@@ -10,6 +10,10 @@ export interface TerminalQueryHandler {
   clearSession?(sessionId: string): void;
 }
 
+export interface TerminalQueryFallback {
+  handleUnknownQuery(context: TerminalQueryContext, query: string): Promise<string | null> | string | null;
+}
+
 class KittyKeyboardHandler implements TerminalQueryHandler {
   private sessionKeyboardFlags = new Map<string, number>();
 
@@ -85,12 +89,21 @@ class OscColorQueryHandler implements TerminalQueryHandler {
 }
 
 export class TerminalQueryBroker {
-  constructor(private readonly handlers: TerminalQueryHandler[]) {}
+  constructor(
+    private readonly handlers: TerminalQueryHandler[],
+    private readonly fallback?: TerminalQueryFallback,
+  ) {}
 
-  handleOutput(context: TerminalQueryContext, data: string): string | null {
+  async handleOutput(context: TerminalQueryContext, data: string): Promise<string | null> {
     const replies: string[] = [];
     for (const handler of this.handlers) {
       replies.push(...handler.handle(context, data));
+    }
+    if (this.fallback) {
+      for (const query of findUnhandledTerminalQueries(data)) {
+        const reply = await this.fallback.handleUnknownQuery(context, query);
+        if (reply) replies.push(reply);
+      }
     }
     return replies.length > 0 ? replies.join("") : null;
   }
@@ -102,11 +115,40 @@ export class TerminalQueryBroker {
   }
 }
 
-export function createDefaultTerminalQueryBroker(): TerminalQueryBroker {
-  return new TerminalQueryBroker([
-    new KittyKeyboardHandler(),
-    new CursorPositionHandler(),
-    new DeviceAttributesHandler(),
-    new OscColorQueryHandler(),
-  ]);
+export function createDefaultTerminalQueryBroker(fallback?: TerminalQueryFallback): TerminalQueryBroker {
+  return new TerminalQueryBroker(
+    [
+      new KittyKeyboardHandler(),
+      new CursorPositionHandler(),
+      new DeviceAttributesHandler(),
+      new OscColorQueryHandler(),
+    ],
+    fallback,
+  );
+}
+
+function findUnhandledTerminalQueries(data: string): string[] {
+  const queries: string[] = [];
+  const patterns = [
+    /\x1b\[[0-9;?]*n/g,
+    /\x1b\[[0-9;?]*c/g,
+    /\x1b\][0-9]+;[^\x07\x1b]*\?\x1b\\/g,
+    /\x1b\][0-9]+;[^\x07\x1b]*\?\x07/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of data.matchAll(pattern)) {
+      queries.push(match[0]);
+    }
+  }
+  return Array.from(new Set(queries)).filter(
+    (query) =>
+      query !== "\x1b[6n" &&
+      query !== "\x1b[c" &&
+      query !== "\x1b]10;?\x1b\\" &&
+      query !== "\x1b]11;?\x1b\\" &&
+      query !== "\x1b]12;?\x1b\\" &&
+      query !== "\x1b]10;?\x07" &&
+      query !== "\x1b]11;?\x07" &&
+      query !== "\x1b]12;?\x07",
+  );
 }
