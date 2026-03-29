@@ -69,14 +69,18 @@ interface WorktreeRemovalJob {
   startedAt: number;
   oldIdx: number;
   stderr: string;
+}
+
+interface DashboardBusyState {
+  title: string;
+  lines: string[];
+  startedAt: number;
   spinnerFrame: number;
 }
 
-interface WorktreeRemovalError {
-  name: string;
-  path: string;
-  message: string;
-  details: string[];
+interface DashboardErrorState {
+  title: string;
+  lines: string[];
 }
 
 export class Multiplexer {
@@ -101,8 +105,9 @@ export class Multiplexer {
   private worktreeListActive = false;
   private worktreeRemoveConfirm: { path: string; name: string } | null = null;
   private worktreeRemovalJob: WorktreeRemovalJob | null = null;
-  private worktreeRemovalSpinner: ReturnType<typeof setInterval> | null = null;
-  private worktreeRemovalError: WorktreeRemovalError | null = null;
+  private dashboardBusyState: DashboardBusyState | null = null;
+  private dashboardBusySpinner: ReturnType<typeof setInterval> | null = null;
+  private dashboardErrorState: DashboardErrorState | null = null;
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
   private graveyardActive = false;
@@ -1230,13 +1235,13 @@ export class Multiplexer {
     const key = event.name || event.char;
     const hasWorktrees = this.worktreeNavOrder.length > 1;
 
-    if (this.worktreeRemovalJob) {
+    if (this.dashboardBusyState) {
       return;
     }
 
-    if (this.worktreeRemovalError) {
+    if (this.dashboardErrorState) {
       if (key === "escape" || key === "enter" || key === "return") {
-        this.dismissWorktreeRemovalError();
+        this.dismissDashboardError();
       }
       return;
     }
@@ -1293,16 +1298,13 @@ export class Multiplexer {
 
         if (selEntry.status === "offline") {
           // Second [x] on offline → move to graveyard
-          this.graveyardSession(selEntry.id);
-          this.adjustAfterRemove(hasWorktrees);
-          this.renderDashboard();
+          void this.graveyardSessionWithFeedback(selEntry.id, hasWorktrees);
           return;
         }
         // First [x] on running → stop PTY, keep as offline for resume
         const pty = this.sessions.find((s) => s.id === selEntry.id);
         if (pty) {
-          this.stopSessionToOffline(pty);
-          this.renderDashboard();
+          void this.stopSessionToOfflineWithFeedback(pty);
         }
         return;
       }
@@ -1356,14 +1358,13 @@ export class Multiplexer {
           const ds = this.getDashboardSessions();
           const entry = ds[this.activeIndex];
           if (entry?.remoteInstanceId) {
-            this.takeoverFromDashEntry(entry);
+            void this.takeoverFromDashEntryWithFeedback(entry);
             return;
           }
           if (entry?.status === "offline") {
             const offline = this.offlineSessions.find((s) => s.id === entry.id);
             if (offline) {
-              this.resumeOfflineSession(offline);
-              this.focusSession(this.sessions.length - 1);
+              void this.resumeOfflineSessionWithFeedback(offline);
             }
             return;
           }
@@ -1446,14 +1447,13 @@ export class Multiplexer {
           const dashEntry = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
           if (!dashEntry) break;
           if (dashEntry.remoteInstanceId) {
-            this.takeoverFromDashEntry(dashEntry);
+            void this.takeoverFromDashEntryWithFeedback(dashEntry);
             return;
           }
           if (dashEntry.status === "offline") {
             const offline = this.offlineSessions.find((s) => s.id === dashEntry.id);
             if (offline) {
-              this.resumeOfflineSession(offline);
-              this.focusSession(this.sessions.length - 1);
+              void this.resumeOfflineSessionWithFeedback(offline);
             }
             return;
           }
@@ -1702,10 +1702,10 @@ export class Multiplexer {
       mainCheckoutInfo,
     );
     process.stdout.write(this.dashboard.render(cols, rows));
-    if (this.worktreeRemovalJob) {
-      this.renderWorktreeRemovalProgress();
-    } else if (this.worktreeRemovalError) {
-      this.renderWorktreeRemovalError();
+    if (this.dashboardBusyState) {
+      this.renderDashboardBusyOverlay();
+    } else if (this.dashboardErrorState) {
+      this.renderDashboardErrorOverlay();
     }
   }
 
@@ -1977,28 +1977,14 @@ export class Multiplexer {
     process.stdout.write(output);
   }
 
-  private renderWorktreeRemovalProgress(): void {
-    const job = this.worktreeRemovalJob;
-    if (!job) return;
-
+  private renderDashboardBusyOverlay(): void {
+    const busy = this.dashboardBusyState;
+    if (!busy) return;
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][job.spinnerFrame % 10];
-    const elapsed = ((Date.now() - job.startedAt) / 1000).toFixed(1);
-    const detail = job.stderr
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .at(-1);
-    const lines = [
-      `${spinner} Removing worktree "${job.name}"`,
-      "",
-      `  Path: ${job.path}`,
-      `  Elapsed: ${elapsed}s`,
-      detail ? `  Git: ${detail.slice(0, 80)}` : "  Cleaning up checkout and metadata...",
-      "",
-      "  Please wait",
-    ];
+    const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][busy.spinnerFrame % 10];
+    const elapsed = ((Date.now() - busy.startedAt) / 1000).toFixed(1);
+    const lines = [`${spinner} ${busy.title}`, "", ...busy.lines, "", `  Elapsed: ${elapsed}s`, "", "  Please wait"];
 
     const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
     const startRow = Math.floor((rows - lines.length - 2) / 2);
@@ -2018,21 +2004,13 @@ export class Multiplexer {
     process.stdout.write(output);
   }
 
-  private renderWorktreeRemovalError(): void {
-    const error = this.worktreeRemovalError;
+  private renderDashboardErrorOverlay(): void {
+    const error = this.dashboardErrorState;
     if (!error) return;
 
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    const lines = [
-      `Failed to remove "${error.name}"`,
-      "",
-      `  Path: ${error.path}`,
-      `  Error: ${error.message}`,
-      ...error.details.slice(0, 4).map((line) => `  ${line}`),
-      "",
-      "  [Esc/Enter] dismiss",
-    ];
+    const lines = [error.title, "", ...error.lines.slice(0, 6).map((line) => `  ${line}`), "", "  [Esc/Enter] dismiss"];
 
     const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
     const startRow = Math.floor((rows - lines.length - 2) / 2);
@@ -2052,8 +2030,49 @@ export class Multiplexer {
     process.stdout.write(output);
   }
 
-  private dismissWorktreeRemovalError(): void {
-    this.worktreeRemovalError = null;
+  private startDashboardBusy(title: string, lines: string[]): void {
+    this.dashboardErrorState = null;
+    this.dashboardBusyState = {
+      title,
+      lines,
+      startedAt: Date.now(),
+      spinnerFrame: 0,
+    };
+    if (this.dashboardBusySpinner) {
+      clearInterval(this.dashboardBusySpinner);
+    }
+    this.dashboardBusySpinner = setInterval(() => {
+      if (!this.dashboardBusyState) return;
+      this.dashboardBusyState.spinnerFrame = (this.dashboardBusyState.spinnerFrame + 1) % 10;
+      if (this.mode === "dashboard") this.renderDashboard();
+    }, 120);
+    this.footerFlash = null;
+    this.footerFlashTicks = 0;
+    this.renderDashboard();
+  }
+
+  private updateDashboardBusy(lines: string[]): void {
+    if (!this.dashboardBusyState) return;
+    this.dashboardBusyState.lines = lines;
+    if (this.mode === "dashboard") this.renderDashboard();
+  }
+
+  private clearDashboardBusy(): void {
+    if (this.dashboardBusySpinner) {
+      clearInterval(this.dashboardBusySpinner);
+      this.dashboardBusySpinner = null;
+    }
+    this.dashboardBusyState = null;
+  }
+
+  private showDashboardError(title: string, lines: string[]): void {
+    this.clearDashboardBusy();
+    this.dashboardErrorState = { title, lines };
+    this.renderDashboard();
+  }
+
+  private dismissDashboardError(): void {
+    this.dashboardErrorState = null;
     this.renderDashboard();
   }
 
@@ -2068,8 +2087,7 @@ export class Multiplexer {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.worktreeRemovalError = { name, path, message, details: [] };
-      this.renderDashboard();
+      this.showDashboardError(`Failed to remove "${name}"`, [`Path: ${path}`, `Error: ${message}`]);
       return;
     }
 
@@ -2079,20 +2097,24 @@ export class Multiplexer {
       startedAt: Date.now(),
       oldIdx,
       stderr: "",
-      spinnerFrame: 0,
     };
-    this.footerFlash = null;
-    this.footerFlashTicks = 0;
-    this.worktreeRemovalSpinner = setInterval(() => {
-      if (!this.worktreeRemovalJob) return;
-      this.worktreeRemovalJob.spinnerFrame = (this.worktreeRemovalJob.spinnerFrame + 1) % 10;
-      if (this.mode === "dashboard") this.renderDashboard();
-    }, 120);
+    this.startDashboardBusy(`Removing worktree "${name}"`, [
+      `  Path: ${path}`,
+      "  Cleaning up checkout and metadata...",
+    ]);
 
     child.stderr.on("data", (chunk: Buffer) => {
       if (!this.worktreeRemovalJob) return;
       this.worktreeRemovalJob.stderr += chunk.toString();
-      if (this.mode === "dashboard") this.renderDashboard();
+      const detail = this.worktreeRemovalJob.stderr
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1);
+      this.updateDashboardBusy([
+        `  Path: ${path}`,
+        detail ? `  Git: ${detail.slice(0, 80)}` : "  Cleaning up checkout and metadata...",
+      ]);
     });
 
     child.on("close", (code: number | null) => {
@@ -2104,18 +2126,11 @@ export class Multiplexer {
       this.worktreeRemovalJob.stderr += `\n${err.message}`;
       this.finishWorktreeRemoval(1);
     });
-
-    this.renderDashboard();
   }
 
   private finishWorktreeRemoval(code: number): void {
     const job = this.worktreeRemovalJob;
     if (!job) return;
-
-    if (this.worktreeRemovalSpinner) {
-      clearInterval(this.worktreeRemovalSpinner);
-      this.worktreeRemovalSpinner = null;
-    }
 
     this.worktreeRemovalJob = null;
     const details = job.stderr
@@ -2124,6 +2139,7 @@ export class Multiplexer {
       .filter(Boolean);
 
     if (code === 0) {
+      this.clearDashboardBusy();
       this.footerFlash = `Removed: ${job.name}`;
       this.footerFlashTicks = 3;
       debug(`removed worktree: ${job.name}`, "worktree");
@@ -2141,12 +2157,8 @@ export class Multiplexer {
       const message = details[0] ?? `git worktree remove exited with code ${code}`;
       this.footerFlash = `Failed: ${message}`;
       this.footerFlashTicks = 5;
-      this.worktreeRemovalError = {
-        name: job.name,
-        path: job.path,
-        message,
-        details,
-      };
+      this.showDashboardError(`Failed to remove "${job.name}"`, [`Path: ${job.path}`, `Error: ${message}`, ...details]);
+      return;
     }
 
     this.renderDashboard();
@@ -2456,19 +2468,9 @@ export class Multiplexer {
       if (!target) return;
 
       // Stop the highlighted session (moves to offline)
-      this.stopSessionToOffline(target);
+      this.dismissSwitcher();
+      void this.stopSessionToOfflineWithFeedback(target);
 
-      // Refresh the list — if < 2 alive, close switcher
-      const newList = this.getSwitcherList();
-      if (newList.length < 2) {
-        this.dismissSwitcher();
-        return;
-      }
-      if (this.switcherIndex >= newList.length) {
-        this.switcherIndex = newList.length - 1;
-      }
-      this.renderSwitcher();
-      this.resetSwitcherTimeout();
       return;
     }
 
@@ -2632,6 +2634,108 @@ export class Multiplexer {
     process.stdout.write(output);
   }
 
+  private waitForSessionExit(session: PtySession, timeoutMs = 15_000): Promise<void> {
+    if (session.exited) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${session.id} to exit`)), timeoutMs);
+      session.onExit(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+
+  private async runDashboardOperation<T>(
+    title: string,
+    lines: string[],
+    work: () => Promise<T> | T,
+    errorTitle = title,
+  ): Promise<T | undefined> {
+    this.startDashboardBusy(title, lines);
+    const minVisibleMs = 250;
+    const startedAt = Date.now();
+    try {
+      const result = await work();
+      const remaining = minVisibleMs - (Date.now() - startedAt);
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
+      this.clearDashboardBusy();
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.showDashboardError(errorTitle, [message]);
+      return undefined;
+    }
+  }
+
+  private async stopSessionToOfflineWithFeedback(session: PtySession): Promise<void> {
+    const label = this.getSessionLabel(session.id) ?? session.command;
+    await this.runDashboardOperation(
+      `Stopping "${label}"`,
+      [`  Session: ${session.id}`, `  Tool: ${session.command}`],
+      async () => {
+        this.stopSessionToOffline(session);
+        await this.waitForSessionExit(session);
+        this.renderDashboard();
+      },
+      `Failed to stop "${label}"`,
+    );
+  }
+
+  private async graveyardSessionWithFeedback(sessionId: string, hasWorktrees: boolean): Promise<void> {
+    const session = this.offlineSessions.find((s) => s.id === sessionId);
+    if (!session) return;
+    const label = session.label ?? session.command;
+    await this.runDashboardOperation(
+      `Sending "${label}" to graveyard`,
+      [`  Session: ${session.id}`],
+      () => {
+        this.graveyardSession(sessionId);
+        this.adjustAfterRemove(hasWorktrees);
+        this.renderDashboard();
+      },
+      `Failed to graveyard "${label}"`,
+    );
+  }
+
+  private async resumeOfflineSessionWithFeedback(session: SessionState): Promise<void> {
+    const label = session.label ?? session.command;
+    await this.runDashboardOperation(
+      `Restoring "${label}"`,
+      [`  Session: ${session.id}`],
+      () => {
+        this.resumeOfflineSession(session);
+        this.focusSession(this.sessions.length - 1);
+      },
+      `Failed to restore "${label}"`,
+    );
+  }
+
+  private async takeoverFromDashEntryWithFeedback(entry: DashboardSession): Promise<void> {
+    const label = entry.label ?? entry.command;
+    await this.runDashboardOperation(
+      `Taking over "${label}"`,
+      [`  Session: ${entry.id}`],
+      () => this.takeoverSessionFromDashEntry(entry),
+      `Failed to take over "${label}"`,
+    );
+  }
+
+  private async migrateSessionWithFeedback(session: PtySession, targetPath: string, targetName: string): Promise<void> {
+    const label = this.getSessionLabel(session.id) ?? session.command;
+    await this.runDashboardOperation(
+      `Migrating "${label}"`,
+      [`  From: ${this.sessionWorktreePaths.get(session.id) ?? "(main)"}`, `  To: ${targetName}`],
+      async () => {
+        this.migrateAgent(session.id, targetPath);
+        await this.waitForSessionExit(session);
+        this.renderDashboard();
+      },
+      `Failed to migrate "${label}"`,
+    );
+  }
+
   private handleMigratePickerKey(data: Buffer): void {
     const events = parseKeys(data);
     if (events.length === 0) return;
@@ -2656,12 +2760,8 @@ export class Multiplexer {
         const target = this.migratePickerWorktrees[idx];
         const session = this.sessions[this.activeIndex];
         if (session) {
-          try {
-            this.migrateAgent(session.id, target.path);
-            debug(`migrated ${session.id} to ${target.name}`, "worktree");
-          } catch (err) {
-            debug(`migration failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
-          }
+          void this.migrateSessionWithFeedback(session, target.path, target.name);
+          return;
         }
       }
     }
@@ -2765,15 +2865,13 @@ export class Multiplexer {
   }
 
   /** Take over a remote session from a DashboardSession entry */
-  private takeoverFromDashEntry(entry: DashboardSession): void {
+  private async takeoverSessionFromDashEntry(entry: DashboardSession): Promise<void> {
     if (!entry.remoteInstanceId || !entry.remoteBackendSessionId) return;
-    this.takeoverSession({
+    await this.takeoverSession({
       id: entry.id,
       tool: entry.command,
       backendSessionId: entry.remoteBackendSessionId,
       fromInstanceId: entry.remoteInstanceId,
-    }).catch((err) => {
-      debug(`takeover failed: ${err instanceof Error ? err.message : String(err)}`, "instance");
     });
   }
 
@@ -3453,10 +3551,7 @@ export class Multiplexer {
 
   private teardown(): void {
     debug("teardown started", "session");
-    if (this.worktreeRemovalSpinner) {
-      clearInterval(this.worktreeRemovalSpinner);
-      this.worktreeRemovalSpinner = null;
-    }
+    this.clearDashboardBusy();
     this.stopHeartbeat();
     this.taskDispatcher = null;
     unregisterInstance(this.instanceId, process.cwd()).catch(() => {});
