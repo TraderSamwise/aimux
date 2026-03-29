@@ -222,6 +222,14 @@ export class PtySession {
     return output;
   }
 
+  getCursorPosition(): { row: number; col: number } {
+    const buffer = this.vt.buffer.active;
+    return {
+      row: buffer.cursorY + 1,
+      col: buffer.cursorX + 1,
+    };
+  }
+
   onData(cb: (data: string) => void): void {
     this.dataListeners.push(cb);
   }

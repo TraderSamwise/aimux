@@ -3185,9 +3185,7 @@ export class Multiplexer {
   private setupScrollRegion(): void {
     const rows = process.stdout.rows ?? 24;
     const toolRows = rows - this.footerHeight;
-    // Set scroll region to top portion, leaving bottom row for footer
     process.stdout.write(`\x1b[1;${toolRows}r`);
-    // Move cursor back into scroll region
     process.stdout.write(`\x1b[${toolRows};1H`);
   }
 
@@ -3213,6 +3211,11 @@ export class Multiplexer {
     const formatHyperlink = (text: string, href?: string) => (href ? `\x1b]8;;${href}\x07${text}\x1b]8;;\x07` : text);
     const fitPlainText = (text: string) => ellipsizeEnd(text, cols);
     const drawRow = (row: number, content: string) => `\x1b[${row};1H\x1b[2K${content}`;
+    const activeSession = this.sessions[this.activeIndex];
+    const cursor =
+      activeSession && typeof (activeSession as any).getCursorPosition === "function"
+        ? (activeSession as any).getCursorPosition()
+        : { row: 1, col: 1 };
 
     const STATUS_ICONS: Record<string, string> = {
       running: "●",
@@ -3232,9 +3235,9 @@ export class Multiplexer {
       parts.push(`${activePrefix}${icon} ${i + 1}:${name}`);
     }
 
-    const activeSession = this.sessions[this.activeIndex];
-    if (activeSession) {
-      const headline = this.deriveHeadline(activeSession.id);
+    const activeSessionForHeadline = this.sessions[this.activeIndex];
+    if (activeSessionForHeadline) {
+      const headline = this.deriveHeadline(activeSessionForHeadline.id);
       if (headline) {
         parts.push(headline);
       }
@@ -3265,12 +3268,12 @@ export class Multiplexer {
     }
     const pluginRow = renderedPluginParts.join("  ");
 
-    // Save cursor, move to footer row, draw, restore cursor
+    // Draw footer rows, then restore the tool cursor explicitly.
     if (footerHeight === 1) {
-      process.stdout.write(`\x1b7${drawRow(rows, tabsRow)}\x1b8`);
+      process.stdout.write(`${drawRow(rows, tabsRow)}\x1b[${cursor.row};${cursor.col}H`);
       return;
     }
-    process.stdout.write(`\x1b7${drawRow(rows - 1, tabsRow)}${drawRow(rows, pluginRow)}\x1b8`);
+    process.stdout.write(`${drawRow(rows - 1, tabsRow)}${drawRow(rows, pluginRow)}\x1b[${cursor.row};${cursor.col}H`);
   }
 
   private getActiveSessionFooterContext(): FooterPluginContext {
