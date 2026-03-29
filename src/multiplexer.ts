@@ -173,6 +173,42 @@ export class Multiplexer {
     return this.sessionLabels.get(sessionId) ?? this.offlineSessions.find((session) => session.id === sessionId)?.label;
   }
 
+  private applySessionLabel(sessionId: string, label?: string): void {
+    const trimmed = label?.trim();
+    if (trimmed) {
+      this.sessionLabels.set(sessionId, trimmed);
+    } else {
+      this.sessionLabels.delete(sessionId);
+    }
+
+    const offline = this.offlineSessions.find((session) => session.id === sessionId);
+    if (offline) {
+      if (trimmed) offline.label = trimmed;
+      else delete offline.label;
+    }
+  }
+
+  private async updateSessionLabel(sessionId: string, label?: string): Promise<void> {
+    this.applySessionLabel(sessionId, label);
+
+    if (this.serverSessionIds.has(sessionId) && this.serverClient?.connected) {
+      const ok = await this.serverClient.renameSession(sessionId, label?.trim() || undefined);
+      if (!ok) {
+        this.footerFlash = `Failed to rename ${sessionId}`;
+        this.footerFlashTicks = 3;
+      }
+    }
+
+    this.saveState();
+    this.writeStatuslineFile();
+
+    if (this.mode === "dashboard") {
+      this.renderDashboard();
+    } else if (this.mode === "focused") {
+      this.focusSession(this.activeIndex);
+    }
+  }
+
   private readStatusHeadline(sessionId: string): string | undefined {
     try {
       const statusPath = join(getStatusDir(), `${sessionId}.md`);
@@ -334,6 +370,15 @@ export class Multiplexer {
     try {
       this.serverClient = new ServerClient();
       await this.serverClient.connect();
+      this.serverClient.onSessionUpdated(({ id, label }) => {
+        this.applySessionLabel(id, label);
+        this.writeStatuslineFile();
+        if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive) {
+          this.renderDashboard();
+        } else if (this.mode === "focused") {
+          this.renderFooter();
+        }
+      });
       debug("connected to aimux server", "server-client");
 
       // Reconnect to existing server sessions
@@ -1844,21 +1889,11 @@ export class Multiplexer {
       const targetId = this.labelInputTarget;
       this.labelInputTarget = null;
       if (targetId) {
-        if (label) this.sessionLabels.set(targetId, label);
-        else this.sessionLabels.delete(targetId);
-        const offline = this.offlineSessions.find((s) => s.id === targetId);
-        if (offline && label) {
-          offline.label = label;
-        } else if (offline) {
-          delete offline.label;
-        }
-        this.saveState();
+        void this.updateSessionLabel(targetId, label || undefined);
+        return;
       }
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
+      if (this.mode === "dashboard") this.renderDashboard();
+      else this.focusSession(this.activeIndex);
       return;
     }
 

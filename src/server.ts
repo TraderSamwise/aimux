@@ -110,11 +110,16 @@ interface KillMsg {
   type: "kill";
   id: string;
 }
+interface RenameMsg {
+  type: "rename";
+  id: string;
+  label?: string;
+}
 interface ListMsg {
   type: "list";
 }
 
-type ClientMessage = SpawnMsg | WriteMsg | ResizeMsg | ScreenMsg | KillMsg | ListMsg;
+type ClientMessage = SpawnMsg | WriteMsg | ResizeMsg | ScreenMsg | KillMsg | RenameMsg | ListMsg;
 
 // ── Server ─────────────────────────────────────────────────────────
 
@@ -224,6 +229,9 @@ export class AimuxServer {
       case "kill":
         this.handleKill(msg);
         break;
+      case "rename":
+        this.handleRename(client, msg);
+        break;
       case "list":
         this.handleList(client);
         break;
@@ -322,6 +330,24 @@ export class AimuxServer {
       this.sessions.delete(msg.id);
       debug(`killed session: ${msg.id}`, "server");
     }
+  }
+
+  private handleRename(client: net.Socket, msg: RenameMsg): void {
+    const record = this.sessions.get(msg.id);
+    if (!record) {
+      this.send(client, { type: "error", message: `Session ${msg.id} not found` });
+      return;
+    }
+
+    const label = msg.label?.trim();
+    if (label) {
+      record.state.label = label;
+    } else {
+      delete record.state.label;
+    }
+
+    this.persistSessionState(record.state);
+    this.broadcast({ type: "session_updated", id: msg.id, label: record.state.label });
   }
 
   private handleList(client: net.Socket): void {

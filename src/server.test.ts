@@ -217,4 +217,50 @@ describe("server", () => {
     expect((server as any).sessions.has("codex-killed")).toBe(false);
     expect(existsSync(join(tmpDir, "state.json"))).toBe(false);
   });
+
+  it("updates and broadcasts server-backed session labels immediately", async () => {
+    const { AimuxServer } = await import("./server.js");
+
+    const writes: string[] = [];
+    const server = new AimuxServer("/repo");
+    (server as any).clients = new Set([
+      {
+        write: (data: string) => {
+          writes.push(data);
+        },
+      },
+    ]);
+
+    (server as any).handleSpawn(
+      { write: vi.fn() },
+      {
+        type: "spawn",
+        id: "codex-live",
+        command: "codex",
+        args: ["--dangerously-bypass-approvals-and-sandbox"],
+        toolConfigKey: "codex",
+        backendSessionId: "backend-rename",
+        cols: 120,
+        rows: 40,
+      },
+    );
+
+    (server as any).handleRename({ write: vi.fn() }, { type: "rename", id: "codex-live", label: "Cache backend" });
+
+    expect((server as any).sessions.get("codex-live").state.label).toBe("Cache backend");
+
+    const saved = JSON.parse(readFileSync(join(tmpDir, "state.json"), "utf-8"));
+    expect(saved.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "codex-live",
+          label: "Cache backend",
+        }),
+      ]),
+    );
+
+    expect(
+      writes.some((line) => line.includes('"type":"session_updated"') && line.includes('"label":"Cache backend"')),
+    ).toBe(true);
+  });
 });

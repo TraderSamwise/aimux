@@ -204,6 +204,7 @@ export class ServerClient {
   private buffer = "";
   private pendingCallbacks = new Map<string, (data: any) => void>();
   private _connected = false;
+  private sessionUpdateListeners: Array<(update: { id: string; label?: string }) => void> = [];
 
   get connected(): boolean {
     return this._connected;
@@ -307,6 +308,18 @@ export class ServerClient {
         if (cb) {
           this.pendingCallbacks.delete("list");
           cb(msg.sessions);
+        }
+        break;
+      }
+      case "session_updated": {
+        const label = typeof msg.label === "string" ? msg.label : undefined;
+        for (const cb of this.sessionUpdateListeners) {
+          cb({ id: msg.id, label });
+        }
+        const pending = this.pendingCallbacks.get(`rename:${msg.id}`);
+        if (pending) {
+          this.pendingCallbacks.delete(`rename:${msg.id}`);
+          pending(true);
         }
         break;
       }
@@ -431,6 +444,26 @@ export class ServerClient {
   /** Get a tracked session by ID */
   getSession(id: string): ServerSession | undefined {
     return this.sessions.get(id);
+  }
+
+  onSessionUpdated(cb: (update: { id: string; label?: string }) => void): void {
+    this.sessionUpdateListeners.push(cb);
+  }
+
+  async renameSession(id: string, label?: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingCallbacks.delete(`rename:${id}`);
+        resolve(false);
+      }, 3000);
+
+      this.pendingCallbacks.set(`rename:${id}`, (ok) => {
+        clearTimeout(timeout);
+        resolve(Boolean(ok));
+      });
+
+      this.send({ type: "rename", id, label });
+    });
   }
 
   /** Register an existing server session (for reconnection) */
