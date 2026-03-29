@@ -123,6 +123,10 @@ export class PtySession {
     return this.terminalState.getCursorPosition();
   }
 
+  async getCursorPositionAsync(): Promise<{ row: number; col: number }> {
+    return this.terminalState.getCursorPositionAsync();
+  }
+
   onData(cb: (data: string) => void): void {
     this.dataListeners.push(cb);
   }

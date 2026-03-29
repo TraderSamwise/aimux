@@ -151,6 +151,11 @@ export class SessionTerminalState {
     };
   }
 
+  async getCursorPositionAsync(): Promise<{ row: number; col: number }> {
+    await this.flush();
+    return this.getCursorPosition();
+  }
+
   dispose(): void {
     this.vt.dispose();
   }

@@ -3795,6 +3795,11 @@ export class Multiplexer {
       activeSession && typeof (activeSession as any).getCursorPosition === "function"
         ? (activeSession as any).getCursorPosition()
         : { row: 1, col: 1 };
+    this.renderFooterWithCursor(cursor, force);
+  }
+
+  private renderFooterWithCursor(cursor: { row: number; col: number }, force = true): void {
+    if (this.mode !== "focused") return;
     const scopedSessions = this.getScopedSessionEntries();
     const sessionChips = scopedSessions.map(({ session, index }, i) => ({
       index: i + 1,
@@ -3818,6 +3823,22 @@ export class Multiplexer {
       },
       force,
     );
+  }
+
+  private async renderFooterAfterFlush(force = true): Promise<void> {
+    if (this.mode !== "focused") return;
+    const activeSession = this.sessions[this.activeIndex];
+    if (!activeSession) return;
+
+    const cursor =
+      typeof (activeSession as any).getCursorPositionAsync === "function"
+        ? await (activeSession as any).getCursorPositionAsync()
+        : typeof (activeSession as any).getCursorPosition === "function"
+          ? (activeSession as any).getCursorPosition()
+          : { row: 1, col: 1 };
+
+    if (this.mode !== "focused" || this.sessions[this.activeIndex] !== activeSession) return;
+    this.renderFooterWithCursor(cursor, force);
   }
 
   private getActiveSessionFooterContext(): FooterPluginContext {
@@ -3902,7 +3923,7 @@ export class Multiplexer {
     this.footerRecoveryTimeout = setTimeout(() => {
       this.footerRecoveryTimeout = null;
       if (this.mode === "focused" && this.sessions[this.activeIndex]) {
-        this.renderFooter(true);
+        void this.renderFooterAfterFlush(true);
       }
     }, 150);
   }
@@ -3966,7 +3987,7 @@ export class Multiplexer {
 
       if (this.mode === "focused") {
         const forceWatchdogRepaint = this.footerWatchdogTicks % 3 === 0;
-        this.renderFooter(forceWatchdogRepaint);
+        void this.renderFooterAfterFlush(forceWatchdogRepaint);
       }
     }, 1000);
   }

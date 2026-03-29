@@ -109,6 +109,10 @@ export class ServerSession {
     return this.terminalState.getCursorPosition();
   }
 
+  async getCursorPositionAsync(): Promise<{ row: number; col: number }> {
+    return this.terminalState.getCursorPositionAsync();
+  }
+
   getDebugState(): SessionTerminalDebugState {
     return this.terminalState.getDebugState();
   }
