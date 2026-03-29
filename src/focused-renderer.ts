@@ -14,7 +14,7 @@ export class FocusedRenderer {
   async renderSession(session: FocusedRenderableSession | null | undefined, forceFooter = true): Promise<void> {
     if (!session) return;
     const viewport = await session.getViewportFrameAsync();
-    let output = "\x1b[r";
+    let output = "\x1b[?25l\x1b[r";
     for (let row = 1; row <= viewport.rows; row++) {
       const line = viewport.visibleLines[row - 1];
       output += `\x1b[${row};1H\x1b[2K${line ? renderTerminalSnapshotLine(line) : ""}`;

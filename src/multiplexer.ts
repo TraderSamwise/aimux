@@ -1432,7 +1432,7 @@ export class Multiplexer {
       if (row === subtitleRow) return this.centerInWidth(`\x1b[2m${subtitle}\x1b[0m`, cols);
       return "";
     });
-    let output = "\x1b[r";
+    let output = "\x1b[?25l\x1b[r";
     for (let i = 0; i < rows; i++) {
       output += `\x1b[${i + 1};1H\x1b[2K${lines[i]}`;
     }

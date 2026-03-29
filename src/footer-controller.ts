@@ -87,11 +87,11 @@ export class FooterController {
     this.lastSignature = signature;
 
     if (footerHeight === 1) {
-      process.stdout.write(`${drawRow(rows, tabsRow)}\x1b[${input.cursor.row};${input.cursor.col}H`);
+      process.stdout.write(`${drawRow(rows, tabsRow)}\x1b[${input.cursor.row};${input.cursor.col}H\x1b[?25h`);
       return;
     }
     process.stdout.write(
-      `${drawRow(rows - 1, tabsRow)}${drawRow(rows, pluginRow)}\x1b[${input.cursor.row};${input.cursor.col}H`,
+      `${drawRow(rows - 1, tabsRow)}${drawRow(rows, pluginRow)}\x1b[${input.cursor.row};${input.cursor.col}H\x1b[?25h`,
     );
   }
 }
