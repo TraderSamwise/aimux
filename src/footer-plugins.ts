@@ -10,17 +10,22 @@ export interface FooterPluginContext {
   isMainCheckout: boolean;
 }
 
+export interface FooterPluginItem {
+  text: string;
+  href?: string;
+}
+
 interface FooterPluginDefinition {
   id: string;
   ttlMs?: number;
-  renderSync?: (ctx: FooterPluginContext) => string | null;
-  resolve?: (ctx: FooterPluginContext) => Promise<string | null>;
+  renderSync?: (ctx: FooterPluginContext) => FooterPluginItem | null;
+  resolve?: (ctx: FooterPluginContext) => Promise<FooterPluginItem | null>;
   getCacheKey?: (ctx: FooterPluginContext) => string;
 }
 
 interface FooterPluginCacheEntry {
   key: string;
-  value: string | null;
+  value: FooterPluginItem | null;
   updatedAt: number;
   pending: boolean;
 }
@@ -37,8 +42,12 @@ export class FooterPluginManager {
     this.onUpdate = onUpdate;
   }
 
-  render(ctx: FooterPluginContext): string[] {
-    const parts: string[] = [];
+  get enabledCount(): number {
+    return this.plugins.length;
+  }
+
+  render(ctx: FooterPluginContext): FooterPluginItem[] {
+    const parts: FooterPluginItem[] = [];
 
     for (const plugin of this.plugins) {
       if (plugin.renderSync) {
@@ -152,7 +161,7 @@ async function runCommand(
   });
 }
 
-async function resolveGithubPrLabel(ctx: FooterPluginContext): Promise<string | null> {
+async function resolveGithubPrLabel(ctx: FooterPluginContext): Promise<FooterPluginItem | null> {
   const ghVersion = await runCommand("gh", ["--version"], ctx.activeSessionPath, 1_500);
   if (!ghVersion.ok) return null;
 
@@ -162,25 +171,45 @@ async function resolveGithubPrLabel(ctx: FooterPluginContext): Promise<string | 
   const branchResult = await runCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"], ctx.activeSessionPath, 1_500);
   if (!branchResult.ok || !branchResult.stdout || branchResult.stdout === "HEAD") return null;
 
-  let prResult = await runCommand("gh", ["pr", "view", "--json", "url", "--jq", ".url"], ctx.activeSessionPath, 2_500);
+  let prResult = await runCommand(
+    "gh",
+    ["pr", "view", "--json", "number,url", "--jq", "[.number, .url] | @tsv"],
+    ctx.activeSessionPath,
+    2_500,
+  );
 
   if (!prResult.ok || !prResult.stdout) {
     prResult = await runCommand(
       "gh",
-      ["pr", "list", "--head", branchResult.stdout, "--json", "url", "--jq", ".[0].url"],
+      [
+        "pr",
+        "list",
+        "--head",
+        branchResult.stdout,
+        "--state",
+        "all",
+        "--json",
+        "number,url",
+        "--jq",
+        ".[0] | [.number, .url] | @tsv",
+      ],
       ctx.activeSessionPath,
       2_500,
     );
   }
 
   if (!prResult.ok || !prResult.stdout || prResult.stdout === "null") return null;
-  return `PR ${prResult.stdout}`;
+  const [number, url] = prResult.stdout.split("\t");
+  if (!number || !url) return null;
+  return { text: `#${number}`, href: url };
 }
 
 const BUILTIN_FOOTER_PLUGINS: Record<string, FooterPluginDefinition> = {
   location: {
     id: "location",
-    renderSync: (ctx) => ctx.locationLabel,
+    renderSync: (ctx) => ({
+      text: ctx.isMainCheckout ? `main:${ctx.branch ?? "?"}` : `wt:${ctx.worktreeName ?? "unknown"}`,
+    }),
   },
   "github-pr": {
     id: "github-pr",

@@ -156,7 +156,6 @@ export class Multiplexer {
   private serverClient: ServerClient | null = null;
   /** Session IDs owned by the server (don't kill on TUI exit) */
   private serverSessionIds = new Set<string>();
-  private static readonly FOOTER_HEIGHT = 1;
 
   constructor() {
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
@@ -3144,13 +3143,17 @@ export class Multiplexer {
   /** Terminal rows available for the tool (total minus footer) */
   private get toolRows(): number {
     const rows = process.stdout.rows ?? 24;
-    return this.mode === "focused" ? rows - Multiplexer.FOOTER_HEIGHT : rows;
+    return this.mode === "focused" ? rows - this.footerHeight : rows;
+  }
+
+  private get footerHeight(): number {
+    return this.footerPlugins.enabledCount > 0 ? 2 : 1;
   }
 
   /** Set scroll region to exclude footer row */
   private setupScrollRegion(): void {
     const rows = process.stdout.rows ?? 24;
-    const toolRows = rows - Multiplexer.FOOTER_HEIGHT;
+    const toolRows = rows - this.footerHeight;
     // Set scroll region to top portion, leaving bottom row for footer
     process.stdout.write(`\x1b[1;${toolRows}r`);
     // Move cursor back into scroll region
@@ -3168,12 +3171,23 @@ export class Multiplexer {
 
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
+    const stripTerminalCodes = (s: string) =>
+      s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\x1b]8;;.*?(?:\x07|\x1b\\)/g, "");
+    const ellipsizeEnd = (s: string, max: number) => {
+      if (max <= 0) return "";
+      if (s.length <= max) return s;
+      if (max <= 1) return "…";
+      return `${s.slice(0, max - 1)}…`;
+    };
+    const formatHyperlink = (text: string, href?: string) => (href ? `\x1b]8;;${href}\x07${text}\x1b]8;;\x07` : text);
+    const fitPlainText = (text: string) => ellipsizeEnd(text, cols);
+    const drawRow = (row: number, content: string) => `\x1b[${row};1H\x1b[2K${content}`;
 
     const STATUS_ICONS: Record<string, string> = {
-      running: "\x1b[33m●\x1b[0m",
-      idle: "\x1b[32m●\x1b[0m",
-      waiting: "\x1b[36m◉\x1b[0m",
-      exited: "\x1b[31m○\x1b[0m",
+      running: "●",
+      idle: "●",
+      waiting: "◉",
+      exited: "○",
     };
 
     // Build session indicators
@@ -3182,42 +3196,49 @@ export class Multiplexer {
       const s = this.sessions[i];
       const icon = STATUS_ICONS[s.status] ?? "?";
       const name = this.getSessionLabel(s.id) ?? s.command;
-      const active = i === this.activeIndex ? "\x1b[1m" : "\x1b[2m";
-      const reset = "\x1b[0m";
-      parts.push(`${active}${icon} ${i + 1}:${name}${reset}`);
+      const activePrefix = i === this.activeIndex ? "*" : "";
+      parts.push(`${activePrefix}${icon} ${i + 1}:${name}`);
     }
 
     const activeSession = this.sessions[this.activeIndex];
     if (activeSession) {
       const headline = this.deriveHeadline(activeSession.id);
       if (headline) {
-        parts.push(`\x1b[2m${headline}\x1b[0m`);
+        parts.push(headline);
       }
     }
 
     const counts = this.taskDispatcher?.getTaskCounts();
     if (counts && (counts.pending > 0 || counts.assigned > 0)) {
-      parts.push(`\x1b[2m[T:${counts.pending}p/${counts.assigned}a]\x1b[0m`);
+      parts.push(`[T:${counts.pending}p/${counts.assigned}a]`);
     }
     if (this.footerFlash) {
-      parts.push(`\x1b[35m${this.footerFlash}\x1b[0m`);
+      parts.push(stripTerminalCodes(this.footerFlash));
     }
 
-    const left = ` ${parts.join("  ")}`;
+    const footerHeight = this.footerHeight;
+    const tabsRow = fitPlainText(` ${parts.join("  ")}`.replace(/\s+/g, " ").trimStart());
     const pluginParts = this.footerPlugins.render(this.getActiveSessionFooterContext());
-    const rightParts = [...pluginParts, "^A ? help"].filter(Boolean);
-    const right = `${rightParts.join("  ")} `;
-
-    // Calculate visible lengths (strip ANSI for padding)
-    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
-    const leftLen = stripAnsi(left).length;
-    const rightLen = stripAnsi(right).length;
-    const padLen = Math.max(0, cols - leftLen - rightLen);
-
-    const footerContent = `\x1b[7m${left}${" ".repeat(padLen)}${right}\x1b[0m`;
+    const helpText = "";
+    const renderedPluginParts: string[] = [];
+    let usedPluginWidth = helpText.length;
+    for (const plugin of pluginParts) {
+      const separatorWidth = renderedPluginParts.length > 0 ? 2 : 0;
+      const remaining = cols - usedPluginWidth - separatorWidth;
+      if (remaining <= 1) break;
+      const fitted = ellipsizeEnd(plugin.text, remaining);
+      if (!fitted) break;
+      renderedPluginParts.push(formatHyperlink(fitted, plugin.href));
+      usedPluginWidth += separatorWidth + fitted.length;
+    }
+    const pluginRow = renderedPluginParts.join("  ");
 
     // Save cursor, move to footer row, draw, restore cursor
-    process.stdout.write(`\x1b7` + `\x1b[${rows};1H` + footerContent + `\x1b8`);
+    if (footerHeight === 1) {
+      process.stdout.write(`\x1b7${drawRow(rows, tabsRow)}\x1b8`);
+      return;
+    }
+    process.stdout.write(`\x1b7${drawRow(rows - 1, tabsRow)}${drawRow(rows, pluginRow)}\x1b8`);
   }
 
   private getActiveSessionFooterContext(): FooterPluginContext {

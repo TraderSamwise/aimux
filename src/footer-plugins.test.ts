@@ -47,7 +47,7 @@ describe("footer plugins", () => {
           return;
         }
         if (command === "gh" && args[0] === "pr" && args[1] === "view") {
-          child.stdout.emit("data", "https://github.com/acme/repo/pull/42\n");
+          child.stdout.emit("data", "42\thttps://github.com/acme/repo/pull/42\n");
           child.emit("close", 0);
           return;
         }
@@ -73,12 +73,15 @@ describe("footer plugins", () => {
       isMainCheckout: true,
     };
 
-    expect(manager.render(ctx)).toEqual(["Main Checkout · master"]);
+    expect(manager.render(ctx)).toEqual([{ text: "main:feat/footer-plugins" }]);
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(updates).toBeGreaterThan(0);
-    expect(manager.render(ctx)).toEqual(["Main Checkout · master", "PR https://github.com/acme/repo/pull/42"]);
+    expect(manager.render(ctx)).toEqual([
+      { text: "main:feat/footer-plugins" },
+      { text: "#42", href: "https://github.com/acme/repo/pull/42" },
+    ]);
   });
 });
