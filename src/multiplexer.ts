@@ -143,6 +143,7 @@ export class Multiplexer {
   private footerInterval: ReturnType<typeof setInterval> | null = null;
   private footerRecoveryTimeout: ReturnType<typeof setTimeout> | null = null;
   private focusedRepaintTimeout: ReturnType<typeof setTimeout> | null = null;
+  private footerWatchdogTicks = 0;
   private footerPlugins: FooterPluginManager;
   private footerSessionScope: "worktree" | "project";
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -3649,9 +3650,11 @@ export class Multiplexer {
 
   private startFooterRefresh(): void {
     if (this.footerInterval) return;
+    this.footerWatchdogTicks = 0;
     this.renderFooter();
     // Refresh every 1s to pick up status changes, dispatch tasks, and check notifications
     this.footerInterval = setInterval(() => {
+      this.footerWatchdogTicks++;
       this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
       this.writeStatuslineFile();
 
@@ -3688,7 +3691,10 @@ export class Multiplexer {
         this.prevStatuses.set(session.id, curr);
       }
 
-      if (this.mode === "focused") this.renderFooter(false);
+      if (this.mode === "focused") {
+        const forceWatchdogRepaint = this.footerWatchdogTicks % 3 === 0;
+        this.renderFooter(forceWatchdogRepaint);
+      }
     }, 1000);
   }
 
@@ -3697,6 +3703,7 @@ export class Multiplexer {
       clearInterval(this.footerInterval);
       this.footerInterval = null;
     }
+    this.footerWatchdogTicks = 0;
     if (this.footerRecoveryTimeout) {
       clearTimeout(this.footerRecoveryTimeout);
       this.footerRecoveryTimeout = null;
