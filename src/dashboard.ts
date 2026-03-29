@@ -68,6 +68,7 @@ export class Dashboard {
   private scrollOffset = 0;
   private serverRunning = false;
   private mainCheckout: MainCheckoutInfo = { name: "Main Checkout", branch: "" };
+  private renderSessionCounter = 0;
 
   update(
     sessions: DashboardSession[],
@@ -94,6 +95,8 @@ export class Dashboard {
   }
 
   render(cols: number, rows: number): string {
+    this.renderSessionCounter = 0;
+
     // Header (fixed)
     const header: string[] = [];
     header.push("");
@@ -158,7 +161,7 @@ export class Dashboard {
   }
 
   private renderSession(session: DashboardSession, indent: string): string {
-    const num = session.index + 1;
+    const num = ++this.renderSessionCounter;
     const isSelected = this.navLevel === "sessions" && session.id === this.selectedSessionId;
     const marker = isSelected ? " \x1b[33m◀\x1b[0m" : "";
     const taskBadge = session.taskDescription ? ` \x1b[2;35m⧫ ${truncate(session.taskDescription, 40)}\x1b[0m` : "";
