@@ -23,12 +23,18 @@ export interface WorktreeConfig {
   baseDir: string;
 }
 
+export interface FooterConfig {
+  /** Ordered built-in footer plugins to render in the focused TUI footer. */
+  plugins: string[];
+}
+
 export interface AimuxConfig {
   defaultTool: string;
   contextMaxEntries: number;
   liveWindowSize: number;
   compactEveryNTurns: number;
   notifications: NotificationConfig;
+  footer: FooterConfig;
   worktrees: WorktreeConfig;
   tools: Record<string, ToolConfig>;
 }
@@ -76,6 +82,9 @@ const DEFAULT_CONFIG: AimuxConfig = {
     onPrompt: true,
     onError: true,
     onComplete: true,
+  },
+  footer: {
+    plugins: ["location", "github-pr"],
   },
   worktrees: {
     baseDir: ".aimux/worktrees",

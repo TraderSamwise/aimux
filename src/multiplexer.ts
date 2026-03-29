@@ -42,6 +42,7 @@ import { TaskDispatcher, requestReview } from "./task-dispatcher.js";
 import { loadTeamConfig } from "./team.js";
 import { scanAllProjects } from "./project-scanner.js";
 import { ServerClient } from "./server-client.js";
+import { FooterPluginManager, type FooterPluginContext } from "./footer-plugins.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -132,6 +133,7 @@ export class Multiplexer {
   /** Sessions in the currently focused worktree (for session-level nav) */
   private dashboardWorktreeSessions: DashboardSession[] = [];
   private footerInterval: ReturnType<typeof setInterval> | null = null;
+  private footerPlugins: FooterPluginManager;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher();
@@ -159,6 +161,9 @@ export class Multiplexer {
   constructor() {
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
+    this.footerPlugins = new FooterPluginManager(loadConfig().footer.plugins, () => {
+      if (this.mode === "focused") this.renderFooter();
+    });
   }
 
   get activeSession(): PtySession | null {
@@ -3199,7 +3204,9 @@ export class Multiplexer {
     }
 
     const left = ` ${parts.join("  ")}`;
-    const right = `${this.getActiveSessionLocationLabel()}  ^A ? help `;
+    const pluginParts = this.footerPlugins.render(this.getActiveSessionFooterContext());
+    const rightParts = [...pluginParts, "^A ? help"].filter(Boolean);
+    const right = `${rightParts.join("  ")} `;
 
     // Calculate visible lengths (strip ANSI for padding)
     const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -3213,10 +3220,15 @@ export class Multiplexer {
     process.stdout.write(`\x1b7` + `\x1b[${rows};1H` + footerContent + `\x1b8`);
   }
 
-  private getActiveSessionLocationLabel(): string {
+  private getActiveSessionFooterContext(): FooterPluginContext {
     const activeSession = this.sessions[this.activeIndex];
     if (!activeSession) {
-      return `${process.cwd().replace(homedir(), "~")}`;
+      return {
+        projectCwd: process.cwd(),
+        activeSessionPath: process.cwd(),
+        locationLabel: process.cwd().replace(homedir(), "~"),
+        isMainCheckout: true,
+      };
     }
 
     const worktreePath = this.sessionWorktreePaths.get(activeSession.id);
@@ -3231,21 +3243,49 @@ export class Multiplexer {
         const mainWorktree =
           (mainRepoPath ? worktrees.find((wt) => wt.path === mainRepoPath) : worktrees[0]) ?? worktrees[0];
         if (mainWorktree) {
-          return `Main Checkout · ${mainWorktree.branch}`;
+          return {
+            projectCwd: process.cwd(),
+            activeSessionId: activeSession.id,
+            activeSessionPath: mainWorktree.path,
+            locationLabel: `Main Checkout · ${mainWorktree.branch}`,
+            branch: mainWorktree.branch,
+            worktreeName: mainWorktree.name,
+            isMainCheckout: true,
+          };
         }
       } catch {}
-      return `Main Checkout · ${process.cwd().replace(homedir(), "~")}`;
+      return {
+        projectCwd: process.cwd(),
+        activeSessionId: activeSession.id,
+        activeSessionPath: mainRepoPath ?? process.cwd(),
+        locationLabel: `Main Checkout · ${process.cwd().replace(homedir(), "~")}`,
+        isMainCheckout: true,
+      };
     }
 
     try {
       const worktrees = listAllWorktrees(worktreePath);
       const current = worktrees.find((wt) => wt.path === worktreePath);
       if (current) {
-        return `Worktree · ${current.name} · ${current.branch}`;
+        return {
+          projectCwd: process.cwd(),
+          activeSessionId: activeSession.id,
+          activeSessionPath: worktreePath,
+          locationLabel: `Worktree · ${current.name} · ${current.branch}`,
+          branch: current.branch,
+          worktreeName: current.name,
+          isMainCheckout: false,
+        };
       }
     } catch {}
 
-    return `Worktree · ${worktreePath.replace(homedir(), "~")}`;
+    return {
+      projectCwd: process.cwd(),
+      activeSessionId: activeSession.id,
+      activeSessionPath: worktreePath,
+      locationLabel: `Worktree · ${worktreePath.replace(homedir(), "~")}`,
+      isMainCheckout: false,
+    };
   }
 
   /** Track previous statuses for notification on transition */
