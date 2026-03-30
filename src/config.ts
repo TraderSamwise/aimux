@@ -30,6 +30,17 @@ export interface FooterConfig {
   sessionScope: "worktree" | "project";
 }
 
+export interface TmuxRuntimeConfig {
+  /** How aimux should coexist with user-owned tmux environments. */
+  mode: "managed-session" | "current-session";
+}
+
+export interface RuntimeConfig {
+  /** Runtime backend for agent sessions. */
+  backend: "pty" | "tmux";
+  tmux: TmuxRuntimeConfig;
+}
+
 export interface AimuxConfig {
   defaultTool: string;
   contextMaxEntries: number;
@@ -37,6 +48,7 @@ export interface AimuxConfig {
   compactEveryNTurns: number;
   notifications: NotificationConfig;
   footer: FooterConfig;
+  runtime: RuntimeConfig;
   worktrees: WorktreeConfig;
   tools: Record<string, ToolConfig>;
 }
@@ -88,6 +100,12 @@ const DEFAULT_CONFIG: AimuxConfig = {
   footer: {
     plugins: ["location", "github-pr"],
     sessionScope: "worktree",
+  },
+  runtime: {
+    backend: "pty",
+    tmux: {
+      mode: "managed-session",
+    },
   },
   worktrees: {
     baseDir: ".aimux/worktrees",
