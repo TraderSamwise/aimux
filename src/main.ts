@@ -431,12 +431,12 @@ teamCmd
 
 // ── Server commands ────────────────────────────────────────────────
 
-const serverCmd = program.command("server").description("Manage aimux server (headless persistent agent host)");
+const serverCmd = program.command("server").description("Manage legacy aimux server (headless PTY host)");
 
 function assertServerSupported(): void {
   if (loadConfig().runtime.backend === "tmux") {
     console.error(
-      'aimux server is not used with runtime.backend = "tmux". Use the tmux-backed dashboard/session flow instead.',
+      'aimux server is a legacy PTY-mode feature and is not used with runtime.backend = "tmux". Use the tmux-backed dashboard/session flow instead.',
     );
     process.exit(1);
   }
@@ -444,7 +444,7 @@ function assertServerSupported(): void {
 
 serverCmd
   .command("start")
-  .description("Start the aimux server as a background daemon")
+  .description("Start the legacy aimux PTY server as a background daemon")
   .option("--foreground", "Run in foreground (used internally)")
   .action(async (opts: { foreground?: boolean }) => {
     assertServerSupported();
@@ -468,7 +468,7 @@ serverCmd
 
 serverCmd
   .command("stop")
-  .description("Stop the running aimux server")
+  .description("Stop the running legacy aimux PTY server")
   .action(() => {
     assertServerSupported();
     if (stopServer()) {
@@ -481,7 +481,7 @@ serverCmd
 
 serverCmd
   .command("status")
-  .description("Check if the aimux server is running")
+  .description("Check if the legacy aimux PTY server is running")
   .action(() => {
     assertServerSupported();
     const status = getServerStatus();

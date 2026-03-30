@@ -1,5 +1,7 @@
 # Terminal Runtime Phase 2
 
+Legacy note: this document describes the old custom `pty` runtime track. The default runtime is now tmux-backed; see [tmux-migration-plan.md](./tmux-migration-plan.md) for the current architecture and migration plan.
+
 ## Context
 
 Phase 1 established a usable terminal core:

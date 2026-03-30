@@ -40,5 +40,12 @@ export class TmuxRuntimeBackend implements RuntimeBackend {
 
 export function createRuntimeBackend(): RuntimeBackend {
   const backend = loadConfig().runtime.backend;
-  return backend === "tmux" ? new TmuxRuntimeBackend() : new PtyRuntimeBackend();
+  if (backend === "tmux") {
+    // The normal tmux-backed runtime path no longer uses AimuxServer. The CLI
+    // blocks `aimux server` in tmux mode, so if this helper is reached anyway,
+    // keep the legacy server path usable instead of constructing a backend that
+    // immediately throws on spawn.
+    return new PtyRuntimeBackend();
+  }
+  return new PtyRuntimeBackend();
 }
