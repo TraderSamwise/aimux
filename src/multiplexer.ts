@@ -52,6 +52,11 @@ import { HostTerminalQueryFallback } from "./terminal-query-fallback.js";
 import { SessionOutputPipeline } from "./session-output-pipeline.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "./session-runtime.js";
 import { ServerRuntimeManager, type ServerRuntimeEvent } from "./server-runtime-manager.js";
+import {
+  buildDashboardSessions,
+  getRemoteOwnedSessionKeys,
+  orderDashboardSessionsByVisualWorktree,
+} from "./dashboard-session-registry.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -3572,93 +3577,28 @@ export class Multiplexer {
 
   /** Get the current dashboard sessions (local + remote merged) for lookup */
   private getDashboardSessions(): DashboardSession[] {
-    // Normalize worktreePath: if it equals the main repo, treat as undefined (not a worktree)
     let mainRepoPath: string | undefined;
     try {
       mainRepoPath = findMainRepo();
     } catch {}
-    const normalizeWtPath = (p?: string) => (p && mainRepoPath && p === mainRepoPath ? undefined : p);
-
-    const dashSessions: DashboardSession[] = this.sessions.map((s, i) => {
-      const wtPath = normalizeWtPath(this.sessionWorktreePaths.get(s.id));
-      const label = this.getSessionLabel(s.id);
-      const headline = this.deriveHeadline(s.id);
-      return {
-        index: i,
-        id: s.id,
-        command: s.command,
-        backendSessionId: s.backendSessionId,
-        status: s.isHydrating ? "hydrating" : s.status,
-        active: i === this.activeIndex,
-        worktreePath: wtPath,
-        label,
-        headline,
-        taskDescription: this.taskDispatcher?.getSessionTask(s.id),
-        role: this.sessionRoles.get(s.id),
-      };
+    return buildDashboardSessions({
+      sessions: this.sessions.map((session) => ({
+        id: session.id,
+        command: session.command,
+        backendSessionId: session.backendSessionId,
+        status: session.isHydrating ? "hydrating" : session.status,
+        worktreePath: this.sessionWorktreePaths.get(session.id),
+      })),
+      activeIndex: this.activeIndex,
+      offlineSessions: this.offlineSessions,
+      remoteInstances: this.getRemoteInstancesSafe(),
+      mainRepoPath,
+      isServerSession: (sessionId) => this.serverRuntime.isServerSession(sessionId),
+      getSessionLabel: (sessionId) => this.getSessionLabel(sessionId),
+      getSessionHeadline: (sessionId) => this.deriveHeadline(sessionId),
+      getSessionTaskDescription: (sessionId) => this.taskDispatcher?.getSessionTask(sessionId),
+      getSessionRole: (sessionId) => this.sessionRoles.get(sessionId),
     });
-    for (const inst of this.getRemoteInstancesSafe()) {
-      const isServer = inst.instanceId.startsWith("server-");
-      for (const rs of inst.sessions) {
-        if (dashSessions.some((ds) => ds.id === rs.id)) continue;
-        const remoteLabel = this.getSessionLabel(rs.id);
-        const remoteHeadline = this.readStatusHeadline(rs.id);
-        dashSessions.push({
-          index: dashSessions.length,
-          id: rs.id,
-          command: rs.tool,
-          backendSessionId: rs.backendSessionId,
-          status: "running",
-          active: false,
-          worktreePath: normalizeWtPath(rs.worktreePath),
-          remoteInstancePid: isServer ? undefined : inst.pid,
-          remoteInstanceId: inst.instanceId,
-          remoteBackendSessionId: rs.backendSessionId,
-          label: remoteLabel,
-          headline: remoteHeadline,
-          isServer,
-        });
-      }
-    }
-
-    // Add offline sessions
-    for (const os of this.offlineSessions) {
-      const alreadyShown = dashSessions.some(
-        (ds) => ds.id === os.id || (os.backendSessionId && ds.backendSessionId === os.backendSessionId),
-      );
-      if (alreadyShown) continue;
-      // Resolve worktree name/branch for display
-      const osWtPath = normalizeWtPath(os.worktreePath);
-      let worktreeName: string | undefined;
-      let worktreeBranch: string | undefined;
-      if (osWtPath) {
-        try {
-          const allWt = listAllWorktrees(osWtPath);
-          const wt = allWt.find((w) => w.path === osWtPath);
-          worktreeName = wt?.name;
-          worktreeBranch = wt?.branch;
-        } catch {}
-        if (!worktreeName) {
-          worktreeName = osWtPath.split("/").pop();
-        }
-      }
-      dashSessions.push({
-        index: dashSessions.length,
-        id: os.id,
-        command: os.command,
-        backendSessionId: os.backendSessionId,
-        status: "offline" as const,
-        active: false,
-        worktreePath: osWtPath,
-        worktreeName,
-        worktreeBranch,
-        remoteBackendSessionId: os.backendSessionId,
-        label: os.label,
-        headline: os.headline,
-      });
-    }
-
-    return dashSessions;
   }
 
   private getDashboardSessionsInVisualOrder(): DashboardSession[] {
@@ -3682,30 +3622,7 @@ export class Multiplexer {
       return allDash;
     }
 
-    if (worktreePaths.length <= 1) {
-      return allDash;
-    }
-
-    const ordered: DashboardSession[] = [];
-    const seen = new Set<string>();
-
-    for (const worktreePath of worktreePaths) {
-      for (const session of allDash) {
-        if (seen.has(session.id)) continue;
-        if (normalizeWtPath(session.worktreePath) === worktreePath) {
-          ordered.push(session);
-          seen.add(session.id);
-        }
-      }
-    }
-
-    for (const session of allDash) {
-      if (!seen.has(session.id)) {
-        ordered.push(session);
-      }
-    }
-
-    return ordered;
+    return orderDashboardSessionsByVisualWorktree(allDash, worktreePaths, mainRepoPath);
   }
 
   /** Take over a remote session from a DashboardSession entry */
@@ -4434,14 +4351,7 @@ export class Multiplexer {
   }
 
   private getRemoteOwnedSessionKeys(): Set<string> {
-    const owned = new Set<string>();
-    for (const inst of this.getRemoteInstancesSafe()) {
-      for (const session of inst.sessions) {
-        owned.add(session.id);
-        if (session.backendSessionId) owned.add(session.backendSessionId);
-      }
-    }
-    return owned;
+    return getRemoteOwnedSessionKeys(this.getRemoteInstancesSafe());
   }
 
   /** Build InstanceSessionRef[] from current sessions for heartbeat/registry updates. */
