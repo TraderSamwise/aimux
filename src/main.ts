@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject } from "./config.js";
-import { loadConfig } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
