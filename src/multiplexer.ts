@@ -51,6 +51,8 @@ import {
   orderDashboardSessionsByVisualWorktree,
 } from "./dashboard-session-registry.js";
 import { InstanceDirectory } from "./instance-directory.js";
+import { TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
+import { TmuxSessionTransport } from "./tmux-session-transport.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -64,6 +66,7 @@ export interface SessionState {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  tmuxTarget?: TmuxTarget;
 }
 
 export interface SavedState {
@@ -197,6 +200,8 @@ export class Multiplexer {
   });
   /** Cross-instance discovery and claim/heartbeat ownership */
   private instanceDirectory = new InstanceDirectory();
+  private tmuxRuntimeManager = new TmuxRuntimeManager();
+  private sessionTmuxTargets = new Map<string, TmuxTarget>();
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -230,6 +235,16 @@ export class Multiplexer {
     return this.sessions.length;
   }
 
+  private isTmuxBackend(): boolean {
+    return loadConfig().runtime.backend === "tmux";
+  }
+
+  private openTmuxDashboardTarget(): void {
+    const session = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
+    const target = this.tmuxRuntimeManager.ensureDashboardWindow(session.sessionName, process.cwd());
+    this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+  }
+
   private getSessionLabel(sessionId: string): string | undefined {
     return this.sessionLabels.get(sessionId) ?? this.offlineSessions.find((session) => session.id === sessionId)?.label;
   }
@@ -251,6 +266,13 @@ export class Multiplexer {
 
   private async updateSessionLabel(sessionId: string, label?: string): Promise<void> {
     this.applySessionLabel(sessionId, label);
+
+    const localSession = this.sessions.find((session) => session.id === sessionId)?.transport;
+    if (localSession instanceof TmuxSessionTransport) {
+      localSession.renameWindow(label?.trim() || localSession.command);
+      const target = localSession.tmuxTarget;
+      this.sessionTmuxTargets.set(sessionId, target);
+    }
 
     if (this.serverRuntime.canControlSession(sessionId)) {
       const ok = await this.serverRuntime.renameSession(sessionId, label?.trim() || undefined);
@@ -440,6 +462,7 @@ export class Multiplexer {
     this.sessions.splice(idx, 1);
     this.writeSessionsFile();
     this.updateContextWatcherSessions();
+    this.sessionTmuxTargets.delete(runtime.id);
 
     if (this.sessions.length === 0) {
       if (this.startedInDashboard) {
@@ -541,7 +564,10 @@ export class Multiplexer {
     initProject();
     await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
-    await this.connectToServer();
+    if (!this.isTmuxBackend()) {
+      await this.connectToServer();
+    }
+    this.restoreTmuxSessionsFromState();
     this.taskDispatcher = new TaskDispatcher(
       (id) => this.sessions.find((s) => s.id === id),
       (id) => this.sessionToolKeys.get(id),
@@ -569,6 +595,11 @@ export class Multiplexer {
       undefined,
       toolConfig?.sessionIdFlag,
     );
+
+    if (this.isTmuxBackend()) {
+      this.focusSession(this.sessions.length - 1);
+      return 0;
+    }
 
     // Enter raw mode and set up footer
     this.terminalHost.enterRawMode();
@@ -676,7 +707,10 @@ export class Multiplexer {
     this.startHeartbeat();
     this.startedInDashboard = true;
     this.mode = "dashboard";
-    await this.connectToServer();
+    if (!this.isTmuxBackend()) {
+      await this.connectToServer();
+    }
+    this.restoreTmuxSessionsFromState();
     this.loadOfflineSessions();
 
     // Load config to set default tool for session creation
@@ -776,7 +810,7 @@ export class Multiplexer {
 
     // Enter dashboard mode directly
     this.mode = "dashboard";
-    process.stdout.write("\x1b[?1049h");
+    this.terminalHost.enterAlternateScreen(true);
     this.renderDashboard();
 
     const exitCode = await new Promise<number>((resolve) => {
@@ -845,6 +879,11 @@ export class Multiplexer {
         saved.worktreePath,
         saved.backendSessionId,
       );
+    }
+
+    if (this.isTmuxBackend()) {
+      this.openTmuxDashboardTarget();
+      return 0;
     }
 
     // Enter raw mode and set up input handling
@@ -999,6 +1038,11 @@ export class Multiplexer {
       );
     }
 
+    if (this.isTmuxBackend()) {
+      this.openTmuxDashboardTarget();
+      return 0;
+    }
+
     // Enter raw mode and set up input handling
     this.terminalHost.enterRawMode();
     this.startFooterRefresh();
@@ -1099,7 +1143,7 @@ export class Multiplexer {
     sessionIdFlag?: string[],
     worktreePath?: string,
     backendSessionIdOverride?: string,
-  ): PtySession {
+  ): SessionTransport {
     const cols = process.stdout.columns ?? 80;
 
     // Pre-generate session ID so we can reference it in the preamble
@@ -1244,14 +1288,41 @@ export class Multiplexer {
       }
     }
 
-    let session: PtySession;
+    let session: SessionTransport;
     let runtime: ManagedSession;
     const sessionStartTime = Date.now();
 
     // If server is connected, register the proxy locally first so onData/onExit
     // listeners are attached before the server can emit initial output.
     // If server is connected, spawn on server for persistent ownership
-    if (this.serverRuntime.connected) {
+    if (this.isTmuxBackend()) {
+      const tmuxSession = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
+      const target = this.tmuxRuntimeManager.createWindow(
+        tmuxSession.sessionName,
+        this.getSessionLabel(sessionId) ?? command,
+        worktreePath ?? process.cwd(),
+        command,
+        finalArgs,
+      );
+      const tmuxTransport = new TmuxSessionTransport(
+        sessionId,
+        command,
+        target,
+        this.tmuxRuntimeManager,
+        cols,
+        this.toolRows,
+      );
+      this.sessionTmuxTargets.set(sessionId, target);
+      session = tmuxTransport;
+      runtime = this.registerManagedSession(
+        tmuxTransport,
+        args,
+        toolConfigKey,
+        worktreePath,
+        undefined,
+        sessionStartTime,
+      );
+    } else if (this.serverRuntime.connected) {
       runtime = this.serverRuntime.spawnManagedSession(
         {
           id: sessionId,
@@ -1277,9 +1348,9 @@ export class Multiplexer {
             ),
         },
       );
-      session = runtime.transport as PtySession;
+      session = runtime.transport;
     } else {
-      session = new PtySession({
+      const pty = new PtySession({
         command,
         args: finalArgs,
         cols,
@@ -1288,7 +1359,8 @@ export class Multiplexer {
         cwd: worktreePath,
         promptPatterns,
       });
-      runtime = this.registerManagedSession(session, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
+      session = pty;
+      runtime = this.registerManagedSession(pty, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
     }
 
     // Store backend session ID and start time
@@ -1297,7 +1369,7 @@ export class Multiplexer {
     // For tools without sessionIdFlag, try to capture the backend session ID via filesystem
     if (!backendSessionId && toolConfigKey) {
       const toolCfg = loadConfig().tools[toolConfigKey];
-      if (toolCfg?.sessionCapture) {
+      if (toolCfg?.sessionCapture && session instanceof PtySession) {
         this.captureSessionId(session, toolCfg.sessionCapture);
       }
     }
@@ -1312,6 +1384,8 @@ export class Multiplexer {
     } else if (this.sessions.length > 1) {
       this.focusSession(this.activeIndex);
     }
+
+    this.saveState();
 
     return session;
   }
@@ -1624,11 +1698,21 @@ export class Multiplexer {
     if (index < 0 || index >= this.sessions.length) return;
 
     this.activeIndex = index;
-    this.setMode("focused");
 
     // Update MRU: move focused session to front
     const sid = this.sessions[index].id;
     this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
+
+    if (this.isTmuxBackend()) {
+      const target = this.sessionTmuxTargets.get(sid);
+      if (target) {
+        this.saveState();
+        this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+      }
+      return;
+    }
+
+    this.setMode("focused");
 
     this.scheduleFocusedRender();
     this.startFooterRefresh();
@@ -2940,12 +3024,12 @@ export class Multiplexer {
 
     this.terminalHost.resetScrollRegion();
     this.terminalHost.exitRawMode();
-    process.stdout.write("\x1b[?1049l");
+    this.terminalHost.exitAlternateScreen();
 
     const result = spawnSync(shell, ["-lc", `${editor} ${shellEscape(path)}`], { stdio: "inherit" });
 
     this.terminalHost.enterRawMode();
-    process.stdout.write("\x1b[?1049h");
+    this.terminalHost.enterAlternateScreen(true);
 
     if (result.error) {
       this.dashboardErrorState = {
@@ -3638,16 +3722,15 @@ export class Multiplexer {
     this.mode = mode;
 
     if (mode === "dashboard" && prev !== "dashboard") {
-      // Stop footer, reset scroll region, enter alternate screen
+      // Stop footer, reset scroll region, keep rendering in alternate screen
       this.stopFooterRefresh();
       this.focusedRenderer.invalidate();
       this.terminalHost.resetScrollRegion();
-      process.stdout.write("\x1b[?1049h");
+      this.terminalHost.enterAlternateScreen(true);
       this.renderDashboard();
     } else if (mode === "focused" && prev === "dashboard") {
-      // Leave alternate screen buffer
       this.focusedRenderer.invalidate();
-      process.stdout.write("\x1b[?1049l");
+      this.terminalHost.enterAlternateScreen(true);
     }
   }
 
@@ -4084,6 +4167,42 @@ export class Multiplexer {
     }
   }
 
+  private restoreTmuxSessionsFromState(): void {
+    if (!this.isTmuxBackend()) return;
+    const state = Multiplexer.loadState();
+    if (!state?.sessions.length) return;
+
+    const cols = process.stdout.columns ?? 80;
+    const rows = this.toolRows;
+    const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
+
+    for (const saved of state.sessions) {
+      const target = saved.tmuxTarget;
+      if (!target) continue;
+      if (target.sessionName !== tmuxSession.sessionName) continue;
+      const resolved = this.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId);
+      if (!resolved) continue;
+      if (resolved.windowName === "dashboard") continue;
+      if (this.sessions.some((session) => session.id === saved.id)) continue;
+
+      const transport = new TmuxSessionTransport(
+        saved.id,
+        saved.command,
+        resolved,
+        this.tmuxRuntimeManager,
+        cols,
+        rows,
+      );
+      transport.backendSessionId = saved.backendSessionId;
+      this.sessionTmuxTargets.set(saved.id, resolved);
+      this.registerManagedSession(transport, saved.args, saved.toolConfigKey, saved.worktreePath, undefined);
+      if (saved.label) {
+        this.sessionLabels.set(saved.id, saved.label);
+        transport.renameWindow(saved.label);
+      }
+    }
+  }
+
   /** Remove an offline session and move it to state-trash.json */
   /** Stop a running session and move it to offline (first [x]) */
   private stopSessionToOffline(session: ManagedSession): void {
@@ -4242,6 +4361,7 @@ export class Multiplexer {
       this.sessionToolKeys.delete(sessionId);
       this.sessionOriginalArgs.delete(sessionId);
       this.sessionWorktreePaths.delete(sessionId);
+      this.sessionTmuxTargets.delete(sessionId);
     }
 
     // Adjust active index
@@ -4298,6 +4418,7 @@ export class Multiplexer {
       worktreePath: this.sessionWorktreePaths.get(s.id),
       label: this.getSessionLabel(s.id),
       headline: this.deriveHeadline(s.id),
+      tmuxTarget: this.sessionTmuxTargets.get(s.id),
     }));
     const mySessions = [...this.offlineSessions, ...liveSessions];
     if (mySessions.length === 0) return;

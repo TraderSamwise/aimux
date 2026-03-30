@@ -37,6 +37,12 @@ export interface CaptureTargetOptions {
   startLine?: number;
 }
 
+export interface TmuxCommandSpec {
+  cwd: string;
+  command: string;
+  args: string[];
+}
+
 const DEFAULT_EXEC: TmuxExec = (args, options) =>
   execFileSync("tmux", args, {
     cwd: options?.cwd,
@@ -75,25 +81,37 @@ export class TmuxRuntimeManager {
     }
   }
 
-  ensureProjectSession(projectRoot: string): TmuxSessionRef {
+  ensureProjectSession(projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxSessionRef {
     const session = this.getProjectSession(projectRoot);
     if (!this.hasSession(session.sessionName)) {
-      this.exec(
-        [
-          "new-session",
-          "-d",
-          "-s",
-          session.sessionName,
-          "-c",
-          projectRoot,
-          "-n",
-          "dashboard",
-          "sh",
-          "-lc",
-          "printf ''",
-        ],
-        { cwd: projectRoot },
-      );
+      const argv =
+        dashboardCommand && dashboardCommand.args.length >= 0
+          ? [
+              "new-session",
+              "-d",
+              "-s",
+              session.sessionName,
+              "-c",
+              dashboardCommand.cwd,
+              "-n",
+              "dashboard",
+              dashboardCommand.command,
+              ...dashboardCommand.args,
+            ]
+          : [
+              "new-session",
+              "-d",
+              "-s",
+              session.sessionName,
+              "-c",
+              projectRoot,
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "printf ''",
+            ];
+      this.exec(argv, { cwd: projectRoot });
     }
     return session;
   }
@@ -121,7 +139,22 @@ export class TmuxRuntimeManager {
       });
   }
 
-  ensureDashboardWindow(sessionName: string, projectRoot: string): TmuxTarget {
+  getTargetByWindowId(sessionName: string, windowId: string): TmuxTarget | null {
+    const window = this.listWindows(sessionName).find((entry) => entry.id === windowId);
+    if (!window) return null;
+    return {
+      sessionName,
+      windowId: window.id,
+      windowIndex: window.index,
+      windowName: window.name,
+    };
+  }
+
+  hasWindow(target: TmuxTarget): boolean {
+    return this.getTargetByWindowId(target.sessionName, target.windowId) !== null;
+  }
+
+  ensureDashboardWindow(sessionName: string, projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxTarget {
     const existing = this.listWindows(sessionName).find((window) => window.index === 0 || window.name === "dashboard");
     if (existing) {
       this.renameWindow(existing.id, "dashboard");
@@ -132,12 +165,36 @@ export class TmuxRuntimeManager {
         windowName: "dashboard",
       };
     }
-    this.exec(
-      ["new-window", "-d", "-t", `${sessionName}:0`, "-c", projectRoot, "-n", "dashboard", "sh", "-lc", "printf ''"],
-      {
-        cwd: projectRoot,
-      },
-    );
+    const argv =
+      dashboardCommand && dashboardCommand.args.length >= 0
+        ? [
+            "new-window",
+            "-d",
+            "-t",
+            `${sessionName}:0`,
+            "-c",
+            dashboardCommand.cwd,
+            "-n",
+            "dashboard",
+            dashboardCommand.command,
+            ...dashboardCommand.args,
+          ]
+        : [
+            "new-window",
+            "-d",
+            "-t",
+            `${sessionName}:0`,
+            "-c",
+            projectRoot,
+            "-n",
+            "dashboard",
+            "sh",
+            "-lc",
+            "printf ''",
+          ];
+    this.exec(argv, {
+      cwd: projectRoot,
+    });
     const created = this.listWindows(sessionName).find((window) => window.index === 0);
     if (!created) {
       throw new Error(`Failed to create dashboard window in tmux session ${sessionName}`);
@@ -181,6 +238,12 @@ export class TmuxRuntimeManager {
 
   renameWindow(windowTarget: string, name: string): void {
     this.exec(["rename-window", "-t", windowTarget, name]);
+  }
+
+  respawnWindow(target: TmuxTarget, spec: TmuxCommandSpec): void {
+    this.exec(["respawn-window", "-k", "-t", target.windowId, "-c", spec.cwd, spec.command, ...spec.args], {
+      cwd: spec.cwd,
+    });
   }
 
   selectWindow(target: TmuxTarget): void {

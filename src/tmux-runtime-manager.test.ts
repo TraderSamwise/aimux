@@ -114,6 +114,35 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.at(-1)?.args).toEqual(["send-keys", "-t", "@3", "Enter"]);
   });
 
+  it("respawns a window with a specific command", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    manager.respawnWindow(
+      {
+        sessionName: "aimux:mobile:abc",
+        windowId: "@0",
+        windowIndex: 0,
+        windowName: "dashboard",
+      },
+      {
+        cwd: "/repo/mobile",
+        command: "/usr/local/bin/node",
+        args: ["/repo/mobile/dist/main.js", "--tmux-dashboard-internal"],
+      },
+    );
+    expect(exec.calls.at(-1)?.args).toEqual([
+      "respawn-window",
+      "-k",
+      "-t",
+      "@0",
+      "-c",
+      "/repo/mobile",
+      "/usr/local/bin/node",
+      "/repo/mobile/dist/main.js",
+      "--tmux-dashboard-internal",
+    ]);
+  });
+
   it("detects whether aimux is already inside tmux", () => {
     const manager = new TmuxRuntimeManager(createExecMock());
     expect(manager.isInsideTmux({ TMUX: "/tmp/tmux-1000/default,123,0" } as NodeJS.ProcessEnv)).toBe(true);

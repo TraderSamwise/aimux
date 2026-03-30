@@ -7,10 +7,12 @@ import { fileURLToPath } from "node:url";
 import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject } from "./config.js";
+import { loadConfig } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, listWorktrees } from "./worktree.js";
 import { startServerForeground, stopServer, getServerStatus, isServerRunning } from "./server.js";
+import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
 const program = new Command();
 
@@ -22,58 +24,101 @@ program
   .argument("[args...]", "Arguments to pass to the tool")
   .option("--resume", "Resume previous sessions using native tool resume")
   .option("--restore", "Start fresh sessions with injected history context")
+  .option("--tmux-dashboard-internal", "Internal tmux dashboard entrypoint")
   .hook("preAction", async () => {
     await initPaths();
   })
-  .action(async (tool: string | undefined, args: string[], opts: { resume?: boolean; restore?: boolean }) => {
-    const mux = new Multiplexer();
-    let cleanedUp = false;
-    const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
-    const cleanupAll = () => {
-      if (cleanedUp) return;
-      cleanedUp = true;
-      mux.cleanup();
-    };
+  .action(
+    async (
+      tool: string | undefined,
+      args: string[],
+      opts: { resume?: boolean; restore?: boolean; tmuxDashboardInternal?: boolean },
+    ) => {
+      const runtimeConfig = loadConfig().runtime;
+      if (runtimeConfig.backend === "tmux" && !opts.tmuxDashboardInternal) {
+        initProject();
+        const tmux = new TmuxRuntimeManager();
+        if (!tmux.isAvailable()) {
+          console.error("aimux: tmux backend selected but tmux is not installed or not available in PATH");
+          process.exit(1);
+        }
+        if (runtimeConfig.tmux.mode !== "managed-session") {
+          console.error('aimux: tmux runtime currently supports only runtime.tmux.mode = "managed-session"');
+          process.exit(1);
+        }
 
-    // Graceful shutdown on signals
-    const shutdown = () => {
-      cleanupAll();
-      process.exit(0);
-    };
-    process.on("exit", ensureTerminalRestored);
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
-    process.on("uncaughtException", (err) => {
-      cleanupAll();
-      console.error(err);
-      process.exit(1);
-    });
-    process.on("unhandledRejection", (reason) => {
-      cleanupAll();
-      console.error(reason);
-      process.exit(1);
-    });
-
-    try {
-      let exitCode: number;
-      if (opts.resume) {
-        exitCode = await mux.resumeSessions(tool);
-      } else if (opts.restore) {
-        exitCode = await mux.restoreSessions(tool);
-      } else if (tool) {
-        exitCode = await mux.run({ command: tool, args });
-      } else {
-        exitCode = await mux.runDashboard();
+        const scriptPath = fileURLToPath(import.meta.url);
+        const dashboardCommand = {
+          cwd: process.cwd(),
+          command: process.execPath,
+          args: [scriptPath, "--tmux-dashboard-internal"],
+        };
+        const dashboardSession = tmux.ensureProjectSession(process.cwd(), {
+          cwd: dashboardCommand.cwd,
+          command: dashboardCommand.command,
+          args: dashboardCommand.args,
+        });
+        const dashboardTarget = tmux.ensureDashboardWindow(
+          dashboardSession.sessionName,
+          process.cwd(),
+          dashboardCommand,
+        );
+        tmux.respawnWindow(dashboardTarget, dashboardCommand);
+        if (!tool && !opts.resume && !opts.restore) {
+          tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
+          return;
+        }
       }
-      cleanupAll();
-      process.exit(exitCode);
-    } catch (err: unknown) {
-      cleanupAll();
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`aimux: failed to spawn "${tool}": ${msg}`);
-      process.exit(1);
-    }
-  });
+
+      const mux = new Multiplexer();
+      let cleanedUp = false;
+      const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
+      const cleanupAll = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        mux.cleanup();
+      };
+
+      // Graceful shutdown on signals
+      const shutdown = () => {
+        cleanupAll();
+        process.exit(0);
+      };
+      process.on("exit", ensureTerminalRestored);
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+      process.on("uncaughtException", (err) => {
+        cleanupAll();
+        console.error(err);
+        process.exit(1);
+      });
+      process.on("unhandledRejection", (reason) => {
+        cleanupAll();
+        console.error(reason);
+        process.exit(1);
+      });
+
+      try {
+        let exitCode: number;
+        if (opts.resume) {
+          exitCode = await mux.resumeSessions(tool);
+        } else if (opts.restore) {
+          exitCode = await mux.restoreSessions(tool);
+        } else if (tool) {
+          exitCode = await mux.run({ command: tool, args });
+        } else {
+          exitCode = await mux.runDashboard();
+        }
+        cleanupAll();
+        process.exit(exitCode);
+      } catch (err: unknown) {
+        cleanupAll();
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`aimux: failed to spawn "${tool}": ${msg}`);
+        process.exit(1);
+      }
+    },
+  );
 
 program
   .command("init")
