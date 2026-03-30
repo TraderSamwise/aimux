@@ -77,4 +77,21 @@ describe("TmuxRuntimeManager", () => {
       "codex",
     ]);
   });
+
+  it("switches client inside tmux and attaches outside tmux", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const target = {
+      sessionName: "aimux:mobile:abc",
+      windowId: "@3",
+      windowIndex: 3,
+      windowName: "codex",
+    };
+
+    manager.openTarget(target, { insideTmux: true });
+    manager.openTarget(target, { insideTmux: false });
+
+    expect(exec.calls.at(-2)?.args).toEqual(["switch-client", "-t", "aimux:mobile:abc:3"]);
+    expect(exec.calls.at(-1)?.args).toEqual(["attach-session", "-t", "aimux:mobile:abc"]);
+  });
 });

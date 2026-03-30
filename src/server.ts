@@ -1,10 +1,10 @@
 import * as net from "node:net";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { PtySession } from "./pty-session.js";
 import { registerInstance, unregisterInstance, updateHeartbeat, type InstanceSessionRef } from "./instance-registry.js";
 import { debug } from "./debug.js";
 import { getProjectStateDir, getStatePath } from "./paths.js";
+import { createRuntimeBackend, type RuntimeBackend, type RuntimeBackendSession } from "./runtime-backend.js";
 
 interface SavedSessionState {
   id: string;
@@ -18,7 +18,7 @@ interface SavedSessionState {
 }
 
 interface ServerSessionRecord {
-  pty: PtySession;
+  runtime: RuntimeBackendSession;
   state: SavedSessionState;
 }
 
@@ -132,9 +132,11 @@ export class AimuxServer {
   private instanceId = `server-${Math.random().toString(36).slice(2, 8)}`;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private cwd: string;
+  private runtimeBackend: RuntimeBackend;
 
-  constructor(cwd?: string) {
+  constructor(cwd?: string, runtimeBackend?: RuntimeBackend) {
     this.cwd = cwd ?? process.cwd();
+    this.runtimeBackend = runtimeBackend ?? createRuntimeBackend();
   }
 
   async start(): Promise<void> {
@@ -245,7 +247,7 @@ export class AimuxServer {
     }
 
     try {
-      const session = new PtySession({
+      const session = this.runtimeBackend.spawn({
         command: msg.command,
         args: msg.args,
         cols: msg.cols,
@@ -256,7 +258,7 @@ export class AimuxServer {
       session.backendSessionId = msg.backendSessionId;
 
       const record: ServerSessionRecord = {
-        pty: session,
+        runtime: session,
         state: {
           id: msg.id,
           tool: msg.command,
@@ -301,21 +303,21 @@ export class AimuxServer {
   private handleWrite(msg: WriteMsg): void {
     const record = this.sessions.get(msg.id);
     if (record) {
-      record.pty.write(Buffer.from(msg.data, "base64").toString());
+      record.runtime.write(Buffer.from(msg.data, "base64").toString());
     }
   }
 
   private handleResize(msg: ResizeMsg): void {
     const record = this.sessions.get(msg.id);
     if (record) {
-      record.pty.resize(msg.cols, msg.rows);
+      record.runtime.resize(msg.cols, msg.rows);
     }
   }
 
   private async handleScreen(client: net.Socket, msg: ScreenMsg): Promise<void> {
     const record = this.sessions.get(msg.id);
     if (record) {
-      const snapshot = await record.pty.getTerminalSnapshot();
+      const snapshot = await record.runtime.getTerminalSnapshot();
       this.send(client, { type: "screen", id: msg.id, data: Buffer.from(JSON.stringify(snapshot)).toString("base64") });
     } else {
       this.send(client, { type: "error", message: `Session ${msg.id} not found` });
@@ -326,7 +328,7 @@ export class AimuxServer {
     const record = this.sessions.get(msg.id);
     if (record) {
       this.skipPersistOnExit.add(msg.id);
-      record.pty.destroy();
+      record.runtime.destroy();
       this.sessions.delete(msg.id);
       debug(`killed session: ${msg.id}`, "server");
     }
@@ -351,11 +353,11 @@ export class AimuxServer {
   }
 
   private handleList(client: net.Socket): void {
-    const sessions = [...this.sessions.values()].map(({ pty, state }) => ({
-      id: pty.id,
-      command: pty.command,
-      status: pty.status,
-      exited: pty.exited,
+    const sessions = [...this.sessions.values()].map(({ runtime, state }) => ({
+      id: runtime.id,
+      command: runtime.command,
+      status: runtime.status,
+      exited: runtime.exited,
       toolConfigKey: state.toolConfigKey,
       backendSessionId: state.backendSessionId,
       worktreePath: state.worktreePath,
@@ -380,9 +382,9 @@ export class AimuxServer {
   }
 
   private getSessionRefs(): InstanceSessionRef[] {
-    return [...this.sessions.values()].map(({ pty, state }) => ({
-      id: pty.id,
-      tool: pty.command,
+    return [...this.sessions.values()].map(({ runtime, state }) => ({
+      id: runtime.id,
+      tool: runtime.command,
       backendSessionId: state.backendSessionId,
       worktreePath: state.worktreePath,
     }));
@@ -397,7 +399,7 @@ export class AimuxServer {
 
     // Kill all sessions
     for (const session of this.sessions.values()) {
-      session.pty.destroy();
+      session.runtime.destroy();
     }
     this.sessions.clear();
 

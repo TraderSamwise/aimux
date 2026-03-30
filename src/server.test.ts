@@ -82,6 +82,15 @@ function makeTmpDir(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "aimux-server-test-")));
 }
 
+function createMockBackend() {
+  return {
+    kind: "pty" as const,
+    spawn(request: { command: string; id?: string }) {
+      return new MockPtySession({ command: request.command, id: request.id ?? "unknown" });
+    },
+  };
+}
+
 describe("server", () => {
   beforeEach(() => {
     tmpDir = makeTmpDir();
@@ -129,12 +138,12 @@ describe("server", () => {
       }),
     );
 
-    const server = new AimuxServer("/repo");
+    const server = new AimuxServer("/repo", createMockBackend() as any);
     (server as any).sessions = new Map([
       [
         "server-session",
         {
-          pty: { id: "server-session", command: "codex" },
+          runtime: { id: "server-session", command: "codex" },
           state: {
             id: "server-session",
             tool: "codex",
@@ -177,7 +186,7 @@ describe("server", () => {
   it("persists a server-backed session when the tool exits naturally", async () => {
     const { AimuxServer } = await import("./server.js");
 
-    const server = new AimuxServer("/repo");
+    const server = new AimuxServer("/repo", createMockBackend() as any);
     (server as any).handleSpawn(
       { write: vi.fn() },
       {
@@ -217,7 +226,7 @@ describe("server", () => {
   it("does not persist a killed server-backed session", async () => {
     const { AimuxServer } = await import("./server.js");
 
-    const server = new AimuxServer("/repo");
+    const server = new AimuxServer("/repo", createMockBackend() as any);
     (server as any).handleSpawn(
       { write: vi.fn() },
       {
@@ -242,7 +251,7 @@ describe("server", () => {
     const { AimuxServer } = await import("./server.js");
 
     const writes: string[] = [];
-    const server = new AimuxServer("/repo");
+    const server = new AimuxServer("/repo", createMockBackend() as any);
     (server as any).clients = new Set([
       {
         write: (data: string) => {

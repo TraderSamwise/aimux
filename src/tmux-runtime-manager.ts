@@ -28,6 +28,10 @@ export interface TmuxTarget {
   windowName: string;
 }
 
+export interface OpenTargetOptions {
+  insideTmux?: boolean;
+}
+
 const DEFAULT_EXEC: TmuxExec = (args, options) =>
   execFileSync("tmux", args, {
     cwd: options?.cwd,
@@ -184,5 +188,13 @@ export class TmuxRuntimeManager {
 
   switchClient(sessionName: string, windowIndex = 0): void {
     this.exec(["switch-client", "-t", `${sessionName}:${windowIndex}`]);
+  }
+
+  openTarget(target: TmuxTarget, options: OpenTargetOptions = {}): void {
+    if (options.insideTmux) {
+      this.switchClient(target.sessionName, target.windowIndex);
+      return;
+    }
+    this.attachSession(target.sessionName);
   }
 }
