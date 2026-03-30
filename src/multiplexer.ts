@@ -1149,11 +1149,8 @@ export class Multiplexer {
       case "p":
         this.showPlans();
         return;
-      case "i":
-        this.showActivityDashboard();
-        return;
       case "a":
-        this.showMetaDashboard();
+        this.showActivityDashboard();
         return;
       case "u":
         void this.activateNextAttentionEntry();
@@ -1445,7 +1442,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/i/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -1523,7 +1520,7 @@ export class Multiplexer {
       this.renderDashboard();
       return;
     }
-    if (key === "i") {
+    if (key === "a") {
       this.renderActivityDashboard();
       return;
     }
@@ -1535,11 +1532,6 @@ export class Multiplexer {
     if (key === "g") {
       this.activityActive = false;
       this.showGraveyard();
-      return;
-    }
-    if (key === "a") {
-      this.activityActive = false;
-      this.showMetaDashboard();
       return;
     }
     if (key === "?") {
@@ -2317,7 +2309,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/i/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -2386,13 +2378,8 @@ export class Multiplexer {
       return;
     }
 
-    if (key === "i") {
-      this.showActivityDashboard();
-      return;
-    }
-
     if (key === "a") {
-      this.showMetaDashboard();
+      this.showActivityDashboard();
       return;
     }
 
@@ -2536,7 +2523,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/i/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -2758,15 +2745,9 @@ export class Multiplexer {
       return;
     }
 
-    if (key === "i") {
-      this.plansActive = false;
-      this.showActivityDashboard();
-      return;
-    }
-
     if (key === "a") {
       this.plansActive = false;
-      this.showMetaDashboard();
+      this.showActivityDashboard();
       return;
     }
 
@@ -2950,12 +2931,11 @@ export class Multiplexer {
       "  Ctrl+A d  return to dashboard window",
       "  arrows / j k n p  navigate",
       "  Enter  open, resume, or takeover",
-      "  i  activity",
+      "  a  activity",
       "  p  plans",
       "  r  name agent",
       "  m  migrate agent",
       "  g  graveyard",
-      "  a  all projects",
       "  q  quit",
       "",
       "Esc, Enter, or ? to close",
@@ -3021,7 +3001,7 @@ export class Multiplexer {
       this.showPlans();
       return;
     }
-    if (key === "i") {
+    if (key === "a") {
       this.dismissHelp();
       this.showActivityDashboard();
       return;
@@ -3029,11 +3009,6 @@ export class Multiplexer {
     if (key === "g") {
       this.dismissHelp();
       this.showGraveyard();
-      return;
-    }
-    if (key === "a") {
-      this.dismissHelp();
-      this.showMetaDashboard();
       return;
     }
     if (key === "?") {
@@ -3127,14 +3102,7 @@ export class Multiplexer {
     this.dismissSwitcher();
   }
 
-  // --- Meta Dashboard (all projects) ---
-
-  private showMetaDashboard(): void {
-    this.clearDashboardSubscreens();
-    this.metaDashboardActive = true;
-    this.writeStatuslineFile();
-    this.renderMetaDashboard();
-  }
+  // --- Meta Dashboard (all projects, currently hidden from navigation) ---
 
   private renderMetaDashboard(): void {
     const cols = process.stdout.columns ?? 80;
@@ -3195,7 +3163,7 @@ export class Multiplexer {
     }
 
     // Fill remaining space
-    const helpLine = " [d] dashboard  [i] activity  [p] plans  [g] graveyard  [q] quit ";
+    const helpLine = " [d] dashboard  [a] activity  [p] plans  [g] graveyard  [q] quit ";
     const usedLines = lines.length + 2;
     const remaining = Math.max(0, rows - usedLines);
     for (let i = 0; i < remaining; i++) {
@@ -3228,36 +3196,31 @@ export class Multiplexer {
     }
 
     if (key === "escape" || key === "d") {
-      this.metaDashboardActive = false;
       this.renderDashboard();
       return;
     }
 
     if (key === "p") {
-      this.metaDashboardActive = false;
       this.showPlans();
       return;
     }
 
-    if (key === "i") {
-      this.metaDashboardActive = false;
+    if (key === "a") {
       this.showActivityDashboard();
       return;
     }
 
     if (key === "g") {
-      this.metaDashboardActive = false;
       this.showGraveyard();
       return;
     }
 
     if (key === "?") {
-      this.metaDashboardActive = false;
       this.showHelp();
       return;
     }
 
-    if (key === "a") {
+    if (key === "m") {
       this.renderMetaDashboard();
     }
   }
@@ -3713,17 +3676,15 @@ export class Multiplexer {
       const dir = getProjectStateDir();
       const data = {
         project: basename(process.cwd()),
-        dashboardScreen: this.metaDashboardActive
-          ? "all"
-          : this.activityActive
-            ? "activity"
-            : this.plansActive
-              ? "plans"
-              : this.graveyardActive
-                ? "graveyard"
-                : this.helpActive
-                  ? "help"
-                  : "dashboard",
+        dashboardScreen: this.activityActive
+          ? "activity"
+          : this.plansActive
+            ? "plans"
+            : this.graveyardActive
+              ? "graveyard"
+              : this.helpActive
+                ? "help"
+                : "dashboard",
         sessions: this.sessions.map((s, i) => ({
           id: s.id,
           tool: s.command,
@@ -3762,10 +3723,6 @@ export class Multiplexer {
   }
 
   private renderCurrentDashboardView(): void {
-    if (this.metaDashboardActive) {
-      this.renderMetaDashboard();
-      return;
-    }
     if (this.activityActive) {
       this.renderActivityDashboard();
       return;

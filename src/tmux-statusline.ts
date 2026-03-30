@@ -21,7 +21,7 @@ interface StatuslineSession {
 
 interface StatuslineData {
   project?: string;
-  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "all" | "help";
+  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "help";
   sessions?: StatuslineSession[];
   metadata?: Record<
     string,
