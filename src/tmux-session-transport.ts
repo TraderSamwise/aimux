@@ -1,27 +1,6 @@
 import { debug } from "./debug.js";
 import type { SessionStatus } from "./status-detector.js";
-import type { SessionTerminalSnapshotLine, SessionTerminalViewport } from "./session-terminal-state.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
-
-function toSnapshotLine(text: string, cols: number): SessionTerminalSnapshotLine {
-  const padded = text.length >= cols ? text.slice(0, cols) : text + " ".repeat(cols - text.length);
-  return {
-    wrapped: false,
-    cells: Array.from(padded).map((chars) => ({
-      chars,
-      width: 1,
-      fg: 0,
-      bg: 0,
-      fgMode: "default" as const,
-      bgMode: "default" as const,
-      bold: false,
-      dim: false,
-      italic: false,
-      underline: false,
-      inverse: false,
-    })),
-  };
-}
 
 export class TmuxSessionTransport {
   readonly command: string;
@@ -79,24 +58,6 @@ export class TmuxSessionTransport {
   resize(cols: number, rows: number): void {
     this.cols = cols;
     this.rows = rows;
-  }
-
-  getCursorPosition(): { row: number; col: number } {
-    return { row: Math.max(1, this.rows), col: 1 };
-  }
-
-  getViewportFrame(): SessionTerminalViewport {
-    const capture = this.manager.captureTarget(this.target, { startLine: -this.rows });
-    const rawLines = capture.split("\n");
-    const visible = rawLines.slice(Math.max(0, rawLines.length - this.rows));
-    const padded = [...visible];
-    while (padded.length < this.rows) padded.unshift("");
-    return {
-      cols: this.cols,
-      rows: this.rows,
-      cursor: this.getCursorPosition(),
-      visibleLines: padded.map((line) => toSnapshotLine(line, this.cols)),
-    };
   }
 
   onData(cb: (data: string) => void): void {

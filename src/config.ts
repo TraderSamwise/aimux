@@ -23,13 +23,6 @@ export interface WorktreeConfig {
   baseDir: string;
 }
 
-export interface FooterConfig {
-  /** Ordered built-in footer plugins to render in the focused TUI footer. */
-  plugins: string[];
-  /** Scope footer agent tabs and focused-session switching controls. */
-  sessionScope: "worktree" | "project";
-}
-
 export interface TmuxRuntimeConfig {
   /** Deterministic prefix for managed per-project tmux sessions. */
   sessionPrefix: string;
@@ -45,7 +38,6 @@ export interface AimuxConfig {
   liveWindowSize: number;
   compactEveryNTurns: number;
   notifications: NotificationConfig;
-  footer: FooterConfig;
   runtime: RuntimeConfig;
   worktrees: WorktreeConfig;
   tools: Record<string, ToolConfig>;
@@ -94,10 +86,6 @@ const DEFAULT_CONFIG: AimuxConfig = {
     onPrompt: true,
     onError: true,
     onComplete: true,
-  },
-  footer: {
-    plugins: ["location", "github-pr"],
-    sessionScope: "worktree",
   },
   runtime: {
     tmux: {

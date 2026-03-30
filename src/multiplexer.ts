@@ -304,17 +304,6 @@ export class Multiplexer {
       return;
     }
 
-    if (event.type === "renderRequested" || event.type === "repaintRequested") {
-      return;
-    }
-
-    if (event.type === "hydrationChanged" || event.type === "loadingChanged" || event.type === "frameReady") {
-      if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
-        this.renderDashboard();
-      }
-      return;
-    }
-
     if (event.type !== "exit") return;
     const _code = event.code;
 
@@ -470,9 +459,6 @@ export class Multiplexer {
 
     // Forward stdin
     this.onStdinData = (data: Buffer) => {
-      if (this.terminalHost.consumeResponse(data)) {
-        return;
-      }
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
         return;
@@ -2296,7 +2282,6 @@ export class Multiplexer {
     const shell = process.env.SHELL || "/bin/zsh";
     const shellEscape = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 
-    this.terminalHost.resetScrollRegion();
     this.terminalHost.exitRawMode();
     this.terminalHost.exitAlternateScreen();
 
@@ -2872,7 +2857,7 @@ export class Multiplexer {
         id: session.id,
         command: session.command,
         backendSessionId: session.backendSessionId,
-        status: session.isHydrating ? "hydrating" : session.status,
+        status: session.status,
         worktreePath: this.sessionWorktreePaths.get(session.id),
       })),
       activeIndex: this.activeIndex,
@@ -3464,7 +3449,6 @@ export class Multiplexer {
     this.saveState();
     this.stopStatusRefresh();
     this.contextWatcher.stop();
-    this.terminalHost.resetScrollRegion();
     this.removeSessionsFile();
     this.removeInstructionFiles();
     closeDebug();

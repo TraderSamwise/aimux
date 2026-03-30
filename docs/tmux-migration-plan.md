@@ -1,8 +1,8 @@
-# Tmux Migration Plan
+# Tmux Runtime Architecture
 
 ## Decision
 
-Aimux should stop owning terminal multiplexing and adopt `tmux` as its runtime substrate.
+Aimux uses `tmux` as its runtime substrate.
 
 Aimux remains responsible for:
 
@@ -22,7 +22,7 @@ Tmux becomes responsible for:
 - repaint and terminal protocol handling
 - pane/window persistence
 
-This is a full backend replacement, not a partial hybrid.
+This is the live backend architecture, not a partial hybrid.
 
 ## Core Model
 
@@ -197,9 +197,9 @@ This means:
 - terminal host scroll region logic
 - custom viewport snapshot hydration path
 
-all become transitional code to delete after migration.
+have been deleted as part of the tmux cutover.
 
-## Migration Principles
+## Cleanup Principles
 
 ## 1. No Long-Term Dual Runtime
 

@@ -1,6 +1,6 @@
 import type { SessionStatus } from "./status-detector.js";
 
-export type DashboardSessionStatus = SessionStatus | "hydrating";
+export type DashboardSessionStatus = SessionStatus;
 
 export interface DashboardSession {
   index: number;
@@ -47,7 +47,6 @@ const STATUS_ICONS: Record<DashboardSessionStatus, string> = {
   waiting: "\x1b[36m◉\x1b[0m", // cyan
   exited: "\x1b[31m○\x1b[0m", // red
   offline: "\x1b[2m○\x1b[0m", // dim
-  hydrating: "\x1b[2;36m◌\x1b[0m", // dim cyan
 };
 
 const STATUS_LABELS: Record<DashboardSessionStatus, string> = {
@@ -56,7 +55,6 @@ const STATUS_LABELS: Record<DashboardSessionStatus, string> = {
   waiting: "thinking",
   exited: "exited",
   offline: "offline",
-  hydrating: "hydrating",
 };
 
 export class Dashboard {

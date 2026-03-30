@@ -37,26 +37,6 @@ describe("TmuxSessionTransport", () => {
     transport.destroy();
   });
 
-  it("captures a viewport from tmux pane output", () => {
-    const manager = {
-      sendText: vi.fn(),
-      sendEnter: vi.fn(),
-      captureTarget: vi.fn().mockReturnValue("a\nb\nc"),
-      killWindow: vi.fn(),
-      renameWindow: vi.fn(),
-      openTarget: vi.fn(),
-      isInsideTmux: vi.fn().mockReturnValue(false),
-      getTargetByWindowId: vi.fn().mockReturnValue(createTarget()),
-    } as unknown as TmuxRuntimeManager;
-
-    const transport = new TmuxSessionTransport("codex-1", "codex", createTarget(), manager, 4, 2);
-    const viewport = transport.getViewportFrame();
-    expect(viewport.visibleLines).toHaveLength(2);
-    expect(viewport.visibleLines[0]?.cells.map((cell) => cell.chars).join("")).toBe("b   ");
-    expect(viewport.visibleLines[1]?.cells.map((cell) => cell.chars).join("")).toBe("c   ");
-    transport.destroy();
-  });
-
   it("marks exit when the tmux window disappears", () => {
     vi.useFakeTimers();
     const manager = {

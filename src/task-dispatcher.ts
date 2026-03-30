@@ -37,7 +37,7 @@ export class TaskDispatcher {
   }
 
   /**
-   * Main dispatch loop, called every ~2s from multiplexer footer refresh.
+   * Main dispatch loop, called every ~2s from the dashboard/status refresh loop.
    */
   tick(localSessionIds: string[]): void {
     this.tickCount++;

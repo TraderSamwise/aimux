@@ -220,10 +220,6 @@ This creates `.aimux/config.json`. You can also create a global config at `~/.ai
       "sessionPrefix": "aimux"
     }
   },
-  "footer": {
-    "plugins": ["location", "github-pr"],
-    "sessionScope": "worktree"
-  },
   "notifications": {
     "enabled": true,
     "onPrompt": true,
@@ -239,16 +235,6 @@ This creates `.aimux/config.json`. You can also create a global config at `~/.ai
   }
 }
 ```
-
-Built-in footer plugins:
-
-- `location` — shows the active session's main checkout or worktree context
-- `github-pr` — if `gh` is installed and authenticated, shows the PR URL for the active branch
-
-Footer session scope:
-
-- `worktree` — legacy `pty` backend focused footer tabs only show agents in the current worktree
-- `project` — legacy `pty` backend focused footer tabs span the whole project
 
 Tmux runtime:
 
