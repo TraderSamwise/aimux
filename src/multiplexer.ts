@@ -31,14 +31,7 @@ import {
 import { debug, debugPreamble, closeDebug } from "./debug.js";
 import { createWorktree, findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
 import { notifyPrompt, notifyComplete } from "./notify.js";
-import {
-  registerInstance,
-  unregisterInstance,
-  updateHeartbeat,
-  getRemoteInstances,
-  claimSession,
-  type InstanceSessionRef,
-} from "./instance-registry.js";
+import { type InstanceSessionRef } from "./instance-registry.js";
 import { TaskDispatcher, requestReview } from "./task-dispatcher.js";
 import { loadTeamConfig } from "./team.js";
 import { scanAllProjects } from "./project-scanner.js";
@@ -57,6 +50,7 @@ import {
   getRemoteOwnedSessionKeys,
   orderDashboardSessionsByVisualWorktree,
 } from "./dashboard-session-registry.js";
+import { InstanceDirectory } from "./instance-directory.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -201,6 +195,8 @@ export class Multiplexer {
   private serverRuntime = new ServerRuntimeManager(undefined, undefined, {
     onEvent: (event) => this.handleServerRuntimeEvent(event),
   });
+  /** Cross-instance discovery and claim/heartbeat ownership */
+  private instanceDirectory = new InstanceDirectory();
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -541,7 +537,7 @@ export class Multiplexer {
 
   async run(opts: Omit<PtySessionOptions, "cols" | "rows">): Promise<number> {
     initProject();
-    await registerInstance(this.instanceId, process.cwd());
+    await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
     await this.connectToServer();
     this.taskDispatcher = new TaskDispatcher(
@@ -674,7 +670,7 @@ export class Multiplexer {
 
   async runDashboard(): Promise<number> {
     initProject();
-    await registerInstance(this.instanceId, process.cwd());
+    await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
     this.startedInDashboard = true;
     this.mode = "dashboard";
@@ -795,7 +791,7 @@ export class Multiplexer {
    */
   async resumeSessions(toolFilter?: string): Promise<number> {
     initProject();
-    await registerInstance(this.instanceId, process.cwd());
+    await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
     const state = Multiplexer.loadState();
     if (!state || state.sessions.length === 0) {
@@ -2096,20 +2092,7 @@ export class Multiplexer {
       mainRepoPath = findMainRepo();
     } catch {}
 
-    const dashSessions: DashboardSession[] = this.sessions.map((s, i) => {
-      const rawWtPath = this.sessionWorktreePaths.get(s.id);
-      const wtPath = rawWtPath && mainRepoPath && rawWtPath === mainRepoPath ? undefined : rawWtPath;
-      return {
-        index: i,
-        id: s.id,
-        command: s.command,
-        backendSessionId: s.backendSessionId,
-        status: s.status,
-        active: i === this.activeIndex,
-        worktreePath: wtPath,
-        isServer: this.serverRuntime.isServerSession(s.id),
-      };
-    });
+    const dashSessions = this.getDashboardSessions();
 
     // Build worktree groups from git
     let worktreeGroups: WorktreeGroup[] = [];
@@ -2147,46 +2130,8 @@ export class Multiplexer {
       this.focusedWorktreePath = undefined;
     }
 
-    // Determine selected session for cursor (set after all sessions are merged below)
+    // Determine selected session for cursor
     let selectedSession: string | undefined;
-
-    // Merge remote sessions (from other aimux instances) into dashSessions
-    for (const inst of this.getRemoteInstancesSafe()) {
-      for (const rs of inst.sessions) {
-        const alreadyOwned = dashSessions.some((ds) => ds.id === rs.id);
-        if (alreadyOwned) continue;
-        dashSessions.push({
-          index: dashSessions.length,
-          id: rs.id,
-          command: rs.tool,
-          backendSessionId: rs.backendSessionId,
-          status: "running" as const,
-          active: false,
-          worktreePath:
-            rs.worktreePath && mainRepoPath && rs.worktreePath === mainRepoPath ? undefined : rs.worktreePath,
-          remoteInstancePid: inst.pid,
-          remoteInstanceId: inst.instanceId,
-          remoteBackendSessionId: rs.backendSessionId,
-        });
-      }
-    }
-
-    // Add offline sessions from previous runs
-    for (const os of this.offlineSessions) {
-      const alreadyShown = dashSessions.some(
-        (ds) => ds.id === os.id || (os.backendSessionId && ds.backendSessionId === os.backendSessionId),
-      );
-      if (alreadyShown) continue;
-      dashSessions.push({
-        index: dashSessions.length,
-        id: os.id,
-        command: os.command,
-        backendSessionId: os.backendSessionId,
-        status: "offline" as const,
-        active: false,
-        worktreePath: os.worktreePath && mainRepoPath && os.worktreePath === mainRepoPath ? undefined : os.worktreePath,
-      });
-    }
 
     // Determine selected session cursor
     if (hasWorktrees && this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0) {
@@ -3643,7 +3588,7 @@ export class Multiplexer {
     fromInstanceId: string;
   }): Promise<void> {
     // Claim the session from the other instance
-    const claimed = await claimSession(target.id, target.fromInstanceId, process.cwd());
+    const claimed = await this.instanceDirectory.claimSession(target.id, target.fromInstanceId, process.cwd());
     if (!claimed) {
       debug(`takeover: session ${target.id} not found in instance ${target.fromInstanceId}`, "instance");
       return;
@@ -3806,32 +3751,16 @@ export class Multiplexer {
     const dir = getLocalAimuxDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-    // Local sessions
-    const data: Array<Record<string, unknown>> = this.sessions.map((s) => ({
+    const localSessions = this.sessions.map((s) => ({
       id: s.id,
       tool: s.command,
-      status: s.status,
       backendSessionId: s.backendSessionId,
       worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
-
-    // Include remote sessions so agents can discover cross-instance agents
-    try {
-      const remote = getRemoteInstances(this.instanceId, process.cwd());
-      for (const inst of remote) {
-        for (const rs of inst.sessions) {
-          if (data.some((d) => d.id === rs.id)) continue;
-          data.push({
-            id: rs.id,
-            tool: rs.tool,
-            status: "running",
-            backendSessionId: rs.backendSessionId,
-            worktreePath: rs.worktreePath,
-            instance: `PID ${inst.pid}`,
-          });
-        }
-      }
-    } catch {}
+    const data = this.instanceDirectory.buildSessionsFileEntries(
+      localSessions,
+      this.instanceDirectory.getRemoteInstancesSafe(this.instanceId, process.cwd()),
+    );
 
     writeFileSync(`${dir}/sessions.json`, JSON.stringify(data, null, 2) + "\n");
   }
@@ -4265,7 +4194,8 @@ export class Multiplexer {
     if (this.heartbeatInterval) return;
     this.heartbeatInterval = setInterval(() => {
       const sessions = this.getInstanceSessionRefs();
-      updateHeartbeat(this.instanceId, sessions, process.cwd())
+      this.instanceDirectory
+        .updateHeartbeat(this.instanceId, sessions, process.cwd())
         .then((previousIds) => {
           // Only detect claims if we got a valid response (previousIds is non-empty
           // OR we have no sessions to confirm). If previousIds is empty but we have
@@ -4343,15 +4273,11 @@ export class Multiplexer {
   }
 
   private getRemoteInstancesSafe() {
-    try {
-      return getRemoteInstances(this.instanceId, process.cwd());
-    } catch {
-      return [];
-    }
+    return this.instanceDirectory.getRemoteInstancesSafe(this.instanceId, process.cwd());
   }
 
   private getRemoteOwnedSessionKeys(): Set<string> {
-    return getRemoteOwnedSessionKeys(this.getRemoteInstancesSafe());
+    return this.instanceDirectory.getRemoteOwnedSessionKeys(this.instanceId, process.cwd());
   }
 
   /** Build InstanceSessionRef[] from current sessions for heartbeat/registry updates. */
@@ -4436,7 +4362,7 @@ export class Multiplexer {
     this.clearDashboardBusy();
     this.stopHeartbeat();
     this.taskDispatcher = null;
-    unregisterInstance(this.instanceId, process.cwd()).catch(() => {});
+    this.instanceDirectory.unregisterInstance(this.instanceId, process.cwd()).catch(() => {});
     this.saveState();
     this.stopFooterRefresh();
     this.contextWatcher.stop();
