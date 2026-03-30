@@ -18,10 +18,35 @@ export interface ServerRuntimeReconnectHooks {
   onHydrated: (runtime: SessionRuntime) => void;
 }
 
+export interface ServerRuntimeClient {
+  readonly connected: boolean;
+  connect(): Promise<void>;
+  onSessionUpdated(cb: (update: { id: string; label?: string }) => void): void;
+  listSessions(): Promise<ServerSessionInfo[]>;
+  registerSession(id: string, command: string, cols: number, rows: number, promptPatterns?: RegExp[]): ServerSession;
+  requestScreen(id: string): Promise<{
+    cols: number;
+    rows: number;
+    cursor: { row: number; col: number };
+    viewportY: number;
+    baseY: number;
+    startLine: number;
+    lines: unknown[];
+  }>;
+  renameSession(id: string, label?: string): Promise<boolean>;
+  send(msg: any): void;
+  disconnect(): void;
+}
+
 export class ServerRuntimeManager {
-  private client: ServerClient | null = null;
+  private client: ServerRuntimeClient | null = null;
   private readonly serverSessionIds = new Set<string>();
   private readonly hydratingSessionIds = new Set<string>();
+
+  constructor(
+    private readonly createClient: () => ServerRuntimeClient = () => new ServerClient(),
+    private readonly isAvailable: () => boolean = () => ServerClient.isAvailable(),
+  ) {}
 
   get connected(): boolean {
     return this.client?.connected ?? false;
@@ -36,8 +61,8 @@ export class ServerRuntimeManager {
   }
 
   async connect(onSessionUpdated: (update: { id: string; label?: string }) => void): Promise<void> {
-    if (!ServerClient.isAvailable()) return;
-    const client = new ServerClient();
+    if (!this.isAvailable()) return;
+    const client = this.createClient();
     await client.connect();
     client.onSessionUpdated(onSessionUpdated);
     this.client = client;

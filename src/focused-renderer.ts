@@ -15,6 +15,7 @@ export class FocusedRenderer {
   constructor(
     private terminalHost: TerminalHost,
     private renderFooter: (cursor: { row: number; col: number }, force?: boolean) => void,
+    private writeOutput: (data: string) => void = (data) => process.stdout.write(data),
   ) {}
 
   invalidate(): void {
@@ -53,7 +54,7 @@ export class FocusedRenderer {
       output += `\x1b[${row};1H\x1b[2K${renderedLines[row - 1]}`;
     }
     if (output) {
-      process.stdout.write(output);
+      this.writeOutput(output);
     }
     this.lastSessionId = session.id;
     this.lastCols = viewport.cols;
