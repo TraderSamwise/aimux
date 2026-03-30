@@ -535,6 +535,12 @@ export class TmuxRuntimeManager {
       ]);
     }
   }
+
+  refreshStatus(): void {
+    try {
+      this.exec(["refresh-client", "-S"]);
+    } catch {}
+  }
 }
 
 function shellQuote(value: string): string {

@@ -1488,6 +1488,7 @@ export class Multiplexer {
   }
 
   private renderDashboard(): void {
+    this.writeStatuslineFile();
     this.restoreTmuxSessionsFromState();
     this.loadOfflineSessions();
 
@@ -2081,6 +2082,7 @@ export class Multiplexer {
       this.graveyardIndex = Math.max(0, this.graveyardEntries.length - 1);
     }
     this.graveyardActive = true;
+    this.writeStatuslineFile();
     this.renderGraveyard();
   }
 
@@ -2218,6 +2220,7 @@ export class Multiplexer {
     if (this.planIndex >= this.planEntries.length) {
       this.planIndex = Math.max(0, this.planEntries.length - 1);
     }
+    this.writeStatuslineFile();
     this.renderPlans();
   }
 
@@ -2609,6 +2612,7 @@ export class Multiplexer {
 
   private showHelp(): void {
     this.helpActive = true;
+    this.writeStatuslineFile();
     this.renderHelp();
   }
 
@@ -2792,6 +2796,7 @@ export class Multiplexer {
 
   private showMetaDashboard(): void {
     this.metaDashboardActive = true;
+    this.writeStatuslineFile();
     this.renderMetaDashboard();
   }
 
@@ -3302,6 +3307,7 @@ export class Multiplexer {
         updatedAt: new Date().toISOString(),
       };
       writeFileSync(join(dir, "statusline.json"), JSON.stringify(data) + "\n");
+      this.tmuxRuntimeManager.refreshStatus();
     } catch {}
   }
 
