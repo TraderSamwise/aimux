@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { basename, join } from "node:path";
-import { getPlansDir, getStatusDir } from "./paths.js";
+import { getPlansDir, getStatusDir, getTasksDir, getHistoryDir } from "./paths.js";
 import type { AimuxPluginInstance, AimuxMetadataAPI } from "./plugin-runtime.js";
 import { debug } from "./debug.js";
+import { readAllTasks } from "./tasks.js";
+import { listSessionIds, readHistory } from "./context/history.js";
 
 function safeRead(path: string): string {
   try {
@@ -86,6 +88,43 @@ export function createBuiltinMetadataWatchers(metadata: AimuxMetadataAPI): Aimux
     }
   });
 
+  const taskWatcher = new DirectoryWatcher(getTasksDir(), () => {
+    const tasks = readAllTasks();
+    const latestBySession = new Map<string, { message: string; tone?: "warn" | "success" | "error" }>();
+    for (const task of tasks) {
+      const sessionId = task.assignedTo ?? task.assignedBy;
+      if (!sessionId) continue;
+      const tone = task.status === "failed" ? "error" : task.status === "done" ? "success" : "warn";
+      const prefix =
+        task.status === "assigned"
+          ? "Task"
+          : task.status === "pending"
+            ? "Queued"
+            : task.status === "done"
+              ? "Done"
+              : "Failed";
+      latestBySession.set(sessionId, { message: `${prefix}: ${task.description}`, tone });
+    }
+    for (const [sessionId, entry] of latestBySession) {
+      metadata.log(sessionId, entry.message, { source: "tasks", tone: entry.tone });
+    }
+  });
+
+  const historyWatcher = new DirectoryWatcher(getHistoryDir(), () => {
+    for (const sessionId of listSessionIds()) {
+      const turns = readHistory(sessionId, { lastN: 1, maxBytes: 16 * 1024 });
+      const turn = turns.at(-1);
+      if (!turn) continue;
+      if (turn.type === "prompt") {
+        metadata.log(sessionId, `Prompt: ${turn.content.slice(0, 80)}`, { source: "history", tone: "info" });
+      } else if (turn.type === "response") {
+        metadata.log(sessionId, `Response: ${turn.content.slice(0, 80)}`, { source: "history" });
+      } else if (turn.type === "git") {
+        metadata.log(sessionId, `Git: ${turn.content.slice(0, 80)}`, { source: "git", tone: "success" });
+      }
+    }
+  });
+
   debug("registered builtin metadata watchers", "plugin");
-  return [planWatcher, statusWatcher];
+  return [planWatcher, statusWatcher, taskWatcher, historyWatcher];
 }
