@@ -21,7 +21,7 @@ interface StatuslineSession {
 
 interface StatuslineData {
   project?: string;
-  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "all" | "help";
+  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "all" | "help";
   sessions?: StatuslineSession[];
   metadata?: Record<
     string,
@@ -113,6 +113,7 @@ function renderDashboardScreens(activeScreen: StatuslineData["dashboardScreen"])
   const active = activeScreen ?? "dashboard";
   const screens: Array<{ key: StatuslineData["dashboardScreen"]; label: string }> = [
     { key: "dashboard", label: "dashboard" },
+    { key: "activity", label: "activity" },
     { key: "plans", label: "plans" },
     { key: "graveyard", label: "graveyard" },
   ];

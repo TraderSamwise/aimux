@@ -129,6 +129,9 @@ export class Multiplexer {
   private graveyardEntries: SessionState[] = [];
   private graveyardIndex = 0;
   private metaDashboardActive = false;
+  private activityActive = false;
+  private activityEntries: DashboardSession[] = [];
+  private activityIndex = 0;
   private plansActive = false;
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
@@ -468,8 +471,8 @@ export class Multiplexer {
     this.metadataServer = new MetadataServer({
       onChange: () => {
         this.writeStatuslineFile();
-        if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
-          this.renderDashboard();
+        if (this.mode === "dashboard") {
+          this.renderCurrentDashboardView();
         }
       },
     });
@@ -517,6 +520,10 @@ export class Multiplexer {
       }
       if (this.metaDashboardActive) {
         this.handleMetaDashboardKey(data);
+        return;
+      }
+      if (this.activityActive) {
+        this.handleActivityKey(data);
         return;
       }
       if (this.plansActive) {
@@ -1142,6 +1149,9 @@ export class Multiplexer {
       case "p":
         this.showPlans();
         return;
+      case "i":
+        this.showActivityDashboard();
+        return;
       case "a":
         this.showMetaDashboard();
         return;
@@ -1356,6 +1366,12 @@ export class Multiplexer {
     const entry = this.getDashboardSessionsInVisualOrder()[index];
     if (!entry) return;
 
+    await this.activateDashboardEntry(entry);
+  }
+
+  private async activateDashboardEntry(entry: DashboardSession): Promise<void> {
+    if (!entry) return;
+
     if (this.openLiveTmuxWindowForEntry(entry)) {
       return;
     }
@@ -1386,6 +1402,179 @@ export class Multiplexer {
     if ((entry.unseenCount ?? 0) > 0) return 2;
     if (entry.activity === "done") return 1;
     return 0;
+  }
+
+  private getActivityEntries(): DashboardSession[] {
+    return this.getDashboardSessionsInVisualOrder()
+      .filter(
+        (entry) =>
+          this.attentionScore(entry) > 0 ||
+          !!entry.activity ||
+          entry.status === "running" ||
+          entry.status === "waiting" ||
+          (entry.unseenCount ?? 0) > 0,
+      )
+      .sort((a, b) => {
+        const scoreDiff = this.attentionScore(b) - this.attentionScore(a);
+        if (scoreDiff !== 0) return scoreDiff;
+        const activeDiff = Number(b.active) - Number(a.active);
+        if (activeDiff !== 0) return activeDiff;
+        const aName = a.label ?? a.command;
+        const bName = b.label ?? b.command;
+        return aName.localeCompare(bName);
+      });
+  }
+
+  private showActivityDashboard(): void {
+    this.clearDashboardSubscreens();
+    this.activityEntries = this.getActivityEntries();
+    if (this.activityIndex >= this.activityEntries.length) {
+      this.activityIndex = Math.max(0, this.activityEntries.length - 1);
+    }
+    this.activityActive = true;
+    this.writeStatuslineFile();
+    this.renderActivityDashboard();
+  }
+
+  private renderActivityDashboard(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const header: string[] = [];
+    header.push("");
+    header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — activity", cols));
+    header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
+    header.push("");
+    const footer = this.centerInWidth(
+      "[↑↓] select  [Tab] details  [d/i/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
+      cols,
+    );
+    const viewportHeight = rows - header.length - 2;
+    const twoPane = cols >= 110 && this.detailsSidebarVisible;
+    const listLines: string[] = [];
+
+    if (this.activityEntries.length === 0) {
+      listLines.push("  Activity");
+      listLines.push("    No sessions currently need attention.");
+    } else {
+      listLines.push("  Activity");
+      for (let i = 0; i < this.activityEntries.length; i++) {
+        const entry = this.activityEntries[i]!;
+        const selected = i === this.activityIndex;
+        const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
+        const identity = entry.label ?? entry.command;
+        const roleTag = entry.role ? ` \x1b[36m(${entry.role})\x1b[0m` : "";
+        const wt = entry.worktreeName
+          ? ` \x1b[2m· ${this.truncatePlain(entry.worktreeName, 18)}${entry.worktreeBranch ? `@${this.truncatePlain(entry.worktreeBranch, 18)}` : ""}\x1b[0m`
+          : "";
+        const state =
+          entry.attention && entry.attention !== "normal" ? entry.attention : (entry.activity ?? entry.status);
+        const unseen = (entry.unseenCount ?? 0) > 0 ? ` \x1b[36m${entry.unseenCount}\x1b[0m` : "";
+        const service = entry.services?.[0]
+          ? ` \x1b[2m· ${entry.services[0].port ? `:${entry.services[0].port}` : this.truncatePlain(entry.services[0].url ?? "", 16)}\x1b[0m`
+          : "";
+        listLines.push(
+          `${marker}[${i + 1}] ${identity}${roleTag} — ${state}${unseen}${wt}${service}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+        );
+      }
+    }
+
+    const focusLine = this.activityEntries.length === 0 ? 1 : this.activityIndex + 1;
+    const body = this.composeSplitScreen(
+      listLines,
+      this.renderSessionDetails(
+        this.activityEntries[this.activityIndex],
+        Math.max(28, cols - Math.floor(cols * 0.56) - 3),
+        viewportHeight,
+      ),
+      cols,
+      viewportHeight,
+      focusLine,
+      twoPane,
+    );
+    process.stdout.write(
+      "\x1b[2J\x1b[H" +
+        [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
+    );
+  }
+
+  private handleActivityKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const key = events[0].name || events[0].char;
+
+    if (key === "tab") {
+      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.renderActivityDashboard();
+      return;
+    }
+
+    if (key === "q") {
+      this.tmuxRuntimeManager.leaveManagedSession({
+        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
+        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+      });
+      this.cleanup();
+      process.exit(0);
+      return;
+    }
+
+    if (key === "escape" || key === "d") {
+      this.activityActive = false;
+      this.renderDashboard();
+      return;
+    }
+    if (key === "i") {
+      this.renderActivityDashboard();
+      return;
+    }
+    if (key === "p") {
+      this.activityActive = false;
+      this.showPlans();
+      return;
+    }
+    if (key === "g") {
+      this.activityActive = false;
+      this.showGraveyard();
+      return;
+    }
+    if (key === "a") {
+      this.activityActive = false;
+      this.showMetaDashboard();
+      return;
+    }
+    if (key === "?") {
+      this.activityActive = false;
+      this.showHelp();
+      return;
+    }
+    if (key === "u") {
+      void this.activateNextAttentionEntry();
+      return;
+    }
+    if (key === "down" || key === "j" || key === "n") {
+      if (this.activityEntries.length > 1) {
+        this.activityIndex = (this.activityIndex + 1) % this.activityEntries.length;
+        this.renderActivityDashboard();
+      }
+      return;
+    }
+    if (key === "up" || key === "k") {
+      if (this.activityEntries.length > 1) {
+        this.activityIndex = (this.activityIndex - 1 + this.activityEntries.length) % this.activityEntries.length;
+        this.renderActivityDashboard();
+      }
+      return;
+    }
+    if (key >= "1" && key <= "9") {
+      const idx = parseInt(key, 10) - 1;
+      const entry = this.activityEntries[idx];
+      if (entry) void this.activateDashboardEntry(entry);
+      return;
+    }
+    if (key === "enter" || key === "return") {
+      const entry = this.activityEntries[this.activityIndex];
+      if (entry) void this.activateDashboardEntry(entry);
+    }
   }
 
   private async activateNextAttentionEntry(): Promise<void> {
@@ -2104,6 +2293,7 @@ export class Multiplexer {
   }
 
   private showGraveyard(): void {
+    this.clearDashboardSubscreens();
     const graveyardPath = getGraveyardPath();
     try {
       this.graveyardEntries = JSON.parse(readFileSync(graveyardPath, "utf-8")) as SessionState[];
@@ -2127,7 +2317,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/i/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -2193,6 +2383,21 @@ export class Multiplexer {
 
     if (key === "p") {
       this.showPlans();
+      return;
+    }
+
+    if (key === "i") {
+      this.showActivityDashboard();
+      return;
+    }
+
+    if (key === "a") {
+      this.showMetaDashboard();
+      return;
+    }
+
+    if (key === "?") {
+      this.showHelp();
       return;
     }
 
@@ -2266,6 +2471,7 @@ export class Multiplexer {
   }
 
   private showPlans(): void {
+    this.clearDashboardSubscreens();
     this.loadPlanEntries();
     this.plansActive = true;
     if (this.planIndex >= this.planEntries.length) {
@@ -2330,7 +2536,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/i/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -2524,6 +2730,12 @@ export class Multiplexer {
     if (events.length === 0) return;
     const key = events[0].name || events[0].char;
 
+    if (key === "tab") {
+      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.renderPlans();
+      return;
+    }
+
     if (key === "q") {
       this.tmuxRuntimeManager.leaveManagedSession({
         insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
@@ -2543,6 +2755,24 @@ export class Multiplexer {
     if (key === "g") {
       this.plansActive = false;
       this.showGraveyard();
+      return;
+    }
+
+    if (key === "i") {
+      this.plansActive = false;
+      this.showActivityDashboard();
+      return;
+    }
+
+    if (key === "a") {
+      this.plansActive = false;
+      this.showMetaDashboard();
+      return;
+    }
+
+    if (key === "?") {
+      this.plansActive = false;
+      this.showHelp();
       return;
     }
 
@@ -2686,6 +2916,7 @@ export class Multiplexer {
   }
 
   private showHelp(): void {
+    this.clearDashboardSubscreens();
     this.helpActive = true;
     this.writeStatuslineFile();
     this.renderHelp();
@@ -2719,6 +2950,7 @@ export class Multiplexer {
       "  Ctrl+A d  return to dashboard window",
       "  arrows / j k n p  navigate",
       "  Enter  open, resume, or takeover",
+      "  i  activity",
       "  p  plans",
       "  r  name agent",
       "  m  migrate agent",
@@ -2787,6 +3019,11 @@ export class Multiplexer {
     if (key === "p") {
       this.dismissHelp();
       this.showPlans();
+      return;
+    }
+    if (key === "i") {
+      this.dismissHelp();
+      this.showActivityDashboard();
       return;
     }
     if (key === "g") {
@@ -2893,6 +3130,7 @@ export class Multiplexer {
   // --- Meta Dashboard (all projects) ---
 
   private showMetaDashboard(): void {
+    this.clearDashboardSubscreens();
     this.metaDashboardActive = true;
     this.writeStatuslineFile();
     this.renderMetaDashboard();
@@ -2957,7 +3195,7 @@ export class Multiplexer {
     }
 
     // Fill remaining space
-    const helpLine = " [a] back  [q] quit ";
+    const helpLine = " [d] dashboard  [i] activity  [p] plans  [g] graveyard  [q] quit ";
     const usedLines = lines.length + 2;
     const remaining = Math.max(0, rows - usedLines);
     for (let i = 0; i < remaining; i++) {
@@ -2998,6 +3236,12 @@ export class Multiplexer {
     if (key === "p") {
       this.metaDashboardActive = false;
       this.showPlans();
+      return;
+    }
+
+    if (key === "i") {
+      this.metaDashboardActive = false;
+      this.showActivityDashboard();
       return;
     }
 
@@ -3123,6 +3367,68 @@ export class Multiplexer {
       },
       `Failed to stop "${label}"`,
     );
+  }
+
+  private clearDashboardSubscreens(): void {
+    this.metaDashboardActive = false;
+    this.activityActive = false;
+    this.plansActive = false;
+    this.graveyardActive = false;
+    this.helpActive = false;
+  }
+
+  private renderSessionDetails(session: DashboardSession | undefined, width: number, height: number): string[] {
+    if (!session) return new Array(height).fill("");
+    const lines: string[] = [];
+    lines.push("\x1b[1mDetails\x1b[0m");
+    lines.push(...this.wrapKeyValue("Agent", `${session.label ?? session.command} (${session.id})`, width));
+    lines.push(...this.wrapKeyValue("Tool", session.command, width));
+    if (session.worktreeName || session.worktreeBranch) {
+      lines.push(
+        ...this.wrapKeyValue(
+          "Worktree",
+          `${session.worktreeName ?? "main"}${session.worktreeBranch ? ` · ${session.worktreeBranch}` : ""}`,
+          width,
+        ),
+      );
+    }
+    if (session.cwd) {
+      lines.push(...this.wrapKeyValue("CWD", session.cwd, width));
+    }
+    if (session.prNumber || session.prTitle || session.prUrl) {
+      const prHeader = [`PR${session.prNumber ? ` #${session.prNumber}` : ""}`];
+      if (session.prTitle) prHeader.push(session.prTitle);
+      lines.push(...this.wrapKeyValue("PR", prHeader.join(": "), width));
+      if (session.prUrl) lines.push(...this.wrapKeyValue("URL", session.prUrl, width));
+    }
+    if (session.repoOwner || session.repoName) {
+      lines.push(...this.wrapKeyValue("Repo", `${session.repoOwner ?? "?"}/${session.repoName ?? "?"}`, width));
+    }
+    if (session.repoRemote) {
+      lines.push(...this.wrapKeyValue("Remote", session.repoRemote, width));
+    }
+    if (session.activity) {
+      lines.push(...this.wrapKeyValue("Activity", session.activity, width));
+    }
+    if (session.attention && session.attention !== "normal") {
+      lines.push(...this.wrapKeyValue("Attention", session.attention, width));
+    }
+    if ((session.unseenCount ?? 0) > 0) {
+      lines.push(...this.wrapKeyValue("Unseen", String(session.unseenCount), width));
+    }
+    if (session.lastEvent?.message) {
+      lines.push(...this.wrapKeyValue("Last", session.lastEvent.message, width));
+    }
+    if (session.threadName || session.threadId) {
+      lines.push(...this.wrapKeyValue("Thread", session.threadName ?? session.threadId ?? "", width));
+    }
+    if ((session.services?.length ?? 0) > 0) {
+      lines.push(
+        ...this.wrapKeyValue("Services", session.services!.map((s) => s.url ?? `:${s.port}`).join(", "), width),
+      );
+    }
+    while (lines.length < height) lines.push("");
+    return lines.slice(0, height);
   }
 
   private async graveyardSessionWithFeedback(sessionId: string, hasWorktrees: boolean): Promise<void> {
@@ -3409,13 +3715,15 @@ export class Multiplexer {
         project: basename(process.cwd()),
         dashboardScreen: this.metaDashboardActive
           ? "all"
-          : this.plansActive
-            ? "plans"
-            : this.graveyardActive
-              ? "graveyard"
-              : this.helpActive
-                ? "help"
-                : "dashboard",
+          : this.activityActive
+            ? "activity"
+            : this.plansActive
+              ? "plans"
+              : this.graveyardActive
+                ? "graveyard"
+                : this.helpActive
+                  ? "help"
+                  : "dashboard",
         sessions: this.sessions.map((s, i) => ({
           id: s.id,
           tool: s.command,
@@ -3456,6 +3764,10 @@ export class Multiplexer {
   private renderCurrentDashboardView(): void {
     if (this.metaDashboardActive) {
       this.renderMetaDashboard();
+      return;
+    }
+    if (this.activityActive) {
+      this.renderActivityDashboard();
       return;
     }
     if (this.plansActive) {
