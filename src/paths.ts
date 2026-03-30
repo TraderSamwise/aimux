@@ -146,6 +146,14 @@ export function getInstancesPath(): string {
   return join(getProjectStateDir(), "instances.json");
 }
 
+export function getMetadataPath(): string {
+  return join(getProjectStateDir(), "metadata.json");
+}
+
+export function getMetadataEndpointPath(): string {
+  return join(getProjectStateDir(), "metadata-api.json");
+}
+
 // ── In-repo paths ({repoRoot}/.aimux/...) ──────────────────────────
 
 export function getLocalAimuxDir(): string {

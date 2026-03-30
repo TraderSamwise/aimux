@@ -9,6 +9,9 @@ aimux uses `tmux` as its terminal runtime substrate. Each project gets its own m
 - **tmux-backed runtime** — real scrollback, attach/detach, repaint, and terminal compatibility come from tmux instead of a custom multiplexer
 - **Dashboard window** — aimux dashboard lives in tmux window `0` for the current project session
 - **Agent windows** — each agent gets its own tmux window with its native TUI intact
+- **tmux status integration** — the native tmux status line shows aimux session, task, headline, and metadata state
+- **Metadata API** — scripts and agents can push status, progress, logs, and notifications into the tmux status line
+- **Plugin/watcher seam** — local plugins can watch files or external tools and publish metadata without patching aimux core
 - **Leader key switching in dashboard** — `Ctrl+A` prefix for dashboard actions like create/kill/switch while you are in the aimux dashboard window
 - **Dashboard view** — see all running, offline, and remote agents at a glance
 - **Multi-instance** — run aimux in multiple terminal tabs; agents from other instances appear inline and can be taken over
@@ -76,6 +79,80 @@ Recommended tmux mental model:
 - window `0` is the aimux dashboard
 - each agent is its own tmux window
 - aimux metadata, plans, worktrees, and task orchestration sit on top of that session
+
+## Tmux Status Line
+
+Aimux now uses tmux's native status bar instead of an in-terminal custom footer.
+
+The managed tmux session config renders:
+
+- **left**: aimux project identity
+- **middle**: native tmux window list
+- **right**: aimux session/task/headline/flash metadata
+
+This keeps the terminal surface fully tmux-native while still surfacing the old footer's useful information.
+
+## Metadata API
+
+Inspired by opensessions, aimux exposes a small project-local metadata API from the dashboard process. The tmux status line reads this state and shows it for the active session.
+
+CLI helpers:
+
+```bash
+aimux metadata endpoint
+aimux metadata set-status <session> "Deploying" --tone warn
+aimux metadata set-progress <session> 3 10 --label services
+aimux metadata log <session> "Tests passed" --source ci --tone success
+aimux metadata clear-log <session>
+```
+
+The dashboard-hosted HTTP API also exposes:
+
+- `GET /health`
+- `GET /state`
+- `POST /set-status`
+- `POST /set-progress`
+- `POST /log`
+- `POST /clear-log`
+- `POST /notify`
+
+Use `aimux metadata endpoint` to get the local base URL for the current project.
+
+## Plugins And Watchers
+
+Aimux can load local metadata plugins from:
+
+- `~/.aimux/plugins/*.js|*.mjs`
+- `.aimux/plugins/*.js|*.mjs`
+
+Each plugin default-exports a factory:
+
+```js
+export default function (api) {
+  return {
+    start() {
+      api.metadata.setStatus("codex-abc123", "Watching", "info");
+    },
+    stop() {}
+  };
+}
+```
+
+Available API today:
+
+- `api.projectRoot`
+- `api.projectId`
+- `api.serverHost`
+- `api.serverPort`
+- `api.metadata.setStatus(session, text, tone?)`
+- `api.metadata.setProgress(session, current, total, label?)`
+- `api.metadata.log(session, message, { source?, tone? })`
+- `api.metadata.clearLog(session)`
+
+Built-in watchers already publish:
+
+- `.aimux/status/{session-id}.md` first-line headline as metadata status
+- `.aimux/plans/{session-id}.md` checkbox completion as metadata progress
 
 ## Dashboard
 

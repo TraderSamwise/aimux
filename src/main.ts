@@ -12,6 +12,8 @@ import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, listWorktrees } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { renderTmuxStatusline, type TmuxStatusSide } from "./tmux-statusline.js";
+import { loadMetadataEndpoint, updateSessionMetadata, clearSessionLogs, type MetadataTone } from "./metadata-store.js";
 
 const program = new Command();
 
@@ -48,11 +50,19 @@ program
           command: process.execPath,
           args: [scriptPath, "--tmux-dashboard-internal"],
         };
-        const dashboardSession = tmux.ensureProjectSession(process.cwd(), {
-          cwd: dashboardCommand.cwd,
-          command: dashboardCommand.command,
-          args: dashboardCommand.args,
-        });
+        const statuslineCommand = {
+          command: process.execPath,
+          args: [scriptPath, "tmux-statusline"],
+        };
+        const dashboardSession = tmux.ensureProjectSession(
+          process.cwd(),
+          {
+            cwd: dashboardCommand.cwd,
+            command: dashboardCommand.command,
+            args: dashboardCommand.args,
+          },
+          statuslineCommand,
+        );
         const dashboardTarget = tmux.ensureDashboardWindow(
           dashboardSession.sessionName,
           process.cwd(),
@@ -262,6 +272,79 @@ graveyardCmd
 // ── Statusline commands ────────────────────────────────────────────
 
 const statuslineCmd = program.command("statusline").description("Manage Claude Code statusline integration");
+
+program
+  .command("tmux-statusline")
+  .description("Internal tmux status line renderer")
+  .option("--side <side>", "Status line side", "right")
+  .option("--project-root <path>", "Project root to read status from", process.cwd())
+  .action(async (opts: { side: TmuxStatusSide; projectRoot: string }) => {
+    await initPaths(opts.projectRoot);
+    process.stdout.write(renderTmuxStatusline(opts.projectRoot, opts.side));
+  });
+
+const metadataCmd = program.command("metadata").description("Push metadata into aimux tmux status integration");
+
+metadataCmd
+  .command("endpoint")
+  .description("Print the local metadata API endpoint")
+  .action(async () => {
+    await initPaths();
+    const endpoint = loadMetadataEndpoint();
+    if (!endpoint) {
+      console.error("aimux metadata API is not running for this project");
+      process.exit(1);
+    }
+    console.log(`http://${endpoint.host}:${endpoint.port}`);
+  });
+
+metadataCmd
+  .command("set-status <session> <text>")
+  .option("--tone <tone>", "Status tone", "info")
+  .description("Set a session status pill")
+  .action(async (session: string, text: string, opts: { tone?: MetadataTone }) => {
+    await initPaths();
+    updateSessionMetadata(session, (current) => ({
+      ...current,
+      status: { text, tone: opts.tone },
+    }));
+  });
+
+metadataCmd
+  .command("set-progress <session> <current> <total>")
+  .option("--label <label>", "Progress label")
+  .description("Set per-session progress")
+  .action(async (session: string, current: string, total: string, opts: { label?: string }) => {
+    await initPaths();
+    updateSessionMetadata(session, (existing) => ({
+      ...existing,
+      progress: { current: Number(current), total: Number(total), label: opts.label },
+    }));
+  });
+
+metadataCmd
+  .command("log <session> <message>")
+  .option("--source <source>", "Log source")
+  .option("--tone <tone>", "Log tone")
+  .description("Append a session log line")
+  .action(async (session: string, message: string, opts: { source?: string; tone?: MetadataTone }) => {
+    await initPaths();
+    updateSessionMetadata(session, (existing) => ({
+      ...existing,
+      logs: [
+        ...(existing.logs ?? []).slice(-19),
+        { message, source: opts.source, tone: opts.tone, ts: new Date().toISOString() },
+      ],
+    }));
+  });
+
+metadataCmd
+  .command("clear-log <session>")
+  .description("Clear session logs")
+  .action(async (session: string) => {
+    await initPaths();
+    clearSessionLogs(session);
+  });
 
 statuslineCmd
   .command("install")

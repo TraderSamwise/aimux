@@ -40,6 +40,9 @@ import { buildDashboardSessions, orderDashboardSessionsByVisualWorktree } from "
 import { InstanceDirectory } from "./instance-directory.js";
 import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
+import { MetadataServer } from "./metadata-server.js";
+import { loadMetadataState } from "./metadata-store.js";
+import { PluginRuntime } from "./plugin-runtime.js";
 
 export type MuxMode = "dashboard";
 
@@ -167,6 +170,8 @@ export class Multiplexer {
   private instanceDirectory = new InstanceDirectory();
   private tmuxRuntimeManager = new TmuxRuntimeManager();
   private sessionTmuxTargets = new Map<string, TmuxTarget>();
+  private metadataServer: MetadataServer | null = null;
+  private pluginRuntime: PluginRuntime | null = null;
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -456,6 +461,25 @@ export class Multiplexer {
 
     this.writeInstructionFiles();
     this.terminalHost.enterRawMode();
+    this.metadataServer = new MetadataServer({
+      onChange: () => {
+        this.writeStatuslineFile();
+        if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
+          this.renderDashboard();
+        }
+      },
+    });
+    await this.metadataServer.start();
+    const endpoint = this.metadataServer.getAddress();
+    if (endpoint) {
+      this.pluginRuntime = new PluginRuntime({
+        host: endpoint.host,
+        port: endpoint.port,
+        pid: process.pid,
+        updatedAt: new Date().toISOString(),
+      });
+      await this.pluginRuntime.start();
+    }
 
     // Forward stdin
     this.onStdinData = (data: Buffer) => {
@@ -1087,7 +1111,7 @@ export class Multiplexer {
         this.showToolPicker();
         return;
       case "q":
-        this.resolveRun?.(0);
+        this.tmuxRuntimeManager.leaveManagedSession({ insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
         return;
       case "w":
         this.showWorktreeCreatePrompt();
@@ -3042,6 +3066,7 @@ export class Multiplexer {
         })),
         tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
         flash: this.footerFlash,
+        metadata: loadMetadataState().sessions,
         updatedAt: new Date().toISOString(),
       };
       writeFileSync(join(dir, "statusline.json"), JSON.stringify(data) + "\n");
@@ -3466,6 +3491,10 @@ export class Multiplexer {
     for (const session of this.sessions) {
       session.destroy();
     }
+    this.metadataServer?.stop();
+    this.metadataServer = null;
+    void this.pluginRuntime?.stop();
+    this.pluginRuntime = null;
     this.teardown();
   }
 
