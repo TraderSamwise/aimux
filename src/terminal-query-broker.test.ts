@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { TerminalQueryBroker, createDefaultTerminalQueryBroker } from "./terminal-query-broker.js";
+import {
+  classifyTerminalQuery,
+  DEFAULT_TERMINAL_QUERY_SUPPORT,
+  TerminalQueryBroker,
+  createDefaultTerminalQueryBroker,
+} from "./terminal-query-broker.js";
 import { HostTerminalQueryFallback } from "./terminal-query-fallback.js";
 
 describe("TerminalQueryBroker", () => {
@@ -57,5 +62,24 @@ describe("TerminalQueryBroker", () => {
     expect(allowed).toBe("\x1b]4;1;rgb:ffff/0000/0000\x1b\\");
     expect(denied).toBeNull();
     expect(writes).toEqual(["\x1b]4;1;?\x1b\\"]);
+  });
+
+  it("exports the default terminal query support matrix", () => {
+    expect(DEFAULT_TERMINAL_QUERY_SUPPORT).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "cursor-position-report", strategy: "builtin" }),
+        expect.objectContaining({ id: "palette-color-query", strategy: "fallback" }),
+      ]),
+    );
+  });
+
+  it("classifies known terminal queries from the matrix", () => {
+    expect(classifyTerminalQuery("\x1b[6n")).toEqual(
+      expect.objectContaining({ id: "cursor-position-report", strategy: "builtin" }),
+    );
+    expect(classifyTerminalQuery("\x1b]4;1;?\x1b\\")).toEqual(
+      expect.objectContaining({ id: "palette-color-query", strategy: "fallback" }),
+    );
+    expect(classifyTerminalQuery("\x1b[5n")).toBeUndefined();
   });
 });

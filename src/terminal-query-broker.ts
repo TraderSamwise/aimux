@@ -1,4 +1,6 @@
 import { debug } from "./debug.js";
+import { classifyTerminalQuery, DEFAULT_TERMINAL_QUERY_SUPPORT } from "./terminal-query-matrix.js";
+export { DEFAULT_TERMINAL_QUERY_SUPPORT, classifyTerminalQuery } from "./terminal-query-matrix.js";
 
 export interface TerminalQueryContext {
   sessionId: string;
@@ -101,8 +103,17 @@ export class TerminalQueryBroker {
     }
     if (this.fallback) {
       for (const query of findUnhandledTerminalQueries(data)) {
+        const support = classifyTerminalQuery(query);
         const reply = await this.fallback.handleUnknownQuery(context, query);
-        if (reply) replies.push(reply);
+        if (reply) {
+          debug(
+            `terminal-query resolved: session=${context.sessionId} strategy=${support?.strategy ?? "fallback"} id=${support?.id ?? "unknown"} query=${JSON.stringify(query)}`,
+            "session",
+          );
+          replies.push(reply);
+        } else {
+          debug(`terminal-query unsupported: session=${context.sessionId} query=${JSON.stringify(query)}`, "session");
+        }
       }
     }
     return replies.length > 0 ? replies.join("") : null;
