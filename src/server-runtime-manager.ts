@@ -17,6 +17,10 @@ export interface ServerRuntimeReconnectHooks {
   onDiscovered: (info: ServerSessionInfo, session: ServerSession) => SessionRuntime;
 }
 
+export interface ServerRuntimeSpawnHooks {
+  onSpawned: (session: ServerSession) => SessionRuntime;
+}
+
 export interface ServerSpawnRequest {
   id: string;
   command: string;
@@ -187,6 +191,13 @@ export class ServerRuntimeManager {
       rows: request.rows,
     });
     return session;
+  }
+
+  spawnManagedSession(request: ServerSpawnRequest, hooks: ServerRuntimeSpawnHooks): SessionRuntime {
+    const session = this.spawnSession(request);
+    const runtime = hooks.onSpawned(session);
+    this.attachRuntime(request.id, runtime);
+    return runtime;
   }
 
   async renameSession(sessionId: string, label?: string): Promise<boolean> {

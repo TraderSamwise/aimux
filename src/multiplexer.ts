@@ -1242,24 +1242,39 @@ export class Multiplexer {
     }
 
     let session: PtySession;
+    let runtime: ManagedSession;
+    const sessionStartTime = Date.now();
 
     // If server is connected, register the proxy locally first so onData/onExit
     // listeners are attached before the server can emit initial output.
     // If server is connected, spawn on server for persistent ownership
     if (this.serverRuntime.connected) {
-      const serverSession = this.serverRuntime.spawnSession({
-        id: sessionId,
-        command,
-        args: finalArgs,
-        toolConfigKey: toolConfigKey ?? command,
-        backendSessionId,
-        worktreePath,
-        cwd: worktreePath ?? process.cwd(),
-        cols,
-        rows: this.toolRows,
-        promptPatterns,
-      });
-      session = serverSession as any;
+      runtime = this.serverRuntime.spawnManagedSession(
+        {
+          id: sessionId,
+          command,
+          args: finalArgs,
+          toolConfigKey: toolConfigKey ?? command,
+          backendSessionId,
+          worktreePath,
+          cwd: worktreePath ?? process.cwd(),
+          cols,
+          rows: this.toolRows,
+          promptPatterns,
+        },
+        {
+          onSpawned: (serverSession) =>
+            this.registerManagedSession(
+              serverSession as any,
+              args,
+              toolConfigKey,
+              worktreePath,
+              undefined,
+              sessionStartTime,
+            ),
+        },
+      );
+      session = runtime.transport as PtySession;
     } else {
       session = new PtySession({
         command,
@@ -1270,11 +1285,11 @@ export class Multiplexer {
         cwd: worktreePath,
         promptPatterns,
       });
+      runtime = this.registerManagedSession(session, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
     }
 
     // Store backend session ID and start time
     session.backendSessionId = backendSessionId;
-    const sessionStartTime = Date.now();
 
     // For tools without sessionIdFlag, try to capture the backend session ID via filesystem
     if (!backendSessionId && toolConfigKey) {
@@ -1284,17 +1299,6 @@ export class Multiplexer {
       }
     }
 
-    const runtime = this.registerManagedSession(
-      session,
-      args,
-      toolConfigKey,
-      worktreePath,
-      undefined,
-      sessionStartTime,
-    );
-    if (this.serverRuntime.connected) {
-      this.serverRuntime.attachRuntime(sessionId, runtime);
-    }
     if (this.serverRuntime.connected) debug(`spawned session on server: ${sessionId}`, "server-client");
 
     // Focus the new session

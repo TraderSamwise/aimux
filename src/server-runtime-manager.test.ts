@@ -282,6 +282,56 @@ describe("ServerRuntimeManager", () => {
     expect(manager.getBackendSessionIds()).toEqual(new Set(["backend-3"]));
   });
 
+  it("spawns and attaches managed runtimes in one flow", async () => {
+    const session = {
+      id: "srv-5",
+      command: "codex",
+      backendSessionId: undefined,
+      resize: vi.fn(),
+      _hydrateSnapshot: vi.fn(),
+    } as any;
+
+    const client: ServerRuntimeClient = {
+      connected: true,
+      connect: vi.fn(),
+      onSessionUpdated: vi.fn(),
+      listSessions: vi.fn(),
+      registerSession: vi.fn().mockReturnValue(session),
+      requestScreen: vi.fn(),
+      renameSession: vi.fn(),
+      send: vi.fn(),
+      disconnect: vi.fn(),
+    };
+
+    const manager = new ServerRuntimeManager(
+      () => client,
+      () => true,
+    );
+    await manager.connect();
+
+    const runtime = createRuntime("srv-5");
+    runtime.backendSessionId = "backend-5";
+    const created = manager.spawnManagedSession(
+      {
+        id: "srv-5",
+        command: "codex",
+        args: [],
+        toolConfigKey: "codex",
+        backendSessionId: "backend-5",
+        cwd: "/tmp",
+        cols: 80,
+        rows: 24,
+      },
+      {
+        onSpawned: () => runtime,
+      },
+    );
+
+    expect(created).toBe(runtime);
+    expect(manager.getRuntime("srv-5")).toBe(runtime);
+    expect(manager.getBackendSessionIds()).toEqual(new Set(["backend-5"]));
+  });
+
   it("provides persistence ownership helpers", async () => {
     const session = {
       id: "srv-4",
