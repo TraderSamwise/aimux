@@ -52,6 +52,22 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "new-session")).toBe(true);
     const createCall = exec.calls.find((call) => call.args[0] === "new-session");
     expect(createCall?.cwd).toBe("/repo/mobile");
+    expect(exec.calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          args: ["set-option", "-t", session.sessionName, "prefix", "C-a"],
+        }),
+        expect.objectContaining({
+          args: ["set-option", "-t", session.sessionName, "prefix2", "C-b"],
+        }),
+        expect.objectContaining({
+          args: ["bind-key", "-T", "prefix", "C-a", "send-prefix"],
+        }),
+        expect.objectContaining({
+          args: ["bind-key", "-T", "prefix", "d", "select-window", "-t", `${session.sessionName}:0`],
+        }),
+      ]),
+    );
   });
 
   it("creates a dashboard window when missing", () => {

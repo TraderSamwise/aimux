@@ -137,6 +137,7 @@ export class TmuxRuntimeManager {
             ];
       this.exec(argv, { cwd: projectRoot });
     }
+    this.configureSessionBindings(session.sessionName);
     return session;
   }
 
@@ -338,5 +339,12 @@ export class TmuxRuntimeManager {
       return;
     }
     this.attachSession(target.sessionName);
+  }
+
+  private configureSessionBindings(sessionName: string): void {
+    this.exec(["set-option", "-t", sessionName, "prefix", "C-a"]);
+    this.exec(["set-option", "-t", sessionName, "prefix2", "C-b"]);
+    this.exec(["bind-key", "-T", "prefix", "C-a", "send-prefix"]);
+    this.exec(["bind-key", "-T", "prefix", "d", "select-window", "-t", `${sessionName}:0`]);
   }
 }
