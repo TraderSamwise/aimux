@@ -41,14 +41,14 @@ describe("TmuxRuntimeManager", () => {
     expect(a.sessionName).toBe(b.sessionName);
     expect(a.projectId).toBe(b.projectId);
     expect(a.sessionName).not.toBe(c.sessionName);
-    expect(a.sessionName).toMatch(/^aimux:mobile:/);
+    expect(a.sessionName).toMatch(/^aimux-mobile-/);
   });
 
   it("creates a detached project session when missing", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);
     const session = manager.ensureProjectSession("/repo/mobile");
-    expect(session.sessionName).toMatch(/^aimux:mobile:/);
+    expect(session.sessionName).toMatch(/^aimux-mobile-/);
     expect(exec.calls.some((call) => call.args[0] === "new-session")).toBe(true);
     const createCall = exec.calls.find((call) => call.args[0] === "new-session");
     expect(createCall?.cwd).toBe("/repo/mobile");
@@ -60,7 +60,7 @@ describe("TmuxRuntimeManager", () => {
     vi.spyOn(manager, "listWindows")
       .mockReturnValueOnce([])
       .mockReturnValueOnce([{ id: "@0", index: 0, name: "dashboard", active: true }]);
-    const target = manager.ensureDashboardWindow("aimux:mobile:abc", "/repo/mobile");
+    const target = manager.ensureDashboardWindow("aimux-mobile-abc", "/repo/mobile");
     expect(target.windowId).toBe("@0");
     expect(exec.calls.some((call) => call.args[0] === "new-window")).toBe(true);
   });
@@ -68,9 +68,9 @@ describe("TmuxRuntimeManager", () => {
   it("creates agent windows with target metadata", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);
-    const target = manager.createWindow("aimux:mobile:abc", "codex", "/repo/mobile", "codex", ["--full-auto"]);
+    const target = manager.createWindow("aimux-mobile-abc", "codex", "/repo/mobile", "codex", ["--full-auto"]);
     expect(target).toEqual({
-      sessionName: "aimux:mobile:abc",
+      sessionName: "aimux-mobile-abc",
       windowId: "@3",
       windowIndex: 3,
       windowName: "codex",
@@ -79,7 +79,7 @@ describe("TmuxRuntimeManager", () => {
       "new-window",
       "-P",
       "-t",
-      "aimux:mobile:abc",
+      "aimux-mobile-abc",
       "-c",
       "/repo/mobile",
       "-n",
@@ -91,7 +91,7 @@ describe("TmuxRuntimeManager", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);
     const target = {
-      sessionName: "aimux:mobile:abc",
+      sessionName: "aimux-mobile-abc",
       windowId: "@3",
       windowIndex: 3,
       windowName: "codex",
@@ -100,15 +100,15 @@ describe("TmuxRuntimeManager", () => {
     manager.openTarget(target, { insideTmux: true });
     manager.openTarget(target, { insideTmux: false });
 
-    expect(exec.calls.at(-2)?.args).toEqual(["switch-client", "-t", "aimux:mobile:abc:3"]);
-    expect(exec.calls.at(-1)?.args).toEqual(["attach-session", "-t", "aimux:mobile:abc"]);
+    expect(exec.calls.at(-2)?.args).toEqual(["switch-client", "-t", "aimux-mobile-abc:3"]);
+    expect(exec.calls.at(-1)?.args).toEqual(["attach-session", "-t", "aimux-mobile-abc"]);
   });
 
   it("captures pane output and sends input primitives", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);
     const target = {
-      sessionName: "aimux:mobile:abc",
+      sessionName: "aimux-mobile-abc",
       windowId: "@3",
       windowIndex: 3,
       windowName: "codex",
@@ -127,7 +127,7 @@ describe("TmuxRuntimeManager", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);
     const target = {
-      sessionName: "aimux:mobile:abc",
+      sessionName: "aimux-mobile-abc",
       windowId: "@3",
       windowIndex: 3,
       windowName: "codex",
@@ -170,7 +170,7 @@ describe("TmuxRuntimeManager", () => {
     const manager = new TmuxRuntimeManager(exec);
     manager.respawnWindow(
       {
-        sessionName: "aimux:mobile:abc",
+        sessionName: "aimux-mobile-abc",
         windowId: "@0",
         windowIndex: 0,
         windowName: "dashboard",

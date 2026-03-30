@@ -78,7 +78,7 @@ export class TmuxRuntimeManager {
     return {
       projectRoot,
       projectId,
-      sessionName: `aimux:${slug}:${projectId}`,
+      sessionName: `aimux-${slug}-${projectId}`,
     };
   }
 

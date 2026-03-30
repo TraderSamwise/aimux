@@ -35,7 +35,7 @@ This is a full backend replacement, not a partial hybrid.
 
 Recommended default:
 
-- tmux session: `aimux:<project-id>`
+- tmux session: `aimux-<project-slug>-<project-id>`
 - dashboard window index/name: `0:dashboard`
 - agent windows: `1..N`, named from session label or session id
 
@@ -335,13 +335,13 @@ Use a deterministic project identifier derived from project root.
 Recommended:
 
 - display name based on repo/folder name
-- internal tmux session name based on stable hash:
-  - `aimux:<short-hash>`
+- internal tmux session name based on slug + stable hash:
+  - `aimux-<short-hash>`
 
 Optional:
 
 - include repo slug for easier debugging:
-  - `aimux:tealstreet-mobile:<short-hash>`
+  - `aimux-tealstreet-mobile-<short-hash>`
 
 ## Window Naming
 
@@ -437,4 +437,3 @@ The migration is complete when:
 3. Define project session naming.
 4. Implement create/list/kill/switch window primitives.
 5. Prove agent spawn/focus in tmux before touching dashboard.
-

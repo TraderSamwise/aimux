@@ -4,7 +4,7 @@ import { TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
 
 function createTarget(): TmuxTarget {
   return {
-    sessionName: "aimux:mobile:abc",
+    sessionName: "aimux-mobile-abc",
     windowId: "@3",
     windowIndex: 3,
     windowName: "codex",
