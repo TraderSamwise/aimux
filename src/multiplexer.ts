@@ -808,17 +808,7 @@ export class Multiplexer {
       return this.runDashboard();
     }
 
-    // Collect session IDs owned by other live instances
-    const ownedByOthers = new Set<string>();
-    try {
-      const remote = getRemoteInstances(this.instanceId, process.cwd());
-      for (const inst of remote) {
-        for (const rs of inst.sessions) {
-          ownedByOthers.add(rs.id);
-          if (rs.backendSessionId) ownedByOthers.add(rs.backendSessionId);
-        }
-      }
-    } catch {}
+    const ownedByOthers = this.getRemoteOwnedSessionKeys();
 
     // Spawn each session with resumeArgs, substituting backend session ID
     for (const saved of sessionsToResume) {
@@ -2152,30 +2142,24 @@ export class Multiplexer {
     let selectedSession: string | undefined;
 
     // Merge remote sessions (from other aimux instances) into dashSessions
-    try {
-      const remote = getRemoteInstances(this.instanceId, process.cwd());
-      for (const inst of remote) {
-        for (const rs of inst.sessions) {
-          // Skip if we already own a session with same backendSessionId
-          const alreadyOwned = dashSessions.some((ds) => ds.id === rs.id);
-          if (alreadyOwned) continue;
-          dashSessions.push({
-            index: dashSessions.length,
-            id: rs.id,
-            command: rs.tool,
-            backendSessionId: rs.backendSessionId,
-            status: "running" as const,
-            active: false,
-            worktreePath:
-              rs.worktreePath && mainRepoPath && rs.worktreePath === mainRepoPath ? undefined : rs.worktreePath,
-            remoteInstancePid: inst.pid,
-            remoteInstanceId: inst.instanceId,
-            remoteBackendSessionId: rs.backendSessionId,
-          });
-        }
+    for (const inst of this.getRemoteInstancesSafe()) {
+      for (const rs of inst.sessions) {
+        const alreadyOwned = dashSessions.some((ds) => ds.id === rs.id);
+        if (alreadyOwned) continue;
+        dashSessions.push({
+          index: dashSessions.length,
+          id: rs.id,
+          command: rs.tool,
+          backendSessionId: rs.backendSessionId,
+          status: "running" as const,
+          active: false,
+          worktreePath:
+            rs.worktreePath && mainRepoPath && rs.worktreePath === mainRepoPath ? undefined : rs.worktreePath,
+          remoteInstancePid: inst.pid,
+          remoteInstanceId: inst.instanceId,
+          remoteBackendSessionId: rs.backendSessionId,
+        });
       }
-    } catch {
-      // Registry read failed — skip remote display
     }
 
     // Add offline sessions from previous runs
@@ -3609,32 +3593,29 @@ export class Multiplexer {
         role: this.sessionRoles.get(s.id),
       };
     });
-    try {
-      const remote = getRemoteInstances(this.instanceId, process.cwd());
-      for (const inst of remote) {
-        const isServer = inst.instanceId.startsWith("server-");
-        for (const rs of inst.sessions) {
-          if (dashSessions.some((ds) => ds.id === rs.id)) continue;
-          const remoteLabel = this.getSessionLabel(rs.id);
-          const remoteHeadline = this.readStatusHeadline(rs.id);
-          dashSessions.push({
-            index: dashSessions.length,
-            id: rs.id,
-            command: rs.tool,
-            backendSessionId: rs.backendSessionId,
-            status: "running",
-            active: false,
-            worktreePath: normalizeWtPath(rs.worktreePath),
-            remoteInstancePid: isServer ? undefined : inst.pid,
-            remoteInstanceId: inst.instanceId,
-            remoteBackendSessionId: rs.backendSessionId,
-            label: remoteLabel,
-            headline: remoteHeadline,
-            isServer,
-          });
-        }
+    for (const inst of this.getRemoteInstancesSafe()) {
+      const isServer = inst.instanceId.startsWith("server-");
+      for (const rs of inst.sessions) {
+        if (dashSessions.some((ds) => ds.id === rs.id)) continue;
+        const remoteLabel = this.getSessionLabel(rs.id);
+        const remoteHeadline = this.readStatusHeadline(rs.id);
+        dashSessions.push({
+          index: dashSessions.length,
+          id: rs.id,
+          command: rs.tool,
+          backendSessionId: rs.backendSessionId,
+          status: "running",
+          active: false,
+          worktreePath: normalizeWtPath(rs.worktreePath),
+          remoteInstancePid: isServer ? undefined : inst.pid,
+          remoteInstanceId: inst.instanceId,
+          remoteBackendSessionId: rs.backendSessionId,
+          label: remoteLabel,
+          headline: remoteHeadline,
+          isServer,
+        });
       }
-    } catch {}
+    }
 
     // Add offline sessions
     for (const os of this.offlineSessions) {
@@ -4233,12 +4214,9 @@ export class Multiplexer {
     // Get all session IDs owned by live instances (including ourselves)
     const ownedIds = new Set<string>();
     for (const s of this.sessions) ownedIds.add(s.id);
-    try {
-      const remote = getRemoteInstances(this.instanceId, process.cwd());
-      for (const inst of remote) {
-        for (const rs of inst.sessions) ownedIds.add(rs.id);
-      }
-    } catch {}
+    for (const inst of this.getRemoteInstancesSafe()) {
+      for (const rs of inst.sessions) ownedIds.add(rs.id);
+    }
 
     // Also exclude by backendSessionId to catch resumed sessions with new IDs
     const ownedBackendIds = this.serverRuntime.getBackendSessionIds();
@@ -4446,6 +4424,25 @@ export class Multiplexer {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
+  }
+
+  private getRemoteInstancesSafe() {
+    try {
+      return getRemoteInstances(this.instanceId, process.cwd());
+    } catch {
+      return [];
+    }
+  }
+
+  private getRemoteOwnedSessionKeys(): Set<string> {
+    const owned = new Set<string>();
+    for (const inst of this.getRemoteInstancesSafe()) {
+      for (const session of inst.sessions) {
+        owned.add(session.id);
+        if (session.backendSessionId) owned.add(session.backendSessionId);
+      }
+    }
+    return owned;
   }
 
   /** Build InstanceSessionRef[] from current sessions for heartbeat/registry updates. */
