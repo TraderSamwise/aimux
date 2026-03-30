@@ -34,21 +34,14 @@ import { type InstanceSessionRef } from "./instance-registry.js";
 import { TaskDispatcher, requestReview } from "./task-dispatcher.js";
 import { loadTeamConfig } from "./team.js";
 import { scanAllProjects } from "./project-scanner.js";
-import { FooterPluginManager, type FooterPluginContext } from "./footer-plugins.js";
 import { TerminalHost } from "./terminal-host.js";
-import { FocusedRenderer } from "./focused-renderer.js";
-import { FooterController } from "./footer-controller.js";
-import type { SessionTerminalDebugState } from "./session-terminal-state.js";
-import { TerminalQueryResponder } from "./terminal-query-responder.js";
-import { HostTerminalQueryFallback } from "./terminal-query-fallback.js";
-import { SessionOutputPipeline } from "./session-output-pipeline.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "./session-runtime.js";
 import { buildDashboardSessions, orderDashboardSessionsByVisualWorktree } from "./dashboard-session-registry.js";
 import { InstanceDirectory } from "./instance-directory.js";
 import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
 
-export type MuxMode = "focused" | "dashboard";
+export type MuxMode = "dashboard";
 
 export interface SessionState {
   id: string;
@@ -104,12 +97,10 @@ interface PlanEntry {
 export class Multiplexer {
   private sessions: ManagedSession[] = [];
   private activeIndex = 0;
-  private mode: MuxMode = "focused";
+  private mode: MuxMode = "dashboard";
   private hotkeys: HotkeyHandler;
   private dashboard: Dashboard;
   private terminalHost: TerminalHost;
-  private focusedRenderer: FocusedRenderer;
-  private footerController: FooterController;
   private onStdinData: ((data: Buffer) => void) | null = null;
   private onResize: (() => void) | null = null;
   private resolveRun: ((code: number) => void) | null = null;
@@ -155,23 +146,7 @@ export class Multiplexer {
   private dashboardSessionIndex = 0;
   /** Sessions in the currently focused worktree (for session-level nav) */
   private dashboardWorktreeSessions: DashboardSession[] = [];
-  private footerInterval: ReturnType<typeof setInterval> | null = null;
-  private focusedRepaintTimeout: ReturnType<typeof setTimeout> | null = null;
-  private focusedRenderTimeout: ReturnType<typeof setTimeout> | null = null;
-  private terminalResizeTimeout: ReturnType<typeof setTimeout> | null = null;
-  private footerWatchdogTicks = 0;
-  private focusedRenderInFlight = false;
-  private focusedRenderQueued = false;
-  private focusedRenderPendingForce = false;
-  private focusedInputTrace: {
-    sessionId: string;
-    writtenAt: number;
-    firstOutputAt?: number;
-  } | null = null;
-  private terminalQueryResponder!: TerminalQueryResponder;
-  private sessionOutputPipeline!: SessionOutputPipeline;
-  private footerPlugins: FooterPluginManager;
-  private footerSessionScope: "worktree" | "project";
+  private statusInterval: ReturnType<typeof setInterval> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher();
@@ -195,34 +170,16 @@ export class Multiplexer {
 
   constructor() {
     this.terminalHost = new TerminalHost();
-    this.sessionOutputPipeline = new SessionOutputPipeline();
-    this.terminalQueryResponder = new TerminalQueryResponder(
-      undefined,
-      new HostTerminalQueryFallback(this.terminalHost, {
-        canForward: (context) => this.canForwardTerminalQuery(context.sessionId),
-      }),
-      this.sessionOutputPipeline.getQueryObserver(),
-    );
-    this.sessionOutputPipeline.setTerminalQueryResponder(this.terminalQueryResponder);
-    this.footerController = new FooterController();
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
-    const footerConfig = loadConfig().footer;
-    this.footerSessionScope = footerConfig.sessionScope;
-    this.footerPlugins = new FooterPluginManager(footerConfig.plugins, () => {
-      if (this.mode === "focused") this.renderFooter(false);
-    });
-    this.focusedRenderer = new FocusedRenderer(this.terminalHost, (cursor, force = true) =>
-      this.renderFooterWithCursor(cursor, force),
-    );
-  }
-
-  get activeSession(): ManagedSession | null {
-    return this.sessions[this.activeIndex] ?? null;
   }
 
   get sessionCount(): number {
     return this.sessions.length;
+  }
+
+  get activeSession(): ManagedSession | null {
+    return this.sessions[this.activeIndex] ?? null;
   }
 
   private isTmuxBackend(): boolean {
@@ -268,11 +225,7 @@ export class Multiplexer {
     this.saveState();
     this.writeStatuslineFile();
 
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    } else if (this.mode === "focused") {
-      this.focusSession(this.activeIndex);
-    }
+    this.renderDashboard();
   }
 
   private readStatusHeadline(sessionId: string): string | undefined {
@@ -314,7 +267,7 @@ export class Multiplexer {
     const existing = this.sessions.find((runtime) => runtime.transport === session);
     if (existing) return existing;
 
-    const runtime = new SessionRuntime(session, this.sessionOutputPipeline, startTime, {
+    const runtime = new SessionRuntime(session, startTime, {
       onEvent: (event) => this.handleSessionRuntimeEvent(runtime, event),
     });
 
@@ -347,56 +300,16 @@ export class Multiplexer {
 
   private handleSessionRuntimeEvent(runtime: ManagedSession, event: SessionRuntimeEvent): void {
     if (event.type === "output") {
-      const data = event.data;
-      if (this.mode === "focused" && this.sessions[this.activeIndex] === runtime) {
-        if (this.focusedInputTrace?.sessionId === runtime.id && this.focusedInputTrace.firstOutputAt === undefined) {
-          this.focusedInputTrace.firstOutputAt = Date.now();
-          debug(
-            `input-trace output: session=${runtime.id} dt=${this.focusedInputTrace.firstOutputAt - this.focusedInputTrace.writtenAt}ms bytes=${data.length}`,
-            "focus-repaint",
-          );
-        }
-        this.scheduleFocusedRender(true);
-      }
+      this.writeStatuslineFile();
       return;
     }
 
-    if (event.type === "renderRequested") {
-      this.scheduleFocusedRender(event.forceFooter ?? true, event.delayMs ?? 0);
+    if (event.type === "renderRequested" || event.type === "repaintRequested") {
       return;
     }
 
-    if (event.type === "repaintRequested") {
-      this.scheduleFocusedRepaint(event.delayMs ?? 75);
-      return;
-    }
-
-    if (event.type === "hydrationChanged") {
+    if (event.type === "hydrationChanged" || event.type === "loadingChanged" || event.type === "frameReady") {
       if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
-        this.renderDashboard();
-      } else if (this.mode === "focused" && this.sessions[this.activeIndex] === runtime) {
-        this.scheduleFocusedRender(true);
-        if (!event.hydrating) {
-          this.scheduleFocusedRepaint();
-        }
-      }
-      return;
-    }
-
-    if (event.type === "loadingChanged") {
-      if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
-        this.renderDashboard();
-      } else if (this.mode === "focused" && this.sessions[this.activeIndex] === runtime) {
-        this.scheduleFocusedRender(true);
-      }
-      return;
-    }
-
-    if (event.type === "frameReady") {
-      if (this.mode === "focused" && this.sessions[this.activeIndex] === runtime) {
-        this.scheduleFocusedRender(true);
-        this.scheduleFocusedRepaint(32);
-      } else if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
         this.renderDashboard();
       }
       return;
@@ -431,7 +344,7 @@ export class Multiplexer {
           }
         } catch {}
       }
-      this.footerFlash = `\x1b[31m✗ ${runtime.id} crashed (code ${_code})${errorHint}\x1b[0m`;
+      this.footerFlash = `✗ ${runtime.id} crashed (code ${_code})${errorHint}`;
       this.footerFlashTicks = 8;
       debug(`quick crash: ${runtime.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
     }
@@ -449,7 +362,7 @@ export class Multiplexer {
 
     if (this.sessions.length === 0) {
       if (this.startedInDashboard) {
-        this.setMode("dashboard");
+        this.renderDashboard();
         return;
       }
       this.resolveRun?.(_code);
@@ -460,11 +373,7 @@ export class Multiplexer {
       this.activeIndex = this.sessions.length - 1;
     }
 
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    } else {
-      this.focusSession(this.activeIndex);
-    }
+    this.renderDashboard();
   }
 
   private buildTmuxWindowMetadata(sessionId: string, command: string): TmuxWindowMetadata {
@@ -564,9 +473,6 @@ export class Multiplexer {
       if (this.terminalHost.consumeResponse(data)) {
         return;
       }
-      if (this.handleTerminalFocusEvent(data)) {
-        return;
-      }
       if (this.pickerActive) {
         this.handleToolPickerKey(data);
         return;
@@ -616,36 +522,19 @@ export class Multiplexer {
         this.handleDashboardKey(data);
         return;
       }
-
-      const passthrough = this.hotkeys.feed(data);
-      if (passthrough !== null) {
-        if (this.mode === "focused" && this.activeSession) {
-          this.focusedInputTrace = {
-            sessionId: this.activeSession.id,
-            writtenAt: Date.now(),
-          };
-          debug(
-            `input-trace write: session=${this.activeSession.id} bytes=${Buffer.byteLength(passthrough)}`,
-            "focus-repaint",
-          );
-        }
-        this.activeSession?.write(passthrough);
-      }
     };
     process.stdin.on("data", this.onStdinData);
 
     // Forward terminal resize
     this.onResize = () => {
-      const cols = process.stdout.columns ?? 80;
-      const rows = process.stdout.rows ?? 24;
-      debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
-      this.scheduleTerminalResize();
+      this.renderDashboard();
     };
     process.stdout.on("resize", this.onResize);
 
     // Enter dashboard mode directly
     this.mode = "dashboard";
     this.terminalHost.enterAlternateScreen(true);
+    this.startStatusRefresh();
     this.renderDashboard();
 
     const exitCode = await new Promise<number>((resolve) => {
@@ -946,7 +835,7 @@ export class Multiplexer {
       target,
       this.tmuxRuntimeManager,
       cols,
-      this.toolRows,
+      process.stdout.rows ?? 24,
     );
     this.sessionTmuxTargets.set(sessionId, target);
     const session: SessionTransport = tmuxTransport;
@@ -960,12 +849,7 @@ export class Multiplexer {
 
     // Focus the new session
     this.activeIndex = this.sessions.length - 1;
-    if (this.mode === "dashboard") {
-      // Stay in dashboard but update it
-      this.renderDashboard();
-    } else if (this.sessions.length > 1) {
-      this.focusSession(this.activeIndex);
-    }
+    this.renderDashboard();
 
     this.saveState();
 
@@ -1097,183 +981,7 @@ export class Multiplexer {
   }
 
   private getScopedSessionEntries(): Array<{ session: ManagedSession; index: number }> {
-    if (this.footerSessionScope === "project") {
-      return this.sessions.map((session, index) => ({ session, index }));
-    }
-
-    const activeSession = this.sessions[this.activeIndex];
-    if (!activeSession) {
-      return this.sessions.map((session, index) => ({ session, index }));
-    }
-
-    const activeWorktreePath = this.sessionWorktreePaths.get(activeSession.id);
-    return this.sessions
-      .map((session, index) => ({ session, index }))
-      .filter(({ session }) => this.sessionWorktreePaths.get(session.id) === activeWorktreePath);
-  }
-
-  private async renderFocusedView(forceFooter = true): Promise<void> {
-    const activeSession = this.sessions[this.activeIndex];
-    debug(
-      `renderFocusedView: session=${activeSession?.id ?? "none"} forceFooter=${forceFooter} hydrating=${
-        activeSession ? activeSession.isHydrating : false
-      }`,
-      "focus-repaint",
-    );
-    const loadingScreen = activeSession?.getLoadingScreen();
-    if (loadingScreen) {
-      this.renderLoadingSession(loadingScreen.title, loadingScreen.subtitle, forceFooter);
-      return;
-    }
-    const debugState = activeSession ? this.getTerminalDebugState(activeSession) : undefined;
-    if (activeSession && debugState) {
-      debug(this.formatDebugState(`render focused ${activeSession.id}`, debugState), "reconnect");
-    } else if (activeSession) {
-      debug(`render focused ${activeSession.id}: no terminal debug state`, "reconnect");
-    }
-    await this.focusedRenderer.renderSession(activeSession, forceFooter);
-  }
-  private renderLoadingSession(title: string, subtitle: string, forceFooter = true): void {
-    this.focusedRenderer.invalidate();
-    const cols = process.stdout.columns ?? 80;
-    const rows = this.toolRows;
-    const titleRow = Math.max(1, Math.floor(rows / 2) - 1);
-    const subtitleRow = Math.min(rows, titleRow + 2);
-    const lines = Array.from({ length: rows }, (_, i) => {
-      const row = i + 1;
-      if (row === titleRow) return this.centerInWidth(`\x1b[1m${title}\x1b[0m`, cols);
-      if (row === subtitleRow) return this.centerInWidth(`\x1b[2m${subtitle}\x1b[0m`, cols);
-      return "";
-    });
-    let output = "\x1b[?25l\x1b[r";
-    for (let i = 0; i < rows; i++) {
-      output += `\x1b[${i + 1};1H\x1b[2K${lines[i]}`;
-    }
-    process.stdout.write(output);
-    this.renderFooter(forceFooter);
-  }
-
-  private handleFocusedResize(): void {
-    const activeSession = this.sessions[this.activeIndex];
-    if (!activeSession) {
-      this.focusedRenderer.invalidate();
-      this.scheduleFocusedRender();
-      return;
-    }
-
-    const loadingScreen = activeSession.getLoadingScreen();
-    if (loadingScreen) {
-      this.focusedRenderer.invalidate();
-      this.renderLoadingSession(loadingScreen.title, loadingScreen.subtitle, true);
-      return;
-    }
-
-    this.focusedRenderer.invalidate();
-    activeSession.handleFocusedResize(
-      () => this.mode === "focused" && this.sessions[this.activeIndex] === activeSession,
-    );
-  }
-
-  private scheduleTerminalResize(): void {
-    if (this.terminalResizeTimeout) {
-      clearTimeout(this.terminalResizeTimeout);
-    }
-    this.terminalResizeTimeout = setTimeout(() => {
-      this.terminalResizeTimeout = null;
-      const cols = process.stdout.columns ?? 80;
-      for (const session of this.sessions) {
-        session.resize(cols, this.toolRows);
-      }
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.handleFocusedResize();
-      }
-    }, 24);
-  }
-
-  private scheduleFocusedRender(forceFooter = true, delayMs = 0): void {
-    this.focusedRenderQueued = true;
-    this.focusedRenderPendingForce = this.focusedRenderPendingForce || forceFooter;
-    if (this.focusedRenderTimeout) return;
-    this.focusedRenderTimeout = setTimeout(() => {
-      this.focusedRenderTimeout = null;
-      void this.flushFocusedRender();
-    }, delayMs);
-  }
-
-  private canForwardTerminalQuery(sessionId: string): boolean {
-    if (this.mode !== "focused") return false;
-    const activeSession = this.sessions[this.activeIndex];
-    if (!activeSession || activeSession.id !== sessionId) return false;
-    if (
-      this.pickerActive ||
-      this.worktreeInputActive ||
-      this.worktreeListActive ||
-      this.labelInputActive ||
-      this.metaDashboardActive ||
-      this.plansActive ||
-      this.helpActive ||
-      this.graveyardActive ||
-      this.switcherActive ||
-      this.migratePickerActive ||
-      this.dashboardBusyState ||
-      this.dashboardErrorState
-    ) {
-      return false;
-    }
-    return true;
-  }
-
-  private handleTerminalFocusEvent(data: Buffer): boolean {
-    const events = parseKeys(data);
-    if (events.length !== 1) return false;
-    const event = events[0];
-    if (event.name === "focusin") {
-      if (this.mode === "focused") {
-        const activeSession = this.sessions[this.activeIndex];
-        if (activeSession) {
-          this.focusedRenderer.invalidate();
-          activeSession.handleFocusIn(process.stdout.columns ?? 80, this.toolRows, () => {
-            return this.mode === "focused" && this.sessions[this.activeIndex] === activeSession;
-          });
-        }
-      }
-      return true;
-    }
-    if (event.name === "focusout") {
-      return true;
-    }
-    return false;
-  }
-
-  private async flushFocusedRender(): Promise<void> {
-    if (this.focusedRenderInFlight) {
-      this.scheduleFocusedRender(this.focusedRenderPendingForce, 16);
-      return;
-    }
-    if (!this.focusedRenderQueued) return;
-    this.focusedRenderInFlight = true;
-    this.focusedRenderQueued = false;
-    const forceFooter = this.focusedRenderPendingForce;
-    this.focusedRenderPendingForce = false;
-    try {
-      await this.renderFocusedView(forceFooter);
-      if (this.focusedInputTrace?.sessionId === this.sessions[this.activeIndex]?.id) {
-        debug(
-          `input-trace render: session=${this.focusedInputTrace.sessionId} ` +
-            `writeToRender=${Date.now() - this.focusedInputTrace.writtenAt}ms ` +
-            `writeToOutput=${this.focusedInputTrace.firstOutputAt ? this.focusedInputTrace.firstOutputAt - this.focusedInputTrace.writtenAt : -1}ms`,
-          "focus-repaint",
-        );
-        this.focusedInputTrace = null;
-      }
-    } finally {
-      this.focusedRenderInFlight = false;
-      if (this.focusedRenderQueued || this.focusedRenderPendingForce) {
-        this.scheduleFocusedRender(this.focusedRenderPendingForce, 16);
-      }
-    }
+    return this.sessions.map((session, index) => ({ session, index }));
   }
 
   private focusSession(index: number): void {
@@ -1294,7 +1002,7 @@ export class Multiplexer {
   private handleAction(action: HotkeyAction): void {
     switch (action.type) {
       case "dashboard":
-        this.setMode("dashboard");
+        this.openTmuxDashboardTarget();
         break;
 
       case "help":
@@ -1354,10 +1062,6 @@ export class Multiplexer {
 
       case "review":
         this.handleReviewRequest();
-        break;
-
-      case "passthrough":
-        this.activeSession?.write(action.data);
         break;
     }
   }
@@ -1735,11 +1439,7 @@ export class Multiplexer {
     }
 
     // Invalid key — redraw current view
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    } else {
-      this.focusSession(this.activeIndex);
-    }
+    this.renderDashboard();
   }
 
   private renderDashboard(): void {
@@ -2678,21 +2378,11 @@ export class Multiplexer {
       this.switcherTimeout = null;
     }
     this.switcherActive = false;
-    // Restore current screen
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    } else {
-      this.scheduleFocusedRender();
-    }
+    this.renderDashboard();
   }
 
   private redrawCurrentView(): void {
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-      return;
-    }
-
-    this.scheduleFocusedRender();
+    this.renderDashboard();
   }
 
   private showHelp(): void {
@@ -2708,72 +2398,37 @@ export class Multiplexer {
   private renderHelp(): void {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    const allLines = this.isTmuxBackend()
-      ? [
-          "Help",
-          "",
-          "Tmux mode",
-          "  Dashboard lives in tmux window 0",
-          "  Each agent runs in its own tmux window",
-          "  Use normal tmux window navigation inside agents",
-          "  Run aimux with no args to return to the dashboard window",
-          "",
-          "Dashboard mode",
-          "  Ctrl+A ?  show help",
-          "  Ctrl+A c  new agent",
-          "  Ctrl+A x  stop agent",
-          "  Ctrl+A w  create worktree",
-          "  Ctrl+A W  worktree list",
-          "  Ctrl+A v  request review",
-          "  Ctrl+A 1-9  focus numbered agent",
-          "  Ctrl+A d  return to dashboard window",
-          "  arrows / j k n p  navigate",
-          "  Enter  open, resume, or takeover",
-          "  p  plans",
-          "  r  name agent",
-          "  m  migrate agent",
-          "  g  graveyard",
-          "  a  all projects",
-          "  q  quit",
-          "",
-          "Esc, Enter, or ? to close",
-        ]
-      : [
-          "Help",
-          "",
-          "Focused mode",
-          "  Ctrl+A ?  show help",
-          "  Ctrl+A d  dashboard",
-          "  Ctrl+A n  next agent",
-          "  Ctrl+A p  previous agent",
-          "  Ctrl+A 1-9  focus numbered agent",
-          "  Ctrl+A s  switch agent",
-          "  Ctrl+A c  new agent",
-          "  Ctrl+A x  stop active agent",
-          "  Ctrl+A w  create worktree",
-          "  Ctrl+A W  list worktrees",
-          "  Ctrl+A v  request review",
-          "",
-          "Dashboard mode",
-          "  ?  show help",
-          "  arrows / j k n p  navigate",
-          "  Enter  focus, resume, or takeover",
-          "  Esc / d  back to focused session",
-          "  c  new agent",
-          "  w  create worktree",
-          "  W  worktree list",
-          "  p  plans",
-          "  x  stop agent or remove worktree",
-          "  r  name agent",
-          "  m  migrate agent",
-          "  g  graveyard",
-          "  a  all projects",
-          "  q  quit",
-          "",
-          "Esc, Enter, or ? to close",
-        ];
+    const allLines = [
+      "Help",
+      "",
+      "Tmux mode",
+      "  Dashboard lives in tmux window 0",
+      "  Each agent runs in its own tmux window",
+      "  Use normal tmux window navigation inside agents",
+      "  Run aimux with no args to return to the dashboard window",
+      "",
+      "Dashboard mode",
+      "  Ctrl+A ?  show help",
+      "  Ctrl+A c  new agent",
+      "  Ctrl+A x  stop agent",
+      "  Ctrl+A w  create worktree",
+      "  Ctrl+A W  worktree list",
+      "  Ctrl+A v  request review",
+      "  Ctrl+A 1-9  focus numbered agent",
+      "  Ctrl+A d  return to dashboard window",
+      "  arrows / j k n p  navigate",
+      "  Enter  open, resume, or takeover",
+      "  p  plans",
+      "  r  name agent",
+      "  m  migrate agent",
+      "  g  graveyard",
+      "  a  all projects",
+      "  q  quit",
+      "",
+      "Esc, Enter, or ? to close",
+    ];
 
-    const visibleRows = this.mode === "focused" ? Math.max(1, rows - this.footerHeight) : rows;
+    const visibleRows = rows;
     const maxContentRows = Math.max(6, visibleRows - 2);
     let lines = [...allLines];
     if (lines.length > maxContentRows) {
@@ -3000,11 +2655,7 @@ export class Multiplexer {
 
     if (key === "escape" || key === "a") {
       this.metaDashboardActive = false;
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
+      this.renderDashboard();
       return;
     }
   }
@@ -3312,28 +2963,7 @@ export class Multiplexer {
       target.backendSessionId,
     );
 
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    } else {
-      this.focusSession(this.sessions.length - 1);
-    }
-  }
-
-  private setMode(mode: MuxMode): void {
-    const prev = this.mode;
-    this.mode = mode;
-
-    if (mode === "dashboard" && prev !== "dashboard") {
-      // Stop footer, reset scroll region, keep rendering in alternate screen
-      this.stopFooterRefresh();
-      this.focusedRenderer.invalidate();
-      this.terminalHost.resetScrollRegion();
-      this.terminalHost.enterAlternateScreen(true);
-      this.renderDashboard();
-    } else if (mode === "focused" && prev === "dashboard") {
-      this.focusedRenderer.invalidate();
-      this.terminalHost.enterAlternateScreen(true);
-    }
+    this.renderDashboard();
   }
 
   /** Instruction files we've written (to clean up on exit) */
@@ -3440,11 +3070,6 @@ export class Multiplexer {
     } catch {}
   }
 
-  /** Terminal rows available for the tool (total minus footer) */
-  private get toolRows(): number {
-    return this.terminalHost.getToolRows(this.mode, this.footerHeight);
-  }
-
   private stripAnsi(text: string): string {
     return text.replace(/\x1b\[[0-9;]*m/g, "");
   }
@@ -3454,189 +3079,18 @@ export class Multiplexer {
     return " ".repeat(pad) + text;
   }
 
-  private get footerHeight(): number {
-    return this.footerController.getFooterHeight(this.footerPlugins.enabledCount);
-  }
-
-  private getTerminalDebugState(session: unknown): SessionTerminalDebugState | undefined {
-    if (!session || typeof session !== "object") return undefined;
-    const maybe = session as { getDebugState?: () => SessionTerminalDebugState };
-    if (typeof maybe.getDebugState !== "function") return undefined;
-    try {
-      return maybe.getDebugState();
-    } catch {
-      return undefined;
-    }
-  }
-
-  private formatDebugState(prefix: string, state: SessionTerminalDebugState): string {
-    const visiblePreview = state.visibleLines
-      .slice(0, 3)
-      .map((line) => JSON.stringify(line.trimEnd()))
-      .join(" | ");
-    return (
-      `${prefix}: viewport=${state.viewportY} base=${state.baseY} cursor=${state.cursor.row},${state.cursor.col} ` +
-      `rows=${state.rows} cols=${state.cols} visible=${visiblePreview || "(empty)"}`
-    );
-  }
-
-  /** Render the status footer in the reserved bottom row */
-  private renderFooter(force = true): void {
-    if (this.mode !== "focused") return;
-    const activeSession = this.sessions[this.activeIndex];
-    const cursor =
-      activeSession && typeof (activeSession as any).getCursorPosition === "function"
-        ? (activeSession as any).getCursorPosition()
-        : { row: 1, col: 1 };
-    this.renderFooterWithCursor(cursor, force);
-  }
-
-  private renderFooterWithCursor(cursor: { row: number; col: number }, force = true): void {
-    if (this.mode !== "focused") return;
-    debug(
-      `renderFooter: force=${force} cursor=${cursor.row},${cursor.col} active=${this.sessions[this.activeIndex]?.id ?? "none"}`,
-      "focus-repaint",
-    );
-    const scopedSessions = this.getScopedSessionEntries();
-    const sessionChips = scopedSessions.map(({ session, index }, i) => ({
-      index: i + 1,
-      name: this.getSessionLabel(session.id) ?? session.command,
-      status: session.status,
-      active: index === this.activeIndex,
-    }));
-
-    const activeSessionForHeadline = this.sessions[this.activeIndex];
-    const headline = activeSessionForHeadline ? this.deriveHeadline(activeSessionForHeadline.id) : undefined;
-    const pluginParts = this.footerPlugins.render(this.getActiveSessionFooterContext());
-    this.footerController.render(
-      {
-        enabledPluginCount: this.footerPlugins.enabledCount,
-        cursor,
-        sessionChips,
-        headline,
-        taskCounts: this.taskDispatcher?.getTaskCounts(),
-        flash: this.footerFlash,
-        pluginItems: pluginParts,
-      },
-      force,
-    );
-  }
-
-  private async renderFooterAfterFlush(force = true): Promise<void> {
-    if (this.mode !== "focused") return;
-    const activeSession = this.sessions[this.activeIndex];
-    if (!activeSession) return;
-
-    const cursor =
-      typeof (activeSession as any).getCursorPositionAsync === "function"
-        ? await (activeSession as any).getCursorPositionAsync()
-        : typeof (activeSession as any).getCursorPosition === "function"
-          ? (activeSession as any).getCursorPosition()
-          : { row: 1, col: 1 };
-
-    if (this.mode !== "focused" || this.sessions[this.activeIndex] !== activeSession) return;
-    this.renderFooterWithCursor(cursor, force);
-  }
-
-  private getActiveSessionFooterContext(): FooterPluginContext {
-    const activeSession = this.sessions[this.activeIndex];
-    if (!activeSession) {
-      return {
-        projectCwd: process.cwd(),
-        activeSessionPath: process.cwd(),
-        locationLabel: process.cwd().replace(homedir(), "~"),
-        isMainCheckout: true,
-      };
-    }
-
-    const worktreePath = this.sessionWorktreePaths.get(activeSession.id);
-    let mainRepoPath: string | undefined;
-    try {
-      mainRepoPath = findMainRepo();
-    } catch {}
-
-    if (!worktreePath || (mainRepoPath && worktreePath === mainRepoPath)) {
-      try {
-        const worktrees = listAllWorktrees();
-        const mainWorktree =
-          (mainRepoPath ? worktrees.find((wt) => wt.path === mainRepoPath) : worktrees[0]) ?? worktrees[0];
-        if (mainWorktree) {
-          return {
-            projectCwd: process.cwd(),
-            activeSessionId: activeSession.id,
-            activeSessionPath: mainWorktree.path,
-            locationLabel: `Main Checkout · ${mainWorktree.branch}`,
-            branch: mainWorktree.branch,
-            worktreeName: mainWorktree.name,
-            isMainCheckout: true,
-          };
-        }
-      } catch {}
-      return {
-        projectCwd: process.cwd(),
-        activeSessionId: activeSession.id,
-        activeSessionPath: mainRepoPath ?? process.cwd(),
-        locationLabel: `Main Checkout · ${process.cwd().replace(homedir(), "~")}`,
-        isMainCheckout: true,
-      };
-    }
-
-    try {
-      const worktrees = listAllWorktrees(worktreePath);
-      const current = worktrees.find((wt) => wt.path === worktreePath);
-      if (current) {
-        return {
-          projectCwd: process.cwd(),
-          activeSessionId: activeSession.id,
-          activeSessionPath: worktreePath,
-          locationLabel: `Worktree · ${current.name} · ${current.branch}`,
-          branch: current.branch,
-          worktreeName: current.name,
-          isMainCheckout: false,
-        };
-      }
-    } catch {}
-
-    return {
-      projectCwd: process.cwd(),
-      activeSessionId: activeSession.id,
-      activeSessionPath: worktreePath,
-      locationLabel: `Worktree · ${worktreePath.replace(homedir(), "~")}`,
-      isMainCheckout: false,
-    };
-  }
-
   /** Track previous statuses for notification on transition */
   private prevStatuses = new Map<string, string>();
   /** Flash message shown temporarily in footer, cleared after a few renders */
   private footerFlash: string | null = null;
   private footerFlashTicks = 0;
 
-  private scheduleFocusedRepaint(delayMs = 75): void {
-    if (this.focusedRepaintTimeout) {
-      clearTimeout(this.focusedRepaintTimeout);
-    }
-
-    this.focusedRepaintTimeout = setTimeout(() => {
-      this.focusedRepaintTimeout = null;
-      if (this.mode === "focused" && this.sessions[this.activeIndex]) {
-        debug(`deferred focused repaint for ${this.sessions[this.activeIndex].id}`, "reconnect");
-        this.scheduleFocusedRender(true);
-      }
-    }, delayMs);
-  }
-
-  private startFooterRefresh(): void {
-    if (this.footerInterval) return;
-    this.footerWatchdogTicks = 0;
-    this.renderFooter();
-    // Refresh every 1s to pick up status changes, dispatch tasks, and check notifications
-    this.footerInterval = setInterval(() => {
-      this.footerWatchdogTicks++;
+  private startStatusRefresh(): void {
+    if (this.statusInterval) return;
+    this.statusInterval = setInterval(() => {
       this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
       this.writeStatuslineFile();
 
-      // Drain task events for flash notifications
       const events = this.taskDispatcher?.drainEvents() ?? [];
       for (const ev of events) {
         if (ev.type === "assigned") {
@@ -3652,52 +3106,31 @@ export class Multiplexer {
         } else if (ev.type === "changes_requested") {
           this.footerFlash = `↻ Changes requested: ${ev.description}`;
         }
-        this.footerFlashTicks = 3; // show for ~6s (3 ticks × 2s)
+        this.footerFlashTicks = 3;
       }
+
       if (this.footerFlashTicks > 0) this.footerFlashTicks--;
       if (this.footerFlashTicks === 0) this.footerFlash = null;
 
-      // Check for status transitions that warrant notifications
       for (const session of this.sessions) {
         const prev = this.prevStatuses.get(session.id);
         const curr = session.status;
-        if (prev && prev !== curr) {
-          if (curr === "idle" && prev === "running") {
-            notifyPrompt(session.id);
-          }
+        if (prev && prev !== curr && curr === "idle" && prev === "running") {
+          notifyPrompt(session.id);
         }
         this.prevStatuses.set(session.id, curr);
       }
 
-      if (this.mode === "focused") {
-        const forceWatchdogRepaint = this.footerWatchdogTicks % 3 === 0;
-        if (forceWatchdogRepaint) {
-          debug(
-            `footerWatchdog repaint: active=${this.sessions[this.activeIndex]?.id ?? "none"} tick=${this.footerWatchdogTicks}`,
-            "focus-repaint",
-          );
-        }
-        void this.renderFooterAfterFlush(forceWatchdogRepaint);
+      if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
+        this.renderDashboard();
       }
     }, 1000);
   }
 
-  private stopFooterRefresh(): void {
-    if (this.footerInterval) {
-      clearInterval(this.footerInterval);
-      this.footerInterval = null;
-    }
-    this.footerWatchdogTicks = 0;
-    if (this.terminalResizeTimeout) {
-      clearTimeout(this.terminalResizeTimeout);
-      this.terminalResizeTimeout = null;
-    }
-    if (this.focusedRenderTimeout) {
-      clearTimeout(this.focusedRenderTimeout);
-      this.focusedRenderTimeout = null;
-    }
-    for (const session of this.sessions) {
-      session.clearFocusedTimers();
+  private stopStatusRefresh(): void {
+    if (this.statusInterval) {
+      clearInterval(this.statusInterval);
+      this.statusInterval = null;
     }
   }
 
@@ -3734,7 +3167,7 @@ export class Multiplexer {
     const savedById = new Map((state?.sessions ?? []).map((session) => [session.id, session]));
 
     const cols = process.stdout.columns ?? 80;
-    const rows = this.toolRows;
+    const rows = process.stdout.rows ?? 24;
     const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
 
     for (const { target, metadata } of this.tmuxRuntimeManager.listManagedWindows(tmuxSession.sessionName)) {
@@ -3902,13 +3335,11 @@ export class Multiplexer {
 
   /**
    * Handle a session that was claimed (taken over) by another aimux instance.
-   * Kill the local PTY and switch to dashboard if it was the focused session.
+   * Kill the local tmux transport and refresh the dashboard.
    */
   private handleSessionClaimed(sessionId: string): void {
     const session = this.sessions.find((s) => s.id === sessionId);
     if (!session) return;
-
-    const wasFocused = this.mode === "focused" && this.sessions[this.activeIndex] === session;
     debug(`session ${sessionId} was claimed by another instance, killing local PTY`, "instance");
 
     // Kill the local PTY without going through normal exit flow (no offline/state save)
@@ -3929,10 +3360,7 @@ export class Multiplexer {
       this.activeIndex = Math.max(0, this.sessions.length - 1);
     }
 
-    // If the claimed session was focused, switch to dashboard
-    if (wasFocused) {
-      this.setMode("dashboard");
-    }
+    this.renderDashboard();
   }
 
   private stopHeartbeat(): void {
@@ -4034,7 +3462,7 @@ export class Multiplexer {
     this.taskDispatcher = null;
     this.instanceDirectory.unregisterInstance(this.instanceId, process.cwd()).catch(() => {});
     this.saveState();
-    this.stopFooterRefresh();
+    this.stopStatusRefresh();
     this.contextWatcher.stop();
     this.terminalHost.resetScrollRegion();
     this.removeSessionsFile();
