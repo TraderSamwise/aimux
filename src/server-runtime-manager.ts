@@ -62,6 +62,7 @@ export interface ServerRuntimeClient {
 export class ServerRuntimeManager {
   private client: ServerRuntimeClient | null = null;
   private readonly serverSessionIds = new Set<string>();
+  private readonly backendSessionIds = new Set<string>();
   private readonly hydratingSessionIds = new Set<string>();
   private readonly runtimes = new Map<string, SessionRuntime>();
 
@@ -87,9 +88,18 @@ export class ServerRuntimeManager {
     return this.runtimes.get(sessionId);
   }
 
+  getSessionIds(): Set<string> {
+    return new Set(this.serverSessionIds);
+  }
+
+  getBackendSessionIds(): Set<string> {
+    return new Set(this.backendSessionIds);
+  }
+
   attachRuntime(sessionId: string, runtime: SessionRuntime): void {
     if (this.serverSessionIds.has(sessionId)) {
       this.runtimes.set(sessionId, runtime);
+      if (runtime.backendSessionId) this.backendSessionIds.add(runtime.backendSessionId);
     }
   }
 
@@ -113,6 +123,7 @@ export class ServerRuntimeManager {
       const session = this.client.registerSession(info.id, info.command, cols, rows, promptPatterns);
       session.backendSessionId = info.backendSessionId;
       this.serverSessionIds.add(info.id);
+      if (info.backendSessionId) this.backendSessionIds.add(info.backendSessionId);
       const runtime = hooks.onDiscovered(info, session);
       this.runtimes.set(info.id, runtime);
       this.hooks.onEvent?.({ type: "sessionDiscovered", info, runtime });
@@ -140,6 +151,10 @@ export class ServerRuntimeManager {
       request.rows,
       request.promptPatterns,
     );
+    if (request.backendSessionId) {
+      session.backendSessionId = request.backendSessionId;
+      this.backendSessionIds.add(request.backendSessionId);
+    }
     this.send({
       type: "spawn",
       id: request.id,
@@ -167,6 +182,7 @@ export class ServerRuntimeManager {
     this.client?.disconnect();
     this.client = null;
     this.serverSessionIds.clear();
+    this.backendSessionIds.clear();
     this.hydratingSessionIds.clear();
     this.runtimes.clear();
   }

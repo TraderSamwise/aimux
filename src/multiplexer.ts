@@ -4241,8 +4241,9 @@ export class Multiplexer {
     } catch {}
 
     // Also exclude by backendSessionId to catch resumed sessions with new IDs
-    const ownedBackendIds = new Set<string>();
+    const ownedBackendIds = this.serverRuntime.getBackendSessionIds();
     for (const s of this.sessions) {
+      if (this.serverRuntime.isServerSession(s.id)) continue;
       const bsid = s.backendSessionId;
       if (bsid) ownedBackendIds.add(bsid);
     }
@@ -4464,7 +4465,8 @@ export class Multiplexer {
 
   /** Save session state to main repo's .aimux/state.json, merging with existing state. */
   private saveState(): void {
-    const localSessions = this.sessions.filter((s) => !this.serverRuntime.isServerSession(s.id));
+    const serverSessionIds = this.serverRuntime.getSessionIds();
+    const localSessions = this.sessions.filter((s) => !serverSessionIds.has(s.id));
     const liveSessions = localSessions.map((s) => ({
       id: s.id,
       tool: s.command,

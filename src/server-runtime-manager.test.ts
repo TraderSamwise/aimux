@@ -144,6 +144,8 @@ describe("ServerRuntimeManager", () => {
     expect(manager.isServerSession("srv-1")).toBe(true);
     expect(manager.isHydrating("srv-1")).toBe(false);
     expect(manager.getRuntime("srv-1")).toBe(runtimes.get("srv-1"));
+    expect(manager.getSessionIds()).toEqual(new Set(["srv-1"]));
+    expect(manager.getBackendSessionIds()).toEqual(new Set(["backend-1"]));
     expect(runtimes.get("srv-1")?.isHydrating).toBe(false);
     expect(registerSession).toHaveBeenCalledTimes(1);
     expect(requestScreen).toHaveBeenCalledWith("srv-1");
@@ -273,7 +275,10 @@ describe("ServerRuntimeManager", () => {
     });
 
     const runtime = createRuntime("srv-3");
+    runtime.backendSessionId = "backend-3";
     manager.attachRuntime("srv-3", runtime);
     expect(manager.getRuntime("srv-3")).toBe(runtime);
+    expect(manager.getSessionIds()).toEqual(new Set(["srv-3"]));
+    expect(manager.getBackendSessionIds()).toEqual(new Set(["backend-3"]));
   });
 });
