@@ -76,6 +76,7 @@ export class Dashboard {
   private runtimeLabel: string | undefined = undefined;
   private mainCheckout: MainCheckoutInfo = { name: "Main Checkout", branch: "" };
   private renderSessionCounter = 0;
+  private detailsPaneVisible = true;
 
   update(
     sessions: DashboardSession[],
@@ -138,7 +139,7 @@ export class Dashboard {
 
     // Viewport: how many content lines fit between header and footer
     const viewportHeight = rows - header.length - footer.length;
-    const twoPane = cols >= 110;
+    const twoPane = cols >= 110 && this.detailsPaneVisible;
 
     // Auto-scroll to keep focused worktree or selected session visible
     const focusLine = this.findFocusLine(content);
@@ -308,20 +309,24 @@ export class Dashboard {
     const tmuxHint = this.runtimeLabel === "tmux" ? "  [d] tmux dashboard" : "";
 
     if (this.sessions.length === 0 && !this.hasWorktrees) {
-      return " [c] new  [p] plans  [a] all projects  [g] graveyard  [?] help  [q] quit ";
+      return " [Tab] details  [c] new  [p] plans  [a] all projects  [g] graveyard  [?] help  [q] quit ";
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ agents  ${enterLabel}  Esc back  [c] new  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ agents  ${enterLabel}  Esc back  [Tab] details  [c] new  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.hasWorktrees) {
-      return ` ↑↓ worktrees  Enter step in  [c] new  [w] worktree  [m] migrate${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ worktrees  Enter step in  [Tab] details  [c] new  [w] worktree  [m] migrate${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [a] all  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [Tab] details  [c] new  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [a] all  [g] graveyard  [?] help  [q] quit `;
     }
-    return " [c] new  [w] worktree  [p] plans  [a] all projects  [g] graveyard  [?] help  [q] quit ";
+    return " [Tab] details  [c] new  [w] worktree  [p] plans  [a] all projects  [g] graveyard  [?] help  [q] quit ";
+  }
+
+  toggleDetailsPane(): void {
+    this.detailsPaneVisible = !this.detailsPaneVisible;
   }
 
   private renderSelectedDetailsPanel(width: number, height: number): string[] {
@@ -375,6 +380,31 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max) + "…";
 }
 
+function truncateAnsi(text: string, max: number): string {
+  if (max <= 0) return "";
+  const plainLength = stripAnsi(text).length;
+  const needsEllipsis = plainLength > max;
+  const limit = needsEllipsis && max > 1 ? max - 1 : max;
+  let visible = 0;
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\x1b") {
+      const match = text.slice(i).match(/^\x1b\[[0-9;]*m/);
+      if (match) {
+        out += match[0];
+        i += match[0].length - 1;
+        continue;
+      }
+    }
+    if (visible >= limit) break;
+    out += text[i];
+    visible += 1;
+  }
+  if (needsEllipsis) out += "…";
+  if (out.includes("\x1b[")) out += "\x1b[0m";
+  return out;
+}
+
 function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
@@ -407,14 +437,14 @@ function wrapKeyValue(key: string, value: string, width: number): string[] {
 
 function composeTwoPane(left: string[], right: string[], cols: number): string[] {
   const leftWidth = Math.max(40, Math.floor(cols * 0.56));
-  const rightWidth = Math.max(24, cols - leftWidth - 3);
+  const rightWidth = Math.max(24, cols - leftWidth - 4);
   const height = Math.max(left.length, right.length);
   const out: string[] = [];
   for (let i = 0; i < height; i++) {
-    const leftLine = left[i] ?? "";
-    const rightLine = right[i] ?? "";
+    const leftLine = truncateAnsi(left[i] ?? "", leftWidth);
+    const rightLine = truncateAnsi(right[i] ?? "", rightWidth);
     const leftPad = Math.max(0, leftWidth - stripAnsi(leftLine).length);
-    out.push(`${leftLine}${" ".repeat(leftPad)} │ ${truncate(rightLine, rightWidth)}`);
+    out.push(`${leftLine}${" ".repeat(leftPad)} │ ${rightLine}`);
   }
   return out;
 }

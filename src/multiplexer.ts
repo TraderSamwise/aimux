@@ -132,6 +132,7 @@ export class Multiplexer {
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
   private helpActive = false;
+  private detailsSidebarVisible = true;
   /** Quick switcher overlay state */
   private switcherActive = false;
   private switcherIndex = 0;
@@ -1100,6 +1101,13 @@ export class Multiplexer {
     if (key >= "1" && key <= "9") {
       const index = parseInt(key, 10) - 1;
       void this.activateDashboardEntryByNumber(index);
+      return;
+    }
+
+    if (key === "tab") {
+      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.dashboard.toggleDetailsPane();
+      this.renderCurrentDashboardView();
       return;
     }
 
@@ -2084,9 +2092,9 @@ export class Multiplexer {
     header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — graveyard", cols));
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
-    const footer = this.centerInWidth("[↑↓] select  [1-9/Enter] resurrect  [q/Esc] back", cols);
+    const footer = this.centerInWidth("[↑↓] select  [Tab] details  [1-9/Enter] resurrect  [q/Esc] back", cols);
     const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110;
+    const twoPane = cols >= 110 && this.detailsSidebarVisible;
     const listLines: string[] = [];
     if (this.graveyardEntries.length === 0) {
       listLines.push("  Graveyard");
@@ -2123,6 +2131,12 @@ export class Multiplexer {
 
     const event = events[0];
     const key = event.name || event.char;
+
+    if (key === "tab") {
+      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.renderGraveyard();
+      return;
+    }
 
     if (key === "escape" || key === "q") {
       this.graveyardActive = false;
@@ -2261,9 +2275,9 @@ export class Multiplexer {
     header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — plans", cols));
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
-    const footer = this.centerInWidth("[↑↓] select  [e/Enter] edit  [r] refresh  [q/Esc] back", cols);
+    const footer = this.centerInWidth("[↑↓] select  [Tab] details  [e/Enter] edit  [r] refresh  [q/Esc] back", cols);
     const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110;
+    const twoPane = cols >= 110 && this.detailsSidebarVisible;
     const listLines: string[] = [];
 
     if (this.planEntries.length === 0) {
@@ -2379,14 +2393,14 @@ export class Multiplexer {
 
   private composeTwoPaneLines(left: string[], right: string[], cols: number): string[] {
     const leftWidth = Math.max(40, Math.floor(cols * 0.56));
-    const rightWidth = Math.max(24, cols - leftWidth - 3);
+    const rightWidth = Math.max(24, cols - leftWidth - 4);
     const height = Math.max(left.length, right.length);
     const out: string[] = [];
     for (let i = 0; i < height; i++) {
-      const leftLine = left[i] ?? "";
-      const rightLine = right[i] ?? "";
+      const leftLine = this.truncateAnsi(left[i] ?? "", leftWidth);
+      const rightLine = this.truncateAnsi(right[i] ?? "", rightWidth);
       const leftPad = Math.max(0, leftWidth - this.stripAnsi(leftLine).length);
-      out.push(`${leftLine}${" ".repeat(leftPad)} │ ${this.truncatePlain(rightLine, rightWidth)}`);
+      out.push(`${leftLine}${" ".repeat(leftPad)} │ ${rightLine}`);
     }
     return out;
   }
@@ -2421,6 +2435,31 @@ export class Multiplexer {
     if (text.length <= max) return text;
     if (max <= 1) return text.slice(0, max);
     return `${text.slice(0, max - 1)}…`;
+  }
+
+  private truncateAnsi(text: string, max: number): string {
+    if (max <= 0) return "";
+    const plainLength = this.stripAnsi(text).length;
+    const needsEllipsis = plainLength > max;
+    const limit = needsEllipsis && max > 1 ? max - 1 : max;
+    let visible = 0;
+    let out = "";
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === "\x1b") {
+        const match = text.slice(i).match(/^\x1b\[[0-9;]*m/);
+        if (match) {
+          out += match[0];
+          i += match[0].length - 1;
+          continue;
+        }
+      }
+      if (visible >= limit) break;
+      out += text[i];
+      visible += 1;
+    }
+    if (needsEllipsis) out += "…";
+    if (out.includes("\x1b[")) out += "\x1b[0m";
+    return out;
   }
 
   private handlePlansKey(data: Buffer): void {
@@ -2652,6 +2691,12 @@ export class Multiplexer {
     if (events.length === 0) return;
     const event = events[0];
     const key = event.name || event.char;
+
+    if (key === "tab") {
+      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.renderPlans();
+      return;
+    }
     if (key === "escape" || key === "enter" || key === "return" || key === "?") {
       this.dismissHelp();
     }
