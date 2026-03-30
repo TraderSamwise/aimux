@@ -112,6 +112,8 @@ export class AgentTracker {
           derived: {
             ...derivedCurrent,
             ...nextState,
+            threadId: normalized.threadId ?? derivedCurrent?.threadId,
+            threadName: normalized.threadName ?? derivedCurrent?.threadName,
             lastEvent: normalized,
             events,
           },

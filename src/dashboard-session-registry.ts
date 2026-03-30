@@ -36,6 +36,8 @@ export interface DashboardSessionRegistryOptions {
         unseenCount?: number;
         lastEvent?: import("./agent-events.js").AgentEvent;
         services?: import("./metadata-store.js").SessionServiceMetadata[];
+        threadId?: string;
+        threadName?: string;
       }
     | undefined;
 }
@@ -79,6 +81,8 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
     unseenCount: options.getSessionDerived(session.id)?.unseenCount,
     lastEvent: options.getSessionDerived(session.id)?.lastEvent,
     services: options.getSessionDerived(session.id)?.services,
+    threadId: options.getSessionDerived(session.id)?.threadId,
+    threadName: options.getSessionDerived(session.id)?.threadName,
   }));
 
   for (const inst of options.remoteInstances) {
@@ -111,6 +115,8 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
         unseenCount: options.getSessionDerived(session.id)?.unseenCount,
         lastEvent: options.getSessionDerived(session.id)?.lastEvent,
         services: options.getSessionDerived(session.id)?.services,
+        threadId: options.getSessionDerived(session.id)?.threadId,
+        threadName: options.getSessionDerived(session.id)?.threadName,
       });
     }
   }
@@ -150,6 +156,8 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       unseenCount: options.getSessionDerived(offline.id)?.unseenCount,
       lastEvent: options.getSessionDerived(offline.id)?.lastEvent,
       services: options.getSessionDerived(offline.id)?.services,
+      threadId: options.getSessionDerived(offline.id)?.threadId,
+      threadName: options.getSessionDerived(offline.id)?.threadName,
     });
   }
 

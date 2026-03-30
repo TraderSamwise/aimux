@@ -33,13 +33,19 @@ describe("AgentTracker", () => {
 
   it("tracks needs-input attention and clears unseen on seen", () => {
     const tracker = new AgentTracker();
-    tracker.emit("s1", { kind: "needs_input", message: "Need your approval" }, repoRoot);
+    tracker.emit(
+      "s1",
+      { kind: "needs_input", message: "Need your approval", threadId: "t-1", threadName: "Approval" },
+      repoRoot,
+    );
     tracker.markSeen("s1", repoRoot);
 
     const derived = loadMetadataState(repoRoot).sessions.s1?.derived;
     expect(derived?.activity).toBe("waiting");
     expect(derived?.attention).toBe("needs_input");
     expect(derived?.unseenCount).toBe(0);
+    expect(derived?.threadId).toBe("t-1");
+    expect(derived?.threadName).toBe("Approval");
   });
 
   it("tracks failed tasks as error attention", () => {

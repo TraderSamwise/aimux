@@ -55,6 +55,8 @@ export interface SessionServiceMetadata {
 export interface SessionDerivedMetadata extends SessionDerivedState {
   activity?: AgentActivityState;
   attention?: AgentAttentionState;
+  threadId?: string;
+  threadName?: string;
   lastEvent?: AgentEvent;
   events?: AgentEvent[];
   services?: SessionServiceMetadata[];

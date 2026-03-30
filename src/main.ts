@@ -447,15 +447,29 @@ metadataCmd
   .option("--message <message>", "Event message")
   .option("--source <source>", "Event source")
   .option("--tone <tone>", "Event tone")
+  .option("--thread-id <threadId>", "Thread identifier")
+  .option("--thread-name <threadName>", "Thread name")
   .description("Emit a normalized agent event")
   .action(
-    async (session: string, kind: AgentEventKind, opts: { message?: string; source?: string; tone?: MetadataTone }) => {
+    async (
+      session: string,
+      kind: AgentEventKind,
+      opts: {
+        message?: string;
+        source?: string;
+        tone?: MetadataTone;
+        threadId?: string;
+        threadName?: string;
+      },
+    ) => {
       await initPaths();
       metadataTracker.emit(session, {
         kind,
         message: opts.message,
         source: opts.source,
         tone: opts.tone,
+        threadId: opts.threadId,
+        threadName: opts.threadName,
       });
     },
   );

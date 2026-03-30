@@ -40,6 +40,8 @@ export interface DashboardSession {
   unseenCount?: number;
   lastEvent?: AgentEvent;
   services?: SessionServiceMetadata[];
+  threadId?: string;
+  threadName?: string;
 }
 
 export interface WorktreeGroup {
@@ -402,6 +404,9 @@ export class Dashboard {
     }
     if (selected.lastEvent?.message) {
       lines.push(...wrapKeyValue("Last", selected.lastEvent.message, width));
+    }
+    if (selected.threadName || selected.threadId) {
+      lines.push(...wrapKeyValue("Thread", selected.threadName ?? selected.threadId ?? "", width));
     }
     if ((selected.services?.length ?? 0) > 0) {
       lines.push(...wrapKeyValue("Services", selected.services!.map((s) => s.url ?? `:${s.port}`).join(", "), width));
