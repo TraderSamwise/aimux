@@ -53,6 +53,40 @@ export class InstanceDirectory {
     return (this.fns.updateHeartbeat ?? updateHeartbeat)(instanceId, sessions, cwd);
   }
 
+  async reconcileHeartbeat(
+    instanceId: string,
+    sessions: InstanceSessionRef[],
+    cwd: string,
+    confirmedRegistered: Set<string>,
+  ): Promise<{ claimedIds: string[]; confirmedIds: Set<string>; skippedClaimDetection: boolean }> {
+    const previousIds = await this.updateHeartbeat(instanceId, sessions, cwd);
+    const nextConfirmed = new Set(confirmedRegistered);
+    const claimedIds: string[] = [];
+    let skippedClaimDetection = false;
+
+    if (previousIds.length > 0 || confirmedRegistered.size === 0) {
+      const previousSet = new Set(previousIds);
+      for (const id of confirmedRegistered) {
+        if (!previousSet.has(id)) {
+          claimedIds.push(id);
+          nextConfirmed.delete(id);
+        }
+      }
+    } else if (confirmedRegistered.size > 0) {
+      skippedClaimDetection = true;
+    }
+
+    for (const session of sessions) {
+      nextConfirmed.add(session.id);
+    }
+
+    return {
+      claimedIds,
+      confirmedIds: nextConfirmed,
+      skippedClaimDetection,
+    };
+  }
+
   async claimSession(sessionId: string, fromInstanceId: string, cwd: string): Promise<InstanceSessionRef | undefined> {
     return (this.fns.claimSession ?? claimSession)(sessionId, fromInstanceId, cwd);
   }

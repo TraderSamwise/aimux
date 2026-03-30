@@ -4195,31 +4195,19 @@ export class Multiplexer {
     this.heartbeatInterval = setInterval(() => {
       const sessions = this.getInstanceSessionRefs();
       this.instanceDirectory
-        .updateHeartbeat(this.instanceId, sessions, process.cwd())
-        .then((previousIds) => {
-          // Only detect claims if we got a valid response (previousIds is non-empty
-          // OR we have no sessions to confirm). If previousIds is empty but we have
-          // confirmed sessions, our registry entry may have been pruned/lost — skip
-          // claim detection this cycle to avoid false positives.
-          if (previousIds.length > 0 || this.confirmedRegistered.size === 0) {
-            const previousSet = new Set(previousIds);
-            for (const id of this.confirmedRegistered) {
-              if (!previousSet.has(id)) {
-                debug(`session ${id} claimed: was in confirmedRegistered but not in previousIds`, "instance");
-                this.handleSessionClaimed(id);
-                this.confirmedRegistered.delete(id);
-              }
-            }
-          } else if (this.confirmedRegistered.size > 0) {
+        .reconcileHeartbeat(this.instanceId, sessions, process.cwd(), this.confirmedRegistered)
+        .then((result) => {
+          for (const id of result.claimedIds) {
+            debug(`session ${id} claimed: was in confirmedRegistered but not in previousIds`, "instance");
+            this.handleSessionClaimed(id);
+          }
+          if (result.skippedClaimDetection && this.confirmedRegistered.size > 0) {
             debug(
               `skipping claim detection: previousIds empty but ${this.confirmedRegistered.size} confirmed sessions (registry entry may have been pruned)`,
               "instance",
             );
           }
-          // Mark all sessions we just wrote as confirmed
-          for (const s of sessions) {
-            this.confirmedRegistered.add(s.id);
-          }
+          this.confirmedRegistered = result.confirmedIds;
         })
         .catch(() => {});
       // Refresh offline sessions from state.json (picks up cross-instance graveyard/kill)

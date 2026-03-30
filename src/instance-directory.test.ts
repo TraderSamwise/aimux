@@ -62,6 +62,40 @@ describe("InstanceDirectory", () => {
     });
   });
 
+  it("reconciles heartbeat claims and confirmed ids", async () => {
+    const directory = new InstanceDirectory({
+      updateHeartbeat: vi.fn<() => Promise<string[]>>().mockResolvedValue(["kept", "newer"]) as any,
+    });
+
+    const result = await directory.reconcileHeartbeat(
+      "self",
+      [{ id: "current", tool: "codex" }],
+      "/tmp",
+      new Set(["kept", "claimed"]),
+    );
+
+    expect(result.claimedIds).toEqual(["claimed"]);
+    expect(result.confirmedIds).toEqual(new Set(["kept", "current"]));
+    expect(result.skippedClaimDetection).toBe(false);
+  });
+
+  it("skips claim detection when previous ids are empty but sessions were confirmed", async () => {
+    const directory = new InstanceDirectory({
+      updateHeartbeat: vi.fn<() => Promise<string[]>>().mockResolvedValue([]) as any,
+    });
+
+    const result = await directory.reconcileHeartbeat(
+      "self",
+      [{ id: "current", tool: "codex" }],
+      "/tmp",
+      new Set(["kept"]),
+    );
+
+    expect(result.claimedIds).toEqual([]);
+    expect(result.confirmedIds).toEqual(new Set(["kept", "current"]));
+    expect(result.skippedClaimDetection).toBe(true);
+  });
+
   it("builds sessions file entries with remote dedupe", () => {
     const directory = new InstanceDirectory();
     const localSessions: InstanceSessionRef[] = [
