@@ -280,12 +280,14 @@ program
   .option("--project-root <path>", "Project root to read status from", process.cwd())
   .option("--current-window <name>", "Current tmux window name")
   .option("--current-path <path>", "Current pane path")
+  .option("--current-session <name>", "Current tmux session name")
   .action(async (opts: { side: TmuxStatusSide; projectRoot: string; currentWindow?: string; currentPath?: string }) => {
     await initPaths(opts.projectRoot);
     process.stdout.write(
       renderTmuxStatusline(opts.projectRoot, opts.side, {
         currentWindow: opts.currentWindow,
         currentPath: opts.currentPath,
+        currentSession: (opts as { currentSession?: string }).currentSession,
       }),
     );
   });

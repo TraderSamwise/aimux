@@ -1,9 +1,10 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths, getProjectStateDirFor } from "./paths.js";
 import { renderTmuxStatusline } from "./tmux-statusline.js";
+import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
 describe("renderTmuxStatusline", () => {
   const originalCwd = process.cwd();
@@ -16,6 +17,7 @@ describe("renderTmuxStatusline", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     process.chdir(originalCwd);
     rmSync(repoRoot, { recursive: true, force: true });
   });
@@ -26,6 +28,29 @@ describe("renderTmuxStatusline", () => {
   });
 
   it("renders session/task/headline/flash data on the right", () => {
+    vi.spyOn(TmuxRuntimeManager.prototype, "listManagedWindows").mockReturnValue([
+      {
+        target: { sessionName: "aimux-mobile", windowId: "@1", windowIndex: 1, windowName: "coder" },
+        metadata: {
+          sessionId: "a",
+          command: "codex",
+          args: [],
+          toolConfigKey: "codex",
+          label: "coder",
+          worktreePath: repoRoot,
+        },
+      },
+      {
+        target: { sessionName: "aimux-mobile", windowId: "@2", windowIndex: 2, windowName: "claude" },
+        metadata: {
+          sessionId: "b",
+          command: "claude",
+          args: [],
+          toolConfigKey: "claude",
+          worktreePath: repoRoot,
+        },
+      },
+    ]);
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
       statusPath,
@@ -48,7 +73,11 @@ describe("renderTmuxStatusline", () => {
         flash: "Review created: auth",
       }),
     );
-    const rendered = renderTmuxStatusline(repoRoot, "right", { currentWindow: "coder", currentPath: repoRoot });
+    const rendered = renderTmuxStatusline(repoRoot, "right", {
+      currentWindow: "coder",
+      currentPath: repoRoot,
+      currentSession: "aimux-mobile",
+    });
     expect(rendered).toContain("●coder(coder)*");
     expect(rendered).toContain("·claude");
     expect(rendered).toContain("tasks 2/1");

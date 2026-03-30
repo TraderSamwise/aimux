@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { getProjectStateDirFor } from "./paths.js";
+import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
 export type TmuxStatusSide = "left" | "right";
 
@@ -84,24 +85,41 @@ function sessionWindowIdentity(session: StatuslineSession): string {
   return session.windowName?.trim() || session.label?.trim() || session.tool || session.id;
 }
 
-function renderScopedSessions(
+function renderScopedSessionsFromTmux(
   data: StatuslineData,
+  currentSession: string | undefined,
   projectRoot: string,
   currentWindow?: string,
   currentPath?: string,
 ): string[] {
-  const sessions = data.sessions ?? [];
+  if (!currentSession) return [];
   const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
-  const scoped = sessions.filter(
-    (session) => normalizePath(session.worktreePath, projectRoot) === normalizedCurrentPath,
-  );
-  return scoped.slice(0, 5).map((session) => {
-    const status = session.status ?? "unknown";
-    const icon = status === "idle" ? "·" : status === "running" ? "●" : status === "waiting" ? "◌" : "○";
-    const identity = trim(sessionIdentity(session), 18);
-    const isCurrent = currentWindow ? sessionWindowIdentity(session) === currentWindow : session.active;
-    return isCurrent ? `${icon}${identity}*` : `${icon}${identity}`;
-  });
+  let windows: ReturnType<TmuxRuntimeManager["listManagedWindows"]> = [];
+  try {
+    windows = new TmuxRuntimeManager().listManagedWindows(currentSession);
+  } catch {
+    return [];
+  }
+  const sessionMap = new Map((data.sessions ?? []).map((session) => [session.id, session]));
+  return windows
+    .filter(({ target, metadata }) => {
+      if (target.windowName === "dashboard" || target.windowIndex === 0) return false;
+      return normalizePath(metadata.worktreePath, projectRoot) === normalizedCurrentPath;
+    })
+    .slice(0, 5)
+    .map(({ target, metadata }) => {
+      const session = sessionMap.get(metadata.sessionId);
+      const status = session?.status ?? "unknown";
+      const icon = status === "idle" ? "·" : status === "running" ? "●" : status === "waiting" ? "◌" : "○";
+      const identity = trim(
+        sessionIdentity(session ?? { id: metadata.sessionId, tool: metadata.command, label: metadata.label }),
+        18,
+      );
+      const isCurrent = currentWindow
+        ? target.windowName === currentWindow || metadata.label === currentWindow
+        : session?.active;
+      return isCurrent ? `${icon}${identity}*` : `${icon}${identity}`;
+    });
 }
 
 function renderTasks(data: StatuslineData): string | null {
@@ -142,13 +160,18 @@ function renderActiveMetadata(data: StatuslineData): string | null {
   return null;
 }
 
-function renderRight(projectRoot: string, currentWindow?: string, currentPath?: string): string {
+function renderRight(
+  projectRoot: string,
+  currentWindow?: string,
+  currentPath?: string,
+  currentSession?: string,
+): string {
   const data = loadStatusline(projectRoot);
   if (!data) return "";
   const sessionSegments =
     currentWindow === "dashboard"
       ? renderDashboardScreens(data.dashboardScreen)
-      : renderScopedSessions(data, projectRoot, currentWindow, currentPath);
+      : renderScopedSessionsFromTmux(data, currentSession, projectRoot, currentWindow, currentPath);
   const segments = [
     ...sessionSegments,
     renderTasks(data),
@@ -162,9 +185,9 @@ function renderRight(projectRoot: string, currentWindow?: string, currentPath?: 
 export function renderTmuxStatusline(
   projectRoot: string,
   side: TmuxStatusSide,
-  options: { currentWindow?: string; currentPath?: string } = {},
+  options: { currentWindow?: string; currentPath?: string; currentSession?: string } = {},
 ): string {
   return side === "left"
     ? renderLeft(projectRoot)
-    : renderRight(projectRoot, options.currentWindow, options.currentPath);
+    : renderRight(projectRoot, options.currentWindow, options.currentPath, options.currentSession);
 }

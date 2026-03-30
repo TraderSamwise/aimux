@@ -441,8 +441,8 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "window-status-format", ""]);
     this.exec(["set-option", "-t", sessionName, "window-status-current-format", ""]);
     if (statuslineCommand) {
-      const left = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side left --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}'`;
-      const right = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side right --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}'`;
+      const left = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side left --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-path '#{pane_current_path}'`;
+      const right = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side right --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-path '#{pane_current_path}'`;
       this.exec([
         "set-option",
         "-t",
