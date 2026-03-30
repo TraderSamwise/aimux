@@ -9,6 +9,15 @@ function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: str
     if (joined === "-V") return "tmux 3.5a";
     if (joined.startsWith("has-session -t ")) throw new Error("missing");
     if (joined.startsWith("list-windows -t ")) return "";
+    if (joined.startsWith("show-window-options -v -t @3 @aimux-meta")) {
+      return JSON.stringify({
+        sessionId: "codex-abc123",
+        command: "codex",
+        args: ["--full-auto"],
+        toolConfigKey: "codex",
+        worktreePath: "/repo/mobile",
+      });
+    }
     if (joined.startsWith("new-window -P")) return "@3\t3\tcodex";
     return "";
   }) as TmuxExec & { calls: Array<{ args: string[]; cwd?: string }> };
@@ -112,6 +121,48 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.at(-3)?.args).toEqual(["capture-pane", "-p", "-J", "-t", "@3", "-S", "-200"]);
     expect(exec.calls.at(-2)?.args).toEqual(["send-keys", "-t", "@3", "-l", "hello"]);
     expect(exec.calls.at(-1)?.args).toEqual(["send-keys", "-t", "@3", "Enter"]);
+  });
+
+  it("stores and reads aimux metadata on tmux windows", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const target = {
+      sessionName: "aimux:mobile:abc",
+      windowId: "@3",
+      windowIndex: 3,
+      windowName: "codex",
+    };
+
+    manager.setWindowMetadata(target, {
+      sessionId: "codex-abc123",
+      command: "codex",
+      args: ["--full-auto"],
+      toolConfigKey: "codex",
+      worktreePath: "/repo/mobile",
+    });
+
+    expect(exec.calls.at(-1)?.args).toEqual([
+      "set-window-option",
+      "-q",
+      "-t",
+      "@3",
+      "@aimux-meta",
+      JSON.stringify({
+        sessionId: "codex-abc123",
+        command: "codex",
+        args: ["--full-auto"],
+        toolConfigKey: "codex",
+        worktreePath: "/repo/mobile",
+      }),
+    ]);
+
+    expect(manager.getWindowMetadata(target)).toEqual({
+      sessionId: "codex-abc123",
+      command: "codex",
+      args: ["--full-auto"],
+      toolConfigKey: "codex",
+      worktreePath: "/repo/mobile",
+    });
   });
 
   it("respawns a window with a specific command", () => {

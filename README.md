@@ -125,6 +125,8 @@ aimux records each agent's conversation and makes it available to other agents:
 
 Agents are told about these files in their startup preamble.
 
+In tmux mode, live terminal state comes from tmux itself. `.aimux/state.json` is mainly for offline/resume metadata, not live screen ownership.
+
 ## Shared Plans
 
 Aimux standardizes planning per agent/session:

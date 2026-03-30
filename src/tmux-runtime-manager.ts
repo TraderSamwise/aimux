@@ -43,6 +43,16 @@ export interface TmuxCommandSpec {
   args: string[];
 }
 
+export interface TmuxWindowMetadata {
+  sessionId: string;
+  command: string;
+  args: string[];
+  toolConfigKey: string;
+  backendSessionId?: string;
+  worktreePath?: string;
+  label?: string;
+}
+
 const DEFAULT_EXEC: TmuxExec = (args, options) =>
   execFileSync("tmux", args, {
     cwd: options?.cwd,
@@ -262,6 +272,38 @@ export class TmuxRuntimeManager {
 
   sendEnter(target: TmuxTarget): void {
     this.exec(["send-keys", "-t", target.windowId, "Enter"]);
+  }
+
+  setWindowMetadata(target: TmuxTarget | string, metadata: TmuxWindowMetadata): void {
+    const windowTarget = typeof target === "string" ? target : target.windowId;
+    this.exec(["set-window-option", "-q", "-t", windowTarget, "@aimux-meta", JSON.stringify(metadata)]);
+  }
+
+  getWindowMetadata(target: TmuxTarget | string): TmuxWindowMetadata | null {
+    const windowTarget = typeof target === "string" ? target : target.windowId;
+    try {
+      const raw = this.exec(["show-window-options", "-v", "-t", windowTarget, "@aimux-meta"]);
+      return JSON.parse(raw) as TmuxWindowMetadata;
+    } catch {
+      return null;
+    }
+  }
+
+  listManagedWindows(sessionName: string): Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> {
+    const windows = this.listWindows(sessionName);
+    const managed: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> = [];
+    for (const window of windows) {
+      const target: TmuxTarget = {
+        sessionName,
+        windowId: window.id,
+        windowIndex: window.index,
+        windowName: window.name,
+      };
+      const metadata = this.getWindowMetadata(target);
+      if (!metadata) continue;
+      managed.push({ target, metadata });
+    }
+    return managed;
   }
 
   attachSession(sessionName: string): void {

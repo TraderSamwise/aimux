@@ -51,7 +51,7 @@ import {
   orderDashboardSessionsByVisualWorktree,
 } from "./dashboard-session-registry.js";
 import { InstanceDirectory } from "./instance-directory.js";
-import { TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
+import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
 
 export type MuxMode = "focused" | "dashboard";
@@ -272,6 +272,7 @@ export class Multiplexer {
       localSession.renameWindow(label?.trim() || localSession.command);
       const target = localSession.tmuxTarget;
       this.sessionTmuxTargets.set(sessionId, target);
+      this.syncTmuxWindowMetadata(sessionId);
     }
 
     if (this.serverRuntime.canControlSession(sessionId)) {
@@ -482,6 +483,27 @@ export class Multiplexer {
     } else {
       this.focusSession(this.activeIndex);
     }
+  }
+
+  private buildTmuxWindowMetadata(sessionId: string, command: string): TmuxWindowMetadata {
+    return {
+      sessionId,
+      command,
+      args: this.sessionOriginalArgs.get(sessionId) ?? [],
+      toolConfigKey: this.sessionToolKeys.get(sessionId) ?? command,
+      backendSessionId: this.sessions.find((session) => session.id === sessionId)?.backendSessionId,
+      worktreePath: this.sessionWorktreePaths.get(sessionId),
+      label: this.getSessionLabel(sessionId),
+    };
+  }
+
+  private syncTmuxWindowMetadata(sessionId: string): void {
+    const runtime = this.sessions.find((session) => session.id === sessionId);
+    if (!runtime || !(runtime.transport instanceof TmuxSessionTransport)) return;
+    this.tmuxRuntimeManager.setWindowMetadata(
+      runtime.transport.tmuxTarget,
+      this.buildTmuxWindowMetadata(sessionId, runtime.command),
+    );
   }
 
   private handleServerRuntimeEvent(event: ServerRuntimeEvent): void {
@@ -1365,6 +1387,9 @@ export class Multiplexer {
 
     // Store backend session ID and start time
     session.backendSessionId = backendSessionId;
+    if (session instanceof TmuxSessionTransport) {
+      this.syncTmuxWindowMetadata(sessionId);
+    }
 
     // For tools without sessionIdFlag, try to capture the backend session ID via filesystem
     if (!backendSessionId && toolConfigKey) {
@@ -4201,36 +4226,35 @@ export class Multiplexer {
   private restoreTmuxSessionsFromState(): void {
     if (!this.isTmuxBackend()) return;
     const state = Multiplexer.loadState();
-    if (!state?.sessions.length) return;
+    const savedById = new Map((state?.sessions ?? []).map((session) => [session.id, session]));
 
     const cols = process.stdout.columns ?? 80;
     const rows = this.toolRows;
     const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
 
-    for (const saved of state.sessions) {
-      const target = saved.tmuxTarget;
-      if (!target) continue;
-      if (target.sessionName !== tmuxSession.sessionName) continue;
-      const resolved = this.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId);
-      if (!resolved) continue;
-      if (resolved.windowName === "dashboard") continue;
-      if (this.sessions.some((session) => session.id === saved.id)) continue;
+    for (const { target, metadata } of this.tmuxRuntimeManager.listManagedWindows(tmuxSession.sessionName)) {
+      if (target.windowName === "dashboard" || target.windowIndex === 0) continue;
+      if (this.sessions.some((session) => session.id === metadata.sessionId)) continue;
 
       const transport = new TmuxSessionTransport(
-        saved.id,
-        saved.command,
-        resolved,
+        metadata.sessionId,
+        metadata.command,
+        target,
         this.tmuxRuntimeManager,
         cols,
         rows,
       );
-      transport.backendSessionId = saved.backendSessionId;
-      this.sessionTmuxTargets.set(saved.id, resolved);
-      this.registerManagedSession(transport, saved.args, saved.toolConfigKey, saved.worktreePath, undefined);
-      if (saved.label) {
-        this.sessionLabels.set(saved.id, saved.label);
-        transport.renameWindow(saved.label);
+      transport.backendSessionId = metadata.backendSessionId;
+      this.sessionTmuxTargets.set(metadata.sessionId, target);
+      this.registerManagedSession(transport, metadata.args, metadata.toolConfigKey, metadata.worktreePath, undefined);
+
+      const saved = savedById.get(metadata.sessionId);
+      const label = metadata.label ?? saved?.label;
+      if (label) {
+        this.sessionLabels.set(metadata.sessionId, label);
+        transport.renameWindow(label);
       }
+      this.syncTmuxWindowMetadata(metadata.sessionId);
     }
   }
 
@@ -4438,7 +4462,7 @@ export class Multiplexer {
 
   /** Save session state to main repo's .aimux/state.json, merging with existing state. */
   private saveState(): void {
-    const localSessions = this.serverRuntime.getPersistableSessions(this.sessions);
+    const localSessions = this.isTmuxBackend() ? [] : this.serverRuntime.getPersistableSessions(this.sessions);
     const liveSessions = localSessions.map((s) => ({
       id: s.id,
       tool: s.command,
