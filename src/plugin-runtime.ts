@@ -7,6 +7,7 @@ import {
   clearSessionLogs,
   type MetadataTone,
   type MetadataApiEndpoint,
+  type SessionContextMetadata,
 } from "./metadata-store.js";
 import { debug } from "./debug.js";
 import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
@@ -16,6 +17,7 @@ export interface AimuxMetadataAPI {
   setProgress(session: string, current: number, total: number, label?: string): void;
   log(session: string, message: string, opts?: { source?: string; tone?: MetadataTone }): void;
   clearLog(session: string): void;
+  setContext(session: string, context: SessionContextMetadata): void;
 }
 
 export interface AimuxPluginAPI {
@@ -77,10 +79,19 @@ export class PluginRuntime {
         clearLog: (session) => {
           clearSessionLogs(session);
         },
+        setContext: (session, context) => {
+          updateSessionMetadata(session, (existing) => ({
+            ...existing,
+            context: {
+              ...(existing.context ?? {}),
+              ...context,
+            },
+          }));
+        },
       },
     };
 
-    for (const watcher of createBuiltinMetadataWatchers(api.metadata)) {
+    for (const watcher of createBuiltinMetadataWatchers(api)) {
       if (watcher.start) await watcher.start();
       this.instances.push(watcher);
     }

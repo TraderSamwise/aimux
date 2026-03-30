@@ -11,6 +11,7 @@ describe("createBuiltinMetadataWatchers", () => {
   const statuses: Array<[string, string, string | undefined]> = [];
   const progresses: Array<[string, number, number, string | undefined]> = [];
   const logs: Array<[string, string, string | undefined]> = [];
+  const contexts: Array<[string, string | undefined, string | undefined, number | undefined]> = [];
 
   beforeEach(async () => {
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-watchers-"));
@@ -19,6 +20,7 @@ describe("createBuiltinMetadataWatchers", () => {
     statuses.length = 0;
     progresses.length = 0;
     logs.length = 0;
+    contexts.length = 0;
   });
 
   afterEach(() => {
@@ -35,14 +37,23 @@ describe("createBuiltinMetadataWatchers", () => {
     );
 
     const watchers = createBuiltinMetadataWatchers({
-      setStatus(session, text, tone) {
-        statuses.push([session, text, tone]);
+      projectRoot: repoRoot,
+      projectId: "proj",
+      serverHost: "127.0.0.1",
+      serverPort: 43000,
+      metadata: {
+        setStatus(session, text, tone) {
+          statuses.push([session, text, tone]);
+        },
+        setProgress(session, current, total, label) {
+          progresses.push([session, current, total, label]);
+        },
+        log() {},
+        clearLog() {},
+        setContext(session, context) {
+          contexts.push([session, context.worktreeName, context.branch, context.pr?.number]);
+        },
       },
-      setProgress(session, current, total, label) {
-        progresses.push([session, current, total, label]);
-      },
-      log() {},
-      clearLog() {},
     });
 
     for (const watcher of watchers) watcher.start?.();
@@ -70,12 +81,21 @@ describe("createBuiltinMetadataWatchers", () => {
     );
 
     const watchers = createBuiltinMetadataWatchers({
-      setStatus() {},
-      setProgress() {},
-      log(session, message, opts) {
-        logs.push([session, message, opts?.source]);
+      projectRoot: repoRoot,
+      projectId: "proj",
+      serverHost: "127.0.0.1",
+      serverPort: 43000,
+      metadata: {
+        setStatus() {},
+        setProgress() {},
+        log(session, message, opts) {
+          logs.push([session, message, opts?.source]);
+        },
+        clearLog() {},
+        setContext(session, context) {
+          contexts.push([session, context.worktreeName, context.branch, context.pr?.number]);
+        },
       },
-      clearLog() {},
     });
 
     for (const watcher of watchers) watcher.start?.();

@@ -8,6 +8,7 @@ import {
   saveMetadataEndpoint,
   loadMetadataState,
   type SessionLogEntry,
+  type SessionContextMetadata,
 } from "./metadata-store.js";
 import { notifyComplete, notifyPrompt } from "./notify.js";
 
@@ -113,6 +114,23 @@ export class MetadataServer {
         updateSessionMetadata(body.session, (current) => ({
           ...current,
           progress: { current: body.current, total: body.total, label: body.label },
+        }));
+        this.options.onChange?.();
+        send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/set-context") {
+        const body = (await readJson(req)) as {
+          session: string;
+          context: SessionContextMetadata;
+        };
+        updateSessionMetadata(body.session, (current) => ({
+          ...current,
+          context: {
+            ...(current.context ?? {}),
+            ...body.context,
+          },
         }));
         this.options.onChange?.();
         send(res, 200, { ok: true });

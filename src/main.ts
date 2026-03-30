@@ -13,7 +13,13 @@ import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js"
 import { createWorktree, listWorktrees } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import { renderTmuxStatusline, type TmuxStatusSide } from "./tmux-statusline.js";
-import { loadMetadataEndpoint, updateSessionMetadata, clearSessionLogs, type MetadataTone } from "./metadata-store.js";
+import {
+  loadMetadataEndpoint,
+  updateSessionMetadata,
+  clearSessionLogs,
+  type MetadataTone,
+  type SessionContextMetadata,
+} from "./metadata-store.js";
 
 const program = new Command();
 
@@ -380,6 +386,58 @@ metadataCmd
       progress: { current: Number(current), total: Number(total), label: opts.label },
     }));
   });
+
+metadataCmd
+  .command("set-context <session>")
+  .option("--cwd <cwd>", "Working directory")
+  .option("--worktree-path <path>", "Worktree path")
+  .option("--worktree-name <name>", "Worktree name")
+  .option("--branch <branch>", "Git branch")
+  .option("--pr-number <number>", "PR number")
+  .option("--pr-title <title>", "PR title")
+  .option("--pr-url <url>", "PR URL")
+  .description("Set rich session context metadata")
+  .action(
+    async (
+      session: string,
+      opts: {
+        cwd?: string;
+        worktreePath?: string;
+        worktreeName?: string;
+        branch?: string;
+        prNumber?: string;
+        prTitle?: string;
+        prUrl?: string;
+      },
+    ) => {
+      await initPaths();
+      const context: SessionContextMetadata = {
+        cwd: opts.cwd,
+        worktreePath: opts.worktreePath,
+        worktreeName: opts.worktreeName,
+        branch: opts.branch,
+        pr:
+          opts.prNumber || opts.prTitle || opts.prUrl
+            ? {
+                number: opts.prNumber ? Number(opts.prNumber) : undefined,
+                title: opts.prTitle,
+                url: opts.prUrl,
+              }
+            : undefined,
+      };
+      updateSessionMetadata(session, (existing) => ({
+        ...existing,
+        context: {
+          ...(existing.context ?? {}),
+          ...context,
+          pr: {
+            ...(existing.context?.pr ?? {}),
+            ...(context.pr ?? {}),
+          },
+        },
+      }));
+    },
+  );
 
 metadataCmd
   .command("log <session> <message>")

@@ -27,6 +27,14 @@ interface StatuslineData {
       status?: { text: string; tone?: string };
       progress?: { current: number; total: number; label?: string };
       logs?: Array<{ message: string; source?: string; tone?: string; ts: string }>;
+      context?: {
+        cwd?: string;
+        worktreePath?: string;
+        worktreeName?: string;
+        branch?: string;
+        pr?: { number?: number; title?: string; url?: string; headRef?: string; baseRef?: string };
+        repo?: { owner?: string; name?: string; remote?: string };
+      };
       updatedAt?: string;
     }
   >;
@@ -81,10 +89,6 @@ function renderDashboardScreens(activeScreen: StatuslineData["dashboardScreen"])
   return screens.map((screen) => (screen.key === active ? `[${screen.label}]` : screen.label));
 }
 
-function sessionWindowIdentity(session: StatuslineSession): string {
-  return session.windowName?.trim() || session.label?.trim() || session.tool || session.id;
-}
-
 function renderScopedSessionsFromTmux(
   data: StatuslineData,
   currentSession: string | undefined,
@@ -122,6 +126,41 @@ function renderScopedSessionsFromTmux(
     });
 }
 
+function getCurrentSessionId(
+  data: StatuslineData,
+  currentSession: string | undefined,
+  currentWindow?: string,
+): string | undefined {
+  if (currentSession && currentWindow) {
+    try {
+      const windows = new TmuxRuntimeManager().listManagedWindows(currentSession);
+      const current = windows.find(
+        ({ target, metadata }) => target.windowName === currentWindow || metadata.label === currentWindow,
+      );
+      if (current?.metadata.sessionId) return current.metadata.sessionId;
+    } catch {}
+  }
+  return data.sessions?.find((session) => session.active)?.id;
+}
+
+function renderActiveContext(
+  data: StatuslineData,
+  currentSession: string | undefined,
+  currentWindow?: string,
+): string | null {
+  const activeSessionId = getCurrentSessionId(data, currentSession, currentWindow);
+  if (!activeSessionId) return null;
+  const context = data.metadata?.[activeSessionId]?.context;
+  if (!context) return null;
+  const worktree = context.worktreeName ? trim(context.worktreeName, 16) : null;
+  const branch = context.branch ? trim(context.branch, 18) : null;
+  const pr = context.pr?.number ? `PR #${context.pr.number}` : null;
+  if (!worktree && !branch && !pr) return null;
+  if (worktree && branch && pr) return `${worktree}@${branch}  ·  ${pr}`;
+  if (worktree && branch) return `${worktree}@${branch}`;
+  return [worktree, branch, pr].filter((segment): segment is string => Boolean(segment)).join("  ·  ");
+}
+
 function renderTasks(data: StatuslineData): string | null {
   const pending = data.tasks?.pending ?? 0;
   const assigned = data.tasks?.assigned ?? 0;
@@ -142,10 +181,14 @@ function renderActiveHeadline(data: StatuslineData): string | null {
   return trim(headline, 42);
 }
 
-function renderActiveMetadata(data: StatuslineData): string | null {
-  const active = (data.sessions ?? []).find((session) => session.active);
-  if (!active) return null;
-  const metadata = data.metadata?.[active.id];
+function renderActiveMetadata(
+  data: StatuslineData,
+  currentSession: string | undefined,
+  currentWindow?: string,
+): string | null {
+  const activeSessionId = getCurrentSessionId(data, currentSession, currentWindow);
+  if (!activeSessionId) return null;
+  const metadata = data.metadata?.[activeSessionId];
   if (!metadata) return null;
   if (metadata.status?.text) return trim(metadata.status.text, 28);
   if (metadata.progress && metadata.progress.total > 0) {
@@ -174,8 +217,9 @@ function renderRight(
       : renderScopedSessionsFromTmux(data, currentSession, projectRoot, currentWindow, currentPath);
   const segments = [
     ...sessionSegments,
+    renderActiveContext(data, currentSession, currentWindow),
     renderTasks(data),
-    renderActiveMetadata(data),
+    renderActiveMetadata(data, currentSession, currentWindow),
     renderActiveHeadline(data),
     renderFlash(data),
   ].filter((segment): segment is string => Boolean(segment));

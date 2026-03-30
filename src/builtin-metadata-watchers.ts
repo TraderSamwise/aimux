@@ -1,10 +1,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { basename, join } from "node:path";
+import { execSync } from "node:child_process";
 import { getPlansDir, getStatusDir, getTasksDir, getHistoryDir } from "./paths.js";
-import type { AimuxPluginInstance, AimuxMetadataAPI } from "./plugin-runtime.js";
+import type { AimuxPluginInstance, AimuxPluginAPI } from "./plugin-runtime.js";
 import { debug } from "./debug.js";
 import { readAllTasks } from "./tasks.js";
 import { listSessionIds, readHistory } from "./context/history.js";
+import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { listWorktrees } from "./worktree.js";
 
 function safeRead(path: string): string {
   try {
@@ -65,7 +68,94 @@ class DirectoryWatcher implements AimuxPluginInstance {
   }
 }
 
-export function createBuiltinMetadataWatchers(metadata: AimuxMetadataAPI): AimuxPluginInstance[] {
+class PollingWatcher implements AimuxPluginInstance {
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(
+    private readonly intervalMs: number,
+    private readonly onPoll: () => void,
+  ) {}
+
+  start(): void {
+    this.onPoll();
+    this.timer = setInterval(() => this.onPoll(), this.intervalMs);
+    this.timer.unref?.();
+  }
+
+  async stop(): Promise<void> {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+function gitOutput(cwd: string, command: string): string | null {
+  try {
+    return execSync(command, {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function gitBranch(cwd: string): string | undefined {
+  return gitOutput(cwd, "git rev-parse --abbrev-ref HEAD") || undefined;
+}
+
+function gitRemote(cwd: string): string | undefined {
+  return gitOutput(cwd, "git remote get-url origin") || undefined;
+}
+
+function parseRemote(remote: string | undefined): { owner?: string; name?: string; remote?: string } {
+  if (!remote) return {};
+  const match = remote.match(/github\.com[:/](.+?)\/(.+?)(?:\.git)?$/);
+  if (!match) return { remote };
+  return {
+    owner: match[1],
+    name: match[2],
+    remote,
+  };
+}
+
+function worktreeNameFor(path: string, projectRoot: string): string {
+  const worktrees = listWorktrees(projectRoot);
+  const match = worktrees.find((entry) => entry.path === path);
+  return match?.name ?? basename(path);
+}
+
+type PrContext = {
+  number?: number;
+  title?: string;
+  url?: string;
+  headRef?: string;
+  baseRef?: string;
+};
+
+const prCache = new Map<string, { expiresAt: number; value: PrContext | null }>();
+
+function ghPr(cwd: string, branch: string | undefined): PrContext | undefined {
+  if (!branch) return undefined;
+  const key = `${cwd}:${branch}`;
+  const cached = prCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value ?? undefined;
+  let value: PrContext | null = null;
+  const raw = gitOutput(
+    cwd,
+    "gh pr view --json number,title,url,headRefName,baseRefName --jq '{number: .number, title: .title, url: .url, headRef: .headRefName, baseRef: .baseRefName}'",
+  );
+  if (raw) {
+    try {
+      value = JSON.parse(raw) as PrContext;
+    } catch {}
+  }
+  prCache.set(key, { value, expiresAt: Date.now() + 60_000 });
+  return value ?? undefined;
+}
+
+export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginInstance[] {
+  const { metadata, projectRoot } = api;
   const planWatcher = new DirectoryWatcher(getPlansDir(), () => {
     for (const file of existsSync(getPlansDir()) ? readdirSync(getPlansDir()) : []) {
       const sessionId = sessionIdFromFile(file, ".md");
@@ -125,6 +215,30 @@ export function createBuiltinMetadataWatchers(metadata: AimuxMetadataAPI): Aimux
     }
   });
 
+  const contextWatcher = new PollingWatcher(15_000, () => {
+    const tmux = new TmuxRuntimeManager();
+    let managed: ReturnType<TmuxRuntimeManager["listManagedWindows"]> = [];
+    try {
+      managed = tmux.listManagedWindows(tmux.getProjectSession(projectRoot).sessionName);
+    } catch {
+      return;
+    }
+    for (const { metadata: windowMeta } of managed) {
+      if (!windowMeta.sessionId) continue;
+      const cwd = windowMeta.worktreePath || projectRoot;
+      const branch = gitBranch(cwd);
+      const remote = gitRemote(cwd);
+      metadata.setContext(windowMeta.sessionId, {
+        cwd,
+        worktreePath: windowMeta.worktreePath || projectRoot,
+        worktreeName: worktreeNameFor(windowMeta.worktreePath || projectRoot, projectRoot),
+        branch,
+        repo: parseRemote(remote),
+        pr: ghPr(cwd, branch),
+      });
+    }
+  });
+
   debug("registered builtin metadata watchers", "plugin");
-  return [planWatcher, statusWatcher, taskWatcher, historyWatcher];
+  return [planWatcher, statusWatcher, taskWatcher, historyWatcher, contextWatcher];
 }

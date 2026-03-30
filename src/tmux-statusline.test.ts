@@ -27,7 +27,7 @@ describe("renderTmuxStatusline", () => {
     expect(renderTmuxStatusline(repoRoot, "left")).toContain("aimux-statusline-");
   });
 
-  it("renders session/task/headline/flash data on the right", () => {
+  it("renders session/task/context/headline/flash data on the right", () => {
     vi.spyOn(TmuxRuntimeManager.prototype, "listManagedWindows").mockReturnValue([
       {
         target: { sessionName: "aimux-mobile", windowId: "@1", windowIndex: 1, windowName: "coder" },
@@ -69,6 +69,15 @@ describe("renderTmuxStatusline", () => {
           },
           { id: "b", tool: "claude", status: "idle", windowName: "claude", worktreePath: repoRoot },
         ],
+        metadata: {
+          a: {
+            context: {
+              worktreeName: "mobile",
+              branch: "feat/mobile-auth",
+              pr: { number: 123 },
+            },
+          },
+        },
         tasks: { pending: 2, assigned: 1 },
         flash: "Review created: auth",
       }),
@@ -80,6 +89,9 @@ describe("renderTmuxStatusline", () => {
     });
     expect(rendered).toContain("●coder(coder)*");
     expect(rendered).toContain("·claude");
+    expect(rendered).toContain("mobile");
+    expect(rendered).toContain("feat/mobile-auth");
+    expect(rendered).toContain("PR #123");
     expect(rendered).toContain("tasks 2/1");
     expect(rendered).toContain("Fix auth flow");
     expect(rendered).toContain("Review created: auth");

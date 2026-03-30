@@ -22,6 +22,13 @@ export interface DashboardSessionRegistryOptions {
   getSessionHeadline: (sessionId: string) => string | undefined;
   getSessionTaskDescription: (sessionId: string) => string | undefined;
   getSessionRole: (sessionId: string) => string | undefined;
+  getSessionContext: (sessionId: string) =>
+    | {
+        cwd?: string;
+        repo?: { owner?: string; name?: string; remote?: string };
+        pr?: { number?: number; title?: string; url?: string };
+      }
+    | undefined;
 }
 
 export function getRemoteOwnedSessionKeys(remoteInstances: InstanceInfo[]): Set<string> {
@@ -51,6 +58,13 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
     taskDescription: options.getSessionTaskDescription(session.id),
     role: options.getSessionRole(session.id),
     isServer: options.isServerSession(session.id),
+    cwd: options.getSessionContext(session.id)?.cwd,
+    repoOwner: options.getSessionContext(session.id)?.repo?.owner,
+    repoName: options.getSessionContext(session.id)?.repo?.name,
+    repoRemote: options.getSessionContext(session.id)?.repo?.remote,
+    prNumber: options.getSessionContext(session.id)?.pr?.number,
+    prTitle: options.getSessionContext(session.id)?.pr?.title,
+    prUrl: options.getSessionContext(session.id)?.pr?.url,
   }));
 
   for (const inst of options.remoteInstances) {
@@ -71,6 +85,13 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
         label: options.getSessionLabel(session.id),
         headline: options.getSessionHeadline(session.id),
         isServer,
+        cwd: options.getSessionContext(session.id)?.cwd,
+        repoOwner: options.getSessionContext(session.id)?.repo?.owner,
+        repoName: options.getSessionContext(session.id)?.repo?.name,
+        repoRemote: options.getSessionContext(session.id)?.repo?.remote,
+        prNumber: options.getSessionContext(session.id)?.pr?.number,
+        prTitle: options.getSessionContext(session.id)?.pr?.title,
+        prUrl: options.getSessionContext(session.id)?.pr?.url,
       });
     }
   }
@@ -98,6 +119,13 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       remoteBackendSessionId: offline.backendSessionId,
       label: offline.label,
       headline: offline.headline,
+      cwd: options.getSessionContext(offline.id)?.cwd,
+      repoOwner: options.getSessionContext(offline.id)?.repo?.owner,
+      repoName: options.getSessionContext(offline.id)?.repo?.name,
+      repoRemote: options.getSessionContext(offline.id)?.repo?.remote,
+      prNumber: options.getSessionContext(offline.id)?.pr?.number,
+      prTitle: options.getSessionContext(offline.id)?.pr?.title,
+      prUrl: options.getSessionContext(offline.id)?.pr?.url,
     });
   }
 

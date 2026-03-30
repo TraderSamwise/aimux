@@ -26,6 +26,13 @@ export interface DashboardSession {
   isServer?: boolean;
   /** Agent's team role (e.g. "coder", "reviewer") */
   role?: string;
+  cwd?: string;
+  repoOwner?: string;
+  repoName?: string;
+  repoRemote?: string;
+  prNumber?: number;
+  prTitle?: string;
+  prUrl?: string;
 }
 
 export interface WorktreeGroup {
@@ -121,6 +128,12 @@ export class Dashboard {
       for (const session of this.sessions) {
         content.push(this.renderSession(session, "  "));
       }
+    }
+
+    const selectedDetails = this.renderSelectedDetails();
+    if (selectedDetails.length > 0) {
+      if (content.length > 0 && content[content.length - 1] !== "") content.push("");
+      content.push(...selectedDetails);
     }
 
     // Footer (fixed)
@@ -305,6 +318,39 @@ export class Dashboard {
       return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [a] all  [g] graveyard  [?] help  [q] quit `;
     }
     return " [c] new  [w] worktree  [p] plans  [a] all projects  [g] graveyard  [?] help  [q] quit ";
+  }
+
+  private renderSelectedDetails(): string[] {
+    const selected = this.selectedSessionId
+      ? this.sessions.find((session) => session.id === this.selectedSessionId)
+      : undefined;
+    if (!selected) return [];
+
+    const lines: string[] = [];
+    lines.push("  Details");
+    lines.push(`    Agent: ${selected.label ?? selected.command} (${selected.id})`);
+    lines.push(`    Tool: ${selected.command}`);
+    if (selected.worktreeName || selected.worktreeBranch) {
+      lines.push(
+        `    Worktree: ${selected.worktreeName ?? "main"}${selected.worktreeBranch ? ` · ${selected.worktreeBranch}` : ""}`,
+      );
+    }
+    if (selected.cwd) {
+      lines.push(`    CWD: ${selected.cwd}`);
+    }
+    if (selected.prNumber || selected.prTitle || selected.prUrl) {
+      const prHeader = [`PR${selected.prNumber ? ` #${selected.prNumber}` : ""}`];
+      if (selected.prTitle) prHeader.push(selected.prTitle);
+      lines.push(`    ${prHeader.join(": ")}`);
+      if (selected.prUrl) lines.push(`    URL: ${selected.prUrl}`);
+    }
+    if (selected.repoOwner || selected.repoName) {
+      lines.push(`    Repo: ${selected.repoOwner ?? "?"}/${selected.repoName ?? "?"}`);
+    }
+    if (selected.repoRemote) {
+      lines.push(`    Remote: ${selected.repoRemote}`);
+    }
+    return lines;
   }
 }
 

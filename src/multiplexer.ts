@@ -2892,6 +2892,7 @@ export class Multiplexer {
 
   /** Get the current dashboard sessions (local + remote merged) for lookup */
   private getDashboardSessions(): DashboardSession[] {
+    const metadata = loadMetadataState().sessions;
     let mainRepoPath: string | undefined;
     try {
       mainRepoPath = findMainRepo();
@@ -2913,6 +2914,7 @@ export class Multiplexer {
       getSessionHeadline: (sessionId) => this.deriveHeadline(sessionId),
       getSessionTaskDescription: (sessionId) => this.taskDispatcher?.getSessionTask(sessionId),
       getSessionRole: (sessionId) => this.sessionRoles.get(sessionId),
+      getSessionContext: (sessionId) => metadata[sessionId]?.context,
     });
   }
 

@@ -22,10 +22,34 @@ export interface SessionLogEntry {
   ts: string;
 }
 
+export interface SessionPrMetadata {
+  number?: number;
+  title?: string;
+  url?: string;
+  headRef?: string;
+  baseRef?: string;
+}
+
+export interface SessionRepoMetadata {
+  owner?: string;
+  name?: string;
+  remote?: string;
+}
+
+export interface SessionContextMetadata {
+  cwd?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  pr?: SessionPrMetadata;
+  repo?: SessionRepoMetadata;
+}
+
 export interface SessionMetadata {
   status?: SessionStatusMetadata;
   progress?: SessionProgressMetadata;
   logs?: SessionLogEntry[];
+  context?: SessionContextMetadata;
   updatedAt: string;
 }
 
