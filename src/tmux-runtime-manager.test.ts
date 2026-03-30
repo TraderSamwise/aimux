@@ -64,7 +64,28 @@ describe("TmuxRuntimeManager", () => {
           args: ["set-option", "-t", session.sessionName, "prefix2", "C-b"],
         }),
         expect.objectContaining({
+          args: ["unbind-key", "-T", "prefix", "s"],
+        }),
+        expect.objectContaining({
+          args: ["unbind-key", "-T", "prefix", "n"],
+        }),
+        expect.objectContaining({
+          args: ["unbind-key", "-T", "prefix", "p"],
+        }),
+        expect.objectContaining({
+          args: ["unbind-key", "-T", "prefix", "d"],
+        }),
+        expect.objectContaining({
           args: ["bind-key", "-T", "prefix", "C-a", "send-prefix"],
+        }),
+        expect.objectContaining({
+          args: ["bind-key", "-T", "prefix", "s", "run-shell", "-b", expect.stringContaining("aimux tmux-switch menu")],
+        }),
+        expect.objectContaining({
+          args: ["bind-key", "-T", "prefix", "n", "run-shell", "-b", expect.stringContaining("aimux tmux-switch next")],
+        }),
+        expect.objectContaining({
+          args: ["bind-key", "-T", "prefix", "p", "run-shell", "-b", expect.stringContaining("aimux tmux-switch prev")],
         }),
         expect.objectContaining({
           args: [
@@ -82,6 +103,12 @@ describe("TmuxRuntimeManager", () => {
         }),
         expect.objectContaining({
           args: ["set-option", "-t", session.sessionName, "status-interval", "2"],
+        }),
+        expect.objectContaining({
+          args: ["set-option", "-t", session.sessionName, "window-status-format", ""],
+        }),
+        expect.objectContaining({
+          args: ["set-option", "-t", session.sessionName, "window-status-current-format", ""],
         }),
       ]),
     );
@@ -175,6 +202,36 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.at(-3)?.args).toEqual(["capture-pane", "-p", "-J", "-t", "@3", "-S", "-200"]);
     expect(exec.calls.at(-2)?.args).toEqual(["send-keys", "-t", "@3", "-l", "hello"]);
     expect(exec.calls.at(-1)?.args).toEqual(["send-keys", "-t", "@3", "Enter"]);
+  });
+
+  it("shows a scoped tmux window menu", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    manager.displayWindowMenu("aimux", [
+      {
+        label: "codex",
+        target: { sessionName: "aimux-mobile-abc", windowId: "@3", windowIndex: 3, windowName: "codex" },
+      },
+      {
+        label: "claude",
+        target: { sessionName: "aimux-mobile-abc", windowId: "@4", windowIndex: 4, windowName: "claude" },
+      },
+    ]);
+    expect(exec.calls.at(-1)?.args).toEqual([
+      "display-menu",
+      "-T",
+      "aimux",
+      "-x",
+      "P",
+      "-y",
+      "P",
+      "codex",
+      "",
+      "select-window -t @3",
+      "claude",
+      "",
+      "select-window -t @4",
+    ]);
   });
 
   it("stores and reads aimux metadata on tmux windows", () => {

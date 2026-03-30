@@ -8,10 +8,12 @@ interface StatuslineSession {
   id: string;
   tool: string;
   label?: string;
+  windowName?: string;
   headline?: string;
   status?: string;
   role?: string;
   active?: boolean;
+  worktreePath?: string;
 }
 
 interface StatuslineData {
@@ -63,13 +65,35 @@ function renderLeft(projectRoot: string): string {
   return `aimux ${basename(projectRoot)}`;
 }
 
-function renderSessions(data: StatuslineData): string[] {
+function normalizePath(path: string | undefined, projectRoot: string): string {
+  return path?.trim() || projectRoot;
+}
+
+function renderDashboardScreens(): string[] {
+  return ["[dashboard]", "plans", "graveyard"];
+}
+
+function sessionWindowIdentity(session: StatuslineSession): string {
+  return session.windowName?.trim() || session.label?.trim() || session.tool || session.id;
+}
+
+function renderScopedSessions(
+  data: StatuslineData,
+  projectRoot: string,
+  currentWindow?: string,
+  currentPath?: string,
+): string[] {
   const sessions = data.sessions ?? [];
-  return sessions.slice(0, 4).map((session) => {
+  const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
+  const scoped = sessions.filter(
+    (session) => normalizePath(session.worktreePath, projectRoot) === normalizedCurrentPath,
+  );
+  return scoped.slice(0, 5).map((session) => {
     const status = session.status ?? "unknown";
     const icon = status === "idle" ? "·" : status === "running" ? "●" : status === "waiting" ? "◌" : "○";
     const identity = trim(sessionIdentity(session), 18);
-    return session.active ? `${icon}${identity}*` : `${icon}${identity}`;
+    const isCurrent = currentWindow ? sessionWindowIdentity(session) === currentWindow : session.active;
+    return isCurrent ? `${icon}${identity}*` : `${icon}${identity}`;
   });
 }
 
@@ -111,11 +135,15 @@ function renderActiveMetadata(data: StatuslineData): string | null {
   return null;
 }
 
-function renderRight(projectRoot: string): string {
+function renderRight(projectRoot: string, currentWindow?: string, currentPath?: string): string {
   const data = loadStatusline(projectRoot);
   if (!data) return "";
+  const sessionSegments =
+    currentWindow === "dashboard"
+      ? renderDashboardScreens()
+      : renderScopedSessions(data, projectRoot, currentWindow, currentPath);
   const segments = [
-    ...renderSessions(data),
+    ...sessionSegments,
     renderTasks(data),
     renderActiveMetadata(data),
     renderActiveHeadline(data),
@@ -124,6 +152,12 @@ function renderRight(projectRoot: string): string {
   return segments.join("  ·  ");
 }
 
-export function renderTmuxStatusline(projectRoot: string, side: TmuxStatusSide): string {
-  return side === "left" ? renderLeft(projectRoot) : renderRight(projectRoot);
+export function renderTmuxStatusline(
+  projectRoot: string,
+  side: TmuxStatusSide,
+  options: { currentWindow?: string; currentPath?: string } = {},
+): string {
+  return side === "left"
+    ? renderLeft(projectRoot)
+    : renderRight(projectRoot, options.currentWindow, options.currentPath);
 }

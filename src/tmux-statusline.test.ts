@@ -35,23 +35,34 @@ describe("renderTmuxStatusline", () => {
             id: "a",
             tool: "codex",
             label: "coder",
+            windowName: "coder",
             role: "coder",
             status: "running",
             active: true,
             headline: "Fix auth flow",
+            worktreePath: repoRoot,
           },
-          { id: "b", tool: "claude", status: "idle" },
+          { id: "b", tool: "claude", status: "idle", windowName: "claude", worktreePath: repoRoot },
         ],
         tasks: { pending: 2, assigned: 1 },
         flash: "Review created: auth",
       }),
     );
-    const rendered = renderTmuxStatusline(repoRoot, "right");
+    const rendered = renderTmuxStatusline(repoRoot, "right", { currentWindow: "coder", currentPath: repoRoot });
     expect(rendered).toContain("●coder(coder)*");
     expect(rendered).toContain("·claude");
     expect(rendered).toContain("tasks 2/1");
     expect(rendered).toContain("Fix auth flow");
     expect(rendered).toContain("Review created: auth");
+  });
+
+  it("renders dashboard-specific screens on the dashboard window", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(statusPath, JSON.stringify({ sessions: [] }));
+    const rendered = renderTmuxStatusline(repoRoot, "right", { currentWindow: "dashboard", currentPath: repoRoot });
+    expect(rendered).toContain("[dashboard]");
+    expect(rendered).toContain("plans");
+    expect(rendered).toContain("graveyard");
   });
 
   it("omits stale statusline files", () => {

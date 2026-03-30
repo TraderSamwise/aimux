@@ -289,6 +289,15 @@ export class TmuxRuntimeManager {
     this.exec(["select-window", "-t", target.windowId]);
   }
 
+  displayWindowMenu(title: string, items: Array<{ label: string; target: TmuxTarget }>): void {
+    if (items.length === 0) return;
+    const args = ["display-menu", "-T", title, "-x", "P", "-y", "P"];
+    for (const item of items) {
+      args.push(item.label, "", `select-window -t ${item.target.windowId}`);
+    }
+    this.exec(args);
+  }
+
   captureTarget(target: TmuxTarget, options: CaptureTargetOptions = {}): string {
     const startLine = options.startLine ?? "-";
     return this.exec(["capture-pane", "-p", "-J", "-t", target.windowId, "-S", String(startLine)]);
@@ -380,7 +389,38 @@ export class TmuxRuntimeManager {
   ): void {
     this.exec(["set-option", "-t", sessionName, "prefix", "C-a"]);
     this.exec(["set-option", "-t", sessionName, "prefix2", "C-b"]);
+    this.exec(["unbind-key", "-T", "prefix", "s"]);
+    this.exec(["unbind-key", "-T", "prefix", "n"]);
+    this.exec(["unbind-key", "-T", "prefix", "p"]);
+    this.exec(["unbind-key", "-T", "prefix", "d"]);
     this.exec(["bind-key", "-T", "prefix", "C-a", "send-prefix"]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "prefix",
+      "n",
+      "run-shell",
+      "-b",
+      `cd '#{pane_current_path}' && aimux tmux-switch next --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+    ]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "prefix",
+      "p",
+      "run-shell",
+      "-b",
+      `cd '#{pane_current_path}' && aimux tmux-switch prev --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+    ]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "prefix",
+      "s",
+      "run-shell",
+      "-b",
+      `cd '#{pane_current_path}' && aimux tmux-switch menu --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+    ]);
     this.exec([
       "bind-key",
       "-T",
@@ -398,17 +438,11 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "status-left-length", "40"]);
     this.exec(["set-option", "-t", sessionName, "status-right-length", "160"]);
     this.exec(["set-option", "-t", sessionName, "window-status-separator", " "]);
-    this.exec(["set-option", "-t", sessionName, "window-status-format", "#[fg=colour245] #I:#W "]);
-    this.exec([
-      "set-option",
-      "-t",
-      sessionName,
-      "window-status-current-format",
-      "#[bg=colour31,fg=colour255,bold] #I:#W #[default]",
-    ]);
+    this.exec(["set-option", "-t", sessionName, "window-status-format", ""]);
+    this.exec(["set-option", "-t", sessionName, "window-status-current-format", ""]);
     if (statuslineCommand) {
-      const left = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side left --project-root ${shellQuote(projectRoot)}`;
-      const right = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side right --project-root ${shellQuote(projectRoot)}`;
+      const left = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side left --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}'`;
+      const right = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side right --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}'`;
       this.exec([
         "set-option",
         "-t",

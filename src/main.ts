@@ -278,9 +278,66 @@ program
   .description("Internal tmux status line renderer")
   .option("--side <side>", "Status line side", "right")
   .option("--project-root <path>", "Project root to read status from", process.cwd())
-  .action(async (opts: { side: TmuxStatusSide; projectRoot: string }) => {
+  .option("--current-window <name>", "Current tmux window name")
+  .option("--current-path <path>", "Current pane path")
+  .action(async (opts: { side: TmuxStatusSide; projectRoot: string; currentWindow?: string; currentPath?: string }) => {
     await initPaths(opts.projectRoot);
-    process.stdout.write(renderTmuxStatusline(opts.projectRoot, opts.side));
+    process.stdout.write(
+      renderTmuxStatusline(opts.projectRoot, opts.side, {
+        currentWindow: opts.currentWindow,
+        currentPath: opts.currentPath,
+      }),
+    );
+  });
+
+program
+  .command("tmux-switch <action>")
+  .description("Internal scoped tmux switcher")
+  .option("--project-root <path>", "Project root", process.cwd())
+  .option("--current-window <name>", "Current tmux window name")
+  .option("--current-path <path>", "Current pane path", process.cwd())
+  .action(async (action: string, opts: { projectRoot: string; currentWindow?: string; currentPath: string }) => {
+    await initPaths(opts.projectRoot);
+    if (opts.currentWindow === "dashboard") return;
+    const tmux = new TmuxRuntimeManager();
+    const tmuxSession = tmux.getProjectSession(opts.projectRoot);
+    const managed = tmux
+      .listManagedWindows(tmuxSession.sessionName)
+      .filter(({ target, metadata }) => {
+        if (target.windowName === "dashboard" || target.windowIndex === 0) return false;
+        const worktreePath = metadata.worktreePath || opts.projectRoot;
+        return worktreePath === opts.currentPath;
+      })
+      .sort((a, b) => a.target.windowIndex - b.target.windowIndex);
+
+    if (managed.length === 0) return;
+
+    const currentIndex = managed.findIndex(({ target, metadata }) => {
+      return target.windowName === opts.currentWindow || metadata.label === opts.currentWindow;
+    });
+    const resolvedIndex = currentIndex >= 0 ? currentIndex : 0;
+
+    if (action === "next") {
+      tmux.selectWindow(managed[(resolvedIndex + 1) % managed.length]!.target);
+      return;
+    }
+    if (action === "prev") {
+      tmux.selectWindow(managed[(resolvedIndex - 1 + managed.length) % managed.length]!.target);
+      return;
+    }
+    if (action === "menu") {
+      tmux.displayWindowMenu(
+        "aimux",
+        managed.map(({ target, metadata }, index) => ({
+          label:
+            index === resolvedIndex
+              ? `${metadata.label || metadata.command}*`
+              : `${metadata.label || metadata.command}`,
+          target,
+        })),
+      );
+      return;
+    }
   });
 
 const metadataCmd = program.command("metadata").description("Push metadata into aimux tmux status integration");
