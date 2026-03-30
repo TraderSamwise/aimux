@@ -18,6 +18,7 @@ interface StatuslineSession {
 
 interface StatuslineData {
   project?: string;
+  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "all" | "help";
   sessions?: StatuslineSession[];
   metadata?: Record<
     string,
@@ -69,8 +70,14 @@ function normalizePath(path: string | undefined, projectRoot: string): string {
   return path?.trim() || projectRoot;
 }
 
-function renderDashboardScreens(): string[] {
-  return ["[dashboard]", "plans", "graveyard"];
+function renderDashboardScreens(activeScreen: StatuslineData["dashboardScreen"]): string[] {
+  const active = activeScreen ?? "dashboard";
+  const screens: Array<{ key: StatuslineData["dashboardScreen"]; label: string }> = [
+    { key: "dashboard", label: "dashboard" },
+    { key: "plans", label: "plans" },
+    { key: "graveyard", label: "graveyard" },
+  ];
+  return screens.map((screen) => (screen.key === active ? `[${screen.label}]` : screen.label));
 }
 
 function sessionWindowIdentity(session: StatuslineSession): string {
@@ -140,7 +147,7 @@ function renderRight(projectRoot: string, currentWindow?: string, currentPath?: 
   if (!data) return "";
   const sessionSegments =
     currentWindow === "dashboard"
-      ? renderDashboardScreens()
+      ? renderDashboardScreens(data.dashboardScreen)
       : renderScopedSessions(data, projectRoot, currentWindow, currentPath);
   const segments = [
     ...sessionSegments,

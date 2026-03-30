@@ -58,10 +58,10 @@ describe("renderTmuxStatusline", () => {
 
   it("renders dashboard-specific screens on the dashboard window", () => {
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
-    writeFileSync(statusPath, JSON.stringify({ sessions: [] }));
+    writeFileSync(statusPath, JSON.stringify({ sessions: [], dashboardScreen: "plans" }));
     const rendered = renderTmuxStatusline(repoRoot, "right", { currentWindow: "dashboard", currentPath: repoRoot });
-    expect(rendered).toContain("[dashboard]");
-    expect(rendered).toContain("plans");
+    expect(rendered).toContain("dashboard");
+    expect(rendered).toContain("[plans]");
     expect(rendered).toContain("graveyard");
   });
 

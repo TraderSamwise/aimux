@@ -126,6 +126,7 @@ export class Multiplexer {
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
   private graveyardActive = false;
   private graveyardEntries: SessionState[] = [];
+  private graveyardIndex = 0;
   private metaDashboardActive = false;
   private plansActive = false;
   private planEntries: PlanEntry[] = [];
@@ -537,7 +538,7 @@ export class Multiplexer {
 
     // Forward terminal resize
     this.onResize = () => {
-      this.renderDashboard();
+      this.renderCurrentDashboardView();
     };
     process.stdout.on("resize", this.onResize);
 
@@ -2039,6 +2040,9 @@ export class Multiplexer {
     } catch {
       this.graveyardEntries = [];
     }
+    if (this.graveyardIndex >= this.graveyardEntries.length) {
+      this.graveyardIndex = Math.max(0, this.graveyardEntries.length - 1);
+    }
     this.graveyardActive = true;
     this.renderGraveyard();
   }
@@ -2046,39 +2050,28 @@ export class Multiplexer {
   private renderGraveyard(): void {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-
-    const lines = ["Graveyard:", ""];
+    const lines: string[] = [];
+    lines.push("");
+    lines.push(this.centerInWidth("\x1b[1maimux\x1b[0m — graveyard", cols));
+    lines.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
+    lines.push("");
     if (this.graveyardEntries.length === 0) {
-      lines.push("  (empty)");
+      lines.push("  Graveyard");
+      lines.push("    (empty)");
     } else {
+      lines.push("  Graveyard");
       for (let i = 0; i < this.graveyardEntries.length; i++) {
         const s = this.graveyardEntries[i];
         const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
         const identity = s.label ? ` — ${s.label}` : "";
         const headline = s.headline ? ` · ${s.headline}` : "";
-        lines.push(`  [${i + 1}] ${s.command}:${s.id}${bsid}${identity}${headline}`);
+        const marker = i === this.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
+        lines.push(`    ${marker}[${i + 1}] ${s.command}:${s.id}${bsid}${identity}${headline}`);
       }
     }
     lines.push("");
-    lines.push("  [1-9] resurrect  [Esc] back");
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1];
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    lines.push(this.centerInWidth("[↑↓] select  [1-9/Enter] resurrect  [q/Esc] back", cols));
+    process.stdout.write("\x1b[2J\x1b[H" + lines.slice(0, rows).join("\r\n"));
   }
 
   private handleGraveyardKey(data: Buffer): void {
@@ -2088,7 +2081,7 @@ export class Multiplexer {
     const event = events[0];
     const key = event.name || event.char;
 
-    if (key === "escape") {
+    if (key === "escape" || key === "q") {
       this.graveyardActive = false;
       if (this.mode === "dashboard") {
         this.renderDashboard();
@@ -2098,41 +2091,68 @@ export class Multiplexer {
       return;
     }
 
-    if (key >= "1" && key <= "9") {
-      const idx = parseInt(key) - 1;
-      if (idx < this.graveyardEntries.length) {
-        const entry = this.graveyardEntries[idx];
-        // Resurrect: move from graveyard to offline
-        this.graveyardEntries.splice(idx, 1);
-        writeFileSync(getGraveyardPath(), JSON.stringify(this.graveyardEntries, null, 2) + "\n");
-
-        // Add to offline sessions and state.json
-        this.offlineSessions.push(entry);
-        const statePath = getStatePath();
-        try {
-          let state: SavedState = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] };
-          if (existsSync(statePath)) {
-            state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
-          }
-          state.sessions.push(entry);
-          writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-        } catch {}
-
-        debug(`resurrected ${entry.id} from graveyard`, "session");
-
-        if (this.graveyardEntries.length === 0) {
-          this.graveyardActive = false;
-          if (this.mode === "dashboard") {
-            this.renderDashboard();
-          } else {
-            this.focusSession(this.activeIndex);
-          }
-        } else {
-          this.renderGraveyard();
-        }
+    if (key === "down" || key === "j" || key === "n") {
+      if (this.graveyardEntries.length > 1) {
+        this.graveyardIndex = (this.graveyardIndex + 1) % this.graveyardEntries.length;
+        this.renderGraveyard();
       }
       return;
     }
+
+    if (key === "up" || key === "k" || key === "p") {
+      if (this.graveyardEntries.length > 1) {
+        this.graveyardIndex = (this.graveyardIndex - 1 + this.graveyardEntries.length) % this.graveyardEntries.length;
+        this.renderGraveyard();
+      }
+      return;
+    }
+
+    if (key >= "1" && key <= "9") {
+      this.resurrectGraveyardEntry(parseInt(key) - 1);
+      return;
+    }
+
+    if (key === "enter" || key === "return") {
+      this.resurrectGraveyardEntry(this.graveyardIndex);
+      return;
+    }
+  }
+
+  private resurrectGraveyardEntry(idx: number): void {
+    if (idx < 0 || idx >= this.graveyardEntries.length) return;
+    const entry = this.graveyardEntries[idx];
+    if (!entry) return;
+
+    this.graveyardEntries.splice(idx, 1);
+    writeFileSync(getGraveyardPath(), JSON.stringify(this.graveyardEntries, null, 2) + "\n");
+
+    this.offlineSessions.push(entry);
+    const statePath = getStatePath();
+    try {
+      let state: SavedState = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] };
+      if (existsSync(statePath)) {
+        state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
+      }
+      state.sessions.push(entry);
+      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    } catch {}
+
+    debug(`resurrected ${entry.id} from graveyard`, "session");
+
+    if (this.graveyardEntries.length === 0) {
+      this.graveyardActive = false;
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      } else {
+        this.focusSession(this.activeIndex);
+      }
+      return;
+    }
+
+    if (this.graveyardIndex >= this.graveyardEntries.length) {
+      this.graveyardIndex = this.graveyardEntries.length - 1;
+    }
+    this.renderGraveyard();
   }
 
   private showPlans(): void {
@@ -2254,7 +2274,7 @@ export class Multiplexer {
     if (events.length === 0) return;
     const key = events[0].name || events[0].char;
 
-    if (key === "escape") {
+    if (key === "escape" || key === "q") {
       this.plansActive = false;
       this.renderDashboard();
       return;
@@ -3055,6 +3075,15 @@ export class Multiplexer {
       const dir = getProjectStateDir();
       const data = {
         project: basename(process.cwd()),
+        dashboardScreen: this.metaDashboardActive
+          ? "all"
+          : this.plansActive
+            ? "plans"
+            : this.graveyardActive
+              ? "graveyard"
+              : this.helpActive
+                ? "help"
+                : "dashboard",
         sessions: this.sessions.map((s, i) => ({
           id: s.id,
           tool: s.command,
@@ -3089,6 +3118,26 @@ export class Multiplexer {
   private centerInWidth(text: string, width: number): string {
     const pad = Math.max(0, Math.floor((width - this.stripAnsi(text).length) / 2));
     return " ".repeat(pad) + text;
+  }
+
+  private renderCurrentDashboardView(): void {
+    if (this.metaDashboardActive) {
+      this.renderMetaDashboard();
+      return;
+    }
+    if (this.plansActive) {
+      this.renderPlans();
+      return;
+    }
+    if (this.helpActive) {
+      this.renderHelp();
+      return;
+    }
+    if (this.graveyardActive) {
+      this.renderGraveyard();
+      return;
+    }
+    this.renderDashboard();
   }
 
   /** Track previous statuses for notification on transition */
@@ -3133,8 +3182,8 @@ export class Multiplexer {
         this.prevStatuses.set(session.id, curr);
       }
 
-      if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive && !this.helpActive) {
-        this.renderDashboard();
+      if (this.mode === "dashboard") {
+        this.renderCurrentDashboardView();
       }
     }, 1000);
   }
@@ -3339,8 +3388,8 @@ export class Multiplexer {
       // Refresh offline sessions from state.json (picks up cross-instance graveyard/kill)
       this.loadOfflineSessions();
       // Refresh dashboard to pick up remote instance changes (skip if overlay is active)
-      if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive) {
-        this.renderDashboard();
+      if (this.mode === "dashboard") {
+        this.renderCurrentDashboardView();
       }
     }, 5000);
   }
