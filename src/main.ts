@@ -9,7 +9,6 @@ import {
   chmodSync,
   statSync,
 } from "node:fs";
-import { spawn } from "node:child_process";
 import { join as pathJoin, resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -64,7 +63,6 @@ program
           process.chdir(projectRoot);
         }
       }
-      const runtimeConfig = loadConfig().runtime;
       if (!opts.tmuxDashboardInternal) {
         initProject();
         const tmux = new TmuxRuntimeManager();
