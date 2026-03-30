@@ -64,7 +64,15 @@ describe("TmuxRuntimeManager", () => {
           args: ["bind-key", "-T", "prefix", "C-a", "send-prefix"],
         }),
         expect.objectContaining({
-          args: ["bind-key", "-T", "prefix", "d", "select-window", "-t", `${session.sessionName}:dashboard`],
+          args: [
+            "bind-key",
+            "-T",
+            "prefix",
+            "d",
+            "run-shell",
+            "-b",
+            "cd '#{pane_current_path}' && aimux >/dev/null 2>&1",
+          ],
         }),
       ]),
     );

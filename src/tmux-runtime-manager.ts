@@ -350,6 +350,14 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "prefix", "C-a"]);
     this.exec(["set-option", "-t", sessionName, "prefix2", "C-b"]);
     this.exec(["bind-key", "-T", "prefix", "C-a", "send-prefix"]);
-    this.exec(["bind-key", "-T", "prefix", "d", "select-window", "-t", `${sessionName}:dashboard`]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "prefix",
+      "d",
+      "run-shell",
+      "-b",
+      "cd '#{pane_current_path}' && aimux >/dev/null 2>&1",
+    ]);
   }
 }
