@@ -70,9 +70,9 @@ Aimux should never assume it owns the user's entire tmux world.
 
 Potential future opt-in:
 
-- `runtime.tmux.mode = "current-session"`
+- attach aimux windows to the current tmux session
 
-This would allow injecting aimux windows into the current tmux session, but it should not be the default because it is harder to reason about, harder to support, and more likely to annoy power users.
+This should not be the default because it is harder to reason about, harder to support, and more likely to annoy power users.
 
 ## User Experience Target
 
@@ -250,7 +250,7 @@ Introduce tmux runtime primitives without changing user-visible flow yet.
   - window id
   - pane id if needed later
 - add config:
-  - `runtime.backend = "tmux"`
+  - `runtime.tmux.sessionPrefix`
 
 ### Deliverable
 

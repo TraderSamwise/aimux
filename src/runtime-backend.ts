@@ -1,4 +1,3 @@
-import { loadConfig } from "./config.js";
 import { PtySession, type PtySessionOptions } from "./pty-session.js";
 
 export interface RuntimeBackendSession {
@@ -18,7 +17,7 @@ export interface RuntimeBackendSession {
 export type RuntimeBackendSpawnRequest = PtySessionOptions;
 
 export interface RuntimeBackend {
-  readonly kind: "pty" | "tmux";
+  readonly kind: "pty";
   spawn(request: RuntimeBackendSpawnRequest): RuntimeBackendSession;
 }
 
@@ -30,22 +29,6 @@ export class PtyRuntimeBackend implements RuntimeBackend {
   }
 }
 
-export class TmuxRuntimeBackend implements RuntimeBackend {
-  readonly kind = "tmux" as const;
-
-  spawn(_request: RuntimeBackendSpawnRequest): RuntimeBackendSession {
-    throw new Error("tmux runtime backend is not wired into the session server yet");
-  }
-}
-
 export function createRuntimeBackend(): RuntimeBackend {
-  const backend = loadConfig().runtime.backend;
-  if (backend === "tmux") {
-    // The normal tmux-backed runtime path no longer uses AimuxServer. The CLI
-    // blocks `aimux server` in tmux mode, so if this helper is reached anyway,
-    // keep the legacy server path usable instead of constructing a backend that
-    // immediately throws on spawn.
-    return new PtyRuntimeBackend();
-  }
   return new PtyRuntimeBackend();
 }

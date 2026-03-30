@@ -52,7 +52,7 @@ aimux aider
 aimux --resume
 ```
 
-In tmux mode, `aimux server ...` is not part of the normal runtime path. The per-project tmux session is the long-lived substrate.
+The per-project tmux session is the long-lived substrate. `aimux server` no longer exists in the normal runtime model.
 
 ## Hotkeys
 
@@ -216,9 +216,8 @@ This creates `.aimux/config.json`. You can also create a global config at `~/.ai
 {
   "defaultTool": "claude",
   "runtime": {
-    "backend": "tmux",
     "tmux": {
-      "mode": "managed-session"
+      "sessionPrefix": "aimux"
     }
   },
   "footer": {
@@ -251,15 +250,9 @@ Footer session scope:
 - `worktree` — legacy `pty` backend focused footer tabs only show agents in the current worktree
 - `project` — legacy `pty` backend focused footer tabs span the whole project
 
-Runtime backend:
+Tmux runtime:
 
-- `tmux` — default and recommended; aimux dashboard + agent orchestration on top of a managed per-project tmux session
-- `pty` — legacy custom multiplexer backend kept only for fallback/transition purposes
-
-Tmux mode:
-
-- `managed-session` — default and currently the only supported tmux mode
-- `current-session` — reserved for future advanced use; not supported yet
+- `sessionPrefix` — deterministic prefix used for managed per-project tmux sessions
 
 ### Tool Configuration
 

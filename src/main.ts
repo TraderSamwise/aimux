@@ -11,7 +11,6 @@ import { loadConfig } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, listWorktrees } from "./worktree.js";
-import { startServerForeground, stopServer, getServerStatus, isServerRunning } from "./server.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
 const program = new Command();
@@ -35,15 +34,11 @@ program
       opts: { resume?: boolean; restore?: boolean; tmuxDashboardInternal?: boolean },
     ) => {
       const runtimeConfig = loadConfig().runtime;
-      if (runtimeConfig.backend === "tmux" && !opts.tmuxDashboardInternal) {
+      if (!opts.tmuxDashboardInternal) {
         initProject();
         const tmux = new TmuxRuntimeManager();
         if (!tmux.isAvailable()) {
-          console.error("aimux: tmux backend selected but tmux is not installed or not available in PATH");
-          process.exit(1);
-        }
-        if (runtimeConfig.tmux.mode !== "managed-session") {
-          console.error('aimux: tmux runtime currently supports only runtime.tmux.mode = "managed-session"');
+          console.error("aimux: tmux is not installed or not available in PATH");
           process.exit(1);
         }
 
@@ -426,69 +421,6 @@ teamCmd
     console.log("Team config initialized with default roles:");
     for (const [name, role] of Object.entries(config.roles) as [string, any][]) {
       console.log(`  ${name}: ${role.description}`);
-    }
-  });
-
-// ── Server commands ────────────────────────────────────────────────
-
-const serverCmd = program.command("server").description("Manage legacy aimux server (headless PTY host)");
-
-function assertServerSupported(): void {
-  if (loadConfig().runtime.backend === "tmux") {
-    console.error(
-      'aimux server is a legacy PTY-mode feature and is not used with runtime.backend = "tmux". Use the tmux-backed dashboard/session flow instead.',
-    );
-    process.exit(1);
-  }
-}
-
-serverCmd
-  .command("start")
-  .description("Start the legacy aimux PTY server as a background daemon")
-  .option("--foreground", "Run in foreground (used internally)")
-  .action(async (opts: { foreground?: boolean }) => {
-    assertServerSupported();
-    if (opts.foreground) {
-      await startServerForeground();
-      return;
-    }
-
-    if (isServerRunning()) {
-      console.log("Server is already running.");
-      process.exit(0);
-    }
-
-    const child = spawn(process.argv[0], [process.argv[1], "server", "start", "--foreground"], {
-      detached: true,
-      stdio: "ignore",
-    });
-    child.unref();
-    console.log(`Server started (PID ${child.pid}).`);
-  });
-
-serverCmd
-  .command("stop")
-  .description("Stop the running legacy aimux PTY server")
-  .action(() => {
-    assertServerSupported();
-    if (stopServer()) {
-      console.log("Server stopped.");
-    } else {
-      console.error("No running server found.");
-      process.exit(1);
-    }
-  });
-
-serverCmd
-  .command("status")
-  .description("Check if the legacy aimux PTY server is running")
-  .action(() => {
-    assertServerSupported();
-    const status = getServerStatus();
-    if (status.running) {
-      console.log(`Server is running (PID ${status.pid}).`);
-    } else {
-      console.log("Server is not running.");
     }
   });
 

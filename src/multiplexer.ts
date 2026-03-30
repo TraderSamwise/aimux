@@ -236,7 +236,7 @@ export class Multiplexer {
   }
 
   private isTmuxBackend(): boolean {
-    return loadConfig().runtime.backend === "tmux";
+    return true;
   }
 
   private openTmuxDashboardTarget(): void {

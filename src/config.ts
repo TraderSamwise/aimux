@@ -31,13 +31,11 @@ export interface FooterConfig {
 }
 
 export interface TmuxRuntimeConfig {
-  /** How aimux should coexist with user-owned tmux environments. */
-  mode: "managed-session" | "current-session";
+  /** Deterministic prefix for managed per-project tmux sessions. */
+  sessionPrefix: string;
 }
 
 export interface RuntimeConfig {
-  /** Runtime backend for agent sessions. */
-  backend: "pty" | "tmux";
   tmux: TmuxRuntimeConfig;
 }
 
@@ -102,9 +100,8 @@ const DEFAULT_CONFIG: AimuxConfig = {
     sessionScope: "worktree",
   },
   runtime: {
-    backend: "tmux",
     tmux: {
-      mode: "managed-session",
+      sessionPrefix: "aimux",
     },
   },
   worktrees: {
