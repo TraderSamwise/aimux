@@ -249,7 +249,7 @@ export class Multiplexer {
   private async updateSessionLabel(sessionId: string, label?: string): Promise<void> {
     this.applySessionLabel(sessionId, label);
 
-    if (this.serverRuntime.isServerSession(sessionId) && this.serverRuntime.connected) {
+    if (this.serverRuntime.canControlSession(sessionId)) {
       const ok = await this.serverRuntime.renameSession(sessionId, label?.trim() || undefined);
       if (!ok) {
         this.footerFlash = `Failed to rename ${sessionId}`;
@@ -4219,12 +4219,7 @@ export class Multiplexer {
     }
 
     // Also exclude by backendSessionId to catch resumed sessions with new IDs
-    const ownedBackendIds = this.serverRuntime.getBackendSessionIds();
-    for (const s of this.sessions) {
-      if (this.serverRuntime.isServerSession(s.id)) continue;
-      const bsid = s.backendSessionId;
-      if (bsid) ownedBackendIds.add(bsid);
-    }
+    const ownedBackendIds = this.serverRuntime.getOwnedBackendSessionIdsForSessions(this.sessions);
 
     this.offlineSessions = state.sessions.filter((s) => {
       if (ownedIds.has(s.id)) return false;
@@ -4462,8 +4457,7 @@ export class Multiplexer {
 
   /** Save session state to main repo's .aimux/state.json, merging with existing state. */
   private saveState(): void {
-    const serverSessionIds = this.serverRuntime.getSessionIds();
-    const localSessions = this.sessions.filter((s) => !serverSessionIds.has(s.id));
+    const localSessions = this.serverRuntime.getPersistableSessions(this.sessions);
     const liveSessions = localSessions.map((s) => ({
       id: s.id,
       tool: s.command,
@@ -4547,9 +4541,7 @@ export class Multiplexer {
   }
 
   cleanup(): void {
-    for (const session of this.sessions) {
-      // Don't kill server-owned sessions — they persist after TUI exits
-      if (this.serverRuntime.isServerSession(session.id)) continue;
+    for (const session of this.serverRuntime.getDestroyableSessions(this.sessions)) {
       session.destroy();
     }
     // Disconnect from server (sessions keep running)

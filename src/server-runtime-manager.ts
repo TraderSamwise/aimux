@@ -96,6 +96,25 @@ export class ServerRuntimeManager {
     return new Set(this.backendSessionIds);
   }
 
+  getPersistableSessions<T extends { id: string }>(sessions: T[]): T[] {
+    return sessions.filter((session) => !this.serverSessionIds.has(session.id));
+  }
+
+  getDestroyableSessions<T extends { id: string }>(sessions: T[]): T[] {
+    return sessions.filter((session) => !this.serverSessionIds.has(session.id));
+  }
+
+  getOwnedBackendSessionIdsForSessions<T extends { id: string; backendSessionId?: string }>(
+    sessions: T[],
+  ): Set<string> {
+    const owned = new Set(this.backendSessionIds);
+    for (const session of sessions) {
+      if (this.serverSessionIds.has(session.id)) continue;
+      if (session.backendSessionId) owned.add(session.backendSessionId);
+    }
+    return owned;
+  }
+
   attachRuntime(sessionId: string, runtime: SessionRuntime): void {
     if (this.serverSessionIds.has(sessionId)) {
       this.runtimes.set(sessionId, runtime);
@@ -171,7 +190,12 @@ export class ServerRuntimeManager {
   }
 
   async renameSession(sessionId: string, label?: string): Promise<boolean> {
+    if (!this.canControlSession(sessionId)) return false;
     return (await this.client?.renameSession(sessionId, label)) ?? false;
+  }
+
+  canControlSession(sessionId: string): boolean {
+    return this.connected && this.serverSessionIds.has(sessionId);
   }
 
   send(msg: any): void {

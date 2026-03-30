@@ -281,4 +281,60 @@ describe("ServerRuntimeManager", () => {
     expect(manager.getSessionIds()).toEqual(new Set(["srv-3"]));
     expect(manager.getBackendSessionIds()).toEqual(new Set(["backend-3"]));
   });
+
+  it("provides persistence ownership helpers", async () => {
+    const session = {
+      id: "srv-4",
+      command: "codex",
+      backendSessionId: undefined,
+      resize: vi.fn(),
+      _hydrateSnapshot: vi.fn(),
+    } as any;
+
+    const client: ServerRuntimeClient = {
+      connected: true,
+      connect: vi.fn(),
+      onSessionUpdated: vi.fn(),
+      listSessions: vi.fn(),
+      registerSession: vi.fn().mockReturnValue(session),
+      requestScreen: vi.fn(),
+      renameSession: vi.fn(),
+      send: vi.fn(),
+      disconnect: vi.fn(),
+    };
+
+    const manager = new ServerRuntimeManager(
+      () => client,
+      () => true,
+    );
+    await manager.connect();
+    manager.spawnSession({
+      id: "srv-4",
+      command: "codex",
+      args: [],
+      toolConfigKey: "codex",
+      backendSessionId: "backend-4",
+      cwd: "/tmp",
+      cols: 80,
+      rows: 24,
+    });
+
+    const sessions = [
+      { id: "srv-4", backendSessionId: "backend-4" },
+      { id: "local-1", backendSessionId: "backend-local" },
+      { id: "local-2" },
+    ];
+
+    expect(manager.getPersistableSessions(sessions)).toEqual([
+      { id: "local-1", backendSessionId: "backend-local" },
+      { id: "local-2" },
+    ]);
+    expect(manager.getDestroyableSessions(sessions)).toEqual([
+      { id: "local-1", backendSessionId: "backend-local" },
+      { id: "local-2" },
+    ]);
+    expect(manager.getOwnedBackendSessionIdsForSessions(sessions)).toEqual(new Set(["backend-4", "backend-local"]));
+    expect(manager.canControlSession("srv-4")).toBe(true);
+    expect(manager.canControlSession("local-1")).toBe(false);
+  });
 });
