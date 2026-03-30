@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { ServerRuntimeManager, type ServerRuntimeClient, type ServerSessionInfo } from "./server-runtime-manager.js";
+import {
+  ServerRuntimeManager,
+  type ServerRuntimeClient,
+  type ServerRuntimeEvent,
+  type ServerSessionInfo,
+} from "./server-runtime-manager.js";
 import { SessionRuntime, type SessionTransport } from "./session-runtime.js";
 import { SessionOutputPipeline } from "./session-output-pipeline.js";
 import { TerminalQueryResponder } from "./terminal-query-responder.js";
@@ -64,7 +69,7 @@ describe("ServerRuntimeManager", () => {
     const createClient = vi.fn<() => ServerRuntimeClient>();
     const manager = new ServerRuntimeManager(createClient, () => false);
 
-    await manager.connect(() => {});
+    await manager.connect();
 
     expect(createClient).not.toHaveBeenCalled();
     expect(manager.connected).toBe(false);
@@ -107,14 +112,15 @@ describe("ServerRuntimeManager", () => {
       disconnect: vi.fn(),
     };
 
+    const onEvent = vi.fn<(event: ServerRuntimeEvent) => void>();
     const manager = new ServerRuntimeManager(
       () => client,
       () => true,
+      { onEvent },
     );
-    await manager.connect(() => {});
+    await manager.connect();
 
     const discovered: string[] = [];
-    const hydrated: string[] = [];
     const runtimes = new Map<string, SessionRuntime>();
 
     await manager.reconnectExistingSessions(80, 24, {
@@ -126,21 +132,24 @@ describe("ServerRuntimeManager", () => {
         runtimes.set(info.id, runtime);
         return runtime;
       },
-      onHydrated: (runtime) => {
-        hydrated.push(runtime.id);
-      },
     });
 
     await vi.waitFor(() => {
-      expect(hydrated).toEqual(["srv-1"]);
+      expect(onEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "sessionHydrated", runtime: expect.objectContaining({ id: "srv-1" }) }),
+      );
     });
 
     expect(discovered).toEqual(["srv-1"]);
     expect(manager.isServerSession("srv-1")).toBe(true);
     expect(manager.isHydrating("srv-1")).toBe(false);
+    expect(manager.getRuntime("srv-1")).toBe(runtimes.get("srv-1"));
     expect(runtimes.get("srv-1")?.isHydrating).toBe(false);
     expect(registerSession).toHaveBeenCalledTimes(1);
     expect(requestScreen).toHaveBeenCalledWith("srv-1");
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "sessionDiscovered", info: expect.objectContaining({ id: "srv-1" }) }),
+    );
   });
 
   it("retries hydration after an empty snapshot by nudging resize", async () => {
@@ -190,13 +199,12 @@ describe("ServerRuntimeManager", () => {
       () => client,
       () => true,
     );
-    await manager.connect(() => {});
+    await manager.connect();
     const runtime = createRuntime("srv-2");
 
     const reconnectPromise = manager.reconnectExistingSessions(80, 24, {
       resolvePromptPatterns: () => undefined,
       onDiscovered: () => runtime,
-      onHydrated: vi.fn(),
     });
 
     await vi.advanceTimersByTimeAsync(150);
@@ -206,5 +214,66 @@ describe("ServerRuntimeManager", () => {
     expect(requestScreen).toHaveBeenCalledTimes(2);
     expect(session._hydrateSnapshot).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+
+  it("owns fresh server-backed spawn registration and dispatch", async () => {
+    const session = {
+      id: "srv-3",
+      command: "codex",
+      backendSessionId: undefined,
+      resize: vi.fn(),
+      _hydrateSnapshot: vi.fn(),
+    } as any;
+
+    const send = vi.fn();
+    const client: ServerRuntimeClient = {
+      connected: true,
+      connect: vi.fn(),
+      onSessionUpdated: vi.fn(),
+      listSessions: vi.fn(),
+      registerSession: vi.fn().mockReturnValue(session),
+      requestScreen: vi.fn(),
+      renameSession: vi.fn(),
+      send,
+      disconnect: vi.fn(),
+    };
+
+    const manager = new ServerRuntimeManager(
+      () => client,
+      () => true,
+    );
+    await manager.connect();
+    const created = manager.spawnSession({
+      id: "srv-3",
+      command: "codex",
+      args: ["--full-auto"],
+      toolConfigKey: "codex",
+      backendSessionId: "backend-3",
+      worktreePath: "/tmp/wt",
+      cwd: "/tmp/wt",
+      cols: 100,
+      rows: 30,
+      promptPatterns: [/foo/],
+    });
+
+    expect(created).toBe(session);
+    expect(manager.isServerSession("srv-3")).toBe(true);
+    expect(client.registerSession).toHaveBeenCalledWith("srv-3", "codex", 100, 30, [/foo/]);
+    expect(send).toHaveBeenCalledWith({
+      type: "spawn",
+      id: "srv-3",
+      command: "codex",
+      args: ["--full-auto"],
+      toolConfigKey: "codex",
+      backendSessionId: "backend-3",
+      worktreePath: "/tmp/wt",
+      cwd: "/tmp/wt",
+      cols: 100,
+      rows: 30,
+    });
+
+    const runtime = createRuntime("srv-3");
+    manager.attachRuntime("srv-3", runtime);
+    expect(manager.getRuntime("srv-3")).toBe(runtime);
   });
 });

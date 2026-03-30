@@ -15,7 +15,28 @@ export interface ServerSessionInfo {
 export interface ServerRuntimeReconnectHooks {
   resolvePromptPatterns: (command: string) => RegExp[] | undefined;
   onDiscovered: (info: ServerSessionInfo, session: ServerSession) => SessionRuntime;
-  onHydrated: (runtime: SessionRuntime) => void;
+}
+
+export interface ServerSpawnRequest {
+  id: string;
+  command: string;
+  args: string[];
+  toolConfigKey: string;
+  backendSessionId?: string;
+  worktreePath?: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  promptPatterns?: RegExp[];
+}
+
+export type ServerRuntimeEvent =
+  | { type: "sessionUpdated"; id: string; label?: string }
+  | { type: "sessionDiscovered"; info: ServerSessionInfo; runtime: SessionRuntime }
+  | { type: "sessionHydrated"; runtime: SessionRuntime };
+
+export interface ServerRuntimeManagerHooks {
+  onEvent?: (event: ServerRuntimeEvent) => void;
 }
 
 export interface ServerRuntimeClient {
@@ -42,10 +63,12 @@ export class ServerRuntimeManager {
   private client: ServerRuntimeClient | null = null;
   private readonly serverSessionIds = new Set<string>();
   private readonly hydratingSessionIds = new Set<string>();
+  private readonly runtimes = new Map<string, SessionRuntime>();
 
   constructor(
     private readonly createClient: () => ServerRuntimeClient = () => new ServerClient(),
     private readonly isAvailable: () => boolean = () => ServerClient.isAvailable(),
+    private readonly hooks: ServerRuntimeManagerHooks = {},
   ) {}
 
   get connected(): boolean {
@@ -60,11 +83,23 @@ export class ServerRuntimeManager {
     return this.hydratingSessionIds.has(sessionId);
   }
 
-  async connect(onSessionUpdated: (update: { id: string; label?: string }) => void): Promise<void> {
+  getRuntime(sessionId: string): SessionRuntime | undefined {
+    return this.runtimes.get(sessionId);
+  }
+
+  attachRuntime(sessionId: string, runtime: SessionRuntime): void {
+    if (this.serverSessionIds.has(sessionId)) {
+      this.runtimes.set(sessionId, runtime);
+    }
+  }
+
+  async connect(): Promise<void> {
     if (!this.isAvailable()) return;
     const client = this.createClient();
     await client.connect();
-    client.onSessionUpdated(onSessionUpdated);
+    client.onSessionUpdated((update) => {
+      this.hooks.onEvent?.({ type: "sessionUpdated", ...update });
+    });
     this.client = client;
     debug("connected to aimux server", "server-client");
   }
@@ -79,9 +114,11 @@ export class ServerRuntimeManager {
       session.backendSessionId = info.backendSessionId;
       this.serverSessionIds.add(info.id);
       const runtime = hooks.onDiscovered(info, session);
+      this.runtimes.set(info.id, runtime);
+      this.hooks.onEvent?.({ type: "sessionDiscovered", info, runtime });
       runtime.setHydrating(true);
       this.hydratingSessionIds.add(info.id);
-      void this.hydrateSession(info.id, session, runtime, cols, rows, hooks.onHydrated);
+      void this.hydrateSession(info.id, session, runtime, cols, rows);
       debug(`reconnected to server session: ${info.id}`, "server-client");
     }
   }
@@ -92,6 +129,29 @@ export class ServerRuntimeManager {
     }
     const session = this.client.registerSession(id, command, cols, rows, promptPatterns);
     this.serverSessionIds.add(id);
+    return session;
+  }
+
+  spawnSession(request: ServerSpawnRequest): ServerSession {
+    const session = this.registerSession(
+      request.id,
+      request.command,
+      request.cols,
+      request.rows,
+      request.promptPatterns,
+    );
+    this.send({
+      type: "spawn",
+      id: request.id,
+      command: request.command,
+      args: request.args,
+      toolConfigKey: request.toolConfigKey,
+      backendSessionId: request.backendSessionId,
+      worktreePath: request.worktreePath,
+      cwd: request.cwd,
+      cols: request.cols,
+      rows: request.rows,
+    });
     return session;
   }
 
@@ -108,6 +168,7 @@ export class ServerRuntimeManager {
     this.client = null;
     this.serverSessionIds.clear();
     this.hydratingSessionIds.clear();
+    this.runtimes.clear();
   }
 
   private async hydrateSession(
@@ -120,7 +181,6 @@ export class ServerRuntimeManager {
     runtime: SessionRuntime,
     cols: number,
     rows: number,
-    onHydrated: (runtime: SessionRuntime) => void,
   ): Promise<void> {
     if (!this.client) {
       runtime.setHydrating(false);
@@ -150,6 +210,6 @@ export class ServerRuntimeManager {
 
     runtime.setHydrating(false);
     this.hydratingSessionIds.delete(sessionId);
-    onHydrated(runtime);
+    this.hooks.onEvent?.({ type: "sessionHydrated", runtime });
   }
 }

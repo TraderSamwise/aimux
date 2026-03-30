@@ -51,7 +51,7 @@ import { TerminalQueryResponder } from "./terminal-query-responder.js";
 import { HostTerminalQueryFallback } from "./terminal-query-fallback.js";
 import { SessionOutputPipeline } from "./session-output-pipeline.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "./session-runtime.js";
-import { ServerRuntimeManager } from "./server-runtime-manager.js";
+import { ServerRuntimeManager, type ServerRuntimeEvent } from "./server-runtime-manager.js";
 
 export type MuxMode = "focused" | "dashboard";
 
@@ -193,7 +193,9 @@ export class Multiplexer {
   /** Offline sessions from previous runs (loaded from state.json) */
   private offlineSessions: SessionState[] = [];
   /** Server-backed runtime ownership and reconnect state */
-  private serverRuntime = new ServerRuntimeManager();
+  private serverRuntime = new ServerRuntimeManager(undefined, undefined, {
+    onEvent: (event) => this.handleServerRuntimeEvent(event),
+  });
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -456,6 +458,38 @@ export class Multiplexer {
     }
   }
 
+  private handleServerRuntimeEvent(event: ServerRuntimeEvent): void {
+    if (event.type === "sessionUpdated") {
+      const { id, label } = event;
+      this.applySessionLabel(id, label);
+      this.writeStatuslineFile();
+      if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive) {
+        this.renderDashboard();
+      } else if (this.mode === "focused") {
+        this.scheduleFocusedRender(false);
+      }
+      return;
+    }
+
+    if (event.type === "sessionDiscovered") {
+      const { info } = event;
+      if (info.label) {
+        const state = this.offlineSessions.find((s) => s.id === info.id);
+        if (state) state.label = info.label;
+        this.sessionLabels.set(info.id, info.label);
+      }
+      return;
+    }
+
+    if (event.type === "sessionHydrated") {
+      const { runtime } = event;
+      const debugState = this.getTerminalDebugState(runtime);
+      if (debugState) {
+        debug(this.formatDebugState(`hydrate done ${runtime.id}`, debugState), "reconnect");
+      }
+    }
+  }
+
   private updateContextWatcherSessions(): void {
     this.contextWatcher.updateSessions(
       this.sessions.map((s) => {
@@ -473,15 +507,7 @@ export class Multiplexer {
   /** Try to connect to a running aimux server for persistent PTY ownership */
   private async connectToServer(): Promise<void> {
     try {
-      await this.serverRuntime.connect(({ id, label }) => {
-        this.applySessionLabel(id, label);
-        this.writeStatuslineFile();
-        if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive) {
-          this.renderDashboard();
-        } else if (this.mode === "focused") {
-          this.scheduleFocusedRender(false);
-        }
-      });
+      await this.serverRuntime.connect();
       const cols = process.stdout.columns ?? 80;
       const rows = this.toolRows;
       await this.serverRuntime.reconnectExistingSessions(cols, rows, {
@@ -499,18 +525,7 @@ export class Multiplexer {
             info.worktreePath,
             undefined,
           );
-          if (info.label) {
-            const state = this.offlineSessions.find((s) => s.id === info.id);
-            if (state) state.label = info.label;
-            this.sessionLabels.set(info.id, info.label);
-          }
           return runtime;
-        },
-        onHydrated: (runtime) => {
-          const debugState = this.getTerminalDebugState(runtime);
-          if (debugState) {
-            debug(this.formatDebugState(`hydrate done ${runtime.id}`, debugState), "reconnect");
-          }
         },
       });
     } catch {
@@ -1240,26 +1255,9 @@ export class Multiplexer {
 
     // If server is connected, register the proxy locally first so onData/onExit
     // listeners are attached before the server can emit initial output.
-    let pendingServerSpawn:
-      | {
-          type: "spawn";
-          id: string;
-          command: string;
-          args: string[];
-          toolConfigKey: string;
-          backendSessionId?: string;
-          worktreePath?: string;
-          cwd: string;
-          cols: number;
-          rows: number;
-        }
-      | undefined;
-
     // If server is connected, spawn on server for persistent ownership
     if (this.serverRuntime.connected) {
-      const serverSession = this.serverRuntime.registerSession(sessionId, command, cols, this.toolRows, promptPatterns);
-      pendingServerSpawn = {
-        type: "spawn",
+      const serverSession = this.serverRuntime.spawnSession({
         id: sessionId,
         command,
         args: finalArgs,
@@ -1269,7 +1267,8 @@ export class Multiplexer {
         cwd: worktreePath ?? process.cwd(),
         cols,
         rows: this.toolRows,
-      };
+        promptPatterns,
+      });
       session = serverSession as any;
     } else {
       session = new PtySession({
@@ -1295,12 +1294,18 @@ export class Multiplexer {
       }
     }
 
-    this.registerManagedSession(session, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
-
-    if (pendingServerSpawn) {
-      this.serverRuntime.send(pendingServerSpawn);
-      debug(`spawned session on server: ${sessionId}`, "server-client");
+    const runtime = this.registerManagedSession(
+      session,
+      args,
+      toolConfigKey,
+      worktreePath,
+      undefined,
+      sessionStartTime,
+    );
+    if (this.serverRuntime.connected) {
+      this.serverRuntime.attachRuntime(sessionId, runtime);
     }
+    if (this.serverRuntime.connected) debug(`spawned session on server: ${sessionId}`, "server-client");
 
     // Focus the new session
     this.activeIndex = this.sessions.length - 1;
