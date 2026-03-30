@@ -11,6 +11,9 @@ import {
 } from "./metadata-store.js";
 import { debug } from "./debug.js";
 import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
+import { AgentTracker } from "./agent-tracker.js";
+import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
+import { createToolOutputWatcher } from "./tool-output-watchers.js";
 
 export interface AimuxMetadataAPI {
   setStatus(session: string, text: string, tone?: MetadataTone): void;
@@ -18,6 +21,10 @@ export interface AimuxMetadataAPI {
   log(session: string, message: string, opts?: { source?: string; tone?: MetadataTone }): void;
   clearLog(session: string): void;
   setContext(session: string, context: SessionContextMetadata): void;
+  emitEvent(session: string, event: AgentEvent): void;
+  markSeen(session: string): void;
+  setActivity(session: string, activity: AgentActivityState): void;
+  setAttention(session: string, attention: AgentAttentionState): void;
 }
 
 export interface AimuxPluginAPI {
@@ -49,6 +56,7 @@ export class PluginRuntime {
   constructor(private readonly endpoint: MetadataApiEndpoint) {}
 
   async start(): Promise<void> {
+    const tracker = new AgentTracker();
     const api: AimuxPluginAPI = {
       projectRoot: getRepoRoot(),
       projectId: getProjectId(),
@@ -88,6 +96,18 @@ export class PluginRuntime {
             },
           }));
         },
+        emitEvent: (session, event) => {
+          tracker.emit(session, event);
+        },
+        markSeen: (session) => {
+          tracker.markSeen(session);
+        },
+        setActivity: (session, activity) => {
+          tracker.setActivity(session, activity);
+        },
+        setAttention: (session, attention) => {
+          tracker.setAttention(session, attention);
+        },
       },
     };
 
@@ -95,6 +115,10 @@ export class PluginRuntime {
       if (watcher.start) await watcher.start();
       this.instances.push(watcher);
     }
+
+    const outputWatcher = createToolOutputWatcher({ api });
+    if (outputWatcher.start) await outputWatcher.start();
+    this.instances.push(outputWatcher);
 
     const pluginFiles = [
       ...listPluginFiles(join(getGlobalAimuxDir(), "plugins")),

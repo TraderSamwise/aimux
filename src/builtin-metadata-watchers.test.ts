@@ -12,6 +12,7 @@ describe("createBuiltinMetadataWatchers", () => {
   const progresses: Array<[string, number, number, string | undefined]> = [];
   const logs: Array<[string, string, string | undefined]> = [];
   const contexts: Array<[string, string | undefined, string | undefined, number | undefined]> = [];
+  const events: Array<[string, string, string | undefined]> = [];
 
   beforeEach(async () => {
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-watchers-"));
@@ -21,6 +22,7 @@ describe("createBuiltinMetadataWatchers", () => {
     progresses.length = 0;
     logs.length = 0;
     contexts.length = 0;
+    events.length = 0;
   });
 
   afterEach(() => {
@@ -53,6 +55,12 @@ describe("createBuiltinMetadataWatchers", () => {
         setContext(session, context) {
           contexts.push([session, context.worktreeName, context.branch, context.pr?.number]);
         },
+        emitEvent(session, event) {
+          events.push([session, event.kind, event.message]);
+        },
+        markSeen() {},
+        setActivity() {},
+        setAttention() {},
       },
     });
 
@@ -60,6 +68,7 @@ describe("createBuiltinMetadataWatchers", () => {
 
     expect(statuses).toContainEqual(["s1", "Working through auth", "info"]);
     expect(progresses).toContainEqual(["s1", 1, 3, "plan"]);
+    expect(events).toContainEqual(["s1", "status", "Working through auth"]);
   });
 
   it("loads initial task and history metadata", async () => {
@@ -95,6 +104,12 @@ describe("createBuiltinMetadataWatchers", () => {
         setContext(session, context) {
           contexts.push([session, context.worktreeName, context.branch, context.pr?.number]);
         },
+        emitEvent(session, event) {
+          events.push([session, event.kind, event.message]);
+        },
+        markSeen() {},
+        setActivity() {},
+        setAttention() {},
       },
     });
 
@@ -111,5 +126,7 @@ describe("createBuiltinMetadataWatchers", () => {
           session === "s1" && message.includes("Prompt: Explain auth flow") && source === "history",
       ),
     ).toBe(true);
+    expect(events).toContainEqual(["s1", "task_assigned", "Task: Ship auth"]);
+    expect(events).toContainEqual(["s1", "prompt", "Explain auth flow"]);
   });
 });

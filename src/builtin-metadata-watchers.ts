@@ -156,6 +156,9 @@ function ghPr(cwd: string, branch: string | undefined): PrContext | undefined {
 
 export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginInstance[] {
   const { metadata, projectRoot } = api;
+  const lastStatusBySession = new Map<string, string>();
+  const lastTaskBySession = new Map<string, string>();
+  const lastHistoryBySession = new Map<string, string>();
   const planWatcher = new DirectoryWatcher(getPlansDir(), () => {
     for (const file of existsSync(getPlansDir()) ? readdirSync(getPlansDir()) : []) {
       const sessionId = sessionIdFromFile(file, ".md");
@@ -174,6 +177,10 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
       const headline = parseStatusHeadline(safeRead(join(getStatusDir(), file)));
       if (headline) {
         metadata.setStatus(sessionId, headline, "info");
+        if (lastStatusBySession.get(sessionId) !== headline) {
+          metadata.emitEvent(sessionId, { kind: "status", message: headline, tone: "info", source: "status" });
+          lastStatusBySession.set(sessionId, headline);
+        }
       }
     }
   });
@@ -197,6 +204,15 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
     }
     for (const [sessionId, entry] of latestBySession) {
       metadata.log(sessionId, entry.message, { source: "tasks", tone: entry.tone });
+      if (lastTaskBySession.get(sessionId) !== entry.message) {
+        metadata.emitEvent(sessionId, {
+          kind: entry.tone === "error" ? "task_failed" : entry.tone === "success" ? "task_done" : "task_assigned",
+          message: entry.message,
+          tone: entry.tone,
+          source: "tasks",
+        });
+        lastTaskBySession.set(sessionId, entry.message);
+      }
     }
   });
 
@@ -205,12 +221,42 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
       const turns = readHistory(sessionId, { lastN: 1, maxBytes: 16 * 1024 });
       const turn = turns.at(-1);
       if (!turn) continue;
+      const historyKey = `${turn.ts}:${turn.type}:${turn.content}`;
       if (turn.type === "prompt") {
         metadata.log(sessionId, `Prompt: ${turn.content.slice(0, 80)}`, { source: "history", tone: "info" });
+        if (lastHistoryBySession.get(sessionId) !== historyKey) {
+          metadata.emitEvent(sessionId, {
+            kind: "prompt",
+            message: turn.content.slice(0, 120),
+            tone: "info",
+            source: "history",
+            ts: turn.ts,
+          });
+          lastHistoryBySession.set(sessionId, historyKey);
+        }
       } else if (turn.type === "response") {
         metadata.log(sessionId, `Response: ${turn.content.slice(0, 80)}`, { source: "history" });
+        if (lastHistoryBySession.get(sessionId) !== historyKey) {
+          metadata.emitEvent(sessionId, {
+            kind: "response",
+            message: turn.content.slice(0, 120),
+            source: "history",
+            ts: turn.ts,
+          });
+          lastHistoryBySession.set(sessionId, historyKey);
+        }
       } else if (turn.type === "git") {
         metadata.log(sessionId, `Git: ${turn.content.slice(0, 80)}`, { source: "git", tone: "success" });
+        if (lastHistoryBySession.get(sessionId) !== historyKey) {
+          metadata.emitEvent(sessionId, {
+            kind: "notify",
+            message: turn.content.slice(0, 120),
+            source: "git",
+            tone: "success",
+            ts: turn.ts,
+          });
+          lastHistoryBySession.set(sessionId, historyKey);
+        }
       }
     }
   });

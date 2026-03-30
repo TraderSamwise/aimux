@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { getProjectStateDirFor } from "./paths.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
 
 export type TmuxStatusLine = "top" | "bottom";
 
@@ -35,6 +36,11 @@ interface StatuslineData {
         branch?: string;
         pr?: { number?: number; title?: string; url?: string; headRef?: string; baseRef?: string };
         repo?: { owner?: string; name?: string; remote?: string };
+      };
+      derived?: {
+        activity?: AgentActivityState;
+        attention?: AgentAttentionState;
+        unseenCount?: number;
       };
       updatedAt?: string;
     }
@@ -136,17 +142,40 @@ function renderScopedSessionsFromTmux(
     .slice(0, 5)
     .map(({ target, metadata }) => {
       const session = sessionMap.get(metadata.sessionId);
+      const derived = data.metadata?.[metadata.sessionId]?.derived;
       const status = session?.status ?? "unknown";
       const icon = status === "idle" ? "·" : status === "running" ? "●" : status === "waiting" ? "◌" : "○";
       const identity = trim(
         sessionIdentity(session ?? { id: metadata.sessionId, tool: metadata.command, label: metadata.label }),
-        18,
+        16,
       );
       const isCurrent = currentWindow
         ? target.windowName === currentWindow || metadata.label === currentWindow
         : session?.active;
-      return isCurrent ? `${icon}${identity}*` : `${icon}${identity}`;
+      const badge = renderDerivedBadge(derived);
+      const rendered = `${icon}${identity}${badge ? ` ${badge}` : ""}`;
+      return isCurrent ? `${rendered}*` : rendered;
     });
+}
+
+function renderDerivedBadge(
+  derived:
+    | {
+        activity?: AgentActivityState;
+        attention?: AgentAttentionState;
+        unseenCount?: number;
+      }
+    | undefined,
+): string | null {
+  if (!derived) return null;
+  if (derived.attention === "error") return "✗";
+  if (derived.attention === "needs_input") return "?";
+  if (derived.attention === "blocked") return "!";
+  if ((derived.unseenCount ?? 0) > 0) return String(Math.min(derived.unseenCount ?? 0, 9));
+  if (derived.activity === "done") return "✓";
+  if (derived.activity === "running") return "↻";
+  if (derived.activity === "waiting") return "…";
+  return null;
 }
 
 function getCurrentSessionId(
@@ -218,6 +247,13 @@ function renderActiveMetadata(
   if (!activeSessionId) return null;
   const metadata = data.metadata?.[activeSessionId];
   if (!metadata) return null;
+  if (metadata.derived?.attention === "error") return "error";
+  if (metadata.derived?.attention === "needs_input") return "needs input";
+  if (metadata.derived?.attention === "blocked") return "blocked";
+  if (metadata.derived?.activity === "running") return "running";
+  if (metadata.derived?.activity === "waiting") return "waiting";
+  if (metadata.derived?.activity === "done") return "done";
+  if ((metadata.derived?.unseenCount ?? 0) > 0) return `unseen ${metadata.derived?.unseenCount}`;
   if (metadata.status?.text) return trim(metadata.status.text, 28);
   if (metadata.progress && metadata.progress.total > 0) {
     const pct = Math.max(0, Math.min(100, Math.round((metadata.progress.current / metadata.progress.total) * 100)));

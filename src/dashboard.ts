@@ -1,4 +1,5 @@
 import type { SessionStatus } from "./status-detector.js";
+import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 
 export type DashboardSessionStatus = SessionStatus;
 
@@ -33,6 +34,10 @@ export interface DashboardSession {
   prNumber?: number;
   prTitle?: string;
   prUrl?: string;
+  activity?: AgentActivityState;
+  attention?: AgentAttentionState;
+  unseenCount?: number;
+  lastEvent?: AgentEvent;
 }
 
 export interface WorktreeGroup {
@@ -63,6 +68,18 @@ const STATUS_LABELS: Record<DashboardSessionStatus, string> = {
   exited: "exited",
   offline: "offline",
 };
+
+function derivedStatusLabel(session: DashboardSession): string {
+  if (session.attention === "error") return "error";
+  if (session.attention === "needs_input") return "needs input";
+  if (session.attention === "blocked") return "blocked";
+  if (session.activity === "done") return "done";
+  if (session.activity === "waiting") return "waiting";
+  if (session.activity === "running") return "working";
+  if (session.activity === "interrupted") return "interrupted";
+  if (session.activity === "error") return "error";
+  return STATUS_LABELS[session.status];
+}
 
 export class Dashboard {
   private sessions: DashboardSession[] = [];
@@ -189,6 +206,15 @@ export class Dashboard {
     const isSelected = this.navLevel === "sessions" && session.id === this.selectedSessionId;
     const marker = isSelected ? " \x1b[33m◀\x1b[0m" : "";
     const taskBadge = session.taskDescription ? ` \x1b[2;35m⧫ ${truncate(session.taskDescription, 40)}\x1b[0m` : "";
+    const attentionBadge =
+      session.attention === "error"
+        ? " \x1b[31m✗\x1b[0m"
+        : session.attention === "needs_input"
+          ? " \x1b[33m?\x1b[0m"
+          : session.attention === "blocked"
+            ? " \x1b[35m!\x1b[0m"
+            : "";
+    const unseenBadge = session.unseenCount && session.unseenCount > 0 ? ` \x1b[36m${session.unseenCount}\x1b[0m` : "";
 
     if (session.remoteInstancePid || session.isServer) {
       // Remote session — different icon and dimmed ownership label
@@ -199,16 +225,16 @@ export class Dashboard {
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText} — ${ownerTag}${marker}`;
+      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${attentionBadge}${unseenBadge} — ${ownerTag}${marker}`;
     }
 
     const icon = STATUS_ICONS[session.status];
-    const statusLabel = STATUS_LABELS[session.status];
+    const statusLabel = derivedStatusLabel(session);
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const serverTag = session.isServer && !session.remoteInstancePid ? " \x1b[32m⬡\x1b[0m" : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${identity}${roleTag}${serverTag} — ${statusLabel}${headlineText}${taskBadge}${marker}`;
+    return `${indent}${icon} [${num}] ${identity}${roleTag}${serverTag} — ${statusLabel}${headlineText}${taskBadge}${attentionBadge}${unseenBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {
@@ -362,6 +388,18 @@ export class Dashboard {
     }
     if (selected.repoRemote) {
       lines.push(...wrapKeyValue("Remote", selected.repoRemote, width));
+    }
+    if (selected.activity) {
+      lines.push(...wrapKeyValue("Activity", selected.activity, width));
+    }
+    if (selected.attention && selected.attention !== "normal") {
+      lines.push(...wrapKeyValue("Attention", selected.attention, width));
+    }
+    if (selected.unseenCount && selected.unseenCount > 0) {
+      lines.push(...wrapKeyValue("Unseen", String(selected.unseenCount), width));
+    }
+    if (selected.lastEvent?.message) {
+      lines.push(...wrapKeyValue("Last", selected.lastEvent.message, width));
     }
     while (lines.length < height) lines.push("");
     return lines.slice(0, height);

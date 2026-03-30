@@ -29,6 +29,14 @@ export interface DashboardSessionRegistryOptions {
         pr?: { number?: number; title?: string; url?: string };
       }
     | undefined;
+  getSessionDerived: (sessionId: string) =>
+    | {
+        activity?: import("./agent-events.js").AgentActivityState;
+        attention?: import("./agent-events.js").AgentAttentionState;
+        unseenCount?: number;
+        lastEvent?: import("./agent-events.js").AgentEvent;
+      }
+    | undefined;
 }
 
 export function getRemoteOwnedSessionKeys(remoteInstances: InstanceInfo[]): Set<string> {
@@ -65,6 +73,10 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
     prNumber: options.getSessionContext(session.id)?.pr?.number,
     prTitle: options.getSessionContext(session.id)?.pr?.title,
     prUrl: options.getSessionContext(session.id)?.pr?.url,
+    activity: options.getSessionDerived(session.id)?.activity,
+    attention: options.getSessionDerived(session.id)?.attention,
+    unseenCount: options.getSessionDerived(session.id)?.unseenCount,
+    lastEvent: options.getSessionDerived(session.id)?.lastEvent,
   }));
 
   for (const inst of options.remoteInstances) {
@@ -92,6 +104,10 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
         prNumber: options.getSessionContext(session.id)?.pr?.number,
         prTitle: options.getSessionContext(session.id)?.pr?.title,
         prUrl: options.getSessionContext(session.id)?.pr?.url,
+        activity: options.getSessionDerived(session.id)?.activity,
+        attention: options.getSessionDerived(session.id)?.attention,
+        unseenCount: options.getSessionDerived(session.id)?.unseenCount,
+        lastEvent: options.getSessionDerived(session.id)?.lastEvent,
       });
     }
   }
@@ -126,6 +142,10 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       prNumber: options.getSessionContext(offline.id)?.pr?.number,
       prTitle: options.getSessionContext(offline.id)?.pr?.title,
       prUrl: options.getSessionContext(offline.id)?.pr?.url,
+      activity: options.getSessionDerived(offline.id)?.activity,
+      attention: options.getSessionDerived(offline.id)?.attention,
+      unseenCount: options.getSessionDerived(offline.id)?.unseenCount,
+      lastEvent: options.getSessionDerived(offline.id)?.lastEvent,
     });
   }
 

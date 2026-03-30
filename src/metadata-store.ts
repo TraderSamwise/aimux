@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getProjectStateDir, getProjectStateDirFor } from "./paths.js";
+import type { AgentActivityState, AgentAttentionState, AgentEvent, SessionDerivedState } from "./agent-events.js";
 
 export type MetadataTone = "neutral" | "info" | "success" | "warn" | "error";
 
@@ -45,11 +46,19 @@ export interface SessionContextMetadata {
   repo?: SessionRepoMetadata;
 }
 
+export interface SessionDerivedMetadata extends SessionDerivedState {
+  activity?: AgentActivityState;
+  attention?: AgentAttentionState;
+  lastEvent?: AgentEvent;
+  events?: AgentEvent[];
+}
+
 export interface SessionMetadata {
   status?: SessionStatusMetadata;
   progress?: SessionProgressMetadata;
   logs?: SessionLogEntry[];
   context?: SessionContextMetadata;
+  derived?: SessionDerivedMetadata;
   updatedAt: string;
 }
 

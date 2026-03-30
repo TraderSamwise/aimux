@@ -27,6 +27,8 @@ import {
   type MetadataTone,
   type SessionContextMetadata,
 } from "./metadata-store.js";
+import { AgentTracker } from "./agent-tracker.js";
+import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
 
 const program = new Command();
 
@@ -424,6 +426,7 @@ program
   });
 
 const metadataCmd = program.command("metadata").description("Push metadata into aimux tmux status integration");
+const metadataTracker = new AgentTracker();
 
 metadataCmd
   .command("endpoint")
@@ -436,6 +439,48 @@ metadataCmd
       process.exit(1);
     }
     console.log(`http://${endpoint.host}:${endpoint.port}`);
+  });
+
+metadataCmd
+  .command("event <session> <kind>")
+  .option("--message <message>", "Event message")
+  .option("--source <source>", "Event source")
+  .option("--tone <tone>", "Event tone")
+  .description("Emit a normalized agent event")
+  .action(
+    async (session: string, kind: AgentEventKind, opts: { message?: string; source?: string; tone?: MetadataTone }) => {
+      await initPaths();
+      metadataTracker.emit(session, {
+        kind,
+        message: opts.message,
+        source: opts.source,
+        tone: opts.tone,
+      });
+    },
+  );
+
+metadataCmd
+  .command("mark-seen <session>")
+  .description("Mark a session's unseen activity as seen")
+  .action(async (session: string) => {
+    await initPaths();
+    metadataTracker.markSeen(session);
+  });
+
+metadataCmd
+  .command("set-activity <session> <activity>")
+  .description("Set derived activity state for a session")
+  .action(async (session: string, activity: AgentActivityState) => {
+    await initPaths();
+    metadataTracker.setActivity(session, activity);
+  });
+
+metadataCmd
+  .command("set-attention <session> <attention>")
+  .description("Set derived attention state for a session")
+  .action(async (session: string, attention: AgentAttentionState) => {
+    await initPaths();
+    metadataTracker.setAttention(session, attention);
   });
 
 metadataCmd

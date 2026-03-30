@@ -11,6 +11,8 @@ import {
   type SessionContextMetadata,
 } from "./metadata-store.js";
 import { notifyComplete, notifyPrompt } from "./notify.js";
+import { AgentTracker } from "./agent-tracker.js";
+import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -39,6 +41,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 export class MetadataServer {
   private server: Server | null = null;
   private port = 0;
+  private tracker = new AgentTracker();
 
   constructor(private readonly options: MetadataServerOptions = {}) {}
 
@@ -154,6 +157,38 @@ export class MetadataServer {
           ...current,
           logs: [...(current.logs ?? []).slice(-19), entry],
         }));
+        this.options.onChange?.();
+        send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/event") {
+        const body = (await readJson(req)) as { session: string; event: AgentEvent };
+        this.tracker.emit(body.session, body.event);
+        this.options.onChange?.();
+        send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/mark-seen") {
+        const body = (await readJson(req)) as { session: string };
+        this.tracker.markSeen(body.session);
+        this.options.onChange?.();
+        send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/set-activity") {
+        const body = (await readJson(req)) as { session: string; activity: AgentActivityState };
+        this.tracker.setActivity(body.session, body.activity);
+        this.options.onChange?.();
+        send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/set-attention") {
+        const body = (await readJson(req)) as { session: string; attention: AgentAttentionState };
+        this.tracker.setAttention(body.session, body.attention);
         this.options.onChange?.();
         send(res, 200, { ok: true });
         return;

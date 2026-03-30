@@ -76,6 +76,11 @@ describe("renderTmuxStatusline", () => {
               branch: "feat/mobile-auth",
               pr: { number: 123 },
             },
+            derived: {
+              activity: "running",
+              attention: "needs_input",
+              unseenCount: 2,
+            },
           },
         },
         tasks: { pending: 2, assigned: 1 },
@@ -93,7 +98,7 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("feat/mobile-auth");
     expect(rendered).toContain("PR #123");
     expect(rendered).toContain("tasks 2/1");
-    expect(rendered).toContain("Review created: auth");
+    expect(rendered).toContain("needs input");
   });
 
   it("renders bottom-line dashboard-specific screens on the dashboard window", () => {
@@ -128,6 +133,7 @@ describe("renderTmuxStatusline", () => {
           a: {
             context: { worktreeName: "very-long-worktree-name", branch: "very-long-branch-name", pr: { number: 123 } },
             status: { text: "Working through a long task description" },
+            derived: { activity: "running" },
           },
         },
         flash: "Review created: auth",
@@ -192,6 +198,10 @@ describe("renderTmuxStatusline", () => {
           },
           { id: "b", tool: "claude", status: "idle", windowName: "claude", worktreePath: repoRoot },
         ],
+        metadata: {
+          a: { derived: { attention: "needs_input", unseenCount: 3 } },
+          b: { derived: { activity: "done" } },
+        },
       }),
     );
     const rendered = renderTmuxStatusline(repoRoot, "bottom", {
@@ -200,8 +210,8 @@ describe("renderTmuxStatusline", () => {
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(rendered).toContain("●coder(coder)*");
-    expect(rendered).toContain("·claude");
+    expect(rendered).toContain("●coder(coder) ?");
+    expect(rendered).toContain("·claude ✓");
     expect(rendered).toContain("Fix auth flow");
   });
 });
