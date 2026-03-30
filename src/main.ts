@@ -22,6 +22,7 @@ import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import { renderTmuxStatusline, type TmuxStatusLine } from "./tmux-statusline.js";
 import {
   loadMetadataEndpoint,
+  loadMetadataState,
   updateSessionMetadata,
   clearSessionLogs,
   type MetadataTone,
@@ -384,19 +385,45 @@ program
   .option("--current-path <path>", "Current pane path", process.cwd())
   .action(async (action: string, opts: { projectRoot: string; currentWindow?: string; currentPath: string }) => {
     await initPaths(opts.projectRoot);
-    if (opts.currentWindow === "dashboard") return;
     const tmux = new TmuxRuntimeManager();
     const tmuxSession = tmux.getProjectSession(opts.projectRoot);
     const managed = tmux
       .listManagedWindows(tmuxSession.sessionName)
       .filter(({ target, metadata }) => {
         if (target.windowName === "dashboard" || target.windowIndex === 0) return false;
+        if (action === "attention") return true;
+        if (opts.currentWindow === "dashboard") return false;
         const worktreePath = metadata.worktreePath || opts.projectRoot;
         return worktreePath === opts.currentPath;
       })
       .sort((a, b) => a.target.windowIndex - b.target.windowIndex);
 
     if (managed.length === 0) return;
+    const metadataState = loadMetadataState(opts.projectRoot);
+
+    const urgency = (sessionId: string): number => {
+      const derived = metadataState.sessions[sessionId]?.derived;
+      if (!derived) return 0;
+      if (derived.attention === "error") return 5;
+      if (derived.attention === "needs_input") return 4;
+      if (derived.attention === "blocked") return 3;
+      if ((derived.unseenCount ?? 0) > 0) return 2;
+      if (derived.activity === "done") return 1;
+      return 0;
+    };
+
+    if (action === "attention") {
+      const candidates = managed
+        .map((entry) => ({ ...entry, urgency: urgency(entry.metadata.sessionId) }))
+        .filter((entry) => entry.urgency > 0)
+        .sort((a, b) => b.urgency - a.urgency || a.target.windowIndex - b.target.windowIndex);
+      if (candidates.length === 0) return;
+      const nonCurrent = candidates.find(
+        ({ target, metadata }) => target.windowName !== opts.currentWindow && metadata.label !== opts.currentWindow,
+      );
+      tmux.selectWindow((nonCurrent ?? candidates[0])!.target);
+      return;
+    }
 
     const currentIndex = managed.findIndex(({ target, metadata }) => {
       return target.windowName === opts.currentWindow || metadata.label === opts.currentWindow;

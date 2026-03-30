@@ -79,6 +79,9 @@ describe("TmuxRuntimeManager", () => {
           args: ["unbind-key", "-T", "prefix", "d"],
         }),
         expect.objectContaining({
+          args: ["unbind-key", "-T", "prefix", "u"],
+        }),
+        expect.objectContaining({
           args: ["bind-key", "-T", "prefix", "C-a", "send-prefix"],
         }),
         expect.objectContaining({
@@ -89,6 +92,17 @@ describe("TmuxRuntimeManager", () => {
         }),
         expect.objectContaining({
           args: ["bind-key", "-T", "prefix", "p", "run-shell", "-b", expect.stringContaining("aimux tmux-switch prev")],
+        }),
+        expect.objectContaining({
+          args: [
+            "bind-key",
+            "-T",
+            "prefix",
+            "u",
+            "run-shell",
+            "-b",
+            expect.stringContaining("aimux tmux-switch attention"),
+          ],
         }),
         expect.objectContaining({
           args: [

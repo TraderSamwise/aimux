@@ -1145,6 +1145,9 @@ export class Multiplexer {
       case "a":
         this.showMetaDashboard();
         return;
+      case "u":
+        void this.activateNextAttentionEntry();
+        return;
       case "x": {
         // At worktree level, [x] removes the focused worktree
         if (hasWorktrees && this.dashboardLevel === "worktrees" && this.focusedWorktreePath) {
@@ -1374,6 +1377,31 @@ export class Multiplexer {
     if (ptyIdx >= 0) {
       this.focusSession(ptyIdx);
     }
+  }
+
+  private attentionScore(entry: DashboardSession): number {
+    if (entry.attention === "error") return 5;
+    if (entry.attention === "needs_input") return 4;
+    if (entry.attention === "blocked") return 3;
+    if ((entry.unseenCount ?? 0) > 0) return 2;
+    if (entry.activity === "done") return 1;
+    return 0;
+  }
+
+  private async activateNextAttentionEntry(): Promise<void> {
+    const ordered = this.getDashboardSessionsInVisualOrder()
+      .map((entry, index) => ({ entry, index, score: this.attentionScore(entry) }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score || a.index - b.index);
+    if (ordered.length === 0) return;
+
+    const currentSessionId =
+      this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
+        ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
+        : this.getDashboardSessions()[this.activeIndex]?.id;
+    const currentIdx = currentSessionId ? ordered.findIndex((entry) => entry.entry.id === currentSessionId) : -1;
+    const next = ordered[currentIdx >= 0 ? (currentIdx + 1) % ordered.length : 0]!;
+    await this.activateDashboardEntryByNumber(next.index);
   }
 
   /** Get sessions belonging to the focused worktree (includes local, remote, offline) */

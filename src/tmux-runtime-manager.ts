@@ -469,6 +469,7 @@ export class TmuxRuntimeManager {
     this.exec(["unbind-key", "-T", "prefix", "n"]);
     this.exec(["unbind-key", "-T", "prefix", "p"]);
     this.exec(["unbind-key", "-T", "prefix", "d"]);
+    this.exec(["unbind-key", "-T", "prefix", "u"]);
     this.exec(["bind-key", "-T", "prefix", "C-a", "send-prefix"]);
     this.exec([
       "bind-key",
@@ -496,6 +497,15 @@ export class TmuxRuntimeManager {
       "run-shell",
       "-b",
       `cd '#{pane_current_path}' && aimux tmux-switch menu --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+    ]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "prefix",
+      "u",
+      "run-shell",
+      "-b",
+      `cd '#{pane_current_path}' && aimux tmux-switch attention --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
