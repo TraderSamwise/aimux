@@ -82,4 +82,31 @@ describe("TerminalQueryBroker", () => {
     );
     expect(classifyTerminalQuery("\x1b[5n")).toBeUndefined();
   });
+
+  it("emits structured observations for builtin, fallback, and unsupported queries", async () => {
+    const observations: Array<{ strategy: string; resolved: boolean; queryId?: string }> = [];
+    const broker = new TerminalQueryBroker(
+      [],
+      {
+        handleUnknownQuery: async (_context, query) =>
+          query === "\x1b]4;1;?\x1b\\" ? "\x1b]4;1;rgb:ffff/0000/0000\x1b\\" : null,
+      },
+      {
+        onQuery: (observation) =>
+          observations.push({
+            strategy: observation.strategy,
+            resolved: observation.resolved,
+            queryId: observation.queryId,
+          }),
+      },
+    );
+
+    await broker.handleOutput({ sessionId: "s1", cursor: { row: 1, col: 1 } }, "\x1b[6n\x1b]4;1;?\x1b\\\x1b[5n");
+
+    expect(observations).toEqual([
+      { strategy: "builtin", resolved: true, queryId: "cursor-position-report" },
+      { strategy: "unsupported", resolved: false, queryId: undefined },
+      { strategy: "fallback", resolved: true, queryId: "palette-color-query" },
+    ]);
+  });
 });

@@ -200,13 +200,15 @@ export class Multiplexer {
 
   constructor() {
     this.terminalHost = new TerminalHost();
+    this.sessionOutputPipeline = new SessionOutputPipeline();
     this.terminalQueryResponder = new TerminalQueryResponder(
       undefined,
       new HostTerminalQueryFallback(this.terminalHost, {
         canForward: (context) => this.canForwardTerminalQuery(context.sessionId),
       }),
+      this.sessionOutputPipeline.getQueryObserver(),
     );
-    this.sessionOutputPipeline = new SessionOutputPipeline(this.terminalQueryResponder);
+    this.sessionOutputPipeline.setTerminalQueryResponder(this.terminalQueryResponder);
     this.footerController = new FooterController();
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();

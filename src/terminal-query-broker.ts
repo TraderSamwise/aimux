@@ -16,6 +16,18 @@ export interface TerminalQueryFallback {
   handleUnknownQuery(context: TerminalQueryContext, query: string): Promise<string | null> | string | null;
 }
 
+export interface TerminalQueryObservation {
+  sessionId: string;
+  query: string;
+  queryId?: string;
+  strategy: "builtin" | "fallback" | "unsupported";
+  resolved: boolean;
+}
+
+export interface TerminalQueryObserver {
+  onQuery(observation: TerminalQueryObservation): void;
+}
+
 class KittyKeyboardHandler implements TerminalQueryHandler {
   private sessionKeyboardFlags = new Map<string, number>();
 
@@ -94,15 +106,29 @@ export class TerminalQueryBroker {
   constructor(
     private readonly handlers: TerminalQueryHandler[],
     private readonly fallback?: TerminalQueryFallback,
+    private readonly observer?: TerminalQueryObserver,
   ) {}
 
   async handleOutput(context: TerminalQueryContext, data: string): Promise<string | null> {
     const replies: string[] = [];
+    const queries = findTerminalQueries(data);
+    for (const query of queries) {
+      const support = classifyTerminalQuery(query);
+      if (support?.strategy === "builtin") {
+        this.observer?.onQuery({
+          sessionId: context.sessionId,
+          query,
+          queryId: support.id,
+          strategy: "builtin",
+          resolved: true,
+        });
+      }
+    }
     for (const handler of this.handlers) {
       replies.push(...handler.handle(context, data));
     }
     if (this.fallback) {
-      for (const query of findUnhandledTerminalQueries(data)) {
+      for (const query of findUnhandledTerminalQueries(queries)) {
         const support = classifyTerminalQuery(query);
         const reply = await this.fallback.handleUnknownQuery(context, query);
         if (reply) {
@@ -110,9 +136,23 @@ export class TerminalQueryBroker {
             `terminal-query resolved: session=${context.sessionId} strategy=${support?.strategy ?? "fallback"} id=${support?.id ?? "unknown"} query=${JSON.stringify(query)}`,
             "session",
           );
+          this.observer?.onQuery({
+            sessionId: context.sessionId,
+            query,
+            queryId: support?.id,
+            strategy: support?.strategy ?? "fallback",
+            resolved: true,
+          });
           replies.push(reply);
         } else {
           debug(`terminal-query unsupported: session=${context.sessionId} query=${JSON.stringify(query)}`, "session");
+          this.observer?.onQuery({
+            sessionId: context.sessionId,
+            query,
+            queryId: support?.id,
+            strategy: "unsupported",
+            resolved: false,
+          });
         }
       }
     }
@@ -126,7 +166,10 @@ export class TerminalQueryBroker {
   }
 }
 
-export function createDefaultTerminalQueryBroker(fallback?: TerminalQueryFallback): TerminalQueryBroker {
+export function createDefaultTerminalQueryBroker(
+  fallback?: TerminalQueryFallback,
+  observer?: TerminalQueryObserver,
+): TerminalQueryBroker {
   return new TerminalQueryBroker(
     [
       new KittyKeyboardHandler(),
@@ -135,10 +178,11 @@ export function createDefaultTerminalQueryBroker(fallback?: TerminalQueryFallbac
       new OscColorQueryHandler(),
     ],
     fallback,
+    observer,
   );
 }
 
-function findUnhandledTerminalQueries(data: string): string[] {
+function findTerminalQueries(data: string): string[] {
   const queries: string[] = [];
   const patterns = [
     /\x1b\[[0-9;?]*n/g,
@@ -151,7 +195,11 @@ function findUnhandledTerminalQueries(data: string): string[] {
       queries.push(match[0]);
     }
   }
-  return Array.from(new Set(queries)).filter(
+  return Array.from(new Set(queries));
+}
+
+function findUnhandledTerminalQueries(queries: string[]): string[] {
+  return queries.filter(
     (query) =>
       query !== "\x1b[6n" &&
       query !== "\x1b[c" &&
