@@ -26,6 +26,7 @@ import {
   clearSessionLogs,
   type MetadataTone,
   type SessionContextMetadata,
+  type SessionServiceMetadata,
 } from "./metadata-store.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
@@ -558,6 +559,30 @@ metadataCmd
       }));
     },
   );
+
+metadataCmd
+  .command("set-services <session>")
+  .requiredOption("--url <url...>", "One or more service URLs")
+  .option("--label <label>", "Shared label for the services")
+  .description("Set detected session services/ports")
+  .action(async (session: string, opts: { url: string[]; label?: string }) => {
+    await initPaths();
+    const services: SessionServiceMetadata[] = (opts.url ?? []).map((url) => {
+      const match = url.match(/:(\d+)(?:\/|$)/);
+      return {
+        label: opts.label,
+        url,
+        port: match ? Number(match[1]) : undefined,
+      };
+    });
+    updateSessionMetadata(session, (existing) => ({
+      ...existing,
+      derived: {
+        ...(existing.derived ?? {}),
+        services,
+      },
+    }));
+  });
 
 metadataCmd
   .command("log <session> <message>")

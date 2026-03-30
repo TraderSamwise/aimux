@@ -35,6 +35,7 @@ export interface DashboardSessionRegistryOptions {
         attention?: import("./agent-events.js").AgentAttentionState;
         unseenCount?: number;
         lastEvent?: import("./agent-events.js").AgentEvent;
+        services?: import("./metadata-store.js").SessionServiceMetadata[];
       }
     | undefined;
 }
@@ -77,6 +78,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
     attention: options.getSessionDerived(session.id)?.attention,
     unseenCount: options.getSessionDerived(session.id)?.unseenCount,
     lastEvent: options.getSessionDerived(session.id)?.lastEvent,
+    services: options.getSessionDerived(session.id)?.services,
   }));
 
   for (const inst of options.remoteInstances) {
@@ -108,6 +110,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
         attention: options.getSessionDerived(session.id)?.attention,
         unseenCount: options.getSessionDerived(session.id)?.unseenCount,
         lastEvent: options.getSessionDerived(session.id)?.lastEvent,
+        services: options.getSessionDerived(session.id)?.services,
       });
     }
   }
@@ -146,6 +149,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       attention: options.getSessionDerived(offline.id)?.attention,
       unseenCount: options.getSessionDerived(offline.id)?.unseenCount,
       lastEvent: options.getSessionDerived(offline.id)?.lastEvent,
+      services: options.getSessionDerived(offline.id)?.services,
     });
   }
 

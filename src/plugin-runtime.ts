@@ -8,6 +8,7 @@ import {
   type MetadataTone,
   type MetadataApiEndpoint,
   type SessionContextMetadata,
+  type SessionServiceMetadata,
 } from "./metadata-store.js";
 import { debug } from "./debug.js";
 import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
@@ -21,6 +22,7 @@ export interface AimuxMetadataAPI {
   log(session: string, message: string, opts?: { source?: string; tone?: MetadataTone }): void;
   clearLog(session: string): void;
   setContext(session: string, context: SessionContextMetadata): void;
+  setServices(session: string, services: SessionServiceMetadata[]): void;
   emitEvent(session: string, event: AgentEvent): void;
   markSeen(session: string): void;
   setActivity(session: string, activity: AgentActivityState): void;
@@ -93,6 +95,15 @@ export class PluginRuntime {
             context: {
               ...(existing.context ?? {}),
               ...context,
+            },
+          }));
+        },
+        setServices: (session, services) => {
+          updateSessionMetadata(session, (existing) => ({
+            ...existing,
+            derived: {
+              ...(existing.derived ?? {}),
+              services,
             },
           }));
         },

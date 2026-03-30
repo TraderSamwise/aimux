@@ -1,5 +1,6 @@
 import type { SessionStatus } from "./status-detector.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
+import type { SessionServiceMetadata } from "./metadata-store.js";
 
 export type DashboardSessionStatus = SessionStatus;
 
@@ -38,6 +39,7 @@ export interface DashboardSession {
   attention?: AgentAttentionState;
   unseenCount?: number;
   lastEvent?: AgentEvent;
+  services?: SessionServiceMetadata[];
 }
 
 export interface WorktreeGroup {
@@ -400,6 +402,9 @@ export class Dashboard {
     }
     if (selected.lastEvent?.message) {
       lines.push(...wrapKeyValue("Last", selected.lastEvent.message, width));
+    }
+    if ((selected.services?.length ?? 0) > 0) {
+      lines.push(...wrapKeyValue("Services", selected.services!.map((s) => s.url ?? `:${s.port}`).join(", "), width));
     }
     while (lines.length < height) lines.push("");
     return lines.slice(0, height);

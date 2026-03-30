@@ -37,6 +37,7 @@ import { scanAllProjects } from "./project-scanner.js";
 import { TerminalHost } from "./terminal-host.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "./session-runtime.js";
 import { buildDashboardSessions, orderDashboardSessionsByVisualWorktree } from "./dashboard-session-registry.js";
+import { AgentTracker } from "./agent-tracker.js";
 import { InstanceDirectory } from "./instance-directory.js";
 import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
@@ -153,6 +154,7 @@ export class Multiplexer {
   private dashboardWorktreeSessions: DashboardSession[] = [];
   private statusInterval: ReturnType<typeof setInterval> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private agentTracker = new AgentTracker();
   private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher();
   private taskDispatcher: TaskDispatcher | null = null;
@@ -1004,6 +1006,7 @@ export class Multiplexer {
     // Update MRU: move focused session to front
     const sid = this.sessions[index].id;
     this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
+    this.agentTracker.markSeen(sid);
     const target = this.sessionTmuxTargets.get(sid);
     if (target) {
       this.saveState();
@@ -1388,6 +1391,7 @@ export class Multiplexer {
       backendSessionId: entry.backendSessionId,
     });
     if (!match) return false;
+    this.agentTracker.markSeen(entry.id);
     this.tmuxRuntimeManager.openTarget(match.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
     return true;
   }
@@ -3212,6 +3216,7 @@ export class Multiplexer {
       getSessionTaskDescription: (sessionId) => this.taskDispatcher?.getSessionTask(sessionId),
       getSessionRole: (sessionId) => this.sessionRoles.get(sessionId),
       getSessionContext: (sessionId) => metadata[sessionId]?.context,
+      getSessionDerived: (sessionId) => metadata[sessionId]?.derived,
     });
   }
 

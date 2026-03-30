@@ -46,11 +46,18 @@ export interface SessionContextMetadata {
   repo?: SessionRepoMetadata;
 }
 
+export interface SessionServiceMetadata {
+  label?: string;
+  url?: string;
+  port?: number;
+}
+
 export interface SessionDerivedMetadata extends SessionDerivedState {
   activity?: AgentActivityState;
   attention?: AgentAttentionState;
   lastEvent?: AgentEvent;
   events?: AgentEvent[];
+  services?: SessionServiceMetadata[];
 }
 
 export interface SessionMetadata {

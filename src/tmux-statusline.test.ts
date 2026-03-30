@@ -80,6 +80,7 @@ describe("renderTmuxStatusline", () => {
               activity: "running",
               attention: "needs_input",
               unseenCount: 2,
+              services: [{ url: "http://localhost:3000", port: 3000 }],
             },
           },
         },
@@ -97,6 +98,7 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("mobile");
     expect(rendered).toContain("feat/mobile-auth");
     expect(rendered).toContain("PR #123");
+    expect(rendered).toContain(":3000");
     expect(rendered).toContain("tasks 2/1");
     expect(rendered).toContain("needs input");
   });

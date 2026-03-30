@@ -41,6 +41,7 @@ interface StatuslineData {
         activity?: AgentActivityState;
         attention?: AgentAttentionState;
         unseenCount?: number;
+        services?: Array<{ label?: string; url?: string; port?: number }>;
       };
       updatedAt?: string;
     }
@@ -204,6 +205,7 @@ function renderActiveContext(
   const activeSessionId = getCurrentSessionId(data, currentSession, currentWindow);
   if (!activeSessionId) return null;
   const context = data.metadata?.[activeSessionId]?.context;
+  const services = data.metadata?.[activeSessionId]?.derived?.services ?? [];
   const liveContext = currentPathContext(currentPath);
   const worktree = liveContext?.worktreeName
     ? trim(liveContext.worktreeName, 16)
@@ -212,10 +214,18 @@ function renderActiveContext(
       : null;
   const branch = liveContext?.branch ? trim(liveContext.branch, 18) : context?.branch ? trim(context.branch, 18) : null;
   const pr = context?.pr?.number ? `PR #${context.pr.number}` : null;
-  if (!worktree && !branch && !pr) return null;
-  if (worktree && branch && pr) return `${worktree}@${branch}  ·  ${pr}`;
-  if (worktree && branch) return `${worktree}@${branch}`;
-  return [worktree, branch, pr].filter((segment): segment is string => Boolean(segment)).join("  ·  ");
+  const service =
+    services.length > 0
+      ? services[0]?.port
+        ? `:${services[0].port}`
+        : services[0]?.url
+          ? trim(services[0].url.replace(/^https?:\/\//, ""), 18)
+          : null
+      : null;
+  if (!worktree && !branch && !pr && !service) return null;
+  if (worktree && branch && pr) return [`${worktree}@${branch}`, pr, service].filter(Boolean).join("  ·  ");
+  if (worktree && branch) return [`${worktree}@${branch}`, service].filter(Boolean).join("  ·  ");
+  return [worktree, branch, pr, service].filter((segment): segment is string => Boolean(segment)).join("  ·  ");
 }
 
 function renderTasks(data: StatuslineData): string | null {

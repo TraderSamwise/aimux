@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { AgentObservation, AgentWatcherContext } from "./agent-watcher.js";
 import type { AimuxPluginInstance } from "./plugin-runtime.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import type { SessionServiceMetadata } from "./metadata-store.js";
 
 interface PaneSnapshot {
   fingerprint: string;
@@ -164,6 +165,17 @@ function deriveObservation(
   return { snapshot: next };
 }
 
+export function extractLocalServices(text: string): SessionServiceMetadata[] {
+  const services = new Map<string, SessionServiceMetadata>();
+  const urlMatches = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+(?:[^\s)]*)?/g) ?? [];
+  for (const url of urlMatches) {
+    const portMatch = url.match(/:(\d+)(?:\/|$)/);
+    const port = portMatch ? Number(portMatch[1]) : undefined;
+    services.set(url, { url, port });
+  }
+  return Array.from(services.values()).slice(0, 3);
+}
+
 export function createToolOutputWatcher(context: AgentWatcherContext): AimuxPluginInstance {
   const snapshots = new Map<string, PaneSnapshot>();
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -186,6 +198,7 @@ export function createToolOutputWatcher(context: AgentWatcherContext): AimuxPlug
       } catch {
         continue;
       }
+      context.api.metadata.setServices(metadata.sessionId, extractLocalServices(text));
       const previous = snapshots.get(metadata.sessionId);
       const { snapshot, observation } = deriveObservation(metadata.sessionId, metadata.command, text, previous);
       snapshots.set(metadata.sessionId, snapshot);

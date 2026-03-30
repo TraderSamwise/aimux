@@ -9,6 +9,7 @@ import {
   loadMetadataState,
   type SessionLogEntry,
   type SessionContextMetadata,
+  type SessionServiceMetadata,
 } from "./metadata-store.js";
 import { notifyComplete, notifyPrompt } from "./notify.js";
 import { AgentTracker } from "./agent-tracker.js";
@@ -133,6 +134,23 @@ export class MetadataServer {
           context: {
             ...(current.context ?? {}),
             ...body.context,
+          },
+        }));
+        this.options.onChange?.();
+        send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/set-services") {
+        const body = (await readJson(req)) as {
+          session: string;
+          services: SessionServiceMetadata[];
+        };
+        updateSessionMetadata(body.session, (current) => ({
+          ...current,
+          derived: {
+            ...(current.derived ?? {}),
+            services: body.services,
           },
         }));
         this.options.onChange?.();
