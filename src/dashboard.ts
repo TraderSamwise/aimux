@@ -68,6 +68,7 @@ export class Dashboard {
   private selectedSessionId: string | undefined = undefined;
   private scrollOffset = 0;
   private serverRunning = false;
+  private runtimeLabel: string | undefined = undefined;
   private mainCheckout: MainCheckoutInfo = { name: "Main Checkout", branch: "" };
   private renderSessionCounter = 0;
 
@@ -78,6 +79,7 @@ export class Dashboard {
     navLevel?: "worktrees" | "sessions",
     selectedSessionId?: string,
     serverRunning?: boolean,
+    runtimeLabel?: string,
     mainCheckout?: MainCheckoutInfo,
   ): void {
     this.sessions = sessions;
@@ -87,6 +89,7 @@ export class Dashboard {
     this.navLevel = navLevel ?? "sessions";
     this.selectedSessionId = selectedSessionId;
     this.serverRunning = serverRunning ?? false;
+    this.runtimeLabel = runtimeLabel;
     this.mainCheckout = mainCheckout ?? { name: "Main Checkout", branch: "" };
   }
 
@@ -101,8 +104,12 @@ export class Dashboard {
     // Header (fixed)
     const header: string[] = [];
     header.push("");
-    const serverTag = this.serverRunning ? "  \x1b[32m● server\x1b[0m" : "";
-    header.push(center(`\x1b[1maimux\x1b[0m — agent multiplexer${serverTag}`, cols));
+    const runtimeTag = this.runtimeLabel
+      ? `  \x1b[32m● ${this.runtimeLabel}\x1b[0m`
+      : this.serverRunning
+        ? "  \x1b[32m● server\x1b[0m"
+        : "";
+    header.push(center(`\x1b[1maimux\x1b[0m — agent multiplexer${runtimeTag}`, cols));
     header.push(center("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
 
@@ -283,19 +290,21 @@ export class Dashboard {
         ? "Enter resume"
         : "Enter focus";
 
+    const tmuxHint = this.runtimeLabel === "tmux" ? "  [d] tmux dashboard" : "";
+
     if (this.sessions.length === 0 && !this.hasWorktrees) {
       return " [c] new  [p] plans  [a] all projects  [g] graveyard  [?] help  [q] quit ";
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ agents  ${enterLabel}  Esc back  [c] new  [m] migrate${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ agents  ${enterLabel}  Esc back  [c] new  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.hasWorktrees) {
-      return " ↑↓ worktrees  Enter step in  [c] new  [w] worktree  [m] migrate  [p] plans  [g] graveyard  [?] help  [q] quit ";
+      return ` ↑↓ worktrees  Enter step in  [c] new  [w] worktree  [m] migrate${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}${rLabel}  [p] plans  [a] all  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [c] new  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [a] all  [g] graveyard  [?] help  [q] quit `;
     }
     return " [c] new  [w] worktree  [p] plans  [a] all projects  [g] graveyard  [?] help  [q] quit ";
   }

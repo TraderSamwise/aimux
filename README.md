@@ -2,12 +2,14 @@
 
 Native CLI agent multiplexer — run multiple AI coding tools side-by-side with their native TUIs intact.
 
-aimux wraps tools like [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), and [Aider](https://github.com/paul-gauthier/aider) in PTY proxies, letting you switch between them like tmux panes while sharing context across agents.
+aimux uses `tmux` as its terminal runtime substrate. Each project gets its own managed tmux session, the aimux dashboard lives in window `0`, and each agent runs in its own tmux window while aimux keeps orchestration, worktrees, plans, and metadata on top.
 
 ## Features
 
-- **Native TUI preservation** — each tool runs in its own PTY, keeping full color, scrollback, and interactivity
-- **Leader key switching** — `Ctrl+A` prefix (like GNU screen/tmux) to switch between agents, open dashboard, create/kill sessions
+- **tmux-backed runtime** — real scrollback, attach/detach, repaint, and terminal compatibility come from tmux instead of a custom multiplexer
+- **Dashboard window** — aimux dashboard lives in tmux window `0` for the current project session
+- **Agent windows** — each agent gets its own tmux window with its native TUI intact
+- **Leader key switching in dashboard** — `Ctrl+A` prefix for dashboard actions like create/kill/switch while you are in the aimux dashboard window
 - **Dashboard view** — see all running, offline, and remote agents at a glance
 - **Multi-instance** — run aimux in multiple terminal tabs; agents from other instances appear inline and can be taken over
 - **Agent lifecycle** — two-step kill (`[x]` stops → offline, `[x]` again → graveyard), with `aimux graveyard resurrect` for recovery
@@ -33,15 +35,15 @@ yarn build
 yarn link
 ```
 
-Requires Node.js >= 18.
+Requires Node.js >= 18 and `tmux` in `PATH`.
 
 ## Quick Start
 
 ```bash
-# Launch dashboard (shows active, offline, and remote agents)
+# Launch dashboard (attaches/switches to the per-project tmux session, window 0)
 aimux
 
-# Launch a specific tool
+# Launch a specific tool in a new tmux agent window
 aimux claude
 aimux codex
 aimux aider
@@ -50,27 +52,34 @@ aimux aider
 aimux --resume
 ```
 
+In tmux mode, `aimux server ...` is not part of the normal runtime path. The per-project tmux session is the long-lived substrate.
+
 ## Hotkeys
 
-All hotkeys use the `Ctrl+A` leader prefix:
+Dashboard hotkeys use the `Ctrl+A` leader prefix:
 
 | Key | Action |
 |---|---|
-| `Ctrl+A d` | Dashboard view |
-| `Ctrl+A n` | Next agent |
-| `Ctrl+A p` | Previous agent |
 | `Ctrl+A c` | Create new agent |
-| `Ctrl+A s` | Quick-switch agents (MRU order, like Cmd+Tab) |
 | `Ctrl+A x` | Stop agent (→ offline) or kill offline agent (→ graveyard) |
-| `Ctrl+A 1-9` | Focus agent by number |
 | `Ctrl+A w` | Create new worktree |
 | `Ctrl+A W` | Worktree management |
 | `Ctrl+A v` | Request code review for active agent |
-| `Ctrl+A Ctrl+A` | Send literal Ctrl+A |
+| `Ctrl+A 1-9` | Focus agent by number from the dashboard |
+| `Ctrl+A d` | Return to dashboard window |
+| `Ctrl+A Ctrl+A` | Send literal Ctrl+A inside the dashboard |
+
+When you are inside an agent window, tmux owns the terminal. Use normal tmux window navigation or run `aimux` again to return to the dashboard window.
+
+Recommended tmux mental model:
+
+- window `0` is the aimux dashboard
+- each agent is its own tmux window
+- aimux metadata, plans, worktrees, and task orchestration sit on top of that session
 
 ## Dashboard
 
-When you run `aimux` without arguments (or press `Ctrl+A d`), you get a dashboard showing all agents across all states:
+When you run `aimux` without arguments, aimux ensures the project tmux session exists and switches you to the dashboard window showing all agents across all states:
 
 ```
          aimux — agent multiplexer
@@ -85,7 +94,7 @@ When you run `aimux` without arguments (or press `Ctrl+A d`), you get a dashboar
  ↑↓ select  Enter focus  [c] new  [x] stop  [q] quit
 ```
 
-- **Enter** on a running agent focuses it
+- **Enter** on a running agent switches to that agent's tmux window
 - **Enter** on an offline agent resumes it
 - **Enter** on a remote agent (other tab) takes it over
 - **`[x]`** on running → stops to offline; **`[x]`** on offline → sends to graveyard
@@ -169,7 +178,7 @@ Tasks can be targeted in three ways:
 ### Dashboard indicators
 
 - Sessions with active tasks show a purple `⧫` badge with the task description
-- The footer shows task counts: `[T:2p/1a]` (2 pending, 1 assigned)
+- The dashboard footer shows task counts: `[T:2p/1a]` (2 pending, 1 assigned)
 - Flash notifications appear when tasks are assigned, completed, or failed
 
 ### Using it
@@ -204,6 +213,12 @@ This creates `.aimux/config.json`. You can also create a global config at `~/.ai
 ```json
 {
   "defaultTool": "claude",
+  "runtime": {
+    "backend": "tmux",
+    "tmux": {
+      "mode": "managed-session"
+    }
+  },
   "footer": {
     "plugins": ["location", "github-pr"],
     "sessionScope": "worktree"
@@ -231,8 +246,18 @@ Built-in footer plugins:
 
 Footer session scope:
 
-- `worktree` — footer agent tabs and focused-mode agent switching only show agents in the current worktree
-- `project` — footer agent tabs and focused-mode agent switching span the whole project
+- `worktree` — legacy `pty` backend focused footer tabs only show agents in the current worktree
+- `project` — legacy `pty` backend focused footer tabs span the whole project
+
+Runtime backend:
+
+- `tmux` — default and recommended; aimux dashboard + agent orchestration on top of a managed per-project tmux session
+- `pty` — legacy custom multiplexer backend kept only for fallback/transition purposes
+
+Tmux mode:
+
+- `managed-session` — default and currently the only supported tmux mode
+- `current-session` — reserved for future advanced use; not supported yet
 
 ### Tool Configuration
 
