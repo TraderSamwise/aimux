@@ -64,7 +64,7 @@ describe("TmuxRuntimeManager", () => {
           args: ["bind-key", "-T", "prefix", "C-a", "send-prefix"],
         }),
         expect.objectContaining({
-          args: ["bind-key", "-T", "prefix", "d", "select-window", "-t", `${session.sessionName}:0`],
+          args: ["bind-key", "-T", "prefix", "d", "select-window", "-t", `${session.sessionName}:dashboard`],
         }),
       ]),
     );
