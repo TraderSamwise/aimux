@@ -45,6 +45,11 @@ export interface TmuxCommandSpec {
   args: string[];
 }
 
+export interface TmuxStatuslineCommandSpec {
+  command: string;
+  args: string[];
+}
+
 export interface TmuxWindowMetadata {
   sessionId: string;
   command: string;
@@ -110,7 +115,11 @@ export class TmuxRuntimeManager {
     }
   }
 
-  ensureProjectSession(projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxSessionRef {
+  ensureProjectSession(
+    projectRoot: string,
+    dashboardCommand?: TmuxCommandSpec,
+    statuslineCommand?: TmuxStatuslineCommandSpec,
+  ): TmuxSessionRef {
     const session = this.getProjectSession(projectRoot);
     if (!this.hasSession(session.sessionName)) {
       const argv =
@@ -142,7 +151,7 @@ export class TmuxRuntimeManager {
             ];
       this.exec(argv, { cwd: projectRoot });
     }
-    this.configureSessionBindings(session.sessionName);
+    this.configureSession(session.sessionName, projectRoot, statuslineCommand);
     return session;
   }
 
@@ -330,6 +339,24 @@ export class TmuxRuntimeManager {
     this.interactiveExec(["attach-session", "-t", sessionName]);
   }
 
+  detachClient(): void {
+    this.interactiveExec(["detach-client"]);
+  }
+
+  switchToLastClientSession(): void {
+    this.interactiveExec(["switch-client", "-l"]);
+  }
+
+  leaveManagedSession(options: { insideTmux?: boolean } = {}): void {
+    if (options.insideTmux) {
+      try {
+        this.switchToLastClientSession();
+        return;
+      } catch {}
+    }
+    this.detachClient();
+  }
+
   switchClient(sessionName: string, windowIndex = 0): void {
     this.interactiveExec(["switch-client", "-t", `${sessionName}:${windowIndex}`]);
   }
@@ -346,7 +373,11 @@ export class TmuxRuntimeManager {
     this.attachSession(target.sessionName);
   }
 
-  private configureSessionBindings(sessionName: string): void {
+  private configureSession(
+    sessionName: string,
+    projectRoot: string,
+    statuslineCommand?: TmuxStatuslineCommandSpec,
+  ): void {
     this.exec(["set-option", "-t", sessionName, "prefix", "C-a"]);
     this.exec(["set-option", "-t", sessionName, "prefix2", "C-b"]);
     this.exec(["bind-key", "-T", "prefix", "C-a", "send-prefix"]);
@@ -359,5 +390,43 @@ export class TmuxRuntimeManager {
       "-b",
       "cd '#{pane_current_path}' && aimux >/dev/null 2>&1",
     ]);
+    this.exec(["set-option", "-t", sessionName, "status", "on"]);
+    this.exec(["set-option", "-t", sessionName, "status-interval", "2"]);
+    this.exec(["set-option", "-t", sessionName, "status-style", "bg=colour236,fg=colour252"]);
+    this.exec(["set-option", "-t", sessionName, "message-style", "bg=colour24,fg=colour255,bold"]);
+    this.exec(["set-option", "-t", sessionName, "message-command-style", "bg=colour24,fg=colour255"]);
+    this.exec(["set-option", "-t", sessionName, "status-left-length", "40"]);
+    this.exec(["set-option", "-t", sessionName, "status-right-length", "160"]);
+    this.exec(["set-option", "-t", sessionName, "window-status-separator", " "]);
+    this.exec(["set-option", "-t", sessionName, "window-status-format", "#[fg=colour245] #I:#W "]);
+    this.exec([
+      "set-option",
+      "-t",
+      sessionName,
+      "window-status-current-format",
+      "#[bg=colour31,fg=colour255,bold] #I:#W #[default]",
+    ]);
+    if (statuslineCommand) {
+      const left = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side left --project-root ${shellQuote(projectRoot)}`;
+      const right = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side right --project-root ${shellQuote(projectRoot)}`;
+      this.exec([
+        "set-option",
+        "-t",
+        sessionName,
+        "status-left",
+        `#[bg=colour238,fg=colour255,bold] #(${left}) #[default]`,
+      ]);
+      this.exec([
+        "set-option",
+        "-t",
+        sessionName,
+        "status-right",
+        `#[fg=colour252]#(${right}) #[fg=colour241]| #[fg=colour248]%H:%M %d-%b-%y `,
+      ]);
+    }
   }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }

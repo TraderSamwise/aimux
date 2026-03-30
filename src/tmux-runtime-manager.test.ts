@@ -47,7 +47,10 @@ describe("TmuxRuntimeManager", () => {
   it("creates a detached project session when missing", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);
-    const session = manager.ensureProjectSession("/repo/mobile");
+    const session = manager.ensureProjectSession("/repo/mobile", undefined, {
+      command: "aimux",
+      args: ["tmux-statusline"],
+    });
     expect(session.sessionName).toMatch(/^aimux-mobile-/);
     expect(exec.calls.some((call) => call.args[0] === "new-session")).toBe(true);
     const createCall = exec.calls.find((call) => call.args[0] === "new-session");
@@ -74,8 +77,16 @@ describe("TmuxRuntimeManager", () => {
             "cd '#{pane_current_path}' && aimux >/dev/null 2>&1",
           ],
         }),
+        expect.objectContaining({
+          args: ["set-option", "-t", session.sessionName, "status", "on"],
+        }),
+        expect.objectContaining({
+          args: ["set-option", "-t", session.sessionName, "status-interval", "2"],
+        }),
       ]),
     );
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-left")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-right")).toBe(true);
   });
 
   it("creates a dashboard window when missing", () => {
@@ -130,6 +141,21 @@ describe("TmuxRuntimeManager", () => {
 
     expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-t", "aimux-mobile-abc:3"]);
     expect(interactiveCalls.at(-1)?.args).toEqual(["attach-session", "-t", "aimux-mobile-abc"]);
+  });
+
+  it("leaves managed tmux sessions by switching back when nested", () => {
+    const exec = createExecMock();
+    const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const interactiveExec: TmuxInteractiveExec = (args, options) => {
+      interactiveCalls.push({ args, cwd: options?.cwd });
+    };
+    const manager = new TmuxRuntimeManager(exec, interactiveExec);
+
+    manager.leaveManagedSession({ insideTmux: true });
+    manager.leaveManagedSession({ insideTmux: false });
+
+    expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-l"]);
+    expect(interactiveCalls.at(-1)?.args).toEqual(["detach-client"]);
   });
 
   it("captures pane output and sends input primitives", () => {

@@ -67,7 +67,7 @@ function renderSessions(data: StatuslineData): string[] {
   const sessions = data.sessions ?? [];
   return sessions.slice(0, 4).map((session) => {
     const status = session.status ?? "unknown";
-    const icon = status === "idle" ? "●" : status === "running" ? "◉" : status === "waiting" ? "◌" : "○";
+    const icon = status === "idle" ? "·" : status === "running" ? "●" : status === "waiting" ? "◌" : "○";
     const identity = trim(sessionIdentity(session), 18);
     return session.active ? `${icon}${identity}*` : `${icon}${identity}`;
   });
@@ -77,7 +77,7 @@ function renderTasks(data: StatuslineData): string | null {
   const pending = data.tasks?.pending ?? 0;
   const assigned = data.tasks?.assigned ?? 0;
   if (pending === 0 && assigned === 0) return null;
-  return `T:${pending}/${assigned}`;
+  return `tasks ${pending}/${assigned}`;
 }
 
 function renderFlash(data: StatuslineData): string | null {
@@ -102,7 +102,7 @@ function renderActiveMetadata(data: StatuslineData): string | null {
   if (metadata.progress && metadata.progress.total > 0) {
     const pct = Math.max(0, Math.min(100, Math.round((metadata.progress.current / metadata.progress.total) * 100)));
     return trim(
-      `${metadata.progress.label ?? "progress"} ${metadata.progress.current}/${metadata.progress.total} ${pct}%`,
+      `${metadata.progress.label ?? "plan"} ${metadata.progress.current}/${metadata.progress.total} ${pct}%`,
       28,
     );
   }
@@ -121,7 +121,7 @@ function renderRight(projectRoot: string): string {
     renderActiveHeadline(data),
     renderFlash(data),
   ].filter((segment): segment is string => Boolean(segment));
-  return segments.join("  ");
+  return segments.join("  ·  ");
 }
 
 export function renderTmuxStatusline(projectRoot: string, side: TmuxStatusSide): string {
