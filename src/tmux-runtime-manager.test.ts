@@ -94,4 +94,29 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.at(-2)?.args).toEqual(["switch-client", "-t", "aimux:mobile:abc:3"]);
     expect(exec.calls.at(-1)?.args).toEqual(["attach-session", "-t", "aimux:mobile:abc"]);
   });
+
+  it("captures pane output and sends input primitives", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const target = {
+      sessionName: "aimux:mobile:abc",
+      windowId: "@3",
+      windowIndex: 3,
+      windowName: "codex",
+    };
+
+    manager.captureTarget(target, { startLine: -200 });
+    manager.sendText(target, "hello");
+    manager.sendEnter(target);
+
+    expect(exec.calls.at(-3)?.args).toEqual(["capture-pane", "-p", "-J", "-t", "@3", "-S", "-200"]);
+    expect(exec.calls.at(-2)?.args).toEqual(["send-keys", "-t", "@3", "-l", "hello"]);
+    expect(exec.calls.at(-1)?.args).toEqual(["send-keys", "-t", "@3", "Enter"]);
+  });
+
+  it("detects whether aimux is already inside tmux", () => {
+    const manager = new TmuxRuntimeManager(createExecMock());
+    expect(manager.isInsideTmux({ TMUX: "/tmp/tmux-1000/default,123,0" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(manager.isInsideTmux({} as NodeJS.ProcessEnv)).toBe(false);
+  });
 });

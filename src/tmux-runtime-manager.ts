@@ -32,6 +32,11 @@ export interface OpenTargetOptions {
   insideTmux?: boolean;
 }
 
+export interface CaptureTargetOptions {
+  /** Number of lines from the bottom of scrollback to include. */
+  startLine?: number;
+}
+
 const DEFAULT_EXEC: TmuxExec = (args, options) =>
   execFileSync("tmux", args, {
     cwd: options?.cwd,
@@ -182,12 +187,30 @@ export class TmuxRuntimeManager {
     this.exec(["select-window", "-t", target.windowId]);
   }
 
+  captureTarget(target: TmuxTarget, options: CaptureTargetOptions = {}): string {
+    const startLine = options.startLine ?? "-";
+    return this.exec(["capture-pane", "-p", "-J", "-t", target.windowId, "-S", String(startLine)]);
+  }
+
+  sendText(target: TmuxTarget, text: string): void {
+    if (!text) return;
+    this.exec(["send-keys", "-t", target.windowId, "-l", text]);
+  }
+
+  sendEnter(target: TmuxTarget): void {
+    this.exec(["send-keys", "-t", target.windowId, "Enter"]);
+  }
+
   attachSession(sessionName: string): void {
     this.exec(["attach-session", "-t", sessionName]);
   }
 
   switchClient(sessionName: string, windowIndex = 0): void {
     this.exec(["switch-client", "-t", `${sessionName}:${windowIndex}`]);
+  }
+
+  isInsideTmux(env: NodeJS.ProcessEnv = process.env): boolean {
+    return Boolean(env.TMUX);
   }
 
   openTarget(target: TmuxTarget, options: OpenTargetOptions = {}): void {
