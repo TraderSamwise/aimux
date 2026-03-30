@@ -62,6 +62,7 @@ describe("dashboard-session-registry", () => {
       getSessionHeadline: () => undefined,
       getSessionTaskDescription: () => undefined,
       getSessionRole: () => undefined,
+      getSessionContext: () => undefined,
     });
 
     expect(sessions.map((session) => session.id)).toEqual(["local-1", "remote-1", "offline-1"]);
