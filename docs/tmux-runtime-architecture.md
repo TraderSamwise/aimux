@@ -12,7 +12,6 @@ Aimux remains responsible for:
 - plans and coordination files
 - tray integration
 - notifications
-- project server lifecycle
 
 Tmux becomes responsible for:
 
@@ -44,10 +43,10 @@ Recommended default:
 Per-project tmux sessions are the default because they provide:
 
 - clean isolation between projects
-- clean server lifecycle ownership
+- clean project lifecycle ownership
 - simpler cleanup semantics
 - safer coexistence with users who already use tmux personally
-- better mapping to current aimux project/server mental model
+- better mapping to the current aimux project mental model
 
 Avoid a single global shared aimux tmux session as the default because it creates:
 
@@ -157,21 +156,7 @@ Aimux runtime object per agent should be simplified to metadata + tmux target:
 
 Status becomes derived from tmux/runtime facts, not from a custom PTY/compositor loop.
 
-## 3. `ServerRuntimeManager`
-
-Server mode remains, but its responsibility changes:
-
-- it owns project/session metadata and orchestration
-- it no longer needs to own a custom terminal emulator pipeline
-- for server-backed agents, it stores and manages tmux targets for the project
-
-Project server should own:
-
-- project tmux session name
-- aimux session -> tmux target mapping
-- lifecycle operations on those targets
-
-## 4. Dashboard / Registry / Tray
+## 3. Dashboard / Registry / Tray
 
 These systems stay mostly intact conceptually:
 
@@ -181,7 +166,7 @@ These systems stay mostly intact conceptually:
 
 But they should stop assuming custom focused terminal ownership.
 
-## 5. Focused Mode
+## 4. Focused Mode
 
 The current custom focused terminal surface should be retired.
 
@@ -199,11 +184,9 @@ This means:
 
 have been deleted as part of the tmux cutover.
 
-## Cleanup Principles
+## Operating Principles
 
 ## 1. No Long-Term Dual Runtime
-
-We may need temporary compatibility shims during migration, but the destination is:
 
 - tmux runtime only
 
@@ -224,107 +207,13 @@ Delete:
 - scrollback emulation
 - terminal query emulation
 
-## 3. Make State Mapping Explicit
+## State Mapping
 
 The key persistent mapping becomes:
 
 - aimux session id -> tmux session/window target
 
 That mapping should live in project state/server state and be considered authoritative.
-
-## Migration Phases
-
-## Phase 1: Backend Foundation
-
-### Objective
-
-Introduce tmux runtime primitives without changing user-visible flow yet.
-
-### Work
-
-- add `TmuxRuntimeManager`
-- add tmux availability checks
-- add deterministic project session naming
-- add target abstraction:
-  - session name
-  - window id
-  - pane id if needed later
-- add config:
-  - `runtime.tmux.sessionPrefix`
-
-### Deliverable
-
-Aimux can create/manage a tmux-backed project session and windows in isolation.
-
-## Phase 2: Agent Spawn / Stop / Focus
-
-### Objective
-
-Move agent lifecycle to tmux windows.
-
-### Work
-
-- new agent creation uses tmux window spawn, not `node-pty`
-- stop/kill removes tmux window/process
-- focus/switch enters the right tmux window
-- rename updates tmux window title as appropriate
-
-### Deliverable
-
-Live agents run in tmux, but dashboard may still be transitional.
-
-## Phase 3: Dashboard-As-Window
-
-### Objective
-
-Make dashboard a tmux-native part of the project session.
-
-### Work
-
-- reserve dashboard as window `0`
-- update tray/server/open commands to attach or switch to window `0`
-- add standard “back to dashboard” behavior
-
-### Deliverable
-
-User experience becomes:
-
-- one tmux session per project
-- dashboard + agents all inside it
-
-## Phase 4: Server Integration
-
-### Objective
-
-Make the project server authoritative over tmux-backed runtime state.
-
-### Work
-
-- store tmux targets in server-backed session records
-- reconnect/list/rename/stop/migrate operate on tmux targets
-- remove custom terminal hydration responsibilities from server/client paths
-
-### Deliverable
-
-Server-backed sessions are persistent because tmux is persistent, not because aimux reconstructs screens.
-
-## Phase 5: Delete Custom Terminal Core
-
-### Objective
-
-Remove the custom multiplexer runtime once parity is proven.
-
-### Delete / Retire
-
-- focused compositor path
-- terminal query responder/broker/fallback
-- custom session viewport hydration/rejoin logic
-- most `TerminalHost` behavior except what the dashboard still needs
-- custom focused footer logic
-
-### Deliverable
-
-Aimux becomes dramatically simpler and more reliable.
 
 ## Detailed Design Decisions
 
@@ -401,16 +290,7 @@ Mitigation:
 - be explicit in docs
 - maybe add opt-in current-session mode later
 
-## 3. Migration Complexity
-
-During migration, there may be temporary parallel codepaths.
-
-Mitigation:
-
-- keep phases crisp
-- delete old runtime aggressively once parity is proven
-
-## 4. Tray / GUI Launch Behavior
+## 3. Tray / GUI Launch Behavior
 
 Tray actions need to target tmux sessions correctly even when no terminal is attached.
 
@@ -421,19 +301,10 @@ Mitigation:
 
 ## Success Criteria
 
-The migration is complete when:
+The tmux-backed architecture is successful when:
 
 - focused agent sessions are tmux-native
 - dashboard is tmux-native window `0`
-- server-backed session persistence no longer depends on custom terminal snapshots
 - scrollback is reliable and isolated per agent
 - terminal protocol quirks are tmux's problem, not aimux's
-- most of the custom terminal-core code can be deleted
-
-## Immediate Next Steps
-
-1. Add tmux backend config and availability checks.
-2. Introduce `TmuxRuntimeManager`.
-3. Define project session naming.
-4. Implement create/list/kill/switch window primitives.
-5. Prove agent spawn/focus in tmux before touching dashboard.
+- the old custom terminal-core code stays deleted

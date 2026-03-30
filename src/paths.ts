@@ -10,7 +10,7 @@
 
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, basename, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -70,7 +70,6 @@ export async function initPaths(cwd?: string): Promise<void> {
   }
 
   registerProject();
-  migrateIfNeeded();
 }
 
 export function getRepoRoot(): string {
@@ -166,11 +165,7 @@ export function getPlansDir(): string {
   return join(getLocalAimuxDir(), "plans");
 }
 
-/**
- * Escape hatch for cross-worktree operations.
- * Used by instance-registry (cross-worktree instance files) and multiplexer
- * (worktree context/history migration). Prefer the no-arg variants above.
- */
+/** Escape hatch for cross-worktree operations. Prefer the no-arg variants above. */
 export function getAimuxDirFor(cwd: string): string {
   return join(cwd, ".aimux");
 }
@@ -238,53 +233,4 @@ export function removeProject(id: string): void {
   const registry = loadRegistry();
   registry.projects = registry.projects.filter((p) => p.id !== id);
   saveRegistry(registry);
-}
-
-// ── Migration from old {cwd}/.aimux/ layout ────────────────────────
-
-function migrateIfNeeded(): void {
-  assertInitialized();
-  const localDir = getLocalAimuxDir();
-  const markerPath = join(localDir, ".migrated");
-
-  if (existsSync(markerPath)) return;
-
-  const oldStatePath = join(localDir, "state.json");
-  if (!existsSync(oldStatePath)) return;
-
-  // Don't overwrite if global state already exists
-  const globalStatePath = getStatePath();
-  if (existsSync(globalStatePath)) {
-    writeFileSync(markerPath, new Date().toISOString() + "\n");
-    return;
-  }
-
-  const projectDir = getProjectStateDir();
-
-  // Copy state files
-  for (const file of ["state.json", "graveyard.json"]) {
-    const src = join(localDir, file);
-    if (existsSync(src)) {
-      try {
-        writeFileSync(join(projectDir, file), readFileSync(src, "utf-8"));
-      } catch {
-        /* skip */
-      }
-    }
-  }
-
-  // Copy directories
-  for (const dir of ["context", "history", "recordings", "tasks", "status"]) {
-    const src = join(localDir, dir);
-    const dest = join(projectDir, dir);
-    if (existsSync(src) && !existsSync(dest)) {
-      try {
-        cpSync(src, dest, { recursive: true });
-      } catch {
-        /* skip */
-      }
-    }
-  }
-
-  writeFileSync(markerPath, new Date().toISOString() + "\n");
 }

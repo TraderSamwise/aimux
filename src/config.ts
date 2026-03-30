@@ -204,8 +204,6 @@ plans/
 # Managed git worktrees
 worktrees/
 
-# Migration marker
-.migrated
 `;
 
 export function initProject(): void {
