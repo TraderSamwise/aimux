@@ -9,6 +9,9 @@ function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: str
     if (joined === "-V") return "tmux 3.5a";
     if (joined.startsWith("has-session -t ")) throw new Error("missing");
     if (joined.startsWith("list-windows -t ")) return "";
+    if (joined.startsWith("display-message -p -t @0 #{pane_dead}")) return "0";
+    if (joined === "display-message -p #{client_session}") return "user-main";
+    if (joined.startsWith("show-options -v -t aimux-mobile-abc @aimux-return-session")) return "user-main";
     if (joined.startsWith("show-window-options -v -t @3 @aimux-meta")) {
       return JSON.stringify({
         sessionId: "codex-abc123",
@@ -99,7 +102,7 @@ describe("TmuxRuntimeManager", () => {
           ],
         }),
         expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "status", "on"],
+          args: ["set-option", "-t", session.sessionName, "status", "2"],
         }),
         expect.objectContaining({
           args: ["set-option", "-t", session.sessionName, "status-interval", "2"],
@@ -114,6 +117,8 @@ describe("TmuxRuntimeManager", () => {
     );
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-left")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-right")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-format[0]")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-format[1]")).toBe(true);
   });
 
   it("creates a dashboard window when missing", () => {
@@ -125,6 +130,19 @@ describe("TmuxRuntimeManager", () => {
     const target = manager.ensureDashboardWindow("aimux-mobile-abc", "/repo/mobile");
     expect(target.windowId).toBe("@0");
     expect(exec.calls.some((call) => call.args[0] === "new-window")).toBe(true);
+  });
+
+  it("detects whether a window is alive", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    expect(
+      manager.isWindowAlive({
+        sessionName: "aimux-mobile-abc",
+        windowId: "@0",
+        windowIndex: 0,
+        windowName: "dashboard",
+      }),
+    ).toBe(true);
   });
 
   it("creates agent windows with target metadata", () => {
@@ -166,8 +184,13 @@ describe("TmuxRuntimeManager", () => {
     manager.openTarget(target, { insideTmux: true });
     manager.openTarget(target, { insideTmux: false });
 
+    expect(
+      exec.calls.some(
+        (call) => call.args.join(" ") === "set-option -t aimux-mobile-abc @aimux-return-session user-main",
+      ),
+    ).toBe(true);
     expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-t", "aimux-mobile-abc:3"]);
-    expect(interactiveCalls.at(-1)?.args).toEqual(["attach-session", "-t", "aimux-mobile-abc"]);
+    expect(interactiveCalls.at(-1)?.args).toEqual(["attach-session", "-t", "aimux-mobile-abc:3"]);
   });
 
   it("leaves managed tmux sessions by switching back when nested", () => {
@@ -178,10 +201,28 @@ describe("TmuxRuntimeManager", () => {
     };
     const manager = new TmuxRuntimeManager(exec, interactiveExec);
 
-    manager.leaveManagedSession({ insideTmux: true });
+    manager.leaveManagedSession({ insideTmux: true, sessionName: "aimux-mobile-abc" });
     manager.leaveManagedSession({ insideTmux: false });
 
-    expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-l"]);
+    expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-t", "user-main"]);
+    expect(interactiveCalls.at(-1)?.args).toEqual(["detach-client"]);
+  });
+
+  it("detaches when there is no valid external return session", () => {
+    const exec = createExecMock();
+    const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const interactiveExec: TmuxInteractiveExec = (args, options) => {
+      interactiveCalls.push({ args, cwd: options?.cwd });
+    };
+    const manager = new TmuxRuntimeManager(
+      ((args, options) => {
+        if (args.join(" ") === "show-options -v -t aimux-mobile-abc @aimux-return-session") return "aimux-mobile-abc";
+        return exec(args, options);
+      }) as TmuxExec,
+      interactiveExec,
+    );
+
+    manager.leaveManagedSession({ insideTmux: true, sessionName: "aimux-mobile-abc" });
     expect(interactiveCalls.at(-1)?.args).toEqual(["detach-client"]);
   });
 

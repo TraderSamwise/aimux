@@ -1,5 +1,14 @@
 import { Command } from "commander";
-import { existsSync, readFileSync, writeFileSync, readdirSync, copyFileSync, mkdirSync, chmodSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+  copyFileSync,
+  mkdirSync,
+  chmodSync,
+  statSync,
+} from "node:fs";
 import { spawn } from "node:child_process";
 import { join as pathJoin, resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { homedir } from "node:os";
@@ -10,9 +19,9 @@ import { initProject } from "./config.js";
 import { loadConfig } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
-import { createWorktree, listWorktrees } from "./worktree.js";
+import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
-import { renderTmuxStatusline, type TmuxStatusSide } from "./tmux-statusline.js";
+import { renderTmuxStatusline, type TmuxStatusLine } from "./tmux-statusline.js";
 import {
   loadMetadataEndpoint,
   updateSessionMetadata,
@@ -41,6 +50,20 @@ program
       args: string[],
       opts: { resume?: boolean; restore?: boolean; tmuxDashboardInternal?: boolean },
     ) => {
+      const originalCwd = process.cwd();
+      const dashboardMode = !tool && !opts.resume && !opts.restore;
+      const shouldAnchorToMainRepo = opts.tmuxDashboardInternal || dashboardMode;
+      let projectRoot = originalCwd;
+      if (shouldAnchorToMainRepo) {
+        try {
+          projectRoot = findMainRepo(originalCwd);
+        } catch {
+          projectRoot = originalCwd;
+        }
+        if (projectRoot !== originalCwd) {
+          process.chdir(projectRoot);
+        }
+      }
       const runtimeConfig = loadConfig().runtime;
       if (!opts.tmuxDashboardInternal) {
         initProject();
@@ -51,8 +74,9 @@ program
         }
 
         const scriptPath = fileURLToPath(import.meta.url);
+        const dashboardBuildStamp = String(statSync(scriptPath).mtimeMs);
         const dashboardCommand = {
-          cwd: process.cwd(),
+          cwd: projectRoot,
           command: process.execPath,
           args: [scriptPath, "--tmux-dashboard-internal"],
         };
@@ -61,7 +85,7 @@ program
           args: [scriptPath, "tmux-statusline"],
         };
         const dashboardSession = tmux.ensureProjectSession(
-          process.cwd(),
+          projectRoot,
           {
             cwd: dashboardCommand.cwd,
             command: dashboardCommand.command,
@@ -69,12 +93,14 @@ program
           },
           statuslineCommand,
         );
-        const dashboardTarget = tmux.ensureDashboardWindow(
-          dashboardSession.sessionName,
-          process.cwd(),
-          dashboardCommand,
-        );
-        tmux.respawnWindow(dashboardTarget, dashboardCommand);
+        const dashboardTarget = tmux.ensureDashboardWindow(dashboardSession.sessionName, projectRoot, dashboardCommand);
+        const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
+        const shouldRespawnDashboard =
+          !tmux.isWindowAlive(dashboardTarget) || currentBuildStamp !== dashboardBuildStamp;
+        if (shouldRespawnDashboard) {
+          tmux.respawnWindow(dashboardTarget, dashboardCommand);
+          tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
+        }
         if (!tool && !opts.resume && !opts.restore) {
           tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
           return;
@@ -137,6 +163,48 @@ program
   .action(() => {
     initProject();
     console.log("Initialized .aimux/ with config.json and .gitignore");
+  });
+
+program
+  .command("dashboard-reload")
+  .description("Force reload the managed tmux dashboard for this project")
+  .option("--open", "Open the dashboard after reloading")
+  .action((opts: { open?: boolean }) => {
+    const originalCwd = process.cwd();
+    let projectRoot = originalCwd;
+    try {
+      projectRoot = findMainRepo(originalCwd);
+    } catch {}
+
+    const tmux = new TmuxRuntimeManager();
+    if (!tmux.isAvailable()) {
+      console.error("aimux: tmux is not installed or not available in PATH");
+      process.exit(1);
+    }
+
+    const scriptPath = fileURLToPath(import.meta.url);
+    const dashboardBuildStamp = String(statSync(scriptPath).mtimeMs);
+    const dashboardCommand = {
+      cwd: projectRoot,
+      command: process.execPath,
+      args: [scriptPath, "--tmux-dashboard-internal"],
+    };
+    const statuslineCommand = {
+      command: process.execPath,
+      args: [scriptPath, "tmux-statusline"],
+    };
+
+    const dashboardSession = tmux.ensureProjectSession(projectRoot, dashboardCommand, statuslineCommand);
+    const dashboardTarget = tmux.ensureDashboardWindow(dashboardSession.sessionName, projectRoot, dashboardCommand);
+    tmux.respawnWindow(dashboardTarget, dashboardCommand);
+    tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
+
+    if (opts.open) {
+      tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
+      return;
+    }
+
+    console.log(`Reloaded dashboard for ${dashboardSession.sessionName}`);
   });
 
 program
@@ -282,21 +350,31 @@ const statuslineCmd = program.command("statusline").description("Manage Claude C
 program
   .command("tmux-statusline")
   .description("Internal tmux status line renderer")
-  .option("--side <side>", "Status line side", "right")
+  .option("--line <line>", "Status line row", "bottom")
   .option("--project-root <path>", "Project root to read status from", process.cwd())
   .option("--current-window <name>", "Current tmux window name")
   .option("--current-path <path>", "Current pane path")
   .option("--current-session <name>", "Current tmux session name")
-  .action(async (opts: { side: TmuxStatusSide; projectRoot: string; currentWindow?: string; currentPath?: string }) => {
-    await initPaths(opts.projectRoot);
-    process.stdout.write(
-      renderTmuxStatusline(opts.projectRoot, opts.side, {
-        currentWindow: opts.currentWindow,
-        currentPath: opts.currentPath,
-        currentSession: (opts as { currentSession?: string }).currentSession,
-      }),
-    );
-  });
+  .option("--width <n>", "Current client width")
+  .action(
+    async (opts: {
+      line: TmuxStatusLine;
+      projectRoot: string;
+      currentWindow?: string;
+      currentPath?: string;
+      width?: string;
+    }) => {
+      await initPaths(opts.projectRoot);
+      process.stdout.write(
+        renderTmuxStatusline(opts.projectRoot, opts.line, {
+          currentWindow: opts.currentWindow,
+          currentPath: opts.currentPath,
+          currentSession: (opts as { currentSession?: string }).currentSession,
+          width: opts.width ? Number(opts.width) : undefined,
+        }),
+      );
+    },
+  );
 
 program
   .command("tmux-switch <action>")

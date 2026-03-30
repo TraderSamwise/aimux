@@ -1112,7 +1112,12 @@ export class Multiplexer {
         this.showToolPicker();
         return;
       case "q":
-        this.tmuxRuntimeManager.leaveManagedSession({ insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+        this.tmuxRuntimeManager.leaveManagedSession({
+          insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
+          sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+        });
+        this.cleanup();
+        process.exit(0);
         return;
       case "w":
         this.showWorktreeCreatePrompt();
@@ -1211,6 +1216,9 @@ export class Multiplexer {
         case "enter": {
           const ds = this.getDashboardSessions();
           const entry = ds[this.activeIndex];
+          if (entry && this.openLiveTmuxWindowForEntry(entry)) {
+            return;
+          }
           if (entry?.remoteInstanceId) {
             void this.takeoverFromDashEntryWithFeedback(entry);
             return;
@@ -1300,6 +1308,9 @@ export class Multiplexer {
         case "enter": {
           const dashEntry = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
           if (!dashEntry) break;
+          if (this.openLiveTmuxWindowForEntry(dashEntry)) {
+            return;
+          }
           if (dashEntry.remoteInstanceId) {
             void this.takeoverFromDashEntryWithFeedback(dashEntry);
             return;
@@ -1331,6 +1342,10 @@ export class Multiplexer {
     const entry = this.getDashboardSessionsInVisualOrder()[index];
     if (!entry) return;
 
+    if (this.openLiveTmuxWindowForEntry(entry)) {
+      return;
+    }
+
     if (entry.remoteInstanceId) {
       await this.takeoverFromDashEntryWithFeedback(entry);
       return;
@@ -1356,6 +1371,17 @@ export class Multiplexer {
     this.dashboardWorktreeSessions = allDash.filter((s) => {
       return (s.worktreePath ?? undefined) === this.focusedWorktreePath;
     });
+  }
+
+  private openLiveTmuxWindowForEntry(entry: { id: string; backendSessionId?: string }): boolean {
+    const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
+    const match = this.tmuxRuntimeManager.findManagedWindow(tmuxSession.sessionName, {
+      sessionId: entry.id,
+      backendSessionId: entry.backendSessionId,
+    });
+    if (!match) return false;
+    this.tmuxRuntimeManager.openTarget(match.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+    return true;
   }
 
   private showToolPicker(): void {
@@ -1454,6 +1480,9 @@ export class Multiplexer {
   }
 
   private renderDashboard(): void {
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
     let mainRepoPath: string | undefined;
@@ -2050,28 +2079,42 @@ export class Multiplexer {
   private renderGraveyard(): void {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    const lines: string[] = [];
-    lines.push("");
-    lines.push(this.centerInWidth("\x1b[1maimux\x1b[0m — graveyard", cols));
-    lines.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-    lines.push("");
+    const header: string[] = [];
+    header.push("");
+    header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — graveyard", cols));
+    header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
+    header.push("");
+    const footer = this.centerInWidth("[↑↓] select  [1-9/Enter] resurrect  [q/Esc] back", cols);
+    const viewportHeight = rows - header.length - 2;
+    const twoPane = cols >= 110;
+    const listLines: string[] = [];
     if (this.graveyardEntries.length === 0) {
-      lines.push("  Graveyard");
-      lines.push("    (empty)");
+      listLines.push("  Graveyard");
+      listLines.push("    (empty)");
     } else {
-      lines.push("  Graveyard");
+      listLines.push("  Graveyard");
       for (let i = 0; i < this.graveyardEntries.length; i++) {
         const s = this.graveyardEntries[i];
         const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
         const identity = s.label ? ` — ${s.label}` : "";
         const headline = s.headline ? ` · ${s.headline}` : "";
         const marker = i === this.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
-        lines.push(`    ${marker}[${i + 1}] ${s.command}:${s.id}${bsid}${identity}${headline}`);
+        listLines.push(`    ${marker}[${i + 1}] ${s.command}:${s.id}${bsid}${identity}${headline}`);
       }
     }
-    lines.push("");
-    lines.push(this.centerInWidth("[↑↓] select  [1-9/Enter] resurrect  [q/Esc] back", cols));
-    process.stdout.write("\x1b[2J\x1b[H" + lines.slice(0, rows).join("\r\n"));
+    const focusLine = this.graveyardEntries.length === 0 ? 1 : this.graveyardIndex + 1;
+    const body = this.composeSplitScreen(
+      listLines,
+      this.renderGraveyardDetails(Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
+      cols,
+      viewportHeight,
+      focusLine,
+      twoPane,
+    );
+    process.stdout.write(
+      "\x1b[2J\x1b[H" +
+        [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 52)), cols), footer].join("\r\n"),
+    );
   }
 
   private handleGraveyardKey(data: Buffer): void {
@@ -2213,16 +2256,20 @@ export class Multiplexer {
   private renderPlans(): void {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    const lines: string[] = [];
-    lines.push("");
-    lines.push(this.centerInWidth("\x1b[1maimux\x1b[0m — plans", cols));
-    lines.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-    lines.push("");
+    const header: string[] = [];
+    header.push("");
+    header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — plans", cols));
+    header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
+    header.push("");
+    const footer = this.centerInWidth("[↑↓] select  [e/Enter] edit  [r] refresh  [q/Esc] back", cols);
+    const viewportHeight = rows - header.length - 2;
+    const twoPane = cols >= 110;
+    const listLines: string[] = [];
 
     if (this.planEntries.length === 0) {
-      lines.push("  No plan files found in .aimux/plans/");
+      listLines.push("  No plan files found in .aimux/plans/");
     } else {
-      lines.push("  Plans");
+      listLines.push("  Plans");
       for (let i = 0; i < this.planEntries.length; i++) {
         const plan = this.planEntries[i];
         const selected = i === this.planIndex;
@@ -2230,31 +2277,22 @@ export class Multiplexer {
         const identity = plan.label ?? plan.tool ?? "unknown";
         const worktree = plan.worktree ?? "main";
         const updated = plan.updatedAt ? ` · ${plan.updatedAt.replace("T", " ").slice(0, 16)}` : "";
-        lines.push(`${marker}[${i + 1}] ${identity} \x1b[2m(${plan.sessionId})\x1b[0m · ${worktree}${updated}`);
-      }
-
-      const selectedPlan = this.planEntries[this.planIndex];
-      if (selectedPlan) {
-        lines.push("");
-        lines.push("  Details");
-        lines.push(`    Agent: ${selectedPlan.label ?? selectedPlan.tool ?? "unknown"} (${selectedPlan.sessionId})`);
-        lines.push(`    Tool: ${selectedPlan.tool ?? "unknown"}`);
-        lines.push(`    Worktree: ${selectedPlan.worktree ?? "main"}`);
-        if (selectedPlan.updatedAt) {
-          lines.push(`    Updated: ${selectedPlan.updatedAt}`);
-        }
-        lines.push(`    File: .aimux/plans/${selectedPlan.sessionId}.md`);
-        lines.push("");
-        lines.push("  Preview");
-        for (const previewLine of this.buildPlanPreview(selectedPlan.content, cols - 4, 10)) {
-          lines.push(`    ${previewLine}`);
-        }
+        listLines.push(`${marker}[${i + 1}] ${identity} \x1b[2m(${plan.sessionId})\x1b[0m · ${worktree}${updated}`);
       }
     }
-
-    lines.push("");
-    lines.push(this.centerInWidth("[↑↓] select  [e/Enter] edit  [r] refresh  [Esc] back", cols));
-    process.stdout.write("\x1b[2J\x1b[H" + lines.slice(0, rows).join("\r\n"));
+    const focusLine = this.planEntries.length === 0 ? 0 : this.planIndex + 1;
+    const body = this.composeSplitScreen(
+      listLines,
+      this.renderPlanDetails(Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
+      cols,
+      viewportHeight,
+      focusLine,
+      twoPane,
+    );
+    process.stdout.write(
+      "\x1b[2J\x1b[H" +
+        [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 56)), cols), footer].join("\r\n"),
+    );
   }
 
   private buildPlanPreview(content: string, width: number, maxLines: number): string[] {
@@ -2267,6 +2305,122 @@ export class Multiplexer {
       preview.push(normalized);
     }
     return preview;
+  }
+
+  private renderPlanDetails(width: number, height: number): string[] {
+    const selectedPlan = this.planEntries[this.planIndex];
+    if (!selectedPlan) return new Array(height).fill("");
+    const lines: string[] = [];
+    lines.push("\x1b[1mDetails\x1b[0m");
+    lines.push(
+      ...this.wrapKeyValue(
+        "Agent",
+        `${selectedPlan.label ?? selectedPlan.tool ?? "unknown"} (${selectedPlan.sessionId})`,
+        width,
+      ),
+    );
+    lines.push(...this.wrapKeyValue("Tool", selectedPlan.tool ?? "unknown", width));
+    lines.push(...this.wrapKeyValue("Worktree", selectedPlan.worktree ?? "main", width));
+    if (selectedPlan.updatedAt) lines.push(...this.wrapKeyValue("Updated", selectedPlan.updatedAt, width));
+    lines.push(...this.wrapKeyValue("File", `.aimux/plans/${selectedPlan.sessionId}.md`, width));
+    lines.push("");
+    lines.push("\x1b[1mPreview\x1b[0m");
+    for (const previewLine of this.buildPlanPreview(selectedPlan.content, width, Math.max(4, height - lines.length))) {
+      lines.push(previewLine);
+    }
+    while (lines.length < height) lines.push("");
+    return lines.slice(0, height);
+  }
+
+  private renderGraveyardDetails(width: number, height: number): string[] {
+    const selected = this.graveyardEntries[this.graveyardIndex];
+    if (!selected) return new Array(height).fill("");
+    const lines: string[] = [];
+    lines.push("\x1b[1mDetails\x1b[0m");
+    lines.push(...this.wrapKeyValue("Agent", `${selected.label ?? selected.command} (${selected.id})`, width));
+    lines.push(...this.wrapKeyValue("Tool", selected.command, width));
+    lines.push(...this.wrapKeyValue("Status", "offline", width));
+    if (selected.worktreePath) lines.push(...this.wrapKeyValue("Worktree", selected.worktreePath, width));
+    if (selected.backendSessionId) lines.push(...this.wrapKeyValue("Backend", selected.backendSessionId, width));
+    if (selected.headline) lines.push(...this.wrapKeyValue("Headline", selected.headline, width));
+    while (lines.length < height) lines.push("");
+    return lines.slice(0, height);
+  }
+
+  private composeSplitScreen(
+    leftLines: string[],
+    rightLines: string[],
+    cols: number,
+    viewportHeight: number,
+    focusLine: number,
+    twoPane: boolean,
+  ): string[] {
+    const content = [...leftLines];
+    let scrollOffset = 0;
+    const maxScroll = Math.max(0, content.length - viewportHeight);
+    if (focusLine >= 0) {
+      if (focusLine < scrollOffset + 1) {
+        scrollOffset = Math.max(0, focusLine - 1);
+      } else if (focusLine >= scrollOffset + viewportHeight - 1) {
+        scrollOffset = Math.min(maxScroll, focusLine - viewportHeight + 2);
+      }
+    }
+    const visibleLeft = content.slice(scrollOffset, scrollOffset + viewportHeight);
+    const canScrollUp = scrollOffset > 0;
+    const canScrollDown = scrollOffset < maxScroll;
+    if (canScrollUp && visibleLeft.length > 0) visibleLeft[0] = this.centerInWidth("\x1b[2m▲ more ▲\x1b[0m", cols);
+    if (canScrollDown && visibleLeft.length > 0) {
+      visibleLeft[visibleLeft.length - 1] = this.centerInWidth("\x1b[2m▼ more ▼\x1b[0m", cols);
+    }
+    while (visibleLeft.length < viewportHeight) visibleLeft.push("");
+    if (!twoPane) return visibleLeft;
+    return this.composeTwoPaneLines(visibleLeft, rightLines, cols);
+  }
+
+  private composeTwoPaneLines(left: string[], right: string[], cols: number): string[] {
+    const leftWidth = Math.max(40, Math.floor(cols * 0.56));
+    const rightWidth = Math.max(24, cols - leftWidth - 3);
+    const height = Math.max(left.length, right.length);
+    const out: string[] = [];
+    for (let i = 0; i < height; i++) {
+      const leftLine = left[i] ?? "";
+      const rightLine = right[i] ?? "";
+      const leftPad = Math.max(0, leftWidth - this.stripAnsi(leftLine).length);
+      out.push(`${leftLine}${" ".repeat(leftPad)} │ ${this.truncatePlain(rightLine, rightWidth)}`);
+    }
+    return out;
+  }
+
+  private wrapKeyValue(key: string, value: string, width: number): string[] {
+    const prefix = `${key}: `;
+    const wrapped = this.wrapText(value, Math.max(8, width - prefix.length));
+    return wrapped.map((line, idx) => (idx === 0 ? `${prefix}${line}` : `${" ".repeat(prefix.length)}${line}`));
+  }
+
+  private wrapText(text: string, width: number): string[] {
+    const plain = text.trim();
+    if (!plain) return [""];
+    if (width <= 8) return [this.truncatePlain(plain, width)];
+    const words = plain.split(/\s+/);
+    const lines: string[] = [];
+    let current = "";
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length <= width) {
+        current = next;
+        continue;
+      }
+      if (current) lines.push(current);
+      current = word.length > width ? this.truncatePlain(word, width) : word;
+    }
+    if (current) lines.push(current);
+    return lines;
+  }
+
+  private truncatePlain(text: string, max: number): string {
+    if (text.length <= max) return text;
+    if (max <= 1) return text.slice(0, max);
+    return `${text.slice(0, max - 1)}…`;
   }
 
   private handlePlansKey(data: Buffer): void {
@@ -2907,7 +3061,7 @@ export class Multiplexer {
       })),
       activeIndex: this.activeIndex,
       offlineSessions: this.offlineSessions,
-      remoteInstances: this.getRemoteInstancesSafe(),
+      remoteInstances: [],
       mainRepoPath,
       isServerSession: () => false,
       getSessionLabel: (sessionId) => this.getSessionLabel(sessionId),

@@ -130,12 +130,6 @@ export class Dashboard {
       }
     }
 
-    const selectedDetails = this.renderSelectedDetails();
-    if (selectedDetails.length > 0) {
-      if (content.length > 0 && content[content.length - 1] !== "") content.push("");
-      content.push(...selectedDetails);
-    }
-
     // Footer (fixed)
     const helpLine = this.buildHelpLine();
     const footer: string[] = [];
@@ -144,6 +138,7 @@ export class Dashboard {
 
     // Viewport: how many content lines fit between header and footer
     const viewportHeight = rows - header.length - footer.length;
+    const twoPane = cols >= 110;
 
     // Auto-scroll to keep focused worktree or selected session visible
     const focusLine = this.findFocusLine(content);
@@ -175,7 +170,16 @@ export class Dashboard {
       visibleContent.push("");
     }
 
-    const lines = [...header, ...visibleContent, ...footer];
+    let bodyLines = visibleContent;
+    if (twoPane) {
+      const rightPanel = this.renderSelectedDetailsPanel(
+        Math.max(28, cols - Math.floor(cols * 0.56) - 3),
+        viewportHeight,
+      );
+      bodyLines = composeTwoPane(visibleContent, rightPanel, cols);
+    }
+
+    const lines = [...header, ...bodyLines, ...footer];
     return "\x1b[2J\x1b[H" + lines.join("\r\n");
   }
 
@@ -320,37 +324,42 @@ export class Dashboard {
     return " [c] new  [w] worktree  [p] plans  [a] all projects  [g] graveyard  [?] help  [q] quit ";
   }
 
-  private renderSelectedDetails(): string[] {
+  private renderSelectedDetailsPanel(width: number, height: number): string[] {
     const selected = this.selectedSessionId
       ? this.sessions.find((session) => session.id === this.selectedSessionId)
       : undefined;
-    if (!selected) return [];
+    if (!selected) return new Array(height).fill("");
 
     const lines: string[] = [];
-    lines.push("  Details");
-    lines.push(`    Agent: ${selected.label ?? selected.command} (${selected.id})`);
-    lines.push(`    Tool: ${selected.command}`);
+    lines.push("\x1b[1mDetails\x1b[0m");
+    lines.push(...wrapKeyValue("Agent", `${selected.label ?? selected.command} (${selected.id})`, width));
+    lines.push(...wrapKeyValue("Tool", selected.command, width));
     if (selected.worktreeName || selected.worktreeBranch) {
       lines.push(
-        `    Worktree: ${selected.worktreeName ?? "main"}${selected.worktreeBranch ? ` · ${selected.worktreeBranch}` : ""}`,
+        ...wrapKeyValue(
+          "Worktree",
+          `${selected.worktreeName ?? "main"}${selected.worktreeBranch ? ` · ${selected.worktreeBranch}` : ""}`,
+          width,
+        ),
       );
     }
     if (selected.cwd) {
-      lines.push(`    CWD: ${selected.cwd}`);
+      lines.push(...wrapKeyValue("CWD", selected.cwd, width));
     }
     if (selected.prNumber || selected.prTitle || selected.prUrl) {
       const prHeader = [`PR${selected.prNumber ? ` #${selected.prNumber}` : ""}`];
       if (selected.prTitle) prHeader.push(selected.prTitle);
-      lines.push(`    ${prHeader.join(": ")}`);
-      if (selected.prUrl) lines.push(`    URL: ${selected.prUrl}`);
+      lines.push(...wrapKeyValue("PR", prHeader.join(": "), width));
+      if (selected.prUrl) lines.push(...wrapKeyValue("URL", selected.prUrl, width));
     }
     if (selected.repoOwner || selected.repoName) {
-      lines.push(`    Repo: ${selected.repoOwner ?? "?"}/${selected.repoName ?? "?"}`);
+      lines.push(...wrapKeyValue("Repo", `${selected.repoOwner ?? "?"}/${selected.repoName ?? "?"}`, width));
     }
     if (selected.repoRemote) {
-      lines.push(`    Remote: ${selected.repoRemote}`);
+      lines.push(...wrapKeyValue("Remote", selected.repoRemote, width));
     }
-    return lines;
+    while (lines.length < height) lines.push("");
+    return lines.slice(0, height);
   }
 }
 
@@ -364,4 +373,48 @@ function center(text: string, width: number): string {
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   return text.slice(0, max) + "…";
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function wrapText(text: string, width: number): string[] {
+  const plain = text.trim();
+  if (!plain) return [""];
+  if (width <= 8) return [truncate(plain, width)];
+  const words = plain.split(/\s+/);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length <= width) {
+      current = next;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = word.length > width ? truncate(word, width) : word;
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function wrapKeyValue(key: string, value: string, width: number): string[] {
+  const prefix = `${key}: `;
+  const wrapped = wrapText(value, Math.max(8, width - prefix.length));
+  return wrapped.map((line, idx) => (idx === 0 ? `${prefix}${line}` : `${" ".repeat(prefix.length)}${line}`));
+}
+
+function composeTwoPane(left: string[], right: string[], cols: number): string[] {
+  const leftWidth = Math.max(40, Math.floor(cols * 0.56));
+  const rightWidth = Math.max(24, cols - leftWidth - 3);
+  const height = Math.max(left.length, right.length);
+  const out: string[] = [];
+  for (let i = 0; i < height; i++) {
+    const leftLine = left[i] ?? "";
+    const rightLine = right[i] ?? "";
+    const leftPad = Math.max(0, leftWidth - stripAnsi(leftLine).length);
+    out.push(`${leftLine}${" ".repeat(leftPad)} │ ${truncate(rightLine, rightWidth)}`);
+  }
+  return out;
 }

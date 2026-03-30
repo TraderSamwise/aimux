@@ -106,6 +106,14 @@ export class TmuxRuntimeManager {
     };
   }
 
+  private getSessionPrefix(): string {
+    try {
+      return loadConfig().runtime.tmux.sessionPrefix || "aimux";
+    } catch {
+      return "aimux";
+    }
+  }
+
   hasSession(sessionName: string): boolean {
     try {
       this.exec(["has-session", "-t", sessionName]);
@@ -191,6 +199,15 @@ export class TmuxRuntimeManager {
 
   hasWindow(target: TmuxTarget): boolean {
     return this.getTargetByWindowId(target.sessionName, target.windowId) !== null;
+  }
+
+  isWindowAlive(target: TmuxTarget): boolean {
+    try {
+      const paneDead = this.exec(["display-message", "-p", "-t", target.windowId, "#{pane_dead}"]).trim();
+      return paneDead !== "1";
+    } catch {
+      return false;
+    }
   }
 
   ensureDashboardWindow(sessionName: string, projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxTarget {
@@ -317,6 +334,21 @@ export class TmuxRuntimeManager {
     this.exec(["set-window-option", "-q", "-t", windowTarget, "@aimux-meta", JSON.stringify(metadata)]);
   }
 
+  setWindowOption(target: TmuxTarget | string, key: string, value: string): void {
+    const windowTarget = typeof target === "string" ? target : target.windowId;
+    this.exec(["set-window-option", "-q", "-t", windowTarget, key, value]);
+  }
+
+  getWindowOption(target: TmuxTarget | string, key: string): string | null {
+    const windowTarget = typeof target === "string" ? target : target.windowId;
+    try {
+      const value = this.exec(["show-window-options", "-v", "-t", windowTarget, key]);
+      return value.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
   getWindowMetadata(target: TmuxTarget | string): TmuxWindowMetadata | null {
     const windowTarget = typeof target === "string" ? target : target.windowId;
     try {
@@ -344,8 +376,21 @@ export class TmuxRuntimeManager {
     return managed;
   }
 
-  attachSession(sessionName: string): void {
-    this.interactiveExec(["attach-session", "-t", sessionName]);
+  findManagedWindow(
+    sessionName: string,
+    matcher: { sessionId?: string; backendSessionId?: string },
+  ): { target: TmuxTarget; metadata: TmuxWindowMetadata } | null {
+    if (!matcher.sessionId && !matcher.backendSessionId) return null;
+    for (const entry of this.listManagedWindows(sessionName)) {
+      if (matcher.sessionId && entry.metadata.sessionId === matcher.sessionId) return entry;
+      if (matcher.backendSessionId && entry.metadata.backendSessionId === matcher.backendSessionId) return entry;
+    }
+    return null;
+  }
+
+  attachSession(sessionName: string, windowIndex?: number): void {
+    const target = windowIndex === undefined ? sessionName : `${sessionName}:${windowIndex}`;
+    this.interactiveExec(["attach-session", "-t", target]);
   }
 
   detachClient(): void {
@@ -356,12 +401,39 @@ export class TmuxRuntimeManager {
     this.interactiveExec(["switch-client", "-l"]);
   }
 
-  leaveManagedSession(options: { insideTmux?: boolean } = {}): void {
-    if (options.insideTmux) {
-      try {
-        this.switchToLastClientSession();
-        return;
-      } catch {}
+  currentClientSession(): string | null {
+    try {
+      return this.exec(["display-message", "-p", "#{client_session}"]);
+    } catch {
+      return null;
+    }
+  }
+
+  setReturnSession(sessionName: string, returnSessionName: string): void {
+    this.exec(["set-option", "-t", sessionName, "@aimux-return-session", returnSessionName]);
+  }
+
+  getReturnSession(sessionName: string): string | null {
+    try {
+      const value = this.exec(["show-options", "-v", "-t", sessionName, "@aimux-return-session"]);
+      return value.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  leaveManagedSession(options: { insideTmux?: boolean; sessionName?: string } = {}): void {
+    if (options.insideTmux && options.sessionName) {
+      const returnSession = this.getReturnSession(options.sessionName);
+      const managedPrefix = `${this.getSessionPrefix()}-`;
+      const isExternalReturn =
+        returnSession && returnSession !== options.sessionName && !returnSession.startsWith(managedPrefix);
+      if (isExternalReturn) {
+        try {
+          this.interactiveExec(["switch-client", "-t", returnSession!]);
+          return;
+        } catch {}
+      }
     }
     this.detachClient();
   }
@@ -376,10 +448,14 @@ export class TmuxRuntimeManager {
 
   openTarget(target: TmuxTarget, options: OpenTargetOptions = {}): void {
     if (options.insideTmux) {
+      const current = this.currentClientSession();
+      if (current && current !== target.sessionName) {
+        this.setReturnSession(target.sessionName, current);
+      }
       this.switchClient(target.sessionName, target.windowIndex);
       return;
     }
-    this.attachSession(target.sessionName);
+    this.attachSession(target.sessionName, target.windowIndex);
   }
 
   private configureSession(
@@ -430,32 +506,32 @@ export class TmuxRuntimeManager {
       "-b",
       "cd '#{pane_current_path}' && aimux >/dev/null 2>&1",
     ]);
-    this.exec(["set-option", "-t", sessionName, "status", "on"]);
+    this.exec(["set-option", "-t", sessionName, "status", "2"]);
     this.exec(["set-option", "-t", sessionName, "status-interval", "2"]);
     this.exec(["set-option", "-t", sessionName, "status-style", "bg=colour236,fg=colour252"]);
     this.exec(["set-option", "-t", sessionName, "message-style", "bg=colour24,fg=colour255,bold"]);
     this.exec(["set-option", "-t", sessionName, "message-command-style", "bg=colour24,fg=colour255"]);
-    this.exec(["set-option", "-t", sessionName, "status-left-length", "40"]);
-    this.exec(["set-option", "-t", sessionName, "status-right-length", "160"]);
     this.exec(["set-option", "-t", sessionName, "window-status-separator", " "]);
     this.exec(["set-option", "-t", sessionName, "window-status-format", ""]);
     this.exec(["set-option", "-t", sessionName, "window-status-current-format", ""]);
     if (statuslineCommand) {
-      const left = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side left --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-path '#{pane_current_path}'`;
-      const right = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --side right --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-path '#{pane_current_path}'`;
+      const top = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line top --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
+      const bottom = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line bottom --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
+      this.exec(["set-option", "-t", sessionName, "status-left", ""]);
+      this.exec(["set-option", "-t", sessionName, "status-right", ""]);
       this.exec([
         "set-option",
         "-t",
         sessionName,
-        "status-left",
-        `#[bg=colour238,fg=colour255,bold] #(${left}) #[default]`,
+        "status-format[0]",
+        `#[bg=colour238,fg=colour255,bold] #(${top}) #[default]`,
       ]);
       this.exec([
         "set-option",
         "-t",
         sessionName,
-        "status-right",
-        `#[fg=colour252]#(${right}) #[fg=colour241]| #[fg=colour248]%H:%M %d-%b-%y `,
+        "status-format[1]",
+        `#[bg=colour236,fg=colour252] #(${bottom}) #[default]`,
       ]);
     }
   }

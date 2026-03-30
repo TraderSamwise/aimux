@@ -1,9 +1,10 @@
 import { basename } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { getProjectStateDirFor } from "./paths.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
-export type TmuxStatusSide = "left" | "right";
+export type TmuxStatusLine = "top" | "bottom";
 
 interface StatuslineSession {
   id: string;
@@ -71,12 +72,34 @@ function sessionIdentity(session: StatuslineSession): string {
   return session.role ? `${base}(${session.role})` : base;
 }
 
-function renderLeft(projectRoot: string): string {
+function renderProjectIdentity(projectRoot: string): string {
   return `aimux ${basename(projectRoot)}`;
 }
 
 function normalizePath(path: string | undefined, projectRoot: string): string {
   return path?.trim() || projectRoot;
+}
+
+function gitOutput(cwd: string, command: string): string | null {
+  try {
+    return execSync(command, {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function currentPathContext(currentPath: string | undefined): { worktreeName?: string; branch?: string } | null {
+  if (!currentPath) return null;
+  const worktreeName = basename(currentPath);
+  const branch = gitOutput(currentPath, "git rev-parse --abbrev-ref HEAD") || undefined;
+  return {
+    worktreeName: worktreeName || undefined,
+    branch,
+  };
 }
 
 function renderDashboardScreens(activeScreen: StatuslineData["dashboardScreen"]): string[] {
@@ -147,14 +170,19 @@ function renderActiveContext(
   data: StatuslineData,
   currentSession: string | undefined,
   currentWindow?: string,
+  currentPath?: string,
 ): string | null {
   const activeSessionId = getCurrentSessionId(data, currentSession, currentWindow);
   if (!activeSessionId) return null;
   const context = data.metadata?.[activeSessionId]?.context;
-  if (!context) return null;
-  const worktree = context.worktreeName ? trim(context.worktreeName, 16) : null;
-  const branch = context.branch ? trim(context.branch, 18) : null;
-  const pr = context.pr?.number ? `PR #${context.pr.number}` : null;
+  const liveContext = currentPathContext(currentPath);
+  const worktree = liveContext?.worktreeName
+    ? trim(liveContext.worktreeName, 16)
+    : context?.worktreeName
+      ? trim(context.worktreeName, 16)
+      : null;
+  const branch = liveContext?.branch ? trim(liveContext.branch, 18) : context?.branch ? trim(context.branch, 18) : null;
+  const pr = context?.pr?.number ? `PR #${context.pr.number}` : null;
   if (!worktree && !branch && !pr) return null;
   if (worktree && branch && pr) return `${worktree}@${branch}  ·  ${pr}`;
   if (worktree && branch) return `${worktree}@${branch}`;
@@ -203,11 +231,32 @@ function renderActiveMetadata(
   return null;
 }
 
-function renderRight(
+function renderTopLine(
   projectRoot: string,
   currentWindow?: string,
   currentPath?: string,
   currentSession?: string,
+  width?: number,
+): string {
+  const data = loadStatusline(projectRoot);
+  const segments = [
+    renderProjectIdentity(projectRoot),
+    data ? renderActiveContext(data, currentSession, currentWindow, currentPath) : null,
+    data ? renderTasks(data) : null,
+    data ? renderActiveMetadata(data, currentSession, currentWindow) : null,
+    data ? renderFlash(data) : null,
+  ].filter((segment): segment is string => Boolean(segment));
+  const separator = "  ·  ";
+  const joined = segments.join(separator);
+  return width ? trim(joined, Math.max(24, width - 2)) : joined;
+}
+
+function renderBottomLine(
+  projectRoot: string,
+  currentWindow?: string,
+  currentPath?: string,
+  currentSession?: string,
+  width?: number,
 ): string {
   const data = loadStatusline(projectRoot);
   if (!data) return "";
@@ -215,23 +264,28 @@ function renderRight(
     currentWindow === "dashboard"
       ? renderDashboardScreens(data.dashboardScreen)
       : renderScopedSessionsFromTmux(data, currentSession, projectRoot, currentWindow, currentPath);
-  const segments = [
-    ...sessionSegments,
-    renderActiveContext(data, currentSession, currentWindow),
-    renderTasks(data),
-    renderActiveMetadata(data, currentSession, currentWindow),
-    renderActiveHeadline(data),
-    renderFlash(data),
-  ].filter((segment): segment is string => Boolean(segment));
-  return segments.join("  ·  ");
+  const segments = [...sessionSegments, renderActiveHeadline(data)].filter((segment): segment is string =>
+    Boolean(segment),
+  );
+  const maxWidth = Math.max(24, (width ?? 120) - 2);
+  const separator = "  ·  ";
+  const chosen: string[] = [];
+  let used = 0;
+  for (const segment of segments) {
+    const next = segment.length + (chosen.length > 0 ? separator.length : 0);
+    if (used + next > maxWidth) break;
+    chosen.push(segment);
+    used += next;
+  }
+  return chosen.join(separator);
 }
 
 export function renderTmuxStatusline(
   projectRoot: string,
-  side: TmuxStatusSide,
-  options: { currentWindow?: string; currentPath?: string; currentSession?: string } = {},
+  line: TmuxStatusLine,
+  options: { currentWindow?: string; currentPath?: string; currentSession?: string; width?: number } = {},
 ): string {
-  return side === "left"
-    ? renderLeft(projectRoot)
-    : renderRight(projectRoot, options.currentWindow, options.currentPath, options.currentSession);
+  return line === "top"
+    ? renderTopLine(projectRoot, options.currentWindow, options.currentPath, options.currentSession, options.width)
+    : renderBottomLine(projectRoot, options.currentWindow, options.currentPath, options.currentSession, options.width);
 }
