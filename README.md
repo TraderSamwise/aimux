@@ -92,6 +92,13 @@ The managed tmux session config renders:
 
 This keeps the terminal surface fully tmux-native while still surfacing the old footer's useful information.
 
+Status rendering has two practical data paths that must stay visually aligned:
+
+- the rich path from `statusline.json` written by the dashboard process
+- the fallback path from live tmux window metadata
+
+When extending the footer/status UI, treat both as first-class render sources. The fallback path must carry enough metadata to render the same identity, role, and activity state as the richer dashboard-written path, otherwise the status bar will visibly flicker between styles during updates.
+
 ## Metadata API
 
 Inspired by opensessions, aimux exposes a small project-local metadata API from the dashboard process. The tmux status line reads this state and shows it for the active session.

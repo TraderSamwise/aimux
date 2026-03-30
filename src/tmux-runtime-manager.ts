@@ -58,6 +58,7 @@ export interface TmuxWindowMetadata {
   backendSessionId?: string;
   worktreePath?: string;
   label?: string;
+  role?: string;
 }
 
 const DEFAULT_EXEC: TmuxExec = (args, options) =>

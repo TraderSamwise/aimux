@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths, getProjectStateDirFor } from "./paths.js";
@@ -112,6 +112,43 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("graveyard");
   });
 
+  it("uses existing statusline data even if it is not freshly rewritten", () => {
+    vi.spyOn(TmuxRuntimeManager.prototype, "listManagedWindows").mockReturnValue([
+      {
+        target: { sessionName: "aimux-mobile", windowId: "@1", windowIndex: 1, windowName: "coder" },
+        metadata: {
+          sessionId: "a",
+          command: "codex",
+          args: [],
+          toolConfigKey: "codex",
+          label: "coder",
+          worktreePath: repoRoot,
+        },
+      },
+    ]);
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        sessions: [{ id: "a", tool: "codex", label: "coder", status: "running", active: true, worktreePath: repoRoot }],
+        metadata: {
+          a: {
+            context: { worktreeName: "mobile", branch: "feat/mobile-auth" },
+            derived: { attention: "needs_input" },
+          },
+        },
+      }),
+    );
+    const rendered = renderTmuxStatusline(repoRoot, "top", {
+      currentWindow: "coder",
+      currentPath: repoRoot,
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    expect(rendered).toContain("mobile");
+    expect(rendered).toContain("needs input");
+  });
+
   it("trims bottom-line segments to available width", () => {
     vi.spyOn(TmuxRuntimeManager.prototype, "listManagedWindows").mockReturnValue([
       {
@@ -148,14 +185,6 @@ describe("renderTmuxStatusline", () => {
       width: 70,
     });
     expect(rendered.length).toBeLessThanOrEqual(68);
-  });
-
-  it("omits stale statusline files", () => {
-    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
-    writeFileSync(statusPath, JSON.stringify({ sessions: [{ id: "a", tool: "codex", status: "running" }] }));
-    const stale = new Date(Date.now() - 20_000);
-    utimesSync(statusPath, stale, stale);
-    expect(renderTmuxStatusline(repoRoot, "bottom")).toBe("");
   });
 
   it("renders bottom-line scoped agents and headline data", () => {
@@ -212,8 +241,75 @@ describe("renderTmuxStatusline", () => {
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(rendered).toContain("●coder(coder) ?");
+    expect(rendered).toContain("[coder(coder) ?]");
     expect(rendered).toContain("·claude ✓");
     expect(rendered).toContain("Fix auth flow");
+  });
+
+  it("disambiguates duplicate tmux window names by current path", () => {
+    const otherWorktree = join(repoRoot, "worktree-a");
+    mkdirSync(otherWorktree, { recursive: true });
+    vi.spyOn(TmuxRuntimeManager.prototype, "listManagedWindows").mockReturnValue([
+      {
+        target: { sessionName: "aimux-mobile", windowId: "@1", windowIndex: 1, windowName: "codex" },
+        metadata: {
+          sessionId: "a",
+          command: "codex",
+          args: [],
+          toolConfigKey: "codex",
+          label: "codex",
+          role: "coder",
+          worktreePath: repoRoot,
+        },
+      },
+      {
+        target: { sessionName: "aimux-mobile", windowId: "@2", windowIndex: 2, windowName: "codex" },
+        metadata: {
+          sessionId: "b",
+          command: "codex",
+          args: [],
+          toolConfigKey: "codex",
+          label: "codex",
+          worktreePath: otherWorktree,
+        },
+      },
+    ]);
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        sessions: [
+          {
+            id: "a",
+            tool: "codex",
+            label: "codex",
+            role: "coder",
+            status: "running",
+            active: false,
+            worktreePath: repoRoot,
+          },
+          { id: "b", tool: "codex", label: "codex", status: "running", active: true, worktreePath: otherWorktree },
+        ],
+        metadata: {
+          a: { derived: { attention: "needs_input" }, context: { worktreeName: "main", branch: "master" } },
+          b: { derived: { activity: "running" }, context: { worktreeName: "worktree-a", branch: "feat/x" } },
+        },
+      }),
+    );
+    const top = renderTmuxStatusline(repoRoot, "top", {
+      currentWindow: "codex",
+      currentPath: repoRoot,
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    const bottom = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "codex",
+      currentPath: repoRoot,
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    expect(top).toContain("needs input");
+    expect(bottom).toContain("[codex(coder) ?]");
+    expect(bottom).not.toContain("[codex ↻]");
   });
 });

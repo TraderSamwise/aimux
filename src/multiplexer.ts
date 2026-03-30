@@ -7,6 +7,7 @@ import {
   readdirSync,
   cpSync,
   copyFileSync,
+  renameSync,
 } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
@@ -386,6 +387,7 @@ export class Multiplexer {
       backendSessionId: this.sessions.find((session) => session.id === sessionId)?.backendSessionId,
       worktreePath: this.sessionWorktreePaths.get(sessionId),
       label: this.getSessionLabel(sessionId),
+      role: this.sessionRoles.get(sessionId),
     };
   }
 
@@ -3674,6 +3676,8 @@ export class Multiplexer {
   private writeStatuslineFile(): void {
     try {
       const dir = getProjectStateDir();
+      const filePath = join(dir, "statusline.json");
+      const tmpPath = `${filePath}.tmp`;
       const data = {
         project: basename(process.cwd()),
         dashboardScreen: this.activityActive
@@ -3701,7 +3705,8 @@ export class Multiplexer {
         metadata: loadMetadataState().sessions,
         updatedAt: new Date().toISOString(),
       };
-      writeFileSync(join(dir, "statusline.json"), JSON.stringify(data) + "\n");
+      writeFileSync(tmpPath, JSON.stringify(data) + "\n");
+      renameSync(tmpPath, filePath);
       this.tmuxRuntimeManager.refreshStatus();
     } catch {}
   }
