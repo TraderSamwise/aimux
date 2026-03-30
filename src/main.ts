@@ -433,11 +433,21 @@ teamCmd
 
 const serverCmd = program.command("server").description("Manage aimux server (headless persistent agent host)");
 
+function assertServerSupported(): void {
+  if (loadConfig().runtime.backend === "tmux") {
+    console.error(
+      'aimux server is not used with runtime.backend = "tmux". Use the tmux-backed dashboard/session flow instead.',
+    );
+    process.exit(1);
+  }
+}
+
 serverCmd
   .command("start")
   .description("Start the aimux server as a background daemon")
   .option("--foreground", "Run in foreground (used internally)")
   .action(async (opts: { foreground?: boolean }) => {
+    assertServerSupported();
     if (opts.foreground) {
       await startServerForeground();
       return;
@@ -460,6 +470,7 @@ serverCmd
   .command("stop")
   .description("Stop the running aimux server")
   .action(() => {
+    assertServerSupported();
     if (stopServer()) {
       console.log("Server stopped.");
     } else {
@@ -472,6 +483,7 @@ serverCmd
   .command("status")
   .description("Check if the aimux server is running")
   .action(() => {
+    assertServerSupported();
     const status = getServerStatus();
     if (status.running) {
       console.log(`Server is running (PID ${status.pid}).`);

@@ -102,7 +102,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
     sessionScope: "worktree",
   },
   runtime: {
-    backend: "pty",
+    backend: "tmux",
     tmux: {
       mode: "managed-session",
     },

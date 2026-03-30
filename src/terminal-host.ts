@@ -1,6 +1,7 @@
 export class TerminalHost {
   private rawModeWas: boolean | undefined;
   private terminalRestored = false;
+  private inAlternateScreen = false;
   private responseWaiters: Array<{
     matcher: (data: string) => boolean;
     resolve: (data: string | null) => void;
@@ -30,6 +31,22 @@ export class TerminalHost {
       process.stdin.resume();
     }
     process.stdout.write("\x1b[?1004h");
+  }
+
+  enterAlternateScreen(clear = false): void {
+    if (!this.inAlternateScreen) {
+      process.stdout.write("\x1b[?1049h");
+      this.inAlternateScreen = true;
+    }
+    if (clear) {
+      process.stdout.write("\x1b[2J\x1b[H");
+    }
+  }
+
+  exitAlternateScreen(): void {
+    if (!this.inAlternateScreen) return;
+    process.stdout.write("\x1b[?1049l");
+    this.inAlternateScreen = false;
   }
 
   writeQuery(data: string): void {
@@ -92,6 +109,7 @@ export class TerminalHost {
           "\x1b[?2004l" +
           "\x1b[?1049l",
       );
+      this.inAlternateScreen = false;
     } catch {}
   }
 }
