@@ -2094,7 +2094,10 @@ export class Multiplexer {
     header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — graveyard", cols));
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
-    const footer = this.centerInWidth("[↑↓] select  [Tab] details  [1-9/Enter] resurrect  [q/Esc] back", cols);
+    const footer = this.centerInWidth(
+      "[↑↓] select  [Tab] details  [d/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
+      cols,
+    );
     const viewportHeight = rows - header.length - 2;
     const twoPane = cols >= 110 && this.detailsSidebarVisible;
     const listLines: string[] = [];
@@ -2140,13 +2143,29 @@ export class Multiplexer {
       return;
     }
 
-    if (key === "escape" || key === "q") {
+    if (key === "q") {
+      this.tmuxRuntimeManager.leaveManagedSession({
+        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
+        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+      });
+      this.cleanup();
+      process.exit(0);
+      return;
+    }
+
+    if (key === "escape" || key === "d") {
       this.graveyardActive = false;
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
+      this.renderDashboard();
+      return;
+    }
+
+    if (key === "p") {
+      this.showPlans();
+      return;
+    }
+
+    if (key === "g") {
+      this.renderGraveyard();
       return;
     }
 
@@ -2278,7 +2297,10 @@ export class Multiplexer {
     header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — plans", cols));
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
-    const footer = this.centerInWidth("[↑↓] select  [Tab] details  [e/Enter] edit  [r] refresh  [q/Esc] back", cols);
+    const footer = this.centerInWidth(
+      "[↑↓] select  [Tab] details  [d/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+      cols,
+    );
     const viewportHeight = rows - header.length - 2;
     const twoPane = cols >= 110 && this.detailsSidebarVisible;
     const listLines: string[] = [];
@@ -2470,9 +2492,30 @@ export class Multiplexer {
     if (events.length === 0) return;
     const key = events[0].name || events[0].char;
 
-    if (key === "escape" || key === "q") {
+    if (key === "q") {
+      this.tmuxRuntimeManager.leaveManagedSession({
+        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
+        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+      });
+      this.cleanup();
+      process.exit(0);
+      return;
+    }
+
+    if (key === "escape" || key === "d") {
       this.plansActive = false;
       this.renderDashboard();
+      return;
+    }
+
+    if (key === "g") {
+      this.plansActive = false;
+      this.showGraveyard();
+      return;
+    }
+
+    if (key === "p") {
+      this.renderPlans();
       return;
     }
 
@@ -2696,12 +2739,35 @@ export class Multiplexer {
     const event = events[0];
     const key = event.name || event.char;
 
-    if (key === "tab") {
-      this.detailsSidebarVisible = !this.detailsSidebarVisible;
-      this.renderPlans();
+    if (key === "q") {
+      this.tmuxRuntimeManager.leaveManagedSession({
+        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
+        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+      });
+      this.cleanup();
+      process.exit(0);
       return;
     }
-    if (key === "escape" || key === "enter" || key === "return" || key === "?") {
+    if (key === "escape" || key === "enter" || key === "return" || key === "d") {
+      this.dismissHelp();
+      return;
+    }
+    if (key === "p") {
+      this.dismissHelp();
+      this.showPlans();
+      return;
+    }
+    if (key === "g") {
+      this.dismissHelp();
+      this.showGraveyard();
+      return;
+    }
+    if (key === "a") {
+      this.dismissHelp();
+      this.showMetaDashboard();
+      return;
+    }
+    if (key === "?") {
       this.dismissHelp();
     }
   }
@@ -2882,14 +2948,41 @@ export class Multiplexer {
     const key = event.name || event.char;
 
     if (key === "q") {
-      this.resolveRun?.(0);
+      this.tmuxRuntimeManager.leaveManagedSession({
+        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
+        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+      });
+      this.cleanup();
+      process.exit(0);
       return;
     }
 
-    if (key === "escape" || key === "a") {
+    if (key === "escape" || key === "d") {
       this.metaDashboardActive = false;
       this.renderDashboard();
       return;
+    }
+
+    if (key === "p") {
+      this.metaDashboardActive = false;
+      this.showPlans();
+      return;
+    }
+
+    if (key === "g") {
+      this.metaDashboardActive = false;
+      this.showGraveyard();
+      return;
+    }
+
+    if (key === "?") {
+      this.metaDashboardActive = false;
+      this.showHelp();
+      return;
+    }
+
+    if (key === "a") {
+      this.renderMetaDashboard();
     }
   }
 
