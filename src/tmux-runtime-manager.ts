@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 export interface TmuxExecOptions {
   cwd?: string;
 }
 
 export type TmuxExec = (args: string[], options?: TmuxExecOptions) => string;
+export type TmuxInteractiveExec = (args: string[], options?: TmuxExecOptions) => void;
 
 export interface TmuxWindowInfo {
   id: string;
@@ -60,8 +61,21 @@ const DEFAULT_EXEC: TmuxExec = (args, options) =>
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 
+const DEFAULT_INTERACTIVE_EXEC: TmuxInteractiveExec = (args, options) => {
+  const result = spawnSync("tmux", args, {
+    cwd: options?.cwd,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.toString() || `tmux ${args.join(" ")} failed`);
+  }
+};
+
 export class TmuxRuntimeManager {
-  constructor(private readonly exec: TmuxExec = DEFAULT_EXEC) {}
+  constructor(
+    private readonly exec: TmuxExec = DEFAULT_EXEC,
+    private readonly interactiveExec: TmuxInteractiveExec = DEFAULT_INTERACTIVE_EXEC,
+  ) {}
 
   isAvailable(): boolean {
     try {
@@ -307,11 +321,11 @@ export class TmuxRuntimeManager {
   }
 
   attachSession(sessionName: string): void {
-    this.exec(["attach-session", "-t", sessionName]);
+    this.interactiveExec(["attach-session", "-t", sessionName]);
   }
 
   switchClient(sessionName: string, windowIndex = 0): void {
-    this.exec(["switch-client", "-t", `${sessionName}:${windowIndex}`]);
+    this.interactiveExec(["switch-client", "-t", `${sessionName}:${windowIndex}`]);
   }
 
   isInsideTmux(env: NodeJS.ProcessEnv = process.env): boolean {

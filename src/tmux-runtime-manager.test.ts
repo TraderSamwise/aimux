@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { TmuxRuntimeManager, type TmuxExec } from "./tmux-runtime-manager.js";
+import { TmuxRuntimeManager, type TmuxExec, type TmuxInteractiveExec } from "./tmux-runtime-manager.js";
 
 function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: string }> } {
   const calls: Array<{ args: string[]; cwd?: string }> = [];
@@ -89,7 +89,11 @@ describe("TmuxRuntimeManager", () => {
 
   it("switches client inside tmux and attaches outside tmux", () => {
     const exec = createExecMock();
-    const manager = new TmuxRuntimeManager(exec);
+    const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const interactiveExec: TmuxInteractiveExec = (args, options) => {
+      interactiveCalls.push({ args, cwd: options?.cwd });
+    };
+    const manager = new TmuxRuntimeManager(exec, interactiveExec);
     const target = {
       sessionName: "aimux-mobile-abc",
       windowId: "@3",
@@ -100,8 +104,8 @@ describe("TmuxRuntimeManager", () => {
     manager.openTarget(target, { insideTmux: true });
     manager.openTarget(target, { insideTmux: false });
 
-    expect(exec.calls.at(-2)?.args).toEqual(["switch-client", "-t", "aimux-mobile-abc:3"]);
-    expect(exec.calls.at(-1)?.args).toEqual(["attach-session", "-t", "aimux-mobile-abc"]);
+    expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-t", "aimux-mobile-abc:3"]);
+    expect(interactiveCalls.at(-1)?.args).toEqual(["attach-session", "-t", "aimux-mobile-abc"]);
   });
 
   it("captures pane output and sends input primitives", () => {
