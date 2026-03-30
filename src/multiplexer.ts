@@ -12,7 +12,6 @@ import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { execSync, spawn, spawnSync } from "node:child_process";
-import { PtySession, type PtySessionOptions } from "./pty-session.js";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
 import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
 import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
@@ -44,12 +43,7 @@ import { TerminalQueryResponder } from "./terminal-query-responder.js";
 import { HostTerminalQueryFallback } from "./terminal-query-fallback.js";
 import { SessionOutputPipeline } from "./session-output-pipeline.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "./session-runtime.js";
-import { ServerRuntimeManager, type ServerRuntimeEvent } from "./server-runtime-manager.js";
-import {
-  buildDashboardSessions,
-  getRemoteOwnedSessionKeys,
-  orderDashboardSessionsByVisualWorktree,
-} from "./dashboard-session-registry.js";
+import { buildDashboardSessions, orderDashboardSessionsByVisualWorktree } from "./dashboard-session-registry.js";
 import { InstanceDirectory } from "./instance-directory.js";
 import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
@@ -194,10 +188,6 @@ export class Multiplexer {
   private sessionLabels = new Map<string, string>();
   /** Offline sessions from previous runs (loaded from state.json) */
   private offlineSessions: SessionState[] = [];
-  /** Server-backed runtime ownership and reconnect state */
-  private serverRuntime = new ServerRuntimeManager(undefined, undefined, {
-    onEvent: (event) => this.handleServerRuntimeEvent(event),
-  });
   /** Cross-instance discovery and claim/heartbeat ownership */
   private instanceDirectory = new InstanceDirectory();
   private tmuxRuntimeManager = new TmuxRuntimeManager();
@@ -273,14 +263,6 @@ export class Multiplexer {
       const target = localSession.tmuxTarget;
       this.sessionTmuxTargets.set(sessionId, target);
       this.syncTmuxWindowMetadata(sessionId);
-    }
-
-    if (this.serverRuntime.canControlSession(sessionId)) {
-      const ok = await this.serverRuntime.renameSession(sessionId, label?.trim() || undefined);
-      if (!ok) {
-        this.footerFlash = `Failed to rename ${sessionId}`;
-        this.footerFlashTicks = 3;
-      }
     }
 
     this.saveState();
@@ -506,38 +488,6 @@ export class Multiplexer {
     );
   }
 
-  private handleServerRuntimeEvent(event: ServerRuntimeEvent): void {
-    if (event.type === "sessionUpdated") {
-      const { id, label } = event;
-      this.applySessionLabel(id, label);
-      this.writeStatuslineFile();
-      if (this.mode === "dashboard" && !this.metaDashboardActive && !this.graveyardActive) {
-        this.renderDashboard();
-      } else if (this.mode === "focused") {
-        this.scheduleFocusedRender(false);
-      }
-      return;
-    }
-
-    if (event.type === "sessionDiscovered") {
-      const { info } = event;
-      if (info.label) {
-        const state = this.offlineSessions.find((s) => s.id === info.id);
-        if (state) state.label = info.label;
-        this.sessionLabels.set(info.id, info.label);
-      }
-      return;
-    }
-
-    if (event.type === "sessionHydrated") {
-      const { runtime } = event;
-      const debugState = this.getTerminalDebugState(runtime);
-      if (debugState) {
-        debug(this.formatDebugState(`hydrate done ${runtime.id}`, debugState), "reconnect");
-      }
-    }
-  }
-
   private updateContextWatcherSessions(): void {
     this.contextWatcher.updateSessions(
       this.sessions.map((s) => {
@@ -552,43 +502,10 @@ export class Multiplexer {
     );
   }
 
-  /** Try to connect to a running aimux server for persistent PTY ownership */
-  private async connectToServer(): Promise<void> {
-    try {
-      await this.serverRuntime.connect();
-      const cols = process.stdout.columns ?? 80;
-      const rows = this.toolRows;
-      await this.serverRuntime.reconnectExistingSessions(cols, rows, {
-        resolvePromptPatterns: (command) => {
-          const config = loadConfig();
-          const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === command);
-          if (!toolEntry?.[1]?.promptPatterns) return undefined;
-          return toolEntry[1].promptPatterns.map((p: string) => new RegExp(p, "m"));
-        },
-        onDiscovered: (info, session) => {
-          const runtime = this.registerManagedSession(
-            session as any,
-            [],
-            info.toolConfigKey ?? info.command,
-            info.worktreePath,
-            undefined,
-          );
-          return runtime;
-        },
-      });
-    } catch {
-      debug("could not connect to server, using direct PTY mode", "server-client");
-      this.serverRuntime.disconnect();
-    }
-  }
-
-  async run(opts: Omit<PtySessionOptions, "cols" | "rows">): Promise<number> {
+  async run(opts: { command: string; args: string[] }): Promise<number> {
     initProject();
     await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
-    if (!this.isTmuxBackend()) {
-      await this.connectToServer();
-    }
     this.restoreTmuxSessionsFromState();
     this.taskDispatcher = new TaskDispatcher(
       (id) => this.sessions.find((s) => s.id === id),
@@ -618,109 +535,8 @@ export class Multiplexer {
       toolConfig?.sessionIdFlag,
     );
 
-    if (this.isTmuxBackend()) {
-      this.focusSession(this.sessions.length - 1);
-      return 0;
-    }
-
-    // Enter raw mode and set up footer
-    this.terminalHost.enterRawMode();
-    this.startFooterRefresh();
-    void this.renderFocusedView(true);
-    this.scheduleFocusedRepaint();
-
-    // Forward stdin through hotkey handler → active PTY
-    this.onStdinData = (data: Buffer) => {
-      if (this.terminalHost.consumeResponse(data)) {
-        return;
-      }
-      if (this.handleTerminalFocusEvent(data)) {
-        return;
-      }
-      if (this.pickerActive) {
-        this.handleToolPickerKey(data);
-        return;
-      }
-      if (this.worktreeRemoveConfirm) {
-        this.handleWorktreeRemoveConfirmKey(data);
-        return;
-      }
-      if (this.worktreeInputActive) {
-        this.handleWorktreeInputKey(data);
-        return;
-      }
-      if (this.worktreeListActive) {
-        this.handleWorktreeListKey(data);
-        return;
-      }
-      if (this.migratePickerActive) {
-        this.handleMigratePickerKey(data);
-        return;
-      }
-      if (this.switcherActive) {
-        this.handleSwitcherKey(data);
-        return;
-      }
-      if (this.labelInputActive) {
-        this.handleLabelInputKey(data);
-        return;
-      }
-      if (this.metaDashboardActive) {
-        this.handleMetaDashboardKey(data);
-        return;
-      }
-      if (this.plansActive) {
-        this.handlePlansKey(data);
-        return;
-      }
-      if (this.helpActive) {
-        this.handleHelpKey(data);
-        return;
-      }
-      if (this.graveyardActive) {
-        this.handleGraveyardKey(data);
-        return;
-      }
-
-      if (this.mode === "dashboard") {
-        this.handleDashboardKey(data);
-        return;
-      }
-
-      const passthrough = this.hotkeys.feed(data);
-      if (passthrough !== null) {
-        if (this.mode === "focused" && this.activeSession) {
-          this.focusedInputTrace = {
-            sessionId: this.activeSession.id,
-            writtenAt: Date.now(),
-          };
-          debug(
-            `input-trace write: session=${this.activeSession.id} bytes=${Buffer.byteLength(passthrough)}`,
-            "focus-repaint",
-          );
-        }
-        this.activeSession?.write(passthrough);
-      }
-    };
-    process.stdin.on("data", this.onStdinData);
-
-    // Forward terminal resize → all PTYs + redraw footer/dashboard
-    this.onResize = () => {
-      const cols = process.stdout.columns ?? 80;
-      const rows = process.stdout.rows ?? 24;
-      debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
-      this.scheduleTerminalResize();
-    };
-    process.stdout.on("resize", this.onResize);
-
-    // Wait until all sessions exit or explicit quit
-    const exitCode = await new Promise<number>((resolve) => {
-      this.resolveRun = resolve;
-    });
-
-    // Cleanup
-    this.teardown();
-    return exitCode;
+    this.focusSession(this.sessions.length - 1);
+    return 0;
   }
 
   async runDashboard(): Promise<number> {
@@ -729,9 +545,6 @@ export class Multiplexer {
     this.startHeartbeat();
     this.startedInDashboard = true;
     this.mode = "dashboard";
-    if (!this.isTmuxBackend()) {
-      await this.connectToServer();
-    }
     this.restoreTmuxSessionsFromState();
     this.loadOfflineSessions();
 
@@ -903,100 +716,8 @@ export class Multiplexer {
       );
     }
 
-    if (this.isTmuxBackend()) {
-      this.openTmuxDashboardTarget();
-      return 0;
-    }
-
-    // Enter raw mode and set up input handling
-    this.terminalHost.enterRawMode();
-    this.startFooterRefresh();
-    void this.renderFocusedView(true);
-    this.scheduleFocusedRepaint();
-
-    this.onStdinData = (data: Buffer) => {
-      if (this.handleTerminalFocusEvent(data)) {
-        return;
-      }
-      if (this.pickerActive) {
-        this.handleToolPickerKey(data);
-        return;
-      }
-      if (this.worktreeRemoveConfirm) {
-        this.handleWorktreeRemoveConfirmKey(data);
-        return;
-      }
-      if (this.worktreeInputActive) {
-        this.handleWorktreeInputKey(data);
-        return;
-      }
-      if (this.worktreeListActive) {
-        this.handleWorktreeListKey(data);
-        return;
-      }
-      if (this.migratePickerActive) {
-        this.handleMigratePickerKey(data);
-        return;
-      }
-      if (this.switcherActive) {
-        this.handleSwitcherKey(data);
-        return;
-      }
-      if (this.labelInputActive) {
-        this.handleLabelInputKey(data);
-        return;
-      }
-      if (this.metaDashboardActive) {
-        this.handleMetaDashboardKey(data);
-        return;
-      }
-      if (this.plansActive) {
-        this.handlePlansKey(data);
-        return;
-      }
-      if (this.helpActive) {
-        this.handleHelpKey(data);
-        return;
-      }
-      if (this.graveyardActive) {
-        this.handleGraveyardKey(data);
-        return;
-      }
-      if (this.mode === "dashboard") {
-        this.handleDashboardKey(data);
-        return;
-      }
-      const passthrough = this.hotkeys.feed(data);
-      if (passthrough !== null) {
-        if (this.mode === "focused" && this.activeSession) {
-          this.focusedInputTrace = {
-            sessionId: this.activeSession.id,
-            writtenAt: Date.now(),
-          };
-          debug(
-            `input-trace write: session=${this.activeSession.id} bytes=${Buffer.byteLength(passthrough)}`,
-            "focus-repaint",
-          );
-        }
-        this.activeSession?.write(passthrough);
-      }
-    };
-    process.stdin.on("data", this.onStdinData);
-
-    this.onResize = () => {
-      const cols = process.stdout.columns ?? 80;
-      const rows = process.stdout.rows ?? 24;
-      debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
-      this.scheduleTerminalResize();
-    };
-    process.stdout.on("resize", this.onResize);
-
-    const exitCode = await new Promise<number>((resolve) => {
-      this.resolveRun = resolve;
-    });
-
-    this.teardown();
-    return exitCode;
+    this.openTmuxDashboardTarget();
+    return 0;
   }
 
   /**
@@ -1060,100 +781,8 @@ export class Multiplexer {
       );
     }
 
-    if (this.isTmuxBackend()) {
-      this.openTmuxDashboardTarget();
-      return 0;
-    }
-
-    // Enter raw mode and set up input handling
-    this.terminalHost.enterRawMode();
-    this.startFooterRefresh();
-    void this.renderFocusedView(true);
-    this.scheduleFocusedRepaint();
-
-    this.onStdinData = (data: Buffer) => {
-      if (this.handleTerminalFocusEvent(data)) {
-        return;
-      }
-      if (this.pickerActive) {
-        this.handleToolPickerKey(data);
-        return;
-      }
-      if (this.worktreeRemoveConfirm) {
-        this.handleWorktreeRemoveConfirmKey(data);
-        return;
-      }
-      if (this.worktreeInputActive) {
-        this.handleWorktreeInputKey(data);
-        return;
-      }
-      if (this.worktreeListActive) {
-        this.handleWorktreeListKey(data);
-        return;
-      }
-      if (this.migratePickerActive) {
-        this.handleMigratePickerKey(data);
-        return;
-      }
-      if (this.switcherActive) {
-        this.handleSwitcherKey(data);
-        return;
-      }
-      if (this.labelInputActive) {
-        this.handleLabelInputKey(data);
-        return;
-      }
-      if (this.metaDashboardActive) {
-        this.handleMetaDashboardKey(data);
-        return;
-      }
-      if (this.plansActive) {
-        this.handlePlansKey(data);
-        return;
-      }
-      if (this.helpActive) {
-        this.handleHelpKey(data);
-        return;
-      }
-      if (this.graveyardActive) {
-        this.handleGraveyardKey(data);
-        return;
-      }
-      if (this.mode === "dashboard") {
-        this.handleDashboardKey(data);
-        return;
-      }
-      const passthrough = this.hotkeys.feed(data);
-      if (passthrough !== null) {
-        if (this.mode === "focused" && this.activeSession) {
-          this.focusedInputTrace = {
-            sessionId: this.activeSession.id,
-            writtenAt: Date.now(),
-          };
-          debug(
-            `input-trace write: session=${this.activeSession.id} bytes=${Buffer.byteLength(passthrough)}`,
-            "focus-repaint",
-          );
-        }
-        this.activeSession?.write(passthrough);
-      }
-    };
-    process.stdin.on("data", this.onStdinData);
-
-    this.onResize = () => {
-      const cols = process.stdout.columns ?? 80;
-      const rows = process.stdout.rows ?? 24;
-      debug(`stdout resize: cols=${cols} rows=${rows} mode=${this.mode}`, "focus-repaint");
-      this.scheduleTerminalResize();
-    };
-    process.stdout.on("resize", this.onResize);
-
-    const exitCode = await new Promise<number>((resolve) => {
-      this.resolveRun = resolve;
-    });
-
-    this.teardown();
-    return exitCode;
+    this.openTmuxDashboardTarget();
+    return 0;
   }
 
   createSession(
@@ -1301,105 +930,33 @@ export class Multiplexer {
       "session",
     );
 
-    // Build prompt patterns from config for status detection
-    let promptPatterns: RegExp[] | undefined;
-    if (toolConfigKey) {
-      const tc = loadConfig().tools[toolConfigKey];
-      if (tc?.promptPatterns) {
-        promptPatterns = tc.promptPatterns.map((p) => new RegExp(p, "m"));
-      }
-    }
-
-    let session: SessionTransport;
-    let runtime: ManagedSession;
     const sessionStartTime = Date.now();
 
-    // If server is connected, register the proxy locally first so onData/onExit
-    // listeners are attached before the server can emit initial output.
-    // If server is connected, spawn on server for persistent ownership
-    if (this.isTmuxBackend()) {
-      const tmuxSession = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
-      const target = this.tmuxRuntimeManager.createWindow(
-        tmuxSession.sessionName,
-        this.getSessionLabel(sessionId) ?? command,
-        worktreePath ?? process.cwd(),
-        command,
-        finalArgs,
-      );
-      const tmuxTransport = new TmuxSessionTransport(
-        sessionId,
-        command,
-        target,
-        this.tmuxRuntimeManager,
-        cols,
-        this.toolRows,
-      );
-      this.sessionTmuxTargets.set(sessionId, target);
-      session = tmuxTransport;
-      runtime = this.registerManagedSession(
-        tmuxTransport,
-        args,
-        toolConfigKey,
-        worktreePath,
-        undefined,
-        sessionStartTime,
-      );
-    } else if (this.serverRuntime.connected) {
-      runtime = this.serverRuntime.spawnManagedSession(
-        {
-          id: sessionId,
-          command,
-          args: finalArgs,
-          toolConfigKey: toolConfigKey ?? command,
-          backendSessionId,
-          worktreePath,
-          cwd: worktreePath ?? process.cwd(),
-          cols,
-          rows: this.toolRows,
-          promptPatterns,
-        },
-        {
-          onSpawned: (serverSession) =>
-            this.registerManagedSession(
-              serverSession as any,
-              args,
-              toolConfigKey,
-              worktreePath,
-              undefined,
-              sessionStartTime,
-            ),
-        },
-      );
-      session = runtime.transport;
-    } else {
-      const pty = new PtySession({
-        command,
-        args: finalArgs,
-        cols,
-        rows: this.toolRows,
-        id: sessionId,
-        cwd: worktreePath,
-        promptPatterns,
-      });
-      session = pty;
-      runtime = this.registerManagedSession(pty, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
-    }
+    const tmuxSession = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
+    const target = this.tmuxRuntimeManager.createWindow(
+      tmuxSession.sessionName,
+      this.getSessionLabel(sessionId) ?? command,
+      worktreePath ?? process.cwd(),
+      command,
+      finalArgs,
+    );
+    const tmuxTransport = new TmuxSessionTransport(
+      sessionId,
+      command,
+      target,
+      this.tmuxRuntimeManager,
+      cols,
+      this.toolRows,
+    );
+    this.sessionTmuxTargets.set(sessionId, target);
+    const session: SessionTransport = tmuxTransport;
+    this.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
 
     // Store backend session ID and start time
     session.backendSessionId = backendSessionId;
     if (session instanceof TmuxSessionTransport) {
       this.syncTmuxWindowMetadata(sessionId);
     }
-
-    // For tools without sessionIdFlag, try to capture the backend session ID via filesystem
-    if (!backendSessionId && toolConfigKey) {
-      const toolCfg = loadConfig().tools[toolConfigKey];
-      if (toolCfg?.sessionCapture && session instanceof PtySession) {
-        this.captureSessionId(session, toolCfg.sessionCapture);
-      }
-    }
-
-    if (this.serverRuntime.connected) debug(`spawned session on server: ${sessionId}`, "server-client");
 
     // Focus the new session
     this.activeIndex = this.sessions.length - 1;
@@ -1727,20 +1284,11 @@ export class Multiplexer {
     // Update MRU: move focused session to front
     const sid = this.sessions[index].id;
     this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
-
-    if (this.isTmuxBackend()) {
-      const target = this.sessionTmuxTargets.get(sid);
-      if (target) {
-        this.saveState();
-        this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
-      }
-      return;
+    const target = this.sessionTmuxTargets.get(sid);
+    if (target) {
+      this.saveState();
+      this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
     }
-
-    this.setMode("focused");
-
-    this.scheduleFocusedRender();
-    this.startFooterRefresh();
   }
 
   private handleAction(action: HotkeyAction): void {
@@ -2258,8 +1806,8 @@ export class Multiplexer {
       this.focusedWorktreePath,
       hasWorktrees ? this.dashboardLevel : "sessions",
       selectedSession,
-      this.serverRuntime.connected ?? false,
-      this.isTmuxBackend() ? "tmux" : undefined,
+      false,
+      "tmux",
       mainCheckoutInfo,
     );
     process.stdout.write(this.dashboard.render(cols, rows));
@@ -3680,7 +3228,7 @@ export class Multiplexer {
       offlineSessions: this.offlineSessions,
       remoteInstances: this.getRemoteInstancesSafe(),
       mainRepoPath,
-      isServerSession: (sessionId) => this.serverRuntime.isServerSession(sessionId),
+      isServerSession: () => false,
       getSessionLabel: (sessionId) => this.getSessionLabel(sessionId),
       getSessionHeadline: (sessionId) => this.deriveHeadline(sessionId),
       getSessionTaskDescription: (sessionId) => this.taskDispatcher?.getSessionTask(sessionId),
@@ -3695,8 +3243,6 @@ export class Multiplexer {
     try {
       mainRepoPath = findMainRepo();
     } catch {}
-
-    const normalizeWtPath = (path?: string) => (path && mainRepoPath && path === mainRepoPath ? undefined : path);
 
     let worktreePaths: Array<string | undefined> = [];
     try {
@@ -3844,48 +3390,6 @@ export class Multiplexer {
       } catch {}
     }
     this.writtenInstructionFiles.clear();
-  }
-
-  /** Write active sessions to .aimux/sessions.json so agents can discover each other */
-  /**
-   * Capture backend session ID by watching a directory for new files.
-   * Config-driven: uses sessionCapture.dir, .pattern, .delayMs from ToolConfig.
-   */
-  private captureSessionId(session: PtySession, capture: import("./config.js").SessionCaptureConfig): void {
-    const now = new Date();
-    const dir = capture.dir
-      .replace("{home}", process.env.HOME ?? "")
-      .replace("{yyyy}", String(now.getFullYear()))
-      .replace("{mm}", String(now.getMonth() + 1).padStart(2, "0"))
-      .replace("{dd}", String(now.getDate()).padStart(2, "0"));
-    const regex = new RegExp(capture.pattern);
-
-    // Snapshot current files
-    let beforeFiles: string[] = [];
-    try {
-      beforeFiles = readdirSync(dir);
-    } catch {}
-
-    const checkForNew = () => {
-      try {
-        const afterFiles = readdirSync(dir);
-        const newFiles = afterFiles.filter((f) => !beforeFiles.includes(f));
-        for (const file of newFiles) {
-          const match = file.match(regex);
-          if (match) {
-            session.backendSessionId = match[1];
-            debug(`captured backendSessionId: ${match[1]}`, "session");
-            return;
-          }
-        }
-      } catch {}
-    };
-
-    // Try a few times with increasing delays
-    const delay = capture.delayMs;
-    setTimeout(checkForNew, delay);
-    setTimeout(checkForNew, delay * 2.5);
-    setTimeout(checkForNew, delay * 5);
   }
 
   private writeSessionsFile(): void {
@@ -4210,7 +3714,9 @@ export class Multiplexer {
     }
 
     // Also exclude by backendSessionId to catch resumed sessions with new IDs
-    const ownedBackendIds = this.serverRuntime.getOwnedBackendSessionIdsForSessions(this.sessions);
+    const ownedBackendIds = new Set(
+      this.sessions.map((session) => session.backendSessionId).filter((value): value is string => Boolean(value)),
+    );
 
     this.offlineSessions = state.sessions.filter((s) => {
       if (ownedIds.has(s.id)) return false;
@@ -4224,7 +3730,6 @@ export class Multiplexer {
   }
 
   private restoreTmuxSessionsFromState(): void {
-    if (!this.isTmuxBackend()) return;
     const state = Multiplexer.loadState();
     const savedById = new Map((state?.sessions ?? []).map((session) => [session.id, session]));
 
@@ -4462,8 +3967,7 @@ export class Multiplexer {
 
   /** Save session state to main repo's .aimux/state.json, merging with existing state. */
   private saveState(): void {
-    const localSessions = this.isTmuxBackend() ? [] : this.serverRuntime.getPersistableSessions(this.sessions);
-    const liveSessions = localSessions.map((s) => ({
+    const liveSessions = this.sessions.map((s) => ({
       id: s.id,
       tool: s.command,
       toolConfigKey: this.sessionToolKeys.get(s.id) ?? s.command,
@@ -4547,11 +4051,9 @@ export class Multiplexer {
   }
 
   cleanup(): void {
-    for (const session of this.serverRuntime.getDestroyableSessions(this.sessions)) {
+    for (const session of this.sessions) {
       session.destroy();
     }
-    // Disconnect from server (sessions keep running)
-    this.serverRuntime.disconnect();
     this.teardown();
   }
 

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { loadConfig } from "./config.js";
 
 export interface TmuxExecOptions {
   cwd?: string;
@@ -89,10 +90,14 @@ export class TmuxRuntimeManager {
   getProjectSession(projectRoot: string): TmuxSessionRef {
     const projectId = createHash("sha1").update(projectRoot).digest("hex").slice(0, 10);
     const slug = basename(projectRoot).replace(/[^a-zA-Z0-9_-]+/g, "-") || "project";
+    let prefix = "aimux";
+    try {
+      prefix = loadConfig().runtime.tmux.sessionPrefix || "aimux";
+    } catch {}
     return {
       projectRoot,
       projectId,
-      sessionName: `aimux-${slug}-${projectId}`,
+      sessionName: `${prefix}-${slug}-${projectId}`,
     };
   }
 
