@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getProjectStateDir, getProjectStateDirFor } from "./paths.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent, SessionDerivedState } from "./agent-events.js";
@@ -106,7 +106,9 @@ function loadJson<T>(path: string, fallback: T): T {
 
 function saveJson(path: string, value: unknown): void {
   ensureParent(path);
-  writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
+  const tmpPath = `${path}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(value, null, 2) + "\n");
+  renameSync(tmpPath, path);
 }
 
 export function loadMetadataState(projectRoot?: string): MetadataState {

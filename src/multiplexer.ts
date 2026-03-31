@@ -28,6 +28,7 @@ import {
   getAimuxDirFor,
   getLocalAimuxDir,
   getPlansDir,
+  getStatuslineOwnerPath,
 } from "./paths.js";
 import { debug, debugPreamble, closeDebug } from "./debug.js";
 import { createWorktree, findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
@@ -46,6 +47,12 @@ import { TmuxSessionTransport } from "./tmux-session-transport.js";
 import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
+
+interface StatuslineOwnerState {
+  instanceId: string;
+  pid: number;
+  updatedAt: string;
+}
 
 export type MuxMode = "dashboard";
 
@@ -463,6 +470,7 @@ export class Multiplexer {
     this.startHeartbeat();
     this.startedInDashboard = true;
     this.mode = "dashboard";
+    this.claimStatuslineOwnership();
     this.restoreTmuxSessionsFromState();
     this.loadOfflineSessions();
 
@@ -3726,6 +3734,7 @@ export class Multiplexer {
   /** Write statusline state for Claude Code's statusline script to read */
   private writeStatuslineFile(): void {
     try {
+      if (!this.ownsStatusline()) return;
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
       const tmpPath = `${filePath}.tmp`;
@@ -3758,8 +3767,47 @@ export class Multiplexer {
       };
       writeFileSync(tmpPath, JSON.stringify(data) + "\n");
       renameSync(tmpPath, filePath);
+      this.touchStatuslineOwnership();
       this.tmuxRuntimeManager.refreshStatus();
     } catch {}
+  }
+
+  private claimStatuslineOwnership(): void {
+    try {
+      const owner: StatuslineOwnerState = {
+        instanceId: this.instanceId,
+        pid: process.pid,
+        updatedAt: new Date().toISOString(),
+      };
+      const ownerPath = getStatuslineOwnerPath();
+      const tmpPath = `${ownerPath}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(owner) + "\n");
+      renameSync(tmpPath, ownerPath);
+    } catch {}
+  }
+
+  private touchStatuslineOwnership(): void {
+    try {
+      const ownerPath = getStatuslineOwnerPath();
+      const owner: StatuslineOwnerState = {
+        instanceId: this.instanceId,
+        pid: process.pid,
+        updatedAt: new Date().toISOString(),
+      };
+      const tmpPath = `${ownerPath}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(owner) + "\n");
+      renameSync(tmpPath, ownerPath);
+    } catch {}
+  }
+
+  private ownsStatusline(): boolean {
+    try {
+      const raw = readFileSync(getStatuslineOwnerPath(), "utf-8");
+      const owner = JSON.parse(raw) as Partial<StatuslineOwnerState>;
+      return owner.instanceId === this.instanceId && owner.pid === process.pid;
+    } catch {
+      return true;
+    }
   }
 
   /** Remove sessions file on exit */
@@ -4229,6 +4277,11 @@ export class Multiplexer {
     }
     this.hotkeys.destroy();
     this.terminalHost.restoreTerminalState();
+    try {
+      if (this.ownsStatusline()) {
+        unlinkSync(getStatuslineOwnerPath());
+      }
+    } catch {}
   }
 
   cleanup(): void {
