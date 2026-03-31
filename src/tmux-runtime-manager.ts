@@ -474,9 +474,11 @@ export class TmuxRuntimeManager {
   ): void {
     this.exec(["set-option", "-t", sessionName, "prefix", "C-a"]);
     this.exec(["set-option", "-t", sessionName, "prefix2", "C-b"]);
+    this.exec(["set-option", "-t", sessionName, "mouse", "off"]);
     this.exec(["set-option", "-t", sessionName, "extended-keys", "always"]);
     this.exec(["set-option", "-t", sessionName, "extended-keys-format", "csi-u"]);
     this.exec(["set-option", "-as", "-t", sessionName, "terminal-features", ",xterm*:extkeys"]);
+    this.exec(["set-option", "-as", "-t", sessionName, "terminal-features", ",xterm*:hyperlinks"]);
     this.exec(["unbind-key", "-T", "root", "C-j"]);
     this.exec(["unbind-key", "-T", "root", "S-Enter"]);
     this.exec([

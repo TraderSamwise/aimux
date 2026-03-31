@@ -67,6 +67,9 @@ describe("TmuxRuntimeManager", () => {
           args: ["set-option", "-t", session.sessionName, "prefix2", "C-b"],
         }),
         expect.objectContaining({
+          args: ["set-option", "-t", session.sessionName, "mouse", "off"],
+        }),
+        expect.objectContaining({
           args: ["set-option", "-t", session.sessionName, "extended-keys", "always"],
         }),
         expect.objectContaining({
@@ -74,6 +77,9 @@ describe("TmuxRuntimeManager", () => {
         }),
         expect.objectContaining({
           args: ["set-option", "-as", "-t", session.sessionName, "terminal-features", ",xterm*:extkeys"],
+        }),
+        expect.objectContaining({
+          args: ["set-option", "-as", "-t", session.sessionName, "terminal-features", ",xterm*:hyperlinks"],
         }),
         expect.objectContaining({
           args: ["unbind-key", "-T", "root", "C-j"],
