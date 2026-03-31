@@ -119,6 +119,8 @@ interface ThreadEntry extends ThreadSummary {
   displayTitle: string;
 }
 
+type DashboardScreen = "dashboard" | "activity" | "threads" | "plans" | "graveyard" | "help";
+
 export class Multiplexer {
   private sessions: ManagedSession[] = [];
   private activeIndex = 0;
@@ -148,19 +150,15 @@ export class Multiplexer {
   private dashboardErrorState: DashboardErrorState | null = null;
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
-  private graveyardActive = false;
+  private dashboardScreen: DashboardScreen = "dashboard";
   private graveyardEntries: SessionState[] = [];
   private graveyardIndex = 0;
-  private activityActive = false;
   private activityEntries: DashboardSession[] = [];
   private activityIndex = 0;
-  private threadsActive = false;
   private threadEntries: ThreadEntry[] = [];
   private threadIndex = 0;
-  private plansActive = false;
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
-  private helpActive = false;
   private detailsSidebarVisible = true;
   /** Quick switcher overlay state */
   private switcherActive = false;
@@ -563,23 +561,23 @@ export class Multiplexer {
         this.handleLabelInputKey(data);
         return;
       }
-      if (this.activityActive) {
+      if (this.isDashboardScreen("activity")) {
         this.handleActivityKey(data);
         return;
       }
-      if (this.threadsActive) {
+      if (this.isDashboardScreen("threads")) {
         this.handleThreadsKey(data);
         return;
       }
-      if (this.plansActive) {
+      if (this.isDashboardScreen("plans")) {
         this.handlePlansKey(data);
         return;
       }
-      if (this.helpActive) {
+      if (this.isDashboardScreen("help")) {
         this.handleHelpKey(data);
         return;
       }
-      if (this.graveyardActive) {
+      if (this.isDashboardScreen("graveyard")) {
         this.handleGraveyardKey(data);
         return;
       }
@@ -1359,7 +1357,7 @@ export class Multiplexer {
     if (this.activityIndex >= this.activityEntries.length) {
       this.activityIndex = Math.max(0, this.activityEntries.length - 1);
     }
-    this.activityActive = true;
+    this.setDashboardScreen("activity");
     this.writeStatuslineFile();
     this.renderActivityDashboard();
   }
@@ -1447,12 +1445,11 @@ export class Multiplexer {
     }
 
     if (key === "escape" || key === "d") {
-      this.activityActive = false;
+      this.setDashboardScreen("dashboard");
       this.renderDashboard();
       return;
     }
     if (key === "t") {
-      this.activityActive = false;
       this.showThreads();
       return;
     }
@@ -1461,17 +1458,14 @@ export class Multiplexer {
       return;
     }
     if (key === "p") {
-      this.activityActive = false;
       this.showPlans();
       return;
     }
     if (key === "g") {
-      this.activityActive = false;
       this.showGraveyard();
       return;
     }
     if (key === "?") {
-      this.activityActive = false;
       this.showHelp();
       return;
     }
@@ -1520,7 +1514,7 @@ export class Multiplexer {
     if (this.threadIndex >= this.threadEntries.length) {
       this.threadIndex = Math.max(0, this.threadEntries.length - 1);
     }
-    this.threadsActive = true;
+    this.setDashboardScreen("threads");
     this.writeStatuslineFile();
     this.renderThreads();
   }
@@ -1628,22 +1622,19 @@ export class Multiplexer {
       return;
     }
     if (key === "escape" || key === "d") {
-      this.threadsActive = false;
+      this.setDashboardScreen("dashboard");
       this.renderDashboard();
       return;
     }
     if (key === "a") {
-      this.threadsActive = false;
       this.showActivityDashboard();
       return;
     }
     if (key === "p") {
-      this.threadsActive = false;
       this.showPlans();
       return;
     }
     if (key === "g") {
-      this.threadsActive = false;
       this.showGraveyard();
       return;
     }
@@ -1652,7 +1643,6 @@ export class Multiplexer {
       return;
     }
     if (key === "?") {
-      this.threadsActive = false;
       this.showHelp();
       return;
     }
@@ -1722,6 +1712,14 @@ export class Multiplexer {
     this.dashboardWorktreeSessions = allDash.filter((s) => {
       return (s.worktreePath ?? undefined) === this.focusedWorktreePath;
     });
+  }
+
+  private isDashboardScreen(screen: DashboardScreen): boolean {
+    return this.dashboardScreen === screen;
+  }
+
+  private setDashboardScreen(screen: DashboardScreen): void {
+    this.dashboardScreen = screen;
   }
 
   private openLiveTmuxWindowForEntry(entry: { id: string; backendSessionId?: string }): boolean {
@@ -2632,7 +2630,7 @@ export class Multiplexer {
     if (this.graveyardIndex >= this.graveyardEntries.length) {
       this.graveyardIndex = Math.max(0, this.graveyardEntries.length - 1);
     }
-    this.graveyardActive = true;
+    this.setDashboardScreen("graveyard");
     this.writeStatuslineFile();
     this.renderGraveyard();
   }
@@ -2705,7 +2703,7 @@ export class Multiplexer {
     }
 
     if (key === "escape" || key === "d") {
-      this.graveyardActive = false;
+      this.setDashboardScreen("dashboard");
       this.renderDashboard();
       return;
     }
@@ -2783,7 +2781,7 @@ export class Multiplexer {
     debug(`resurrected ${entry.id} from graveyard`, "session");
 
     if (this.graveyardEntries.length === 0) {
-      this.graveyardActive = false;
+      this.setDashboardScreen("dashboard");
       if (this.mode === "dashboard") {
         this.renderDashboard();
       } else {
@@ -2801,7 +2799,7 @@ export class Multiplexer {
   private showPlans(): void {
     this.clearDashboardSubscreens();
     this.loadPlanEntries();
-    this.plansActive = true;
+    this.setDashboardScreen("plans");
     if (this.planIndex >= this.planEntries.length) {
       this.planIndex = Math.max(0, this.planEntries.length - 1);
     }
@@ -3075,30 +3073,26 @@ export class Multiplexer {
     }
 
     if (key === "escape" || key === "d") {
-      this.plansActive = false;
+      this.setDashboardScreen("dashboard");
       this.renderDashboard();
       return;
     }
 
     if (key === "g") {
-      this.plansActive = false;
       this.showGraveyard();
       return;
     }
     if (key === "t") {
-      this.plansActive = false;
       this.showThreads();
       return;
     }
 
     if (key === "a") {
-      this.plansActive = false;
       this.showActivityDashboard();
       return;
     }
 
     if (key === "?") {
-      this.plansActive = false;
       this.showHelp();
       return;
     }
@@ -3244,13 +3238,13 @@ export class Multiplexer {
 
   private showHelp(): void {
     this.clearDashboardSubscreens();
-    this.helpActive = true;
+    this.setDashboardScreen("help");
     this.writeStatuslineFile();
     this.renderHelp();
   }
 
   private dismissHelp(): void {
-    this.helpActive = false;
+    this.setDashboardScreen("dashboard");
     this.redrawCurrentView();
   }
 
@@ -3556,11 +3550,7 @@ export class Multiplexer {
   }
 
   private clearDashboardSubscreens(): void {
-    this.activityActive = false;
-    this.threadsActive = false;
-    this.plansActive = false;
-    this.graveyardActive = false;
-    this.helpActive = false;
+    this.setDashboardScreen("dashboard");
   }
 
   private renderSessionDetails(session: DashboardSession | undefined, width: number, height: number): string[] {
@@ -3933,17 +3923,7 @@ export class Multiplexer {
       const tmpPath = `${filePath}.tmp`;
       const data = {
         project: basename(process.cwd()),
-        dashboardScreen: this.activityActive
-          ? "activity"
-          : this.threadsActive
-            ? "threads"
-            : this.plansActive
-              ? "plans"
-              : this.graveyardActive
-                ? "graveyard"
-                : this.helpActive
-                  ? "help"
-                  : "dashboard",
+        dashboardScreen: this.dashboardScreen,
         sessions: this.sessions.map((s, i) => ({
           id: s.id,
           tool: s.command,
@@ -4022,23 +4002,23 @@ export class Multiplexer {
   }
 
   private renderCurrentDashboardView(): void {
-    if (this.activityActive) {
+    if (this.isDashboardScreen("activity")) {
       this.renderActivityDashboard();
       return;
     }
-    if (this.threadsActive) {
+    if (this.isDashboardScreen("threads")) {
       this.renderThreads();
       return;
     }
-    if (this.plansActive) {
+    if (this.isDashboardScreen("plans")) {
       this.renderPlans();
       return;
     }
-    if (this.helpActive) {
+    if (this.isDashboardScreen("help")) {
       this.renderHelp();
       return;
     }
-    if (this.graveyardActive) {
+    if (this.isDashboardScreen("graveyard")) {
       this.renderGraveyard();
       return;
     }
