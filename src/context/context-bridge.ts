@@ -7,6 +7,8 @@ import { getRecordingsDir, getContextDir } from "../paths.js";
 import { appendTurn, readHistory, type HistoryTurn } from "./history.js";
 import { algorithmicCompact } from "./compactor.js";
 import { debugTurn, debugGit, debugContext, debugCompact } from "../debug.js";
+import { TmuxRuntimeManager, type TmuxTarget } from "../tmux-runtime-manager.js";
+import { classifyToolPane } from "../tool-output-watchers.js";
 
 const git = simpleGit();
 
@@ -55,7 +57,7 @@ function simpleHash(str: string): string {
  */
 export class ContextWatcher {
   private interval: ReturnType<typeof setInterval> | null = null;
-  private sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[] }> = [];
+  private sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[]; tmuxTarget?: TmuxTarget }> = [];
   /** Track how far we've read into each session's recording */
   private readOffsets = new Map<string, number>();
   /** Track last turn type per session to detect response→prompt transitions */
@@ -66,8 +68,13 @@ export class ContextWatcher {
   private totalTurnCount = 0;
   /** Track which sessions have new turns since last write */
   private dirtySessions = new Set<string>();
+  /** Track last pane snapshot hash per session for tmux-backed live context. */
+  private paneSnapshotHashes = new Map<string, string>();
+  private panePromptVisible = new Map<string, boolean>();
 
-  updateSessions(sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[] }>): void {
+  updateSessions(
+    sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[]; tmuxTarget?: TmuxTarget }>,
+  ): void {
     this.sessions = sessions;
   }
 
@@ -112,6 +119,7 @@ export class ContextWatcher {
         this.initOffset(session.id);
       }
       await this.extractNewContent(session);
+      this.capturePaneSnapshot(session);
     }
     // Only write live context when new turns were extracted
     if (this.dirtySessions.size > 0) {
@@ -123,7 +131,12 @@ export class ContextWatcher {
    * Read new content from a session's recording since our last read offset.
    * Parse into turns and persist to JSONL history.
    */
-  private async extractNewContent(session: { id: string; command: string; turnPatterns?: RegExp[] }): Promise<void> {
+  private async extractNewContent(session: {
+    id: string;
+    command: string;
+    turnPatterns?: RegExp[];
+    tmuxTarget?: TmuxTarget;
+  }): Promise<void> {
     const txtPath = this.recordingPath(session.id);
     if (!existsSync(txtPath)) return;
 
@@ -172,6 +185,62 @@ export class ContextWatcher {
         }
       }
     } catch {}
+  }
+
+  private capturePaneSnapshot(session: { id: string; command: string; tmuxTarget?: TmuxTarget }): void {
+    if (!session.tmuxTarget) return;
+    let text = "";
+    try {
+      text = new TmuxRuntimeManager().captureTarget(session.tmuxTarget, { startLine: -120 });
+    } catch {
+      return;
+    }
+    const normalized = text
+      .split("\n")
+      .map(normalizeTerminalLine)
+      .filter((line) => !isLikelyUiChrome(line))
+      .join("\n")
+      .trim();
+    if (!normalized) return;
+    const hash = simpleHash(normalized);
+    const { promptVisible } = classifyToolPane(session.command, text);
+    const previousPromptVisible = this.panePromptVisible.get(session.id) ?? false;
+    this.panePromptVisible.set(session.id, promptVisible);
+    if (this.paneSnapshotHashes.get(session.id) === hash) return;
+    this.paneSnapshotHashes.set(session.id, hash);
+
+    const turns = readHistory(session.id, { lastN: 1 });
+    if (promptVisible && !previousPromptVisible) {
+      const snapshotTurn = normalized.split("\n").slice(-80).join("\n").trim();
+      if (snapshotTurn) {
+        const lastTurn = turns.at(-1);
+        if (!lastTurn || lastTurn.content !== snapshotTurn) {
+          appendTurn(session.id, {
+            ts: new Date().toISOString(),
+            type: "response",
+            content: snapshotTurn,
+          });
+          this.dirtySessions.add(session.id);
+          debugTurn(session.id, "response", snapshotTurn.length);
+        }
+      }
+    }
+    if (turns.length > 0) return;
+
+    const sessionDir = join(getContextDir(), session.id);
+    if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
+    const snapshot = [
+      `# ${session.id} (${session.command}) — Live Snapshot`,
+      "",
+      `Updated: ${new Date().toISOString()}`,
+      "",
+      "Recent terminal output:",
+      "",
+      normalized.slice(-MAX_LIVE_MD_BYTES),
+      "",
+    ].join("\n");
+    writeFileSync(join(sessionDir, "live.md"), snapshot);
+    debugContext("wrote", `${session.id}/live.md`, snapshot.length);
   }
 
   /**
@@ -270,13 +339,30 @@ interface ConversationTurn {
   content: string;
 }
 
+function normalizeTerminalLine(line: string): string {
+  return line
+    .replace(/\u00a0/g, " ")
+    .replace(/\r/g, "")
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
+    .replace(/\s+$/g, "");
+}
+
+function isLikelyUiChrome(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return true;
+  if (/^[─│╭╮╯╰┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬]+$/.test(trimmed)) return true;
+  if (/^[╰╭][─┄━]+/.test(trimmed)) return true;
+  if (/^│\s*$/.test(trimmed)) return true;
+  return false;
+}
+
 /**
  * Parse raw terminal recording output into conversation turns.
  * Uses heuristics based on common CLI tool patterns.
  */
 function parseConversationTurns(text: string, tool: string, turnPatterns?: RegExp[]): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
-  const lines = text.split("\n");
+  const lines = text.split("\n").map(normalizeTerminalLine);
 
   const patterns = turnPatterns ?? [/^[>❯$]\s*(.+)/];
 
@@ -285,7 +371,7 @@ function parseConversationTurns(text: string, tool: string, turnPatterns?: RegEx
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (isLikelyUiChrome(line)) continue;
 
     // Check if this line is a prompt
     let isPrompt = false;
@@ -322,6 +408,10 @@ function parseConversationTurns(text: string, tool: string, turnPatterns?: RegEx
       currentContent = [trimmed];
     } else if (currentType === "response") {
       currentContent.push(trimmed);
+    } else if (!currentType) {
+      // If the recording starts mid-response, recover useful content instead of discarding it.
+      currentType = "response";
+      currentContent = [trimmed];
     }
   }
 

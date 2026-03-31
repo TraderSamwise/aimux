@@ -99,6 +99,8 @@ Status rendering has two practical data paths that must stay visually aligned:
 
 When extending the footer/status UI, treat both as first-class render sources. The fallback path must carry enough metadata to render the same identity, role, and activity state as the richer dashboard-written path, otherwise the status bar will visibly flicker between styles during updates.
 
+For future tool wiring and continuity expectations, see [docs/tool-integration.md](docs/tool-integration.md).
+
 ## Metadata API
 
 Inspired by opensessions, aimux exposes a small project-local metadata API from the dashboard process. The tmux status line reads this state and shows it for the active session.

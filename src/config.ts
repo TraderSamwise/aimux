@@ -60,6 +60,11 @@ export interface ToolConfig {
   preambleFlag?: string[];
   /** Args to resume a specific session, with {sessionId} placeholder, e.g. ["--resume", "{sessionId}"] */
   resumeArgs?: string[];
+  /**
+   * Whether backendSessionId values tracked by aimux are valid inputs for resumeArgs.
+   * Some tools expose a session-id flag without guaranteeing that the same value is later resumable.
+   */
+  resumeByBackendSessionId?: boolean;
   /** Fallback resume args when backendSessionId is unavailable, e.g. ["--continue"] */
   resumeFallback?: string[];
   /** Flag to set a session ID when starting, with {sessionId} placeholder, e.g. ["--session-id", "{sessionId}"] */
@@ -103,9 +108,10 @@ const DEFAULT_CONFIG: AimuxConfig = {
       preambleFlag: ["--append-system-prompt"],
       sessionIdFlag: ["--session-id", "{sessionId}"],
       resumeArgs: ["--resume", "{sessionId}"],
+      resumeByBackendSessionId: false,
       resumeFallback: ["--continue"],
       promptPatterns: ["^> $", "\\$ $"],
-      turnPatterns: ["^[❯>]\\s*(.+)", "^❯\\s*$"],
+      turnPatterns: ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
       compactCommand: "claude --print --output-format text",
     },
     codex: {
@@ -113,6 +119,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
       args: ["--dangerously-bypass-approvals-and-sandbox"],
       enabled: true,
       resumeArgs: ["resume", "{sessionId}"],
+      resumeByBackendSessionId: true,
       resumeFallback: ["resume", "--last"],
       instructionsFile: "AGENTS.md",
       sessionCapture: {

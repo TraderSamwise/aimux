@@ -39,7 +39,7 @@ export function classifyToolPane(
   const lower = text.toLowerCase();
   const lastLine = lastMeaningfulLine(text);
   const promptVisible =
-    /^\s*[›>]\s?.*$/.test(lastLine) ||
+    /^\s*[›>❯]\s?.*$/.test(lastLine) ||
     /use \/skills to list available skills/i.test(text) ||
     /find and fix a bug in @filename/i.test(text);
   const errorVisible =

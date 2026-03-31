@@ -8,6 +8,15 @@ describe("classifyToolPane", () => {
     expect(classified.errorVisible).toBe(false);
   });
 
+  it("detects Claude prompt panes", () => {
+    const classified = classifyToolPane(
+      "claude",
+      ["sam@MacBook-Pro-4 ~/repo main", "▶▶ bypass permissions on (shift+tab to cycle)", "❯ "].join("\n"),
+    );
+    expect(classified.promptVisible).toBe(true);
+    expect(classified.errorVisible).toBe(false);
+  });
+
   it("detects interrupted/error panes", () => {
     const classified = classifyToolPane(
       "codex",

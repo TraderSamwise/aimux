@@ -24,6 +24,7 @@ import {
   getGraveyardPath,
   getStatePath,
   getStatusDir,
+  getContextDir,
   getAimuxDirFor,
   getLocalAimuxDir,
   getPlansDir,
@@ -360,7 +361,11 @@ export class Multiplexer {
     this.sessions.splice(idx, 1);
     this.writeSessionsFile();
     this.updateContextWatcherSessions();
-    this.sessionTmuxTargets.delete(runtime.id);
+    const mappedTarget = this.sessionTmuxTargets.get(runtime.id);
+    const runtimeTarget = runtime.transport instanceof TmuxSessionTransport ? runtime.transport.tmuxTarget : undefined;
+    if (!mappedTarget || !runtimeTarget || mappedTarget.windowId === runtimeTarget.windowId) {
+      this.sessionTmuxTargets.delete(runtime.id);
+    }
 
     if (this.sessions.length === 0) {
       if (this.startedInDashboard) {
@@ -409,6 +414,7 @@ export class Multiplexer {
           id: s.id,
           command: s.command,
           turnPatterns: tc?.turnPatterns?.map((p) => new RegExp(p)),
+          tmuxTarget: this.sessionTmuxTargets.get(s.id),
         };
       }),
     );
@@ -607,11 +613,11 @@ export class Multiplexer {
 
       const bsid = saved.backendSessionId;
       let resumeArgs: string[];
-      if (bsid) {
+      if (this.canResumeWithBackendSessionId(toolCfg, bsid)) {
         // Substitute backend session ID into resume args
-        resumeArgs = (toolCfg.resumeArgs ?? []).map((a: string) => a.replace("{sessionId}", bsid));
+        resumeArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", bsid!));
       } else {
-        // No backend session ID — use tool's configured fallback
+        // No valid backend resume path — use tool's configured fallback
         resumeArgs = toolCfg.resumeFallback ?? [];
       }
       const args = this.composeToolArgs(toolCfg, resumeArgs, saved.args);
@@ -706,11 +712,12 @@ export class Multiplexer {
     sessionIdFlag?: string[],
     worktreePath?: string,
     backendSessionIdOverride?: string,
+    sessionIdOverride?: string,
   ): SessionTransport {
     const cols = process.stdout.columns ?? 80;
 
     // Pre-generate session ID so we can reference it in the preamble
-    const sessionId = `${command}-${Math.random().toString(36).slice(2, 8)}`;
+    const sessionId = sessionIdOverride ?? `${command}-${Math.random().toString(36).slice(2, 8)}`;
 
     // Generate a backend session UUID for tools that support it (e.g. claude --session-id)
     const backendSessionId = backendSessionIdOverride ?? (sessionIdFlag ? randomUUID() : undefined);
@@ -915,6 +922,13 @@ export class Multiplexer {
     return [...baseArgs, ...actionArgs, ...trailingArgs];
   }
 
+  private canResumeWithBackendSessionId(
+    toolCfg: { resumeArgs?: string[]; resumeByBackendSessionId?: boolean } | undefined,
+    backendSessionId: string | undefined,
+  ): boolean {
+    return Boolean(backendSessionId && toolCfg?.resumeArgs && toolCfg.resumeByBackendSessionId !== false);
+  }
+
   /**
    * Migrate an agent from its current worktree to a target worktree.
    * Copies history and context, kills the old session, starts a new one
@@ -950,22 +964,53 @@ export class Multiplexer {
     const toolCfg = config.tools[toolConfigKey];
     const originalArgs = this.sessionOriginalArgs.get(sessionId) ?? [];
 
-    // Build history preamble (same pattern as restoreSessions)
-    const turns = readHistory(sessionId, { lastN: 20 });
+    const backendSessionId = session.backendSessionId as string | undefined;
+    let migrateArgs = originalArgs;
     let historyContext = "";
-    if (turns.length > 0) {
-      const formattedTurns = turns.map((t) => {
-        const time = t.ts.slice(0, 16);
-        if (t.type === "prompt") return `[${time}] User: ${t.content}`;
-        if (t.type === "response") return `[${time}] Agent: ${t.content}`;
-        if (t.type === "git") return `[${time}] Git: ${t.content}${t.files ? ` (${t.files.join(", ")})` : ""}`;
-        return `[${time}] ${t.content}`;
-      });
-      historyContext =
-        "\n\n=== Your previous session context ===\n" +
-        "You were previously working in a different worktree. Here's what happened:\n" +
-        formattedTurns.join("\n") +
-        "\n=== End previous context ===\n";
+    const useBackendResume = this.canResumeWithBackendSessionId(toolCfg, backendSessionId);
+    const sourceTarget = this.sessionTmuxTargets.get(sessionId);
+
+    if (useBackendResume) {
+      migrateArgs = this.composeToolArgs(
+        toolCfg,
+        toolCfg!.resumeArgs!.map((arg) => arg.replace("{sessionId}", backendSessionId!)),
+        originalArgs,
+      );
+    } else {
+      // Fall back to context injection when the tool has no real backend resume path.
+      const turns = readHistory(sessionId, { lastN: 20 });
+      if (turns.length > 0) {
+        const formattedTurns = turns.map((t) => {
+          const time = t.ts.slice(0, 16);
+          if (t.type === "prompt") return `[${time}] User: ${t.content}`;
+          if (t.type === "response") return `[${time}] Agent: ${t.content}`;
+          if (t.type === "git") return `[${time}] Git: ${t.content}${t.files ? ` (${t.files.join(", ")})` : ""}`;
+          return `[${time}] ${t.content}`;
+        });
+        historyContext =
+          "\n\n=== Your previous session context ===\n" +
+          "You were previously working in a different worktree. Here's what happened:\n" +
+          formattedTurns.join("\n") +
+          "\n=== End previous context ===\n";
+      } else {
+        const livePath = join(getContextDir(), sessionId, "live.md");
+        let snapshot = "";
+        try {
+          if (existsSync(livePath)) snapshot = readFileSync(livePath, "utf-8").trim();
+        } catch {}
+        if (!snapshot && sourceTarget) {
+          try {
+            snapshot = this.tmuxRuntimeManager.captureTarget(sourceTarget, { startLine: -120 }).trim();
+          } catch {}
+        }
+        if (snapshot) {
+          historyContext =
+            "\n\n=== Your previous session context ===\n" +
+            "You were previously working in a different worktree. Here's the most recent terminal context:\n" +
+            snapshot +
+            "\n=== End previous context ===\n";
+        }
+      }
     }
 
     // Kill the old session
@@ -977,12 +1022,14 @@ export class Multiplexer {
     const effectiveTarget = targetWorktreePath === process.cwd() ? undefined : targetWorktreePath;
     this.createSession(
       session.command,
-      originalArgs,
-      toolCfg?.preambleFlag,
+      migrateArgs,
+      useBackendResume ? undefined : toolCfg?.preambleFlag,
       toolConfigKey,
       historyContext.trim() || undefined,
-      toolCfg?.sessionIdFlag,
+      useBackendResume ? undefined : toolCfg?.sessionIdFlag,
       effectiveTarget,
+      backendSessionId,
+      sessionId,
     );
   }
 
@@ -3575,6 +3622,10 @@ export class Multiplexer {
       debug(`takeover: no resumeArgs configured for tool ${target.tool}`, "instance");
       return;
     }
+    if (!this.canResumeWithBackendSessionId(toolCfg, target.backendSessionId)) {
+      debug(`takeover: tool ${target.tool} does not support backendSessionId resume`, "instance");
+      return;
+    }
 
     // Build resume args with the backend session ID
     const resumeArgs = toolCfg.resumeArgs.map((a: string) => a.replace("{sessionId}", target.backendSessionId));
@@ -3984,8 +4035,8 @@ export class Multiplexer {
     if (!toolCfg) return;
 
     let actionArgs: string[];
-    if (session.backendSessionId && toolCfg.resumeArgs) {
-      actionArgs = toolCfg.resumeArgs.map((a: string) => a.replace("{sessionId}", session.backendSessionId!));
+    if (this.canResumeWithBackendSessionId(toolCfg, session.backendSessionId)) {
+      actionArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", session.backendSessionId!));
     } else {
       actionArgs = [...(toolCfg.resumeFallback ?? [])];
     }
