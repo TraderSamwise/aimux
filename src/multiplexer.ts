@@ -430,8 +430,7 @@ export class Multiplexer {
     if (!runtime || !(runtime.transport instanceof TmuxSessionTransport)) return;
     const metadata = this.buildTmuxWindowMetadata(sessionId, runtime.command);
     this.tmuxRuntimeManager.setWindowMetadata(runtime.transport.tmuxTarget, metadata);
-    this.tmuxRuntimeManager.setWindowOption(runtime.transport.tmuxTarget, "@aimux-tool", metadata.toolConfigKey);
-    this.tmuxRuntimeManager.setWindowOption(runtime.transport.tmuxTarget, "allow-passthrough", "on");
+    this.tmuxRuntimeManager.applyManagedAgentWindowPolicy(runtime.transport.tmuxTarget, metadata.toolConfigKey);
   }
 
   private updateContextWatcherSessions(): void {

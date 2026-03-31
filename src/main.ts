@@ -19,6 +19,7 @@ import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./tmux-doctor.js";
 import { renderTmuxStatusline, type TmuxStatusLine } from "./tmux-statusline.js";
 import {
   loadMetadataEndpoint,
@@ -503,15 +504,18 @@ program
       line: TmuxStatusLine;
       projectRoot: string;
       currentWindow?: string;
+      currentWindowId?: string;
       currentPath?: string;
+      currentSession?: string;
       width?: string;
     }) => {
       await initPaths(opts.projectRoot);
       process.stdout.write(
         renderTmuxStatusline(opts.projectRoot, opts.line, {
           currentWindow: opts.currentWindow,
+          currentWindowId: opts.currentWindowId,
           currentPath: opts.currentPath,
-          currentSession: (opts as { currentSession?: string }).currentSession,
+          currentSession: opts.currentSession,
           width: opts.width ? Number(opts.width) : undefined,
         }),
       );
@@ -592,6 +596,30 @@ program
       );
       return;
     }
+  });
+
+const doctorCmd = program.command("doctor").description("Inspect aimux runtime compatibility");
+
+doctorCmd
+  .command("tmux")
+  .description("Inspect managed tmux session compatibility state")
+  .option("--project-root <path>", "Project root", process.cwd())
+  .option("--session <name>", "Managed tmux session name override")
+  .option("--window-id <id>", "Specific tmux window id to inspect")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { projectRoot: string; session?: string; windowId?: string; json?: boolean }) => {
+    await initPaths(opts.projectRoot);
+    const tmux = new TmuxRuntimeManager();
+    const report = buildTmuxDoctorReport(tmux, {
+      projectRoot: opts.projectRoot,
+      sessionName: opts.session,
+      windowId: opts.windowId,
+    });
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(renderTmuxDoctorReport(report));
   });
 
 const metadataCmd = program.command("metadata").description("Push metadata into aimux tmux status integration");

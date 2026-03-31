@@ -65,6 +65,22 @@ export interface TmuxWindowMetadata {
   statusText?: string;
 }
 
+export const MANAGED_TMUX_SESSION_OPTIONS = Object.freeze({
+  prefix: "C-a",
+  prefix2: "C-b",
+  mouse: "off",
+  extendedKeys: "always",
+  extendedKeysFormat: "csi-u",
+});
+
+export const MANAGED_TMUX_TERMINAL_FEATURES = Object.freeze(["xterm*:extkeys", "xterm*:hyperlinks"] as const);
+
+export const MANAGED_TMUX_AGENT_WINDOW_OPTIONS = Object.freeze({
+  allowPassthrough: "on",
+});
+
+const MODIFIED_ENTER_HEX = "1b 5b 31 33 3b 32 75";
+
 const DEFAULT_EXEC: TmuxExec = (args, options) =>
   execFileSync("tmux", args, {
     cwd: options?.cwd,
@@ -97,6 +113,14 @@ export class TmuxRuntimeManager {
     }
   }
 
+  getVersion(): string | null {
+    try {
+      return this.exec(["-V"]);
+    } catch {
+      return null;
+    }
+  }
+
   getProjectSession(projectRoot: string): TmuxSessionRef {
     const projectId = createHash("sha1").update(projectRoot).digest("hex").slice(0, 10);
     const slug = basename(projectRoot).replace(/[^a-zA-Z0-9_-]+/g, "-") || "project";
@@ -117,6 +141,10 @@ export class TmuxRuntimeManager {
     } catch {
       return "aimux";
     }
+  }
+
+  isManagedSessionName(sessionName: string): boolean {
+    return sessionName.startsWith(`${this.getSessionPrefix()}-`);
   }
 
   hasSession(sessionName: string): boolean {
@@ -348,6 +376,11 @@ export class TmuxRuntimeManager {
     this.exec(["set-window-option", "-q", "-t", windowTarget, key, value]);
   }
 
+  applyManagedAgentWindowPolicy(target: TmuxTarget | string, toolConfigKey: string): void {
+    this.setWindowOption(target, "@aimux-tool", toolConfigKey);
+    this.setWindowOption(target, "allow-passthrough", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allowPassthrough);
+  }
+
   getWindowOption(target: TmuxTarget | string, key: string): string | null {
     const windowTarget = typeof target === "string" ? target : target.windowId;
     try {
@@ -418,6 +451,25 @@ export class TmuxRuntimeManager {
     }
   }
 
+  displayMessage(format: string, target?: string): string | null {
+    try {
+      const args = target ? ["display-message", "-p", "-t", target, format] : ["display-message", "-p", format];
+      const value = this.exec(args);
+      return value.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  getSessionOption(sessionName: string, key: string): string | null {
+    try {
+      const value = this.exec(["show-options", "-v", "-t", sessionName, key]);
+      return value.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
   setReturnSession(sessionName: string, returnSessionName: string): void {
     this.exec(["set-option", "-t", sessionName, "@aimux-return-session", returnSessionName]);
   }
@@ -472,13 +524,20 @@ export class TmuxRuntimeManager {
     projectRoot: string,
     statuslineCommand?: TmuxStatuslineCommandSpec,
   ): void {
-    this.exec(["set-option", "-t", sessionName, "prefix", "C-a"]);
-    this.exec(["set-option", "-t", sessionName, "prefix2", "C-b"]);
-    this.exec(["set-option", "-t", sessionName, "mouse", "off"]);
-    this.exec(["set-option", "-t", sessionName, "extended-keys", "always"]);
-    this.exec(["set-option", "-t", sessionName, "extended-keys-format", "csi-u"]);
-    this.exec(["set-option", "-as", "-t", sessionName, "terminal-features", ",xterm*:extkeys"]);
-    this.exec(["set-option", "-as", "-t", sessionName, "terminal-features", ",xterm*:hyperlinks"]);
+    this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
+    this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
+    this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);
+    this.exec(["set-option", "-t", sessionName, "extended-keys", MANAGED_TMUX_SESSION_OPTIONS.extendedKeys]);
+    this.exec([
+      "set-option",
+      "-t",
+      sessionName,
+      "extended-keys-format",
+      MANAGED_TMUX_SESSION_OPTIONS.extendedKeysFormat,
+    ]);
+    for (const feature of MANAGED_TMUX_TERMINAL_FEATURES) {
+      this.ensureTerminalFeature(sessionName, feature);
+    }
     this.exec(["unbind-key", "-T", "root", "C-j"]);
     this.exec(["unbind-key", "-T", "root", "S-Enter"]);
     this.exec([
@@ -500,7 +559,7 @@ export class TmuxRuntimeManager {
       "if-shell",
       "-F",
       "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
-      "send-keys -H 1b 5b 31 33 3b 32 75",
+      `send-keys -H ${MODIFIED_ENTER_HEX}`,
       "send-keys S-Enter",
     ]);
     this.exec(["unbind-key", "-T", "prefix", "s"]);

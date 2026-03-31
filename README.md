@@ -57,6 +57,39 @@ aimux --resume
 
 The per-project tmux session is the long-lived substrate. `aimux server` no longer exists in the normal runtime model.
 
+## Tmux Compatibility
+
+Aimux treats tmux as a managed runtime, not a transparent pass-through. For aimux-owned tmux sessions, aimux applies a fixed compatibility contract instead of inheriting whatever ambient tmux defaults happen to exist on the machine.
+
+Managed session policy today:
+
+- `prefix = C-a`
+- `prefix2 = C-b`
+- `mouse = off` so the outer terminal can own command-click and text selection
+- `extended-keys = always`
+- `extended-keys-format = csi-u`
+- `terminal-features` includes `xterm*:extkeys`
+- `terminal-features` includes `xterm*:hyperlinks`
+- managed Claude/Codex windows get `allow-passthrough = on`
+- managed Claude/Codex windows get scoped modified-enter bindings for multiline input compatibility
+
+This is why aimux can support features like `Ctrl+J`, `Shift+Enter`, and command-clicked links inside managed tmux sessions without depending on user-specific tmux configuration.
+
+To inspect the live state for the current project:
+
+```bash
+aimux doctor tmux
+aimux doctor tmux --json
+```
+
+That reports:
+
+- terminal environment like `TERM` and `TERM_PROGRAM`
+- tmux version and current client session
+- observed managed-session options versus expected values
+- required terminal features such as `extkeys` and `hyperlinks`
+- active-window state including `@aimux-tool` and `allow-passthrough`
+
 ## Hotkeys
 
 Dashboard hotkeys use the `Ctrl+A` leader prefix:
@@ -79,6 +112,8 @@ Recommended tmux mental model:
 - window `0` is the aimux dashboard
 - each agent is its own tmux window
 - aimux metadata, plans, worktrees, and task orchestration sit on top of that session
+
+For normal tmux users outside aimux, the equivalent setup usually lives in `~/.tmux.conf`. Aimux just codifies that policy inside its own managed sessions so behavior is stable across projects and terminals.
 
 ## Tmux Status Line
 

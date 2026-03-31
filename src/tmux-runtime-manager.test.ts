@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { TmuxRuntimeManager, type TmuxExec, type TmuxInteractiveExec } from "./tmux-runtime-manager.js";
+import {
+  MANAGED_TMUX_AGENT_WINDOW_OPTIONS,
+  MANAGED_TMUX_SESSION_OPTIONS,
+  TmuxRuntimeManager,
+  type TmuxExec,
+  type TmuxInteractiveExec,
+} from "./tmux-runtime-manager.js";
 
 function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: string }> } {
   const calls: Array<{ args: string[]; cwd?: string }> = [];
@@ -11,7 +17,10 @@ function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: str
     if (joined.startsWith("list-windows -t ")) return "";
     if (joined.startsWith("display-message -p -t @0 #{pane_dead}")) return "0";
     if (joined === "display-message -p #{client_session}") return "user-main";
+    if (joined === "display-message -p #{window_id}") return "@3";
+    if (joined === "display-message -p #{window_name}") return "codex";
     if (joined.startsWith("show-options -v -t aimux-mobile-abc @aimux-return-session")) return "user-main";
+    if (joined.startsWith("show-options -v -t aimux-mobile-abc terminal-features")) return "";
     if (joined.startsWith("show-window-options -v -t @3 @aimux-meta")) {
       return JSON.stringify({
         sessionId: "codex-abc123",
@@ -61,19 +70,25 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "prefix", "C-a"],
+          args: ["set-option", "-t", session.sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix],
         }),
         expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "prefix2", "C-b"],
+          args: ["set-option", "-t", session.sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2],
         }),
         expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "mouse", "off"],
+          args: ["set-option", "-t", session.sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse],
         }),
         expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "extended-keys", "always"],
+          args: ["set-option", "-t", session.sessionName, "extended-keys", MANAGED_TMUX_SESSION_OPTIONS.extendedKeys],
         }),
         expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "extended-keys-format", "csi-u"],
+          args: [
+            "set-option",
+            "-t",
+            session.sessionName,
+            "extended-keys-format",
+            MANAGED_TMUX_SESSION_OPTIONS.extendedKeysFormat,
+          ],
         }),
         expect.objectContaining({
           args: ["set-option", "-as", "-t", session.sessionName, "terminal-features", ",xterm*:extkeys"],
@@ -380,6 +395,61 @@ describe("TmuxRuntimeManager", () => {
       toolConfigKey: "codex",
       worktreePath: "/repo/mobile",
     });
+  });
+
+  it("applies managed agent window policy in one place", () => {
+    const exec = createExecMock();
+    const manager = new TmuxRuntimeManager(exec);
+    const target = {
+      sessionName: "aimux-mobile-abc",
+      windowId: "@3",
+      windowIndex: 3,
+      windowName: "codex",
+    };
+
+    manager.applyManagedAgentWindowPolicy(target, "codex");
+
+    expect(exec.calls.slice(-2).map((call) => call.args)).toEqual([
+      ["set-window-option", "-q", "-t", "@3", "@aimux-tool", "codex"],
+      ["set-window-option", "-q", "-t", "@3", "allow-passthrough", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allowPassthrough],
+    ]);
+  });
+
+  it("does not keep appending duplicate terminal features when a managed session is reconfigured", () => {
+    let terminalFeatures = "";
+    let hasSession = false;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined.startsWith("has-session -t aimux-mobile-")) {
+        if (!hasSession) throw new Error("missing");
+        return "";
+      }
+      if (joined.startsWith("new-session -d -s aimux-mobile-")) {
+        hasSession = true;
+        return "";
+      }
+      if (joined.startsWith("show-options -v -t aimux-mobile-") && joined.endsWith(" terminal-features")) {
+        return terminalFeatures;
+      }
+      if (args[0] === "set-option" && args[1] === "-as" && args[4] === "terminal-features") {
+        const next = args[5]!.replace(/^,/, "");
+        terminalFeatures = [terminalFeatures, next].filter(Boolean).join("\n");
+        return "";
+      }
+      if (joined.startsWith("list-windows -t ")) return "";
+      return "";
+    };
+
+    const manager = new TmuxRuntimeManager(exec);
+    manager.ensureProjectSession("/repo/mobile");
+    manager.ensureProjectSession("/repo/mobile");
+
+    const featureAppendCalls = calls.filter((call) => call.args[0] === "set-option" && call.args[1] === "-as");
+    expect(featureAppendCalls).toHaveLength(2);
+    expect(terminalFeatures.split("\n")).toEqual(["xterm*:extkeys", "xterm*:hyperlinks"]);
   });
 
   it("respawns a window with a specific command", () => {
