@@ -345,20 +345,20 @@ export class Dashboard {
     const tmuxHint = this.runtimeLabel === "tmux" ? "  [d] tmux dashboard" : "";
 
     if (this.sessions.length === 0 && !this.hasWorktrees) {
-      return " [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [p] plans  [g] graveyard  [?] help  [q] quit ";
+      return " [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [f] fork  [p] plans  [g] graveyard  [?] help  [q] quit ";
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ agents  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ agents  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [f] fork  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.hasWorktrees) {
-      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [w] worktree  [m] migrate${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [w] worktree${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [f] fork  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
-    return " [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
+    return " [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [f] fork  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
   }
 
   toggleDetailsPane(): void {

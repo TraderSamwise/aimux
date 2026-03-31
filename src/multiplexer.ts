@@ -53,6 +53,7 @@ import {
   listThreadSummaries,
   markThreadSeen,
   readMessages,
+  updateThread,
   type ThreadSummary,
 } from "./threads.js";
 
@@ -133,6 +134,7 @@ export class Multiplexer {
   private defaultArgs: string[] = [];
   private startedInDashboard = false;
   private pickerActive = false;
+  private forkSourceSessionId: string | null = null;
   private worktreeInputActive = false;
   private worktreeInputBuffer = "";
   private labelInputActive = false;
@@ -426,10 +428,9 @@ export class Multiplexer {
   private syncTmuxWindowMetadata(sessionId: string): void {
     const runtime = this.sessions.find((session) => session.id === sessionId);
     if (!runtime || !(runtime.transport instanceof TmuxSessionTransport)) return;
-    this.tmuxRuntimeManager.setWindowMetadata(
-      runtime.transport.tmuxTarget,
-      this.buildTmuxWindowMetadata(sessionId, runtime.command),
-    );
+    const metadata = this.buildTmuxWindowMetadata(sessionId, runtime.command);
+    this.tmuxRuntimeManager.setWindowMetadata(runtime.transport.tmuxTarget, metadata);
+    this.tmuxRuntimeManager.setWindowOption(runtime.transport.tmuxTarget, "@aimux-tool", metadata.toolConfigKey);
   }
 
   private updateContextWatcherSessions(): void {
@@ -911,7 +912,9 @@ export class Multiplexer {
 
     // Focus the new session
     this.activeIndex = this.sessions.length - 1;
-    this.renderDashboard();
+    if (this.startedInDashboard && this.mode === "dashboard") {
+      this.renderDashboard();
+    }
 
     this.saveState();
 
@@ -1210,6 +1213,18 @@ export class Multiplexer {
       case "c":
         this.showToolPicker();
         return;
+      case "f": {
+        const selected =
+          this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
+            ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]
+            : !hasWorktrees
+              ? this.getDashboardSessions()[this.activeIndex]
+              : undefined;
+        if (selected && !selected.remoteInstancePid) {
+          this.showToolPicker(selected.id);
+        }
+        return;
+      }
       case "q":
         this.tmuxRuntimeManager.leaveManagedSession({
           insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
@@ -1889,9 +1904,10 @@ export class Multiplexer {
     return true;
   }
 
-  private showToolPicker(): void {
+  private showToolPicker(sourceSessionId?: string): void {
     const config = loadConfig();
     const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
+    this.forkSourceSessionId = sourceSessionId ?? null;
 
     if (tools.length === 1) {
       const [key, tool] = tools[0];
@@ -1900,7 +1916,11 @@ export class Multiplexer {
       } else {
         // Only one available tool — skip picker, spawn directly
         const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
-        this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
+        if (this.forkSourceSessionId) {
+          this.forkSessionFromSource(this.forkSourceSessionId, key, undefined, wtPath);
+        } else {
+          this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
+        }
         return;
       }
     }
@@ -1910,7 +1930,7 @@ export class Multiplexer {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
 
-    const lines = ["Select tool:"];
+    const lines = [this.forkSourceSessionId ? `Fork from ${this.forkSourceSessionId}: select tool` : "Select tool:"];
     for (let i = 0; i < tools.length; i++) {
       const available = isToolAvailable(tools[i][1].command);
       const label = available ? `  [${i + 1}] ${tools[i][0]}` : `  [${i + 1}] ${tools[i][0]} (not installed)`;
@@ -1948,6 +1968,7 @@ export class Multiplexer {
     this.pickerActive = false;
 
     if (key === "escape") {
+      this.forkSourceSessionId = null;
       if (this.mode === "dashboard") {
         this.renderDashboard();
       } else {
@@ -1975,13 +1996,179 @@ export class Multiplexer {
           return;
         }
         const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
-        this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
+        if (this.forkSourceSessionId) {
+          const sourceSessionId = this.forkSourceSessionId;
+          this.forkSourceSessionId = null;
+          this.forkSessionFromSource(sourceSessionId, key, undefined, wtPath);
+        } else {
+          this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
+        }
         return;
       }
     }
 
     // Invalid key — redraw current view
+    this.forkSourceSessionId = null;
     this.renderDashboard();
+  }
+
+  private buildForkPreamble(sourceSessionId: string, targetSessionId: string): string {
+    const sourceLabel = this.getSessionLabel(sourceSessionId) ?? sourceSessionId;
+    const sourceRole = this.sessionRoles.get(sourceSessionId);
+    const sourceWorktree = this.sessionWorktreePaths.get(sourceSessionId);
+    const historyTurns = readHistory(sourceSessionId, { lastN: 12 });
+    const historyText =
+      historyTurns.length > 0
+        ? historyTurns
+            .map((turn) => {
+              const prefix =
+                turn.type === "prompt"
+                  ? "User"
+                  : turn.type === "response"
+                    ? "Agent"
+                    : turn.type === "git"
+                      ? "Git"
+                      : "Note";
+              return `- ${prefix}: ${turn.content}`;
+            })
+            .join("\n")
+        : "";
+    const liveContext = buildContextPreamble([sourceSessionId], 12).trim();
+    const planPath = join(getPlansDir(), `${sourceSessionId}.md`);
+    let planText = "";
+    try {
+      if (existsSync(planPath)) {
+        planText = readFileSync(planPath, "utf-8")
+          .replace(/^---\n[\s\S]*?\n---\n?/, "")
+          .trim();
+      }
+    } catch {}
+
+    return [
+      "## Aimux Handoff",
+      `You are a fork of ${sourceLabel}${sourceRole ? ` (${sourceRole})` : ""}.`,
+      `Your new session ID is ${targetSessionId}.`,
+      sourceWorktree ? `Source worktree: ${sourceWorktree}` : undefined,
+      "",
+      "Continue the same line of work using the source agent's context below.",
+      "You are independent now, but should preserve continuity and build on the source agent's progress.",
+      planText ? `\n### Source Plan\n${planText}` : undefined,
+      historyText ? `\n### Recent History\n${historyText}` : undefined,
+      liveContext ? `\n### Source Live Context\n${liveContext}` : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  private forkSessionFromSource(
+    sourceSessionId: string,
+    targetToolConfigKey: string,
+    instruction?: string,
+    targetWorktreePath?: string,
+  ): { sessionId: string; threadId: string; target?: TmuxTarget } | undefined {
+    const sourceSession = this.sessions.find((session) => session.id === sourceSessionId);
+    if (!sourceSession) {
+      this.showDashboardError("Cannot fork missing session", [`Source session ${sourceSessionId} not found.`]);
+      return undefined;
+    }
+    const config = loadConfig();
+    const toolCfg = config.tools[targetToolConfigKey];
+    if (!toolCfg) {
+      this.showDashboardError("Cannot fork session", [`Unknown tool config: ${targetToolConfigKey}`]);
+      return undefined;
+    }
+    const targetSessionId = `${toolCfg.command}-${Math.random().toString(36).slice(2, 8)}`;
+    const targetWorktree =
+      targetWorktreePath === process.cwd()
+        ? undefined
+        : (targetWorktreePath ?? this.sessionWorktreePaths.get(sourceSessionId));
+    const thread = createThread({
+      title: `Handoff: ${this.getSessionLabel(sourceSessionId) ?? sourceSession.command} → ${toolCfg.command}`,
+      kind: "handoff",
+      createdBy: sourceSessionId,
+      participants: [sourceSessionId, targetSessionId],
+      owner: targetSessionId,
+      waitingOn: [targetSessionId],
+      worktreePath: targetWorktree,
+    });
+    const handoffBody = instruction?.trim() || "Continue this work with the same context and take over as needed.";
+    appendMessage(thread.id, {
+      from: sourceSessionId,
+      to: [targetSessionId],
+      kind: "handoff",
+      body: handoffBody,
+      metadata: {
+        sourceSessionId,
+      },
+    });
+    updateThread(thread.id, (current) => ({
+      ...current,
+      status: "waiting",
+      owner: targetSessionId,
+      waitingOn: [targetSessionId],
+    }));
+    const extraPreamble = [this.buildForkPreamble(sourceSessionId, targetSessionId), instruction?.trim()]
+      .filter(Boolean)
+      .join("\n\n");
+    const transport = this.createSession(
+      toolCfg.command,
+      toolCfg.args,
+      toolCfg.preambleFlag,
+      targetToolConfigKey,
+      extraPreamble,
+      toolCfg.sessionIdFlag,
+      targetWorktree,
+      undefined,
+      targetSessionId,
+    );
+    this.agentTracker.emit(sourceSessionId, {
+      kind: "status",
+      message: `Forked ${targetSessionId} from this session`,
+      threadId: thread.id,
+      threadName: thread.title,
+      source: "fork",
+      tone: "info",
+    });
+    this.agentTracker.emit(targetSessionId, {
+      kind: "task_assigned",
+      message: `Forked from ${sourceSessionId}`,
+      threadId: thread.id,
+      threadName: thread.title,
+      source: "fork",
+      tone: "info",
+    });
+    return {
+      sessionId: targetSessionId,
+      threadId: thread.id,
+      target: this.sessionTmuxTargets.get(transport.id),
+    };
+  }
+
+  forkAgent(opts: {
+    sourceSessionId: string;
+    targetToolConfigKey: string;
+    instruction?: string;
+    targetWorktreePath?: string;
+    open?: boolean;
+  }): { sessionId: string; threadId: string } {
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+    const result = this.forkSessionFromSource(
+      opts.sourceSessionId,
+      opts.targetToolConfigKey,
+      opts.instruction,
+      opts.targetWorktreePath,
+    );
+    if (!result) {
+      throw new Error(`Unable to fork session ${opts.sourceSessionId}`);
+    }
+    if (opts.open !== false && result.target) {
+      this.tmuxRuntimeManager.openTarget(result.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+    }
+    return {
+      sessionId: result.sessionId,
+      threadId: result.threadId,
+    };
   }
 
   private renderDashboard(): void {

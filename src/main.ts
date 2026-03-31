@@ -395,6 +395,31 @@ worktreeCmd
     }
   });
 
+program
+  .command("fork")
+  .description("Fork an existing agent into a new agent with handed-off context")
+  .argument("<sourceSessionId>", "Source session id to fork from")
+  .requiredOption("--tool <toolKey>", "Configured target tool key, e.g. claude or codex")
+  .option("--instruction <text>", "Extra instruction for the forked agent")
+  .option("--worktree <path>", "Target worktree path")
+  .option("--no-open", "Do not switch into the forked agent window")
+  .action(
+    (sourceSessionId: string, opts: { tool: string; instruction?: string; worktree?: string; open?: boolean }) => {
+      initProject();
+      const mux = new Multiplexer();
+      const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
+      const result = mux.forkAgent({
+        sourceSessionId,
+        targetToolConfigKey: opts.tool,
+        instruction: opts.instruction,
+        targetWorktreePath,
+        open: opts.open,
+      });
+      console.log(`forked ${result.sessionId}`);
+      console.log(`thread ${result.threadId}`);
+    },
+  );
+
 const graveyardCmd = program.command("graveyard").description("Manage killed agents (recoverable)");
 
 graveyardCmd
