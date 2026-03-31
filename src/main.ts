@@ -32,6 +32,7 @@ import {
 } from "./metadata-store.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
+import { listDesktopProjects, scanProject } from "./project-scanner.js";
 import {
   appendMessage,
   createThread,
@@ -43,6 +44,59 @@ import {
 } from "./threads.js";
 
 const program = new Command();
+
+function resolveProjectRoot(cwd: string): string {
+  try {
+    return findMainRepo(cwd);
+  } catch {
+    return cwd;
+  }
+}
+
+function ensureTmuxAvailable(tmux: TmuxRuntimeManager): void {
+  if (!tmux.isAvailable()) {
+    console.error("aimux: tmux is not installed or not available in PATH");
+    process.exit(1);
+  }
+}
+
+function getDashboardCommandSpec(projectRoot: string) {
+  const scriptPath = fileURLToPath(import.meta.url);
+  return {
+    scriptPath,
+    dashboardBuildStamp: String(statSync(scriptPath).mtimeMs),
+    dashboardCommand: {
+      cwd: projectRoot,
+      command: process.execPath,
+      args: [scriptPath, "--tmux-dashboard-internal"],
+    },
+    statuslineCommand: {
+      command: process.execPath,
+      args: [scriptPath, "tmux-statusline"],
+    },
+  };
+}
+
+function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
+  const { dashboardBuildStamp, dashboardCommand, statuslineCommand } = getDashboardCommandSpec(projectRoot);
+  const dashboardSession = tmux.ensureProjectSession(
+    projectRoot,
+    {
+      cwd: dashboardCommand.cwd,
+      command: dashboardCommand.command,
+      args: dashboardCommand.args,
+    },
+    statuslineCommand,
+  );
+  const dashboardTarget = tmux.ensureDashboardWindow(dashboardSession.sessionName, projectRoot, dashboardCommand);
+  const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
+  const shouldRespawnDashboard = !tmux.isWindowAlive(dashboardTarget) || currentBuildStamp !== dashboardBuildStamp;
+  if (shouldRespawnDashboard) {
+    tmux.respawnWindow(dashboardTarget, dashboardCommand);
+    tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
+  }
+  return { dashboardSession, dashboardTarget };
+}
 
 program
   .name("aimux")
@@ -79,39 +133,8 @@ program
       if (!opts.tmuxDashboardInternal) {
         initProject();
         const tmux = new TmuxRuntimeManager();
-        if (!tmux.isAvailable()) {
-          console.error("aimux: tmux is not installed or not available in PATH");
-          process.exit(1);
-        }
-
-        const scriptPath = fileURLToPath(import.meta.url);
-        const dashboardBuildStamp = String(statSync(scriptPath).mtimeMs);
-        const dashboardCommand = {
-          cwd: projectRoot,
-          command: process.execPath,
-          args: [scriptPath, "--tmux-dashboard-internal"],
-        };
-        const statuslineCommand = {
-          command: process.execPath,
-          args: [scriptPath, "tmux-statusline"],
-        };
-        const dashboardSession = tmux.ensureProjectSession(
-          projectRoot,
-          {
-            cwd: dashboardCommand.cwd,
-            command: dashboardCommand.command,
-            args: dashboardCommand.args,
-          },
-          statuslineCommand,
-        );
-        const dashboardTarget = tmux.ensureDashboardWindow(dashboardSession.sessionName, projectRoot, dashboardCommand);
-        const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
-        const shouldRespawnDashboard =
-          !tmux.isWindowAlive(dashboardTarget) || currentBuildStamp !== dashboardBuildStamp;
-        if (shouldRespawnDashboard) {
-          tmux.respawnWindow(dashboardTarget, dashboardCommand);
-          tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
-        }
+        ensureTmuxAvailable(tmux);
+        const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
         if (!tool && !opts.resume && !opts.restore) {
           tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
           return;
@@ -182,33 +205,11 @@ program
   .option("--open", "Open the dashboard after reloading")
   .action((opts: { open?: boolean }) => {
     const originalCwd = process.cwd();
-    let projectRoot = originalCwd;
-    try {
-      projectRoot = findMainRepo(originalCwd);
-    } catch {}
+    const projectRoot = resolveProjectRoot(originalCwd);
 
     const tmux = new TmuxRuntimeManager();
-    if (!tmux.isAvailable()) {
-      console.error("aimux: tmux is not installed or not available in PATH");
-      process.exit(1);
-    }
-
-    const scriptPath = fileURLToPath(import.meta.url);
-    const dashboardBuildStamp = String(statSync(scriptPath).mtimeMs);
-    const dashboardCommand = {
-      cwd: projectRoot,
-      command: process.execPath,
-      args: [scriptPath, "--tmux-dashboard-internal"],
-    };
-    const statuslineCommand = {
-      command: process.execPath,
-      args: [scriptPath, "tmux-statusline"],
-    };
-
-    const dashboardSession = tmux.ensureProjectSession(projectRoot, dashboardCommand, statuslineCommand);
-    const dashboardTarget = tmux.ensureDashboardWindow(dashboardSession.sessionName, projectRoot, dashboardCommand);
-    tmux.respawnWindow(dashboardTarget, dashboardCommand);
-    tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
+    ensureTmuxAvailable(tmux);
+    const { dashboardSession, dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
 
     if (opts.open) {
       tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
@@ -216,6 +217,115 @@ program
     }
 
     console.log(`Reloaded dashboard for ${dashboardSession.sessionName}`);
+  });
+
+const projectsCmd = program.command("projects").description("Inspect known aimux projects");
+
+projectsCmd
+  .command("list")
+  .description("List known aimux projects")
+  .option("--json", "Emit JSON")
+  .action((opts: { json?: boolean }) => {
+    const projects = listDesktopProjects();
+    if (opts.json) {
+      console.log(JSON.stringify({ projects }, null, 2));
+      return;
+    }
+
+    if (projects.length === 0) {
+      console.log("No aimux projects found.");
+      return;
+    }
+
+    for (const project of projects) {
+      const liveBadge = project.sessions.some((session) => session.status !== "offline") ? "live" : "idle";
+      console.log(`${project.name}  ${liveBadge}  ${project.path}`);
+      if (project.sessions.length === 0) continue;
+      for (const session of project.sessions) {
+        const label = session.label ? ` ${session.label}` : "";
+        const headline = session.headline ? ` - ${session.headline}` : "";
+        console.log(`  ${session.id}  ${session.tool}  ${session.status}${label}${headline}`);
+      }
+    }
+  });
+
+const desktopCmd = program.command("desktop").description("Desktop shell integration commands");
+
+desktopCmd
+  .command("open")
+  .description("Open or attach to a project's dashboard")
+  .requiredOption("--project <path>", "Project path")
+  .action(async (opts: { project: string }) => {
+    const requestedPath = pathResolve(opts.project);
+    const projectRoot = resolveProjectRoot(requestedPath);
+    await initPaths(projectRoot);
+    initProject();
+
+    const tmux = new TmuxRuntimeManager();
+    ensureTmuxAvailable(tmux);
+    const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
+    tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
+  });
+
+desktopCmd
+  .command("focus")
+  .description("Focus a running aimux session in its tmux window")
+  .requiredOption("--project <path>", "Project path")
+  .requiredOption("--session <id>", "Aimux session id")
+  .action(async (opts: { project: string; session: string }) => {
+    const requestedPath = pathResolve(opts.project);
+    const projectRoot = resolveProjectRoot(requestedPath);
+    await initPaths(projectRoot);
+
+    const tmux = new TmuxRuntimeManager();
+    ensureTmuxAvailable(tmux);
+    const tmuxSession = tmux.getProjectSession(projectRoot);
+    const match = tmux.findManagedWindow(tmuxSession.sessionName, { sessionId: opts.session });
+    if (!match) {
+      const scanned = scanProject(projectRoot);
+      const knownSession = scanned.sessions.find((session) => session.id === opts.session);
+      if (knownSession?.status === "offline") {
+        console.error(`aimux: session "${opts.session}" is offline in ${projectRoot}`);
+      } else if (knownSession) {
+        console.error(`aimux: session "${opts.session}" exists but has no live tmux window`);
+      } else {
+        console.error(`aimux: session "${opts.session}" not found in ${projectRoot}`);
+      }
+      process.exit(1);
+    }
+
+    tmux.openTarget(match.target, { insideTmux: tmux.isInsideTmux() });
+  });
+
+desktopCmd
+  .command("dashboard-target")
+  .description("Show the resolved dashboard tmux target for a project")
+  .requiredOption("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project: string; json?: boolean }) => {
+    const requestedPath = pathResolve(opts.project);
+    const projectRoot = resolveProjectRoot(requestedPath);
+    await initPaths(projectRoot);
+
+    const tmux = new TmuxRuntimeManager();
+    ensureTmuxAvailable(tmux);
+    const { dashboardSession, dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            projectRoot,
+            sessionName: dashboardSession.sessionName,
+            target: dashboardTarget,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    console.log(`${dashboardSession.sessionName}:${dashboardTarget.windowIndex}`);
   });
 
 program
@@ -405,11 +515,14 @@ program
   .option("--worktree <path>", "Target worktree path")
   .option("--no-open", "Do not switch into the forked agent window")
   .action(
-    (sourceSessionId: string, opts: { tool: string; instruction?: string; worktree?: string; open?: boolean }) => {
+    async (
+      sourceSessionId: string,
+      opts: { tool: string; instruction?: string; worktree?: string; open?: boolean },
+    ) => {
       initProject();
       const mux = new Multiplexer();
       const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-      const result = mux.forkAgent({
+      const result = await mux.forkAgent({
         sourceSessionId,
         targetToolConfigKey: opts.tool,
         instruction: opts.instruction,
@@ -496,6 +609,7 @@ program
   .option("--line <line>", "Status line row", "bottom")
   .option("--project-root <path>", "Project root to read status from", process.cwd())
   .option("--current-window <name>", "Current tmux window name")
+  .option("--current-window-id <id>", "Current tmux window id")
   .option("--current-path <path>", "Current pane path")
   .option("--current-session <name>", "Current tmux session name")
   .option("--width <n>", "Current client width")

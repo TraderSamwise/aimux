@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
-import { getAimuxDirFor, getProjectStateDirById, listProjects } from "./paths.js";
+import { getAimuxDirFor, getProjectStateDirById, listProjects, type ProjectEntry } from "./paths.js";
+import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
 export interface GlobalSession {
   id: string;
@@ -18,6 +19,16 @@ export interface GlobalSession {
 export interface ProjectInfo {
   name: string;
   path: string;
+  sessions: GlobalSession[];
+}
+
+export interface DesktopProjectInfo {
+  id: string;
+  name: string;
+  path: string;
+  lastSeen?: string;
+  serverRunning: boolean;
+  dashboardSessionName: string;
   sessions: GlobalSession[];
 }
 
@@ -251,4 +262,59 @@ export function scanAllProjects(): ProjectInfo[] {
     .map(scanProject)
     .filter((p) => p.sessions.length > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isServerRunning(project: ProjectEntry): boolean {
+  const pidPath = join(getProjectStateDirById(project.id), "aimux.pid");
+  if (!existsSync(pidPath)) return false;
+  try {
+    const pid = Number.parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+    if (!Number.isFinite(pid)) return false;
+    return isProcessAlive(pid);
+  } catch {
+    return false;
+  }
+}
+
+export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopProjectInfo[] {
+  const scannedByPath = new Map(scanAllProjects().map((project) => [project.path, project]));
+  const projects = new Map<string, DesktopProjectInfo>();
+
+  for (const entry of listProjects()) {
+    const scanned = scannedByPath.get(entry.repoRoot);
+    const tmuxSession = tmux.getProjectSession(entry.repoRoot);
+    projects.set(entry.repoRoot, {
+      id: entry.id,
+      name: entry.name,
+      path: entry.repoRoot,
+      lastSeen: entry.lastSeen,
+      serverRunning: isServerRunning(entry),
+      dashboardSessionName: tmuxSession.sessionName,
+      sessions: scanned?.sessions ?? [],
+    });
+  }
+
+  for (const scanned of scannedByPath.values()) {
+    if (projects.has(scanned.path)) continue;
+    const tmuxSession = tmux.getProjectSession(scanned.path);
+    projects.set(scanned.path, {
+      id: `unregistered-${tmuxSession.sessionName}`,
+      name: scanned.name,
+      path: scanned.path,
+      serverRunning: false,
+      dashboardSessionName: tmuxSession.sessionName,
+      sessions: scanned.sessions,
+    });
+  }
+
+  return [...projects.values()].sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
 }

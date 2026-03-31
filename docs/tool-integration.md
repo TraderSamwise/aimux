@@ -49,12 +49,69 @@ Aimux now maintains continuity from tmux pane state:
 
 - live pane snapshots backfill `context/<session-id>/live.md`
 - when a tool returns to a visible prompt after output, aimux captures a synthetic response snapshot into `history/<session-id>.jsonl`
+- `live.md` is a bounded, replaceable working set maintained by aimux, not by the tool itself
 - migration fallback prefers:
   1. parsed history turns
   2. `live.md`
   3. direct tmux pane capture from the source session
 
 This matters for tools like Claude where native backend resume is not reliable.
+
+## Fork vs Migrate
+
+Aimux has two continuity-preserving operations above plain session creation:
+
+### Fork
+
+- creates a new session id
+- copies and seeds agent-facing continuity artifacts into the new session:
+  - `plans/<target>.md`
+  - `status/<target>.md`
+  - `history/<target>.jsonl`
+  - `context/<target>/live.md`
+  - `context/<target>/summary.md`
+- opens a handoff thread between source and target
+
+Fork is the main path for:
+
+- switching to a different tool
+- splitting work into parallel branches
+- preserving context while changing role
+
+### Migrate
+
+- preserves the same aimux session id
+- prefers native backend resume when available
+- otherwise falls back to aimux-owned continuity injection
+
+Migrate is the main path for:
+
+- moving a session between worktrees
+- keeping the same identity while changing working directory
+
+These two operations intentionally share the same source continuity snapshot logic, but they do not share the same tool startup behavior.
+
+## Memory Contract
+
+Aimux continuity is intentionally split into three layers:
+
+1. `history/<session-id>.jsonl`
+- append-only audit log
+- never compacted away
+
+2. `context/<session-id>/live.md`
+- current tmux-derived working set
+- bounded and replaceable
+- optimized for handoff/fork/runtime continuity
+
+3. `context/<session-id>/summary.md`
+- compacted derived memory
+- lossy by design
+- accompanied by:
+  - `summary.meta.json`
+  - `summary.checkpoints.jsonl`
+
+Compaction must only mutate derived artifacts (`summary*`), never the raw audit log.
 
 ## Required Tool Config Surface
 
@@ -107,9 +164,16 @@ At minimum:
 - prompt detection: yes
 - tmux snapshot continuity: yes
 - aimux fallback continuity: yes
+- clean startup handoff flag: no
 - audit note:
   - native resume is the preferred path
   - tmux-backed sessions can still lack structured `history/*.jsonl` or `live.md`, so the pane-snapshot fallback remains important
+  - `fork` therefore uses:
+    - detached tmux spawn
+    - seeded `.aimux/context/...` and `.aimux/plans/...` files
+    - an auto-submitted first-turn kickoff prompt
+  - that kickoff path is timing-sensitive and must be tested live if touched
+  - do not assume Codex fork startup behaves like Claude preamble startup
 
 ### Claude
 
@@ -117,9 +181,11 @@ At minimum:
 - prompt detection: partly heuristic
 - tmux snapshot continuity: yes
 - aimux fallback continuity: required
+- clean startup handoff flag: yes
 - audit note:
   - raw terminal recordings are not reliable enough to reconstruct turns on their own
   - migration continuity depends on tmux pane snapshots and live-context fallback instead of backend-id resume
+  - `fork` is cleaner than Codex because the carried-over handoff can be injected through the tool preamble path
 
 ## Integration Checklist
 
@@ -137,3 +203,30 @@ When wiring a future tool:
 - dashboard activity/attention state
 
 If backend resume is not real, set `resumeByBackendSessionId: false` and rely on aimux-owned continuity instead of pretending the tool can resume natively.
+
+## Contributor Notes
+
+When changing continuity code, verify all three of these separately:
+
+1. fork into Claude
+2. fork into Codex
+3. migrate for the same tool
+
+Do not assume that fixing one path fixes the others:
+
+- Claude fork uses preamble injection
+- Codex fork uses a startup kickoff flow
+- Codex migrate usually uses native backend resume
+- Claude migrate uses aimux-owned continuity fallback
+
+Also keep the ownership boundary clear:
+
+- aimux owns:
+  - `history/*.jsonl`
+  - `context/*/live.md`
+  - `context/*/summary.md`
+- agents may update:
+  - `plans/*.md`
+  - `status/*.md`
+
+Do not move continuity ownership back into tool instructions. Aimux must remain the source of truth for traceable runtime continuity.

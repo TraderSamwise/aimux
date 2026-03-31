@@ -123,4 +123,37 @@ describe("project-scanner", () => {
       }),
     );
   });
+
+  it("builds desktop project summaries with dashboard session names and server state", async () => {
+    writeFileSync(join(tmpHome, ".aimux", "projects", "proj-a", "aimux.pid"), String(process.pid));
+
+    const { listDesktopProjects } = await import("./project-scanner.js");
+    const projects = listDesktopProjects();
+
+    expect(projects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "proj-a",
+          name: "project-a",
+          path: projectA,
+          serverRunning: true,
+          dashboardSessionName: expect.stringMatching(/^aimux-project-a-/),
+          sessions: expect.arrayContaining([
+            expect.objectContaining({
+              id: "session-a",
+              tool: "codex",
+              isServer: true,
+            }),
+          ]),
+        }),
+        expect.objectContaining({
+          id: "proj-b",
+          name: "project-b",
+          path: projectB,
+          serverRunning: false,
+          dashboardSessionName: expect.stringMatching(/^aimux-project-b-/),
+        }),
+      ]),
+    );
+  });
 });

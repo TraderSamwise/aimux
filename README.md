@@ -240,13 +240,49 @@ aimux records each agent's conversation and makes it available to other agents:
 
 - **`.aimux/context/{session-id}/live.md`** — rolling window of recent turns
 - **`.aimux/context/{session-id}/summary.md`** — compacted history
+- **`.aimux/context/{session-id}/summary.meta.json`** — summary provenance (source range + digest)
+- **`.aimux/context/{session-id}/summary.checkpoints.jsonl`** — append-only compaction checkpoints
 - **`.aimux/history/{session-id}.jsonl`** — full raw conversation log
 - **`.aimux/plans/{session-id}.md`** — canonical shared plan for that agent
 - **`.aimux/sessions.json`** — all running agents (so agents can discover each other)
 
 Agents are told about these files in their startup preamble.
 
-In tmux mode, live terminal state comes from tmux itself. `.aimux/state.json` is mainly for offline/resume metadata, not live screen ownership.
+These are the canonical agent-facing paths. Runtime-private state stays under `~/.aimux/projects/<project-id>/...` and is not part of the agent contract.
+
+In tmux mode, live terminal state comes from tmux itself. `~/.aimux/projects/<project-id>/state.json` is mainly for offline/resume metadata, not live screen ownership.
+
+Memory roles are explicit:
+
+- `history/*.jsonl` is append-only audit history and is never compacted away
+- `context/*/live.md` is bounded runtime scratch state maintained by aimux from tmux pane snapshots
+- `context/*/summary.md` is a derived, lossy summary for long-horizon memory
+- `summary.meta.json` and `summary.checkpoints.jsonl` preserve compaction provenance so summaries can be traced back to the underlying raw history
+
+## Fork And Migrate Semantics
+
+Aimux treats `fork` and `migrate` as related but distinct operations:
+
+- `fork`
+  - always creates a new session id
+  - seeds the new session with carried-over `.aimux/context/`, `.aimux/history/`, `.aimux/plans/`, and `.aimux/status/` artifacts
+  - opens a handoff thread between source and target
+- `migrate`
+  - preserves the same aimux session id
+  - prefers native backend resume when the tool truly supports it
+  - otherwise falls back to aimux-owned continuity injection from history/live context
+
+Tool behavior differs:
+
+- `Claude`
+  - supports clean preamble injection
+  - does **not** support backend-session-id resume in the way aimux originally assumed
+  - so `fork` and fallback `migrate` rely on aimux-owned continuity artifacts
+- `Codex`
+  - supports backend-session-id resume, so `migrate` usually takes the native resume path
+  - does **not** currently have a clean startup handoff flag, so `fork` uses seeded files plus an auto-submitted first-turn kickoff
+
+For deeper details, see [docs/tool-integration.md](docs/tool-integration.md).
 
 ## Shared Plans
 
