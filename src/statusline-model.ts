@@ -38,7 +38,7 @@ export interface StatuslineMetadataEntry {
 
 export interface StatuslineData {
   project?: string;
-  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "help";
+  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "threads" | "help";
   sessions?: StatuslineSession[];
   metadata?: Record<string, StatuslineMetadataEntry>;
   tasks?: {
@@ -106,6 +106,7 @@ export function renderDashboardScreens(activeScreen: StatuslineData["dashboardSc
   const screens: Array<{ key: StatuslineData["dashboardScreen"]; label: string }> = [
     { key: "dashboard", label: "dashboard" },
     { key: "activity", label: "activity" },
+    { key: "threads", label: "threads" },
     { key: "plans", label: "plans" },
     { key: "graveyard", label: "graveyard" },
   ];

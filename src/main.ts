@@ -31,6 +31,15 @@ import {
 } from "./metadata-store.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
+import {
+  appendMessage,
+  createThread,
+  listThreadSummaries,
+  readMessages,
+  readThread,
+  type MessageKind,
+  type ThreadKind,
+} from "./threads.js";
 
 const program = new Command();
 
@@ -257,6 +266,113 @@ const worktreeCmd = program.command("worktree").description("Manage git worktree
 worktreeCmd.action(() => {
   printWorktrees();
 });
+
+const threadCmd = program.command("thread").description("Inspect and manage orchestration threads");
+
+threadCmd
+  .command("list")
+  .description("List orchestration threads")
+  .option("--session <sessionId>", "Filter to threads involving a session")
+  .option("--json", "Emit JSON")
+  .action((opts: { session?: string; json?: boolean }) => {
+    const summaries = listThreadSummaries(opts.session);
+    if (opts.json) {
+      console.log(JSON.stringify(summaries, null, 2));
+      return;
+    }
+    if (summaries.length === 0) {
+      console.log("No threads found.");
+      return;
+    }
+    for (const summary of summaries) {
+      const unread = summary.thread.unreadBy?.length ? ` unread=${summary.thread.unreadBy.length}` : "";
+      const waiting = summary.thread.waitingOn?.length ? ` waiting=${summary.thread.waitingOn.join(",")}` : "";
+      console.log(`${summary.thread.id}  ${summary.thread.kind}  ${summary.thread.status}${unread}${waiting}`);
+      console.log(`  ${summary.thread.title}`);
+      if (summary.latestMessage) {
+        console.log(
+          `  latest: ${summary.latestMessage.from} [${summary.latestMessage.kind}] ${summary.latestMessage.body}`,
+        );
+      }
+    }
+  });
+
+threadCmd
+  .command("show")
+  .description("Show a thread and its messages")
+  .argument("<threadId>")
+  .option("--json", "Emit JSON")
+  .action((threadId: string, opts: { json?: boolean }) => {
+    const thread = readThread(threadId);
+    if (!thread) {
+      console.error(`aimux: thread not found: ${threadId}`);
+      process.exit(1);
+    }
+    const messages = readMessages(threadId);
+    if (opts.json) {
+      console.log(JSON.stringify({ thread, messages }, null, 2));
+      return;
+    }
+    console.log(`${thread.title} (${thread.kind})`);
+    console.log(`id: ${thread.id}`);
+    console.log(`status: ${thread.status}`);
+    console.log(`participants: ${thread.participants.join(", ")}`);
+    if (thread.owner) console.log(`owner: ${thread.owner}`);
+    if (thread.waitingOn?.length) console.log(`waitingOn: ${thread.waitingOn.join(", ")}`);
+    console.log("");
+    for (const message of messages) {
+      console.log(`${message.ts}  ${message.from} [${message.kind}]`);
+      console.log(`  ${message.body}`);
+    }
+  });
+
+threadCmd
+  .command("open")
+  .description("Open a new orchestration thread")
+  .requiredOption("--title <title>", "Thread title")
+  .requiredOption("--from <sessionId>", "Creating session")
+  .requiredOption("--participants <ids>", "Comma-separated participant session ids")
+  .option("--kind <kind>", "conversation|task|review|handoff|user", "conversation")
+  .action((opts: { title: string; from: string; participants: string; kind?: ThreadKind }) => {
+    const participants = opts.participants
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const thread = createThread({
+      title: opts.title,
+      kind: (opts.kind as ThreadKind) ?? "conversation",
+      createdBy: opts.from,
+      participants: [...new Set([opts.from, ...participants])],
+    });
+    console.log(thread.id);
+  });
+
+threadCmd
+  .command("send")
+  .description("Append a message to an orchestration thread")
+  .argument("<threadId>")
+  .argument("<body>")
+  .requiredOption("--from <sessionId>", "Sending session")
+  .option("--to <ids>", "Comma-separated recipient session ids")
+  .option("--kind <kind>", "request|reply|status|decision|handoff|note", "note")
+  .action((threadId: string, body: string, opts: { from: string; to?: string; kind?: MessageKind }) => {
+    const thread = readThread(threadId);
+    if (!thread) {
+      console.error(`aimux: thread not found: ${threadId}`);
+      process.exit(1);
+    }
+    const to = opts.to
+      ?.split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const message = appendMessage(threadId, {
+      from: opts.from,
+      to,
+      kind: (opts.kind as MessageKind) ?? "note",
+      body,
+    });
+    console.log(message.id);
+  });
 
 worktreeCmd
   .command("list")

@@ -38,6 +38,11 @@ export interface OrchestrationMessage {
   metadata?: Record<string, string | number | boolean | null>;
 }
 
+export interface ThreadSummary {
+  thread: OrchestrationThread;
+  latestMessage?: OrchestrationMessage;
+}
+
 function threadsDir(): string {
   const dir = join(getLocalAimuxDir(), "threads");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -200,5 +205,20 @@ export function openTaskThread(
     participants: input.participants,
     taskId,
     worktreePath: input.worktreePath,
+  });
+}
+
+export function listThreadsForParticipant(participantId: string): OrchestrationThread[] {
+  return listThreads().filter((thread) => thread.participants.includes(participantId));
+}
+
+export function listThreadSummaries(participantId?: string): ThreadSummary[] {
+  const threads = participantId ? listThreadsForParticipant(participantId) : listThreads();
+  return threads.map((thread) => {
+    const messages = readMessages(thread.id);
+    return {
+      thread,
+      latestMessage: messages[messages.length - 1],
+    };
   });
 }

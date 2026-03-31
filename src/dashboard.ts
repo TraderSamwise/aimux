@@ -42,6 +42,8 @@ export interface DashboardSession {
   services?: SessionServiceMetadata[];
   threadId?: string;
   threadName?: string;
+  threadUnreadCount?: number;
+  threadWaitingCount?: number;
 }
 
 export interface WorktreeGroup {
@@ -210,6 +212,10 @@ export class Dashboard {
     const isSelected = this.navLevel === "sessions" && session.id === this.selectedSessionId;
     const marker = isSelected ? " \x1b[33m◀\x1b[0m" : "";
     const taskBadge = session.taskDescription ? ` \x1b[2;35m⧫ ${truncate(session.taskDescription, 40)}\x1b[0m` : "";
+    const threadBadge =
+      (session.threadUnreadCount ?? 0) > 0 || (session.threadWaitingCount ?? 0) > 0
+        ? ` \x1b[2;34m💬 ${session.threadUnreadCount ?? 0}/${session.threadWaitingCount ?? 0}\x1b[0m`
+        : "";
     const attentionBadge =
       session.attention === "error"
         ? " \x1b[31m✗\x1b[0m"
@@ -229,7 +235,7 @@ export class Dashboard {
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${attentionBadge}${unseenBadge} — ${ownerTag}${marker}`;
+      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${attentionBadge}${unseenBadge} — ${ownerTag}${marker}`;
     }
 
     const icon = STATUS_ICONS[session.status];
@@ -238,7 +244,7 @@ export class Dashboard {
     const serverTag = session.isServer && !session.remoteInstancePid ? " \x1b[32m⬡\x1b[0m" : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${identity}${roleTag}${serverTag} — ${statusLabel}${headlineText}${taskBadge}${attentionBadge}${unseenBadge}${marker}`;
+    return `${indent}${icon} [${num}] ${identity}${roleTag}${serverTag} — ${statusLabel}${headlineText}${taskBadge}${threadBadge}${attentionBadge}${unseenBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {
@@ -339,20 +345,20 @@ export class Dashboard {
     const tmuxHint = this.runtimeLabel === "tmux" ? "  [d] tmux dashboard" : "";
 
     if (this.sessions.length === 0 && !this.hasWorktrees) {
-      return " [u] attention  [a] activity  [Tab] details  [c] new  [p] plans  [g] graveyard  [?] help  [q] quit ";
+      return " [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [p] plans  [g] graveyard  [?] help  [q] quit ";
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ agents  ${enterLabel}  Esc back  [u] attention  [a] activity  [Tab] details  [c] new  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ agents  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.hasWorktrees) {
-      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [Tab] details  [c] new  [w] worktree  [m] migrate${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [w] worktree  [m] migrate${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [Tab] details  [c] new  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
-    return " [u] attention  [a] activity  [Tab] details  [c] new  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
+    return " [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
   }
 
   toggleDetailsPane(): void {
@@ -407,6 +413,15 @@ export class Dashboard {
     }
     if (selected.threadName || selected.threadId) {
       lines.push(...wrapKeyValue("Thread", selected.threadName ?? selected.threadId ?? "", width));
+    }
+    if ((selected.threadUnreadCount ?? 0) > 0 || (selected.threadWaitingCount ?? 0) > 0) {
+      lines.push(
+        ...wrapKeyValue(
+          "Threads",
+          `${selected.threadUnreadCount ?? 0} unread · ${selected.threadWaitingCount ?? 0} waiting`,
+          width,
+        ),
+      );
     }
     if ((selected.services?.length ?? 0) > 0) {
       lines.push(...wrapKeyValue("Services", selected.services!.map((s) => s.url ?? `:${s.port}`).join(", "), width));

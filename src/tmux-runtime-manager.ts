@@ -334,6 +334,10 @@ export class TmuxRuntimeManager {
     this.exec(["send-keys", "-t", target.windowId, "Enter"]);
   }
 
+  sendKey(target: TmuxTarget, key: string): void {
+    this.exec(["send-keys", "-t", target.windowId, key]);
+  }
+
   setWindowMetadata(target: TmuxTarget | string, metadata: TmuxWindowMetadata): void {
     const windowTarget = typeof target === "string" ? target : target.windowId;
     this.exec(["set-window-option", "-q", "-t", windowTarget, "@aimux-meta", JSON.stringify(metadata)]);
@@ -470,6 +474,9 @@ export class TmuxRuntimeManager {
   ): void {
     this.exec(["set-option", "-t", sessionName, "prefix", "C-a"]);
     this.exec(["set-option", "-t", sessionName, "prefix2", "C-b"]);
+    this.exec(["set-option", "-t", sessionName, "extended-keys", "always"]);
+    this.exec(["set-option", "-t", sessionName, "extended-keys-format", "csi-u"]);
+    this.exec(["set-option", "-as", "-t", sessionName, "terminal-features", ",xterm*:extkeys"]);
     this.exec(["unbind-key", "-T", "prefix", "s"]);
     this.exec(["unbind-key", "-T", "prefix", "n"]);
     this.exec(["unbind-key", "-T", "prefix", "p"]);

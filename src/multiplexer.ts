@@ -47,6 +47,14 @@ import { TmuxSessionTransport } from "./tmux-session-transport.js";
 import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
+import {
+  appendMessage,
+  createThread,
+  listThreadSummaries,
+  markThreadSeen,
+  readMessages,
+  type ThreadSummary,
+} from "./threads.js";
 
 interface StatuslineOwnerState {
   instanceId: string;
@@ -107,6 +115,10 @@ interface PlanEntry {
   content: string;
 }
 
+interface ThreadEntry extends ThreadSummary {
+  displayTitle: string;
+}
+
 export class Multiplexer {
   private sessions: ManagedSession[] = [];
   private activeIndex = 0;
@@ -141,6 +153,9 @@ export class Multiplexer {
   private activityActive = false;
   private activityEntries: DashboardSession[] = [];
   private activityIndex = 0;
+  private threadsActive = false;
+  private threadEntries: ThreadEntry[] = [];
+  private threadIndex = 0;
   private plansActive = false;
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
@@ -545,6 +560,10 @@ export class Multiplexer {
       }
       if (this.activityActive) {
         this.handleActivityKey(data);
+        return;
+      }
+      if (this.threadsActive) {
+        this.handleThreadsKey(data);
         return;
       }
       if (this.plansActive) {
@@ -1211,6 +1230,9 @@ export class Multiplexer {
       case "p":
         this.showPlans();
         return;
+      case "t":
+        this.showThreads();
+        return;
       case "a":
         this.showActivityDashboard();
         return;
@@ -1504,7 +1526,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -1582,6 +1604,11 @@ export class Multiplexer {
       this.renderDashboard();
       return;
     }
+    if (key === "t") {
+      this.activityActive = false;
+      this.showThreads();
+      return;
+    }
     if (key === "a") {
       this.renderActivityDashboard();
       return;
@@ -1628,6 +1655,201 @@ export class Multiplexer {
     if (key === "enter" || key === "return") {
       const entry = this.activityEntries[this.activityIndex];
       if (entry) void this.activateDashboardEntry(entry);
+    }
+  }
+
+  private buildThreadEntries(): ThreadEntry[] {
+    return listThreadSummaries()
+      .map((summary) => ({
+        ...summary,
+        displayTitle: summary.thread.title || `${summary.thread.kind} ${summary.thread.id}`,
+      }))
+      .sort((a, b) => (a.thread.updatedAt < b.thread.updatedAt ? 1 : a.thread.updatedAt > b.thread.updatedAt ? -1 : 0));
+  }
+
+  private showThreads(): void {
+    this.clearDashboardSubscreens();
+    this.threadEntries = this.buildThreadEntries();
+    if (this.threadIndex >= this.threadEntries.length) {
+      this.threadIndex = Math.max(0, this.threadEntries.length - 1);
+    }
+    this.threadsActive = true;
+    this.writeStatuslineFile();
+    this.renderThreads();
+  }
+
+  private renderThreads(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const header: string[] = [];
+    header.push("");
+    header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — threads", cols));
+    header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
+    header.push("");
+    const footer = this.centerInWidth(
+      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [Enter] focus owner  [r] refresh  [Esc] dashboard  [q] quit",
+      cols,
+    );
+    const viewportHeight = rows - header.length - 2;
+    const twoPane = cols >= 110 && this.detailsSidebarVisible;
+    const listLines: string[] = [];
+
+    if (this.threadEntries.length === 0) {
+      listLines.push("  Threads");
+      listLines.push("    No orchestration threads yet.");
+    } else {
+      listLines.push("  Threads");
+      for (let i = 0; i < this.threadEntries.length; i++) {
+        const entry = this.threadEntries[i]!;
+        const selected = i === this.threadIndex;
+        const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
+        const unread =
+          (entry.thread.unreadBy?.length ?? 0) > 0 ? ` \x1b[36m${entry.thread.unreadBy!.length}\x1b[0m` : "";
+        const waiting =
+          (entry.thread.waitingOn?.length ?? 0) > 0 ? ` \x1b[35m→ ${entry.thread.waitingOn!.join(",")}\x1b[0m` : "";
+        const latest = entry.latestMessage?.body
+          ? ` \x1b[2m· ${this.truncatePlain(entry.latestMessage.body, 34)}\x1b[0m`
+          : "";
+        listLines.push(
+          `${marker}[${i + 1}] ${entry.displayTitle} \x1b[2m(${entry.thread.kind})\x1b[0m — ${entry.thread.status}${unread}${waiting}${latest}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+        );
+      }
+    }
+
+    const focusLine = this.threadEntries.length === 0 ? 1 : this.threadIndex + 1;
+    const body = this.composeSplitScreen(
+      listLines,
+      this.renderThreadDetails(Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
+      cols,
+      viewportHeight,
+      focusLine,
+      twoPane,
+    );
+    process.stdout.write(
+      "\x1b[2J\x1b[H" +
+        [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
+    );
+  }
+
+  private renderThreadDetails(width: number, height: number): string[] {
+    const entry = this.threadEntries[this.threadIndex];
+    if (!entry) return new Array(height).fill("");
+    const lines: string[] = [];
+    lines.push("\x1b[1mDetails\x1b[0m");
+    lines.push(...this.wrapKeyValue("Title", entry.displayTitle, width));
+    lines.push(...this.wrapKeyValue("Kind", entry.thread.kind, width));
+    lines.push(...this.wrapKeyValue("Status", entry.thread.status, width));
+    lines.push(...this.wrapKeyValue("Created By", entry.thread.createdBy, width));
+    lines.push(...this.wrapKeyValue("Participants", entry.thread.participants.join(", "), width));
+    if (entry.thread.owner) lines.push(...this.wrapKeyValue("Owner", entry.thread.owner, width));
+    if ((entry.thread.waitingOn?.length ?? 0) > 0) {
+      lines.push(...this.wrapKeyValue("Waiting On", entry.thread.waitingOn!.join(", "), width));
+    }
+    if ((entry.thread.unreadBy?.length ?? 0) > 0) {
+      lines.push(...this.wrapKeyValue("Unread By", entry.thread.unreadBy!.join(", "), width));
+    }
+    if (entry.thread.taskId) lines.push(...this.wrapKeyValue("Task", entry.thread.taskId, width));
+    if (entry.thread.worktreePath) lines.push(...this.wrapKeyValue("Worktree", entry.thread.worktreePath, width));
+    lines.push("");
+    lines.push("\x1b[1mMessages\x1b[0m");
+    const messages = readMessages(entry.thread.id).slice(-Math.max(3, height - lines.length));
+    for (const message of messages) {
+      const prefix = `${message.from} [${message.kind}]`;
+      lines.push(...this.wrapKeyValue(prefix, message.body, width));
+    }
+    while (lines.length < height) lines.push("");
+    return lines.slice(0, height);
+  }
+
+  private handleThreadsKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const key = events[0].name || events[0].char;
+
+    if (key === "tab") {
+      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.renderThreads();
+      return;
+    }
+    if (key === "q") {
+      this.tmuxRuntimeManager.leaveManagedSession({
+        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
+        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+      });
+      this.cleanup();
+      process.exit(0);
+      return;
+    }
+    if (key === "escape" || key === "d") {
+      this.threadsActive = false;
+      this.renderDashboard();
+      return;
+    }
+    if (key === "a") {
+      this.threadsActive = false;
+      this.showActivityDashboard();
+      return;
+    }
+    if (key === "p") {
+      this.threadsActive = false;
+      this.showPlans();
+      return;
+    }
+    if (key === "g") {
+      this.threadsActive = false;
+      this.showGraveyard();
+      return;
+    }
+    if (key === "t") {
+      this.renderThreads();
+      return;
+    }
+    if (key === "?") {
+      this.threadsActive = false;
+      this.showHelp();
+      return;
+    }
+    if (key === "r") {
+      this.threadEntries = this.buildThreadEntries();
+      if (this.threadIndex >= this.threadEntries.length) {
+        this.threadIndex = Math.max(0, this.threadEntries.length - 1);
+      }
+      this.renderThreads();
+      return;
+    }
+    if (key === "down" || key === "j" || key === "n") {
+      if (this.threadEntries.length > 1) {
+        this.threadIndex = (this.threadIndex + 1) % this.threadEntries.length;
+        this.renderThreads();
+      }
+      return;
+    }
+    if (key === "up" || key === "k") {
+      if (this.threadEntries.length > 1) {
+        this.threadIndex = (this.threadIndex - 1 + this.threadEntries.length) % this.threadEntries.length;
+        this.renderThreads();
+      }
+      return;
+    }
+    if (key >= "1" && key <= "9") {
+      const idx = parseInt(key, 10) - 1;
+      if (idx < this.threadEntries.length) {
+        this.threadIndex = idx;
+        this.renderThreads();
+      }
+      return;
+    }
+    if (key === "enter" || key === "return") {
+      const entry = this.threadEntries[this.threadIndex];
+      if (!entry) return;
+      const targetSessionId = entry.thread.owner ?? entry.thread.waitingOn?.[0] ?? entry.thread.participants[0];
+      if (targetSessionId) {
+        markThreadSeen(entry.thread.id, targetSessionId);
+        const dashEntry = this.getDashboardSessions().find((session) => session.id === targetSessionId);
+        if (dashEntry) {
+          void this.activateDashboardEntry(dashEntry);
+        }
+      }
     }
   }
 
@@ -2371,7 +2593,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -2442,6 +2664,10 @@ export class Multiplexer {
 
     if (key === "a") {
       this.showActivityDashboard();
+      return;
+    }
+    if (key === "t") {
+      this.showThreads();
       return;
     }
 
@@ -2585,7 +2811,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -2804,6 +3030,11 @@ export class Multiplexer {
     if (key === "g") {
       this.plansActive = false;
       this.showGraveyard();
+      return;
+    }
+    if (key === "t") {
+      this.plansActive = false;
+      this.showThreads();
       return;
     }
 
@@ -3271,6 +3502,10 @@ export class Multiplexer {
       this.showActivityDashboard();
       return;
     }
+    if (key === "t") {
+      this.showThreads();
+      return;
+    }
 
     if (key === "g") {
       this.showGraveyard();
@@ -3397,6 +3632,7 @@ export class Multiplexer {
   private clearDashboardSubscreens(): void {
     this.metaDashboardActive = false;
     this.activityActive = false;
+    this.threadsActive = false;
     this.plansActive = false;
     this.graveyardActive = false;
     this.helpActive = false;
@@ -3553,6 +3789,22 @@ export class Multiplexer {
   /** Get the current dashboard sessions (local + remote merged) for lookup */
   private getDashboardSessions(): DashboardSession[] {
     const metadata = loadMetadataState().sessions;
+    const threadSummaries = listThreadSummaries();
+    const threadStats = new Map<string, { unread: number; waiting: number; latestId?: string; latestTitle?: string }>();
+    for (const summary of threadSummaries) {
+      for (const participant of summary.thread.participants) {
+        const current = threadStats.get(participant) ?? { unread: 0, waiting: 0 };
+        if ((summary.thread.unreadBy ?? []).includes(participant)) current.unread += 1;
+        if ((summary.thread.waitingOn ?? []).includes(participant) || summary.thread.owner === participant) {
+          current.waiting += 1;
+        }
+        if (!current.latestId) {
+          current.latestId = summary.thread.id;
+          current.latestTitle = summary.thread.title;
+        }
+        threadStats.set(participant, current);
+      }
+    }
     let mainRepoPath: string | undefined;
     try {
       mainRepoPath = findMainRepo();
@@ -3576,6 +3828,15 @@ export class Multiplexer {
       getSessionRole: (sessionId) => this.sessionRoles.get(sessionId),
       getSessionContext: (sessionId) => metadata[sessionId]?.context,
       getSessionDerived: (sessionId) => metadata[sessionId]?.derived,
+    }).map((session) => {
+      const stats = threadStats.get(session.id);
+      return {
+        ...session,
+        threadUnreadCount: stats?.unread ?? 0,
+        threadWaitingCount: stats?.waiting ?? 0,
+        threadId: session.threadId ?? stats?.latestId,
+        threadName: session.threadName ?? stats?.latestTitle,
+      };
     });
   }
 
@@ -3750,13 +4011,15 @@ export class Multiplexer {
         project: basename(process.cwd()),
         dashboardScreen: this.activityActive
           ? "activity"
-          : this.plansActive
-            ? "plans"
-            : this.graveyardActive
-              ? "graveyard"
-              : this.helpActive
-                ? "help"
-                : "dashboard",
+          : this.threadsActive
+            ? "threads"
+            : this.plansActive
+              ? "plans"
+              : this.graveyardActive
+                ? "graveyard"
+                : this.helpActive
+                  ? "help"
+                  : "dashboard",
         sessions: this.sessions.map((s, i) => ({
           id: s.id,
           tool: s.command,
@@ -3837,6 +4100,10 @@ export class Multiplexer {
   private renderCurrentDashboardView(): void {
     if (this.activityActive) {
       this.renderActivityDashboard();
+      return;
+    }
+    if (this.threadsActive) {
+      this.renderThreads();
       return;
     }
     if (this.plansActive) {

@@ -67,6 +67,15 @@ describe("TmuxRuntimeManager", () => {
           args: ["set-option", "-t", session.sessionName, "prefix2", "C-b"],
         }),
         expect.objectContaining({
+          args: ["set-option", "-t", session.sessionName, "extended-keys", "always"],
+        }),
+        expect.objectContaining({
+          args: ["set-option", "-t", session.sessionName, "extended-keys-format", "csi-u"],
+        }),
+        expect.objectContaining({
+          args: ["set-option", "-as", "-t", session.sessionName, "terminal-features", ",xterm*:extkeys"],
+        }),
+        expect.objectContaining({
           args: ["unbind-key", "-T", "prefix", "s"],
         }),
         expect.objectContaining({
@@ -253,10 +262,14 @@ describe("TmuxRuntimeManager", () => {
     manager.captureTarget(target, { startLine: -200 });
     manager.sendText(target, "hello");
     manager.sendEnter(target);
+    manager.sendKey(target, "C-j");
 
-    expect(exec.calls.at(-3)?.args).toEqual(["capture-pane", "-p", "-J", "-t", "@3", "-S", "-200"]);
-    expect(exec.calls.at(-2)?.args).toEqual(["send-keys", "-t", "@3", "-l", "hello"]);
-    expect(exec.calls.at(-1)?.args).toEqual(["send-keys", "-t", "@3", "Enter"]);
+    expect(exec.calls.slice(-4).map((call) => call.args)).toEqual([
+      ["capture-pane", "-p", "-J", "-t", "@3", "-S", "-200"],
+      ["send-keys", "-t", "@3", "-l", "hello"],
+      ["send-keys", "-t", "@3", "Enter"],
+      ["send-keys", "-t", "@3", "C-j"],
+    ]);
   });
 
   it("shows a scoped tmux window menu", () => {

@@ -16,6 +16,7 @@ describe("TmuxSessionTransport", () => {
     const manager = {
       sendText: vi.fn(),
       sendEnter: vi.fn(),
+      sendKey: vi.fn(),
       captureTarget: vi.fn().mockReturnValue(""),
       killWindow: vi.fn(),
       renameWindow: vi.fn(),
@@ -33,7 +34,8 @@ describe("TmuxSessionTransport", () => {
       [createTarget(), "one"],
       [createTarget(), "two"],
     ]);
-    expect((manager.sendEnter as any).mock.calls.length).toBe(3);
+    expect((manager.sendEnter as any).mock.calls).toEqual([[createTarget()]]);
+    expect((manager.sendKey as any).mock.calls).toEqual([[createTarget(), "C-j"]]);
     transport.destroy();
   });
 
@@ -42,6 +44,7 @@ describe("TmuxSessionTransport", () => {
     const manager = {
       sendText: vi.fn(),
       sendEnter: vi.fn(),
+      sendKey: vi.fn(),
       captureTarget: vi.fn().mockReturnValue(""),
       killWindow: vi.fn(),
       renameWindow: vi.fn(),

@@ -7,6 +7,8 @@ import {
   appendMessage,
   createThread,
   listThreads,
+  listThreadsForParticipant,
+  listThreadSummaries,
   markThreadSeen,
   openTaskThread,
   readMessages,
@@ -82,5 +84,34 @@ describe("threads", () => {
     });
     expect(second.id).toBe(first.id);
     expect(readThread(first.id)?.taskId).toBe("task-1");
+  });
+
+  it("filters and summarizes threads by participant", () => {
+    const first = createThread({
+      title: "Review API shape",
+      kind: "conversation",
+      createdBy: "claude-1",
+      participants: ["claude-1", "codex-1"],
+    });
+    const second = createThread({
+      title: "Check failing test",
+      kind: "task",
+      createdBy: "codex-1",
+      participants: ["codex-1", "claude-2"],
+    });
+    appendMessage(first.id, {
+      from: "claude-1",
+      kind: "request",
+      body: "Take a look",
+    });
+    appendMessage(second.id, {
+      from: "codex-1",
+      kind: "request",
+      body: "Please fix test",
+    });
+    expect(listThreadsForParticipant("claude-1").map((thread) => thread.id)).toContain(first.id);
+    expect(listThreadsForParticipant("claude-1").map((thread) => thread.id)).not.toContain(second.id);
+    expect(listThreadSummaries("codex-1")).toHaveLength(2);
+    expect(listThreadSummaries("codex-1")[0]?.latestMessage?.body).toBeTruthy();
   });
 });

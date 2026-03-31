@@ -139,7 +139,7 @@ export function parseKeys(data: Buffer | string): KeyEvent[] {
         const ctrlName =
           code === 127 || code === 8
             ? "backspace"
-            : code === 13 || code === 10
+            : code === 13
               ? "enter"
               : code === 9
                 ? "tab"
@@ -150,7 +150,7 @@ export function parseKeys(data: Buffer | string): KeyEvent[] {
           char: ctrlName ? "" : ch,
           name: ctrlName || ch,
           shift: false,
-          ctrl: ctrlName !== "" && code < 32 && code !== 13 && code !== 10 && code !== 9 && code !== 8,
+          ctrl: code < 32 && code !== 13 && code !== 9 && code !== 8,
           alt: true,
           raw: str.slice(i, i + 2),
         });
@@ -167,7 +167,7 @@ export function parseKeys(data: Buffer | string): KeyEvent[] {
     // Control characters
     const code = str.charCodeAt(i);
     if (code < 32 || code === 127) {
-      if (code === 13 || code === 10) {
+      if (code === 13) {
         events.push({ char: "", name: "enter", shift: false, ctrl: false, alt: false, raw: str[i] });
       } else if (code === 9) {
         events.push({ char: "", name: "tab", shift: false, ctrl: false, alt: false, raw: str[i] });

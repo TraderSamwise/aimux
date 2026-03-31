@@ -45,14 +45,28 @@ export class TmuxSessionTransport {
 
   write(data: string): void {
     if (this._exited || !data) return;
-    const normalized = data.replace(/\r/g, "\n");
-    const chunks = normalized.split("\n");
-    chunks.forEach((chunk, index) => {
-      if (chunk) this.manager.sendText(this.target, chunk);
-      if (index < chunks.length - 1 || normalized.endsWith("\n")) {
+    let textBuffer = "";
+    const flushText = () => {
+      if (!textBuffer) return;
+      this.manager.sendText(this.target, textBuffer);
+      textBuffer = "";
+    };
+
+    for (const ch of data) {
+      if (ch === "\r") {
+        flushText();
         this.manager.sendEnter(this.target);
+        continue;
       }
-    });
+      if (ch === "\n") {
+        flushText();
+        this.manager.sendKey(this.target, "C-j");
+        continue;
+      }
+      textBuffer += ch;
+    }
+
+    flushText();
   }
 
   resize(cols: number, rows: number): void {
