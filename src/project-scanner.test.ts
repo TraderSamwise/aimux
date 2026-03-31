@@ -99,7 +99,7 @@ describe("project-scanner", () => {
             id: "session-a",
             tool: "codex",
             label: "chart-fix",
-            headline: "auditing meta dashboard",
+            headline: "auditing session routing",
             status: "waiting",
             role: "coder",
           },
@@ -114,7 +114,7 @@ describe("project-scanner", () => {
       expect.objectContaining({
         id: "session-a",
         label: "chart-fix",
-        headline: "auditing meta dashboard",
+        headline: "auditing session routing",
         status: "waiting",
         role: "coder",
       }),

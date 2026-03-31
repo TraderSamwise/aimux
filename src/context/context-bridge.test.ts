@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { ContextWatcher } from "./context-bridge.js";
 import { readHistory } from "./history.js";
 import { initPaths, getContextDir, getProjectStateDir } from "../paths.js";
-import { TmuxRuntimeManager, type TmuxTarget } from "../tmux-runtime-manager.js";
+import { type TmuxTarget } from "../tmux-runtime-manager.js";
 
 function target(windowId = "@3"): TmuxTarget {
   return {
@@ -34,11 +34,7 @@ describe("ContextWatcher tmux continuity", () => {
   });
 
   it("writes live.md from tmux pane snapshots when no structured history exists", () => {
-    vi.spyOn(TmuxRuntimeManager.prototype, "captureTarget").mockReturnValue(
-      ["Streaming output", "Still thinking through the change"].join("\n"),
-    );
-
-    const watcher = new ContextWatcher();
+    const watcher = new ContextWatcher(() => ["Streaming output", "Still thinking through the change"].join("\n"));
     (watcher as any).capturePaneSnapshot({
       id: "claude-live",
       command: "claude",
@@ -54,9 +50,7 @@ describe("ContextWatcher tmux continuity", () => {
 
   it("bounds live.md to recent pane content instead of growing unbounded", () => {
     const huge = Array.from({ length: 400 }, (_, index) => `line-${index.toString().padStart(3, "0")}`).join("\n");
-    vi.spyOn(TmuxRuntimeManager.prototype, "captureTarget").mockReturnValue(huge);
-
-    const watcher = new ContextWatcher();
+    const watcher = new ContextWatcher(() => huge);
     (watcher as any).capturePaneSnapshot({
       id: "claude-bounded",
       command: "claude",
@@ -71,11 +65,9 @@ describe("ContextWatcher tmux continuity", () => {
   });
 
   it("captures a synthetic response turn when Claude returns to a visible prompt", () => {
-    vi.spyOn(TmuxRuntimeManager.prototype, "captureTarget").mockReturnValue(
+    const watcher = new ContextWatcher(() =>
       ["sam@host ~/repo main", "▶▶ bypass permissions on (shift+tab to cycle)", "❯ "].join("\n"),
     );
-
-    const watcher = new ContextWatcher();
     const session = {
       id: "claude-prompt",
       command: "claude",
@@ -92,11 +84,9 @@ describe("ContextWatcher tmux continuity", () => {
   });
 
   it("captures a synthetic response turn when Codex returns to a visible prompt", () => {
-    vi.spyOn(TmuxRuntimeManager.prototype, "captureTarget").mockReturnValue(
+    const watcher = new ContextWatcher(() =>
       ["The work is complete.", "", "› Find and fix a bug in @filename"].join("\n"),
     );
-
-    const watcher = new ContextWatcher();
     const session = {
       id: "codex-prompt",
       command: "codex",

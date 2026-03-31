@@ -31,6 +31,13 @@ export interface TmuxTarget {
   windowName: string;
 }
 
+export interface TmuxClientInfo {
+  tty: string;
+  sessionName: string;
+  windowId: string;
+  name: string;
+}
+
 export interface OpenTargetOptions {
   insideTmux?: boolean;
 }
@@ -348,6 +355,11 @@ export class TmuxRuntimeManager {
     this.exec(["select-window", "-t", target.windowId]);
   }
 
+  switchClientToTarget(clientTty: string, target: TmuxTarget): void {
+    debug(`tmux switchClientToTarget: client=${clientTty} target=${target.windowId}`, "fork");
+    this.exec(["switch-client", "-c", clientTty, "-t", target.windowId]);
+  }
+
   displayWindowMenu(title: string, items: Array<{ label: string; target: TmuxTarget }>): void {
     if (items.length === 0) return;
     const args = ["display-menu", "-T", title, "-x", "P", "-y", "P"];
@@ -362,15 +374,46 @@ export class TmuxRuntimeManager {
     return this.exec(["capture-pane", "-p", "-J", "-t", target.windowId, "-S", String(startLine)]);
   }
 
+  listClients(): TmuxClientInfo[] {
+    const raw = this.exec(["list-clients", "-F", "#{client_tty}\t#{session_name}\t#{window_id}\t#{client_name}"]);
+    if (!raw) return [];
+    return raw
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [tty, sessionName, windowId, name] = line.split("\t");
+        return { tty, sessionName, windowId, name };
+      });
+  }
+
+  getAttachedClientForTarget(target: TmuxTarget): TmuxClientInfo | null {
+    const clients = this.listClients().filter((client) => client.sessionName === target.sessionName);
+    if (clients.length === 0) return null;
+    return clients.find((client) => client.windowId === target.windowId) ?? clients[0] ?? null;
+  }
+
   sendText(target: TmuxTarget, text: string): void {
     if (!text) return;
-    debug(`tmux sendText: target=${target.windowId} bytes=${Buffer.byteLength(text)} preview=${JSON.stringify(text.slice(0, 180))}`, "fork");
+    debug(
+      `tmux sendText: target=${target.windowId} bytes=${Buffer.byteLength(text)} preview=${JSON.stringify(text.slice(0, 180))}`,
+      "fork",
+    );
     this.exec(["send-keys", "-t", target.windowId, "-l", text]);
   }
 
   sendEnter(target: TmuxTarget): void {
     debug(`tmux sendEnter: target=${target.windowId}`, "fork");
     this.exec(["send-keys", "-t", target.windowId, "Enter"]);
+  }
+
+  sendClientEnter(clientTty: string): void {
+    debug(`tmux sendClientEnter: client=${clientTty}`, "fork");
+    this.exec(["send-keys", "-K", "-c", clientTty, "Enter"]);
+  }
+
+  sendClientCarriageReturn(clientTty: string, target: TmuxTarget): void {
+    debug(`tmux sendClientCarriageReturn: client=${clientTty} target=${target.windowId}`, "fork");
+    this.exec(["send-keys", "-c", clientTty, "-t", target.windowId, "-H", "0d"]);
   }
 
   sendCarriageReturn(target: TmuxTarget): void {

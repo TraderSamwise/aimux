@@ -79,6 +79,11 @@ function boundLiveSnapshot(text: string): string {
  * persists them to JSONL history, and maintains live.md for cross-agent sharing.
  */
 export class ContextWatcher {
+  constructor(
+    private readonly capturePane: (target: TmuxTarget) => string = (target) =>
+      new TmuxRuntimeManager().captureTarget(target, { startLine: -120 }),
+  ) {}
+
   private interval: ReturnType<typeof setInterval> | null = null;
   private sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[]; tmuxTarget?: TmuxTarget }> = [];
   /** Track how far we've read into each session's recording */
@@ -218,7 +223,7 @@ export class ContextWatcher {
     if (!session.tmuxTarget) return;
     let text = "";
     try {
-      text = new TmuxRuntimeManager().captureTarget(session.tmuxTarget, { startLine: -120 });
+      text = this.capturePane(session.tmuxTarget);
     } catch {
       return;
     }
