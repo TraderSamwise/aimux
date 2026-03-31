@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { loadConfig } from "../config.js";
 import { getContextDir } from "../paths.js";
 import { readHistory } from "./history.js";
@@ -9,6 +10,74 @@ const MAX_SUMMARY_BYTES = 30 * 1024;
 
 const DECISION_KEYWORDS = /\b(decided|chose|instead|approach|switched to|went with)\b/i;
 const ERROR_KEYWORDS = /\b(error|failed|blocked|issue|broken|crash|exception)\b/i;
+
+export interface SummaryProvenance {
+  sessionId: string;
+  mode: "algorithmic" | "llm";
+  generatedAt: string;
+  turns: number;
+  firstTurnTs?: string;
+  lastTurnTs?: string;
+  historyDigest: string;
+  summaryBytes: number;
+}
+
+function historyDigest(turns: ReturnType<typeof readHistory>): string {
+  const hash = createHash("sha1");
+  for (const turn of turns) {
+    hash.update(turn.ts);
+    hash.update("\0");
+    hash.update(turn.type);
+    hash.update("\0");
+    hash.update(turn.content);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+function withSummaryHeader(summary: string, provenance: SummaryProvenance): string {
+  const lines = [
+    `# ${provenance.sessionId} — Session Summary`,
+    `Generated: ${provenance.generatedAt}`,
+    `Source: ${provenance.mode}`,
+    `Turns covered: ${provenance.turns}`,
+  ];
+  if (provenance.firstTurnTs || provenance.lastTurnTs) {
+    lines.push(`History range: ${provenance.firstTurnTs ?? "unknown"} -> ${provenance.lastTurnTs ?? "unknown"}`);
+  }
+  lines.push(`History digest: ${provenance.historyDigest}`);
+  lines.push("");
+  return `${lines.join("\n")}${summary.trimStart() ? `\n${summary.trimStart()}` : ""}`;
+}
+
+function writeSummaryArtifacts(
+  sessionDir: string,
+  sessionId: string,
+  mode: SummaryProvenance["mode"],
+  turns: ReturnType<typeof readHistory>,
+  summary: string,
+): void {
+  const generatedAt = new Date().toISOString();
+  const baseProvenance: SummaryProvenance = {
+    sessionId,
+    mode,
+    generatedAt,
+    turns: turns.length,
+    firstTurnTs: turns[0]?.ts,
+    lastTurnTs: turns.at(-1)?.ts,
+    historyDigest: historyDigest(turns),
+    summaryBytes: 0,
+  };
+  const summaryWithHeader = withSummaryHeader(summary, baseProvenance);
+  const provenance: SummaryProvenance = {
+    ...baseProvenance,
+    summaryBytes: Buffer.byteLength(summaryWithHeader),
+  };
+
+  writeFileSync(join(sessionDir, "summary.md"), summaryWithHeader);
+  writeFileSync(join(sessionDir, "summary.meta.json"), JSON.stringify(provenance, null, 2) + "\n");
+  appendFileSync(join(sessionDir, "summary.checkpoints.jsonl"), JSON.stringify(provenance) + "\n");
+}
 
 /**
  * Algorithmic compaction: extract key signals from history and write per-session summaries.
@@ -25,7 +94,7 @@ export function algorithmicCompact(sessionIds: string[]): void {
     const sessionDir = join(baseDir, sessionId);
     if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
 
-    const sections: string[] = [`# ${sessionId} — Session Summary`, `Generated: ${new Date().toISOString()}`, ""];
+    const sections: string[] = [];
 
     const tasks: string[] = [];
     const fileCounts = new Map<string, number>();
@@ -101,7 +170,7 @@ export function algorithmicCompact(sessionIds: string[]): void {
       content = content.slice(0, MAX_SUMMARY_BYTES);
     }
 
-    writeFileSync(join(sessionDir, "summary.md"), content);
+    writeSummaryArtifacts(sessionDir, sessionId, "algorithmic", turns, content);
   }
 }
 
@@ -162,13 +231,13 @@ export function llmCompact(sessionIds: string[]): void {
         maxBuffer: 1024 * 1024,
       });
 
-      let summary = `# ${sessionId} — Session Summary\nGenerated: ${new Date().toISOString()}\nSource: LLM compaction\n\n${output}`;
+      let summary = output;
 
       if (summary.length > MAX_SUMMARY_BYTES) {
         summary = summary.slice(0, MAX_SUMMARY_BYTES);
       }
 
-      writeFileSync(join(sessionDir, "summary.md"), summary);
+      writeSummaryArtifacts(sessionDir, sessionId, "llm", turns, summary);
     } catch {
       // If claude CLI fails for this session, fall back to algorithmic for just this session
       algorithmicCompact([sessionId]);

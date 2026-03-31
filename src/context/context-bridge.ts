@@ -13,6 +13,7 @@ import { classifyToolPane } from "../tool-output-watchers.js";
 const git = simpleGit();
 
 const MAX_LIVE_MD_BYTES = 50 * 1024;
+const MAX_LIVE_MD_LINES = 200;
 
 /**
  * Capture git diff and write a context entry on session exit.
@@ -51,6 +52,28 @@ function simpleHash(str: string): string {
   return hash.toString(36);
 }
 
+function boundLiveSnapshot(text: string): string {
+  const lines = text.split("\n").slice(-MAX_LIVE_MD_LINES);
+  let bounded = lines.join("\n").trim();
+  if (Buffer.byteLength(bounded) <= MAX_LIVE_MD_BYTES) {
+    return bounded;
+  }
+
+  while (lines.length > 1 && Buffer.byteLength(lines.join("\n")) > MAX_LIVE_MD_BYTES) {
+    lines.shift();
+  }
+  bounded = lines.join("\n").trim();
+  if (Buffer.byteLength(bounded) <= MAX_LIVE_MD_BYTES) {
+    return bounded;
+  }
+
+  const buf = Buffer.from(bounded);
+  return buf
+    .subarray(buf.length - MAX_LIVE_MD_BYTES)
+    .toString("utf-8")
+    .trim();
+}
+
 /**
  * Live context watcher. Monitors recording files for new conversation turns,
  * persists them to JSONL history, and maintains live.md for cross-agent sharing.
@@ -78,7 +101,7 @@ export class ContextWatcher {
     this.sessions = sessions;
   }
 
-  start(intervalMs = 5_000): void {
+  start(intervalMs = 1_000): void {
     if (this.interval) return;
     // Initialize read offsets to current file sizes (don't process existing content)
     for (const session of this.sessions) {
@@ -99,6 +122,20 @@ export class ContextWatcher {
     this.writeLiveContext();
   }
 
+  async syncNow(sessionId?: string): Promise<void> {
+    const sessions = sessionId ? this.sessions.filter((session) => session.id === sessionId) : this.sessions;
+    for (const session of sessions) {
+      if (!this.readOffsets.has(session.id)) {
+        this.initOffset(session.id);
+      }
+      await this.extractNewContent(session);
+      this.capturePaneSnapshot(session);
+    }
+    if (this.dirtySessions.size > 0) {
+      this.writeLiveContext();
+    }
+  }
+
   private initOffset(sessionId: string): void {
     const txtPath = this.recordingPath(sessionId);
     try {
@@ -114,17 +151,7 @@ export class ContextWatcher {
   }
 
   private async tick(): Promise<void> {
-    for (const session of this.sessions) {
-      if (!this.readOffsets.has(session.id)) {
-        this.initOffset(session.id);
-      }
-      await this.extractNewContent(session);
-      this.capturePaneSnapshot(session);
-    }
-    // Only write live context when new turns were extracted
-    if (this.dirtySessions.size > 0) {
-      this.writeLiveContext();
-    }
+    await this.syncNow();
   }
 
   /**
@@ -209,8 +236,24 @@ export class ContextWatcher {
     if (this.paneSnapshotHashes.get(session.id) === hash) return;
     this.paneSnapshotHashes.set(session.id, hash);
 
+    const sessionDir = join(getContextDir(), session.id);
+    if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
+    const snapshotBody = boundLiveSnapshot(normalized);
+    const snapshot = [
+      `# ${session.id} (${session.command}) — Live Snapshot`,
+      "",
+      `Updated: ${new Date().toISOString()}`,
+      "",
+      "Recent terminal output:",
+      "",
+      snapshotBody,
+      "",
+    ].join("\n");
+    writeFileSync(join(sessionDir, "live.md"), snapshot);
+    debugContext("wrote", `${session.id}/live.md`, snapshot.length);
+
     const turns = readHistory(session.id, { lastN: 1 });
-    if (promptVisible && !previousPromptVisible) {
+    if (promptVisible) {
       const snapshotTurn = normalized.split("\n").slice(-80).join("\n").trim();
       if (snapshotTurn) {
         const lastTurn = turns.at(-1);
@@ -225,22 +268,6 @@ export class ContextWatcher {
         }
       }
     }
-    if (turns.length > 0) return;
-
-    const sessionDir = join(getContextDir(), session.id);
-    if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
-    const snapshot = [
-      `# ${session.id} (${session.command}) — Live Snapshot`,
-      "",
-      `Updated: ${new Date().toISOString()}`,
-      "",
-      "Recent terminal output:",
-      "",
-      normalized.slice(-MAX_LIVE_MD_BYTES),
-      "",
-    ].join("\n");
-    writeFileSync(join(sessionDir, "live.md"), snapshot);
-    debugContext("wrote", `${session.id}/live.md`, snapshot.length);
   }
 
   /**

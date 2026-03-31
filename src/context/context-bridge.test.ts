@@ -52,6 +52,24 @@ describe("ContextWatcher tmux continuity", () => {
     expect(readHistory("claude-live")).toEqual([]);
   });
 
+  it("bounds live.md to recent pane content instead of growing unbounded", () => {
+    const huge = Array.from({ length: 400 }, (_, index) => `line-${index.toString().padStart(3, "0")}`).join("\n");
+    vi.spyOn(TmuxRuntimeManager.prototype, "captureTarget").mockReturnValue(huge);
+
+    const watcher = new ContextWatcher();
+    (watcher as any).capturePaneSnapshot({
+      id: "claude-bounded",
+      command: "claude",
+      tmuxTarget: target("@6"),
+    });
+
+    const livePath = join(getContextDir(), "claude-bounded", "live.md");
+    const live = readFileSync(livePath, "utf-8");
+    expect(live).not.toContain("line-000");
+    expect(live).toContain("line-399");
+    expect(Buffer.byteLength(live)).toBeLessThan(55 * 1024);
+  });
+
   it("captures a synthetic response turn when Claude returns to a visible prompt", () => {
     vi.spyOn(TmuxRuntimeManager.prototype, "captureTarget").mockReturnValue(
       ["sam@host ~/repo main", "▶▶ bypass permissions on (shift+tab to cycle)", "❯ "].join("\n"),
