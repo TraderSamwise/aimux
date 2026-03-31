@@ -78,7 +78,6 @@ describe("project-scanner", () => {
       expect.objectContaining({
         id: "session-a",
         headline: "Alpha headline",
-        isServer: true,
       }),
     );
 
@@ -87,7 +86,6 @@ describe("project-scanner", () => {
       expect.objectContaining({
         id: "session-b",
         headline: "Beta headline",
-        isServer: true,
       }),
     );
   });
@@ -119,14 +117,11 @@ describe("project-scanner", () => {
         headline: "auditing meta dashboard",
         status: "waiting",
         role: "coder",
-        isServer: true,
       }),
     );
   });
 
-  it("builds desktop project summaries with dashboard session names and server state", async () => {
-    writeFileSync(join(tmpHome, ".aimux", "projects", "proj-a", "aimux.pid"), String(process.pid));
-
+  it("builds desktop project summaries with dashboard session names", async () => {
     const { listDesktopProjects } = await import("./project-scanner.js");
     const projects = listDesktopProjects();
 
@@ -136,13 +131,11 @@ describe("project-scanner", () => {
           id: "proj-a",
           name: "project-a",
           path: projectA,
-          serverRunning: true,
           dashboardSessionName: expect.stringMatching(/^aimux-project-a-/),
           sessions: expect.arrayContaining([
             expect.objectContaining({
               id: "session-a",
               tool: "codex",
-              isServer: true,
             }),
           ]),
         }),
@@ -150,7 +143,6 @@ describe("project-scanner", () => {
           id: "proj-b",
           name: "project-b",
           path: projectB,
-          serverRunning: false,
           dashboardSessionName: expect.stringMatching(/^aimux-project-b-/),
         }),
       ]),

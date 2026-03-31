@@ -17,7 +17,6 @@ export interface DashboardSessionRegistryOptions {
   offlineSessions: SessionState[];
   remoteInstances: InstanceInfo[];
   mainRepoPath?: string;
-  isServerSession: (sessionId: string) => boolean;
   getSessionLabel: (sessionId: string) => string | undefined;
   getSessionHeadline: (sessionId: string) => string | undefined;
   getSessionTaskDescription: (sessionId: string) => string | undefined;
@@ -68,7 +67,6 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
     headline: options.getSessionHeadline(session.id),
     taskDescription: options.getSessionTaskDescription(session.id),
     role: options.getSessionRole(session.id),
-    isServer: options.isServerSession(session.id),
     cwd: options.getSessionContext(session.id)?.cwd,
     repoOwner: options.getSessionContext(session.id)?.repo?.owner,
     repoName: options.getSessionContext(session.id)?.repo?.name,
@@ -86,7 +84,6 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
   }));
 
   for (const inst of options.remoteInstances) {
-    const isServer = inst.instanceId.startsWith("server-");
     for (const session of inst.sessions) {
       if (dashSessions.some((existing) => existing.id === session.id)) continue;
       dashSessions.push({
@@ -97,12 +94,11 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
         status: "running",
         active: false,
         worktreePath: normalizeWtPath(session.worktreePath),
-        remoteInstancePid: isServer ? undefined : inst.pid,
+        remoteInstancePid: inst.pid,
         remoteInstanceId: inst.instanceId,
         remoteBackendSessionId: session.backendSessionId,
         label: options.getSessionLabel(session.id),
         headline: options.getSessionHeadline(session.id),
-        isServer,
         cwd: options.getSessionContext(session.id)?.cwd,
         repoOwner: options.getSessionContext(session.id)?.repo?.owner,
         repoName: options.getSessionContext(session.id)?.repo?.name,

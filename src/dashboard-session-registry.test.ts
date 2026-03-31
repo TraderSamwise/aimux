@@ -57,7 +57,6 @@ describe("dashboard-session-registry", () => {
       offlineSessions,
       remoteInstances,
       mainRepoPath: "/repo",
-      isServerSession: () => false,
       getSessionLabel: (id) => (id === "local-1" ? "primary" : undefined),
       getSessionHeadline: () => undefined,
       getSessionTaskDescription: () => undefined,

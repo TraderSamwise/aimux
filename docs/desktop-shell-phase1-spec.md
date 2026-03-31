@@ -47,12 +47,6 @@ The current codebase already gives us most of the runtime substrate we need.
 - `src/tmux-statusline.ts`
   - file-backed lightweight project/session summary
 
-### Existing desktop-adjacent code we should learn from, not extend directly
-
-- `tray/AimuxTray.swift`
-  - proves project discovery and background-state UX are useful
-  - duplicates scanning logic that should move into shared TS/CLI surfaces instead of being copied into a new desktop codebase
-
 ### Important constraints from the current implementation
 
 - aimux is already tmux-backed by design
@@ -169,7 +163,6 @@ Implementation source:
 
 - build on `src/project-scanner.ts`
 - enrich using global registry data from `src/paths.ts`
-- reuse any useful shaping from `tray/AimuxTray.swift`, but keep implementation in TS
 
 Output shape:
 
@@ -180,7 +173,6 @@ Output shape:
       "id": "repo-123",
       "name": "repo",
       "path": "/abs/path/repo",
-      "serverRunning": false,
       "dashboardSessionName": "aimux-repo-abc123",
       "sessions": [
         {
@@ -190,8 +182,7 @@ Output shape:
           "headline": "check task queue race",
           "status": "running",
           "role": "reviewer",
-          "worktreePath": "/abs/path/repo-wt-review",
-          "isServer": false
+          "worktreePath": "/abs/path/repo-wt-review"
         }
       ]
     }
@@ -202,7 +193,6 @@ Output shape:
 Notes:
 
 - `dashboardSessionName` should come from `TmuxRuntimeManager.getProjectSession(projectRoot)`
-- `serverRunning` can remain file/PID-derived for now because Phase 1 does not depend on a separate server model
 
 ### B. `aimux desktop open --project <path>`
 
@@ -327,7 +317,7 @@ Deliverables:
 - `aimux desktop open --project <path>`
 - `aimux desktop focus --project <path> --session <id>`
 
-### 3. Extract any duplicated project/session shaping from the tray app into shared TS logic
+### 3. Extract any duplicated project/session shaping into shared TS logic
 
 Files likely touched:
 
@@ -403,7 +393,7 @@ Phase 1 is complete when all of the following are true:
 - diff viewers
 - artifact browsers
 - global daemon architecture
-- replacing the existing tray app in the same change
+- replacing any legacy desktop shell assumptions in the same change
 
 ## Risks
 

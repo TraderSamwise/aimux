@@ -24,8 +24,6 @@ export interface DashboardSession {
   label?: string;
   /** Short current-work summary */
   headline?: string;
-  /** Whether this session is owned by the headless server */
-  isServer?: boolean;
   /** Agent's team role (e.g. "coder", "reviewer") */
   role?: string;
   cwd?: string;
@@ -95,7 +93,6 @@ export class Dashboard {
   private navLevel: "worktrees" | "sessions" = "sessions";
   private selectedSessionId: string | undefined = undefined;
   private scrollOffset = 0;
-  private serverRunning = false;
   private runtimeLabel: string | undefined = undefined;
   private mainCheckout: MainCheckoutInfo = { name: "Main Checkout", branch: "" };
   private renderSessionCounter = 0;
@@ -107,7 +104,6 @@ export class Dashboard {
     focusedWorktreePath?: string,
     navLevel?: "worktrees" | "sessions",
     selectedSessionId?: string,
-    serverRunning?: boolean,
     runtimeLabel?: string,
     mainCheckout?: MainCheckoutInfo,
   ): void {
@@ -117,7 +113,6 @@ export class Dashboard {
     this.focusedWorktreePath = focusedWorktreePath;
     this.navLevel = navLevel ?? "sessions";
     this.selectedSessionId = selectedSessionId;
-    this.serverRunning = serverRunning ?? false;
     this.runtimeLabel = runtimeLabel;
     this.mainCheckout = mainCheckout ?? { name: "Main Checkout", branch: "" };
   }
@@ -133,11 +128,7 @@ export class Dashboard {
     // Header (fixed)
     const header: string[] = [];
     header.push("");
-    const runtimeTag = this.runtimeLabel
-      ? `  \x1b[32m● ${this.runtimeLabel}\x1b[0m`
-      : this.serverRunning
-        ? "  \x1b[32m● server\x1b[0m"
-        : "";
+    const runtimeTag = this.runtimeLabel ? `  \x1b[32m● ${this.runtimeLabel}\x1b[0m` : "";
     header.push(center(`\x1b[1maimux\x1b[0m — agent multiplexer${runtimeTag}`, cols));
     header.push(center("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
@@ -226,12 +217,10 @@ export class Dashboard {
             : "";
     const unseenBadge = session.unseenCount && session.unseenCount > 0 ? ` \x1b[36m${session.unseenCount}\x1b[0m` : "";
 
-    if (session.remoteInstancePid || session.isServer) {
+    if (session.remoteInstancePid) {
       // Remote session — different icon and dimmed ownership label
       const icon = "\x1b[2;36m◈\x1b[0m"; // dim cyan diamond
-      const ownerTag = session.isServer
-        ? "\x1b[2;32m[server]\x1b[0m"
-        : `\x1b[2mother tab (PID ${session.remoteInstancePid})\x1b[0m`;
+      const ownerTag = `\x1b[2mother tab (PID ${session.remoteInstancePid})\x1b[0m`;
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
@@ -241,10 +230,9 @@ export class Dashboard {
     const icon = STATUS_ICONS[session.status];
     const statusLabel = derivedStatusLabel(session);
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
-    const serverTag = session.isServer && !session.remoteInstancePid ? " \x1b[32m⬡\x1b[0m" : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${identity}${roleTag}${serverTag} — ${statusLabel}${headlineText}${taskBadge}${threadBadge}${attentionBadge}${unseenBadge}${marker}`;
+    return `${indent}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${headlineText}${taskBadge}${threadBadge}${attentionBadge}${unseenBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {

@@ -10,7 +10,6 @@ Aimux remains responsible for:
 - worktree orchestration
 - dashboard and project views
 - plans and coordination files
-- tray integration
 - notifications
 
 Tmux becomes responsible for:
@@ -156,13 +155,11 @@ Aimux runtime object per agent should be simplified to metadata + tmux target:
 
 Status becomes derived from tmux/runtime facts, not from a custom PTY/compositor loop.
 
-## 3. Dashboard / Registry / Tray
+## 3. Dashboard / Registry
 
 These systems stay mostly intact conceptually:
 
 - dashboard uses aimux metadata + runtime status
-- all-projects/meta view stays aimux-owned
-- tray still starts/stops project server and opens dashboard
 
 But they should stop assuming custom focused terminal ownership.
 
@@ -290,13 +287,13 @@ Mitigation:
 - be explicit in docs
 - maybe add opt-in current-session mode later
 
-## 3. Tray / GUI Launch Behavior
+## 3. GUI / Desktop Launch Behavior
 
-Tray actions need to target tmux sessions correctly even when no terminal is attached.
+Desktop shell actions need to target tmux sessions correctly even when no terminal is attached.
 
 Mitigation:
 
-- tray/server should ensure project session exists
+- desktop shell should ensure project session exists
 - opening dashboard should attach/switch to dashboard window
 
 ## Success Criteria

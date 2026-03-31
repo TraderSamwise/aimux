@@ -37,7 +37,6 @@ import { notifyPrompt, notifyComplete } from "./notify.js";
 import { type InstanceSessionRef } from "./instance-registry.js";
 import { TaskDispatcher, requestReview } from "./task-dispatcher.js";
 import { loadTeamConfig } from "./team.js";
-import { scanAllProjects } from "./project-scanner.js";
 import { TerminalHost } from "./terminal-host.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "./session-runtime.js";
 import { buildDashboardSessions, orderDashboardSessionsByVisualWorktree } from "./dashboard-session-registry.js";
@@ -153,7 +152,6 @@ export class Multiplexer {
   private graveyardActive = false;
   private graveyardEntries: SessionState[] = [];
   private graveyardIndex = 0;
-  private metaDashboardActive = false;
   private activityActive = false;
   private activityEntries: DashboardSession[] = [];
   private activityIndex = 0;
@@ -555,10 +553,6 @@ export class Multiplexer {
       }
       if (this.labelInputActive) {
         this.handleLabelInputKey(data);
-        return;
-      }
-      if (this.metaDashboardActive) {
-        this.handleMetaDashboardKey(data);
         return;
       }
       if (this.activityActive) {
@@ -2205,11 +2199,7 @@ export class Multiplexer {
   private paneStillContainsDraft(target: TmuxTarget, draft: string): boolean {
     try {
       const pane = this.tmuxRuntimeManager.captureTarget(target, { startLine: -60 });
-      const normalize = (value: string) =>
-        value
-          .replace(/\s+/g, " ")
-          .trim()
-          .toLowerCase();
+      const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
       const normalizedPane = normalize(pane);
       const expectedFragments = [
         "this session is a fork of",
@@ -2226,10 +2216,7 @@ export class Multiplexer {
   private capturePaneFingerprint(target: TmuxTarget): string {
     try {
       const pane = this.tmuxRuntimeManager.captureTarget(target, { startLine: -80 });
-      return pane
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(-800);
+      return pane.replace(/\s+/g, " ").trim().slice(-800);
     } catch {
       return "";
     }
@@ -2244,35 +2231,38 @@ export class Multiplexer {
           resolve(false);
           return;
         }
-        setTimeout(() => {
-          try {
-            const currentTarget = this.sessionTmuxTargets.get(targetSessionId);
-            if (!currentTarget || currentTarget.windowId !== target.windowId) {
-              debug(`fork kickoff submit: target=${targetSessionId} no longer active`, "fork");
+        setTimeout(
+          () => {
+            try {
+              const currentTarget = this.sessionTmuxTargets.get(targetSessionId);
+              if (!currentTarget || currentTarget.windowId !== target.windowId) {
+                debug(`fork kickoff submit: target=${targetSessionId} no longer active`, "fork");
+                resolve(false);
+                return;
+              }
+              const stillDraft = this.paneStillContainsDraft(target, kickoff);
+              const fingerprint = this.capturePaneFingerprint(target);
+              const settled = stillDraft && fingerprint.length > 0 && fingerprint === lastFingerprint;
+              debug(
+                `fork kickoff submit: target=${targetSessionId} attempt=${attempt} stillDraft=${stillDraft ? "yes" : "no"} settled=${settled ? "yes" : "no"} mode=Enter`,
+                "fork",
+              );
+              if (!stillDraft && attempt > 1) {
+                resolve(true);
+                return;
+              }
+              if (!settled) {
+                step(attempt, fingerprint);
+                return;
+              }
+              this.tmuxRuntimeManager.sendEnter(target);
+              step(attempt + 1, "");
+            } catch {
               resolve(false);
-              return;
             }
-            const stillDraft = this.paneStillContainsDraft(target, kickoff);
-            const fingerprint = this.capturePaneFingerprint(target);
-            const settled = stillDraft && fingerprint.length > 0 && fingerprint === lastFingerprint;
-            debug(
-              `fork kickoff submit: target=${targetSessionId} attempt=${attempt} stillDraft=${stillDraft ? "yes" : "no"} settled=${settled ? "yes" : "no"} mode=Enter`,
-              "fork",
-            );
-            if (!stillDraft && attempt > 1) {
-              resolve(true);
-              return;
-            }
-            if (!settled) {
-              step(attempt, fingerprint);
-              return;
-            }
-            this.tmuxRuntimeManager.sendEnter(target);
-            step(attempt + 1, "");
-          } catch {
-            resolve(false);
-          }
-        }, attempt === 1 ? 1200 : 700);
+          },
+          attempt === 1 ? 1200 : 700,
+        );
       };
       step();
     });
@@ -2433,7 +2423,10 @@ export class Multiplexer {
               this.tmuxRuntimeManager.sendText(target, kickoff);
               await this.waitForCodexKickoffSubmit(targetSessionId, target, kickoff);
             } else {
-              debug(`fork kickoff fallback transport write: target=${targetSessionId} toolKey=${targetToolConfigKey}`, "fork");
+              debug(
+                `fork kickoff fallback transport write: target=${targetSessionId} toolKey=${targetToolConfigKey}`,
+                "fork",
+              );
               transport.write(kickoff + "\r");
             }
           } catch {
@@ -2562,7 +2555,6 @@ export class Multiplexer {
       this.focusedWorktreePath,
       hasWorktrees ? this.dashboardLevel : "sessions",
       selectedSession,
-      false,
       "tmux",
       mainCheckoutInfo,
     );
@@ -3905,133 +3897,6 @@ export class Multiplexer {
     this.dismissSwitcher();
   }
 
-  // --- Meta Dashboard (all projects, currently hidden from navigation) ---
-
-  private renderMetaDashboard(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const projects = scanAllProjects();
-
-    const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
-
-    const center = (text: string) => {
-      const pad = Math.max(0, Math.floor((cols - strip(text).length) / 2));
-      return " ".repeat(pad) + text;
-    };
-
-    const lines: string[] = [];
-
-    // Title
-    lines.push("");
-    lines.push(center("\x1b[1maimux\x1b[0m — all projects"));
-    lines.push(center("─".repeat(Math.min(50, cols - 4))));
-    lines.push("");
-
-    if (projects.length === 0) {
-      lines.push(center("No aimux projects found."));
-    } else {
-      for (const project of projects) {
-        const running = project.sessions.filter((s) => s.status !== "offline").length;
-        const offline = project.sessions.filter((s) => s.status === "offline").length;
-        const counts: string[] = [];
-        if (running > 0) counts.push(`${running} running`);
-        if (offline > 0) counts.push(`${offline} offline`);
-        const countStr = counts.length > 0 ? ` (${counts.join(", ")})` : "";
-
-        lines.push(`  \x1b[1m${project.name}\x1b[0m${countStr}`);
-
-        for (const session of project.sessions) {
-          const icon =
-            session.status === "running"
-              ? "\x1b[33m●\x1b[0m"
-              : session.status === "idle"
-                ? "\x1b[32m●\x1b[0m"
-                : session.status === "waiting"
-                  ? "\x1b[36m◉\x1b[0m"
-                  : "\x1b[2m○\x1b[0m";
-
-          const identity = session.label ? `${session.label} \x1b[2m(${session.tool})\x1b[0m` : session.tool;
-          const role = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-          const headline = session.headline ? ` \x1b[2m· ${session.headline.slice(0, 48)}\x1b[0m` : "";
-          const owner = session.isServer
-            ? " \x1b[2;32m[server]\x1b[0m"
-            : session.ownerPid
-              ? ` \x1b[2m[PID ${session.ownerPid}]\x1b[0m`
-              : "";
-
-          lines.push(`    ${icon} ${identity}${role}${headline}${owner}`);
-        }
-        lines.push("");
-      }
-    }
-
-    // Fill remaining space
-    const helpLine = " [d] dashboard  [a] activity  [p] plans  [g] graveyard  [q] quit ";
-    const usedLines = lines.length + 2;
-    const remaining = Math.max(0, rows - usedLines);
-    for (let i = 0; i < remaining; i++) {
-      lines.push("");
-    }
-
-    lines.push(center("─".repeat(Math.min(cols - 4, strip(helpLine).length + 4))));
-    lines.push(center(helpLine));
-
-    // Full screen render (same as dashboard)
-    const screen = "\x1b[2J\x1b[H" + lines.join("\r\n");
-    process.stdout.write(screen);
-  }
-
-  private handleMetaDashboardKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-
-    const event = events[0];
-    const key = event.name || event.char;
-
-    if (key === "q") {
-      this.tmuxRuntimeManager.leaveManagedSession({
-        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
-        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
-      });
-      this.cleanup();
-      process.exit(0);
-      return;
-    }
-
-    if (key === "escape" || key === "d") {
-      this.renderDashboard();
-      return;
-    }
-
-    if (key === "p") {
-      this.showPlans();
-      return;
-    }
-
-    if (key === "a") {
-      this.showActivityDashboard();
-      return;
-    }
-    if (key === "t") {
-      this.showThreads();
-      return;
-    }
-
-    if (key === "g") {
-      this.showGraveyard();
-      return;
-    }
-
-    if (key === "?") {
-      this.showHelp();
-      return;
-    }
-
-    if (key === "m") {
-      this.renderMetaDashboard();
-    }
-  }
-
   private showMigratePicker(): void {
     // Collect available worktrees to migrate to
     try {
@@ -4140,7 +4005,6 @@ export class Multiplexer {
   }
 
   private clearDashboardSubscreens(): void {
-    this.metaDashboardActive = false;
     this.activityActive = false;
     this.threadsActive = false;
     this.plansActive = false;
@@ -4331,7 +4195,6 @@ export class Multiplexer {
       offlineSessions: this.offlineSessions,
       remoteInstances: [],
       mainRepoPath,
-      isServerSession: () => false,
       getSessionLabel: (sessionId) => this.getSessionLabel(sessionId),
       getSessionHeadline: (sessionId) => this.deriveHeadline(sessionId),
       getSessionTaskDescription: (sessionId) => this.taskDispatcher?.getSessionTask(sessionId),

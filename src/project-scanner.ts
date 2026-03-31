@@ -13,7 +13,6 @@ export interface GlobalSession {
   role?: string;
   worktreePath?: string;
   ownerPid?: number;
-  isServer: boolean;
 }
 
 export interface ProjectInfo {
@@ -27,7 +26,6 @@ export interface DesktopProjectInfo {
   name: string;
   path: string;
   lastSeen?: string;
-  serverRunning: boolean;
   dashboardSessionName: string;
   sessions: GlobalSession[];
 }
@@ -116,8 +114,6 @@ export function scanProject(projectPath: string): ProjectInfo {
           continue;
         }
 
-        const isServer = inst.instanceId.startsWith("server-");
-
         for (const s of inst.sessions) {
           if (seenIds.has(s.id)) continue;
           seenIds.add(s.id);
@@ -145,7 +141,6 @@ export function scanProject(projectPath: string): ProjectInfo {
             headline,
             worktreePath: s.worktreePath,
             ownerPid: inst.pid,
-            isServer,
           });
           sessionById.set(s.id, sessions[sessions.length - 1]);
         }
@@ -196,7 +191,6 @@ export function scanProject(projectPath: string): ProjectInfo {
           headline: s.headline,
           status: s.status ?? "idle",
           role: s.role,
-          isServer: false,
         };
         sessions.push(session);
         sessionById.set(s.id, session);
@@ -240,7 +234,6 @@ export function scanProject(projectPath: string): ProjectInfo {
           label: s.label,
           headline: s.headline,
           worktreePath: s.worktreePath,
-          isServer: false,
         });
       }
     } catch {}
@@ -264,27 +257,6 @@ export function scanAllProjects(): ProjectInfo[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isServerRunning(project: ProjectEntry): boolean {
-  const pidPath = join(getProjectStateDirById(project.id), "aimux.pid");
-  if (!existsSync(pidPath)) return false;
-  try {
-    const pid = Number.parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
-    if (!Number.isFinite(pid)) return false;
-    return isProcessAlive(pid);
-  } catch {
-    return false;
-  }
-}
-
 export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopProjectInfo[] {
   const scannedByPath = new Map(scanAllProjects().map((project) => [project.path, project]));
   const projects = new Map<string, DesktopProjectInfo>();
@@ -297,7 +269,6 @@ export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopPro
       name: entry.name,
       path: entry.repoRoot,
       lastSeen: entry.lastSeen,
-      serverRunning: isServerRunning(entry),
       dashboardSessionName: tmuxSession.sessionName,
       sessions: scanned?.sessions ?? [],
     });
@@ -310,7 +281,6 @@ export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopPro
       id: `unregistered-${tmuxSession.sessionName}`,
       name: scanned.name,
       path: scanned.path,
-      serverRunning: false,
       dashboardSessionName: tmuxSession.sessionName,
       sessions: scanned.sessions,
     });

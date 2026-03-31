@@ -55,7 +55,7 @@ aimux aider
 aimux --resume
 ```
 
-The per-project tmux session is the long-lived substrate. `aimux server` no longer exists in the normal runtime model.
+The per-project tmux session is the long-lived substrate. There is no separate non-tmux runtime service in the normal model.
 
 ## Tmux Compatibility
 
