@@ -55,11 +55,45 @@ fn aimux_entrypoint() -> PathBuf {
   repo_root().join("bin").join("aimux")
 }
 
+fn resolve_node() -> PathBuf {
+  // GUI apps on macOS don't inherit the shell PATH. Try common locations.
+  let candidates = [
+    "/opt/homebrew/bin/node",
+    "/usr/local/bin/node",
+    "/usr/bin/node",
+  ];
+  for candidate in &candidates {
+    if Path::new(candidate).exists() {
+      return PathBuf::from(candidate);
+    }
+  }
+  // Fallback — hope it's in PATH
+  PathBuf::from("node")
+}
+
+fn shell_path() -> String {
+  // Build a reasonable PATH for child processes
+  let base = std::env::var("PATH").unwrap_or_default();
+  let extras = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+  let mut parts: Vec<&str> = if base.is_empty() {
+    vec![]
+  } else {
+    base.split(':').collect()
+  };
+  for extra in &extras {
+    if !parts.contains(extra) {
+      parts.push(extra);
+    }
+  }
+  parts.join(":")
+}
+
 fn run_aimux_json(args: &[&str], cwd: &Path) -> Result<Value, String> {
-  let output = Command::new("node")
+  let output = Command::new(resolve_node())
     .arg(aimux_entrypoint())
     .args(args)
     .current_dir(cwd)
+    .env("PATH", shell_path())
     .output()
     .map_err(|error| format!("failed to launch aimux: {error}"))?;
 
@@ -105,12 +139,13 @@ fn spawn_aimux(
     })
     .map_err(|error| format!("failed to create PTY: {error}"))?;
 
-  let mut command = CommandBuilder::new("node");
+  let mut command = CommandBuilder::new(resolve_node());
   command.arg(aimux_entrypoint().to_string_lossy().to_string());
   for arg in args {
     command.arg(arg);
   }
   command.cwd(project);
+  command.env("PATH", shell_path());
 
   let child = pair
     .slave

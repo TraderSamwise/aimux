@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "identifier": "io.tealstreet.aimux.desktop",
   "build": {
-    "frontendDist": "../desktop"
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../desktop-ui/dist"
   },
   "app": {
     "windows": [
