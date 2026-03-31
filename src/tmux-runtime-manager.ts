@@ -477,6 +477,30 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "extended-keys", "always"]);
     this.exec(["set-option", "-t", sessionName, "extended-keys-format", "csi-u"]);
     this.exec(["set-option", "-as", "-t", sessionName, "terminal-features", ",xterm*:extkeys"]);
+    this.exec(["unbind-key", "-T", "root", "C-j"]);
+    this.exec(["unbind-key", "-T", "root", "S-Enter"]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "root",
+      "C-j",
+      "if-shell",
+      "-F",
+      "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+      "send-keys -H 1b 5b 31 33 3b 32 75",
+      "send-keys C-j",
+    ]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "root",
+      "S-Enter",
+      "if-shell",
+      "-F",
+      "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+      "send-keys -H 1b 5b 31 33 3b 32 75",
+      "send-keys S-Enter",
+    ]);
     this.exec(["unbind-key", "-T", "prefix", "s"]);
     this.exec(["unbind-key", "-T", "prefix", "n"]);
     this.exec(["unbind-key", "-T", "prefix", "p"]);
