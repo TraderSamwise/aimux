@@ -1413,22 +1413,7 @@ export class Multiplexer {
       this.renderDashboard();
       return;
     }
-    if (key === "t") {
-      this.showThreads();
-      return;
-    }
-    if (key === "a") {
-      this.renderActivityDashboard();
-      return;
-    }
-    if (key === "p") {
-      this.showPlans();
-      return;
-    }
-    if (key === "g") {
-      this.showGraveyard();
-      return;
-    }
+    if (this.handleDashboardSubscreenNavigationKey(key, "activity")) return;
     if (key === "?") {
       this.showHelp();
       return;
@@ -1590,22 +1575,7 @@ export class Multiplexer {
       this.renderDashboard();
       return;
     }
-    if (key === "a") {
-      this.showActivityDashboard();
-      return;
-    }
-    if (key === "p") {
-      this.showPlans();
-      return;
-    }
-    if (key === "g") {
-      this.showGraveyard();
-      return;
-    }
-    if (key === "t") {
-      this.renderThreads();
-      return;
-    }
+    if (this.handleDashboardSubscreenNavigationKey(key, "threads")) return;
     if (key === "?") {
       this.showHelp();
       return;
@@ -1765,6 +1735,50 @@ export class Multiplexer {
     }
     if (this.pickerActive) {
       this.renderToolPicker();
+      return true;
+    }
+    return false;
+  }
+
+  private handleDashboardSubscreenNavigationKey(
+    key: string,
+    currentScreen: Exclude<DashboardScreen, "dashboard">,
+  ): boolean {
+    if (key === "d") {
+      this.setDashboardScreen("dashboard");
+      this.renderDashboard();
+      return true;
+    }
+    if (key === "a") {
+      if (currentScreen === "activity") {
+        this.renderActivityDashboard();
+      } else {
+        this.showActivityDashboard();
+      }
+      return true;
+    }
+    if (key === "t") {
+      if (currentScreen === "threads") {
+        this.renderThreads();
+      } else {
+        this.showThreads();
+      }
+      return true;
+    }
+    if (key === "p") {
+      if (currentScreen === "plans") {
+        this.renderPlans();
+      } else {
+        this.showPlans();
+      }
+      return true;
+    }
+    if (key === "g") {
+      if (currentScreen === "graveyard") {
+        this.renderGraveyard();
+      } else {
+        this.showGraveyard();
+      }
       return true;
     }
     return false;
@@ -2755,28 +2769,10 @@ export class Multiplexer {
       this.renderDashboard();
       return;
     }
-
-    if (key === "p") {
-      this.showPlans();
-      return;
-    }
-
-    if (key === "a") {
-      this.showActivityDashboard();
-      return;
-    }
-    if (key === "t") {
-      this.showThreads();
-      return;
-    }
+    if (this.handleDashboardSubscreenNavigationKey(key, "graveyard")) return;
 
     if (key === "?") {
       this.showHelp();
-      return;
-    }
-
-    if (key === "g") {
-      this.renderGraveyard();
       return;
     }
 
@@ -2788,7 +2784,7 @@ export class Multiplexer {
       return;
     }
 
-    if (key === "up" || key === "k" || key === "p") {
+    if (key === "up" || key === "k") {
       if (this.graveyardEntries.length > 1) {
         this.graveyardIndex = (this.graveyardIndex - 1 + this.graveyardEntries.length) % this.graveyardEntries.length;
         this.renderGraveyard();
@@ -3125,28 +3121,10 @@ export class Multiplexer {
       this.renderDashboard();
       return;
     }
-
-    if (key === "g") {
-      this.showGraveyard();
-      return;
-    }
-    if (key === "t") {
-      this.showThreads();
-      return;
-    }
-
-    if (key === "a") {
-      this.showActivityDashboard();
-      return;
-    }
+    if (this.handleDashboardSubscreenNavigationKey(key, "plans")) return;
 
     if (key === "?") {
       this.showHelp();
-      return;
-    }
-
-    if (key === "p") {
-      this.renderPlans();
       return;
     }
 
@@ -3167,7 +3145,7 @@ export class Multiplexer {
       return;
     }
 
-    if (key === "up" || key === "k" || key === "p") {
+    if (key === "up" || key === "k") {
       if (this.planEntries.length > 1) {
         this.planIndex = (this.planIndex - 1 + this.planEntries.length) % this.planEntries.length;
         this.renderPlans();
