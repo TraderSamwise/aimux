@@ -2,15 +2,17 @@
  * Central path resolution for aimux.
  *
  * Two locations:
- *   - In-repo:  {repoRoot}/.aimux/  → config.json, team.json (shareable, tracked in git)
- *   - Global:   ~/.aimux/projects/<project-id>/  → state, context, tasks, history, recordings, status
+ *   - In-repo:  {repoRoot}/.aimux/  → agent-facing shared artifacts
+ *                (config, team, plans, context, history, tasks, status, threads, sessions.json)
+ *   - Global:   ~/.aimux/projects/<project-id>/  → runtime-private state
+ *                (recordings, metadata, instance ownership, statusline internals, offline state)
  *
  * Must call `await initPaths(cwd)` once at startup before using sync path functions.
  */
 
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, readdirSync } from "node:fs";
 import { join, basename, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -69,6 +71,9 @@ export async function initPaths(cwd?: string): Promise<void> {
     mkdirSync(projectDir, { recursive: true });
   }
 
+  ensureLocalSharedDirs();
+  migrateAgentFacingStateToLocal();
+
   registerProject();
 }
 
@@ -116,7 +121,7 @@ export function getGraveyardPath(): string {
 }
 
 export function getContextDir(): string {
-  return join(getProjectStateDir(), "context");
+  return join(getLocalAimuxDir(), "context");
 }
 
 export function getContextPathForDate(date: Date): string {
@@ -127,7 +132,7 @@ export function getContextPathForDate(date: Date): string {
 }
 
 export function getHistoryDir(): string {
-  return join(getProjectStateDir(), "history");
+  return join(getLocalAimuxDir(), "history");
 }
 
 export function getRecordingsDir(): string {
@@ -135,11 +140,11 @@ export function getRecordingsDir(): string {
 }
 
 export function getTasksDir(): string {
-  return join(getProjectStateDir(), "tasks");
+  return join(getLocalAimuxDir(), "tasks");
 }
 
 export function getStatusDir(): string {
-  return join(getProjectStateDir(), "status");
+  return join(getLocalAimuxDir(), "status");
 }
 
 export function getInstancesPath(): string {
@@ -177,9 +182,44 @@ export function getPlansDir(): string {
   return join(getLocalAimuxDir(), "plans");
 }
 
+export function getThreadsDir(): string {
+  return join(getLocalAimuxDir(), "threads");
+}
+
 /** Escape hatch for cross-worktree operations. Prefer the no-arg variants above. */
 export function getAimuxDirFor(cwd: string): string {
-  return join(cwd, ".aimux");
+  return join(resolveRepoRoot(cwd), ".aimux");
+}
+
+function ensureLocalSharedDirs(): void {
+  const localDir = getLocalAimuxDir();
+  mkdirSync(localDir, { recursive: true });
+  for (const subdir of ["plans", "context", "history", "tasks", "status", "threads"]) {
+    mkdirSync(join(localDir, subdir), { recursive: true });
+  }
+}
+
+function migrateDirIfNeeded(globalSubdir: string, localDir: string): void {
+  const source = join(getProjectStateDir(), globalSubdir);
+  if (!existsSync(source) || !existsSync(localDir)) return;
+  const hasLocalEntries = (() => {
+    try {
+      return readdirSync(localDir).length > 0;
+    } catch {
+      return false;
+    }
+  })();
+  if (hasLocalEntries) return;
+  try {
+    cpSync(source, localDir, { recursive: true, force: false });
+  } catch {}
+}
+
+function migrateAgentFacingStateToLocal(): void {
+  migrateDirIfNeeded("context", getContextDir());
+  migrateDirIfNeeded("history", getHistoryDir());
+  migrateDirIfNeeded("tasks", getTasksDir());
+  migrateDirIfNeeded("status", getStatusDir());
 }
 
 // ── Global non-project paths ───────────────────────────────────────

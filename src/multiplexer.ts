@@ -135,6 +135,7 @@ export class Multiplexer {
   private defaultArgs: string[] = [];
   private startedInDashboard = false;
   private pickerActive = false;
+  private pickerMode: "create" | "fork" = "create";
   private forkSourceSessionId: string | null = null;
   private worktreeInputActive = false;
   private worktreeInputBuffer = "";
@@ -747,6 +748,7 @@ export class Multiplexer {
     worktreePath?: string,
     backendSessionIdOverride?: string,
     sessionIdOverride?: string,
+    detachedInTmux = false,
   ): SessionTransport {
     const cols = process.stdout.columns ?? 80;
 
@@ -892,6 +894,7 @@ export class Multiplexer {
       worktreePath ?? process.cwd(),
       command,
       finalArgs,
+      { detached: detachedInTmux },
     );
     const tmuxTransport = new TmuxSessionTransport(
       sessionId,
@@ -1887,7 +1890,11 @@ export class Multiplexer {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
 
-    const lines = [this.forkSourceSessionId ? `Fork from ${this.forkSourceSessionId}: select tool` : "Select tool:"];
+    const lines = [
+      this.pickerMode === "fork" && this.forkSourceSessionId
+        ? `Fork from ${this.forkSourceSessionId}: select tool`
+        : "Select tool:",
+    ];
     for (let i = 0; i < tools.length; i++) {
       const available = isToolAvailable(tools[i][1].command);
       const label = available ? `  [${i + 1}] ${tools[i][0]}` : `  [${i + 1}] ${tools[i][0]} (not installed)`;
@@ -1918,6 +1925,7 @@ export class Multiplexer {
   private showToolPicker(sourceSessionId?: string): void {
     const config = loadConfig();
     const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
+    this.pickerMode = sourceSessionId ? "fork" : "create";
     this.forkSourceSessionId = sourceSessionId ?? null;
 
     if (tools.length === 1) {
@@ -1927,10 +1935,24 @@ export class Multiplexer {
       } else {
         // Only one available tool — skip picker, spawn directly
         const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
-        if (this.forkSourceSessionId) {
-          void this.forkSessionFromSource(this.forkSourceSessionId, key, undefined, wtPath);
-        } else {
+        if (this.pickerMode === "fork" && this.forkSourceSessionId) {
+          this.startDashboardBusy("Forking agent", [
+            `Source: ${this.forkSourceSessionId}`,
+            `Tool: ${key}`,
+            "Seeding carried-over context",
+          ]);
+          void this.forkAgent({
+            sourceSessionId: this.forkSourceSessionId,
+            targetToolConfigKey: key,
+            targetWorktreePath: wtPath,
+            open: true,
+          })
+            .catch((error) => this.showDashboardError("Cannot fork session", [String(error)]))
+            .finally(() => this.clearDashboardBusy());
+        } else if (this.pickerMode === "create") {
           this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
+        } else {
+          this.showDashboardError("Cannot fork session", ["Fork source was lost before tool selection. Try again."]);
         }
         return;
       }
@@ -1950,6 +1972,7 @@ export class Multiplexer {
     this.pickerActive = false;
 
     if (key === "escape") {
+      this.pickerMode = "create";
       this.forkSourceSessionId = null;
       if (this.mode === "dashboard") {
         this.renderDashboard();
@@ -1978,11 +2001,29 @@ export class Multiplexer {
           return;
         }
         const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
-        if (this.forkSourceSessionId) {
+        if (this.pickerMode === "fork") {
           const sourceSessionId = this.forkSourceSessionId;
+          this.pickerMode = "create";
           this.forkSourceSessionId = null;
-          void this.forkSessionFromSource(sourceSessionId, key, undefined, wtPath);
+          if (!sourceSessionId) {
+            this.showDashboardError("Cannot fork session", ["Fork source was lost before tool selection. Try again."]);
+            return;
+          }
+          this.startDashboardBusy("Forking agent", [
+            `Source: ${sourceSessionId}`,
+            `Tool: ${key}`,
+            "Seeding carried-over context",
+          ]);
+          void this.forkAgent({
+            sourceSessionId,
+            targetToolConfigKey: key,
+            targetWorktreePath: wtPath,
+            open: true,
+          })
+            .catch((error) => this.showDashboardError("Cannot fork session", [String(error)]))
+            .finally(() => this.clearDashboardBusy());
         } else {
+          this.pickerMode = "create";
           this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
         }
         return;
@@ -1990,6 +2031,7 @@ export class Multiplexer {
     }
 
     // Invalid key — redraw current view
+    this.pickerMode = "create";
     this.forkSourceSessionId = null;
     this.renderDashboard();
   }
@@ -1998,33 +2040,8 @@ export class Multiplexer {
     const sourceLabel = this.getSessionLabel(sourceSessionId) ?? sourceSessionId;
     const sourceRole = this.sessionRoles.get(sourceSessionId);
     const sourceWorktree = this.sessionWorktreePaths.get(sourceSessionId);
-    const historyTurns = readHistory(sourceSessionId, { lastN: 12 });
-    const historyText =
-      historyTurns.length > 0
-        ? historyTurns
-            .map((turn) => {
-              const prefix =
-                turn.type === "prompt"
-                  ? "User"
-                  : turn.type === "response"
-                    ? "Agent"
-                    : turn.type === "git"
-                      ? "Git"
-                      : "Note";
-              return `- ${prefix}: ${turn.content}`;
-            })
-            .join("\n")
-        : "";
-    const liveContext = buildContextPreamble([sourceSessionId], 12).trim();
-    const planPath = join(getPlansDir(), `${sourceSessionId}.md`);
-    let planText = "";
-    try {
-      if (existsSync(planPath)) {
-        planText = readFileSync(planPath, "utf-8")
-          .replace(/^---\n[\s\S]*?\n---\n?/, "")
-          .trim();
-      }
-    } catch {}
+    const snapshot = this.readForkSourceSnapshot(sourceSessionId);
+    const activitySummary = this.summarizeForkSourceActivity(snapshot);
 
     return [
       "## Aimux Handoff",
@@ -2032,11 +2049,15 @@ export class Multiplexer {
       `Your new session ID is ${targetSessionId}.`,
       sourceWorktree ? `Source worktree: ${sourceWorktree}` : undefined,
       "",
-      "Continue the same line of work using the source agent's context below.",
+      "Continue the same line of work using the source agent's carried-over context below.",
       "You are independent now, but should preserve continuity and build on the source agent's progress.",
-      planText ? `\n### Source Plan\n${planText}` : undefined,
-      historyText ? `\n### Recent History\n${historyText}` : undefined,
-      liveContext ? `\n### Source Live Context\n${liveContext}` : undefined,
+      "Treat the provided summary, history, and live snapshot as prior context you already know.",
+      "Do not describe yourself as a fresh session if any carried-over context is present.",
+      "A blank source plan does not mean there was no prior work or interaction.",
+      activitySummary ? `\n### Recent Activity Summary\n${activitySummary}` : undefined,
+      snapshot.planText ? `\n### Source Plan\n${snapshot.planText}` : undefined,
+      snapshot.historyText ? `\n### Recent History\n${snapshot.historyText}` : undefined,
+      snapshot.liveText ? `\n### Live Terminal Snapshot\n${snapshot.liveText}` : undefined,
     ]
       .filter(Boolean)
       .join("\n");
@@ -2120,8 +2141,146 @@ export class Multiplexer {
     };
   }
 
+  private summarizeForkSourceActivity(snapshot: {
+    historyText?: string;
+    liveText?: string;
+    planText?: string;
+    statusText?: string;
+  }): string | undefined {
+    if (snapshot.statusText?.trim()) {
+      return snapshot.statusText.trim();
+    }
+
+    const source = snapshot.historyText || snapshot.liveText;
+    if (!source) return undefined;
+
+    const lines = source
+      .split("\n")
+      .map((line) => line.replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .filter(
+        (line) =>
+          !line.startsWith("# ") &&
+          !line.startsWith("Updated:") &&
+          !line.startsWith("Recent terminal output:") &&
+          !line.includes("gpt-5.4 medium") &&
+          !line.includes("Opus 4.6") &&
+          !line.startsWith("sam@") &&
+          !line.startsWith("▐") &&
+          !line.startsWith("▝") &&
+          !line.startsWith("⏵⏵"),
+      );
+
+    const tail = lines.slice(-8);
+    if (tail.length === 0) return undefined;
+    return tail.join(" ").slice(0, 500);
+  }
+
+  private buildForkKickoffPrompt(
+    sourceSessionId: string,
+    targetSessionId: string,
+    targetToolConfigKey: string,
+    snapshot: {
+      historyText?: string;
+      liveText?: string;
+      planText?: string;
+      statusText?: string;
+    },
+    instruction?: string,
+  ): string {
+    const activitySummary = this.summarizeForkSourceActivity(snapshot);
+    return [
+      `This session is a fork of ${sourceSessionId}.`,
+      `Read .aimux/context/${targetSessionId}/summary.md, .aimux/context/${targetSessionId}/live.md, and .aimux/plans/${targetSessionId}.md first.`,
+      `Treat them as real carried-over memory, not fresh-session scaffolding.`,
+      `Do not start with git archaeology.`,
+      activitySummary ? `Recent source activity: ${activitySummary}` : undefined,
+      instruction?.trim() ? `Instruction: ${instruction.trim()}` : undefined,
+      `After reading them, briefly summarize what we were doing and continue from that context.`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  private paneStillContainsDraft(target: TmuxTarget, draft: string): boolean {
+    try {
+      const pane = this.tmuxRuntimeManager.captureTarget(target, { startLine: -60 });
+      const normalize = (value: string) =>
+        value
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+      const normalizedPane = normalize(pane);
+      const expectedFragments = [
+        "this session is a fork of",
+        "treat them as real carried-over memory",
+        "after reading them, briefly summarize",
+      ].filter((fragment) => normalize(draft).includes(fragment));
+      if (expectedFragments.length === 0) return false;
+      return expectedFragments.every((fragment) => normalizedPane.includes(fragment));
+    } catch {
+      return false;
+    }
+  }
+
+  private capturePaneFingerprint(target: TmuxTarget): string {
+    try {
+      const pane = this.tmuxRuntimeManager.captureTarget(target, { startLine: -80 });
+      return pane
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(-800);
+    } catch {
+      return "";
+    }
+  }
+
+  private waitForCodexKickoffSubmit(targetSessionId: string, target: TmuxTarget, kickoff: string): Promise<boolean> {
+    const startedAt = Date.now();
+    return new Promise((resolve) => {
+      const step = (attempt = 1, lastFingerprint = "") => {
+        if (Date.now() - startedAt > 12000 || attempt > 12) {
+          debug(`fork kickoff submit: target=${targetSessionId} timeout`, "fork");
+          resolve(false);
+          return;
+        }
+        setTimeout(() => {
+          try {
+            const currentTarget = this.sessionTmuxTargets.get(targetSessionId);
+            if (!currentTarget || currentTarget.windowId !== target.windowId) {
+              debug(`fork kickoff submit: target=${targetSessionId} no longer active`, "fork");
+              resolve(false);
+              return;
+            }
+            const stillDraft = this.paneStillContainsDraft(target, kickoff);
+            const fingerprint = this.capturePaneFingerprint(target);
+            const settled = stillDraft && fingerprint.length > 0 && fingerprint === lastFingerprint;
+            debug(
+              `fork kickoff submit: target=${targetSessionId} attempt=${attempt} stillDraft=${stillDraft ? "yes" : "no"} settled=${settled ? "yes" : "no"} mode=Enter`,
+              "fork",
+            );
+            if (!stillDraft && attempt > 1) {
+              resolve(true);
+              return;
+            }
+            if (!settled) {
+              step(attempt, fingerprint);
+              return;
+            }
+            this.tmuxRuntimeManager.sendEnter(target);
+            step(attempt + 1, "");
+          } catch {
+            resolve(false);
+          }
+        }, attempt === 1 ? 1200 : 700);
+      };
+      step();
+    });
+  }
+
   private seedForkArtifacts(sourceSessionId: string, targetSessionId: string, targetToolConfigKey: string): void {
     const snapshot = this.readForkSourceSnapshot(sourceSessionId);
+    const activitySummary = this.summarizeForkSourceActivity(snapshot);
     const sourceHistoryPath = join(getHistoryDir(), `${sourceSessionId}.jsonl`);
     const targetHistoryPath = join(getHistoryDir(), `${targetSessionId}.jsonl`);
     if (existsSync(sourceHistoryPath) && !existsSync(targetHistoryPath)) {
@@ -2151,12 +2310,13 @@ export class Multiplexer {
       `# Goal\n\n` +
       `${snapshot.planText ? "Continue the forked work described below." : `Continue work forked from ${sourceSessionId}.`}\n\n` +
       `# Current Status\n\n` +
-      `${snapshot.statusText || "Forked from an existing agent with carried-over context."}\n\n` +
+      `${snapshot.statusText || activitySummary || "Forked from an existing agent with carried-over context."}\n\n` +
       `# Steps\n\n` +
       `- [ ] Review .aimux/context/${targetSessionId}/summary.md and live.md\n` +
       `- [ ] Continue the forked line of work\n\n` +
       `# Notes\n\n` +
       `- Forked from ${sourceSessionId}\n` +
+      (activitySummary ? `- Recent carried-over activity: ${activitySummary}\n` : "") +
       (snapshot.planText ? `- Source plan carried below\n\n## Source Plan\n\n${snapshot.planText}\n` : "");
     writeFileSync(targetPlanPath, handoffPlan);
 
@@ -2173,7 +2333,12 @@ export class Multiplexer {
         "",
         `Target session: ${targetSessionId}`,
         "",
+        "Treat this file as carried-over prior context from the source session.",
+        "Do not describe yourself as a fresh session if this file contains prior interaction.",
+        "A blank source plan does not mean there was no prior context.",
+        "",
         snapshot.statusText ? `## Source Status\n\n${snapshot.statusText}\n` : "",
+        activitySummary ? `## Recent Activity Summary\n\n${activitySummary}\n` : "",
         snapshot.planText ? `## Source Plan\n\n${snapshot.planText}\n` : "",
         snapshot.historyText ? `## Recent History\n\n${snapshot.historyText}\n` : "",
         snapshot.liveText ? `## Live Terminal Snapshot\n\n${snapshot.liveText}\n` : "",
@@ -2231,6 +2396,7 @@ export class Multiplexer {
       waitingOn: [targetSessionId],
     }));
     await this.contextWatcher.syncNow(sourceSessionId).catch(() => {});
+    const sourceSnapshot = this.readForkSourceSnapshot(sourceSessionId);
     this.seedForkArtifacts(sourceSessionId, targetSessionId, targetToolConfigKey);
     const extraPreamble = [this.buildForkPreamble(sourceSessionId, targetSessionId), instruction?.trim()]
       .filter(Boolean)
@@ -2245,7 +2411,39 @@ export class Multiplexer {
       targetWorktree,
       undefined,
       targetSessionId,
+      !toolCfg.preambleFlag,
     );
+    if (!toolCfg.preambleFlag) {
+      const kickoff = this.buildForkKickoffPrompt(
+        sourceSessionId,
+        targetSessionId,
+        targetToolConfigKey,
+        sourceSnapshot,
+        instruction,
+      );
+      await new Promise<void>((resolve) => {
+        setTimeout(async () => {
+          try {
+            const target = this.sessionTmuxTargets.get(targetSessionId);
+            debug(
+              `fork kickoff: source=${sourceSessionId} target=${targetSessionId} toolKey=${targetToolConfigKey} targetFound=${target ? "yes" : "no"} kickoffPreview=${JSON.stringify(kickoff.slice(0, 220))}`,
+              "fork",
+            );
+            if (target) {
+              this.tmuxRuntimeManager.sendText(target, kickoff);
+              await this.waitForCodexKickoffSubmit(targetSessionId, target, kickoff);
+            } else {
+              debug(`fork kickoff fallback transport write: target=${targetSessionId} toolKey=${targetToolConfigKey}`, "fork");
+              transport.write(kickoff + "\r");
+            }
+          } catch {
+            // Continue even if kickoff automation fails; user can still recover manually.
+          } finally {
+            resolve();
+          }
+        }, 1800);
+      });
+    }
     this.agentTracker.emit(sourceSessionId, {
       kind: "status",
       message: `Forked ${targetSessionId} from this session`,

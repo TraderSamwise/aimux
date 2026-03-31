@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getLocalAimuxDir } from "./paths.js";
+import { getThreadsDir } from "./paths.js";
 
 export type ThreadKind = "conversation" | "task" | "review" | "handoff" | "user";
 export type ThreadStatus = "open" | "waiting" | "blocked" | "done" | "abandoned";
@@ -44,7 +44,7 @@ export interface ThreadSummary {
 }
 
 function threadsDir(): string {
-  const dir = join(getLocalAimuxDir(), "threads");
+  const dir = getThreadsDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
 }

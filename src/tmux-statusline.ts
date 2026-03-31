@@ -36,6 +36,7 @@ function renderActiveContext(
   projectRoot: string,
   currentSession?: string,
   currentWindow?: string,
+  currentWindowId?: string,
   currentPath?: string,
 ): string | null {
   const activeSessionId = resolveCurrentSessionId(
@@ -43,6 +44,7 @@ function renderActiveContext(
     tmuxRuntimeManager,
     currentSession,
     currentWindow,
+    currentWindowId,
     currentPath,
     projectRoot,
   );
@@ -97,6 +99,7 @@ function renderActiveMetadata(
   projectRoot: string,
   currentSession?: string,
   currentWindow?: string,
+  currentWindowId?: string,
   currentPath?: string,
 ): string | null {
   const activeSessionId = resolveCurrentSessionId(
@@ -104,6 +107,7 @@ function renderActiveMetadata(
     tmuxRuntimeManager,
     currentSession,
     currentWindow,
+    currentWindowId,
     currentPath,
     projectRoot,
   );
@@ -114,6 +118,7 @@ function renderActiveMetadata(
     projectRoot,
     currentSession,
     currentWindow,
+    currentWindowId,
     currentPath,
   );
   if (!metadata) return null;
@@ -140,6 +145,7 @@ function renderActiveMetadata(
 function renderTopLine(
   projectRoot: string,
   currentWindow?: string,
+  currentWindowId?: string,
   currentPath?: string,
   currentSession?: string,
   width?: number,
@@ -149,11 +155,27 @@ function renderTopLine(
   const segments = [
     renderProjectIdentity(projectRoot),
     data
-      ? renderActiveContext(data, tmuxRuntimeManager, projectRoot, currentSession, currentWindow, currentPath)
+      ? renderActiveContext(
+          data,
+          tmuxRuntimeManager,
+          projectRoot,
+          currentSession,
+          currentWindow,
+          currentWindowId,
+          currentPath,
+        )
       : null,
     data ? renderTasks(data) : null,
     data
-      ? renderActiveMetadata(data, tmuxRuntimeManager, projectRoot, currentSession, currentWindow, currentPath)
+      ? renderActiveMetadata(
+          data,
+          tmuxRuntimeManager,
+          projectRoot,
+          currentSession,
+          currentWindow,
+          currentWindowId,
+          currentPath,
+        )
       : null,
     data ? renderFlash(data) : null,
   ].filter((segment): segment is string => Boolean(segment));
@@ -172,6 +194,7 @@ function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[num
 function renderBottomLine(
   projectRoot: string,
   currentWindow?: string,
+  currentWindowId?: string,
   currentPath?: string,
   currentSession?: string,
   width?: number,
@@ -182,7 +205,15 @@ function renderBottomLine(
   const sessionSegments =
     currentWindow === "dashboard"
       ? renderDashboardScreens(data.dashboardScreen)
-      : resolveScopedSessions(data, tmuxRuntimeManager, projectRoot, currentSession, currentWindow, currentPath).map(
+      : resolveScopedSessions(
+          data,
+          tmuxRuntimeManager,
+          projectRoot,
+          currentSession,
+          currentWindow,
+          currentWindowId,
+          currentPath,
+        ).map(
           renderSessionChip,
         );
   const segments = [...sessionSegments, renderActiveHeadline(data)].filter((segment): segment is string =>
@@ -204,9 +235,29 @@ function renderBottomLine(
 export function renderTmuxStatusline(
   projectRoot: string,
   line: TmuxStatusLine,
-  options: { currentWindow?: string; currentPath?: string; currentSession?: string; width?: number } = {},
+  options: {
+    currentWindow?: string;
+    currentWindowId?: string;
+    currentPath?: string;
+    currentSession?: string;
+    width?: number;
+  } = {},
 ): string {
   return line === "top"
-    ? renderTopLine(projectRoot, options.currentWindow, options.currentPath, options.currentSession, options.width)
-    : renderBottomLine(projectRoot, options.currentWindow, options.currentPath, options.currentSession, options.width);
+    ? renderTopLine(
+        projectRoot,
+        options.currentWindow,
+        options.currentWindowId,
+        options.currentPath,
+        options.currentSession,
+        options.width,
+      )
+    : renderBottomLine(
+        projectRoot,
+        options.currentWindow,
+        options.currentWindowId,
+        options.currentPath,
+        options.currentSession,
+        options.width,
+      );
 }

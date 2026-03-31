@@ -140,20 +140,25 @@ export function resolveCurrentSessionId(
   tmuxRuntimeManager: TmuxRuntimeManager,
   currentSession?: string,
   currentWindow?: string,
+  currentWindowId?: string,
   currentPath?: string,
   projectRoot?: string,
 ): string | undefined {
-  if (currentSession && currentWindow && projectRoot) {
+  if (currentSession && projectRoot) {
     try {
-      const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
       const windows = tmuxRuntimeManager.listManagedWindows(currentSession);
-      const current = windows.find(({ target, metadata }) => {
-        const metadataPath = normalizePath(metadata.worktreePath, projectRoot);
-        return (
-          metadataPath === normalizedCurrentPath &&
-          (target.windowName === currentWindow || metadata.label === currentWindow)
-        );
-      });
+      const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
+      const current =
+        (currentWindowId ? windows.find(({ target }) => target.windowId === currentWindowId) : undefined) ??
+        (currentWindow
+          ? windows.find(({ target, metadata }) => {
+              const metadataPath = normalizePath(metadata.worktreePath, projectRoot);
+              return (
+                metadataPath === normalizedCurrentPath &&
+                (target.windowName === currentWindow || metadata.label === currentWindow)
+              );
+            })
+          : undefined);
       if (current?.metadata.sessionId) return current.metadata.sessionId;
     } catch {}
   }
@@ -166,6 +171,7 @@ export function resolveScopedSessions(
   projectRoot: string,
   currentSession?: string,
   currentWindow?: string,
+  currentWindowId?: string,
   currentPath?: string,
 ): ResolvedStatuslineSession[] {
   if (!currentSession) return [];
@@ -201,8 +207,10 @@ export function resolveScopedSessions(
         ...session,
         derived: resolvedMetadata?.derived,
         metadata: resolvedMetadata,
-        isCurrent: currentWindow
-          ? matchesCurrentPath && (target.windowName === currentWindow || metadata.label === currentWindow)
+        isCurrent: currentWindowId
+          ? target.windowId === currentWindowId
+          : currentWindow
+            ? matchesCurrentPath && (target.windowName === currentWindow || metadata.label === currentWindow)
           : Boolean(session.active),
       };
     });
@@ -214,6 +222,7 @@ export function resolveSessionMetadata(
   projectRoot: string,
   currentSession?: string,
   currentWindow?: string,
+  currentWindowId?: string,
   currentPath?: string,
 ): StatuslineMetadataEntry | undefined {
   const activeSessionId = resolveCurrentSessionId(
@@ -221,6 +230,7 @@ export function resolveSessionMetadata(
     tmuxRuntimeManager,
     currentSession,
     currentWindow,
+    currentWindowId,
     currentPath,
     projectRoot,
   );
@@ -233,6 +243,7 @@ export function resolveSessionMetadata(
     const current = windows.find(({ target, metadata }) => {
       const metadataPath = normalizePath(metadata.worktreePath, projectRoot);
       return (
+        (currentWindowId ? target.windowId === currentWindowId : false) ||
         metadata.sessionId === activeSessionId ||
         (metadataPath === normalizedCurrentPath &&
           (target.windowName === currentWindow || metadata.label === currentWindow))

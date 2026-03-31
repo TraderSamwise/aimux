@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { loadConfig } from "./config.js";
+import { debug } from "./debug.js";
 
 export interface TmuxExecOptions {
   cwd?: string;
@@ -296,9 +297,17 @@ export class TmuxRuntimeManager {
     };
   }
 
-  createWindow(sessionName: string, name: string, cwd: string, command: string, args: string[]): TmuxTarget {
+  createWindow(
+    sessionName: string,
+    name: string,
+    cwd: string,
+    command: string,
+    args: string[],
+    options: { detached?: boolean } = {},
+  ): TmuxTarget {
     const argv = [
       "new-window",
+      ...(options.detached ? ["-d"] : []),
       "-P",
       "-t",
       sessionName,
@@ -355,14 +364,27 @@ export class TmuxRuntimeManager {
 
   sendText(target: TmuxTarget, text: string): void {
     if (!text) return;
+    debug(`tmux sendText: target=${target.windowId} bytes=${Buffer.byteLength(text)} preview=${JSON.stringify(text.slice(0, 180))}`, "fork");
     this.exec(["send-keys", "-t", target.windowId, "-l", text]);
   }
 
   sendEnter(target: TmuxTarget): void {
+    debug(`tmux sendEnter: target=${target.windowId}`, "fork");
     this.exec(["send-keys", "-t", target.windowId, "Enter"]);
   }
 
+  sendCarriageReturn(target: TmuxTarget): void {
+    debug(`tmux sendCarriageReturn: target=${target.windowId}`, "fork");
+    this.exec(["send-keys", "-t", target.windowId, "-H", "0d"]);
+  }
+
+  sendModifiedEnter(target: TmuxTarget): void {
+    debug(`tmux sendModifiedEnter: target=${target.windowId} hex=${MODIFIED_ENTER_HEX}`, "fork");
+    this.exec(["send-keys", "-t", target.windowId, "-H", ...MODIFIED_ENTER_HEX.split(" ")]);
+  }
+
   sendKey(target: TmuxTarget, key: string): void {
+    debug(`tmux sendKey: target=${target.windowId} key=${key}`, "fork");
     this.exec(["send-keys", "-t", target.windowId, key]);
   }
 
@@ -548,7 +570,7 @@ export class TmuxRuntimeManager {
       "if-shell",
       "-F",
       "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
-      "send-keys -H 1b 5b 31 33 3b 32 75",
+      `send-keys -H ${MODIFIED_ENTER_HEX}`,
       "send-keys C-j",
     ]);
     this.exec([
@@ -622,8 +644,8 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "window-status-format", ""]);
     this.exec(["set-option", "-t", sessionName, "window-status-current-format", ""]);
     if (statuslineCommand) {
-      const top = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line top --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
-      const bottom = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line bottom --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
+      const top = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line top --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
+      const bottom = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line bottom --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
       this.exec(["set-option", "-t", sessionName, "status-left", ""]);
       this.exec(["set-option", "-t", sessionName, "status-right", ""]);
       this.exec([
@@ -647,6 +669,16 @@ export class TmuxRuntimeManager {
     try {
       this.exec(["refresh-client", "-S"]);
     } catch {}
+  }
+
+  private ensureTerminalFeature(sessionName: string, feature: string): void {
+    const current = this.getSessionOption(sessionName, "terminal-features");
+    const features = current
+      ?.split("\n")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (features?.includes(feature)) return;
+    this.exec(["set-option", "-as", "-t", sessionName, "terminal-features", `,${feature}`]);
   }
 }
 
