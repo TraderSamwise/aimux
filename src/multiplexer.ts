@@ -533,32 +533,7 @@ export class Multiplexer {
 
     // Forward stdin
     this.onStdinData = (data: Buffer) => {
-      if (this.pickerActive) {
-        this.handleToolPickerKey(data);
-        return;
-      }
-      if (this.worktreeRemoveConfirm) {
-        this.handleWorktreeRemoveConfirmKey(data);
-        return;
-      }
-      if (this.worktreeInputActive) {
-        this.handleWorktreeInputKey(data);
-        return;
-      }
-      if (this.worktreeListActive) {
-        this.handleWorktreeListKey(data);
-        return;
-      }
-      if (this.migratePickerActive) {
-        this.handleMigratePickerKey(data);
-        return;
-      }
-      if (this.switcherActive) {
-        this.handleSwitcherKey(data);
-        return;
-      }
-      if (this.labelInputActive) {
-        this.handleLabelInputKey(data);
+      if (this.handleActiveDashboardOverlayKey(data)) {
         return;
       }
       if (this.isDashboardScreen("activity")) {
@@ -1010,17 +985,6 @@ export class Multiplexer {
     const event = events[0];
     const key = event.name || event.char;
     const hasWorktrees = this.worktreeNavOrder.length > 1;
-
-    if (this.dashboardBusyState) {
-      return;
-    }
-
-    if (this.dashboardErrorState) {
-      if (key === "escape" || key === "enter" || key === "return") {
-        this.dismissDashboardError();
-      }
-      return;
-    }
 
     // Digits 1-9: always focus session directly (shortcut)
     if (key >= "1" && key <= "9") {
@@ -1720,6 +1684,90 @@ export class Multiplexer {
 
   private setDashboardScreen(screen: DashboardScreen): void {
     this.dashboardScreen = screen;
+  }
+
+  private handleActiveDashboardOverlayKey(data: Buffer): boolean {
+    if (this.dashboardBusyState) {
+      return true;
+    }
+    if (this.dashboardErrorState) {
+      const events = parseKeys(data);
+      if (events.length === 0) return true;
+      const key = events[0].name || events[0].char;
+      if (key === "escape" || key === "enter" || key === "return") {
+        this.dismissDashboardError();
+      }
+      return true;
+    }
+    if (this.pickerActive) {
+      this.handleToolPickerKey(data);
+      return true;
+    }
+    if (this.worktreeRemoveConfirm) {
+      this.handleWorktreeRemoveConfirmKey(data);
+      return true;
+    }
+    if (this.worktreeInputActive) {
+      this.handleWorktreeInputKey(data);
+      return true;
+    }
+    if (this.worktreeListActive) {
+      this.handleWorktreeListKey(data);
+      return true;
+    }
+    if (this.migratePickerActive) {
+      this.handleMigratePickerKey(data);
+      return true;
+    }
+    if (this.switcherActive) {
+      this.handleSwitcherKey(data);
+      return true;
+    }
+    if (this.labelInputActive) {
+      this.handleLabelInputKey(data);
+      return true;
+    }
+    return false;
+  }
+
+  private renderActiveDashboardOverlay(): boolean {
+    if (this.worktreeRemoveConfirm) {
+      this.renderWorktreeRemoveConfirm();
+      return true;
+    }
+    if (this.dashboardErrorState) {
+      this.renderDashboardErrorOverlay();
+      return true;
+    }
+    if (this.dashboardBusyState) {
+      this.renderDashboardBusyOverlay();
+      return true;
+    }
+    if (this.switcherActive) {
+      this.renderSwitcher();
+      return true;
+    }
+    if (this.migratePickerActive) {
+      this.renderMigratePicker();
+      return true;
+    }
+    if (this.worktreeListActive) {
+      this.renderWorktreeList();
+      return true;
+    }
+    if (this.labelInputActive) {
+      this.renderLabelInput();
+      return true;
+    }
+    if (this.worktreeInputActive) {
+      this.renderWorktreeInput();
+      return true;
+    }
+    if (this.pickerActive) {
+      this.renderToolPicker();
+      return true;
+    }
+    return false;
   }
 
   private openLiveTmuxWindowForEntry(entry: { id: string; backendSessionId?: string }): boolean {
@@ -4023,41 +4071,7 @@ export class Multiplexer {
       return;
     }
     this.renderDashboard();
-    if (this.worktreeRemoveConfirm) {
-      this.renderWorktreeRemoveConfirm();
-      return;
-    }
-    if (this.dashboardErrorState) {
-      this.renderDashboardErrorOverlay();
-      return;
-    }
-    if (this.dashboardBusyState) {
-      this.renderDashboardBusyOverlay();
-      return;
-    }
-    if (this.switcherActive) {
-      this.renderSwitcher();
-      return;
-    }
-    if (this.migratePickerActive) {
-      this.renderMigratePicker();
-      return;
-    }
-    if (this.worktreeListActive) {
-      this.renderWorktreeList();
-      return;
-    }
-    if (this.labelInputActive) {
-      this.renderLabelInput();
-      return;
-    }
-    if (this.worktreeInputActive) {
-      this.renderWorktreeInput();
-      return;
-    }
-    if (this.pickerActive) {
-      this.renderToolPicker();
-    }
+    this.renderActiveDashboardOverlay();
   }
 
   /** Track previous statuses for notification on transition */
