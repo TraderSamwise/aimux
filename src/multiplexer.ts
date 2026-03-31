@@ -970,7 +970,7 @@ export class Multiplexer {
    * Copies history and context, kills the old session, starts a new one
    * with injected prior history.
    */
-  migrateAgent(sessionId: string, targetWorktreePath: string): void {
+  async migrateAgent(sessionId: string, targetWorktreePath: string): Promise<void> {
     const session = this.sessions.find((s) => s.id === sessionId);
     if (!session) {
       throw new Error(`Session "${sessionId}" not found`);
@@ -989,7 +989,8 @@ export class Multiplexer {
     let migrateArgs = originalArgs;
     let historyContext = "";
     const useBackendResume = this.canResumeWithBackendSessionId(toolCfg, backendSessionId);
-    const sourceTarget = this.sessionTmuxTargets.get(sessionId);
+    await this.contextWatcher.syncNow(sessionId).catch(() => {});
+    const sourceSnapshot = this.readForkSourceSnapshot(sessionId);
 
     if (useBackendResume) {
       migrateArgs = this.composeToolArgs(
@@ -999,38 +1000,18 @@ export class Multiplexer {
       );
     } else {
       // Fall back to context injection when the tool has no real backend resume path.
-      const turns = readHistory(sessionId, { lastN: 20 });
-      if (turns.length > 0) {
-        const formattedTurns = turns.map((t) => {
-          const time = t.ts.slice(0, 16);
-          if (t.type === "prompt") return `[${time}] User: ${t.content}`;
-          if (t.type === "response") return `[${time}] Agent: ${t.content}`;
-          if (t.type === "git") return `[${time}] Git: ${t.content}${t.files ? ` (${t.files.join(", ")})` : ""}`;
-          return `[${time}] ${t.content}`;
-        });
+      if (sourceSnapshot.historyText) {
         historyContext =
           "\n\n=== Your previous session context ===\n" +
           "You were previously working in a different worktree. Here's what happened:\n" +
-          formattedTurns.join("\n") +
+          sourceSnapshot.historyText +
           "\n=== End previous context ===\n";
-      } else {
-        const livePath = join(getContextDir(), sessionId, "live.md");
-        let snapshot = "";
-        try {
-          if (existsSync(livePath)) snapshot = readFileSync(livePath, "utf-8").trim();
-        } catch {}
-        if (!snapshot && sourceTarget) {
-          try {
-            snapshot = this.tmuxRuntimeManager.captureTarget(sourceTarget, { startLine: -120 }).trim();
-          } catch {}
-        }
-        if (snapshot) {
-          historyContext =
-            "\n\n=== Your previous session context ===\n" +
-            "You were previously working in a different worktree. Here's the most recent terminal context:\n" +
-            snapshot +
-            "\n=== End previous context ===\n";
-        }
+      } else if (sourceSnapshot.liveText) {
+        historyContext =
+          "\n\n=== Your previous session context ===\n" +
+          "You were previously working in a different worktree. Here's the most recent terminal context:\n" +
+          sourceSnapshot.liveText +
+          "\n=== End previous context ===\n";
       }
     }
 
@@ -4072,7 +4053,7 @@ export class Multiplexer {
       `Migrating "${label}"`,
       [`  From: ${this.sessionWorktreePaths.get(session.id) ?? "(main)"}`, `  To: ${targetName}`],
       async () => {
-        this.migrateAgent(session.id, targetPath);
+        await this.migrateAgent(session.id, targetPath);
         await this.waitForSessionExit(session);
         this.renderDashboard();
       },
