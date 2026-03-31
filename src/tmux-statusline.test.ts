@@ -242,7 +242,7 @@ describe("renderTmuxStatusline", () => {
       width: 220,
     });
     expect(rendered).toContain("[coder(coder) ?]");
-    expect(rendered).toContain("·claude ✓");
+    expect(rendered).toContain("claude ✓");
     expect(rendered).toContain("Fix auth flow");
   });
 

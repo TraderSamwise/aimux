@@ -391,6 +391,7 @@ export class Multiplexer {
   }
 
   private buildTmuxWindowMetadata(sessionId: string, command: string): TmuxWindowMetadata {
+    const sessionMetadata = loadMetadataState().sessions[sessionId];
     return {
       sessionId,
       command,
@@ -400,6 +401,10 @@ export class Multiplexer {
       worktreePath: this.sessionWorktreePaths.get(sessionId),
       label: this.getSessionLabel(sessionId),
       role: this.sessionRoles.get(sessionId),
+      activity: sessionMetadata?.derived?.activity,
+      attention: sessionMetadata?.derived?.attention,
+      unseenCount: sessionMetadata?.derived?.unseenCount,
+      statusText: sessionMetadata?.status?.text,
     };
   }
 
@@ -3735,6 +3740,9 @@ export class Multiplexer {
   private writeStatuslineFile(): void {
     try {
       if (!this.ownsStatusline()) return;
+      for (const session of this.sessions) {
+        this.syncTmuxWindowMetadata(session.id);
+      }
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
       const tmpPath = `${filePath}.tmp`;

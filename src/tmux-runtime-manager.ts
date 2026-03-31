@@ -59,6 +59,10 @@ export interface TmuxWindowMetadata {
   worktreePath?: string;
   label?: string;
   role?: string;
+  activity?: string;
+  attention?: string;
+  unseenCount?: number;
+  statusText?: string;
 }
 
 const DEFAULT_EXEC: TmuxExec = (args, options) =>

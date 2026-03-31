@@ -7,6 +7,7 @@ import {
   renderDashboardScreens,
   renderDerivedBadge,
   resolveCurrentSessionId,
+  resolveSessionMetadata,
   resolveScopedSessions,
   sessionIdentity,
   trim,
@@ -107,7 +108,14 @@ function renderActiveMetadata(
     projectRoot,
   );
   if (!activeSessionId) return null;
-  const metadata = data.metadata?.[activeSessionId];
+  const metadata = resolveSessionMetadata(
+    data,
+    tmuxRuntimeManager,
+    projectRoot,
+    currentSession,
+    currentWindow,
+    currentPath,
+  );
   if (!metadata) return null;
   if (metadata.derived?.attention === "error") return "error";
   if (metadata.derived?.attention === "needs_input") return "needs input";
@@ -155,15 +163,10 @@ function renderTopLine(
 }
 
 function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[number]): string {
-  const status = session.status ?? session.derived?.activity ?? "unknown";
-  const icon = status === "idle" ? "·" : status === "running" ? "●" : status === "waiting" ? "◌" : "○";
   const identity = trim(sessionIdentity(session), 16);
   const badge = renderDerivedBadge(session.derived);
-  if (session.isCurrent) {
-    const activeLabel = trim(`${identity}${badge ? ` ${badge}` : ""}`, 20);
-    return `[${activeLabel}]`;
-  }
-  return `${icon}${identity}${badge ? ` ${badge}` : ""}`;
+  const label = trim(`${identity}${badge ? ` ${badge}` : ""}`, 20);
+  return session.isCurrent ? `[${label}]` : label;
 }
 
 function renderBottomLine(
