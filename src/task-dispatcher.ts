@@ -1,5 +1,6 @@
 import { type Task, readAllTasks, writeTask, cleanupTasks, hasActiveTask } from "./tasks.js";
 import { loadTeamConfig } from "./team.js";
+import { appendMessage, openTaskThread, updateThread } from "./threads.js";
 
 interface DispatchSession {
   id: string;
@@ -256,6 +257,27 @@ export class TaskDispatcher {
    * Inject a task prompt into a session's PTY.
    */
   private inject(session: DispatchSession, task: Task): void {
+    const thread = openTaskThread(task.id, {
+      title: `${task.type === "review" ? "Review" : "Task"}: ${task.description}`,
+      createdBy: task.assignedBy,
+      participants: [task.assignedBy, session.id],
+      kind: task.type === "review" ? "review" : "task",
+    });
+    task.threadId = thread.id;
+    appendMessage(thread.id, {
+      from: task.assignedBy,
+      to: [session.id],
+      kind: "request",
+      body: task.description,
+      taskId: task.id,
+    });
+    updateThread(thread.id, (current) => ({
+      ...current,
+      status: "waiting",
+      owner: session.id,
+      waitingOn: [session.id],
+    }));
+
     const prefix =
       task.type === "review"
         ? `[AIMUX REVIEW ${task.id} from ${task.assignedBy}]`
@@ -293,6 +315,25 @@ export class TaskDispatcher {
    * Notify the assigning session that a task has completed.
    */
   private notifyAssigner(session: DispatchSession, task: Task): void {
+    if (task.threadId) {
+      appendMessage(task.threadId, {
+        from: task.assignedTo ?? task.assignedBy,
+        to: [task.assignedBy],
+        kind: task.status === "done" ? "status" : "reply",
+        body:
+          task.status === "done"
+            ? `Completed: ${task.description}${task.result ? `\n\n${task.result}` : ""}`
+            : `Failed: ${task.description}${task.error ? `\n\n${task.error}` : ""}`,
+        taskId: task.id,
+      });
+      updateThread(task.threadId, (current) => ({
+        ...current,
+        status: task.status === "done" ? "done" : "blocked",
+        owner: task.assignedBy,
+        waitingOn: [],
+      }));
+    }
+
     session.write(
       `[AIMUX TASK COMPLETE ${task.id}] Agent ${task.assignedTo} finished: ${task.result ?? task.error ?? "no details"}\r`,
     );

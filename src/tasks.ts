@@ -8,6 +8,7 @@ export interface Task {
   status: "pending" | "assigned" | "done" | "failed";
   assignedBy: string;
   assignedTo?: string;
+  threadId?: string;
   tool?: string;
   description: string;
   prompt: string;

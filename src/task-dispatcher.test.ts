@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 let tmpDir: string;
 vi.mock("./paths.js", () => ({
   getTasksDir: () => join(tmpDir, "tasks"),
+  getLocalAimuxDir: () => join(tmpDir, ".aimux"),
 }));
 
 import { TaskDispatcher } from "./task-dispatcher.js";
