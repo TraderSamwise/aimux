@@ -3745,6 +3745,41 @@ export class Multiplexer {
       return;
     }
     this.renderDashboard();
+    if (this.worktreeRemoveConfirm) {
+      this.renderWorktreeRemoveConfirm();
+      return;
+    }
+    if (this.dashboardErrorState) {
+      this.renderDashboardErrorOverlay();
+      return;
+    }
+    if (this.dashboardBusyState) {
+      this.renderDashboardBusyOverlay();
+      return;
+    }
+    if (this.switcherActive) {
+      this.renderSwitcher();
+      return;
+    }
+    if (this.migratePickerActive) {
+      this.renderMigratePicker();
+      return;
+    }
+    if (this.worktreeListActive) {
+      this.renderWorktreeList();
+      return;
+    }
+    if (this.labelInputActive) {
+      this.renderLabelInput();
+      return;
+    }
+    if (this.worktreeInputActive) {
+      this.renderWorktreeInput();
+      return;
+    }
+    if (this.pickerActive) {
+      this.showToolPicker();
+    }
   }
 
   /** Track previous statuses for notification on transition */
