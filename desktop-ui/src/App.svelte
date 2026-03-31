@@ -1,16 +1,16 @@
 <script>
+  import { onMount } from "svelte";
   import Sidebar from "./lib/Sidebar.svelte";
   import WorkspaceHeader from "./lib/WorkspaceHeader.svelte";
   import SessionPanel from "./lib/SessionPanel.svelte";
   import TerminalPanel from "./lib/TerminalPanel.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
-  import { getState, loadProjects, pollStatusline } from "./stores/state.svelte.js";
+  import { loadProjects, pollStatusline, stopPollingStatusline } from "./stores/state.svelte.js";
 
-  const state = getState();
-
-  $effect(() => {
+  onMount(() => {
     loadProjects();
     pollStatusline();
+    return () => stopPollingStatusline();
   });
 </script>
 
