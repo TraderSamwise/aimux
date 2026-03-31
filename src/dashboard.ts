@@ -352,7 +352,7 @@ export class Dashboard {
       return ` ↑↓ agents  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [f] fork  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.hasWorktrees) {
-      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [w] worktree${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [t] threads  [Tab] details  [c] new  [f] fork(step in)  [w] worktree${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";

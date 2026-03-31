@@ -25,6 +25,7 @@ import {
   getStatePath,
   getStatusDir,
   getContextDir,
+  getHistoryDir,
   getAimuxDirFor,
   getLocalAimuxDir,
   getPlansDir,
@@ -978,21 +979,6 @@ export class Multiplexer {
     const sourceWorktree = this.sessionWorktreePaths.get(sessionId);
     const sourceCwd = sourceWorktree ?? process.cwd();
 
-    // Copy history file
-    const sourceHistoryPath = join(getProjectStateDir(), "history", `${sessionId}.jsonl`);
-    const targetHistoryDir = join(getAimuxDirFor(targetWorktreePath), "history");
-    mkdirSync(targetHistoryDir, { recursive: true });
-    if (existsSync(sourceHistoryPath)) {
-      copyFileSync(sourceHistoryPath, join(targetHistoryDir, `${sessionId}.jsonl`));
-    }
-
-    // Copy context directory
-    const sourceContextDir = join(getProjectStateDir(), "context", sessionId);
-    const targetContextDir = join(getAimuxDirFor(targetWorktreePath), "context", sessionId);
-    if (existsSync(sourceContextDir)) {
-      cpSync(sourceContextDir, targetContextDir, { recursive: true });
-    }
-
     // Get tool config for the session
     const toolConfigKey = this.sessionToolKeys.get(sessionId) ?? session.command;
     const config = loadConfig();
@@ -1214,14 +1200,13 @@ export class Multiplexer {
         this.showToolPicker();
         return;
       case "f": {
-        const selected =
-          this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
-            ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]
-            : !hasWorktrees
-              ? this.getDashboardSessions()[this.activeIndex]
-              : undefined;
+        const selected = this.getSelectedDashboardSessionForActions();
         if (selected && !selected.remoteInstancePid) {
           this.showToolPicker(selected.id);
+        } else if (hasWorktrees && this.dashboardLevel === "worktrees") {
+          this.showDashboardError("Select an agent to fork", [
+            "Press Enter to step into a worktree, then select a session and press [f] to fork it.",
+          ]);
         }
         return;
       }
@@ -1904,28 +1889,19 @@ export class Multiplexer {
     return true;
   }
 
-  private showToolPicker(sourceSessionId?: string): void {
+  private getSelectedDashboardSessionForActions(): DashboardSession | undefined {
+    if (this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0) {
+      return this.dashboardWorktreeSessions[this.dashboardSessionIndex];
+    }
+    if (this.worktreeNavOrder.length <= 1) {
+      return this.getDashboardSessions()[this.activeIndex];
+    }
+    return undefined;
+  }
+
+  private renderToolPicker(): void {
     const config = loadConfig();
     const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
-    this.forkSourceSessionId = sourceSessionId ?? null;
-
-    if (tools.length === 1) {
-      const [key, tool] = tools[0];
-      if (!isToolAvailable(tool.command)) {
-        // Show all tools anyway so user sees what's supported
-      } else {
-        // Only one available tool — skip picker, spawn directly
-        const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
-        if (this.forkSourceSessionId) {
-          this.forkSessionFromSource(this.forkSourceSessionId, key, undefined, wtPath);
-        } else {
-          this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
-        }
-        return;
-      }
-    }
-
-    this.pickerActive = true;
 
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
@@ -1956,6 +1932,31 @@ export class Multiplexer {
     }
     output += "\x1b8"; // restore cursor
     process.stdout.write(output);
+  }
+
+  private showToolPicker(sourceSessionId?: string): void {
+    const config = loadConfig();
+    const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
+    this.forkSourceSessionId = sourceSessionId ?? null;
+
+    if (tools.length === 1) {
+      const [key, tool] = tools[0];
+      if (!isToolAvailable(tool.command)) {
+        // Show all tools anyway so user sees what's supported
+      } else {
+        // Only one available tool — skip picker, spawn directly
+        const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
+        if (this.forkSourceSessionId) {
+          void this.forkSessionFromSource(this.forkSourceSessionId, key, undefined, wtPath);
+        } else {
+          this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
+        }
+        return;
+      }
+    }
+
+    this.pickerActive = true;
+    this.renderToolPicker();
   }
 
   private handleToolPickerKey(data: Buffer): void {
@@ -1999,7 +2000,7 @@ export class Multiplexer {
         if (this.forkSourceSessionId) {
           const sourceSessionId = this.forkSourceSessionId;
           this.forkSourceSessionId = null;
-          this.forkSessionFromSource(sourceSessionId, key, undefined, wtPath);
+          void this.forkSessionFromSource(sourceSessionId, key, undefined, wtPath);
         } else {
           this.createSession(tool.command, tool.args, tool.preambleFlag, key, undefined, tool.sessionIdFlag, wtPath);
         }
@@ -2060,12 +2061,153 @@ export class Multiplexer {
       .join("\n");
   }
 
-  private forkSessionFromSource(
+  private isDefaultPlanContent(content: string): boolean {
+    const normalized = content.replace(/\r/g, "").trim();
+    return (
+      normalized.includes("# Goal\n\nTBD") &&
+      normalized.includes("# Current Status\n\nTBD") &&
+      normalized.includes("# Steps\n\n- [ ] TBD")
+    );
+  }
+
+  private readForkSourceSnapshot(sourceSessionId: string): {
+    historyText?: string;
+    liveText?: string;
+    planText?: string;
+    statusText?: string;
+  } {
+    const historyTurns = readHistory(sourceSessionId, { lastN: 20 });
+    const historyText =
+      historyTurns.length > 0
+        ? historyTurns
+            .map((turn) => {
+              const prefix =
+                turn.type === "prompt"
+                  ? "User"
+                  : turn.type === "response"
+                    ? "Agent"
+                    : turn.type === "git"
+                      ? "Git"
+                      : "Note";
+              return `- ${prefix}: ${turn.content}`;
+            })
+            .join("\n")
+        : undefined;
+
+    let liveText = "";
+    const sourceTarget = this.sessionTmuxTargets.get(sourceSessionId);
+    if (sourceTarget) {
+      try {
+        liveText = this.tmuxRuntimeManager.captureTarget(sourceTarget, { startLine: -160 }).trim();
+      } catch {}
+    }
+    if (!liveText) {
+      const sourceLivePath = join(getContextDir(), sourceSessionId, "live.md");
+      try {
+        if (existsSync(sourceLivePath)) {
+          liveText = readFileSync(sourceLivePath, "utf-8").trim();
+        }
+      } catch {}
+    }
+
+    const sourcePlanPath = join(getPlansDir(), `${sourceSessionId}.md`);
+    let planText = "";
+    try {
+      if (existsSync(sourcePlanPath)) {
+        const raw = readFileSync(sourcePlanPath, "utf-8")
+          .replace(/^---\n[\s\S]*?\n---\n?/, "")
+          .trim();
+        if (raw && !this.isDefaultPlanContent(raw)) {
+          planText = raw;
+        }
+      }
+    } catch {}
+
+    const sourceStatusPath = join(getStatusDir(), `${sourceSessionId}.md`);
+    let statusText = "";
+    try {
+      if (existsSync(sourceStatusPath)) {
+        statusText = readFileSync(sourceStatusPath, "utf-8").trim();
+      }
+    } catch {}
+
+    return {
+      historyText: historyText || undefined,
+      liveText: liveText || undefined,
+      planText: planText || undefined,
+      statusText: statusText || undefined,
+    };
+  }
+
+  private seedForkArtifacts(sourceSessionId: string, targetSessionId: string, targetToolConfigKey: string): void {
+    const snapshot = this.readForkSourceSnapshot(sourceSessionId);
+    const sourceHistoryPath = join(getHistoryDir(), `${sourceSessionId}.jsonl`);
+    const targetHistoryPath = join(getHistoryDir(), `${targetSessionId}.jsonl`);
+    if (existsSync(sourceHistoryPath) && !existsSync(targetHistoryPath)) {
+      copyFileSync(sourceHistoryPath, targetHistoryPath);
+    }
+
+    const targetContextDir = join(getContextDir(), targetSessionId);
+    mkdirSync(targetContextDir, { recursive: true });
+
+    const sourceStatusPath = join(getStatusDir(), `${sourceSessionId}.md`);
+    const targetStatusPath = join(getStatusDir(), `${targetSessionId}.md`);
+    if (existsSync(sourceStatusPath) && !existsSync(targetStatusPath)) {
+      copyFileSync(sourceStatusPath, targetStatusPath);
+    } else if (!existsSync(targetStatusPath) && snapshot.statusText) {
+      writeFileSync(targetStatusPath, snapshot.statusText + "\n");
+    }
+
+    const targetPlanPath = join(getPlansDir(), `${targetSessionId}.md`);
+    const targetWorktree = this.sessionWorktreePaths.get(sourceSessionId) ?? "main";
+    const handoffPlan =
+      `---\n` +
+      `sessionId: ${targetSessionId}\n` +
+      `tool: ${targetToolConfigKey}\n` +
+      `worktree: ${targetWorktree}\n` +
+      `updatedAt: ${new Date().toISOString()}\n` +
+      `---\n\n` +
+      `# Goal\n\n` +
+      `${snapshot.planText ? "Continue the forked work described below." : `Continue work forked from ${sourceSessionId}.`}\n\n` +
+      `# Current Status\n\n` +
+      `${snapshot.statusText || "Forked from an existing agent with carried-over context."}\n\n` +
+      `# Steps\n\n` +
+      `- [ ] Review .aimux/context/${targetSessionId}/summary.md and live.md\n` +
+      `- [ ] Continue the forked line of work\n\n` +
+      `# Notes\n\n` +
+      `- Forked from ${sourceSessionId}\n` +
+      (snapshot.planText ? `- Source plan carried below\n\n## Source Plan\n\n${snapshot.planText}\n` : "");
+    writeFileSync(targetPlanPath, handoffPlan);
+
+    const targetLivePath = join(targetContextDir, "live.md");
+    if (snapshot.liveText) {
+      writeFileSync(targetLivePath, snapshot.liveText + "\n");
+    }
+
+    const targetSummaryPath = join(targetContextDir, "summary.md");
+    writeFileSync(
+      targetSummaryPath,
+      [
+        `# Forked from ${sourceSessionId}`,
+        "",
+        `Target session: ${targetSessionId}`,
+        "",
+        snapshot.statusText ? `## Source Status\n\n${snapshot.statusText}\n` : "",
+        snapshot.planText ? `## Source Plan\n\n${snapshot.planText}\n` : "",
+        snapshot.historyText ? `## Recent History\n\n${snapshot.historyText}\n` : "",
+        snapshot.liveText ? `## Live Terminal Snapshot\n\n${snapshot.liveText}\n` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  private async forkSessionFromSource(
     sourceSessionId: string,
     targetToolConfigKey: string,
     instruction?: string,
     targetWorktreePath?: string,
-  ): { sessionId: string; threadId: string; target?: TmuxTarget } | undefined {
+  ): Promise<{ sessionId: string; threadId: string; target?: TmuxTarget } | undefined> {
     const sourceSession = this.sessions.find((session) => session.id === sourceSessionId);
     if (!sourceSession) {
       this.showDashboardError("Cannot fork missing session", [`Source session ${sourceSessionId} not found.`]);
@@ -2107,6 +2249,8 @@ export class Multiplexer {
       owner: targetSessionId,
       waitingOn: [targetSessionId],
     }));
+    await this.contextWatcher.syncNow(sourceSessionId).catch(() => {});
+    this.seedForkArtifacts(sourceSessionId, targetSessionId, targetToolConfigKey);
     const extraPreamble = [this.buildForkPreamble(sourceSessionId, targetSessionId), instruction?.trim()]
       .filter(Boolean)
       .join("\n\n");
@@ -2144,16 +2288,16 @@ export class Multiplexer {
     };
   }
 
-  forkAgent(opts: {
+  async forkAgent(opts: {
     sourceSessionId: string;
     targetToolConfigKey: string;
     instruction?: string;
     targetWorktreePath?: string;
     open?: boolean;
-  }): { sessionId: string; threadId: string } {
+  }): Promise<{ sessionId: string; threadId: string }> {
     this.restoreTmuxSessionsFromState();
     this.loadOfflineSessions();
-    const result = this.forkSessionFromSource(
+    const result = await this.forkSessionFromSource(
       opts.sourceSessionId,
       opts.targetToolConfigKey,
       opts.instruction,
@@ -4339,7 +4483,7 @@ export class Multiplexer {
       return;
     }
     if (this.pickerActive) {
-      this.showToolPicker();
+      this.renderToolPicker();
     }
   }
 
