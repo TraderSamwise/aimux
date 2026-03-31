@@ -75,8 +75,12 @@ function boundLiveSnapshot(text: string): string {
 }
 
 /**
- * Live context watcher. Monitors recording files for new conversation turns,
- * persists them to JSONL history, and maintains live.md for cross-agent sharing.
+ * Live context watcher. Tmux pane snapshots are the primary continuity source:
+ * they keep `live.md` current and backfill append-only history when a tool settles.
+ *
+ * Raw terminal recordings are kept as secondary audit/backfill artifacts only.
+ * They may yield extra turns when available, but continuity should not depend on
+ * recordings existing or parsing perfectly.
  */
 export class ContextWatcher {
   constructor(
@@ -86,7 +90,7 @@ export class ContextWatcher {
 
   private interval: ReturnType<typeof setInterval> | null = null;
   private sessions: Array<{ id: string; command: string; turnPatterns?: RegExp[]; tmuxTarget?: TmuxTarget }> = [];
-  /** Track how far we've read into each session's recording */
+  /** Track how far we've read into each session's secondary raw recording */
   private readOffsets = new Map<string, number>();
   /** Track last turn type per session to detect response→prompt transitions */
   private lastTurnTypes = new Map<string, "prompt" | "response">();
@@ -160,8 +164,8 @@ export class ContextWatcher {
   }
 
   /**
-   * Read new content from a session's recording since our last read offset.
-   * Parse into turns and persist to JSONL history.
+   * Read new content from a session's raw recording since our last read offset.
+   * This is a secondary audit/backfill path; tmux pane capture is primary.
    */
   private async extractNewContent(session: {
     id: string;
@@ -390,7 +394,7 @@ function isLikelyUiChrome(line: string): boolean {
 
 /**
  * Parse raw terminal recording output into conversation turns.
- * Uses heuristics based on common CLI tool patterns.
+ * Recordings are treated as a best-effort recovery path, not the primary continuity source.
  */
 function parseConversationTurns(text: string, tool: string, turnPatterns?: RegExp[]): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
@@ -458,7 +462,7 @@ function parseConversationTurns(text: string, tool: string, turnPatterns?: RegEx
   return turns;
 }
 
-/** Get recent stripped output from a session's recording. */
+/** Get recent stripped output from a session's raw recording as a fallback/debug aid. */
 export function getRecentOutput(sessionId: string, maxLines: number = 20): string {
   const txtPath = join(getRecordingsDir(), `${sessionId}.txt`);
   if (!existsSync(txtPath)) return "";
@@ -489,7 +493,7 @@ export function buildContextPreamble(otherSessionIds: string[], maxLinesPerSessi
         }
       } catch {}
     }
-    // Fallback to recording snippets
+    // Fallback to raw recording snippets only when no live context file exists.
     const output = getRecentOutput(id, maxLinesPerSession);
     if (output) {
       sections.push(`--- Recent output from ${id} ---\n${output}`);

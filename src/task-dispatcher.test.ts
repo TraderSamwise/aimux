@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 let tmpDir: string;
 vi.mock("./paths.js", () => ({
   getTasksDir: () => join(tmpDir, "tasks"),
+  getThreadsDir: () => join(tmpDir, "threads"),
   getLocalAimuxDir: () => join(tmpDir, ".aimux"),
 }));
 
@@ -16,6 +17,7 @@ import { writeTask, readTask, type Task } from "./tasks.js";
 function makeTmpDir(): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "aimux-test-")));
   mkdirSync(join(dir, "tasks"), { recursive: true });
+  mkdirSync(join(dir, "threads"), { recursive: true });
   return dir;
 }
 

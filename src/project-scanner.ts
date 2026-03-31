@@ -31,7 +31,7 @@ export interface DesktopProjectInfo {
 }
 
 /**
- * Discover all projects with aimux state.
+ * Discover local projects with aimux state.
  * Uses the global projects registry plus filesystem scanning as fallback.
  */
 export function discoverProjects(): string[] {
