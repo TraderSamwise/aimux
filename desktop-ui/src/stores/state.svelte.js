@@ -8,9 +8,11 @@ let selectedSessionId = $state(null);
 let terminalSessionId = $state(null);
 let terminalStatus = $state("Idle");
 let loading = $state(false);
+let statusline = $state(null);
 
 let unlistenOutput = null;
 let unlistenExit = null;
+let statuslinePollTimer = null;
 
 export function getState() {
   return {
@@ -22,6 +24,7 @@ export function getState() {
     get terminalSessionId() { return terminalSessionId; },
     get terminalStatus() { return terminalStatus; },
     get loading() { return loading; },
+    get statusline() { return statusline; },
     get selectedProject() {
       return projects.find((p) => p.path === selectedProjectPath) || null;
     },
@@ -51,11 +54,40 @@ export async function loadProjects() {
 export function selectProject(path) {
   selectedProjectPath = path;
   selectedSessionId = null;
+  statusline = null;
+  pollStatusline();
 }
 
 export function selectSession(id) {
   selectedSessionId = id;
 }
+
+// --- Statusline polling ---
+
+async function fetchStatusline() {
+  const project = projects.find((p) => p.path === selectedProjectPath);
+  if (!project) { statusline = null; return; }
+  try {
+    statusline = await invoke("read_statusline", { projectId: project.id });
+  } catch {
+    statusline = null;
+  }
+}
+
+export function pollStatusline() {
+  stopPollingStatusline();
+  fetchStatusline();
+  statuslinePollTimer = setInterval(fetchStatusline, 1500);
+}
+
+export function stopPollingStatusline() {
+  if (statuslinePollTimer) {
+    clearInterval(statuslinePollTimer);
+    statuslinePollTimer = null;
+  }
+}
+
+// --- Terminal ---
 
 async function detachListeners() {
   if (unlistenOutput) { await unlistenOutput(); unlistenOutput = null; }

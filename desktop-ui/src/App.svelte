@@ -3,12 +3,14 @@
   import WorkspaceHeader from "./lib/WorkspaceHeader.svelte";
   import SessionPanel from "./lib/SessionPanel.svelte";
   import TerminalPanel from "./lib/TerminalPanel.svelte";
-  import { getState, loadProjects } from "./stores/state.svelte.js";
+  import StatusBar from "./lib/StatusBar.svelte";
+  import { getState, loadProjects, pollStatusline } from "./stores/state.svelte.js";
 
   const state = getState();
 
   $effect(() => {
     loadProjects();
+    pollStatusline();
   });
 </script>
 
@@ -20,6 +22,7 @@
       <SessionPanel />
       <TerminalPanel />
     </div>
+    <StatusBar />
   </main>
 </div>
 

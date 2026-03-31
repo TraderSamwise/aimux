@@ -110,6 +110,19 @@ fn run_aimux_json(args: &[&str], cwd: &Path) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn read_statusline(project_id: String) -> Result<Value, String> {
+  let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+  let path = PathBuf::from(home)
+    .join(".aimux")
+    .join("projects")
+    .join(&project_id)
+    .join("statusline.json");
+  let content =
+    std::fs::read_to_string(&path).map_err(|e| format!("failed to read statusline: {e}"))?;
+  serde_json::from_str::<Value>(&content).map_err(|e| format!("invalid statusline JSON: {e}"))
+}
+
+#[tauri::command]
 fn list_projects() -> Result<ProjectsResponse, String> {
   let value = run_aimux_json(&["projects", "list", "--json"], &repo_root())?;
   let projects = value
@@ -285,6 +298,7 @@ fn main() {
     .manage(TerminalRegistry::default())
     .invoke_handler(tauri::generate_handler![
       list_projects,
+      read_statusline,
       spawn_aimux,
       write_terminal,
       resize_terminal,
