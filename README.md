@@ -55,36 +55,46 @@ aimux aider
 aimux --resume
 ```
 
-The per-project tmux session is the long-lived substrate. There is no separate non-tmux runtime service in the normal model.
+The per-project tmux session is the long-lived runtime substrate. Aimux no longer tries to build its own PTY multiplexer on top of native TUIs.
 
-## Project Host
+## Global Control Plane
 
-Each project now has one elected host process for control-plane sidecars:
+Aimux now distinguishes between:
 
-- `MetadataServer`
-- `PluginRuntime`
-- statusline/state writing
-- host heartbeat/ownership
+- `tmux` runtime
+- global aimux control-plane daemon
+- terminal/desktop clients
 
-Tmux still owns the actual agent runtime. The host is only the per-project control plane.
+`tmux` still owns the actual agent runtime:
 
-Normal `aimux` usage starts that host from the dashboard path. For desktop or service-style integration, you can run it headlessly:
+- agent windows
+- PTYs
+- scrollback
+- attach/detach
+
+The global daemon owns shared control-plane responsibilities:
+
+- project discovery and activation
+- metadata API lifecycle
+- plugin runtime supervision
+- orchestration routing
+- statusline/state aggregation
+
+Per-project services are daemon-managed. They are not elected opportunistically by dashboard processes anymore.
+
+Useful commands:
 
 ```bash
-# Start the per-project host without opening the dashboard UI
+aimux daemon ensure
+aimux daemon status --json
+aimux daemon projects --json
+aimux daemon project-ensure --project /abs/path/to/repo
+
+# Compatibility wrapper: ensure the current project's control service
 aimux serve
-
-# Inspect the current host
-aimux host status
-aimux host status --json
-
-# Restart the host into headless mode
-aimux host restart --serve
 ```
 
-If another live host already exists for the current project, `aimux serve` reports it and exits instead of starting a competing sidecar set.
-
-For the full runtime/host/client split, see [docs/project-host-model.md](docs/project-host-model.md).
+For the migration rationale and rollout plan, see [docs/global-control-plane-rfc.md](docs/global-control-plane-rfc.md).
 
 ## Tmux Compatibility
 

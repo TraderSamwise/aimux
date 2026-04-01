@@ -1,5 +1,11 @@
 # Project Host Model
 
+## Status
+
+Superseded by [docs/global-control-plane-rfc.md](./global-control-plane-rfc.md).
+
+This document describes the replaced per-project host-election model. It remains as historical context only and should not be treated as the current target architecture.
+
 Aimux is now built around three separate concepts that should not be conflated:
 
 1. tmux runtime
