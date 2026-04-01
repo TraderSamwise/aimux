@@ -12,7 +12,6 @@ let terminalStatus = $state("Idle");
 let unlistenOutput = null;
 let unlistenExit = null;
 let heartbeatTimer = null;
-let lastHeartbeatJson = null;
 let ensuringHosts = new Set();
 
 export function getState() {
@@ -34,6 +33,19 @@ export function getState() {
   };
 }
 
+// Fingerprint only the fields the UI renders — ignores updatedAt, logs, etc.
+function uiFingerprint(project) {
+  const sl = project.statusline;
+  if (!sl) return "null";
+  const sessions = (sl.sessions ?? []).map((s) => `${s.id}:${s.status}:${s.role || ""}`).join(",");
+  const meta = sl.metadata ? Object.entries(sl.metadata).map(([id, m]) => {
+    const d = m.derived || {};
+    return `${id}:${d.activity || ""}:${d.attention || ""}:${d.unseenCount ?? 0}`;
+  }).join(",") : "";
+  const tasks = sl.tasks ? `${sl.tasks.pending || 0}:${sl.tasks.assigned || 0}` : "";
+  return `${sessions}|${meta}|${tasks}|${sl.flash || ""}|${sl.dashboardScreen || ""}`;
+}
+
 // ── Heartbeat (single loop for everything) ────────────────────────
 
 async function tick() {
@@ -44,11 +56,45 @@ async function tick() {
     // Sort alphabetically for stable ordering
     incoming.sort((a, b) => a.name.localeCompare(b.name));
 
-    // Only update reactive state if something changed
-    const json = JSON.stringify(incoming);
-    if (json !== lastHeartbeatJson) {
-      lastHeartbeatJson = json;
-      projects = incoming;
+    // Build a stable project set — only add new projects, never remove existing
+    // ones mid-session (protects against mid-write reads of projects.json).
+    const incomingById = new Map(incoming.map((p) => [p.id, p]));
+    const existingById = new Map(projects.map((p) => [p.id, p]));
+
+    let changed = false;
+    const merged = [];
+
+    // Keep all existing projects, update their data if incoming has fresher info
+    for (const existing of projects) {
+      const fresh = incomingById.get(existing.id);
+      if (fresh) {
+        const currFp = uiFingerprint(existing);
+        const nextFp = uiFingerprint(fresh);
+        if (existing.serviceAlive !== fresh.serviceAlive || currFp !== nextFp) {
+          merged.push(fresh);
+          changed = true;
+        } else {
+          merged.push(existing);
+        }
+      } else {
+        // Project disappeared from registry — keep it (likely mid-write)
+        merged.push(existing);
+      }
+    }
+
+    // Add genuinely new projects
+    for (const fresh of incoming) {
+      if (!existingById.has(fresh.id)) {
+        merged.push(fresh);
+        changed = true;
+      }
+    }
+
+    // Sort alphabetically for stable ordering
+    merged.sort((a, b) => a.name.localeCompare(b.name));
+
+    if (changed || projects.length === 0) {
+      projects = merged;
     }
 
     // Auto-select first project if none selected
@@ -61,12 +107,12 @@ async function tick() {
       selectedSessionId = null;
     }
 
-    // Auto-ensure host for ALL projects without one
+    // Auto-ensure host only for real projects (those with a real path on disk)
     for (const project of projects) {
-      if (!project.hostAlive && !ensuringHosts.has(project.path)) {
+      if (!project.serviceAlive && !ensuringHosts.has(project.path) && project.path.startsWith("/")) {
         ensuringHosts.add(project.path);
-        invoke("ensure_host", { projectPath: project.path })
-          .catch((e) => console.error(`Failed to ensure host for ${project.name}:`, e))
+        invoke("ensure_daemon_project", { projectPath: project.path })
+          .catch(() => {}) // Silently ignore — may be a stale registry entry
           .finally(() => ensuringHosts.delete(project.path));
       }
     }

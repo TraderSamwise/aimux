@@ -107,6 +107,18 @@ export function getGlobalAimuxDir(): string {
   return join(HOME, ".aimux");
 }
 
+export function getDaemonDir(): string {
+  return join(getGlobalAimuxDir(), "daemon");
+}
+
+export function getDaemonInfoPath(): string {
+  return join(getDaemonDir(), "daemon.json");
+}
+
+export function getDaemonStatePath(): string {
+  return join(getDaemonDir(), "state.json");
+}
+
 export function getProjectStateDir(): string {
   assertInitialized();
   return join(getGlobalAimuxDir(), "projects", _projectId!);

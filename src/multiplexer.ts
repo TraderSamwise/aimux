@@ -71,7 +71,7 @@ interface StatuslineOwnerState {
   updatedAt: string;
 }
 
-export type MuxMode = "dashboard" | "serve";
+export type MuxMode = "dashboard" | "serve" | "project-service";
 
 export interface SessionState {
   id: string;
@@ -219,6 +219,7 @@ export class Multiplexer {
   private pluginRuntime: PluginRuntime | null = null;
   private projectHostInfo: ProjectHostInfo | null = null;
   private isProjectHost = false;
+  private projectServiceInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -748,7 +749,6 @@ export class Multiplexer {
 
     this.writeInstructionFiles();
     this.terminalHost.enterRawMode();
-    await this.reconcileProjectHost();
 
     // Forward stdin
     this.onStdinData = (data: Buffer) => {
@@ -838,6 +838,32 @@ export class Multiplexer {
     console.log(
       `aimux serve: hosting ${process.cwd()}${endpoint ? ` on http://${endpoint.host}:${endpoint.port}` : ""}`,
     );
+
+    const exitCode = await new Promise<number>((resolve) => {
+      this.resolveRun = resolve;
+    });
+
+    this.teardown();
+    return exitCode;
+  }
+
+  async runProjectService(): Promise<number> {
+    initProject();
+    this.mode = "project-service";
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+    this.taskDispatcher = new TaskDispatcher(
+      (id) => this.sessions.find((s) => s.id === id),
+      (id) => this.sessionToolKeys.get(id),
+      (id) => this.sessionRoles.get(id),
+    );
+    this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
+    this.writeInstructionFiles();
+    this.isProjectHost = true;
+    await this.startHostServices();
+    this.writeStatuslineFile();
+    this.startStatusRefresh();
+    this.startProjectServiceRefresh();
 
     const exitCode = await new Promise<number>((resolve) => {
       this.resolveRun = resolve;
@@ -4890,6 +4916,11 @@ export class Multiplexer {
   private startHeartbeat(): void {
     if (this.heartbeatInterval) return;
     this.heartbeatInterval = setInterval(() => {
+      if (this.mode === "project-service") {
+        this.restoreTmuxSessionsFromState();
+        this.loadOfflineSessions();
+        return;
+      }
       const sessions = this.getInstanceSessionRefs();
       this.instanceDirectory
         .reconcileHeartbeat(this.instanceId, sessions, process.cwd(), this.confirmedRegistered)
@@ -4907,9 +4938,6 @@ export class Multiplexer {
           this.confirmedRegistered = result.confirmedIds;
         })
         .catch(() => {});
-      if (this.mode === "dashboard" || this.mode === "serve") {
-        void this.reconcileProjectHost().catch(() => {});
-      }
       // Refresh offline sessions from state.json (picks up cross-instance graveyard/kill)
       this.loadOfflineSessions();
       // Refresh dashboard to pick up remote instance changes (skip if overlay is active)
@@ -4953,6 +4981,22 @@ export class Multiplexer {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
+    }
+  }
+
+  private startProjectServiceRefresh(): void {
+    if (this.projectServiceInterval) return;
+    this.projectServiceInterval = setInterval(() => {
+      this.restoreTmuxSessionsFromState();
+      this.loadOfflineSessions();
+      this.writeStatuslineFile();
+    }, 2000);
+  }
+
+  private stopProjectServiceRefresh(): void {
+    if (this.projectServiceInterval) {
+      clearInterval(this.projectServiceInterval);
+      this.projectServiceInterval = null;
     }
   }
 
@@ -5045,6 +5089,7 @@ export class Multiplexer {
     debug("teardown started", "session");
     this.clearDashboardBusy();
     this.stopHeartbeat();
+    this.stopProjectServiceRefresh();
     this.taskDispatcher = null;
     this.orchestrationDispatcher = null;
     this.instanceDirectory.unregisterInstance(this.instanceId, process.cwd()).catch(() => {});
@@ -5062,7 +5107,7 @@ export class Multiplexer {
     }
     this.hotkeys.destroy();
     this.terminalHost.restoreTerminalState();
-    if (this.isProjectHost) {
+    if (this.isProjectHost && this.mode !== "project-service") {
       void releaseProjectHost(this.instanceId, process.cwd()).catch(() => {});
       this.isProjectHost = false;
       this.projectHostInfo = null;

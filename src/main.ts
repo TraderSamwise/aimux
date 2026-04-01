@@ -36,6 +36,16 @@ import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./
 import { listDesktopProjects, scanProject } from "./project-scanner.js";
 import { clearProjectHost, loadProjectHost, pruneDeadProjectHost, terminateProjectHost } from "./project-host.js";
 import {
+  AimuxDaemon,
+  ensureDaemonRunning,
+  ensureProjectService,
+  loadDaemonInfo,
+  loadDaemonState,
+  projectServiceStatus,
+  requestDaemonJson,
+  stopProjectService,
+} from "./daemon.js";
+import {
   appendMessage,
   createThread,
   listThreadSummaries,
@@ -51,7 +61,11 @@ import { assignTask, sendHandoff } from "./orchestration-actions.js";
 const program = new Command();
 
 async function postHostJson(path: string, body: unknown): Promise<any> {
-  const endpoint = loadMetadataEndpoint();
+  let endpoint = loadMetadataEndpoint();
+  if (!endpoint) {
+    await ensureProjectService(resolveProjectRoot(process.cwd()));
+    endpoint = loadMetadataEndpoint();
+  }
   if (!endpoint) {
     throw new Error("no live project host endpoint");
   }
@@ -65,6 +79,11 @@ async function postHostJson(path: string, body: unknown): Promise<any> {
     throw new Error(json?.error || `request failed: ${res.status}`);
   }
   return json;
+}
+
+async function ensureDaemonProjectReady(projectRoot: string): Promise<void> {
+  await ensureDaemonRunning();
+  await ensureProjectService(projectRoot);
 }
 
 function resolveProjectRoot(cwd: string): string {
@@ -173,6 +192,7 @@ program
       }
       if (!opts.tmuxDashboardInternal) {
         initProject();
+        await ensureDaemonProjectReady(projectRoot);
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
         const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
@@ -264,7 +284,181 @@ const hostCmd = program.command("host").description("Manage the per-project aimu
 
 program
   .command("serve")
-  .description("Run the per-project aimux host sidecar in headless mode")
+  .description("Ensure the daemon-backed project control service is running")
+  .action(async () => {
+    const projectRoot = resolveProjectRoot(process.cwd());
+    if (projectRoot !== process.cwd()) {
+      process.chdir(projectRoot);
+    }
+    await initPaths(projectRoot);
+    await ensureDaemonProjectReady(projectRoot);
+    const status = await projectServiceStatus(projectRoot);
+    console.log(`aimux serve: daemon managing ${projectRoot}${status ? ` (service pid ${status.pid})` : ""}`);
+  });
+
+hostCmd
+  .command("status")
+  .description("Show current project control-service status")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    await initPaths();
+    await ensureDaemonRunning();
+    const projectRoot = resolveProjectRoot(process.cwd());
+    const project = await projectServiceStatus(projectRoot);
+    const endpoint = loadMetadataEndpoint(projectRoot);
+    const tmux = new TmuxRuntimeManager();
+    const session = tmux.getProjectSession(projectRoot);
+    const payload = {
+      projectRoot,
+      sessionName: session.sessionName,
+      daemon: loadDaemonInfo(),
+      host: project,
+      metadataEndpoint: endpoint,
+    };
+    if (opts.json) {
+      console.log(JSON.stringify(payload, null, 2));
+      return;
+    }
+    if (!project) {
+      console.log(`No live control service for ${session.sessionName}`);
+      return;
+    }
+    console.log(`Service pid=${project.pid}`);
+    console.log(`Started: ${project.startedAt}`);
+    console.log(`Metadata: ${endpoint ? `http://${endpoint.host}:${endpoint.port}` : "not running"}`);
+    console.log(`Tmux session: ${session.sessionName}`);
+  });
+
+hostCmd
+  .command("stop")
+  .description("Stop the current project's daemon-managed control service")
+  .action(async () => {
+    await initPaths();
+    const projectRoot = resolveProjectRoot(process.cwd());
+    const result = await stopProjectService(projectRoot);
+    if (!result) {
+      console.log("No live project service to stop.");
+      return;
+    }
+    removeMetadataEndpoint();
+    console.log(`Stopped project service pid ${result.pid}`);
+  });
+
+hostCmd
+  .command("kill")
+  .description("Force kill the current project's daemon-managed control service")
+  .action(async () => {
+    await initPaths();
+    const projectRoot = resolveProjectRoot(process.cwd());
+    const result = await stopProjectService(projectRoot);
+    if (!result) {
+      console.log("No live project service to kill.");
+      return;
+    }
+    removeMetadataEndpoint();
+    console.log(`Killed project service pid ${result.pid}`);
+  });
+
+hostCmd
+  .command("restart")
+  .description("Restart the current project's daemon-managed control service")
+  .option("--open", "Open the dashboard after restarting")
+  .option("--serve", "Restart the host in headless serve mode")
+  .action(async (opts: { open?: boolean; serve?: boolean }) => {
+    await initPaths();
+    const projectRoot = resolveProjectRoot(process.cwd());
+    await stopProjectService(projectRoot);
+    removeMetadataEndpoint();
+    await ensureDaemonProjectReady(projectRoot);
+    if (opts.serve) return;
+    const tmux = new TmuxRuntimeManager();
+    ensureTmuxAvailable(tmux);
+    const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
+    if (opts.open) {
+      tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
+      return;
+    }
+    console.log(`Restarted host for ${dashboardSession.sessionName}`);
+  });
+
+const daemonCmd = program.command("daemon").description("Manage the global aimux control-plane daemon");
+
+daemonCmd
+  .command("run")
+  .description("Internal daemon entrypoint")
+  .action(async () => {
+    const daemon = new AimuxDaemon();
+    await daemon.start();
+    const shutdown = () => {
+      daemon.stop();
+      process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    await new Promise(() => {});
+  });
+
+daemonCmd
+  .command("ensure")
+  .description("Ensure the global aimux daemon is running")
+  .action(async () => {
+    const info = await ensureDaemonRunning();
+    console.log(`aimux daemon: pid ${info.pid} on http://127.0.0.1:${info.port}`);
+  });
+
+daemonCmd
+  .command("status")
+  .description("Show daemon status")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const info = loadDaemonInfo();
+    const state = loadDaemonState();
+    const payload = {
+      daemon: info,
+      projects: Object.values(state.projects),
+    };
+    if (opts.json) {
+      console.log(JSON.stringify(payload, null, 2));
+      return;
+    }
+    if (!info) {
+      console.log("aimux daemon is not running.");
+      return;
+    }
+    console.log(`Daemon pid=${info.pid} port=${info.port}`);
+    console.log(`Managed projects: ${Object.keys(state.projects).length}`);
+  });
+
+daemonCmd
+  .command("projects")
+  .description("List projects through the daemon")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    await ensureDaemonRunning();
+    const result = await requestDaemonJson("/projects");
+    if (opts.json) {
+      console.log(JSON.stringify({ projects: result.projects }, null, 2));
+      return;
+    }
+    for (const project of result.projects as Array<any>) {
+      const badge = project.serviceAlive ? "service" : "idle";
+      console.log(`${project.name}  ${badge}  ${project.path}`);
+    }
+  });
+
+daemonCmd
+  .command("project-ensure")
+  .description("Ensure a project's control service is running")
+  .requiredOption("--project <path>", "Project path")
+  .action(async (opts: { project: string }) => {
+    const projectRoot = resolveProjectRoot(pathResolve(opts.project));
+    const project = await ensureProjectService(projectRoot);
+    console.log(`Ensured project service for ${projectRoot} (pid ${project.pid})`);
+  });
+
+program
+  .command("__project-service-internal")
+  .description("Internal daemon-managed project service entrypoint")
   .action(async () => {
     const projectRoot = resolveProjectRoot(process.cwd());
     if (projectRoot !== process.cwd()) {
@@ -301,135 +495,15 @@ program
     });
 
     try {
-      const exitCode = await mux.runServe();
+      const exitCode = await mux.runProjectService();
       cleanupAll();
       process.exit(exitCode);
     } catch (err: unknown) {
       cleanupAll();
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`aimux serve: ${msg}`);
+      console.error(`aimux project service: ${msg}`);
       process.exit(1);
     }
-  });
-
-hostCmd
-  .command("status")
-  .description("Show current project host status")
-  .option("--json", "Emit JSON")
-  .action(async (opts: { json?: boolean }) => {
-    await initPaths();
-    await pruneDeadProjectHost(process.cwd());
-    const host = loadProjectHost();
-    const endpoint = host ? loadMetadataEndpoint() : null;
-    const tmux = new TmuxRuntimeManager();
-    const session = tmux.getProjectSession(resolveProjectRoot(process.cwd()));
-    const payload = {
-      projectRoot: resolveProjectRoot(process.cwd()),
-      sessionName: session.sessionName,
-      host,
-      metadataEndpoint: endpoint,
-    };
-    if (opts.json) {
-      console.log(JSON.stringify(payload, null, 2));
-      return;
-    }
-    if (!host) {
-      console.log(`No live host for ${session.sessionName}`);
-      return;
-    }
-    console.log(`Host: ${host.instanceId} pid=${host.pid}`);
-    console.log(`Heartbeat: ${host.heartbeat}`);
-    console.log(`Metadata: ${endpoint ? `http://${endpoint.host}:${endpoint.port}` : "not running"}`);
-    console.log(`Tmux session: ${session.sessionName}`);
-  });
-
-hostCmd
-  .command("stop")
-  .description("Stop the current project host sidecar/dashboard process")
-  .action(async () => {
-    await initPaths();
-    const result = await terminateProjectHost(process.cwd(), "SIGTERM");
-    if (!result.host) {
-      console.log("No live project host to stop.");
-      return;
-    }
-    removeMetadataEndpoint();
-    await clearProjectHost(process.cwd());
-    console.log(`Stopped host ${result.host.instanceId} (pid ${result.host.pid})`);
-  });
-
-hostCmd
-  .command("kill")
-  .description("Force kill the current project host process")
-  .action(async () => {
-    await initPaths();
-    const result = await terminateProjectHost(process.cwd(), "SIGKILL");
-    if (!result.host) {
-      console.log("No live project host to kill.");
-      return;
-    }
-    removeMetadataEndpoint();
-    await clearProjectHost(process.cwd());
-    console.log(`Killed host ${result.host.instanceId} (pid ${result.host.pid})`);
-  });
-
-hostCmd
-  .command("restart")
-  .description("Restart the current project host/dashboard process")
-  .option("--open", "Open the dashboard after restarting")
-  .option("--serve", "Restart the host in headless serve mode")
-  .action(async (opts: { open?: boolean; serve?: boolean }) => {
-    await initPaths();
-    await terminateProjectHost(process.cwd(), "SIGTERM");
-    removeMetadataEndpoint();
-    await clearProjectHost(process.cwd());
-    if (opts.serve) {
-      initProject();
-      const mux = new Multiplexer();
-      let cleanedUp = false;
-      const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
-      const cleanupAll = () => {
-        if (cleanedUp) return;
-        cleanedUp = true;
-        mux.cleanup();
-      };
-      const shutdown = () => {
-        cleanupAll();
-        process.exit(0);
-      };
-      process.on("exit", ensureTerminalRestored);
-      process.on("SIGINT", shutdown);
-      process.on("SIGTERM", shutdown);
-      process.on("uncaughtException", (err) => {
-        cleanupAll();
-        console.error(err);
-        process.exit(1);
-      });
-      process.on("unhandledRejection", (reason) => {
-        cleanupAll();
-        console.error(reason);
-        process.exit(1);
-      });
-      try {
-        const exitCode = await mux.runServe();
-        cleanupAll();
-        process.exit(exitCode);
-      } catch (err: unknown) {
-        cleanupAll();
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`aimux host restart --serve: ${msg}`);
-        process.exit(1);
-      }
-    }
-    const projectRoot = resolveProjectRoot(process.cwd());
-    const tmux = new TmuxRuntimeManager();
-    ensureTmuxAvailable(tmux);
-    const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
-    if (opts.open) {
-      tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
-      return;
-    }
-    console.log(`Restarted host for ${dashboardSession.sessionName}`);
   });
 
 const projectsCmd = program.command("projects").description("Inspect known aimux projects");
@@ -438,8 +512,10 @@ projectsCmd
   .command("list")
   .description("List known aimux projects")
   .option("--json", "Emit JSON")
-  .action((opts: { json?: boolean }) => {
-    const projects = listDesktopProjects();
+  .action(async (opts: { json?: boolean }) => {
+    await ensureDaemonRunning();
+    const result = await requestDaemonJson("/projects");
+    const projects = result.projects as ReturnType<typeof listDesktopProjects>;
     if (opts.json) {
       console.log(JSON.stringify({ projects }, null, 2));
       return;
@@ -473,6 +549,7 @@ desktopCmd
     const projectRoot = resolveProjectRoot(requestedPath);
     await initPaths(projectRoot);
     initProject();
+    await ensureDaemonProjectReady(projectRoot);
 
     const tmux = new TmuxRuntimeManager();
     ensureTmuxAvailable(tmux);
@@ -489,6 +566,7 @@ desktopCmd
     const requestedPath = pathResolve(opts.project);
     const projectRoot = resolveProjectRoot(requestedPath);
     await initPaths(projectRoot);
+    await ensureDaemonProjectReady(projectRoot);
 
     const tmux = new TmuxRuntimeManager();
     ensureTmuxAvailable(tmux);
@@ -519,6 +597,7 @@ desktopCmd
     const requestedPath = pathResolve(opts.project);
     const projectRoot = resolveProjectRoot(requestedPath);
     await initPaths(projectRoot);
+    await ensureDaemonProjectReady(projectRoot);
 
     const tmux = new TmuxRuntimeManager();
     ensureTmuxAvailable(tmux);

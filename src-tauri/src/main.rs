@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{Emitter, Manager, State};
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -58,46 +58,21 @@ fn shell_path() -> String {
   parts.join(":")
 }
 
-fn is_pid_alive(pid: u32) -> bool {
-  unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-
 // ── Data types ────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
-struct ProjectsRegistry {
-  projects: Vec<ProjectEntry>,
-}
-
 #[derive(Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ProjectEntry {
-  id: String,
-  name: String,
-  repo_root: String,
-  last_seen: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct MetadataEndpoint {
-  host: String,
-  port: u16,
-  pid: u32,
-}
-
-#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ProjectInfo {
   id: String,
   name: String,
   path: String,
   last_seen: Option<String>,
-  host_alive: bool,
-  host_port: Option<u16>,
+  service_alive: bool,
+  service_pid: Option<u32>,
   statusline: Option<Value>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HeartbeatResponse {
   projects: Vec<ProjectInfo>,
@@ -136,29 +111,30 @@ struct TerminalSession {
 
 // ── Commands: unified heartbeat ───────────────────────────────────
 
+static LAST_STATUSLINES: LazyLock<Mutex<HashMap<String, Value>>> =
+  LazyLock::new(|| Mutex::new(HashMap::new()));
+
 #[tauri::command]
 fn heartbeat() -> Result<HeartbeatResponse, String> {
-  let registry_path = aimux_global_dir().join("projects.json");
-  let content = fs::read_to_string(&registry_path)
-    .map_err(|e| format!("failed to read projects.json: {e}"))?;
-  let registry: ProjectsRegistry =
-    serde_json::from_str(&content).map_err(|e| format!("invalid projects.json: {e}"))?;
+  let output = std::process::Command::new(resolve_node())
+    .arg(aimux_entrypoint())
+    .args(["daemon", "projects", "--json"])
+    .env("PATH", shell_path())
+    .output()
+    .map_err(|e| format!("failed to read daemon projects: {e}"))?;
 
-  let projects = registry
+  let response: HeartbeatResponse = serde_json::from_slice(&output.stdout)
+    .map_err(|e| format!("invalid daemon projects JSON: {e}"))?;
+
+  let projects = response
     .projects
     .into_iter()
-    .map(|entry| {
-      let project_dir = aimux_global_dir().join("projects").join(&entry.id);
-      let (host_alive, host_port) = check_host(&project_dir);
-      let statusline = read_statusline_file(&project_dir);
+    .map(|project| {
+      let project_dir = aimux_global_dir().join("projects").join(&project.id);
+      let statusline = read_statusline_cached(&project.id, &project_dir).or(project.statusline.clone());
       ProjectInfo {
-        id: entry.id,
-        name: entry.name,
-        path: entry.repo_root,
-        last_seen: entry.last_seen,
-        host_alive,
-        host_port,
         statusline,
+        ..project
       }
     })
     .collect();
@@ -166,20 +142,38 @@ fn heartbeat() -> Result<HeartbeatResponse, String> {
   Ok(HeartbeatResponse { projects })
 }
 
-fn check_host(project_dir: &Path) -> (bool, Option<u16>) {
-  let endpoint_path = project_dir.join("metadata-api.json");
-  let content = match fs::read_to_string(&endpoint_path) {
-    Ok(c) if !c.trim().is_empty() => c,
-    _ => return (false, None),
-  };
-  let endpoint: MetadataEndpoint = match serde_json::from_str(&content) {
-    Ok(e) => e,
-    Err(_) => return (false, None),
-  };
-  if is_pid_alive(endpoint.pid) {
-    (true, Some(endpoint.port))
-  } else {
-    (false, None)
+fn read_statusline_cached(project_id: &str, project_dir: &Path) -> Option<Value> {
+  let fresh = read_statusline_file(project_dir);
+  let mut cache = LAST_STATUSLINES.lock().unwrap_or_else(|e| e.into_inner());
+
+  match fresh {
+    Some(data) => {
+      // Only accept fresh data if it doesn't look like a mid-write snapshot.
+      // The host momentarily writes sessions:[] during refresh — don't cache that
+      // if we already have a richer version.
+      let fresh_count = data
+        .get("sessions")
+        .and_then(Value::as_array)
+        .map(|a| a.len())
+        .unwrap_or(0);
+
+      if let Some(cached) = cache.get(project_id) {
+        let cached_count = cached
+          .get("sessions")
+          .and_then(Value::as_array)
+          .map(|a| a.len())
+          .unwrap_or(0);
+
+        if fresh_count == 0 && cached_count > 0 {
+          // Fresh read has no sessions but cache does — keep cache
+          return Some(cached.clone());
+        }
+      }
+
+      cache.insert(project_id.to_string(), data.clone());
+      Some(data)
+    }
+    None => cache.get(project_id).cloned(),
   }
 }
 
@@ -205,49 +199,16 @@ fn read_statusline_file(project_dir: &Path) -> Option<Value> {
 // ── Commands: host management ─────────────────────────────────────
 
 #[tauri::command]
-fn ensure_host(project_path: String) -> Result<Value, String> {
-  // Check if host is already running via `aimux host status --json`
+fn ensure_daemon_project(project_path: String) -> Result<Value, String> {
   let output = std::process::Command::new(resolve_node())
     .arg(aimux_entrypoint())
-    .args(["host", "status", "--json"])
+    .args(["daemon", "project-ensure", "--project", &project_path])
     .current_dir(&project_path)
     .env("PATH", shell_path())
     .output()
-    .map_err(|e| format!("failed to check host status: {e}"))?;
+    .map_err(|e| format!("failed to ensure daemon project service: {e}"))?;
 
-  let status: Value = serde_json::from_slice(&output.stdout)
-    .map_err(|e| format!("invalid host status JSON: {e}"))?;
-
-  // If host is running, return its info
-  if status.get("host").is_some_and(|h| !h.is_null()) {
-    return Ok(status);
-  }
-
-  // No host — spawn `aimux serve` in background
-  std::process::Command::new(resolve_node())
-    .arg(aimux_entrypoint())
-    .arg("serve")
-    .current_dir(&project_path)
-    .env("PATH", shell_path())
-    .stdin(std::process::Stdio::null())
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null())
-    .spawn()
-    .map_err(|e| format!("failed to spawn aimux serve: {e}"))?;
-
-  // Give it a moment to start, then re-check
-  std::thread::sleep(std::time::Duration::from_millis(1500));
-
-  let output2 = std::process::Command::new(resolve_node())
-    .arg(aimux_entrypoint())
-    .args(["host", "status", "--json"])
-    .current_dir(&project_path)
-    .env("PATH", shell_path())
-    .output()
-    .map_err(|e| format!("failed to re-check host status: {e}"))?;
-
-  serde_json::from_slice(&output2.stdout)
-    .map_err(|e| format!("invalid host status JSON after spawn: {e}"))
+  serde_json::from_slice(&output.stdout).or_else(|_| Ok(serde_json::json!({ "ok": output.status.success() })))
 }
 
 // ── Commands: terminal PTY ────────────────────────────────────────
@@ -419,7 +380,7 @@ fn main() {
     .manage(TerminalRegistry::default())
     .invoke_handler(tauri::generate_handler![
       heartbeat,
-      ensure_host,
+      ensure_daemon_project,
       spawn_aimux,
       write_terminal,
       resize_terminal,
