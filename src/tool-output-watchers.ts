@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentObservation, AgentWatcherContext } from "./agent-watcher.js";
 import type { AimuxPluginInstance } from "./plugin-runtime.js";
-import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import type { SessionServiceMetadata } from "./metadata-store.js";
 
 interface PaneSnapshot {
@@ -191,7 +191,7 @@ export function createToolOutputWatcher(context: AgentWatcherContext): AimuxPlug
     }
 
     for (const { target, metadata } of windows) {
-      if (!metadata.sessionId || target.windowName === "dashboard" || target.windowIndex === 0) continue;
+      if (!metadata.sessionId || isDashboardWindowName(target.windowName)) continue;
       let text = "";
       try {
         text = tmux.captureTarget(target, { startLine: -80 });

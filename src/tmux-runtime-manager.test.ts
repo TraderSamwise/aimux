@@ -14,11 +14,20 @@ function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: str
     const joined = args.join(" ");
     if (joined === "-V") return "tmux 3.5a";
     if (joined.startsWith("has-session -t ")) throw new Error("missing");
+    if (joined.startsWith("list-windows -t aimux-mobile-abc-client-")) {
+      const linked = calls.some((call) => call.args[0] === "link-window");
+      return linked ? "@0\t0\tdashboard-268eff9c\t1\n@3\t3\tcodex\t0" : "@0\t0\tdashboard-268eff9c\t1";
+    }
     if (joined.startsWith("list-windows -t ")) return "";
     if (joined.startsWith("display-message -p -t @0 #{pane_dead}")) return "0";
     if (joined === "display-message -p #{client_session}") return "user-main";
+    if (joined === "display-message -p #{client_tty}") return "/dev/ttys111";
     if (joined === "display-message -p #{window_id}") return "@3";
     if (joined === "display-message -p #{window_name}") return "codex";
+    if (joined.startsWith("show-options -v -t aimux-mobile-abc @aimux-project-root")) return "/repo/mobile";
+    if (joined.startsWith("show-options -v -t aimux-mobile-abc @aimux-statusline-command")) {
+      return JSON.stringify({ command: "aimux", args: ["tmux-statusline"] });
+    }
     if (joined.startsWith("show-options -v -t aimux-mobile-abc @aimux-return-session")) return "user-main";
     if (joined.startsWith("show-options -v -t aimux-mobile-abc terminal-features")) return "";
     if (joined.startsWith("show-window-options -v -t @3 @aimux-meta")) {
@@ -250,6 +259,7 @@ describe("TmuxRuntimeManager", () => {
       interactiveCalls.push({ args, cwd: options?.cwd });
     };
     const manager = new TmuxRuntimeManager(exec, interactiveExec);
+    const clientSessionName = manager.getProjectClientSessionName("aimux-mobile-abc", "268eff9c");
     const target = {
       sessionName: "aimux-mobile-abc",
       windowId: "@3",
@@ -257,16 +267,30 @@ describe("TmuxRuntimeManager", () => {
       windowName: "codex",
     };
 
-    manager.openTarget(target, { insideTmux: true });
-    manager.openTarget(target, { insideTmux: false });
+    const prev = process.env.AIMUX_CLIENT_KEY;
+    process.env.AIMUX_CLIENT_KEY = "test-client";
+    try {
+      manager.openTarget(target, { insideTmux: true });
+      manager.openTarget(target, { insideTmux: false });
+    } finally {
+      if (prev === undefined) delete process.env.AIMUX_CLIENT_KEY;
+      else process.env.AIMUX_CLIENT_KEY = prev;
+    }
 
     expect(
       exec.calls.some(
-        (call) => call.args.join(" ") === "set-option -t aimux-mobile-abc @aimux-return-session user-main",
+        (call) => call.args.join(" ") === `set-option -t ${clientSessionName} @aimux-return-session user-main`,
       ),
     ).toBe(true);
-    expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-t", "aimux-mobile-abc:3"]);
-    expect(interactiveCalls.at(-1)?.args).toEqual(["attach-session", "-t", "aimux-mobile-abc:3"]);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args.join(" ") ===
+          `new-session -d -s ${clientSessionName} -c /repo/mobile -n dashboard-268eff9c sh -lc tail -f /dev/null`,
+      ),
+    ).toBe(true);
+    expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-t", `${clientSessionName}:3`]);
+    expect(interactiveCalls.at(-1)?.args).toEqual(["attach-session", "-t", `${clientSessionName}:3`]);
   });
 
   it("leaves managed tmux sessions by switching back when nested", () => {
@@ -275,7 +299,20 @@ describe("TmuxRuntimeManager", () => {
     const interactiveExec: TmuxInteractiveExec = (args, options) => {
       interactiveCalls.push({ args, cwd: options?.cwd });
     };
-    const manager = new TmuxRuntimeManager(exec, interactiveExec);
+    const probeManager = new TmuxRuntimeManager(exec, interactiveExec);
+    const clientSessionName = probeManager.getProjectClientSessionName("aimux-mobile-abc", "test-client");
+    const manager = new TmuxRuntimeManager(
+      ((args, options) => {
+        if (args.join(" ") === "display-message -p #{client_session}") {
+          return clientSessionName;
+        }
+        if (args.join(" ") === `show-options -v -t ${clientSessionName} @aimux-return-session`) {
+          return "user-main";
+        }
+        return exec(args, options);
+      }) as TmuxExec,
+      interactiveExec,
+    );
 
     manager.leaveManagedSession({ insideTmux: true, sessionName: "aimux-mobile-abc" });
     manager.leaveManagedSession({ insideTmux: false });

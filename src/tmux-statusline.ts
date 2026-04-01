@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { getProjectStateDirFor } from "./paths.js";
-import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import {
   currentPathContext,
   renderDashboardScreens,
@@ -203,7 +203,7 @@ function renderBottomLine(
   if (!data) return "";
   const tmuxRuntimeManager = new TmuxRuntimeManager();
   const sessionSegments =
-    currentWindow === "dashboard"
+    currentWindow && isDashboardWindowName(currentWindow)
       ? renderDashboardScreens(data.dashboardScreen)
       : resolveScopedSessions(
           data,
@@ -213,9 +213,7 @@ function renderBottomLine(
           currentWindow,
           currentWindowId,
           currentPath,
-        ).map(
-          renderSessionChip,
-        );
+        ).map(renderSessionChip);
   const segments = [...sessionSegments, renderActiveHeadline(data)].filter((segment): segment is string =>
     Boolean(segment),
   );

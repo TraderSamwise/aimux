@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { execSync } from "node:child_process";
 import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
 import type { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 
 export interface StatuslineSession {
   id: string;
@@ -186,7 +187,7 @@ export function resolveScopedSessions(
   const sessionMap = new Map((data.sessions ?? []).map((session) => [session.id, session]));
   return windows
     .filter(({ target, metadata }) => {
-      if (target.windowName === "dashboard" || target.windowIndex === 0) return false;
+      if (isDashboardWindowName(target.windowName)) return false;
       return normalizePath(metadata.worktreePath, projectRoot) === normalizedCurrentPath;
     })
     .slice(0, 5)
@@ -211,7 +212,7 @@ export function resolveScopedSessions(
           ? target.windowId === currentWindowId
           : currentWindow
             ? matchesCurrentPath && (target.windowName === currentWindow || metadata.label === currentWindow)
-          : Boolean(session.active),
+            : Boolean(session.active),
       };
     });
 }

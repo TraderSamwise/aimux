@@ -18,7 +18,7 @@ import { initProject } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
-import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./tmux-doctor.js";
 import { renderTmuxStatusline, type TmuxStatusLine } from "./tmux-statusline.js";
 import {
@@ -90,7 +90,8 @@ function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManage
     },
     statuslineCommand,
   );
-  const dashboardTarget = tmux.ensureDashboardWindow(dashboardSession.sessionName, projectRoot, dashboardCommand);
+  const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
+  const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
   const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
   const shouldRespawnDashboard = !tmux.isWindowAlive(dashboardTarget) || currentBuildStamp !== dashboardBuildStamp;
   if (shouldRespawnDashboard) {
@@ -111,7 +112,8 @@ function forceReloadDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeM
     },
     statuslineCommand,
   );
-  const dashboardTarget = tmux.ensureDashboardWindow(dashboardSession.sessionName, projectRoot, dashboardCommand);
+  const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
+  const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
   tmux.respawnWindow(dashboardTarget, dashboardCommand);
   tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
   return { dashboardSession, dashboardTarget };
@@ -751,9 +753,9 @@ program
     const managed = tmux
       .listManagedWindows(tmuxSession.sessionName)
       .filter(({ target, metadata }) => {
-        if (target.windowName === "dashboard" || target.windowIndex === 0) return false;
+        if (isDashboardWindowName(target.windowName)) return false;
         if (action === "attention") return true;
-        if (opts.currentWindow === "dashboard") return false;
+        if (opts.currentWindow && isDashboardWindowName(opts.currentWindow)) return false;
         const worktreePath = metadata.worktreePath || opts.projectRoot;
         return worktreePath === opts.currentPath;
       })

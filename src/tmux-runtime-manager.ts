@@ -73,6 +73,10 @@ export interface TmuxWindowMetadata {
   statusText?: string;
 }
 
+export function isDashboardWindowName(name: string): boolean {
+  return name === "dashboard" || name.startsWith("dashboard-");
+}
+
 export const MANAGED_TMUX_SESSION_OPTIONS = Object.freeze({
   prefix: "C-a",
   prefix2: "C-b",
@@ -141,6 +145,71 @@ export class TmuxRuntimeManager {
       projectId,
       sessionName: `${prefix}-${slug}-${projectId}`,
     };
+  }
+
+  getProjectClientSessionName(hostSessionName: string, clientSuffix: string): string {
+    return `${hostSessionName}-client-${clientSuffix}`;
+  }
+
+  isClientSessionName(sessionName: string): boolean {
+    return /-client-[a-f0-9]{8}$/.test(sessionName);
+  }
+
+  getOpenSessionName(sessionName: string, insideTmux = this.isInsideTmux()): string {
+    return this.resolveOpenSessionName(sessionName, insideTmux);
+  }
+
+  private ensureClientSession(
+    hostSessionName: string,
+    clientSessionName: string,
+    projectRoot: string,
+    statuslineCommand?: TmuxStatuslineCommandSpec,
+  ): void {
+    const dashboardName = `dashboard-${clientSessionName.match(/-client-([a-f0-9]{8})$/)?.[1] ?? "client"}`;
+    const hostDashboard = this.listWindows(hostSessionName).find((window) => isDashboardWindowName(window.name));
+    const existingDashboard = this.hasSession(clientSessionName)
+      ? this.listWindows(clientSessionName).find((window) => isDashboardWindowName(window.name))
+      : undefined;
+    const needsRecreate =
+      !!hostDashboard &&
+      !!existingDashboard &&
+      (existingDashboard.id === hostDashboard.id || existingDashboard.name === "dashboard");
+
+    if (needsRecreate) {
+      this.exec(["kill-session", "-t", clientSessionName]);
+    }
+
+    if (!this.hasSession(clientSessionName)) {
+      this.exec(
+        [
+          "new-session",
+          "-d",
+          "-s",
+          clientSessionName,
+          "-c",
+          projectRoot,
+          "-n",
+          dashboardName,
+          "sh",
+          "-lc",
+          "tail -f /dev/null",
+        ],
+        { cwd: projectRoot },
+      );
+    }
+    this.configureSession(clientSessionName, projectRoot, statuslineCommand);
+    this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
+  }
+
+  private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget): TmuxTarget {
+    const existing = this.getTargetByWindowId(clientSessionName, target.windowId);
+    if (existing) return existing;
+    this.exec(["link-window", "-d", "-s", target.windowId, "-t", clientSessionName]);
+    const linked = this.getTargetByWindowId(clientSessionName, target.windowId);
+    if (!linked) {
+      throw new Error(`Failed to link window ${target.windowId} into tmux session ${clientSessionName}`);
+    }
+    return linked;
   }
 
   private getSessionPrefix(): string {
@@ -252,14 +321,15 @@ export class TmuxRuntimeManager {
   }
 
   ensureDashboardWindow(sessionName: string, projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxTarget {
-    const existing = this.listWindows(sessionName).find((window) => window.index === 0 || window.name === "dashboard");
+    const dashboardName = this.getDashboardWindowName();
+    const existing = this.listWindows(sessionName).find((window) => window.name === dashboardName);
     if (existing) {
-      this.renameWindow(existing.id, "dashboard");
+      this.renameWindow(existing.id, dashboardName);
       return {
         sessionName,
         windowId: existing.id,
         windowIndex: existing.index,
-        windowName: "dashboard",
+        windowName: dashboardName,
       };
     }
     const argv =
@@ -268,31 +338,19 @@ export class TmuxRuntimeManager {
             "new-window",
             "-d",
             "-t",
-            `${sessionName}:0`,
+            sessionName,
             "-c",
             dashboardCommand.cwd,
             "-n",
-            "dashboard",
+            dashboardName,
             dashboardCommand.command,
             ...dashboardCommand.args,
           ]
-        : [
-            "new-window",
-            "-d",
-            "-t",
-            `${sessionName}:0`,
-            "-c",
-            projectRoot,
-            "-n",
-            "dashboard",
-            "sh",
-            "-lc",
-            "printf ''",
-          ];
+        : ["new-window", "-d", "-t", sessionName, "-c", projectRoot, "-n", dashboardName, "sh", "-lc", "printf ''"];
     this.exec(argv, {
       cwd: projectRoot,
     });
-    const created = this.listWindows(sessionName).find((window) => window.index === 0);
+    const created = this.listWindows(sessionName).find((window) => window.name === dashboardName);
     if (!created) {
       throw new Error(`Failed to create dashboard window in tmux session ${sessionName}`);
     }
@@ -387,7 +445,10 @@ export class TmuxRuntimeManager {
   }
 
   getAttachedClientForTarget(target: TmuxTarget): TmuxClientInfo | null {
-    const clients = this.listClients().filter((client) => client.sessionName === target.sessionName);
+    const clientPrefix = `${target.sessionName}-client-`;
+    const clients = this.listClients().filter(
+      (client) => client.sessionName === target.sessionName || client.sessionName.startsWith(clientPrefix),
+    );
     if (clients.length === 0) return null;
     return clients.find((client) => client.windowId === target.windowId) ?? clients[0] ?? null;
   }
@@ -549,11 +610,14 @@ export class TmuxRuntimeManager {
   }
 
   leaveManagedSession(options: { insideTmux?: boolean; sessionName?: string } = {}): void {
-    if (options.insideTmux && options.sessionName) {
-      const returnSession = this.getReturnSession(options.sessionName);
+    const activeSession = options.insideTmux
+      ? (this.currentClientSession() ?? options.sessionName)
+      : options.sessionName;
+    if (options.insideTmux && activeSession) {
+      const returnSession = this.getReturnSession(activeSession);
       const managedPrefix = `${this.getSessionPrefix()}-`;
       const isExternalReturn =
-        returnSession && returnSession !== options.sessionName && !returnSession.startsWith(managedPrefix);
+        returnSession && returnSession !== activeSession && !returnSession.startsWith(managedPrefix);
       if (isExternalReturn) {
         try {
           this.interactiveExec(["switch-client", "-t", returnSession!]);
@@ -573,15 +637,23 @@ export class TmuxRuntimeManager {
   }
 
   openTarget(target: TmuxTarget, options: OpenTargetOptions = {}): void {
+    const sessionName = this.resolveOpenSessionName(target.sessionName, options.insideTmux === true);
+    const effectiveTarget =
+      sessionName !== target.sessionName && !isDashboardWindowName(target.windowName)
+        ? this.ensureLinkedWindow(sessionName, target)
+        : {
+            ...target,
+            sessionName,
+          };
     if (options.insideTmux) {
       const current = this.currentClientSession();
-      if (current && current !== target.sessionName) {
-        this.setReturnSession(target.sessionName, current);
+      if (current && current !== sessionName) {
+        this.setReturnSession(sessionName, current);
       }
-      this.switchClient(target.sessionName, target.windowIndex);
+      this.switchClient(sessionName, effectiveTarget.windowIndex);
       return;
     }
-    this.attachSession(target.sessionName, target.windowIndex);
+    this.attachSession(sessionName, effectiveTarget.windowIndex);
   }
 
   private configureSession(
@@ -589,6 +661,7 @@ export class TmuxRuntimeManager {
     projectRoot: string,
     statuslineCommand?: TmuxStatuslineCommandSpec,
   ): void {
+    this.exec(["set-option", "-t", sessionName, "@aimux-project-root", projectRoot]);
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
     this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);
@@ -687,6 +760,7 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "window-status-format", ""]);
     this.exec(["set-option", "-t", sessionName, "window-status-current-format", ""]);
     if (statuslineCommand) {
+      this.exec(["set-option", "-t", sessionName, "@aimux-statusline-command", JSON.stringify(statuslineCommand)]);
       const top = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line top --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
       const bottom = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line bottom --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
       this.exec(["set-option", "-t", sessionName, "status-left", ""]);
@@ -722,6 +796,65 @@ export class TmuxRuntimeManager {
       .filter(Boolean);
     if (features?.includes(feature)) return;
     this.exec(["set-option", "-as", "-t", sessionName, "terminal-features", `,${feature}`]);
+  }
+
+  private resolveOpenSessionName(sessionName: string, insideTmux: boolean): string {
+    if (!this.isManagedSessionName(sessionName) || this.isClientSessionName(sessionName)) return sessionName;
+    const clientSuffix = this.resolveClientSuffix(insideTmux);
+    if (!clientSuffix) return sessionName;
+    const clientSessionName = this.getProjectClientSessionName(sessionName, clientSuffix);
+    const projectRoot = this.getSessionOption(sessionName, "@aimux-project-root");
+    const statuslineCommand = this.getManagedStatuslineCommand(sessionName);
+    if (projectRoot) {
+      this.ensureClientSession(sessionName, clientSessionName, projectRoot, statuslineCommand);
+    }
+    return clientSessionName;
+  }
+
+  private getDashboardWindowName(): string {
+    const clientSuffix = this.resolveClientSuffix(this.isInsideTmux());
+    if (!clientSuffix) return "dashboard";
+    return `dashboard-${clientSuffix}`;
+  }
+
+  private normalizeClientSuffix(value: string): string {
+    if (/^[a-f0-9]{8}$/.test(value)) return value;
+    return createHash("sha1").update(value).digest("hex").slice(0, 8);
+  }
+
+  private resolveClientSuffix(insideTmux: boolean): string | null {
+    const override = process.env.AIMUX_CLIENT_KEY?.trim();
+    if (override) return this.normalizeClientSuffix(override);
+    if (insideTmux) {
+      const currentSession = this.currentClientSession();
+      if (currentSession) {
+        const match = currentSession.match(/-client-([a-f0-9]{8})$/);
+        if (match) return match[1]!;
+      }
+      const clientTty = this.displayMessage("#{client_tty}");
+      const clientPid = this.displayMessage("#{client_pid}");
+      if (clientTty || clientPid) return this.normalizeClientSuffix(`${clientTty ?? "tty"}:${clientPid ?? "pid"}`);
+      return null;
+    }
+    try {
+      const tty = execFileSync("tty", {
+        encoding: "utf8",
+        stdio: ["inherit", "pipe", "ignore"],
+      }).trim();
+      return this.normalizeClientSuffix(`${tty}:${process.ppid}`);
+    } catch {
+      return null;
+    }
+  }
+
+  private getManagedStatuslineCommand(sessionName: string): TmuxStatuslineCommandSpec | undefined {
+    const raw = this.getSessionOption(sessionName, "@aimux-statusline-command");
+    if (!raw) return undefined;
+    try {
+      return JSON.parse(raw) as TmuxStatuslineCommandSpec;
+    } catch {
+      return undefined;
+    }
   }
 }
 

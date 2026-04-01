@@ -42,6 +42,7 @@ import { buildDashboardSessions, orderDashboardSessionsByVisualWorktree } from "
 import { AgentTracker } from "./agent-tracker.js";
 import { InstanceDirectory } from "./instance-directory.js";
 import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./tmux-runtime-manager.js";
+import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
 import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState, removeMetadataEndpoint } from "./metadata-store.js";
@@ -224,7 +225,8 @@ export class Multiplexer {
 
   private openTmuxDashboardTarget(): void {
     const session = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
-    const target = this.tmuxRuntimeManager.ensureDashboardWindow(session.sessionName, process.cwd());
+    const openSession = this.tmuxRuntimeManager.getOpenSessionName(session.sessionName);
+    const target = this.tmuxRuntimeManager.ensureDashboardWindow(openSession, process.cwd());
     this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
   }
 
@@ -3324,7 +3326,7 @@ export class Multiplexer {
       "Help",
       "",
       "Tmux mode",
-      "  Dashboard lives in tmux window 0",
+      "  Dashboard lives in a managed tmux dashboard window",
       "  Each agent runs in its own tmux window",
       "  Use normal tmux window navigation inside agents",
       "  Run aimux with no args to return to the dashboard window",
@@ -4190,7 +4192,7 @@ export class Multiplexer {
     const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
 
     for (const { target, metadata } of this.tmuxRuntimeManager.listManagedWindows(tmuxSession.sessionName)) {
-      if (target.windowName === "dashboard" || target.windowIndex === 0) continue;
+      if (isDashboardWindowName(target.windowName)) continue;
       if (this.sessions.some((session) => session.id === metadata.sessionId)) continue;
 
       const transport = new TmuxSessionTransport(
