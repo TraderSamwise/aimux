@@ -49,3 +49,9 @@ export function resolveOrchestrationTarget(input: RouteTargetInput): RoutingCand
     (a, b) => scoreCandidate(b, input) - scoreCandidate(a, input) || a.id.localeCompare(b.id),
   )[0];
 }
+
+export function resolveOrchestrationRecipients(input: RouteTargetInput): string[] {
+  if (input.to) return [input.to];
+  const target = resolveOrchestrationTarget(input);
+  return target ? [target.id] : [];
+}

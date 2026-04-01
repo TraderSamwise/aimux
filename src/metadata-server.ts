@@ -33,6 +33,9 @@ interface MetadataServerOptions {
       threadId?: string;
       from?: string;
       to?: string[];
+      assignee?: string;
+      tool?: string;
+      worktreePath?: string;
       kind?: MessageKind;
       body: string;
       title?: string;
@@ -44,7 +47,15 @@ interface MetadataServerOptions {
     };
   };
   actions?: {
-    sendHandoff?: (input: { from?: string; to?: string[]; body: string; title?: string; worktreePath?: string }) => {
+    sendHandoff?: (input: {
+      from?: string;
+      to?: string[];
+      assignee?: string;
+      tool?: string;
+      body: string;
+      title?: string;
+      worktreePath?: string;
+    }) => {
       thread: unknown;
       message: unknown;
       deliveredTo?: string[];
@@ -303,6 +314,9 @@ export class MetadataServer {
           threadId?: string;
           from?: string;
           to?: string[];
+          assignee?: string;
+          tool?: string;
+          worktreePath?: string;
           kind?: MessageKind;
           body: string;
           title?: string;
@@ -323,6 +337,7 @@ export class MetadataServer {
                 kind: body.kind as any,
                 body: body.body,
                 title: body.title,
+                worktreePath: body.worktreePath,
               });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
@@ -345,6 +360,8 @@ export class MetadataServer {
         const body = (await readJson(req)) as {
           from?: string;
           to?: string[];
+          assignee?: string;
+          tool?: string;
           body: string;
           title?: string;
           worktreePath?: string;

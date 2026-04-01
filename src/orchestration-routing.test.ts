@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveOrchestrationTarget } from "./orchestration-routing.js";
+import { resolveOrchestrationRecipients, resolveOrchestrationTarget } from "./orchestration-routing.js";
 
 describe("orchestration routing", () => {
   const candidates = [
@@ -20,5 +20,11 @@ describe("orchestration routing", () => {
     expect(resolveOrchestrationTarget({ candidates, tool: "codex", worktreePath: "/repo/api" })?.id).toBe(
       "codex-coder",
     );
+  });
+
+  it("returns routed recipients as a session id list", () => {
+    expect(resolveOrchestrationRecipients({ candidates, assignee: "ui", worktreePath: "/repo/ui" })).toEqual([
+      "claude-ui",
+    ]);
   });
 });

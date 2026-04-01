@@ -745,8 +745,8 @@ messageCmd
         ?.split(",")
         .map((value) => value.trim())
         .filter(Boolean);
-      if ((!to || to.length === 0) && !opts.thread) {
-        console.error("aimux: message send requires --to for now");
+      if ((!to || to.length === 0) && !opts.thread && !opts.assignee && !opts.tool) {
+        console.error("aimux: message send requires --to, --assignee, or --tool");
         process.exit(1);
       }
       try {
@@ -754,6 +754,9 @@ messageCmd
           threadId: opts.thread,
           from: opts.from ?? "user",
           to,
+          assignee: opts.assignee,
+          tool: opts.tool,
+          worktreePath: opts.worktree,
           kind: (opts.kind as MessageKind) ?? "request",
           body,
           title: opts.title,
@@ -792,38 +795,54 @@ handoffCmd
   .command("send")
   .description("Open a handoff thread and transfer ownership/context to another agent")
   .argument("<body>")
-  .requiredOption("--to <ids>", "Comma-separated recipient session ids")
+  .option("--to <ids>", "Comma-separated recipient session ids")
+  .option("--assignee <role>", "Route to a role if no explicit session id is provided")
+  .option("--tool <tool>", "Route to a tool if no explicit session id is provided")
+  .option("--worktree <path>", "Prefer a target in this worktree")
   .option("--from <sessionId>", "Sender session id", "user")
   .option("--title <title>", "Handoff thread title")
-  .action(async (body: string, opts: { to: string; from?: string; title?: string }) => {
-    const to = opts.to
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    try {
-      const result = await postHostJson("/handoff", {
-        from: opts.from ?? "user",
-        to,
-        body,
-        title: opts.title,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-      if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
-        console.log(`delivered ${result.deliveredTo.join(",")}`);
+  .action(
+    async (
+      body: string,
+      opts: { to?: string; assignee?: string; tool?: string; worktree?: string; from?: string; title?: string },
+    ) => {
+      const to = opts.to
+        ?.split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      if ((!to || to.length === 0) && !opts.assignee && !opts.tool) {
+        console.error("aimux: handoff send requires --to, --assignee, or --tool");
+        process.exit(1);
       }
-      return;
-    } catch {
-      const result = sendHandoff({
-        from: opts.from ?? "user",
-        to,
-        body,
-        title: opts.title,
-      });
-      console.log(`thread ${result.thread.id}`);
-      console.log(`message ${result.message.id}`);
-    }
-  });
+      try {
+        const result = await postHostJson("/handoff", {
+          from: opts.from ?? "user",
+          to,
+          assignee: opts.assignee,
+          tool: opts.tool,
+          body,
+          title: opts.title,
+          worktreePath: opts.worktree,
+        });
+        console.log(`thread ${result.thread.id}`);
+        console.log(`message ${result.message.id}`);
+        if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
+          console.log(`delivered ${result.deliveredTo.join(",")}`);
+        }
+        return;
+      } catch {
+        const result = sendHandoff({
+          from: opts.from ?? "user",
+          to: to ?? [],
+          body,
+          title: opts.title,
+          worktreePath: opts.worktree,
+        });
+        console.log(`thread ${result.thread.id}`);
+        console.log(`message ${result.message.id}`);
+      }
+    },
+  );
 
 const taskCmd = program.command("task").description("Create and manage orchestrated tasks");
 

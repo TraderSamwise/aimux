@@ -63,6 +63,7 @@ import {
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import { assignTask, sendHandoff } from "./orchestration-actions.js";
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
+import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
 
 interface StatuslineOwnerState {
   instanceId: string;
@@ -321,26 +322,47 @@ export class Multiplexer {
     threadId?: string;
     from?: string;
     to?: string[];
+    assignee?: string;
+    tool?: string;
+    worktreePath?: string;
     kind?: MessageKind;
     body: string;
     title?: string;
   }): { thread: unknown; message: unknown; deliveredTo: string[]; threadCreated: boolean } {
     const from = input.from?.trim() || "user";
     const kind = input.kind ?? "request";
+    const resolvedRecipients =
+      input.threadId && !input.to?.length
+        ? undefined
+        : resolveOrchestrationRecipients({
+            candidates: this.sessions.map((session) => ({
+              id: session.id,
+              tool: this.sessionToolKeys.get(session.id),
+              role: this.sessionRoles.get(session.id),
+              worktreePath: this.sessionWorktreePaths.get(session.id),
+              status: session.status,
+              exited: session.exited,
+            })),
+            to: input.to?.[0],
+            assignee: input.assignee,
+            tool: input.tool,
+            worktreePath: input.worktreePath,
+          });
     const result = input.threadId
       ? sendThreadMessage({
           threadId: input.threadId,
           from,
-          to: input.to,
+          to: resolvedRecipients,
           kind,
           body: input.body,
         })
       : sendDirectMessage({
           from,
-          to: input.to ?? [],
+          to: resolvedRecipients ?? [],
           kind: kind as any,
           body: input.body,
           title: input.title,
+          worktreePath: input.worktreePath,
         });
     const deliveredTo = this.deliverOrchestrationMessage(
       result.message.to ?? [],
@@ -366,14 +388,30 @@ export class Multiplexer {
   private sendHandoffMessage(input: {
     from?: string;
     to?: string[];
+    assignee?: string;
+    tool?: string;
     body: string;
     title?: string;
     worktreePath?: string;
   }): { thread: unknown; message: unknown; deliveredTo: string[]; threadCreated: boolean } {
     const from = input.from?.trim() || "user";
+    const resolvedRecipients = resolveOrchestrationRecipients({
+      candidates: this.sessions.map((session) => ({
+        id: session.id,
+        tool: this.sessionToolKeys.get(session.id),
+        role: this.sessionRoles.get(session.id),
+        worktreePath: this.sessionWorktreePaths.get(session.id),
+        status: session.status,
+        exited: session.exited,
+      })),
+      to: input.to?.[0],
+      assignee: input.assignee,
+      tool: input.tool,
+      worktreePath: input.worktreePath,
+    });
     const result = sendHandoff({
       from,
-      to: input.to ?? [],
+      to: resolvedRecipients,
       body: input.body,
       title: input.title,
       worktreePath: input.worktreePath,
