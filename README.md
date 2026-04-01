@@ -57,13 +57,14 @@ aimux --resume
 
 The per-project tmux session is the long-lived runtime substrate. Aimux no longer tries to build its own PTY multiplexer on top of native TUIs.
 
-## Global Control Plane
+## Architecture
 
 Aimux now distinguishes between:
 
 - `tmux` runtime
 - global aimux control-plane daemon
-- terminal/desktop clients
+- daemon-managed project services
+- terminal/desktop/service clients
 
 `tmux` still owns the actual agent runtime:
 
@@ -75,12 +76,17 @@ Aimux now distinguishes between:
 The global daemon owns shared control-plane responsibilities:
 
 - project discovery and activation
-- metadata API lifecycle
-- plugin runtime supervision
-- orchestration routing
-- statusline/state aggregation
+- supervision of daemon-managed project services
+- desktop/service-facing project discovery
 
-Per-project services are daemon-managed. They are not elected opportunistically by dashboard processes anymore.
+Each active project may have one daemon-managed project service. That project service owns:
+
+- metadata API lifecycle
+- plugin runtime
+- project `statusline.json` writing
+- project-scoped control-plane sidecars
+
+There is no per-project host election anymore. Dashboard processes are clients, not control-plane owners.
 
 Useful commands:
 
@@ -94,7 +100,8 @@ aimux daemon project-ensure --project /abs/path/to/repo
 aimux serve
 ```
 
-For the migration rationale and rollout plan, see [docs/global-control-plane-rfc.md](docs/global-control-plane-rfc.md).
+For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
+For the migration rationale, see [docs/global-control-plane-rfc.md](docs/global-control-plane-rfc.md).
 
 ## Tmux Compatibility
 
@@ -168,7 +175,7 @@ This keeps the terminal surface fully tmux-native while still surfacing the old 
 
 Status rendering has two practical data paths that must stay visually aligned:
 
-- the rich path from `statusline.json` written by the dashboard process
+- the rich path from `statusline.json` written by the daemon-managed project service
 - the fallback path from live tmux window metadata
 
 When extending the footer/status UI, treat both as first-class render sources. The fallback path must carry enough metadata to render the same identity, role, and activity state as the richer dashboard-written path, otherwise the status bar will visibly flicker between styles during updates.
@@ -177,7 +184,7 @@ For future tool wiring and continuity expectations, see [docs/tool-integration.m
 
 ## Metadata API
 
-Inspired by opensessions, aimux exposes a small project-local metadata API from the elected per-project host. The tmux status line reads this state and shows it for the active session.
+Inspired by opensessions, aimux exposes a small project-local metadata API from the daemon-managed project service. The tmux status line reads this state and shows it for the active session.
 
 CLI helpers:
 
@@ -189,7 +196,7 @@ aimux metadata log <session> "Tests passed" --source ci --tone success
 aimux metadata clear-log <session>
 ```
 
-The dashboard-hosted HTTP API also exposes:
+The project-service HTTP API also exposes:
 
 - `GET /health`
 - `GET /state`
@@ -199,7 +206,7 @@ The dashboard-hosted HTTP API also exposes:
 - `POST /clear-log`
 - `POST /notify`
 
-Use `aimux metadata endpoint` to get the local base URL for the current project.
+Use `aimux metadata endpoint` to get the local base URL for the current project service.
 
 ## Plugins And Watchers
 
