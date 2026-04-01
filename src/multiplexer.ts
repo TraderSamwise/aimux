@@ -2284,6 +2284,7 @@ export class Multiplexer {
         assignee: role,
         worktreePath: focusedWorktreePath,
       });
+      if (recipientIds.length === 0) continue;
       options.push({
         label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${this.formatRoutePreview(recipientIds)}`,
         assignee: role,
@@ -2300,6 +2301,7 @@ export class Multiplexer {
         tool: toolKey,
         worktreePath: focusedWorktreePath,
       });
+      if (recipientIds.length === 0) continue;
       options.push({
         label: `Tool: ${toolKey}${this.formatRoutePreview(recipientIds)}`,
         tool: toolKey,
