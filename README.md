@@ -2,12 +2,12 @@
 
 Native CLI agent multiplexer — run multiple AI coding tools side-by-side with their native TUIs intact.
 
-aimux uses `tmux` as its terminal runtime substrate. Each project gets its own managed tmux session, the aimux dashboard lives in window `0`, and each agent runs in its own tmux window while aimux keeps orchestration, worktrees, plans, and metadata on top.
+aimux uses `tmux` as its terminal runtime substrate. Each project gets its own managed tmux runtime session, each terminal gets its own dashboard client session/window, and each agent runs in its own tmux window while aimux keeps orchestration, worktrees, plans, and metadata on top.
 
 ## Features
 
 - **tmux-backed runtime** — real scrollback, attach/detach, repaint, and terminal compatibility come from tmux instead of a custom multiplexer
-- **Dashboard window** — aimux dashboard lives in tmux window `0` for the current project session
+- **Dashboard clients** — each terminal gets its own dashboard tmux client session/window while agent runtime stays shared per project
 - **Agent windows** — each agent gets its own tmux window with its native TUI intact
 - **tmux status integration** — the native tmux status line shows aimux session, task, headline, and metadata state
 - **Metadata API** — scripts and agents can push status, progress, logs, and notifications into the tmux status line
@@ -43,7 +43,7 @@ Requires Node.js >= 18 and `tmux` in `PATH`.
 ## Quick Start
 
 ```bash
-# Launch dashboard (attaches/switches to the per-project tmux session, window 0)
+# Launch dashboard for this terminal client
 aimux
 
 # Launch a specific tool in a new tmux agent window
@@ -87,6 +87,13 @@ Each active project may have one daemon-managed project service. That project se
 - project-scoped control-plane sidecars
 
 There is no per-project host election anymore. Dashboard processes are clients, not control-plane owners.
+
+Terminal clients are isolated from each other:
+
+- the shared per-project tmux runtime session owns agent windows
+- each terminal gets its own tmux client session and dashboard window
+- dashboard tab, pointer, and load state are terminal-local
+- orchestration, metadata, and plugin sidecars are project-scoped through the daemon-managed project service
 
 Useful commands:
 
@@ -155,9 +162,9 @@ When you are inside an agent window, tmux owns the terminal. Use normal tmux win
 
 Recommended tmux mental model:
 
-- window `0` is the aimux dashboard
-- each agent is its own tmux window
-- aimux metadata, plans, worktrees, and task orchestration sit on top of that session
+- the shared project runtime session owns agent windows
+- each terminal gets its own dashboard client session/window
+- aimux metadata, plans, worktrees, and task orchestration sit on top of that runtime
 
 For normal tmux users outside aimux, the equivalent setup usually lives in `~/.tmux.conf`. Aimux just codifies that policy inside its own managed sessions so behavior is stable across projects and terminals.
 

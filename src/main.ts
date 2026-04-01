@@ -60,7 +60,7 @@ import { assignTask, sendHandoff } from "./orchestration-actions.js";
 
 const program = new Command();
 
-async function postHostJson(path: string, body: unknown): Promise<any> {
+async function postProjectServiceJson(path: string, body: unknown): Promise<any> {
   let endpoint = loadMetadataEndpoint();
   if (!endpoint) {
     await ensureProjectService(resolveProjectRoot(process.cwd()));
@@ -866,7 +866,7 @@ messageCmd
         process.exit(1);
       }
       try {
-        const result = await postHostJson("/threads/send", {
+        const result = await postProjectServiceJson("/threads/send", {
           threadId: opts.thread,
           from: opts.from ?? "user",
           to,
@@ -931,7 +931,7 @@ handoffCmd
         process.exit(1);
       }
       try {
-        const result = await postHostJson("/handoff", {
+        const result = await postProjectServiceJson("/handoff", {
           from: opts.from ?? "user",
           to,
           assignee: opts.assignee,
@@ -989,7 +989,7 @@ taskCmd
       },
     ) => {
       try {
-        const result = await postHostJson("/tasks/assign", {
+        const result = await postProjectServiceJson("/tasks/assign", {
           from: opts.from ?? "user",
           to: opts.to,
           assignee: opts.assignee,

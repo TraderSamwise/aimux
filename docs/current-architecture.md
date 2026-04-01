@@ -109,7 +109,13 @@ When you run `aimux`:
 - it ensures the managed tmux dashboard exists
 - it opens or attaches to that dashboard
 
-Dashboard UI state can still be terminal-local, but shared control-plane state is no longer owned by the dashboard process.
+Dashboard UI state is terminal-local:
+
+- the shared per-project tmux runtime session owns agent windows
+- each terminal gets its own tmux client session and dashboard window/process
+- dashboard tab, pointer, and load state are per-terminal
+
+Shared control-plane state is no longer owned by the dashboard process.
 
 ## `aimux serve`
 

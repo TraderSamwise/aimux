@@ -2212,10 +2212,10 @@ export class Multiplexer {
     process.stdout.write(output);
   }
 
-  private async postToProjectHost(path: string, body: unknown): Promise<any> {
+  private async postToProjectService(path: string, body: unknown): Promise<any> {
     const endpoint = loadMetadataEndpoint();
     if (!endpoint) {
-      throw new Error("no live project host endpoint");
+      throw new Error("no live project service endpoint");
     }
     const res = await fetch(`http://${endpoint.host}:${endpoint.port}${path}`, {
       method: "POST",
@@ -2279,7 +2279,7 @@ export class Multiplexer {
   ): Promise<void> {
     try {
       if (mode === "message") {
-        await this.postToProjectHost("/threads/send", {
+        await this.postToProjectService("/threads/send", {
           from: "user",
           to: [targetSessionId],
           kind: "request",
@@ -2287,7 +2287,7 @@ export class Multiplexer {
         });
         this.footerFlash = `✉ Message sent → ${targetSessionId}`;
       } else if (mode === "handoff") {
-        await this.postToProjectHost("/handoff", {
+        await this.postToProjectService("/handoff", {
           from: "user",
           to: [targetSessionId],
           body,
@@ -2295,7 +2295,7 @@ export class Multiplexer {
         });
         this.footerFlash = `⇢ Handoff sent → ${targetSessionId}`;
       } else {
-        await this.postToProjectHost("/tasks/assign", {
+        await this.postToProjectService("/tasks/assign", {
           from: "user",
           to: targetSessionId,
           description: body,
