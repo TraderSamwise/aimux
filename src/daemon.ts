@@ -41,6 +41,11 @@ function saveJson(path: string, value: unknown): void {
   renameSync(tmpPath, path);
 }
 
+function clearFile(path: string): void {
+  ensureParent(path);
+  writeFileSync(path, "");
+}
+
 function loadJson<T>(path: string, fallback: T): T {
   if (!existsSync(path)) return fallback;
   try {
@@ -78,6 +83,27 @@ export function loadDaemonInfo(): AimuxDaemonInfo | null {
   const info = loadJson<AimuxDaemonInfo | null>(getDaemonInfoPath(), null);
   if (!info) return null;
   return isPidAlive(info.pid) ? info : null;
+}
+
+export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<AimuxDaemonInfo | null> {
+  const info = loadDaemonInfo();
+  if (!info) return null;
+  const state = loadDaemonState();
+  for (const entry of Object.values(state.projects)) {
+    try {
+      process.kill(entry.pid, signal);
+    } catch {}
+  }
+  try {
+    process.kill(info.pid, signal);
+  } catch {}
+  saveJson(getDaemonStatePath(), {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    projects: {},
+  } satisfies DaemonState);
+  clearFile(getDaemonInfoPath());
+  return info;
 }
 
 export function loadDaemonState(): DaemonState {
@@ -198,6 +224,19 @@ export class AimuxDaemon {
   }
 
   stop(): void {
+    for (const entry of Object.values(this.state.projects)) {
+      try {
+        process.kill(entry.pid, "SIGTERM");
+      } catch {}
+    }
+    this.children.clear();
+    this.state = {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      projects: {},
+    };
+    saveJson(getDaemonStatePath(), this.state);
+    clearFile(getDaemonInfoPath());
     this.server?.close();
     this.server = null;
   }

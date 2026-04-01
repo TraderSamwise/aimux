@@ -28,7 +28,6 @@ import {
   getAimuxDirFor,
   getLocalAimuxDir,
   getPlansDir,
-  getStatuslineOwnerPath,
 } from "./paths.js";
 import { debug, closeDebug } from "./debug.js";
 import { createWorktree, findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
@@ -48,7 +47,6 @@ import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
-import { acquireProjectHost, heartbeatProjectHost, releaseProjectHost, type ProjectHostInfo } from "./project-host.js";
 import {
   appendMessage,
   createThread,
@@ -65,13 +63,7 @@ import { assignTask, sendHandoff } from "./orchestration-actions.js";
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
 
-interface StatuslineOwnerState {
-  instanceId: string;
-  pid: number;
-  updatedAt: string;
-}
-
-export type MuxMode = "dashboard" | "serve" | "project-service";
+export type MuxMode = "dashboard" | "project-service";
 
 export interface SessionState {
   id: string;
@@ -217,8 +209,6 @@ export class Multiplexer {
   private sessionTmuxTargets = new Map<string, TmuxTarget>();
   private metadataServer: MetadataServer | null = null;
   private pluginRuntime: PluginRuntime | null = null;
-  private projectHostInfo: ProjectHostInfo | null = null;
-  private isProjectHost = false;
   private projectServiceInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -246,9 +236,8 @@ export class Multiplexer {
     this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
   }
 
-  private async startHostServices(): Promise<void> {
+  private async startProjectServices(): Promise<void> {
     if (this.metadataServer) return;
-    this.claimStatuslineOwnership();
     this.metadataServer = new MetadataServer({
       threads: {
         sendMessage: (input) => this.sendOrchestrationMessage(input),
@@ -266,10 +255,6 @@ export class Multiplexer {
     await this.metadataServer.start();
     const endpoint = this.metadataServer.getAddress();
     if (endpoint) {
-      this.projectHostInfo = await heartbeatProjectHost(this.instanceId, process.cwd(), {
-        metadataPort: endpoint.port,
-        cwd: process.cwd(),
-      });
       this.pluginRuntime = new PluginRuntime({
         host: endpoint.host,
         port: endpoint.port,
@@ -438,40 +423,12 @@ export class Multiplexer {
     };
   }
 
-  private async stopHostServices(): Promise<void> {
+  private async stopProjectServices(): Promise<void> {
     this.metadataServer?.stop();
     this.metadataServer = null;
     removeMetadataEndpoint();
     await this.pluginRuntime?.stop?.();
     this.pluginRuntime = null;
-    try {
-      if (this.ownsStatusline()) {
-        unlinkSync(getStatuslineOwnerPath());
-      }
-    } catch {}
-  }
-
-  private async reconcileProjectHost(): Promise<void> {
-    const result = await acquireProjectHost(this.instanceId, process.cwd());
-    if (result.claimed) {
-      this.projectHostInfo = result.host;
-      if (!this.isProjectHost) {
-        this.isProjectHost = true;
-        await this.startHostServices();
-      } else {
-        this.projectHostInfo = await heartbeatProjectHost(this.instanceId, process.cwd(), {
-          metadataPort: this.metadataServer?.getAddress()?.port,
-          cwd: process.cwd(),
-        });
-      }
-      return;
-    }
-
-    this.projectHostInfo = result.host;
-    if (this.isProjectHost) {
-      this.isProjectHost = false;
-      await this.stopHostServices();
-    }
   }
 
   private getSessionLabel(sessionId: string): string | undefined {
@@ -803,50 +760,6 @@ export class Multiplexer {
     return exitCode;
   }
 
-  async runServe(): Promise<number> {
-    initProject();
-    await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
-    this.mode = "serve";
-    this.startHeartbeat();
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
-    this.taskDispatcher = new TaskDispatcher(
-      (id) => this.sessions.find((s) => s.id === id),
-      (id) => this.sessionToolKeys.get(id),
-      (id) => this.sessionRoles.get(id),
-    );
-    this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
-    this.writeInstructionFiles();
-    await this.reconcileProjectHost();
-
-    if (!this.isProjectHost) {
-      const host = this.projectHostInfo;
-      if (host) {
-        const endpoint = this.metadataServer?.getAddress();
-        console.log(
-          `aimux serve: host already running for ${process.cwd()} (instance ${host.instanceId}, pid ${host.pid}${host.metadataPort ? `, http://127.0.0.1:${host.metadataPort}` : ""})`,
-        );
-      } else {
-        console.log(`aimux serve: unable to acquire host for ${process.cwd()}`);
-      }
-      this.teardown();
-      return 0;
-    }
-
-    this.writeStatuslineFile();
-    const endpoint = this.metadataServer?.getAddress();
-    console.log(
-      `aimux serve: hosting ${process.cwd()}${endpoint ? ` on http://${endpoint.host}:${endpoint.port}` : ""}`,
-    );
-
-    const exitCode = await new Promise<number>((resolve) => {
-      this.resolveRun = resolve;
-    });
-
-    this.teardown();
-    return exitCode;
-  }
-
   async runProjectService(): Promise<number> {
     initProject();
     this.mode = "project-service";
@@ -859,8 +772,7 @@ export class Multiplexer {
     );
     this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
     this.writeInstructionFiles();
-    this.isProjectHost = true;
-    await this.startHostServices();
+    await this.startProjectServices();
     this.writeStatuslineFile();
     this.startStatusRefresh();
     this.startProjectServiceRefresh();
@@ -4564,8 +4476,7 @@ export class Multiplexer {
   /** Write statusline state for Claude Code's statusline script to read */
   private writeStatuslineFile(): void {
     try {
-      if (!this.isProjectHost) return;
-      if (!this.ownsStatusline()) return;
+      if (this.mode !== "project-service") return;
       for (const session of this.sessions) {
         this.syncTmuxWindowMetadata(session.id);
       }
@@ -4593,47 +4504,8 @@ export class Multiplexer {
       };
       writeFileSync(tmpPath, JSON.stringify(data) + "\n");
       renameSync(tmpPath, filePath);
-      this.touchStatuslineOwnership();
       this.tmuxRuntimeManager.refreshStatus();
     } catch {}
-  }
-
-  private claimStatuslineOwnership(): void {
-    try {
-      const owner: StatuslineOwnerState = {
-        instanceId: this.instanceId,
-        pid: process.pid,
-        updatedAt: new Date().toISOString(),
-      };
-      const ownerPath = getStatuslineOwnerPath();
-      const tmpPath = `${ownerPath}.tmp`;
-      writeFileSync(tmpPath, JSON.stringify(owner) + "\n");
-      renameSync(tmpPath, ownerPath);
-    } catch {}
-  }
-
-  private touchStatuslineOwnership(): void {
-    try {
-      const ownerPath = getStatuslineOwnerPath();
-      const owner: StatuslineOwnerState = {
-        instanceId: this.instanceId,
-        pid: process.pid,
-        updatedAt: new Date().toISOString(),
-      };
-      const tmpPath = `${ownerPath}.tmp`;
-      writeFileSync(tmpPath, JSON.stringify(owner) + "\n");
-      renameSync(tmpPath, ownerPath);
-    } catch {}
-  }
-
-  private ownsStatusline(): boolean {
-    try {
-      const raw = readFileSync(getStatuslineOwnerPath(), "utf-8");
-      const owner = JSON.parse(raw) as Partial<StatuslineOwnerState>;
-      return owner.instanceId === this.instanceId && owner.pid === process.pid;
-    } catch {
-      return true;
-    }
   }
 
   /** Remove sessions file on exit */
@@ -4688,7 +4560,7 @@ export class Multiplexer {
     this.statusInterval = setInterval(() => {
       this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
       this.orchestrationDispatcher?.tick(this.sessions.map((s) => s.id));
-      if (this.isProjectHost) {
+      if (this.mode === "project-service") {
         this.writeStatuslineFile();
       }
 
@@ -5107,18 +4979,13 @@ export class Multiplexer {
     }
     this.hotkeys.destroy();
     this.terminalHost.restoreTerminalState();
-    if (this.isProjectHost && this.mode !== "project-service") {
-      void releaseProjectHost(this.instanceId, process.cwd()).catch(() => {});
-      this.isProjectHost = false;
-      this.projectHostInfo = null;
-    }
   }
 
   cleanup(): void {
     for (const session of this.sessions) {
       session.destroy();
     }
-    void this.stopHostServices().catch(() => {});
+    void this.stopProjectServices().catch(() => {});
     this.teardown();
   }
 

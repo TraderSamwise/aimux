@@ -34,7 +34,6 @@ import {
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
 import { listDesktopProjects, scanProject } from "./project-scanner.js";
-import { clearProjectHost, loadProjectHost, pruneDeadProjectHost, terminateProjectHost } from "./project-host.js";
 import {
   AimuxDaemon,
   ensureDaemonRunning,
@@ -43,6 +42,7 @@ import {
   loadDaemonState,
   projectServiceStatus,
   requestDaemonJson,
+  stopDaemon,
   stopProjectService,
 } from "./daemon.js";
 import {
@@ -67,7 +67,7 @@ async function postHostJson(path: string, body: unknown): Promise<any> {
     endpoint = loadMetadataEndpoint();
   }
   if (!endpoint) {
-    throw new Error("no live project host endpoint");
+    throw new Error("no live project service metadata endpoint");
   }
   const res = await fetch(`http://${endpoint.host}:${endpoint.port}${path}`, {
     method: "POST",
@@ -280,7 +280,7 @@ program
     console.log(`Reloaded dashboard for ${dashboardSession.sessionName}`);
   });
 
-const hostCmd = program.command("host").description("Manage the per-project aimux host sidecar");
+const hostCmd = program.command("host").description("Compatibility wrappers for daemon-managed project services");
 
 program
   .command("serve")
@@ -312,7 +312,7 @@ hostCmd
       projectRoot,
       sessionName: session.sessionName,
       daemon: loadDaemonInfo(),
-      host: project,
+      projectService: project,
       metadataEndpoint: endpoint,
     };
     if (opts.json) {
@@ -363,7 +363,7 @@ hostCmd
   .command("restart")
   .description("Restart the current project's daemon-managed control service")
   .option("--open", "Open the dashboard after restarting")
-  .option("--serve", "Restart the host in headless serve mode")
+  .option("--serve", "Restart the project service without reopening the dashboard")
   .action(async (opts: { open?: boolean; serve?: boolean }) => {
     await initPaths();
     const projectRoot = resolveProjectRoot(process.cwd());
@@ -378,8 +378,12 @@ hostCmd
       tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
       return;
     }
-    console.log(`Restarted host for ${dashboardSession.sessionName}`);
+    console.log(`Restarted project service for ${dashboardSession.sessionName}`);
   });
+
+hostCmd.action(() => {
+  console.log("`aimux host` is a compatibility alias for daemon-managed project services.");
+});
 
 const daemonCmd = program.command("daemon").description("Manage the global aimux control-plane daemon");
 
@@ -404,6 +408,39 @@ daemonCmd
   .action(async () => {
     const info = await ensureDaemonRunning();
     console.log(`aimux daemon: pid ${info.pid} on http://127.0.0.1:${info.port}`);
+  });
+
+daemonCmd
+  .command("stop")
+  .description("Stop the global aimux daemon")
+  .action(async () => {
+    const info = await stopDaemon("SIGTERM");
+    if (!info) {
+      console.log("aimux daemon is not running.");
+      return;
+    }
+    console.log(`Stopped daemon pid ${info.pid}`);
+  });
+
+daemonCmd
+  .command("kill")
+  .description("Force kill the global aimux daemon")
+  .action(async () => {
+    const info = await stopDaemon("SIGKILL");
+    if (!info) {
+      console.log("aimux daemon is not running.");
+      return;
+    }
+    console.log(`Killed daemon pid ${info.pid}`);
+  });
+
+daemonCmd
+  .command("restart")
+  .description("Restart the global aimux daemon")
+  .action(async () => {
+    await stopDaemon("SIGTERM");
+    const info = await ensureDaemonRunning();
+    console.log(`Restarted daemon pid ${info.pid} on http://127.0.0.1:${info.port}`);
   });
 
 daemonCmd

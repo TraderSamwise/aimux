@@ -171,14 +171,6 @@ export function getMetadataEndpointPath(): string {
   return join(getProjectStateDir(), "metadata-api.json");
 }
 
-export function getStatuslineOwnerPath(): string {
-  return join(getProjectStateDir(), "statusline-owner.json");
-}
-
-export function getHostStatePath(): string {
-  return join(getProjectStateDir(), "host.json");
-}
-
 // ── In-repo paths ({repoRoot}/.aimux/...) ──────────────────────────
 
 export function getLocalAimuxDir(): string {
