@@ -11,6 +11,8 @@ export interface WorkflowEntry extends ThreadEntry {
   task?: Task;
   urgency: number;
   stateLabel: string;
+  familyRootTaskId?: string;
+  familyTaskIds: string[];
 }
 
 export function buildThreadEntries(): ThreadEntry[] {
@@ -39,6 +41,16 @@ export function buildThreadEntries(): ThreadEntry[] {
 export function buildWorkflowEntries(currentParticipant = "user"): WorkflowEntry[] {
   const tasks = readAllTasks();
   const taskById = new Map(tasks.map((task) => [task.id, task] as const));
+  const familyByRoot = new Map<string, Task[]>();
+  for (const task of tasks) {
+    const root = task.reviewOf ?? task.id;
+    const existing = familyByRoot.get(root) ?? [];
+    existing.push(task);
+    familyByRoot.set(root, existing);
+  }
+  for (const family of familyByRoot.values()) {
+    family.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+  }
   return buildThreadEntries()
     .filter(
       (entry) => entry.thread.kind === "task" || entry.thread.kind === "review" || entry.thread.kind === "handoff",
@@ -60,11 +72,17 @@ export function buildWorkflowEntries(currentParticipant = "user"): WorkflowEntry
             : (entry.thread.waitingOn?.length ?? 0) > 0
               ? `on ${entry.thread.waitingOn!.join(", ")}`
               : (task?.status ?? entry.thread.status);
+      const familyRootTaskId = task ? (task.reviewOf ?? task.id) : undefined;
+      const familyTaskIds = familyRootTaskId
+        ? (familyByRoot.get(familyRootTaskId) ?? [task!]).map((item) => item.id)
+        : [];
       return {
         ...entry,
         task,
         urgency,
         stateLabel,
+        familyRootTaskId,
+        familyTaskIds,
       };
     })
     .sort((a, b) => b.urgency - a.urgency || (a.thread.updatedAt < b.thread.updatedAt ? 1 : -1));

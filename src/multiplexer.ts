@@ -1635,11 +1635,12 @@ export class Multiplexer {
         const pending = entry.pendingDeliveries > 0 ? ` \x1b[31m⇢ ${entry.pendingDeliveries}\x1b[0m` : "";
         const unread =
           (entry.thread.unreadBy?.length ?? 0) > 0 ? ` \x1b[36m${entry.thread.unreadBy!.length}\x1b[0m` : "";
+        const family = entry.familyTaskIds.length > 1 ? ` \x1b[35m⤳${entry.familyTaskIds.length}\x1b[0m` : "";
         const latest = entry.latestMessage?.body
           ? ` \x1b[2m· ${this.truncatePlain(entry.latestMessage.body, 28)}\x1b[0m`
           : "";
         listLines.push(
-          `${marker}[${i + 1}] ${entry.displayTitle} \x1b[2m(${entry.thread.kind})\x1b[0m — ${entry.stateLabel}${unread}${pending}${latest}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+          `${marker}[${i + 1}] ${entry.displayTitle} \x1b[2m(${entry.thread.kind})\x1b[0m — ${entry.stateLabel}${family}${unread}${pending}${latest}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
         );
       }
     }
@@ -1669,6 +1670,11 @@ export class Multiplexer {
     lines.push(...this.wrapKeyValue("State", entry.stateLabel, width));
     if (entry.task) {
       lines.push(...this.wrapKeyValue("Task Status", entry.task.status, width));
+      if (entry.familyTaskIds.length > 1) {
+        lines.push(...this.wrapKeyValue("Workflow Root", entry.familyRootTaskId ?? entry.task.id, width));
+        lines.push(...this.wrapKeyValue("Chain Size", String(entry.familyTaskIds.length), width));
+        lines.push(...this.wrapKeyValue("Chain", entry.familyTaskIds.join(" → "), width));
+      }
       lines.push(...this.wrapKeyValue("Prompt", entry.task.prompt, width));
       if (entry.task.result) lines.push(...this.wrapKeyValue("Result", entry.task.result, width));
       if (entry.task.error) lines.push(...this.wrapKeyValue("Error", entry.task.error, width));
