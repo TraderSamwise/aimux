@@ -2,7 +2,23 @@
 
 ## Status
 
-Draft
+In progress.
+
+Implemented so far:
+
+- durable thread/message storage under `.aimux/threads/`
+- thread inbox/dashboard screen
+- direct messaging, handoff, and task-assignment CLI verbs
+- host API endpoints for threads, handoffs, and task assignment
+- durable message delivery when recipients are busy
+- dashboard-native orchestration actions and quick reply/jump flows
+- routing by explicit session, role, tool, and worktree
+
+Still open:
+
+- richer automation on top of the current verbs
+- clearer dependency-graph views beyond per-thread/per-session summaries
+- higher-level workflow primitives above direct send/handoff/assign
 
 ## Summary
 
@@ -14,7 +30,7 @@ Aimux already has the substrate for multi-agent work:
 - shared context/history
 - metadata, events, activity, and attention tracking
 
-What it does not yet have is a true orchestration layer:
+What it did not yet have at the start of this PRD was a true orchestration layer:
 
 - explicit agent-to-agent messaging
 - first-class threads

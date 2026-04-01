@@ -17,6 +17,8 @@ aimux uses `tmux` as its terminal runtime substrate. Each project gets its own m
 - **Multi-instance** — run aimux in multiple terminal tabs; agents from other instances appear inline and can be taken over
 - **Agent lifecycle** — two-step kill (`[x]` stops → offline, `[x]` again → graveyard), with `aimux graveyard resurrect` for recovery
 - **Task delegation** — agents can delegate work to each other via `.aimux/tasks/`, with automatic dispatch, completion notifications, and dashboard badges
+- **Threaded orchestration** — direct messages, handoffs, and task assignment all flow through durable `.aimux/threads/` state with queued delivery when recipients are busy
+- **Dashboard orchestration actions** — from the main dashboard, use `S` to send a message, `H` to send a handoff, `T` to assign a task, `o` to jump to the most relevant thread, and `R` to reply when something is waiting on you
 - **Context sharing** — agents can read each other's conversation history via `.aimux/context/`
 - **Session resume** — resume previous sessions using each tool's native resume (`--resume`) or injected history (`--restore`)
 - **Git worktree support** — first-class worktree management for parallel feature work, with per-worktree agent isolation
@@ -105,6 +107,15 @@ aimux daemon project-ensure --project /abs/path/to/repo
 
 # Compatibility wrapper: ensure the current project's control service
 aimux serve
+```
+
+Orchestration commands:
+
+```bash
+aimux message send "Need UI review on the login flow" --assignee ui --worktree /abs/path/to/worktree
+aimux handoff send "Take over the sidebar polish from here" --tool claude
+aimux task assign "Audit the websocket reconnect path" --assignee reviewer
+aimux thread list
 ```
 
 GUI-facing lifecycle commands:
