@@ -97,6 +97,47 @@ interface MetadataServerOptions {
       body?: string;
     }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
   };
+  lifecycle?: {
+    spawnAgent?: (input: {
+      tool: string;
+      worktreePath?: string;
+      open?: boolean;
+    }) => Promise<{ sessionId: string }> | { sessionId: string };
+    forkAgent?: (input: {
+      sourceSessionId: string;
+      tool: string;
+      instruction?: string;
+      worktreePath?: string;
+      open?: boolean;
+    }) => Promise<{ sessionId: string; threadId: string }> | { sessionId: string; threadId: string };
+    stopAgent?: (input: { sessionId: string }) =>
+      | Promise<{ sessionId: string; status: "offline" }>
+      | {
+          sessionId: string;
+          status: "offline";
+        };
+    renameAgent?: (input: { sessionId: string; label?: string }) =>
+      | Promise<{ sessionId: string; label?: string }>
+      | {
+          sessionId: string;
+          label?: string;
+        };
+    migrateAgent?: (input: {
+      sessionId: string;
+      worktreePath: string;
+    }) => Promise<{ sessionId: string; worktreePath?: string }> | { sessionId: string; worktreePath?: string };
+    killAgent?: (input: { sessionId: string }) =>
+      | Promise<{
+          sessionId: string;
+          status: "graveyard";
+          previousStatus: "running" | "offline";
+        }>
+      | {
+          sessionId: string;
+          status: "graveyard";
+          previousStatus: "running" | "offline";
+        };
+  };
 }
 
 function desiredPort(): number {
@@ -532,6 +573,84 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/spawn") {
+        const body = (await readJson(req)) as { tool: string; worktreePath?: string; open?: boolean };
+        if (!this.options.lifecycle?.spawnAgent) {
+          send(res, 501, { ok: false, error: "agent spawn not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.spawnAgent(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/fork") {
+        const body = (await readJson(req)) as {
+          sourceSessionId: string;
+          tool: string;
+          instruction?: string;
+          worktreePath?: string;
+          open?: boolean;
+        };
+        if (!this.options.lifecycle?.forkAgent) {
+          send(res, 501, { ok: false, error: "agent fork not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.forkAgent(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/stop") {
+        const body = (await readJson(req)) as { sessionId: string };
+        if (!this.options.lifecycle?.stopAgent) {
+          send(res, 501, { ok: false, error: "agent stop not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.stopAgent(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/rename") {
+        const body = (await readJson(req)) as { sessionId: string; label?: string };
+        if (!this.options.lifecycle?.renameAgent) {
+          send(res, 501, { ok: false, error: "agent rename not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.renameAgent(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/migrate") {
+        const body = (await readJson(req)) as { sessionId: string; worktreePath: string };
+        if (!this.options.lifecycle?.migrateAgent) {
+          send(res, 501, { ok: false, error: "agent migrate not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.migrateAgent(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/kill") {
+        const body = (await readJson(req)) as { sessionId: string };
+        if (!this.options.lifecycle?.killAgent) {
+          send(res, 501, { ok: false, error: "agent kill not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.killAgent(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;

@@ -265,6 +265,26 @@ export class Multiplexer {
       actions: {
         sendHandoff: (input) => this.sendHandoffMessage(input),
       },
+      lifecycle: {
+        spawnAgent: (input) =>
+          this.spawnAgent({
+            toolConfigKey: input.tool,
+            targetWorktreePath: input.worktreePath,
+            open: input.open ?? false,
+          }),
+        forkAgent: (input) =>
+          this.forkAgent({
+            sourceSessionId: input.sourceSessionId,
+            targetToolConfigKey: input.tool,
+            instruction: input.instruction,
+            targetWorktreePath: input.worktreePath,
+            open: input.open ?? false,
+          }),
+        stopAgent: (input) => this.stopAgent(input.sessionId),
+        renameAgent: (input) => this.renameAgent(input.sessionId, input.label),
+        migrateAgent: (input) => this.migrateAgentSession(input.sessionId, input.worktreePath),
+        killAgent: (input) => this.sendAgentToGraveyard(input.sessionId),
+      },
       onChange: () => {
         this.writeStatuslineFile();
         if (this.mode === "dashboard") {

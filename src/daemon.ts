@@ -4,6 +4,7 @@ import { dirname, resolve as pathResolve } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { getDaemonInfoPath, getDaemonStatePath, getProjectIdFor } from "./paths.js";
 import { listDesktopProjects } from "./project-scanner.js";
+import { loadMetadataEndpoint } from "./metadata-store.js";
 
 const DAEMON_PORT = 43190;
 const DAEMON_HOST = "127.0.0.1";
@@ -336,6 +337,7 @@ export class AimuxDaemon {
         ...project,
         service: liveById[project.id] ?? null,
         serviceAlive: Boolean(liveById[project.id]),
+        serviceEndpoint: project.path ? loadMetadataEndpoint(project.path) : null,
       }));
       send(res, 200, { ok: true, projects });
       return;
