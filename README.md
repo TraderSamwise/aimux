@@ -57,6 +57,33 @@ aimux --resume
 
 The per-project tmux session is the long-lived substrate. There is no separate non-tmux runtime service in the normal model.
 
+## Project Host
+
+Each project now has one elected host process for control-plane sidecars:
+
+- `MetadataServer`
+- `PluginRuntime`
+- statusline/state writing
+- host heartbeat/ownership
+
+Tmux still owns the actual agent runtime. The host is only the per-project control plane.
+
+Normal `aimux` usage starts that host from the dashboard path. For desktop or service-style integration, you can run it headlessly:
+
+```bash
+# Start the per-project host without opening the dashboard UI
+aimux serve
+
+# Inspect the current host
+aimux host status
+aimux host status --json
+
+# Restart the host into headless mode
+aimux host restart --serve
+```
+
+If another live host already exists for the current project, `aimux serve` reports it and exits instead of starting a competing sidecar set.
+
 ## Tmux Compatibility
 
 Aimux treats tmux as a managed runtime, not a transparent pass-through. For aimux-owned tmux sessions, aimux applies a fixed compatibility contract instead of inheriting whatever ambient tmux defaults happen to exist on the machine.

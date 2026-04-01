@@ -242,6 +242,56 @@ program
 
 const hostCmd = program.command("host").description("Manage the per-project aimux host sidecar");
 
+program
+  .command("serve")
+  .description("Run the per-project aimux host sidecar in headless mode")
+  .action(async () => {
+    const projectRoot = resolveProjectRoot(process.cwd());
+    if (projectRoot !== process.cwd()) {
+      process.chdir(projectRoot);
+    }
+    await initPaths(projectRoot);
+    initProject();
+
+    const mux = new Multiplexer();
+    let cleanedUp = false;
+    const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
+    const cleanupAll = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      mux.cleanup();
+    };
+
+    const shutdown = () => {
+      cleanupAll();
+      process.exit(0);
+    };
+    process.on("exit", ensureTerminalRestored);
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    process.on("uncaughtException", (err) => {
+      cleanupAll();
+      console.error(err);
+      process.exit(1);
+    });
+    process.on("unhandledRejection", (reason) => {
+      cleanupAll();
+      console.error(reason);
+      process.exit(1);
+    });
+
+    try {
+      const exitCode = await mux.runServe();
+      cleanupAll();
+      process.exit(exitCode);
+    } catch (err: unknown) {
+      cleanupAll();
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`aimux serve: ${msg}`);
+      process.exit(1);
+    }
+  });
+
 hostCmd
   .command("status")
   .description("Show current project host status")
@@ -307,11 +357,50 @@ hostCmd
   .command("restart")
   .description("Restart the current project host/dashboard process")
   .option("--open", "Open the dashboard after restarting")
-  .action(async (opts: { open?: boolean }) => {
+  .option("--serve", "Restart the host in headless serve mode")
+  .action(async (opts: { open?: boolean; serve?: boolean }) => {
     await initPaths();
     await terminateProjectHost(process.cwd(), "SIGTERM");
     removeMetadataEndpoint();
     await clearProjectHost(process.cwd());
+    if (opts.serve) {
+      initProject();
+      const mux = new Multiplexer();
+      let cleanedUp = false;
+      const ensureTerminalRestored = () => mux.cleanupTerminalOnly();
+      const cleanupAll = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        mux.cleanup();
+      };
+      const shutdown = () => {
+        cleanupAll();
+        process.exit(0);
+      };
+      process.on("exit", ensureTerminalRestored);
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+      process.on("uncaughtException", (err) => {
+        cleanupAll();
+        console.error(err);
+        process.exit(1);
+      });
+      process.on("unhandledRejection", (reason) => {
+        cleanupAll();
+        console.error(reason);
+        process.exit(1);
+      });
+      try {
+        const exitCode = await mux.runServe();
+        cleanupAll();
+        process.exit(exitCode);
+      } catch (err: unknown) {
+        cleanupAll();
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`aimux host restart --serve: ${msg}`);
+        process.exit(1);
+      }
+    }
     const projectRoot = resolveProjectRoot(process.cwd());
     const tmux = new TmuxRuntimeManager();
     ensureTmuxAvailable(tmux);

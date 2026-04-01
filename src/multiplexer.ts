@@ -65,7 +65,7 @@ interface StatuslineOwnerState {
   updatedAt: string;
 }
 
-export type MuxMode = "dashboard";
+export type MuxMode = "dashboard" | "serve";
 
 export interface SessionState {
   id: string;
@@ -614,6 +614,49 @@ export class Multiplexer {
     this.terminalHost.enterAlternateScreen(true);
     this.startStatusRefresh();
     this.renderDashboard();
+
+    const exitCode = await new Promise<number>((resolve) => {
+      this.resolveRun = resolve;
+    });
+
+    this.teardown();
+    return exitCode;
+  }
+
+  async runServe(): Promise<number> {
+    initProject();
+    await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
+    this.mode = "serve";
+    this.startHeartbeat();
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+    this.taskDispatcher = new TaskDispatcher(
+      (id) => this.sessions.find((s) => s.id === id),
+      (id) => this.sessionToolKeys.get(id),
+      (id) => this.sessionRoles.get(id),
+    );
+    this.writeInstructionFiles();
+    await this.reconcileProjectHost();
+
+    if (!this.isProjectHost) {
+      const host = this.projectHostInfo;
+      if (host) {
+        const endpoint = this.metadataServer?.getAddress();
+        console.log(
+          `aimux serve: host already running for ${process.cwd()} (instance ${host.instanceId}, pid ${host.pid}${host.metadataPort ? `, http://127.0.0.1:${host.metadataPort}` : ""})`,
+        );
+      } else {
+        console.log(`aimux serve: unable to acquire host for ${process.cwd()}`);
+      }
+      this.teardown();
+      return 0;
+    }
+
+    this.writeStatuslineFile();
+    const endpoint = this.metadataServer?.getAddress();
+    console.log(
+      `aimux serve: hosting ${process.cwd()}${endpoint ? ` on http://${endpoint.host}:${endpoint.port}` : ""}`,
+    );
 
     const exitCode = await new Promise<number>((resolve) => {
       this.resolveRun = resolve;
@@ -4345,7 +4388,7 @@ export class Multiplexer {
           this.confirmedRegistered = result.confirmedIds;
         })
         .catch(() => {});
-      if (this.mode === "dashboard") {
+      if (this.mode === "dashboard" || this.mode === "serve") {
         void this.reconcileProjectHost().catch(() => {});
       }
       // Refresh offline sessions from state.json (picks up cross-instance graveyard/kill)
