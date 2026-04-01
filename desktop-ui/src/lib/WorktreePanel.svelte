@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { getState, selectSession, runTerminal } from "../stores/state.svelte.js";
+  import { getState, selectSession, runTerminal, pushAction } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const appState = getState();
@@ -118,6 +118,7 @@
     if (!project || busy) return;
     busy = true;
     try {
+      pushAction(`Killing ${agentLabel(agent)}...`);
       await invoke("agent_kill", { projectPath: project.path, sessionId: agent.id });
     } catch (err) {
       showError(`Kill failed: ${err}`);
@@ -132,6 +133,7 @@
     if (!project || busy) return;
     busy = true;
     try {
+      pushAction(`Stopping ${agentLabel(agent)}...`);
       await invoke("agent_stop", { projectPath: project.path, sessionId: agent.id });
     } catch (err) {
       showError(`Stop failed: ${err}`);
@@ -146,6 +148,7 @@
     showSpawnMenu = null;
     busy = true;
     try {
+      pushAction(`Spawning ${tool}...`);
       await invoke("agent_spawn", {
         projectPath: project.path,
         tool,
@@ -164,6 +167,7 @@
     if (!project || !name || busy) return;
     busy = true;
     try {
+      pushAction(`Creating worktree "${name}"...`);
       await invoke("worktree_create", { projectPath: project.path, name });
       newWorktreeName = "";
       showNewWorktreeInput = false;

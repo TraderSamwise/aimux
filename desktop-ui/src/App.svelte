@@ -5,6 +5,7 @@
   import WorktreePanel from "./lib/WorktreePanel.svelte";
   import TerminalPanel from "./lib/TerminalPanel.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
+  import ActionBar from "./lib/ActionBar.svelte";
   import { startHeartbeat, stopHeartbeat } from "./stores/state.svelte.js";
 
   onMount(() => {
@@ -22,6 +23,7 @@
       <TerminalPanel />
     </div>
     <StatusBar />
+    <ActionBar />
   </main>
 </div>
 

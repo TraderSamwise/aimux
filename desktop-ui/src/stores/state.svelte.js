@@ -14,6 +14,27 @@ let unlistenExit = null;
 let heartbeatTimer = null;
 let heartbeatInFlight = false;
 
+// ── In-progress action queue ──────────────────────────────────────
+
+let tickNumber = 0;
+let pendingActions = $state([]);       // { message: string, tickCreated: number }
+let currentAction = $state(null);      // newest pending action message, or null
+
+export function pushAction(message) {
+  pendingActions.push({ message, tickCreated: tickNumber });
+  currentAction = message;
+}
+
+function drainActions() {
+  const cutoff = tickNumber - 2;
+  pendingActions = pendingActions.filter((a) => a.tickCreated > cutoff);
+  currentAction = pendingActions.length > 0
+    ? pendingActions[pendingActions.length - 1].message
+    : null;
+}
+
+// ── State getters ─────────────────────────────────────────────────
+
 export function getState() {
   return {
     get projects() { return projects; },
@@ -23,6 +44,7 @@ export function getState() {
     set selectedSessionId(v) { selectedSessionId = v; },
     get terminalSessionId() { return terminalSessionId; },
     get terminalStatus() { return terminalStatus; },
+    get currentAction() { return currentAction; },
     get selectedProject() {
       return projects.find((p) => p.path === selectedProjectPath) || null;
     },
@@ -47,6 +69,9 @@ async function tick() {
   if (heartbeatInFlight) return;
   heartbeatInFlight = true;
   try {
+    tickNumber++;
+    drainActions();
+
     const response = await invoke("heartbeat");
     const incoming = response.projects || [];
     incoming.sort((a, b) => a.name.localeCompare(b.name));
