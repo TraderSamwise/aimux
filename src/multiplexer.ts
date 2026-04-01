@@ -47,6 +47,7 @@ import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
+import { readAllTasks, readTask, type Task } from "./tasks.js";
 import {
   appendMessage,
   createThread,
@@ -125,6 +126,12 @@ interface ThreadEntry extends ThreadSummary {
   latestPendingRecipients: string[];
 }
 
+interface WorkflowEntry extends ThreadEntry {
+  task?: Task;
+  urgency: number;
+  stateLabel: string;
+}
+
 interface DashboardOrchestrationTarget {
   label: string;
   sessionId?: string;
@@ -174,6 +181,8 @@ export class Multiplexer {
   private graveyardIndex = 0;
   private activityEntries: DashboardSession[] = [];
   private activityIndex = 0;
+  private workflowEntries: WorkflowEntry[] = [];
+  private workflowIndex = 0;
   private threadEntries: ThreadEntry[] = [];
   private threadIndex = 0;
   private threadReplyActive = false;
@@ -732,6 +741,10 @@ export class Multiplexer {
         this.handleActivityKey(data);
         return;
       }
+      if (this.isDashboardScreen("workflow")) {
+        this.handleWorkflowKey(data);
+        return;
+      }
       if (this.isDashboardScreen("threads")) {
         this.handleThreadsKey(data);
         return;
@@ -1285,6 +1298,9 @@ export class Multiplexer {
       case "g":
         this.showGraveyard();
         return;
+      case "y":
+        this.showWorkflow();
+        return;
       case "p":
         this.showPlans();
         return;
@@ -1580,6 +1596,239 @@ export class Multiplexer {
     this.renderActivityDashboard();
   }
 
+  private buildWorkflowEntries(): WorkflowEntry[] {
+    const tasksById = new Map(readAllTasks().map((task) => [task.id, task]));
+    return this.buildThreadEntries()
+      .filter(
+        (entry) => entry.thread.kind === "task" || entry.thread.kind === "review" || entry.thread.kind === "handoff",
+      )
+      .map((entry) => {
+        const task = entry.thread.taskId ? tasksById.get(entry.thread.taskId) : undefined;
+        const waitingOnMe = entry.thread.waitingOn?.includes("user") ? 1 : 0;
+        const pending = entry.pendingDeliveries;
+        const blocked = entry.thread.status === "blocked" ? 1 : 0;
+        const unread = entry.thread.unreadBy?.includes("user") ? 1 : 0;
+        const taskAssigned = task?.status === "assigned" ? 1 : 0;
+        const urgency = waitingOnMe * 10 + blocked * 8 + pending * 4 + unread * 3 + taskAssigned * 2;
+        const stateLabel =
+          entry.thread.status === "blocked"
+            ? "blocked"
+            : waitingOnMe
+              ? "on me"
+              : (entry.thread.waitingOn?.length ?? 0) > 0
+                ? `on ${entry.thread.waitingOn!.join(", ")}`
+                : (task?.status ?? entry.thread.status);
+        return {
+          ...entry,
+          task,
+          urgency,
+          stateLabel,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.urgency - a.urgency ||
+          (a.thread.updatedAt < b.thread.updatedAt ? 1 : a.thread.updatedAt > b.thread.updatedAt ? -1 : 0),
+      );
+  }
+
+  private showWorkflow(): void {
+    this.clearDashboardSubscreens();
+    this.workflowEntries = this.buildWorkflowEntries();
+    if (this.workflowIndex >= this.workflowEntries.length) {
+      this.workflowIndex = Math.max(0, this.workflowEntries.length - 1);
+    }
+    this.setDashboardScreen("workflow");
+    this.writeStatuslineFile();
+    this.renderWorkflow();
+  }
+
+  private renderWorkflow(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const header: string[] = [];
+    header.push("");
+    header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — workflow", cols));
+    header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
+    header.push("");
+    const footer = this.centerInWidth(
+      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a/c/b/o/x] act  [Enter] thread  [Esc] dashboard  [q] quit",
+      cols,
+    );
+    const viewportHeight = rows - header.length - 2;
+    const twoPane = cols >= 110 && this.dashboardState.detailsSidebarVisible;
+    const listLines: string[] = [];
+
+    if (this.workflowEntries.length === 0) {
+      listLines.push("  Workflow");
+      listLines.push("    No open task/review/handoff workflow items.");
+    } else {
+      listLines.push("  Workflow");
+      for (let i = 0; i < this.workflowEntries.length; i++) {
+        const entry = this.workflowEntries[i]!;
+        const selected = i === this.workflowIndex;
+        const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
+        const pending = entry.pendingDeliveries > 0 ? ` \x1b[31m⇢ ${entry.pendingDeliveries}\x1b[0m` : "";
+        const unread =
+          (entry.thread.unreadBy?.length ?? 0) > 0 ? ` \x1b[36m${entry.thread.unreadBy!.length}\x1b[0m` : "";
+        const latest = entry.latestMessage?.body
+          ? ` \x1b[2m· ${this.truncatePlain(entry.latestMessage.body, 28)}\x1b[0m`
+          : "";
+        listLines.push(
+          `${marker}[${i + 1}] ${entry.displayTitle} \x1b[2m(${entry.thread.kind})\x1b[0m — ${entry.stateLabel}${unread}${pending}${latest}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+        );
+      }
+    }
+
+    const focusLine = this.workflowEntries.length === 0 ? 1 : this.workflowIndex + 1;
+    const body = this.composeSplitScreen(
+      listLines,
+      this.renderWorkflowDetails(Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
+      cols,
+      viewportHeight,
+      focusLine,
+      twoPane,
+    );
+    process.stdout.write(
+      "\x1b[2J\x1b[H" +
+        [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
+    );
+  }
+
+  private renderWorkflowDetails(width: number, height: number): string[] {
+    const entry = this.workflowEntries[this.workflowIndex];
+    if (!entry) return new Array(height).fill("");
+    const lines: string[] = [];
+    lines.push("\x1b[1mWorkflow\x1b[0m");
+    lines.push(...this.wrapKeyValue("Title", entry.displayTitle, width));
+    lines.push(...this.wrapKeyValue("Kind", entry.thread.kind, width));
+    lines.push(...this.wrapKeyValue("State", entry.stateLabel, width));
+    if (entry.task) {
+      lines.push(...this.wrapKeyValue("Task Status", entry.task.status, width));
+      lines.push(...this.wrapKeyValue("Prompt", entry.task.prompt, width));
+      if (entry.task.result) lines.push(...this.wrapKeyValue("Result", entry.task.result, width));
+      if (entry.task.error) lines.push(...this.wrapKeyValue("Error", entry.task.error, width));
+    }
+    if (entry.thread.owner) lines.push(...this.wrapKeyValue("Owner", entry.thread.owner, width));
+    if ((entry.thread.waitingOn?.length ?? 0) > 0) {
+      lines.push(...this.wrapKeyValue("Waiting On", entry.thread.waitingOn!.join(", "), width));
+    }
+    if (entry.pendingDeliveries > 0) {
+      lines.push(...this.wrapKeyValue("Pending Delivery", entry.latestPendingRecipients.join(", "), width));
+    }
+    if (entry.thread.taskId) lines.push(...this.wrapKeyValue("Task", entry.thread.taskId, width));
+    lines.push("");
+    lines.push("\x1b[1mLatest\x1b[0m");
+    if (entry.latestMessage) {
+      lines.push(
+        ...this.wrapKeyValue(
+          `${entry.latestMessage.from} [${entry.latestMessage.kind}]`,
+          entry.latestMessage.body,
+          width,
+        ),
+      );
+    }
+    while (lines.length < height) lines.push("");
+    return lines.slice(0, height);
+  }
+
+  private handleWorkflowKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const key = events[0].name || events[0].char;
+
+    if (key === "tab") {
+      this.dashboardState.toggleDetailsSidebar();
+      this.renderWorkflow();
+      return;
+    }
+    if (key === "q") {
+      this.tmuxRuntimeManager.leaveManagedSession({
+        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
+        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+      });
+      this.cleanup();
+      process.exit(0);
+      return;
+    }
+    if (key === "escape" || key === "d") {
+      this.setDashboardScreen("dashboard");
+      this.renderDashboard();
+      return;
+    }
+    if (this.handleDashboardSubscreenNavigationKey(key, "workflow")) return;
+    if (key === "?") {
+      this.showHelp();
+      return;
+    }
+    if (key === "s") {
+      const entry = this.workflowEntries[this.workflowIndex];
+      if (entry) {
+        this.threadEntries = this.buildThreadEntries();
+        this.threadIndex = Math.max(
+          0,
+          this.threadEntries.findIndex((thread) => thread.thread.id === entry.thread.id),
+        );
+        this.threadReplyActive = true;
+        this.threadReplyBuffer = "";
+        this.setDashboardScreen("threads");
+        this.renderThreadReply();
+      }
+      return;
+    }
+    if (key === "a" || key === "c" || key === "b" || key === "o" || key === "x") {
+      const entry = this.workflowEntries[this.workflowIndex];
+      if (!entry) return;
+      if (key === "a" && entry.thread.kind === "handoff") {
+        void this.runThreadHandoffAction("accept", entry.thread.id);
+        return;
+      }
+      if (key === "c" && entry.thread.kind === "handoff") {
+        void this.runThreadHandoffAction("complete", entry.thread.id);
+        return;
+      }
+      const statusMap: Record<string, ThreadStatus> = { b: "blocked", o: "open", x: "done" };
+      const status = statusMap[key];
+      if (status) {
+        void this.runThreadStatusAction(entry.thread.id, status);
+      }
+      return;
+    }
+    if (key === "down" || key === "j" || key === "n") {
+      if (this.workflowEntries.length > 1) {
+        this.workflowIndex = (this.workflowIndex + 1) % this.workflowEntries.length;
+        this.renderWorkflow();
+      }
+      return;
+    }
+    if (key === "up" || key === "k") {
+      if (this.workflowEntries.length > 1) {
+        this.workflowIndex = (this.workflowIndex - 1 + this.workflowEntries.length) % this.workflowEntries.length;
+        this.renderWorkflow();
+      }
+      return;
+    }
+    if (key >= "1" && key <= "9") {
+      const idx = parseInt(key, 10) - 1;
+      if (idx < this.workflowEntries.length) {
+        this.workflowIndex = idx;
+        this.renderWorkflow();
+      }
+      return;
+    }
+    if (key === "enter" || key === "return") {
+      const entry = this.workflowEntries[this.workflowIndex];
+      if (!entry) return;
+      this.threadEntries = this.buildThreadEntries();
+      this.threadIndex = Math.max(
+        0,
+        this.threadEntries.findIndex((thread) => thread.thread.id === entry.thread.id),
+      );
+      this.setDashboardScreen("threads");
+      this.renderThreads();
+    }
+  }
+
   private renderActivityDashboard(): void {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
@@ -1589,7 +1838,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -1792,7 +2041,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [s] reply  [a] accept  [c] complete  [b/o/x] state  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a] accept  [c] complete  [b/o/x] state  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -2327,6 +2576,14 @@ export class Multiplexer {
         this.renderThreads();
       } else {
         this.showThreads();
+      }
+      return true;
+    }
+    if (key === "y") {
+      if (currentScreen === "workflow") {
+        this.renderWorkflow();
+      } else {
+        this.showWorkflow();
       }
       return true;
     }
@@ -3753,7 +4010,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -3953,7 +4210,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -4345,6 +4602,7 @@ export class Multiplexer {
       "  arrows / j k n p  navigate",
       "  Enter  open, resume, or takeover",
       "  a  activity",
+      "  y  workflow",
       "  p  plans",
       "  r  name agent",
       "  m  migrate agent",
@@ -4417,6 +4675,11 @@ export class Multiplexer {
     if (key === "a") {
       this.dismissHelp();
       this.showActivityDashboard();
+      return;
+    }
+    if (key === "y") {
+      this.dismissHelp();
+      this.showWorkflow();
       return;
     }
     if (key === "g") {
@@ -5086,6 +5349,10 @@ export class Multiplexer {
   private renderCurrentDashboardView(): void {
     if (this.isDashboardScreen("activity")) {
       this.renderActivityDashboard();
+      return;
+    }
+    if (this.isDashboardScreen("workflow")) {
+      this.renderWorkflow();
       return;
     }
     if (this.isDashboardScreen("threads")) {

@@ -1,6 +1,6 @@
 import type { DashboardSession } from "./dashboard.js";
 
-export type DashboardScreen = "dashboard" | "activity" | "threads" | "plans" | "graveyard" | "help";
+export type DashboardScreen = "dashboard" | "activity" | "workflow" | "threads" | "plans" | "graveyard" | "help";
 export type DashboardLevel = "worktrees" | "sessions";
 
 export class DashboardState {
