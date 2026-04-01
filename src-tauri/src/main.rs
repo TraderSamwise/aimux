@@ -296,12 +296,33 @@ fn agent_spawn(project_path: String, tool: String, worktree: Option<String>) -> 
 
 #[tauri::command]
 fn agent_stop(project_path: String, session_id: String) -> Result<Value, String> {
-  fire_and_forget(&project_path, &["stop", &session_id, "--project", &project_path, "--json"])
+  // Run on a background thread so UI doesn't freeze, but let the process complete
+  let pp = project_path.clone();
+  let sid = session_id.clone();
+  std::thread::spawn(move || {
+    let _ = std::process::Command::new(resolve_node())
+      .arg(aimux_entrypoint())
+      .args(["stop", &sid, "--project", &pp, "--json"])
+      .current_dir(&pp)
+      .env("PATH", shell_path())
+      .output();
+  });
+  Ok(serde_json::json!({ "ok": true }))
 }
 
 #[tauri::command]
 fn agent_kill(project_path: String, session_id: String) -> Result<Value, String> {
-  fire_and_forget(&project_path, &["kill", &session_id, "--project", &project_path, "--json"])
+  let pp = project_path.clone();
+  let sid = session_id.clone();
+  std::thread::spawn(move || {
+    let _ = std::process::Command::new(resolve_node())
+      .arg(aimux_entrypoint())
+      .args(["kill", &sid, "--project", &pp, "--json"])
+      .current_dir(&pp)
+      .env("PATH", shell_path())
+      .output();
+  });
+  Ok(serde_json::json!({ "ok": true }))
 }
 
 #[tauri::command]
