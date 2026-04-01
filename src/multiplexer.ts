@@ -1860,9 +1860,19 @@ export class Multiplexer {
     lines.push("\x1b[1mMessages\x1b[0m");
     const messages = readMessages(entry.thread.id).slice(-Math.max(3, height - lines.length));
     for (const message of messages) {
-      const prefix = `${message.from} [${message.kind}]`;
+      const prefix = `${message.from}${message.to?.length ? ` → ${message.to.join(", ")}` : ""} [${message.kind}]`;
+      const delivered = message.deliveredTo ?? [];
       const pending = (message.to ?? []).filter((recipient) => !(message.deliveredTo ?? []).includes(recipient));
-      const suffix = pending.length > 0 ? ` (${pending.join(", ")} pending)` : "";
+      const statusParts: string[] = [];
+      if (delivered.length > 0) {
+        statusParts.push(
+          pending.length > 0 ? `delivered ${delivered.join(", ")}` : `delivered to ${delivered.join(", ")}`,
+        );
+      }
+      if (pending.length > 0) {
+        statusParts.push(`pending ${pending.join(", ")}`);
+      }
+      const suffix = statusParts.length > 0 ? ` (${statusParts.join("; ")})` : "";
       lines.push(...this.wrapKeyValue(prefix, `${message.body}${suffix}`, width));
     }
     while (lines.length < height) lines.push("");
