@@ -62,7 +62,7 @@ fn shell_path() -> String {
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct ProjectInfo {
+struct DaemonProject {
   id: String,
   name: String,
   path: String,
@@ -72,14 +72,31 @@ struct ProjectInfo {
   service_alive: bool,
   #[serde(default)]
   sessions: Vec<Value>,
-  #[serde(default)]
-  statusline: Option<Value>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DaemonProjectsResponse {
+  projects: Vec<DaemonProject>,
+}
+
+// What the frontend actually receives — one flat blob per project
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectSnapshot {
+  id: String,
+  name: String,
+  path: String,
+  service_alive: bool,
+  sessions: Vec<Value>,
+  statusline: Option<Value>,
+  worktrees: Vec<Value>,
+}
+
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HeartbeatResponse {
-  projects: Vec<ProjectInfo>,
+  projects: Vec<ProjectSnapshot>,
 }
 
 fn preview_bytes(bytes: &[u8], limit: usize) -> String {
@@ -179,8 +196,8 @@ static LAST_STATUSLINES: LazyLock<Mutex<HashMap<String, Value>>> =
 #[tauri::command]
 fn heartbeat() -> Result<HeartbeatResponse, String> {
   let cwd = repo_root();
-  let response: HeartbeatResponse = match run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects") {
-    Ok(response) => response,
+  let response: DaemonProjectsResponse = match run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects") {
+    Ok(r) => r,
     Err(_) => {
       let _: Value = run_aimux_json(&cwd, &["daemon", "ensure", "--json"], "daemon ensure")?;
       run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects")?
@@ -192,10 +209,23 @@ fn heartbeat() -> Result<HeartbeatResponse, String> {
     .into_iter()
     .map(|project| {
       let project_dir = aimux_global_dir().join("projects").join(&project.id);
-      let statusline = read_statusline_cached(&project.id, &project_dir).or(project.statusline.clone());
-      ProjectInfo {
+      let statusline = read_statusline_cached(&project.id, &project_dir);
+
+      // Worktree list — fast git operation, ok to run every tick
+      let worktrees = run_aimux_json::<Vec<Value>>(
+        Path::new(&project.path),
+        &["worktree", "list", "--project", &project.path, "--json"],
+        "worktree list",
+      ).unwrap_or_default();
+
+      ProjectSnapshot {
+        id: project.id,
+        name: project.name,
+        path: project.path,
+        service_alive: project.service_alive,
+        sessions: project.sessions,
         statusline,
-        ..project
+        worktrees,
       }
     })
     .collect();

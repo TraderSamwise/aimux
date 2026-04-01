@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { getState, selectSession, runTerminal, refreshWorktrees } from "../stores/state.svelte.js";
+  import { getState, selectSession, runTerminal } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const appState = getState();
@@ -167,7 +167,7 @@
       await invoke("worktree_create", { projectPath: project.path, name });
       newWorktreeName = "";
       showNewWorktreeInput = false;
-      refreshWorktrees(project.path);
+      // Will appear on next heartbeat tick
     } catch (err) {
       showError(`Worktree create failed: ${err}`);
     } finally {
