@@ -1444,6 +1444,40 @@ program
   });
 
 program
+  .command("rename <sessionId>")
+  .description("Rename an agent label in running or offline state")
+  .requiredOption("--label <label>", "New agent label")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (sessionId: string, opts: { label: string; project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      const mux = new Multiplexer();
+      const result = await mux.renameAgent(sessionId, opts.label);
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              projectRoot,
+              sessionId: result.sessionId,
+              label: result.label,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`renamed ${result.sessionId} -> ${result.label ?? ""}`.trim());
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+program
   .command("kill <sessionId>")
   .description("Send an agent to the graveyard from running or offline state")
   .option("--project <path>", "Project path")
@@ -1470,6 +1504,41 @@ program
         return;
       }
       console.log(`graveyarded ${result.sessionId}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("migrate <sessionId>")
+  .description("Migrate a running agent into another worktree")
+  .requiredOption("--worktree <path>", "Target worktree path")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (sessionId: string, opts: { worktree: string; project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      const mux = new Multiplexer();
+      const targetWorktreePath = pathResolve(opts.worktree);
+      const result = await mux.migrateAgentSession(sessionId, targetWorktreePath);
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              projectRoot,
+              sessionId: result.sessionId,
+              worktreePath: result.worktreePath ?? projectRoot,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`migrated ${result.sessionId} -> ${result.worktreePath ?? projectRoot}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);

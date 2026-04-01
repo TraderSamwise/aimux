@@ -3062,6 +3062,20 @@ export class Multiplexer {
     return { sessionId: transport.id };
   }
 
+  async renameAgent(sessionId: string, label?: string): Promise<{ sessionId: string; label?: string }> {
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+
+    const runningSession = this.sessions.find((session) => session.id === sessionId);
+    const offlineSession = this.offlineSessions.find((session) => session.id === sessionId);
+    if (!runningSession && !offlineSession) {
+      throw new Error(`Session "${sessionId}" not found`);
+    }
+
+    await this.updateSessionLabel(sessionId, label);
+    return { sessionId, label: this.getSessionLabel(sessionId) };
+  }
+
   async stopAgent(sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
     this.restoreTmuxSessionsFromState();
     this.loadOfflineSessions();
@@ -3107,6 +3121,27 @@ export class Multiplexer {
 
     this.graveyardSession(sessionId);
     return { sessionId, status: "graveyard", previousStatus };
+  }
+
+  async migrateAgentSession(
+    sessionId: string,
+    targetWorktreePath: string,
+  ): Promise<{ sessionId: string; worktreePath?: string }> {
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+
+    const runningSession = this.sessions.find((session) => session.id === sessionId);
+    if (!runningSession) {
+      const offlineSession = this.offlineSessions.find((session) => session.id === sessionId);
+      if (offlineSession) {
+        throw new Error(`Session "${sessionId}" is offline and cannot be migrated`);
+      }
+      throw new Error(`Session "${sessionId}" not found`);
+    }
+
+    await this.migrateAgent(sessionId, targetWorktreePath);
+    await this.waitForSessionExit(runningSession);
+    return { sessionId, worktreePath: this.getSessionWorktreePath(sessionId) };
   }
 
   private renderDashboard(): void {

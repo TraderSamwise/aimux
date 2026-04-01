@@ -129,6 +129,8 @@ aimux fork <sessionId> --tool codex --project /abs/path/to/repo --worktree /abs/
 
 # Match the dashboard lifecycle
 aimux stop <sessionId> --project /abs/path/to/repo --json
+aimux rename <sessionId> --label "Backend reviewer" --project /abs/path/to/repo --json
+aimux migrate <sessionId> --worktree /abs/path/to/worktree --project /abs/path/to/repo --json
 aimux kill <sessionId> --project /abs/path/to/repo --json
 aimux graveyard send <sessionId> --project /abs/path/to/repo --json
 aimux graveyard resurrect <sessionId> --project /abs/path/to/repo --json

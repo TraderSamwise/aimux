@@ -104,6 +104,8 @@ The CLI is also the GUI automation surface. For project-targeted automation, pre
 aimux spawn --tool claude --project /abs/path/to/repo --json
 aimux fork <sessionId> --tool codex --project /abs/path/to/repo --json
 aimux stop <sessionId> --project /abs/path/to/repo --json
+aimux rename <sessionId> --label "Backend reviewer" --project /abs/path/to/repo --json
+aimux migrate <sessionId> --worktree /abs/path/to/worktree --project /abs/path/to/repo --json
 aimux kill <sessionId> --project /abs/path/to/repo --json
 aimux graveyard send <sessionId> --project /abs/path/to/repo --json
 aimux graveyard resurrect <sessionId> --project /abs/path/to/repo --json
