@@ -47,7 +47,7 @@ import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
-import { readAllTasks, readTask, type Task } from "./tasks.js";
+import { readTask, type Task } from "./tasks.js";
 import {
   appendMessage,
   createThread,
@@ -60,7 +60,6 @@ import {
   setThreadStatus,
   type ThreadStatus,
   updateThread,
-  type ThreadSummary,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import {
@@ -74,6 +73,7 @@ import {
 } from "./orchestration-actions.js";
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
+import { buildThreadEntries, buildWorkflowEntries, type ThreadEntry, type WorkflowEntry } from "./workflow.js";
 
 export type MuxMode = "dashboard" | "project-service";
 
@@ -126,18 +126,6 @@ interface PlanEntry {
   updatedAt?: string;
   path: string;
   content: string;
-}
-
-interface ThreadEntry extends ThreadSummary {
-  displayTitle: string;
-  pendingDeliveries: number;
-  latestPendingRecipients: string[];
-}
-
-interface WorkflowEntry extends ThreadEntry {
-  task?: Task;
-  urgency: number;
-  stateLabel: string;
 }
 
 interface DashboardOrchestrationTarget {
@@ -1605,39 +1593,7 @@ export class Multiplexer {
   }
 
   private buildWorkflowEntries(): WorkflowEntry[] {
-    const tasksById = new Map(readAllTasks().map((task) => [task.id, task]));
-    return this.buildThreadEntries()
-      .filter(
-        (entry) => entry.thread.kind === "task" || entry.thread.kind === "review" || entry.thread.kind === "handoff",
-      )
-      .map((entry) => {
-        const task = entry.thread.taskId ? tasksById.get(entry.thread.taskId) : undefined;
-        const waitingOnMe = entry.thread.waitingOn?.includes("user") ? 1 : 0;
-        const pending = entry.pendingDeliveries;
-        const blocked = entry.thread.status === "blocked" ? 1 : 0;
-        const unread = entry.thread.unreadBy?.includes("user") ? 1 : 0;
-        const taskAssigned = task?.status === "assigned" ? 1 : 0;
-        const urgency = waitingOnMe * 10 + blocked * 8 + pending * 4 + unread * 3 + taskAssigned * 2;
-        const stateLabel =
-          entry.thread.status === "blocked"
-            ? "blocked"
-            : waitingOnMe
-              ? "on me"
-              : (entry.thread.waitingOn?.length ?? 0) > 0
-                ? `on ${entry.thread.waitingOn!.join(", ")}`
-                : (task?.status ?? entry.thread.status);
-        return {
-          ...entry,
-          task,
-          urgency,
-          stateLabel,
-        };
-      })
-      .sort(
-        (a, b) =>
-          b.urgency - a.urgency ||
-          (a.thread.updatedAt < b.thread.updatedAt ? 1 : a.thread.updatedAt > b.thread.updatedAt ? -1 : 0),
-      );
+    return buildWorkflowEntries("user");
   }
 
   private showWorkflow(): void {
@@ -1772,7 +1728,7 @@ export class Multiplexer {
     if (key === "s") {
       const entry = this.workflowEntries[this.workflowIndex];
       if (entry) {
-        this.threadEntries = this.buildThreadEntries();
+        this.threadEntries = buildThreadEntries();
         this.threadIndex = Math.max(
           0,
           this.threadEntries.findIndex((thread) => thread.thread.id === entry.thread.id),
@@ -1841,7 +1797,7 @@ export class Multiplexer {
     if (key === "enter" || key === "return") {
       const entry = this.workflowEntries[this.workflowIndex];
       if (!entry) return;
-      this.threadEntries = this.buildThreadEntries();
+      this.threadEntries = buildThreadEntries();
       this.threadIndex = Math.max(
         0,
         this.threadEntries.findIndex((thread) => thread.thread.id === entry.thread.id),
@@ -1973,32 +1929,9 @@ export class Multiplexer {
     }
   }
 
-  private buildThreadEntries(): ThreadEntry[] {
-    return listThreadSummaries()
-      .map((summary) => {
-        const messages = readMessages(summary.thread.id);
-        const pending = messages.flatMap((message) =>
-          (message.to ?? []).filter((recipient) => !(message.deliveredTo ?? []).includes(recipient)),
-        );
-        const latestWithPending = [...messages]
-          .reverse()
-          .find((message) => (message.to ?? []).some((recipient) => !(message.deliveredTo ?? []).includes(recipient)));
-        const latestPendingRecipients = (latestWithPending?.to ?? []).filter(
-          (recipient) => !(latestWithPending?.deliveredTo ?? []).includes(recipient),
-        );
-        return {
-          ...summary,
-          displayTitle: summary.thread.title || `${summary.thread.kind} ${summary.thread.id}`,
-          pendingDeliveries: pending.length,
-          latestPendingRecipients,
-        };
-      })
-      .sort((a, b) => (a.thread.updatedAt < b.thread.updatedAt ? 1 : a.thread.updatedAt > b.thread.updatedAt ? -1 : 0));
-  }
-
   private showThreads(): void {
     this.clearDashboardSubscreens();
-    this.threadEntries = this.buildThreadEntries();
+    this.threadEntries = buildThreadEntries();
     if (this.threadIndex >= this.threadEntries.length) {
       this.threadIndex = Math.max(0, this.threadEntries.length - 1);
     }
@@ -2032,7 +1965,7 @@ export class Multiplexer {
   }
 
   private openRelevantThreadForSession(sessionId: string): void {
-    const entries = this.buildThreadEntries();
+    const entries = buildThreadEntries();
     const idx = this.getPreferredThreadIndexForParticipant(sessionId, entries);
     if (idx < 0 || idx >= entries.length) {
       this.footerFlash = `No thread for ${sessionId}`;
@@ -2186,7 +2119,7 @@ export class Multiplexer {
       return;
     }
     if (key === "r") {
-      this.threadEntries = this.buildThreadEntries();
+      this.threadEntries = buildThreadEntries();
       if (this.threadIndex >= this.threadEntries.length) {
         this.threadIndex = Math.max(0, this.threadEntries.length - 1);
       }
@@ -2355,7 +2288,7 @@ export class Multiplexer {
         return;
       }
     }
-    this.threadEntries = this.buildThreadEntries();
+    this.threadEntries = buildThreadEntries();
     this.threadIndex = Math.min(this.threadIndex, Math.max(0, this.threadEntries.length - 1));
     this.renderThreads();
   }
@@ -2380,7 +2313,7 @@ export class Multiplexer {
         return;
       }
     }
-    this.threadEntries = this.buildThreadEntries();
+    this.threadEntries = buildThreadEntries();
     this.threadIndex = Math.min(this.threadIndex, Math.max(0, this.threadEntries.length - 1));
     this.renderThreads();
   }
@@ -2454,7 +2387,7 @@ export class Multiplexer {
         this.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]);
         return;
       }
-      this.threadEntries = this.buildThreadEntries();
+      this.threadEntries = buildThreadEntries();
       this.threadIndex = Math.min(this.threadIndex, Math.max(0, this.threadEntries.length - 1));
       this.renderThreads();
       return;

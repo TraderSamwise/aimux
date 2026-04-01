@@ -152,4 +152,32 @@ describe("MetadataServer threads API", () => {
     expect(completed.task.status).toBe("done");
     expect(completed.task.result).toContain("Fixed");
   });
+
+  it("returns workflow entries over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Audit the parser timeout path",
+      }),
+    });
+
+    const workflowRes = await fetch(`${base}/workflow?participant=codex-1`);
+    const workflow = (await workflowRes.json()) as Array<{
+      thread: { kind: string };
+      task?: { status: string };
+      stateLabel: string;
+    }>;
+    expect(workflowRes.ok).toBe(true);
+    expect(workflow.some((entry) => entry.thread.kind === "task")).toBe(true);
+    expect(workflow.some((entry) => entry.stateLabel.includes("on codex-1") || entry.stateLabel === "on me")).toBe(
+      true,
+    );
+  });
 });

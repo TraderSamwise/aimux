@@ -36,6 +36,7 @@ import {
   sendHandoff,
   type TaskLifecycleResult,
 } from "./orchestration-actions.js";
+import { buildWorkflowEntries } from "./workflow.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -178,6 +179,10 @@ export class MetadataServer {
     }
     if (req.method === "GET" && url.pathname === "/threads") {
       send(res, 200, listThreadSummaries(url.searchParams.get("session") ?? undefined));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/workflow") {
+      send(res, 200, buildWorkflowEntries(url.searchParams.get("participant") ?? "user"));
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/threads/")) {
