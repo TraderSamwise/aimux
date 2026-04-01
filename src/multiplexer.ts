@@ -44,9 +44,10 @@ import { InstanceDirectory } from "./instance-directory.js";
 import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
 import { MetadataServer } from "./metadata-server.js";
-import { loadMetadataState } from "./metadata-store.js";
+import { loadMetadataState, removeMetadataEndpoint } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
+import { acquireProjectHost, heartbeatProjectHost, releaseProjectHost, type ProjectHostInfo } from "./project-host.js";
 import {
   appendMessage,
   createThread,
@@ -200,6 +201,8 @@ export class Multiplexer {
   private sessionTmuxTargets = new Map<string, TmuxTarget>();
   private metadataServer: MetadataServer | null = null;
   private pluginRuntime: PluginRuntime | null = null;
+  private projectHostInfo: ProjectHostInfo | null = null;
+  private isProjectHost = false;
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -223,6 +226,70 @@ export class Multiplexer {
     const session = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
     const target = this.tmuxRuntimeManager.ensureDashboardWindow(session.sessionName, process.cwd());
     this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+  }
+
+  private async startHostServices(): Promise<void> {
+    if (this.metadataServer) return;
+    this.claimStatuslineOwnership();
+    this.metadataServer = new MetadataServer({
+      onChange: () => {
+        this.writeStatuslineFile();
+        if (this.mode === "dashboard") {
+          this.renderCurrentDashboardView();
+        }
+      },
+    });
+    await this.metadataServer.start();
+    const endpoint = this.metadataServer.getAddress();
+    if (endpoint) {
+      this.projectHostInfo = await heartbeatProjectHost(this.instanceId, process.cwd(), {
+        metadataPort: endpoint.port,
+        cwd: process.cwd(),
+      });
+      this.pluginRuntime = new PluginRuntime({
+        host: endpoint.host,
+        port: endpoint.port,
+        pid: process.pid,
+        updatedAt: new Date().toISOString(),
+      });
+      await this.pluginRuntime.start();
+    }
+  }
+
+  private async stopHostServices(): Promise<void> {
+    this.metadataServer?.stop();
+    this.metadataServer = null;
+    removeMetadataEndpoint();
+    await this.pluginRuntime?.stop?.();
+    this.pluginRuntime = null;
+    try {
+      if (this.ownsStatusline()) {
+        unlinkSync(getStatuslineOwnerPath());
+      }
+    } catch {}
+  }
+
+  private async reconcileProjectHost(): Promise<void> {
+    const result = await acquireProjectHost(this.instanceId, process.cwd());
+    if (result.claimed) {
+      this.projectHostInfo = result.host;
+      if (!this.isProjectHost) {
+        this.isProjectHost = true;
+        await this.startHostServices();
+      } else {
+        this.projectHostInfo = await heartbeatProjectHost(this.instanceId, process.cwd(), {
+          metadataPort: this.metadataServer?.getAddress()?.port,
+          cwd: process.cwd(),
+        });
+      }
+      return;
+    }
+
+    this.projectHostInfo = result.host;
+    if (this.isProjectHost) {
+      this.isProjectHost = false;
+      await this.stopHostServices();
+    }
   }
 
   private getSessionLabel(sessionId: string): string | undefined {
@@ -486,7 +553,6 @@ export class Multiplexer {
     this.startHeartbeat();
     this.startedInDashboard = true;
     this.mode = "dashboard";
-    this.claimStatuslineOwnership();
     this.restoreTmuxSessionsFromState();
     this.loadOfflineSessions();
 
@@ -500,25 +566,7 @@ export class Multiplexer {
 
     this.writeInstructionFiles();
     this.terminalHost.enterRawMode();
-    this.metadataServer = new MetadataServer({
-      onChange: () => {
-        this.writeStatuslineFile();
-        if (this.mode === "dashboard") {
-          this.renderCurrentDashboardView();
-        }
-      },
-    });
-    await this.metadataServer.start();
-    const endpoint = this.metadataServer.getAddress();
-    if (endpoint) {
-      this.pluginRuntime = new PluginRuntime({
-        host: endpoint.host,
-        port: endpoint.port,
-        pid: process.pid,
-        updatedAt: new Date().toISOString(),
-      });
-      await this.pluginRuntime.start();
-    }
+    await this.reconcileProjectHost();
 
     // Forward stdin
     this.onStdinData = (data: Buffer) => {
@@ -3935,6 +3983,7 @@ export class Multiplexer {
   /** Write statusline state for Claude Code's statusline script to read */
   private writeStatuslineFile(): void {
     try {
+      if (!this.isProjectHost) return;
       if (!this.ownsStatusline()) return;
       for (const session of this.sessions) {
         this.syncTmuxWindowMetadata(session.id);
@@ -4057,7 +4106,9 @@ export class Multiplexer {
     if (this.statusInterval) return;
     this.statusInterval = setInterval(() => {
       this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
-      this.writeStatuslineFile();
+      if (this.isProjectHost) {
+        this.writeStatuslineFile();
+      }
 
       const events = this.taskDispatcher?.drainEvents() ?? [];
       for (const ev of events) {
@@ -4292,6 +4343,9 @@ export class Multiplexer {
           this.confirmedRegistered = result.confirmedIds;
         })
         .catch(() => {});
+      if (this.mode === "dashboard") {
+        void this.reconcileProjectHost().catch(() => {});
+      }
       // Refresh offline sessions from state.json (picks up cross-instance graveyard/kill)
       this.loadOfflineSessions();
       // Refresh dashboard to pick up remote instance changes (skip if overlay is active)
@@ -4443,21 +4497,18 @@ export class Multiplexer {
     }
     this.hotkeys.destroy();
     this.terminalHost.restoreTerminalState();
-    try {
-      if (this.ownsStatusline()) {
-        unlinkSync(getStatuslineOwnerPath());
-      }
-    } catch {}
+    if (this.isProjectHost) {
+      void releaseProjectHost(this.instanceId, process.cwd()).catch(() => {});
+      this.isProjectHost = false;
+      this.projectHostInfo = null;
+    }
   }
 
   cleanup(): void {
     for (const session of this.sessions) {
       session.destroy();
     }
-    this.metadataServer?.stop();
-    this.metadataServer = null;
-    void this.pluginRuntime?.stop();
-    this.pluginRuntime = null;
+    void this.stopHostServices().catch(() => {});
     this.teardown();
   }
 

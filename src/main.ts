@@ -29,10 +29,12 @@ import {
   type MetadataTone,
   type SessionContextMetadata,
   type SessionServiceMetadata,
+  removeMetadataEndpoint,
 } from "./metadata-store.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
 import { listDesktopProjects, scanProject } from "./project-scanner.js";
+import { clearProjectHost, loadProjectHost, pruneDeadProjectHost, terminateProjectHost } from "./project-host.js";
 import {
   appendMessage,
   createThread,
@@ -95,6 +97,23 @@ function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManage
     tmux.respawnWindow(dashboardTarget, dashboardCommand);
     tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
   }
+  return { dashboardSession, dashboardTarget };
+}
+
+function forceReloadDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
+  const { dashboardBuildStamp, dashboardCommand, statuslineCommand } = getDashboardCommandSpec(projectRoot);
+  const dashboardSession = tmux.ensureProjectSession(
+    projectRoot,
+    {
+      cwd: dashboardCommand.cwd,
+      command: dashboardCommand.command,
+      args: dashboardCommand.args,
+    },
+    statuslineCommand,
+  );
+  const dashboardTarget = tmux.ensureDashboardWindow(dashboardSession.sessionName, projectRoot, dashboardCommand);
+  tmux.respawnWindow(dashboardTarget, dashboardCommand);
+  tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
   return { dashboardSession, dashboardTarget };
 }
 
@@ -209,7 +228,7 @@ program
 
     const tmux = new TmuxRuntimeManager();
     ensureTmuxAvailable(tmux);
-    const { dashboardSession, dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
+    const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
 
     if (opts.open) {
       tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
@@ -217,6 +236,89 @@ program
     }
 
     console.log(`Reloaded dashboard for ${dashboardSession.sessionName}`);
+  });
+
+const hostCmd = program.command("host").description("Manage the per-project aimux host sidecar");
+
+hostCmd
+  .command("status")
+  .description("Show current project host status")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    await initPaths();
+    await pruneDeadProjectHost(process.cwd());
+    const host = loadProjectHost();
+    const endpoint = host ? loadMetadataEndpoint() : null;
+    const tmux = new TmuxRuntimeManager();
+    const session = tmux.getProjectSession(resolveProjectRoot(process.cwd()));
+    const payload = {
+      projectRoot: resolveProjectRoot(process.cwd()),
+      sessionName: session.sessionName,
+      host,
+      metadataEndpoint: endpoint,
+    };
+    if (opts.json) {
+      console.log(JSON.stringify(payload, null, 2));
+      return;
+    }
+    if (!host) {
+      console.log(`No live host for ${session.sessionName}`);
+      return;
+    }
+    console.log(`Host: ${host.instanceId} pid=${host.pid}`);
+    console.log(`Heartbeat: ${host.heartbeat}`);
+    console.log(`Metadata: ${endpoint ? `http://${endpoint.host}:${endpoint.port}` : "not running"}`);
+    console.log(`Tmux session: ${session.sessionName}`);
+  });
+
+hostCmd
+  .command("stop")
+  .description("Stop the current project host sidecar/dashboard process")
+  .action(async () => {
+    await initPaths();
+    const result = await terminateProjectHost(process.cwd(), "SIGTERM");
+    if (!result.host) {
+      console.log("No live project host to stop.");
+      return;
+    }
+    removeMetadataEndpoint();
+    await clearProjectHost(process.cwd());
+    console.log(`Stopped host ${result.host.instanceId} (pid ${result.host.pid})`);
+  });
+
+hostCmd
+  .command("kill")
+  .description("Force kill the current project host process")
+  .action(async () => {
+    await initPaths();
+    const result = await terminateProjectHost(process.cwd(), "SIGKILL");
+    if (!result.host) {
+      console.log("No live project host to kill.");
+      return;
+    }
+    removeMetadataEndpoint();
+    await clearProjectHost(process.cwd());
+    console.log(`Killed host ${result.host.instanceId} (pid ${result.host.pid})`);
+  });
+
+hostCmd
+  .command("restart")
+  .description("Restart the current project host/dashboard process")
+  .option("--open", "Open the dashboard after restarting")
+  .action(async (opts: { open?: boolean }) => {
+    await initPaths();
+    await terminateProjectHost(process.cwd(), "SIGTERM");
+    removeMetadataEndpoint();
+    await clearProjectHost(process.cwd());
+    const projectRoot = resolveProjectRoot(process.cwd());
+    const tmux = new TmuxRuntimeManager();
+    ensureTmuxAvailable(tmux);
+    const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
+    if (opts.open) {
+      tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
+      return;
+    }
+    console.log(`Restarted host for ${dashboardSession.sessionName}`);
   });
 
 const projectsCmd = program.command("projects").description("Inspect known aimux projects");
