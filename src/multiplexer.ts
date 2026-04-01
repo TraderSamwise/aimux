@@ -1755,6 +1755,13 @@ export class Multiplexer {
     this.threadIndex = idx;
     this.setDashboardScreen("threads");
     this.writeStatuslineFile();
+    const entry = this.threadEntries[this.threadIndex];
+    if (entry && (entry.thread.waitingOn ?? []).includes(sessionId)) {
+      this.threadReplyActive = true;
+      this.threadReplyBuffer = "";
+      this.renderThreadReply();
+      return;
+    }
     this.renderThreads();
   }
 
