@@ -1243,6 +1243,13 @@ export class Multiplexer {
         this.showOrchestrationRoutePicker("task");
         return;
       }
+      case "o": {
+        const selected = this.getSelectedDashboardSessionForActions();
+        if (selected && !selected.remoteInstancePid) {
+          this.openRelevantThreadForSession(selected.id);
+        }
+        return;
+      }
       case "q":
         this.tmuxRuntimeManager.leaveManagedSession({
           insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
@@ -1706,6 +1713,46 @@ export class Multiplexer {
     if (this.threadIndex >= this.threadEntries.length) {
       this.threadIndex = Math.max(0, this.threadEntries.length - 1);
     }
+    this.setDashboardScreen("threads");
+    this.writeStatuslineFile();
+    this.renderThreads();
+  }
+
+  private getPreferredThreadIndexForParticipant(participantId: string, entries: ThreadEntry[]): number {
+    const participantEntries = entries.filter((entry) => entry.thread.participants.includes(participantId));
+    const targetEntries = participantEntries;
+    if (targetEntries.length === 0) return -1;
+    const scored = targetEntries
+      .map((entry) => {
+        const waitingOnMe = (entry.thread.waitingOn ?? []).includes(participantId) ? 3 : 0;
+        const unread = (entry.thread.unreadBy ?? []).includes(participantId) ? 2 : 0;
+        const ownsWaiting = entry.thread.owner === participantId && (entry.thread.waitingOn?.length ?? 0) > 0 ? 1 : 0;
+        return { entry, score: waitingOnMe + unread + ownsWaiting };
+      })
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          (a.entry.thread.updatedAt < b.entry.thread.updatedAt
+            ? 1
+            : a.entry.thread.updatedAt > b.entry.thread.updatedAt
+              ? -1
+              : 0),
+      );
+    const targetId = scored[0]!.entry.thread.id;
+    return entries.findIndex((entry) => entry.thread.id === targetId);
+  }
+
+  private openRelevantThreadForSession(sessionId: string): void {
+    const entries = this.buildThreadEntries();
+    const idx = this.getPreferredThreadIndexForParticipant(sessionId, entries);
+    if (idx < 0 || idx >= entries.length) {
+      this.footerFlash = `No thread for ${sessionId}`;
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
+      return;
+    }
+    this.threadEntries = entries;
+    this.threadIndex = idx;
     this.setDashboardScreen("threads");
     this.writeStatuslineFile();
     this.renderThreads();
