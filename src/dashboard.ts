@@ -42,6 +42,8 @@ export interface DashboardSession {
   threadName?: string;
   threadUnreadCount?: number;
   threadWaitingCount?: number;
+  threadWaitingOnMeCount?: number;
+  threadWaitingOnThemCount?: number;
   threadPendingCount?: number;
 }
 
@@ -205,8 +207,10 @@ export class Dashboard {
     const marker = isSelected ? " \x1b[33m◀\x1b[0m" : "";
     const taskBadge = session.taskDescription ? ` \x1b[2;35m⧫ ${truncate(session.taskDescription, 40)}\x1b[0m` : "";
     const threadBadge =
-      (session.threadUnreadCount ?? 0) > 0 || (session.threadWaitingCount ?? 0) > 0
-        ? ` \x1b[2;34m💬 ${session.threadUnreadCount ?? 0}/${session.threadWaitingCount ?? 0}\x1b[0m`
+      (session.threadUnreadCount ?? 0) > 0 ||
+      (session.threadWaitingOnMeCount ?? 0) > 0 ||
+      (session.threadWaitingOnThemCount ?? 0) > 0
+        ? ` \x1b[2;34m💬 ${session.threadUnreadCount ?? 0}/${session.threadWaitingOnMeCount ?? 0}/${session.threadWaitingOnThemCount ?? 0}\x1b[0m`
         : "";
     const pendingBadge =
       (session.threadPendingCount ?? 0) > 0 ? ` \x1b[2;31m⇢ ${session.threadPendingCount}\x1b[0m` : "";
@@ -407,13 +411,14 @@ export class Dashboard {
     }
     if (
       (selected.threadUnreadCount ?? 0) > 0 ||
-      (selected.threadWaitingCount ?? 0) > 0 ||
+      (selected.threadWaitingOnMeCount ?? 0) > 0 ||
+      (selected.threadWaitingOnThemCount ?? 0) > 0 ||
       (selected.threadPendingCount ?? 0) > 0
     ) {
       lines.push(
         ...wrapKeyValue(
           "Threads",
-          `${selected.threadUnreadCount ?? 0} unread · ${selected.threadWaitingCount ?? 0} waiting · ${selected.threadPendingCount ?? 0} pending`,
+          `${selected.threadUnreadCount ?? 0} unread · ${selected.threadWaitingOnMeCount ?? 0} on me · ${selected.threadWaitingOnThemCount ?? 0} on them · ${selected.threadPendingCount ?? 0} pending`,
           width,
         ),
       );

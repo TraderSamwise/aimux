@@ -4310,13 +4310,14 @@ export class Multiplexer {
     }
     if (
       (session.threadUnreadCount ?? 0) > 0 ||
-      (session.threadWaitingCount ?? 0) > 0 ||
+      (session.threadWaitingOnMeCount ?? 0) > 0 ||
+      (session.threadWaitingOnThemCount ?? 0) > 0 ||
       (session.threadPendingCount ?? 0) > 0
     ) {
       lines.push(
         ...this.wrapKeyValue(
           "Threads",
-          `${session.threadUnreadCount ?? 0} unread · ${session.threadWaitingCount ?? 0} waiting · ${session.threadPendingCount ?? 0} pending`,
+          `${session.threadUnreadCount ?? 0} unread · ${session.threadWaitingOnMeCount ?? 0} on me · ${session.threadWaitingOnThemCount ?? 0} on them · ${session.threadPendingCount ?? 0} pending`,
           width,
         ),
       );
@@ -4430,7 +4431,15 @@ export class Multiplexer {
     const threadSummaries = listThreadSummaries();
     const threadStats = new Map<
       string,
-      { unread: number; waiting: number; pending: number; latestId?: string; latestTitle?: string }
+      {
+        unread: number;
+        waiting: number;
+        waitingOnMe: number;
+        waitingOnThem: number;
+        pending: number;
+        latestId?: string;
+        latestTitle?: string;
+      }
     >();
     for (const summary of threadSummaries) {
       const messages = readMessages(summary.thread.id);
@@ -4443,11 +4452,21 @@ export class Multiplexer {
         }
       }
       for (const participant of summary.thread.participants) {
-        const current = threadStats.get(participant) ?? { unread: 0, waiting: 0, pending: 0 };
+        const current = threadStats.get(participant) ?? {
+          unread: 0,
+          waiting: 0,
+          waitingOnMe: 0,
+          waitingOnThem: 0,
+          pending: 0,
+        };
         if ((summary.thread.unreadBy ?? []).includes(participant)) current.unread += 1;
-        if ((summary.thread.waitingOn ?? []).includes(participant) || summary.thread.owner === participant) {
+        const waitsOnParticipant = (summary.thread.waitingOn ?? []).includes(participant);
+        const ownedByParticipant = summary.thread.owner === participant;
+        if (waitsOnParticipant || ownedByParticipant) {
           current.waiting += 1;
         }
+        if (waitsOnParticipant) current.waitingOnMe += 1;
+        if (ownedByParticipant && (summary.thread.waitingOn?.length ?? 0) > 0) current.waitingOnThem += 1;
         current.pending += pendingByParticipant.get(participant) ?? 0;
         if (!current.latestId) {
           current.latestId = summary.thread.id;
@@ -4484,6 +4503,8 @@ export class Multiplexer {
         ...session,
         threadUnreadCount: stats?.unread ?? 0,
         threadWaitingCount: stats?.waiting ?? 0,
+        threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
+        threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
         threadPendingCount: stats?.pending ?? 0,
         threadId: session.threadId ?? stats?.latestId,
         threadName: session.threadName ?? stats?.latestTitle,
