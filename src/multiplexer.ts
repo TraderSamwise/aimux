@@ -45,7 +45,7 @@ import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./
 import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
 import { MetadataServer } from "./metadata-server.js";
-import { loadMetadataState, removeMetadataEndpoint } from "./metadata-store.js";
+import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
 import { acquireProjectHost, heartbeatProjectHost, releaseProjectHost, type ProjectHostInfo } from "./project-host.js";
@@ -61,7 +61,7 @@ import {
   type ThreadSummary,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
-import { sendHandoff } from "./orchestration-actions.js";
+import { assignTask, sendHandoff } from "./orchestration-actions.js";
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 
 interface StatuslineOwnerState {
@@ -150,6 +150,10 @@ export class Multiplexer {
   private labelInputActive = false;
   private labelInputBuffer = "";
   private labelInputTarget: string | null = null;
+  private orchestrationInputActive = false;
+  private orchestrationInputBuffer = "";
+  private orchestrationInputTarget: string | null = null;
+  private orchestrationInputMode: "message" | "handoff" | "task" | null = null;
   private worktreeListActive = false;
   private worktreeRemoveConfirm: { path: string; name: string } | null = null;
   private worktreeRemovalJob: WorktreeRemovalJob | null = null;
@@ -1240,6 +1244,27 @@ export class Multiplexer {
         }
         return;
       }
+      case "S": {
+        const selected = this.getSelectedDashboardSessionForActions();
+        if (selected && !selected.remoteInstancePid) {
+          this.showOrchestrationInput("message", selected.id);
+        }
+        return;
+      }
+      case "H": {
+        const selected = this.getSelectedDashboardSessionForActions();
+        if (selected && !selected.remoteInstancePid) {
+          this.showOrchestrationInput("handoff", selected.id);
+        }
+        return;
+      }
+      case "T": {
+        const selected = this.getSelectedDashboardSessionForActions();
+        if (selected && !selected.remoteInstancePid) {
+          this.showOrchestrationInput("task", selected.id);
+        }
+        return;
+      }
       case "q":
         this.tmuxRuntimeManager.leaveManagedSession({
           insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
@@ -2041,6 +2066,10 @@ export class Multiplexer {
       this.handleThreadReplyKey(data);
       return true;
     }
+    if (this.orchestrationInputActive) {
+      this.handleOrchestrationInputKey(data);
+      return true;
+    }
     if (this.labelInputActive) {
       this.handleLabelInputKey(data);
       return true;
@@ -2067,6 +2096,10 @@ export class Multiplexer {
     }
     if (this.threadReplyActive) {
       this.renderThreadReply();
+      return true;
+    }
+    if (this.orchestrationInputActive) {
+      this.renderOrchestrationInput();
       return true;
     }
     if (this.migratePickerActive) {
@@ -2156,6 +2189,180 @@ export class Multiplexer {
       return this.getDashboardSessions()[this.activeIndex];
     }
     return undefined;
+  }
+
+  private showOrchestrationInput(mode: "message" | "handoff" | "task", targetSessionId: string): void {
+    this.orchestrationInputMode = mode;
+    this.orchestrationInputTarget = targetSessionId;
+    this.orchestrationInputBuffer = "";
+    this.orchestrationInputActive = true;
+    this.renderOrchestrationInput();
+  }
+
+  private renderOrchestrationInput(): void {
+    const targetId = this.orchestrationInputTarget;
+    const mode = this.orchestrationInputMode;
+    if (!targetId || !mode) return;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const session = this.getDashboardSessions().find((entry) => entry.id === targetId);
+    const targetLabel = session?.label ?? session?.command ?? targetId;
+    const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Handoff" : "Assign task";
+    const actionLabel = mode === "task" ? "assign" : "send";
+    const lines = [
+      `${modeLabel}:`,
+      "",
+      `  To: ${targetLabel} (${targetId})`,
+      `  Text: ${this.orchestrationInputBuffer}_`,
+      "",
+      `  [Enter] ${actionLabel}  [Esc] cancel`,
+    ];
+
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1]!;
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private async postToProjectHost(path: string, body: unknown): Promise<any> {
+    const endpoint = loadMetadataEndpoint();
+    if (!endpoint) {
+      throw new Error("no live project host endpoint");
+    }
+    const res = await fetch(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.ok === false) {
+      throw new Error(json?.error || `request failed: ${res.status}`);
+    }
+    return json;
+  }
+
+  private handleOrchestrationInputKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const event = events[0];
+    const key = event.name || event.char;
+
+    if (key === "escape") {
+      this.orchestrationInputActive = false;
+      this.orchestrationInputBuffer = "";
+      this.orchestrationInputMode = null;
+      this.orchestrationInputTarget = null;
+      this.renderDashboard();
+      return;
+    }
+
+    if (key === "enter" || key === "return") {
+      const mode = this.orchestrationInputMode;
+      const targetId = this.orchestrationInputTarget;
+      const body = this.orchestrationInputBuffer.trim();
+      this.orchestrationInputActive = false;
+      this.orchestrationInputBuffer = "";
+      this.orchestrationInputMode = null;
+      this.orchestrationInputTarget = null;
+      if (!mode || !targetId || !body) {
+        this.renderDashboard();
+        return;
+      }
+      void this.submitDashboardOrchestrationAction(mode, targetId, body);
+      return;
+    }
+
+    if (key === "backspace" || key === "delete") {
+      this.orchestrationInputBuffer = this.orchestrationInputBuffer.slice(0, -1);
+      this.renderOrchestrationInput();
+      return;
+    }
+
+    if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
+      this.orchestrationInputBuffer += event.char;
+      this.renderOrchestrationInput();
+    }
+  }
+
+  private async submitDashboardOrchestrationAction(
+    mode: "message" | "handoff" | "task",
+    targetSessionId: string,
+    body: string,
+  ): Promise<void> {
+    try {
+      if (mode === "message") {
+        await this.postToProjectHost("/threads/send", {
+          from: "user",
+          to: [targetSessionId],
+          kind: "request",
+          body,
+        });
+        this.footerFlash = `✉ Message sent → ${targetSessionId}`;
+      } else if (mode === "handoff") {
+        await this.postToProjectHost("/handoff", {
+          from: "user",
+          to: [targetSessionId],
+          body,
+          title: `Handoff to ${targetSessionId}`,
+        });
+        this.footerFlash = `⇢ Handoff sent → ${targetSessionId}`;
+      } else {
+        await this.postToProjectHost("/tasks/assign", {
+          from: "user",
+          to: targetSessionId,
+          description: body,
+        });
+        this.footerFlash = `⧫ Task assigned → ${targetSessionId}`;
+      }
+      this.footerFlashTicks = 3;
+    } catch {
+      try {
+        if (mode === "message") {
+          this.sendOrchestrationMessage({
+            from: "user",
+            to: [targetSessionId],
+            kind: "request",
+            body,
+          });
+          this.footerFlash = `✉ Message sent → ${targetSessionId}`;
+        } else if (mode === "handoff") {
+          this.sendHandoffMessage({
+            from: "user",
+            to: [targetSessionId],
+            body,
+            title: `Handoff to ${targetSessionId}`,
+          });
+          this.footerFlash = `⇢ Handoff sent → ${targetSessionId}`;
+        } else {
+          await assignTask({
+            from: "user",
+            to: targetSessionId,
+            description: body,
+          });
+          this.footerFlash = `⧫ Task assigned → ${targetSessionId}`;
+        }
+        this.footerFlashTicks = 3;
+      } catch (error) {
+        this.showDashboardError(
+          `Failed to ${mode === "task" ? "assign task" : mode === "handoff" ? "send handoff" : "send message"}`,
+          [error instanceof Error ? error.message : String(error)],
+        );
+        return;
+      }
+    }
+    this.renderDashboard();
   }
 
   private renderToolPicker(): void {
