@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { execSync, spawn, spawnSync } from "node:child_process";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
 import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
+import { DashboardState, type DashboardScreen } from "./dashboard-state.js";
 import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
 import { readHistory } from "./context/history.js";
 import { parseKeys } from "./key-parser.js";
@@ -119,8 +120,6 @@ interface ThreadEntry extends ThreadSummary {
   displayTitle: string;
 }
 
-type DashboardScreen = "dashboard" | "activity" | "threads" | "plans" | "graveyard" | "help";
-
 export class Multiplexer {
   private sessions: ManagedSession[] = [];
   private activeIndex = 0;
@@ -150,7 +149,6 @@ export class Multiplexer {
   private dashboardErrorState: DashboardErrorState | null = null;
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
-  private dashboardScreen: DashboardScreen = "dashboard";
   private graveyardEntries: SessionState[] = [];
   private graveyardIndex = 0;
   private activityEntries: DashboardSession[] = [];
@@ -159,7 +157,6 @@ export class Multiplexer {
   private threadIndex = 0;
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
-  private detailsSidebarVisible = true;
   /** Quick switcher overlay state */
   private switcherActive = false;
   private switcherIndex = 0;
@@ -169,15 +166,7 @@ export class Multiplexer {
   /** Sessions confirmed registered in the instance registry (for claim detection) */
   private confirmedRegistered = new Set<string>();
   /** The focused worktree path on the dashboard (undefined = main repo) */
-  private focusedWorktreePath: string | undefined = undefined;
-  /** Ordered list of worktree paths for navigation (undefined = main repo) */
-  private worktreeNavOrder: Array<string | undefined> = [];
-  /** Dashboard navigation level: worktrees (top) or sessions (inside a worktree) */
-  private dashboardLevel: "worktrees" | "sessions" = "worktrees";
-  /** Index within sessions of the focused worktree */
-  private dashboardSessionIndex = 0;
-  /** Sessions in the currently focused worktree (for session-level nav) */
-  private dashboardWorktreeSessions: DashboardSession[] = [];
+  private dashboardState = new DashboardState();
   private statusInterval: ReturnType<typeof setInterval> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private agentTracker = new AgentTracker();
@@ -984,7 +973,7 @@ export class Multiplexer {
 
     const event = events[0];
     const key = event.name || event.char;
-    const hasWorktrees = this.worktreeNavOrder.length > 1;
+    const hasWorktrees = this.dashboardState.hasWorktrees();
 
     // Digits 1-9: always focus session directly (shortcut)
     if (key >= "1" && key <= "9") {
@@ -994,7 +983,7 @@ export class Multiplexer {
     }
 
     if (key === "tab") {
-      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.dashboardState.toggleDetailsSidebar();
       this.dashboard.toggleDetailsPane();
       this.renderCurrentDashboardView();
       return;
@@ -1012,7 +1001,7 @@ export class Multiplexer {
         const selected = this.getSelectedDashboardSessionForActions();
         if (selected && !selected.remoteInstancePid) {
           this.showToolPicker(selected.id);
-        } else if (hasWorktrees && this.dashboardLevel === "worktrees") {
+        } else if (hasWorktrees && this.dashboardState.level === "worktrees") {
           this.showDashboardError("Select an agent to fork", [
             "Press Enter to step into a worktree, then select a session and press [f] to fork it.",
           ]);
@@ -1050,17 +1039,18 @@ export class Multiplexer {
         return;
       case "x": {
         // At worktree level, [x] removes the focused worktree
-        if (hasWorktrees && this.dashboardLevel === "worktrees" && this.focusedWorktreePath) {
-          const wtName = this.focusedWorktreePath.split("/").pop() ?? this.focusedWorktreePath;
-          this.worktreeRemoveConfirm = { path: this.focusedWorktreePath, name: wtName };
+        if (hasWorktrees && this.dashboardState.level === "worktrees" && this.dashboardState.focusedWorktreePath) {
+          const wtName =
+            this.dashboardState.focusedWorktreePath.split("/").pop() ?? this.dashboardState.focusedWorktreePath;
+          this.worktreeRemoveConfirm = { path: this.dashboardState.focusedWorktreePath, name: wtName };
           this.renderWorktreeRemoveConfirm();
           return;
         }
 
         const allDs = this.getDashboardSessions();
         const selId =
-          this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
-            ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
+          this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0
+            ? this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex]?.id
             : undefined;
         const selEntry = selId
           ? allDs.find((d) => d.id === selId)
@@ -1089,8 +1079,8 @@ export class Multiplexer {
       case "r": {
         const allDs2 = this.getDashboardSessions();
         const selId2 =
-          this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
-            ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
+          this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0
+            ? this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex]?.id
             : undefined;
         const selEntry2 = selId2
           ? allDs2.find((d) => d.id === selId2)
@@ -1160,22 +1150,25 @@ export class Multiplexer {
     }
 
     // Two-level navigation with worktrees
-    if (this.dashboardLevel === "worktrees") {
+    if (this.dashboardState.level === "worktrees") {
       switch (key) {
         case "down":
         case "j":
         case "n": {
-          const curIdx = this.worktreeNavOrder.indexOf(this.focusedWorktreePath);
-          this.focusedWorktreePath = this.worktreeNavOrder[(curIdx + 1) % this.worktreeNavOrder.length];
+          const curIdx = this.dashboardState.worktreeNavOrder.indexOf(this.dashboardState.focusedWorktreePath);
+          this.dashboardState.focusedWorktreePath =
+            this.dashboardState.worktreeNavOrder[(curIdx + 1) % this.dashboardState.worktreeNavOrder.length];
           this.renderDashboard();
           break;
         }
         case "up":
         case "k":
         case "p": {
-          const curIdx = this.worktreeNavOrder.indexOf(this.focusedWorktreePath);
-          this.focusedWorktreePath =
-            this.worktreeNavOrder[(curIdx - 1 + this.worktreeNavOrder.length) % this.worktreeNavOrder.length];
+          const curIdx = this.dashboardState.worktreeNavOrder.indexOf(this.dashboardState.focusedWorktreePath);
+          this.dashboardState.focusedWorktreePath =
+            this.dashboardState.worktreeNavOrder[
+              (curIdx - 1 + this.dashboardState.worktreeNavOrder.length) % this.dashboardState.worktreeNavOrder.length
+            ];
           this.renderDashboard();
           break;
         }
@@ -1184,9 +1177,9 @@ export class Multiplexer {
         case "l":
           // Step into worktree to navigate its sessions
           this.updateWorktreeSessions();
-          if (this.dashboardWorktreeSessions.length > 0) {
-            this.dashboardLevel = "sessions";
-            this.dashboardSessionIndex = 0;
+          if (this.dashboardState.worktreeSessions.length > 0) {
+            this.dashboardState.level = "sessions";
+            this.dashboardState.sessionIndex = 0;
             this.renderDashboard();
           }
           break;
@@ -1204,23 +1197,24 @@ export class Multiplexer {
         case "down":
         case "j":
         case "n":
-          if (this.dashboardWorktreeSessions.length > 1) {
-            this.dashboardSessionIndex = (this.dashboardSessionIndex + 1) % this.dashboardWorktreeSessions.length;
+          if (this.dashboardState.worktreeSessions.length > 1) {
+            this.dashboardState.sessionIndex =
+              (this.dashboardState.sessionIndex + 1) % this.dashboardState.worktreeSessions.length;
             this.renderDashboard();
           }
           break;
         case "up":
         case "k":
         case "p":
-          if (this.dashboardWorktreeSessions.length > 1) {
-            this.dashboardSessionIndex =
-              (this.dashboardSessionIndex - 1 + this.dashboardWorktreeSessions.length) %
-              this.dashboardWorktreeSessions.length;
+          if (this.dashboardState.worktreeSessions.length > 1) {
+            this.dashboardState.sessionIndex =
+              (this.dashboardState.sessionIndex - 1 + this.dashboardState.worktreeSessions.length) %
+              this.dashboardState.worktreeSessions.length;
             this.renderDashboard();
           }
           break;
         case "enter": {
-          const dashEntry = this.dashboardWorktreeSessions[this.dashboardSessionIndex];
+          const dashEntry = this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex];
           if (!dashEntry) break;
           if (this.openLiveTmuxWindowForEntry(dashEntry)) {
             return;
@@ -1245,7 +1239,7 @@ export class Multiplexer {
         case "left":
         case "h":
           // Step back to worktree level
-          this.dashboardLevel = "worktrees";
+          this.dashboardState.level = "worktrees";
           this.renderDashboard();
           break;
       }
@@ -1339,7 +1333,7 @@ export class Multiplexer {
       cols,
     );
     const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110 && this.detailsSidebarVisible;
+    const twoPane = cols >= 110 && this.dashboardState.detailsSidebarVisible;
     const listLines: string[] = [];
 
     if (this.activityEntries.length === 0) {
@@ -1393,7 +1387,7 @@ export class Multiplexer {
     const key = events[0].name || events[0].char;
 
     if (key === "tab") {
-      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.dashboardState.toggleDetailsSidebar();
       this.renderActivityDashboard();
       return;
     }
@@ -1481,7 +1475,7 @@ export class Multiplexer {
       cols,
     );
     const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110 && this.detailsSidebarVisible;
+    const twoPane = cols >= 110 && this.dashboardState.detailsSidebarVisible;
     const listLines: string[] = [];
 
     if (this.threadEntries.length === 0) {
@@ -1557,7 +1551,7 @@ export class Multiplexer {
     const key = events[0].name || events[0].char;
 
     if (key === "tab") {
-      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.dashboardState.toggleDetailsSidebar();
       this.renderThreads();
       return;
     }
@@ -1632,8 +1626,8 @@ export class Multiplexer {
     if (ordered.length === 0) return;
 
     const currentSessionId =
-      this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0
-        ? this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id
+      this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0
+        ? this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex]?.id
         : this.getDashboardSessions()[this.activeIndex]?.id;
     const currentIdx = currentSessionId ? ordered.findIndex((entry) => entry.entry.id === currentSessionId) : -1;
     const next = ordered[currentIdx >= 0 ? (currentIdx + 1) % ordered.length : 0]!;
@@ -1643,17 +1637,17 @@ export class Multiplexer {
   /** Get sessions belonging to the focused worktree (includes local, remote, offline) */
   private updateWorktreeSessions(): void {
     const allDash = this.getDashboardSessions();
-    this.dashboardWorktreeSessions = allDash.filter((s) => {
-      return (s.worktreePath ?? undefined) === this.focusedWorktreePath;
+    this.dashboardState.worktreeSessions = allDash.filter((s) => {
+      return (s.worktreePath ?? undefined) === this.dashboardState.focusedWorktreePath;
     });
   }
 
   private isDashboardScreen(screen: DashboardScreen): boolean {
-    return this.dashboardScreen === screen;
+    return this.dashboardState.isScreen(screen);
   }
 
   private setDashboardScreen(screen: DashboardScreen): void {
-    this.dashboardScreen = screen;
+    this.dashboardState.setScreen(screen);
   }
 
   private handleActiveDashboardOverlayKey(data: Buffer): boolean {
@@ -1797,10 +1791,10 @@ export class Multiplexer {
   }
 
   private getSelectedDashboardSessionForActions(): DashboardSession | undefined {
-    if (this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0) {
-      return this.dashboardWorktreeSessions[this.dashboardSessionIndex];
+    if (this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0) {
+      return this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex];
     }
-    if (this.worktreeNavOrder.length <= 1) {
+    if (this.dashboardState.worktreeNavOrder.length <= 1) {
       return this.getDashboardSessions()[this.activeIndex];
     }
     return undefined;
@@ -1846,7 +1840,7 @@ export class Multiplexer {
   }
 
   private runSelectedTool(toolKey: string, tool: ToolConfig): void {
-    const wtPath = this.mode === "dashboard" ? this.focusedWorktreePath : undefined;
+    const wtPath = this.mode === "dashboard" ? this.dashboardState.focusedWorktreePath : undefined;
 
     if (this.pickerMode === "fork") {
       const sourceSessionId = this.forkSourceSessionId;
@@ -2143,18 +2137,18 @@ export class Multiplexer {
 
     // Build worktree navigation order: main repo first, then registered worktrees
     const hasWorktrees = worktreeGroups.length > 0;
-    this.worktreeNavOrder = [undefined, ...worktreeGroups.map((wt) => wt.path)];
+    this.dashboardState.worktreeNavOrder = [undefined, ...worktreeGroups.map((wt) => wt.path)];
     // Ensure focusedWorktreePath is valid
-    if (!this.worktreeNavOrder.includes(this.focusedWorktreePath)) {
-      this.focusedWorktreePath = undefined;
+    if (!this.dashboardState.worktreeNavOrder.includes(this.dashboardState.focusedWorktreePath)) {
+      this.dashboardState.focusedWorktreePath = undefined;
     }
 
     // Determine selected session for cursor
     let selectedSession: string | undefined;
 
     // Determine selected session cursor
-    if (hasWorktrees && this.dashboardLevel === "sessions" && this.dashboardWorktreeSessions.length > 0) {
-      selectedSession = this.dashboardWorktreeSessions[this.dashboardSessionIndex]?.id;
+    if (hasWorktrees && this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0) {
+      selectedSession = this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex]?.id;
     } else if (!hasWorktrees && dashSessions.length > 0) {
       // Flat mode — use activeIndex across all dash sessions
       selectedSession = dashSessions[this.activeIndex]?.id;
@@ -2163,8 +2157,8 @@ export class Multiplexer {
     this.dashboard.update(
       dashSessions,
       worktreeGroups,
-      this.focusedWorktreePath,
-      hasWorktrees ? this.dashboardLevel : "sessions",
+      this.dashboardState.focusedWorktreePath,
+      hasWorktrees ? this.dashboardState.level : "sessions",
       selectedSession,
       "tmux",
       mainCheckoutInfo,
@@ -2603,13 +2597,14 @@ export class Multiplexer {
       debug(`removed worktree: ${job.name}`, "worktree");
 
       const newWorktrees = listAllWorktrees().filter((wt) => !wt.isBare);
-      this.worktreeNavOrder = [undefined, ...newWorktrees.map((wt) => wt.path)];
-      if (job.oldIdx >= 0 && job.oldIdx < this.worktreeNavOrder.length) {
-        this.focusedWorktreePath = this.worktreeNavOrder[job.oldIdx];
-      } else if (this.worktreeNavOrder.length > 1) {
-        this.focusedWorktreePath = this.worktreeNavOrder[this.worktreeNavOrder.length - 1];
+      this.dashboardState.worktreeNavOrder = [undefined, ...newWorktrees.map((wt) => wt.path)];
+      if (job.oldIdx >= 0 && job.oldIdx < this.dashboardState.worktreeNavOrder.length) {
+        this.dashboardState.focusedWorktreePath = this.dashboardState.worktreeNavOrder[job.oldIdx];
+      } else if (this.dashboardState.worktreeNavOrder.length > 1) {
+        this.dashboardState.focusedWorktreePath =
+          this.dashboardState.worktreeNavOrder[this.dashboardState.worktreeNavOrder.length - 1];
       } else {
-        this.focusedWorktreePath = undefined;
+        this.dashboardState.focusedWorktreePath = undefined;
       }
     } else {
       const message = details[0] ?? `git worktree remove exited with code ${code}`;
@@ -2631,7 +2626,7 @@ export class Multiplexer {
       const confirm = this.worktreeRemoveConfirm;
       if (confirm) {
         this.worktreeRemoveConfirm = null;
-        const oldIdx = this.worktreeNavOrder.indexOf(confirm.path);
+        const oldIdx = this.dashboardState.worktreeNavOrder.indexOf(confirm.path);
         this.beginWorktreeRemoval(confirm.path, confirm.name, oldIdx);
         return;
       }
@@ -2710,7 +2705,7 @@ export class Multiplexer {
       cols,
     );
     const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110 && this.detailsSidebarVisible;
+    const twoPane = cols >= 110 && this.dashboardState.detailsSidebarVisible;
     const listLines: string[] = [];
     if (this.graveyardEntries.length === 0) {
       listLines.push("  Graveyard");
@@ -2749,7 +2744,7 @@ export class Multiplexer {
     const key = event.name || event.char;
 
     if (key === "tab") {
-      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.dashboardState.toggleDetailsSidebar();
       this.renderGraveyard();
       return;
     }
@@ -2910,7 +2905,7 @@ export class Multiplexer {
       cols,
     );
     const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110 && this.detailsSidebarVisible;
+    const twoPane = cols >= 110 && this.dashboardState.detailsSidebarVisible;
     const listLines: string[] = [];
 
     if (this.planEntries.length === 0) {
@@ -3101,7 +3096,7 @@ export class Multiplexer {
     const key = events[0].name || events[0].char;
 
     if (key === "tab") {
-      this.detailsSidebarVisible = !this.detailsSidebarVisible;
+      this.dashboardState.toggleDetailsSidebar();
       this.renderPlans();
       return;
     }
@@ -3576,7 +3571,7 @@ export class Multiplexer {
   }
 
   private clearDashboardSubscreens(): void {
-    this.setDashboardScreen("dashboard");
+    this.dashboardState.resetSubscreen();
   }
 
   private renderSessionDetails(session: DashboardSession | undefined, width: number, height: number): string[] {
@@ -3949,7 +3944,7 @@ export class Multiplexer {
       const tmpPath = `${filePath}.tmp`;
       const data = {
         project: basename(process.cwd()),
-        dashboardScreen: this.dashboardScreen,
+        dashboardScreen: this.dashboardState.screen,
         sessions: this.sessions.map((s, i) => ({
           id: s.id,
           tool: s.command,
@@ -4200,13 +4195,13 @@ export class Multiplexer {
   /** Move an offline session to the graveyard (second [x]) */
   /** After removing a session, adjust cursor to nearest sibling or step back to worktree level */
   private adjustAfterRemove(hasWorktrees: boolean): void {
-    if (hasWorktrees && this.dashboardLevel === "sessions") {
+    if (hasWorktrees && this.dashboardState.level === "sessions") {
       this.updateWorktreeSessions();
-      if (this.dashboardWorktreeSessions.length === 0) {
+      if (this.dashboardState.worktreeSessions.length === 0) {
         // No more agents in this worktree — step back to worktree level
-        this.dashboardLevel = "worktrees";
-      } else if (this.dashboardSessionIndex >= this.dashboardWorktreeSessions.length) {
-        this.dashboardSessionIndex = this.dashboardWorktreeSessions.length - 1;
+        this.dashboardState.level = "worktrees";
+      } else if (this.dashboardState.sessionIndex >= this.dashboardState.worktreeSessions.length) {
+        this.dashboardState.sessionIndex = this.dashboardState.worktreeSessions.length - 1;
       }
     } else if (!hasWorktrees) {
       const total = this.getDashboardSessions().length;
