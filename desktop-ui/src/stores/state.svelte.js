@@ -9,11 +9,14 @@ let selectedSessionId = $state(null);
 let terminalSessionId = $state(null);
 let terminalStatus = $state("Idle");
 
+let worktreeCache = $state({}); // projectPath → worktree[]
+
 let unlistenOutput = null;
 let unlistenExit = null;
 let heartbeatTimer = null;
 let ensuringHosts = new Set();
 let heartbeatInFlight = false;
+let heartbeatCount = 0;
 
 function scoreStatusline(statusline) {
   if (!statusline) return 0;
@@ -67,7 +70,20 @@ export function getState() {
       const project = projects.find((p) => p.path === selectedProjectPath);
       return project?.statusline || null;
     },
+    get worktreeList() {
+      return worktreeCache[selectedProjectPath] || [];
+    },
   };
+}
+
+export async function refreshWorktrees(projectPath) {
+  if (!projectPath) return;
+  try {
+    const result = await invoke("worktree_list", { projectPath });
+    worktreeCache[projectPath] = Array.isArray(result) ? result : [];
+  } catch {
+    // worktree list not available — ignore
+  }
 }
 
 // ── Heartbeat (single loop for everything) ────────────────────────
@@ -101,6 +117,11 @@ async function tick() {
           .finally(() => ensuringHosts.delete(project.path));
       }
     }
+    // Refresh worktree list periodically (~every 15s)
+    heartbeatCount++;
+    if (heartbeatCount % 5 === 1 && selectedProjectPath) {
+      refreshWorktrees(selectedProjectPath);
+    }
   } catch (error) {
     console.error("Heartbeat failed:", error);
   } finally {
@@ -126,6 +147,7 @@ export function stopHeartbeat() {
 export function selectProject(path) {
   selectedProjectPath = path;
   selectedSessionId = null;
+  refreshWorktrees(path);
 }
 
 export function selectSession(id) {

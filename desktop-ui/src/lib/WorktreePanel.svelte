@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { getState, selectSession, runTerminal } from "../stores/state.svelte.js";
+  import { getState, selectSession, runTerminal, refreshWorktrees } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const appState = getState();
@@ -37,8 +37,13 @@
       group.agents.push({ ...s, meta: m || null, derived: m?.derived || null });
     }
 
-    // Filter out "Unassigned" if it only has agents that are very new (< 10s old)
-    // They'll get assigned on the next statusline write
+    // Merge in worktrees from worktree list that have no agents yet
+    for (const wt of appState.worktreeList) {
+      if (!groups.has(wt.path)) {
+        groups.set(wt.path, { path: wt.path, name: wt.name, branch: wt.branch, agents: [] });
+      }
+    }
+
     const result = [...groups.values()];
 
     return result.sort((a, b) => {
@@ -67,9 +72,19 @@
     return agent.label || agent.tool || agent.id;
   }
 
-  function showError(msg) {
-    errorMsg = msg;
-    setTimeout(() => { if (errorMsg === msg) errorMsg = null; }, 4000);
+  function showError(raw) {
+    // Extract clean error from verbose debug output
+    const str = String(raw);
+    // Look for stderr= section and get the last meaningful line
+    const stderrMatch = str.match(/stderr="([\s\S]+?)"/);
+    if (stderrMatch) {
+      const lines = stderrMatch[1].split(/\\n|\n/).map((l) => l.trim()).filter(Boolean);
+      // Take the last non-empty line (usually the actual error)
+      errorMsg = lines[lines.length - 1] || lines[0] || str.slice(0, 150);
+    } else {
+      errorMsg = str.length > 150 ? str.slice(0, 150) + "..." : str;
+    }
+    setTimeout(() => { if (errorMsg) errorMsg = null; }, 5000);
   }
 
   async function focusAgent(agent) {
@@ -139,6 +154,7 @@
       await invoke("worktree_create", { projectPath: project.path, name });
       newWorktreeName = "";
       showNewWorktreeInput = false;
+      refreshWorktrees(project.path);
     } catch (err) {
       showError(`Worktree create failed: ${err}`);
     } finally {
