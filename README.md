@@ -84,6 +84,8 @@ aimux host restart --serve
 
 If another live host already exists for the current project, `aimux serve` reports it and exits instead of starting a competing sidecar set.
 
+For the full runtime/host/client split, see [docs/project-host-model.md](docs/project-host-model.md).
+
 ## Tmux Compatibility
 
 Aimux treats tmux as a managed runtime, not a transparent pass-through. For aimux-owned tmux sessions, aimux applies a fixed compatibility contract instead of inheriting whatever ambient tmux defaults happen to exist on the machine.
@@ -165,7 +167,7 @@ For future tool wiring and continuity expectations, see [docs/tool-integration.m
 
 ## Metadata API
 
-Inspired by opensessions, aimux exposes a small project-local metadata API from the dashboard process. The tmux status line reads this state and shows it for the active session.
+Inspired by opensessions, aimux exposes a small project-local metadata API from the elected per-project host. The tmux status line reads this state and shows it for the active session.
 
 CLI helpers:
 
