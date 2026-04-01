@@ -107,6 +107,31 @@ aimux daemon project-ensure --project /abs/path/to/repo
 aimux serve
 ```
 
+GUI-facing lifecycle commands:
+
+```bash
+# Fresh agent using the same spawn flow as the dashboard
+aimux spawn --tool claude --project /abs/path/to/repo --worktree /abs/path/to/worktree --json
+
+# Fork an existing live agent with handed-off context
+aimux fork <sessionId> --tool codex --project /abs/path/to/repo --worktree /abs/path/to/worktree --json
+
+# Match the dashboard lifecycle
+aimux stop <sessionId> --project /abs/path/to/repo --json
+aimux kill <sessionId> --project /abs/path/to/repo --json
+aimux graveyard send <sessionId> --project /abs/path/to/repo --json
+aimux graveyard resurrect <sessionId> --project /abs/path/to/repo --json
+
+# Project-scoped worktree helpers
+aimux worktree list --project /abs/path/to/repo --json
+aimux worktree create feature-x --project /abs/path/to/repo --json
+
+# Focus a live agent in tmux
+aimux desktop focus --project /abs/path/to/repo --session <sessionId>
+```
+
+For desktop / GUI callers, prefer explicit `--project` usage instead of relying on launcher cwd.
+
 For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
 For the migration rationale, see [docs/global-control-plane-rfc.md](docs/global-control-plane-rfc.md).
 
@@ -514,6 +539,12 @@ Agents have three states: **running**, **offline**, and **graveyarded**.
 # List agents in the graveyard
 aimux graveyard list
 
+# Stop to offline
+aimux stop <sessionId>
+
+# Send directly to graveyard
+aimux kill <sessionId>
+
 # Resurrect an agent back to offline state
 aimux graveyard resurrect <id>
 ```
@@ -525,6 +556,12 @@ Context files (`.aimux/context/`, `.aimux/history/`) are never deleted — only 
 aimux manages git worktrees and, by default, creates them inside `.aimux/worktrees/` in the main repo:
 
 ```bash
+# Spawn a fresh agent
+aimux spawn --tool claude
+
+# Fork a live agent into a worktree
+aimux fork <sessionId> --tool codex --worktree /abs/path/to/repo/.aimux/worktrees/fix-auth
+
 # Create a worktree
 aimux worktree create fix-auth
 

@@ -602,6 +602,7 @@ export class Multiplexer {
     if (!mappedTarget || !runtimeTarget || mappedTarget.windowId === runtimeTarget.windowId) {
       this.sessionTmuxTargets.delete(runtime.id);
     }
+    this.saveState();
 
     if (this.sessions.length === 0) {
       if (this.startedInDashboard) {
@@ -2846,6 +2847,92 @@ export class Multiplexer {
       sessionId: result.sessionId,
       threadId: result.threadId,
     };
+  }
+
+  async spawnAgent(opts: {
+    toolConfigKey: string;
+    targetWorktreePath?: string;
+    open?: boolean;
+  }): Promise<{ sessionId: string }> {
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+
+    const config = loadConfig();
+    const toolCfg = config.tools[opts.toolConfigKey];
+    if (!toolCfg) {
+      throw new Error(`Unknown tool config: ${opts.toolConfigKey}`);
+    }
+    if (!toolCfg.enabled) {
+      throw new Error(`Tool "${opts.toolConfigKey}" is disabled`);
+    }
+    if (!isToolAvailable(toolCfg.command)) {
+      throw new Error(`Tool "${toolCfg.command}" is not installed or not on PATH`);
+    }
+
+    const targetWorktreePath = opts.targetWorktreePath === process.cwd() ? undefined : opts.targetWorktreePath;
+    const transport = this.createSession(
+      toolCfg.command,
+      toolCfg.args,
+      toolCfg.preambleFlag,
+      opts.toolConfigKey,
+      undefined,
+      toolCfg.sessionIdFlag,
+      targetWorktreePath,
+    );
+
+    const target = this.sessionTmuxTargets.get(transport.id);
+    if (opts.open !== false && target) {
+      this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+    }
+
+    return { sessionId: transport.id };
+  }
+
+  async stopAgent(sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+
+    const runningSession = this.sessions.find((session) => session.id === sessionId);
+    if (!runningSession) {
+      const offlineSession = this.offlineSessions.find((session) => session.id === sessionId);
+      if (offlineSession) {
+        return { sessionId, status: "offline" };
+      }
+      throw new Error(`Session "${sessionId}" not found`);
+    }
+
+    this.stopSessionToOffline(runningSession);
+    await this.waitForSessionExit(runningSession);
+    this.saveState();
+
+    return { sessionId, status: "offline" };
+  }
+
+  async sendAgentToGraveyard(sessionId: string): Promise<{
+    sessionId: string;
+    status: "graveyard";
+    previousStatus: "running" | "offline";
+  }> {
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+
+    let previousStatus: "running" | "offline";
+    const runningSession = this.sessions.find((session) => session.id === sessionId);
+    if (runningSession) {
+      previousStatus = "running";
+      this.stopSessionToOffline(runningSession);
+      await this.waitForSessionExit(runningSession);
+      this.saveState();
+    } else {
+      const offlineSession = this.offlineSessions.find((session) => session.id === sessionId);
+      if (!offlineSession) {
+        throw new Error(`Session "${sessionId}" not found`);
+      }
+      previousStatus = "offline";
+    }
+
+    this.graveyardSession(sessionId);
+    return { sessionId, status: "graveyard", previousStatus };
   }
 
   private renderDashboard(): void {

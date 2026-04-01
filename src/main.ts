@@ -167,8 +167,11 @@ program
   .option("--resume", "Resume previous sessions using native tool resume")
   .option("--restore", "Start fresh sessions with injected history context")
   .option("--tmux-dashboard-internal", "Internal tmux dashboard entrypoint")
-  .hook("preAction", async () => {
-    await initPaths();
+  .hook("preAction", async (_thisCommand, actionCommand) => {
+    const opts = typeof actionCommand?.opts === "function" ? actionCommand.opts() : {};
+    const requestedProject = typeof opts.project === "string" ? opts.project : undefined;
+    const projectRoot = requestedProject ? resolveProjectRoot(pathResolve(requestedProject)) : undefined;
+    await initPaths(projectRoot);
   })
   .action(
     async (
@@ -692,9 +695,17 @@ program
     console.log(`Done. Summary written to ${getContextDir()}/summary.md`);
   });
 
-function printWorktrees(): void {
+async function prepareProjectContext(requestedProject?: string): Promise<string> {
+  const requestedPath = pathResolve(requestedProject ?? process.cwd());
+  const projectRoot = resolveProjectRoot(requestedPath);
+  await initPaths(projectRoot);
+  process.chdir(projectRoot);
+  return projectRoot;
+}
+
+function printWorktrees(projectRoot?: string): void {
   try {
-    const worktrees = listWorktrees();
+    const worktrees = listWorktrees(projectRoot);
     if (worktrees.length === 0) {
       console.log("No worktrees found.");
       return;
@@ -1034,17 +1045,88 @@ taskCmd
 worktreeCmd
   .command("list")
   .description("List all git worktrees")
-  .action(() => {
-    printWorktrees();
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    const projectRoot = await prepareProjectContext(opts.project);
+    const worktrees = listWorktrees(projectRoot);
+    if (opts.json) {
+      console.log(JSON.stringify(worktrees, null, 2));
+      return;
+    }
+    printWorktrees(projectRoot);
   });
 
 worktreeCmd
   .command("create <name>")
   .description("Create a git worktree")
-  .action((name: string) => {
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (name: string, opts: { project?: string; json?: boolean }) => {
     try {
-      const path = createWorktree(name);
-      console.log(`Created worktree "${name}" at ${path}`);
+      const projectRoot = await prepareProjectContext(opts.project);
+      const createdPath = createWorktree(name, projectRoot);
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              name,
+              path: createdPath,
+              projectRoot,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`Created worktree "${name}" at ${createdPath}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("spawn")
+  .description("Spawn a fresh agent session using the same flow as the dashboard")
+  .requiredOption("--tool <toolKey>", "Configured target tool key, e.g. claude or codex")
+  .option("--project <path>", "Project path")
+  .option("--worktree <path>", "Target worktree path")
+  .option("--no-open", "Do not switch into the spawned agent window")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { tool: string; project?: string; worktree?: string; open?: boolean; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      await ensureDaemonProjectReady(projectRoot);
+      initProject();
+      const mux = new Multiplexer();
+      const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
+      const result = await mux.spawnAgent({
+        toolConfigKey: opts.tool,
+        targetWorktreePath,
+        open: opts.open,
+      });
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              projectRoot,
+              sessionId: result.sessionId,
+              tool: opts.tool,
+              worktreePath: targetWorktreePath ?? projectRoot,
+              opened: opts.open !== false,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`spawned ${result.sessionId}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);
@@ -1057,26 +1139,55 @@ program
   .description("Fork an existing agent into a new agent with handed-off context")
   .argument("<sourceSessionId>", "Source session id to fork from")
   .requiredOption("--tool <toolKey>", "Configured target tool key, e.g. claude or codex")
+  .option("--project <path>", "Project path")
   .option("--instruction <text>", "Extra instruction for the forked agent")
   .option("--worktree <path>", "Target worktree path")
   .option("--no-open", "Do not switch into the forked agent window")
+  .option("--json", "Emit JSON")
   .action(
     async (
       sourceSessionId: string,
-      opts: { tool: string; instruction?: string; worktree?: string; open?: boolean },
+      opts: { tool: string; project?: string; instruction?: string; worktree?: string; open?: boolean; json?: boolean },
     ) => {
-      initProject();
-      const mux = new Multiplexer();
-      const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
-      const result = await mux.forkAgent({
-        sourceSessionId,
-        targetToolConfigKey: opts.tool,
-        instruction: opts.instruction,
-        targetWorktreePath,
-        open: opts.open,
-      });
-      console.log(`forked ${result.sessionId}`);
-      console.log(`thread ${result.threadId}`);
+      try {
+        const projectRoot = await prepareProjectContext(opts.project);
+        await ensureDaemonProjectReady(projectRoot);
+        initProject();
+        const mux = new Multiplexer();
+        const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
+        const result = await mux.forkAgent({
+          sourceSessionId,
+          targetToolConfigKey: opts.tool,
+          instruction: opts.instruction,
+          targetWorktreePath,
+          open: opts.open,
+        });
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                projectRoot,
+                sourceSessionId,
+                sessionId: result.sessionId,
+                threadId: result.threadId,
+                tool: opts.tool,
+                worktreePath: targetWorktreePath ?? projectRoot,
+                opened: opts.open !== false,
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+        console.log(`forked ${result.sessionId}`);
+        console.log(`thread ${result.threadId}`);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
     },
   );
 
@@ -1085,10 +1196,17 @@ const graveyardCmd = program.command("graveyard").description("Manage killed age
 graveyardCmd
   .command("list")
   .description("List agents in the graveyard")
-  .action(() => {
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; json?: boolean }) => {
+    await prepareProjectContext(opts.project);
     const graveyardPath = getGraveyardPath();
     try {
       const graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8"));
+      if (opts.json) {
+        console.log(JSON.stringify(Array.isArray(graveyard) ? graveyard : [], null, 2));
+        return;
+      }
       if (!Array.isArray(graveyard) || graveyard.length === 0) {
         console.log("Graveyard is empty.");
         return;
@@ -1101,14 +1219,55 @@ graveyardCmd
         );
       }
     } catch {
+      if (opts.json) {
+        console.log("[]");
+        return;
+      }
       console.log("Graveyard is empty.");
+    }
+  });
+
+graveyardCmd
+  .command("send <id>")
+  .description("Send an agent to the graveyard from running or offline state")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (id: string, opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      const mux = new Multiplexer();
+      const result = await mux.sendAgentToGraveyard(id);
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              projectRoot,
+              sessionId: result.sessionId,
+              status: result.status,
+              previousStatus: result.previousStatus,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`graveyarded ${result.sessionId}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
     }
   });
 
 graveyardCmd
   .command("resurrect <id>")
   .description("Resurrect an agent from the graveyard back to offline state")
-  .action((id: string) => {
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (id: string, opts: { project?: string; json?: boolean }) => {
+    await prepareProjectContext(opts.project);
     const graveyardPath = getGraveyardPath();
     if (!existsSync(graveyardPath)) {
       console.error("Graveyard is empty.");
@@ -1137,7 +1296,88 @@ graveyardCmd
       }
       state.sessions.push(restored);
       writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              sessionId: id,
+              status: "offline",
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
       console.log(`Resurrected "${id}". It will appear as offline next time you start aimux.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("stop <sessionId>")
+  .description("Stop a running agent and move it to offline state")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (sessionId: string, opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      const mux = new Multiplexer();
+      const result = await mux.stopAgent(sessionId);
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              projectRoot,
+              sessionId: result.sessionId,
+              status: result.status,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`stopped ${result.sessionId}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("kill <sessionId>")
+  .description("Send an agent to the graveyard from running or offline state")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (sessionId: string, opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      const mux = new Multiplexer();
+      const result = await mux.sendAgentToGraveyard(sessionId);
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              projectRoot,
+              sessionId: result.sessionId,
+              status: result.status,
+              previousStatus: result.previousStatus,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`graveyarded ${result.sessionId}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);

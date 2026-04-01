@@ -98,6 +98,20 @@ They:
 - attach to tmux dashboards/agent windows
 - call metadata/orchestration surfaces through the daemon-managed system
 
+The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
+
+```bash
+aimux spawn --tool claude --project /abs/path/to/repo --json
+aimux fork <sessionId> --tool codex --project /abs/path/to/repo --json
+aimux stop <sessionId> --project /abs/path/to/repo --json
+aimux kill <sessionId> --project /abs/path/to/repo --json
+aimux graveyard send <sessionId> --project /abs/path/to/repo --json
+aimux graveyard resurrect <sessionId> --project /abs/path/to/repo --json
+aimux worktree list --project /abs/path/to/repo --json
+aimux worktree create feature-x --project /abs/path/to/repo --json
+aimux desktop focus --project /abs/path/to/repo --session <sessionId>
+```
+
 ## Dashboard Model
 
 `aimux` remains the terminal-native UI.
