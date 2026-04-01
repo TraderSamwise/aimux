@@ -1250,6 +1250,19 @@ export class Multiplexer {
         }
         return;
       }
+      case "R": {
+        const selected = this.getSelectedDashboardSessionForActions();
+        if (selected && !selected.remoteInstancePid) {
+          if ((selected.threadWaitingOnMeCount ?? 0) > 0) {
+            this.openRelevantThreadForSession(selected.id);
+          } else {
+            this.footerFlash = `Nothing waiting on you for ${selected.label ?? selected.command}`;
+            this.footerFlashTicks = 3;
+            this.renderDashboard();
+          }
+        }
+        return;
+      }
       case "q":
         this.tmuxRuntimeManager.leaveManagedSession({
           insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
