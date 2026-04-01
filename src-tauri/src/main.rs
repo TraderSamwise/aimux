@@ -265,7 +265,7 @@ fn ensure_daemon_project(project_path: String) -> Result<Value, String> {
 
 #[tauri::command]
 fn agent_spawn(project_path: String, tool: String, worktree: Option<String>) -> Result<Value, String> {
-  let mut args = vec!["spawn", "--tool", &tool, "--project", &project_path, "--json"];
+  let mut args = vec!["spawn", "--tool", &tool, "--project", &project_path, "--json", "--no-open"];
   let wt_owned;
   if let Some(ref wt) = worktree {
     wt_owned = wt.clone();
@@ -309,6 +309,7 @@ fn agent_fork(project_path: String, session_id: String, tool: Option<String>, wo
     args.push(&wt_owned);
   }
   args.push("--json");
+  args.push("--no-open");
   run_aimux_json(Path::new(&project_path), &args, "agent fork")
 }
 
