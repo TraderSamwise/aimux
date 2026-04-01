@@ -122,6 +122,14 @@ interface ThreadEntry extends ThreadSummary {
   latestPendingRecipients: string[];
 }
 
+interface DashboardOrchestrationTarget {
+  label: string;
+  sessionId?: string;
+  assignee?: string;
+  tool?: string;
+  worktreePath?: string;
+}
+
 export class Multiplexer {
   private sessions: ManagedSession[] = [];
   private activeIndex = 0;
@@ -145,8 +153,11 @@ export class Multiplexer {
   private labelInputTarget: string | null = null;
   private orchestrationInputActive = false;
   private orchestrationInputBuffer = "";
-  private orchestrationInputTarget: string | null = null;
+  private orchestrationInputTarget: DashboardOrchestrationTarget | null = null;
   private orchestrationInputMode: "message" | "handoff" | "task" | null = null;
+  private orchestrationRoutePickerActive = false;
+  private orchestrationRouteMode: "message" | "handoff" | "task" | null = null;
+  private orchestrationRouteOptions: DashboardOrchestrationTarget[] = [];
   private worktreeListActive = false;
   private worktreeRemoveConfirm: { path: string; name: string } | null = null;
   private worktreeRemovalJob: WorktreeRemovalJob | null = null;
@@ -1221,24 +1232,15 @@ export class Multiplexer {
         return;
       }
       case "S": {
-        const selected = this.getSelectedDashboardSessionForActions();
-        if (selected && !selected.remoteInstancePid) {
-          this.showOrchestrationInput("message", selected.id);
-        }
+        this.showOrchestrationRoutePicker("message");
         return;
       }
       case "H": {
-        const selected = this.getSelectedDashboardSessionForActions();
-        if (selected && !selected.remoteInstancePid) {
-          this.showOrchestrationInput("handoff", selected.id);
-        }
+        this.showOrchestrationRoutePicker("handoff");
         return;
       }
       case "T": {
-        const selected = this.getSelectedDashboardSessionForActions();
-        if (selected && !selected.remoteInstancePid) {
-          this.showOrchestrationInput("task", selected.id);
-        }
+        this.showOrchestrationRoutePicker("task");
         return;
       }
       case "q":
@@ -2042,6 +2044,10 @@ export class Multiplexer {
       this.handleThreadReplyKey(data);
       return true;
     }
+    if (this.orchestrationRoutePickerActive) {
+      this.handleOrchestrationRoutePickerKey(data);
+      return true;
+    }
     if (this.orchestrationInputActive) {
       this.handleOrchestrationInputKey(data);
       return true;
@@ -2096,6 +2102,10 @@ export class Multiplexer {
     }
     if (this.pickerActive) {
       this.renderToolPicker();
+      return true;
+    }
+    if (this.orchestrationRoutePickerActive) {
+      this.renderOrchestrationRoutePicker();
       return true;
     }
     return false;
@@ -2167,32 +2177,110 @@ export class Multiplexer {
     return undefined;
   }
 
-  private showOrchestrationInput(mode: "message" | "handoff" | "task", targetSessionId: string): void {
+  private showOrchestrationRoutePicker(mode: "message" | "handoff" | "task"): void {
+    const selected = this.getSelectedDashboardSessionForActions();
+    const options: DashboardOrchestrationTarget[] = [];
+    const focusedWorktreePath = this.mode === "dashboard" ? this.dashboardState.focusedWorktreePath : undefined;
+
+    if (selected && !selected.remoteInstancePid) {
+      options.push({
+        label: `${selected.label ?? selected.command ?? selected.id} (${selected.id})`,
+        sessionId: selected.id,
+      });
+    }
+
+    const team = loadTeamConfig();
+    for (const [role, cfg] of Object.entries(team.roles)) {
+      options.push({
+        label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}`,
+        assignee: role,
+        worktreePath: focusedWorktreePath,
+      });
+    }
+
+    const config = loadConfig();
+    for (const [toolKey, toolCfg] of Object.entries(config.tools)) {
+      if (!toolCfg.enabled) continue;
+      options.push({
+        label: `Tool: ${toolKey}`,
+        tool: toolKey,
+        worktreePath: focusedWorktreePath,
+      });
+    }
+
+    if (options.length === 0) {
+      this.showDashboardError("No orchestration targets available", [
+        "Select a local agent, define team roles, or enable tools before sending orchestration actions.",
+      ]);
+      return;
+    }
+
+    this.orchestrationRouteMode = mode;
+    this.orchestrationRouteOptions = options;
+    this.orchestrationRoutePickerActive = true;
+    this.renderOrchestrationRoutePicker();
+  }
+
+  private showOrchestrationInput(mode: "message" | "handoff" | "task", target: DashboardOrchestrationTarget): void {
     this.orchestrationInputMode = mode;
-    this.orchestrationInputTarget = targetSessionId;
+    this.orchestrationInputTarget = target;
     this.orchestrationInputBuffer = "";
     this.orchestrationInputActive = true;
     this.renderOrchestrationInput();
   }
 
   private renderOrchestrationInput(): void {
-    const targetId = this.orchestrationInputTarget;
+    const target = this.orchestrationInputTarget;
     const mode = this.orchestrationInputMode;
-    if (!targetId || !mode) return;
+    if (!target || !mode) return;
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    const session = this.getDashboardSessions().find((entry) => entry.id === targetId);
-    const targetLabel = session?.label ?? session?.command ?? targetId;
     const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Handoff" : "Assign task";
     const actionLabel = mode === "task" ? "assign" : "send";
+    const worktreeLine = target.worktreePath ? `  Worktree: ${target.worktreePath}` : null;
     const lines = [
       `${modeLabel}:`,
       "",
-      `  To: ${targetLabel} (${targetId})`,
+      `  To: ${target.label}`,
+      ...(worktreeLine ? [worktreeLine] : []),
       `  Text: ${this.orchestrationInputBuffer}_`,
       "",
       `  [Enter] ${actionLabel}  [Esc] cancel`,
     ];
+
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1]!;
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private renderOrchestrationRoutePicker(): void {
+    const mode = this.orchestrationRouteMode;
+    if (!mode) return;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Send handoff" : "Assign task";
+    const lines = [`${modeLabel}: choose target`, ""];
+    for (let i = 0; i < Math.min(this.orchestrationRouteOptions.length, 9); i++) {
+      lines.push(`  [${i + 1}] ${this.orchestrationRouteOptions[i]!.label}`);
+    }
+    if (this.orchestrationRouteOptions.length > 9) {
+      lines.push("  ...");
+    }
+    lines.push("");
+    lines.push("  [Esc] cancel");
 
     const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
     const startRow = Math.floor((rows - lines.length - 2) / 2);
@@ -2246,17 +2334,17 @@ export class Multiplexer {
 
     if (key === "enter" || key === "return") {
       const mode = this.orchestrationInputMode;
-      const targetId = this.orchestrationInputTarget;
+      const target = this.orchestrationInputTarget;
       const body = this.orchestrationInputBuffer.trim();
       this.orchestrationInputActive = false;
       this.orchestrationInputBuffer = "";
       this.orchestrationInputMode = null;
       this.orchestrationInputTarget = null;
-      if (!mode || !targetId || !body) {
+      if (!mode || !target || !body) {
         this.renderDashboard();
         return;
       }
-      void this.submitDashboardOrchestrationAction(mode, targetId, body);
+      void this.submitDashboardOrchestrationAction(mode, target, body);
       return;
     }
 
@@ -2272,62 +2360,122 @@ export class Multiplexer {
     }
   }
 
+  private handleOrchestrationRoutePickerKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    if (key === "escape") {
+      this.orchestrationRoutePickerActive = false;
+      this.orchestrationRouteMode = null;
+      this.orchestrationRouteOptions = [];
+      this.renderDashboard();
+      return;
+    }
+
+    if (key && /^[1-9]$/.test(key)) {
+      const idx = parseInt(key, 10) - 1;
+      const target = this.orchestrationRouteOptions[idx];
+      const mode = this.orchestrationRouteMode;
+      this.orchestrationRoutePickerActive = false;
+      this.orchestrationRouteMode = null;
+      this.orchestrationRouteOptions = [];
+      if (!target || !mode) {
+        this.renderDashboard();
+        return;
+      }
+      this.showOrchestrationInput(mode, target);
+    }
+  }
+
   private async submitDashboardOrchestrationAction(
     mode: "message" | "handoff" | "task",
-    targetSessionId: string,
+    target: DashboardOrchestrationTarget,
     body: string,
   ): Promise<void> {
     try {
+      const requestBody = {
+        from: "user",
+        to: target.sessionId ? [target.sessionId] : undefined,
+        assignee: target.assignee,
+        tool: target.tool,
+        worktreePath: target.worktreePath,
+      };
       if (mode === "message") {
         await this.postToProjectService("/threads/send", {
-          from: "user",
-          to: [targetSessionId],
           kind: "request",
+          ...requestBody,
           body,
         });
-        this.footerFlash = `✉ Message sent → ${targetSessionId}`;
+        this.footerFlash = `✉ Message sent → ${target.label}`;
       } else if (mode === "handoff") {
         await this.postToProjectService("/handoff", {
-          from: "user",
-          to: [targetSessionId],
+          ...requestBody,
           body,
-          title: `Handoff to ${targetSessionId}`,
+          title: `Handoff to ${target.label}`,
         });
-        this.footerFlash = `⇢ Handoff sent → ${targetSessionId}`;
+        this.footerFlash = `⇢ Handoff sent → ${target.label}`;
       } else {
         await this.postToProjectService("/tasks/assign", {
           from: "user",
-          to: targetSessionId,
+          to: target.sessionId,
+          assignee: target.assignee,
+          tool: target.tool,
+          worktreePath: target.worktreePath,
           description: body,
         });
-        this.footerFlash = `⧫ Task assigned → ${targetSessionId}`;
+        this.footerFlash = `⧫ Task assigned → ${target.label}`;
       }
       this.footerFlashTicks = 3;
     } catch {
       try {
+        const metadataState = loadMetadataState().sessions;
+        const localRecipients = target.sessionId
+          ? [target.sessionId]
+          : resolveOrchestrationRecipients({
+              candidates: this.sessions.map((session) => ({
+                id: session.id,
+                tool: this.sessionToolKeys.get(session.id) ?? session.command,
+                role: this.sessionRoles.get(session.id),
+                worktreePath: this.sessionWorktreePaths.get(session.id),
+                status: metadataState[session.id]?.derived?.activity,
+                exited: session.exited,
+              })),
+              assignee: target.assignee,
+              tool: target.tool,
+              worktreePath: target.worktreePath,
+            });
+        if (localRecipients.length === 0) {
+          throw new Error("no matching live session for selected route");
+        }
         if (mode === "message") {
           this.sendOrchestrationMessage({
             from: "user",
-            to: [targetSessionId],
+            to: localRecipients,
             kind: "request",
             body,
           });
-          this.footerFlash = `✉ Message sent → ${targetSessionId}`;
+          this.footerFlash = `✉ Message sent → ${target.label}`;
         } else if (mode === "handoff") {
           this.sendHandoffMessage({
             from: "user",
-            to: [targetSessionId],
+            to: localRecipients,
             body,
-            title: `Handoff to ${targetSessionId}`,
+            title: `Handoff to ${target.label}`,
           });
-          this.footerFlash = `⇢ Handoff sent → ${targetSessionId}`;
+          this.footerFlash = `⇢ Handoff sent → ${target.label}`;
         } else {
           await assignTask({
             from: "user",
-            to: targetSessionId,
+            to: localRecipients[0],
+            assignee: target.assignee,
+            tool: target.tool,
+            worktreePath: target.worktreePath,
             description: body,
           });
-          this.footerFlash = `⧫ Task assigned → ${targetSessionId}`;
+          this.footerFlash = `⧫ Task assigned → ${target.label}`;
         }
         this.footerFlashTicks = 3;
       } catch (error) {
