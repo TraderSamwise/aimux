@@ -7,7 +7,7 @@ import { listDesktopProjects } from "./project-scanner.js";
 
 const DAEMON_PORT = 43190;
 const DAEMON_HOST = "127.0.0.1";
-const DAEMON_STARTUP_TIMEOUT_MS = 4_000;
+const DAEMON_STARTUP_TIMEOUT_MS = 10_000;
 
 export interface AimuxDaemonInfo {
   pid: number;

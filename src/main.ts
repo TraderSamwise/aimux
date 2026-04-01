@@ -405,8 +405,13 @@ daemonCmd
 daemonCmd
   .command("ensure")
   .description("Ensure the global aimux daemon is running")
-  .action(async () => {
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
     const info = await ensureDaemonRunning();
+    if (opts.json) {
+      console.log(JSON.stringify({ daemon: info }, null, 2));
+      return;
+    }
     console.log(`aimux daemon: pid ${info.pid} on http://127.0.0.1:${info.port}`);
   });
 
@@ -487,9 +492,14 @@ daemonCmd
   .command("project-ensure")
   .description("Ensure a project's control service is running")
   .requiredOption("--project <path>", "Project path")
-  .action(async (opts: { project: string }) => {
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project: string; json?: boolean }) => {
     const projectRoot = resolveProjectRoot(pathResolve(opts.project));
     const project = await ensureProjectService(projectRoot);
+    if (opts.json) {
+      console.log(JSON.stringify({ project }, null, 2));
+      return;
+    }
     console.log(`Ensured project service for ${projectRoot} (pid ${project.pid})`);
   });
 

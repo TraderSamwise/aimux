@@ -1,12 +1,12 @@
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, State};
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -68,7 +68,6 @@ struct ProjectInfo {
   path: String,
   last_seen: Option<String>,
   service_alive: bool,
-  service_pid: Option<u32>,
   statusline: Option<Value>,
 }
 
@@ -76,6 +75,64 @@ struct ProjectInfo {
 #[serde(rename_all = "camelCase")]
 struct HeartbeatResponse {
   projects: Vec<ProjectInfo>,
+}
+
+fn preview_bytes(bytes: &[u8], limit: usize) -> String {
+  let take = bytes.len().min(limit);
+  String::from_utf8_lossy(&bytes[..take]).trim().to_string()
+}
+
+fn run_aimux_json<T: DeserializeOwned>(
+  cwd: &Path,
+  args: &[&str],
+  context: &str,
+) -> Result<T, String> {
+  let node = resolve_node();
+  let entrypoint = aimux_entrypoint();
+  let output = std::process::Command::new(&node)
+    .arg(&entrypoint)
+    .args(args)
+    .current_dir(cwd)
+    .env("PATH", shell_path())
+    .output()
+    .map_err(|e| {
+      format!(
+        "{context}: failed to spawn command\nnode={}\nentrypoint={}\ncwd={}\nerror={e}",
+        node.display(),
+        entrypoint.display(),
+        cwd.display()
+      )
+    })?;
+
+  if !output.status.success() || output.stdout.is_empty() {
+    let stdout = preview_bytes(&output.stdout, 400);
+    let stderr = preview_bytes(&output.stderr, 400);
+    return Err(format!(
+      "{context}: command did not produce valid JSON stdout\nnode={}\nentrypoint={}\ncwd={}\nargs={:?}\nexit={}\nstdout={:?}\nstderr={:?}",
+      node.display(),
+      entrypoint.display(),
+      cwd.display(),
+      args,
+      output.status,
+      stdout,
+      stderr
+    ));
+  }
+
+  serde_json::from_slice(&output.stdout).map_err(|e| {
+    let stdout = preview_bytes(&output.stdout, 400);
+    let stderr = preview_bytes(&output.stderr, 400);
+    format!(
+      "{context}: invalid JSON response\nnode={}\nentrypoint={}\ncwd={}\nargs={:?}\nexit={}\nstdout={:?}\nstderr={:?}\nerror={e}",
+      node.display(),
+      entrypoint.display(),
+      cwd.display(),
+      args,
+      output.status,
+      stdout,
+      stderr
+    )
+  })
 }
 
 #[derive(Serialize, Clone)]
@@ -111,20 +168,12 @@ struct TerminalSession {
 
 // ── Commands: unified heartbeat ───────────────────────────────────
 
-static LAST_STATUSLINES: LazyLock<Mutex<HashMap<String, Value>>> =
-  LazyLock::new(|| Mutex::new(HashMap::new()));
-
 #[tauri::command]
 fn heartbeat() -> Result<HeartbeatResponse, String> {
-  let output = std::process::Command::new(resolve_node())
-    .arg(aimux_entrypoint())
-    .args(["daemon", "projects", "--json"])
-    .env("PATH", shell_path())
-    .output()
-    .map_err(|e| format!("failed to read daemon projects: {e}"))?;
-
-  let response: HeartbeatResponse = serde_json::from_slice(&output.stdout)
-    .map_err(|e| format!("invalid daemon projects JSON: {e}"))?;
+  let cwd = repo_root();
+  let _: Value = run_aimux_json(&cwd, &["daemon", "ensure", "--json"], "daemon ensure")?;
+  let response: HeartbeatResponse =
+    run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects")?;
 
   let projects = response
     .projects
@@ -142,7 +191,7 @@ fn heartbeat() -> Result<HeartbeatResponse, String> {
   Ok(HeartbeatResponse { projects })
 }
 
-fn read_statusline_cached(project_id: &str, project_dir: &Path) -> Option<Value> {
+fn read_statusline_cached(_project_id: &str, project_dir: &Path) -> Option<Value> {
   // TODO: re-enable caching if statusline flicker returns.
   // Previously the host would momentarily write sessions:[] during refresh,
   // and this cache prevented that from reaching the UI. With the daemon model
@@ -202,15 +251,13 @@ fn read_statusline_file(project_dir: &Path) -> Option<Value> {
 
 #[tauri::command]
 fn ensure_daemon_project(project_path: String) -> Result<Value, String> {
-  let output = std::process::Command::new(resolve_node())
-    .arg(aimux_entrypoint())
-    .args(["daemon", "project-ensure", "--project", &project_path])
-    .current_dir(&project_path)
-    .env("PATH", shell_path())
-    .output()
-    .map_err(|e| format!("failed to ensure daemon project service: {e}"))?;
-
-  serde_json::from_slice(&output.stdout).or_else(|_| Ok(serde_json::json!({ "ok": output.status.success() })))
+  let cwd = Path::new(&project_path);
+  let _: Value = run_aimux_json(&repo_root(), &["daemon", "ensure", "--json"], "daemon ensure")?;
+  run_aimux_json(
+    cwd,
+    &["daemon", "project-ensure", "--project", &project_path, "--json"],
+    "daemon project ensure",
+  )
 }
 
 // ── Commands: terminal PTY ────────────────────────────────────────
