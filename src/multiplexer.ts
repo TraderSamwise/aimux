@@ -61,6 +61,7 @@ import {
   type ThreadSummary,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
+import { sendHandoff } from "./orchestration-actions.js";
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 
 interface StatuslineOwnerState {
@@ -124,6 +125,8 @@ interface PlanEntry {
 
 interface ThreadEntry extends ThreadSummary {
   displayTitle: string;
+  pendingDeliveries: number;
+  latestPendingRecipients: string[];
 }
 
 export class Multiplexer {
@@ -244,6 +247,9 @@ export class Multiplexer {
       threads: {
         sendMessage: (input) => this.sendOrchestrationMessage(input),
       },
+      actions: {
+        sendHandoff: (input) => this.sendHandoffMessage(input),
+      },
       onChange: () => {
         this.writeStatuslineFile();
         if (this.mode === "dashboard") {
@@ -338,6 +344,42 @@ export class Multiplexer {
       from,
       input.body,
       kind,
+      result.thread.title,
+      result.message.id,
+    );
+    this.writeStatuslineFile();
+    if (this.mode === "dashboard") {
+      this.renderCurrentDashboardView();
+    }
+    return {
+      thread: result.thread,
+      message: result.message,
+      deliveredTo,
+      threadCreated: result.threadCreated,
+    };
+  }
+
+  private sendHandoffMessage(input: {
+    from?: string;
+    to?: string[];
+    body: string;
+    title?: string;
+    worktreePath?: string;
+  }): { thread: unknown; message: unknown; deliveredTo: string[]; threadCreated: boolean } {
+    const from = input.from?.trim() || "user";
+    const result = sendHandoff({
+      from,
+      to: input.to ?? [],
+      body: input.body,
+      title: input.title,
+      worktreePath: input.worktreePath,
+    });
+    const deliveredTo = this.deliverOrchestrationMessage(
+      result.message.to ?? [],
+      result.thread.id,
+      from,
+      input.body,
+      "handoff",
       result.thread.title,
       result.message.id,
     );
@@ -1634,10 +1676,24 @@ export class Multiplexer {
 
   private buildThreadEntries(): ThreadEntry[] {
     return listThreadSummaries()
-      .map((summary) => ({
-        ...summary,
-        displayTitle: summary.thread.title || `${summary.thread.kind} ${summary.thread.id}`,
-      }))
+      .map((summary) => {
+        const messages = readMessages(summary.thread.id);
+        const pending = messages.flatMap((message) =>
+          (message.to ?? []).filter((recipient) => !(message.deliveredTo ?? []).includes(recipient)),
+        );
+        const latestWithPending = [...messages]
+          .reverse()
+          .find((message) => (message.to ?? []).some((recipient) => !(message.deliveredTo ?? []).includes(recipient)));
+        const latestPendingRecipients = (latestWithPending?.to ?? []).filter(
+          (recipient) => !(latestWithPending?.deliveredTo ?? []).includes(recipient),
+        );
+        return {
+          ...summary,
+          displayTitle: summary.thread.title || `${summary.thread.kind} ${summary.thread.id}`,
+          pendingDeliveries: pending.length,
+          latestPendingRecipients,
+        };
+      })
       .sort((a, b) => (a.thread.updatedAt < b.thread.updatedAt ? 1 : a.thread.updatedAt > b.thread.updatedAt ? -1 : 0));
   }
 
@@ -1681,11 +1737,12 @@ export class Multiplexer {
           (entry.thread.unreadBy?.length ?? 0) > 0 ? ` \x1b[36m${entry.thread.unreadBy!.length}\x1b[0m` : "";
         const waiting =
           (entry.thread.waitingOn?.length ?? 0) > 0 ? ` \x1b[35m→ ${entry.thread.waitingOn!.join(",")}\x1b[0m` : "";
+        const pending = entry.pendingDeliveries > 0 ? ` \x1b[31m⇢ ${entry.pendingDeliveries}\x1b[0m` : "";
         const latest = entry.latestMessage?.body
           ? ` \x1b[2m· ${this.truncatePlain(entry.latestMessage.body, 34)}\x1b[0m`
           : "";
         listLines.push(
-          `${marker}[${i + 1}] ${entry.displayTitle} \x1b[2m(${entry.thread.kind})\x1b[0m — ${entry.thread.status}${unread}${waiting}${latest}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+          `${marker}[${i + 1}] ${entry.displayTitle} \x1b[2m(${entry.thread.kind})\x1b[0m — ${entry.thread.status}${unread}${waiting}${pending}${latest}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
         );
       }
     }
@@ -1722,6 +1779,9 @@ export class Multiplexer {
     if ((entry.thread.unreadBy?.length ?? 0) > 0) {
       lines.push(...this.wrapKeyValue("Unread By", entry.thread.unreadBy!.join(", "), width));
     }
+    if (entry.pendingDeliveries > 0) {
+      lines.push(...this.wrapKeyValue("Pending Delivery", entry.latestPendingRecipients.join(", "), width));
+    }
     if (entry.thread.taskId) lines.push(...this.wrapKeyValue("Task", entry.thread.taskId, width));
     if (entry.thread.worktreePath) lines.push(...this.wrapKeyValue("Worktree", entry.thread.worktreePath, width));
     lines.push("");
@@ -1729,7 +1789,9 @@ export class Multiplexer {
     const messages = readMessages(entry.thread.id).slice(-Math.max(3, height - lines.length));
     for (const message of messages) {
       const prefix = `${message.from} [${message.kind}]`;
-      lines.push(...this.wrapKeyValue(prefix, message.body, width));
+      const pending = (message.to ?? []).filter((recipient) => !(message.deliveredTo ?? []).includes(recipient));
+      const suffix = pending.length > 0 ? ` (${pending.join(", ")} pending)` : "";
+      lines.push(...this.wrapKeyValue(prefix, `${message.body}${suffix}`, width));
     }
     while (lines.length < height) lines.push("");
     return lines.slice(0, height);

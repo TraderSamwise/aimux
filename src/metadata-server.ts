@@ -43,6 +43,14 @@ interface MetadataServerOptions {
       threadCreated?: boolean;
     };
   };
+  actions?: {
+    sendHandoff?: (input: { from?: string; to?: string[]; body: string; title?: string; worktreePath?: string }) => {
+      thread: unknown;
+      message: unknown;
+      deliveredTo?: string[];
+      threadCreated?: boolean;
+    };
+  };
 }
 
 function desiredPort(): number {
@@ -341,13 +349,15 @@ export class MetadataServer {
           title?: string;
           worktreePath?: string;
         };
-        const result = sendHandoff({
-          from: body.from?.trim() || "user",
-          to: body.to ?? [],
-          body: body.body,
-          title: body.title,
-          worktreePath: body.worktreePath,
-        });
+        const result = this.options.actions?.sendHandoff
+          ? this.options.actions.sendHandoff(body)
+          : sendHandoff({
+              from: body.from?.trim() || "user",
+              to: body.to ?? [],
+              body: body.body,
+              title: body.title,
+              worktreePath: body.worktreePath,
+            });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
