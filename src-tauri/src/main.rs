@@ -188,21 +188,19 @@ struct TerminalSession {
   child: Mutex<Box<dyn Child + Send>>,
 }
 
-// ── Commands: unified heartbeat ───────────────────────────────────
+// ── Heartbeat (background thread → event) ─────────────────────────
 
 static LAST_STATUSLINES: LazyLock<Mutex<HashMap<String, Value>>> =
   LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[tauri::command]
-fn heartbeat() -> Result<HeartbeatResponse, String> {
+fn build_heartbeat() -> Option<HeartbeatResponse> {
   let cwd = repo_root();
-  let response: DaemonProjectsResponse = match run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects") {
-    Ok(r) => r,
-    Err(_) => {
+  let response: DaemonProjectsResponse = run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects")
+    .or_else(|_| {
       let _: Value = run_aimux_json(&cwd, &["daemon", "ensure", "--json"], "daemon ensure")?;
-      run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects")?
-    }
-  };
+      run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects")
+    })
+    .ok()?;
 
   let projects = response
     .projects
@@ -211,7 +209,6 @@ fn heartbeat() -> Result<HeartbeatResponse, String> {
       let project_dir = aimux_global_dir().join("projects").join(&project.id);
       let statusline = read_statusline_cached(&project.id, &project_dir);
 
-      // Worktree list — fast git operation, ok to run every tick
       let worktrees = run_aimux_json::<Vec<Value>>(
         Path::new(&project.path),
         &["worktree", "list", "--project", &project.path, "--json"],
@@ -230,7 +227,18 @@ fn heartbeat() -> Result<HeartbeatResponse, String> {
     })
     .collect();
 
-  Ok(HeartbeatResponse { projects })
+  Some(HeartbeatResponse { projects })
+}
+
+fn start_heartbeat_thread(app: tauri::AppHandle) {
+  std::thread::spawn(move || {
+    loop {
+      if let Some(response) = build_heartbeat() {
+        let _ = app.emit("heartbeat", &response);
+      }
+      std::thread::sleep(std::time::Duration::from_millis(1500));
+    }
+  });
 }
 
 fn read_statusline_cached(project_id: &str, project_dir: &Path) -> Option<Value> {
@@ -583,7 +591,6 @@ fn main() {
   tauri::Builder::default()
     .manage(TerminalRegistry::default())
     .invoke_handler(tauri::generate_handler![
-      heartbeat,
       ensure_daemon_project,
       agent_spawn,
       agent_stop,
@@ -599,6 +606,9 @@ fn main() {
       close_terminal
     ])
     .setup(|app| {
+      // Start heartbeat background thread
+      start_heartbeat_thread(app.handle().clone());
+
       if let Some(window) = app.get_webview_window("main") {
         let registry = app.state::<TerminalRegistry>().inner().clone();
         window.on_window_event(move |event| {

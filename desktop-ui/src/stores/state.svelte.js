@@ -11,14 +11,13 @@ let terminalStatus = $state("Idle");
 
 let unlistenOutput = null;
 let unlistenExit = null;
-let heartbeatTimer = null;
-let heartbeatInFlight = false;
+let unlistenHeartbeat = null;
 
 // ── In-progress action queue ──────────────────────────────────────
 
-let tickNumber = 0;
-let pendingActions = $state([]);       // { message: string, tickCreated: number }
-let currentAction = $state(null);      // newest pending action message, or null
+let tickNumber = $state(0);
+let pendingActions = $state([]);
+let currentAction = $state(null);
 
 export function pushAction(message) {
   pendingActions.push({ message, tickCreated: tickNumber });
@@ -63,46 +62,34 @@ export function getState() {
   };
 }
 
-// ── Single tick loop ──────────────────────────────────────────────
+// ── Heartbeat listener (Rust pushes events, JS just receives) ─────
 
-async function tick() {
-  if (heartbeatInFlight) return;
-  heartbeatInFlight = true;
-  try {
-    tickNumber++;
-    drainActions();
+function onHeartbeat(event) {
+  tickNumber++;
+  drainActions();
 
-    const response = await invoke("heartbeat");
-    const incoming = response.projects || [];
-    incoming.sort((a, b) => a.name.localeCompare(b.name));
-    projects = incoming;
+  const incoming = event.payload?.projects || [];
+  incoming.sort((a, b) => a.name.localeCompare(b.name));
+  projects = incoming;
 
-    // Auto-select first project if none selected
-    if (!selectedProjectPath && projects.length > 0) {
-      selectedProjectPath = projects[0].path;
-    }
-    // Fix stale selection
-    if (selectedProjectPath && !projects.some((p) => p.path === selectedProjectPath)) {
-      selectedProjectPath = projects[0]?.path || null;
-      selectedSessionId = null;
-    }
-  } catch (error) {
-    console.error("Heartbeat failed:", error);
-  } finally {
-    heartbeatInFlight = false;
+  if (!selectedProjectPath && projects.length > 0) {
+    selectedProjectPath = projects[0].path;
+  }
+  if (selectedProjectPath && !projects.some((p) => p.path === selectedProjectPath)) {
+    selectedProjectPath = projects[0]?.path || null;
+    selectedSessionId = null;
   }
 }
 
-export function startHeartbeat() {
+export async function startHeartbeat() {
   stopHeartbeat();
-  tick();
-  heartbeatTimer = setInterval(tick, 3000);
+  unlistenHeartbeat = await listen("heartbeat", onHeartbeat);
 }
 
 export function stopHeartbeat() {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
+  if (unlistenHeartbeat) {
+    unlistenHeartbeat();
+    unlistenHeartbeat = null;
   }
 }
 
