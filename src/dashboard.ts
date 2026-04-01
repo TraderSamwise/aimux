@@ -42,6 +42,7 @@ export interface DashboardSession {
   threadName?: string;
   threadUnreadCount?: number;
   threadWaitingCount?: number;
+  threadPendingCount?: number;
 }
 
 export interface WorktreeGroup {
@@ -207,6 +208,8 @@ export class Dashboard {
       (session.threadUnreadCount ?? 0) > 0 || (session.threadWaitingCount ?? 0) > 0
         ? ` \x1b[2;34m💬 ${session.threadUnreadCount ?? 0}/${session.threadWaitingCount ?? 0}\x1b[0m`
         : "";
+    const pendingBadge =
+      (session.threadPendingCount ?? 0) > 0 ? ` \x1b[2;31m⇢ ${session.threadPendingCount}\x1b[0m` : "";
     const attentionBadge =
       session.attention === "error"
         ? " \x1b[31m✗\x1b[0m"
@@ -224,7 +227,7 @@ export class Dashboard {
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${attentionBadge}${unseenBadge} — ${ownerTag}${marker}`;
+      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${attentionBadge}${unseenBadge} — ${ownerTag}${marker}`;
     }
 
     const icon = STATUS_ICONS[session.status];
@@ -232,7 +235,7 @@ export class Dashboard {
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${headlineText}${taskBadge}${threadBadge}${attentionBadge}${unseenBadge}${marker}`;
+    return `${indent}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${attentionBadge}${unseenBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {
@@ -402,11 +405,15 @@ export class Dashboard {
     if (selected.threadName || selected.threadId) {
       lines.push(...wrapKeyValue("Thread", selected.threadName ?? selected.threadId ?? "", width));
     }
-    if ((selected.threadUnreadCount ?? 0) > 0 || (selected.threadWaitingCount ?? 0) > 0) {
+    if (
+      (selected.threadUnreadCount ?? 0) > 0 ||
+      (selected.threadWaitingCount ?? 0) > 0 ||
+      (selected.threadPendingCount ?? 0) > 0
+    ) {
       lines.push(
         ...wrapKeyValue(
           "Threads",
-          `${selected.threadUnreadCount ?? 0} unread · ${selected.threadWaitingCount ?? 0} waiting`,
+          `${selected.threadUnreadCount ?? 0} unread · ${selected.threadWaitingCount ?? 0} waiting · ${selected.threadPendingCount ?? 0} pending`,
           width,
         ),
       );

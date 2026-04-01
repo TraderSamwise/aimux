@@ -4308,6 +4308,19 @@ export class Multiplexer {
     if (session.threadName || session.threadId) {
       lines.push(...this.wrapKeyValue("Thread", session.threadName ?? session.threadId ?? "", width));
     }
+    if (
+      (session.threadUnreadCount ?? 0) > 0 ||
+      (session.threadWaitingCount ?? 0) > 0 ||
+      (session.threadPendingCount ?? 0) > 0
+    ) {
+      lines.push(
+        ...this.wrapKeyValue(
+          "Threads",
+          `${session.threadUnreadCount ?? 0} unread · ${session.threadWaitingCount ?? 0} waiting · ${session.threadPendingCount ?? 0} pending`,
+          width,
+        ),
+      );
+    }
     if ((session.services?.length ?? 0) > 0) {
       lines.push(
         ...this.wrapKeyValue("Services", session.services!.map((s) => s.url ?? `:${s.port}`).join(", "), width),
@@ -4415,14 +4428,27 @@ export class Multiplexer {
   private getDashboardSessions(): DashboardSession[] {
     const metadata = loadMetadataState().sessions;
     const threadSummaries = listThreadSummaries();
-    const threadStats = new Map<string, { unread: number; waiting: number; latestId?: string; latestTitle?: string }>();
+    const threadStats = new Map<
+      string,
+      { unread: number; waiting: number; pending: number; latestId?: string; latestTitle?: string }
+    >();
     for (const summary of threadSummaries) {
+      const messages = readMessages(summary.thread.id);
+      const pendingByParticipant = new Map<string, number>();
+      for (const message of messages) {
+        for (const recipient of message.to ?? []) {
+          if (!(message.deliveredTo ?? []).includes(recipient)) {
+            pendingByParticipant.set(recipient, (pendingByParticipant.get(recipient) ?? 0) + 1);
+          }
+        }
+      }
       for (const participant of summary.thread.participants) {
-        const current = threadStats.get(participant) ?? { unread: 0, waiting: 0 };
+        const current = threadStats.get(participant) ?? { unread: 0, waiting: 0, pending: 0 };
         if ((summary.thread.unreadBy ?? []).includes(participant)) current.unread += 1;
         if ((summary.thread.waitingOn ?? []).includes(participant) || summary.thread.owner === participant) {
           current.waiting += 1;
         }
+        current.pending += pendingByParticipant.get(participant) ?? 0;
         if (!current.latestId) {
           current.latestId = summary.thread.id;
           current.latestTitle = summary.thread.title;
@@ -4458,6 +4484,7 @@ export class Multiplexer {
         ...session,
         threadUnreadCount: stats?.unread ?? 0,
         threadWaitingCount: stats?.waiting ?? 0,
+        threadPendingCount: stats?.pending ?? 0,
         threadId: session.threadId ?? stats?.latestId,
         threadName: session.threadName ?? stats?.latestTitle,
       };
