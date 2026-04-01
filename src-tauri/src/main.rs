@@ -143,38 +143,40 @@ fn heartbeat() -> Result<HeartbeatResponse, String> {
 }
 
 fn read_statusline_cached(project_id: &str, project_dir: &Path) -> Option<Value> {
-  let fresh = read_statusline_file(project_dir);
-  let mut cache = LAST_STATUSLINES.lock().unwrap_or_else(|e| e.into_inner());
+  // TODO: re-enable caching if statusline flicker returns.
+  // Previously the host would momentarily write sessions:[] during refresh,
+  // and this cache prevented that from reaching the UI. With the daemon model
+  // this should no longer happen — disabled to avoid masking bugs.
+  read_statusline_file(project_dir)
 
-  match fresh {
-    Some(data) => {
-      // Only accept fresh data if it doesn't look like a mid-write snapshot.
-      // The host momentarily writes sessions:[] during refresh — don't cache that
-      // if we already have a richer version.
-      let fresh_count = data
-        .get("sessions")
-        .and_then(Value::as_array)
-        .map(|a| a.len())
-        .unwrap_or(0);
-
-      if let Some(cached) = cache.get(project_id) {
-        let cached_count = cached
-          .get("sessions")
-          .and_then(Value::as_array)
-          .map(|a| a.len())
-          .unwrap_or(0);
-
-        if fresh_count == 0 && cached_count > 0 {
-          // Fresh read has no sessions but cache does — keep cache
-          return Some(cached.clone());
-        }
-      }
-
-      cache.insert(project_id.to_string(), data.clone());
-      Some(data)
-    }
-    None => cache.get(project_id).cloned(),
-  }
+  // let fresh = read_statusline_file(project_dir);
+  // let mut cache = LAST_STATUSLINES.lock().unwrap_or_else(|e| e.into_inner());
+  //
+  // match fresh {
+  //   Some(data) => {
+  //     let fresh_count = data
+  //       .get("sessions")
+  //       .and_then(Value::as_array)
+  //       .map(|a| a.len())
+  //       .unwrap_or(0);
+  //
+  //     if let Some(cached) = cache.get(project_id) {
+  //       let cached_count = cached
+  //         .get("sessions")
+  //         .and_then(Value::as_array)
+  //         .map(|a| a.len())
+  //         .unwrap_or(0);
+  //
+  //       if fresh_count == 0 && cached_count > 0 {
+  //         return Some(cached.clone());
+  //       }
+  //     }
+  //
+  //     cache.insert(project_id.to_string(), data.clone());
+  //     Some(data)
+  //   }
+  //   None => cache.get(project_id).cloned(),
+  // }
 }
 
 fn read_statusline_file(project_dir: &Path) -> Option<Value> {

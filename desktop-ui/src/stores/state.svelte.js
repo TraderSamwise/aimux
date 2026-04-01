@@ -33,19 +33,6 @@ export function getState() {
   };
 }
 
-// Fingerprint only the fields the UI renders — ignores updatedAt, logs, etc.
-function uiFingerprint(project) {
-  const sl = project.statusline;
-  if (!sl) return "null";
-  const sessions = (sl.sessions ?? []).map((s) => `${s.id}:${s.status}:${s.role || ""}`).join(",");
-  const meta = sl.metadata ? Object.entries(sl.metadata).map(([id, m]) => {
-    const d = m.derived || {};
-    return `${id}:${d.activity || ""}:${d.attention || ""}:${d.unseenCount ?? 0}`;
-  }).join(",") : "";
-  const tasks = sl.tasks ? `${sl.tasks.pending || 0}:${sl.tasks.assigned || 0}` : "";
-  return `${sessions}|${meta}|${tasks}|${sl.flash || ""}|${sl.dashboardScreen || ""}`;
-}
-
 // ── Heartbeat (single loop for everything) ────────────────────────
 
 async function tick() {
@@ -53,49 +40,8 @@ async function tick() {
     const response = await invoke("heartbeat");
     const incoming = response.projects || [];
 
-    // Sort alphabetically for stable ordering
     incoming.sort((a, b) => a.name.localeCompare(b.name));
-
-    // Build a stable project set — only add new projects, never remove existing
-    // ones mid-session (protects against mid-write reads of projects.json).
-    const incomingById = new Map(incoming.map((p) => [p.id, p]));
-    const existingById = new Map(projects.map((p) => [p.id, p]));
-
-    let changed = false;
-    const merged = [];
-
-    // Keep all existing projects, update their data if incoming has fresher info
-    for (const existing of projects) {
-      const fresh = incomingById.get(existing.id);
-      if (fresh) {
-        const currFp = uiFingerprint(existing);
-        const nextFp = uiFingerprint(fresh);
-        if (existing.serviceAlive !== fresh.serviceAlive || currFp !== nextFp) {
-          merged.push(fresh);
-          changed = true;
-        } else {
-          merged.push(existing);
-        }
-      } else {
-        // Project disappeared from registry — keep it (likely mid-write)
-        merged.push(existing);
-      }
-    }
-
-    // Add genuinely new projects
-    for (const fresh of incoming) {
-      if (!existingById.has(fresh.id)) {
-        merged.push(fresh);
-        changed = true;
-      }
-    }
-
-    // Sort alphabetically for stable ordering
-    merged.sort((a, b) => a.name.localeCompare(b.name));
-
-    if (changed || projects.length === 0) {
-      projects = merged;
-    }
+    projects = incoming;
 
     // Auto-select first project if none selected
     if (!selectedProjectPath && projects.length > 0) {
