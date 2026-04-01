@@ -52,8 +52,10 @@ import {
   markThreadSeen,
   readMessages,
   readThread,
+  setThreadStatus,
   type MessageKind,
   type ThreadKind,
+  type ThreadStatus,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import { acceptHandoff, assignTask, completeHandoff, sendHandoff } from "./orchestration-actions.js";
@@ -848,6 +850,42 @@ threadCmd
       process.exit(1);
     }
     console.log("ok");
+  });
+
+threadCmd
+  .command("status")
+  .description("Update a thread status")
+  .argument("<threadId>")
+  .requiredOption("--status <status>", "open|waiting|blocked|done|abandoned")
+  .option("--owner <sessionId>", "Override thread owner")
+  .option("--waiting-on <ids>", "Comma-separated waitingOn participants")
+  .action(async (threadId: string, opts: { status: ThreadStatus; owner?: string; waitingOn?: string }) => {
+    const waitingOn = opts.waitingOn
+      ?.split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    try {
+      const result = await postProjectServiceJson("/threads/status", {
+        threadId,
+        status: opts.status,
+        owner: opts.owner,
+        waitingOn,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`status ${result.thread.status}`);
+      return;
+    } catch {
+      const thread = setThreadStatus(threadId, opts.status, {
+        owner: opts.owner?.trim(),
+        waitingOn,
+      });
+      if (!thread) {
+        console.error(`aimux: thread not found: ${threadId}`);
+        process.exit(1);
+      }
+      console.log(`thread ${thread.id}`);
+      console.log(`status ${thread.status}`);
+    }
   });
 
 const messageCmd = program.command("message").description("Send directed orchestration messages");

@@ -226,6 +226,19 @@ export function markThreadSeen(threadId: string, sessionId: string): Orchestrati
   }));
 }
 
+export function setThreadStatus(
+  threadId: string,
+  status: ThreadStatus,
+  input?: { owner?: string; waitingOn?: string[] },
+): OrchestrationThread | undefined {
+  return updateThread(threadId, (current) => ({
+    ...current,
+    status,
+    owner: input?.owner ?? current.owner,
+    waitingOn: input?.waitingOn ?? (status === "done" || status === "abandoned" ? [] : current.waitingOn),
+  }));
+}
+
 export function openTaskThread(
   taskId: string,
   input: {

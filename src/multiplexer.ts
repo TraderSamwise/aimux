@@ -56,6 +56,8 @@ import {
   type MessageKind,
   type OrchestrationThread,
   readMessages,
+  setThreadStatus,
+  type ThreadStatus,
   updateThread,
   type ThreadSummary,
 } from "./threads.js";
@@ -1790,7 +1792,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [s] reply  [a] accept  [c] complete  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [s] reply  [a] accept  [c] complete  [b/o/x] state  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -1942,6 +1944,27 @@ export class Multiplexer {
       }
       return;
     }
+    if (key === "b") {
+      const entry = this.threadEntries[this.threadIndex];
+      if (entry) {
+        void this.runThreadStatusAction(entry.thread.id, "blocked");
+      }
+      return;
+    }
+    if (key === "o") {
+      const entry = this.threadEntries[this.threadIndex];
+      if (entry) {
+        void this.runThreadStatusAction(entry.thread.id, "open");
+      }
+      return;
+    }
+    if (key === "x") {
+      const entry = this.threadEntries[this.threadIndex];
+      if (entry) {
+        void this.runThreadStatusAction(entry.thread.id, "done");
+      }
+      return;
+    }
     if (key === "down" || key === "j" || key === "n") {
       if (this.threadEntries.length > 1) {
         this.threadIndex = (this.threadIndex + 1) % this.threadEntries.length;
@@ -2058,6 +2081,31 @@ export class Multiplexer {
         this.footerFlashTicks = 3;
       } catch (error) {
         this.showDashboardError(`Failed to ${mode} handoff`, [error instanceof Error ? error.message : String(error)]);
+        return;
+      }
+    }
+    this.threadEntries = this.buildThreadEntries();
+    this.threadIndex = Math.min(this.threadIndex, Math.max(0, this.threadEntries.length - 1));
+    this.renderThreads();
+  }
+
+  private async runThreadStatusAction(threadId: string, status: ThreadStatus): Promise<void> {
+    try {
+      await this.postToProjectService("/threads/status", {
+        threadId,
+        status,
+      });
+      this.footerFlash = `Thread marked ${status}`;
+      this.footerFlashTicks = 3;
+    } catch {
+      try {
+        setThreadStatus(threadId, status);
+        this.footerFlash = `Thread marked ${status}`;
+        this.footerFlashTicks = 3;
+      } catch (error) {
+        this.showDashboardError("Failed to update thread status", [
+          error instanceof Error ? error.message : String(error),
+        ]);
         return;
       }
     }

@@ -13,6 +13,7 @@ import {
   openTaskThread,
   readMessages,
   readThread,
+  setThreadStatus,
 } from "./threads.js";
 
 describe("threads", () => {
@@ -67,6 +68,21 @@ describe("threads", () => {
       unreadBy: ["codex-1"],
     });
     expect(markThreadSeen(thread.id, "codex-1")?.unreadBy).toEqual([]);
+  });
+
+  it("updates thread status and clears waiting when done", () => {
+    const thread = createThread({
+      title: "Ask about parser",
+      kind: "conversation",
+      createdBy: "claude-1",
+      participants: ["claude-1", "codex-1"],
+      owner: "claude-1",
+      waitingOn: ["codex-1"],
+      status: "waiting",
+    });
+    const updated = setThreadStatus(thread.id, "done");
+    expect(updated?.status).toBe("done");
+    expect(updated?.waitingOn).toEqual([]);
   });
 
   it("opens stable task-linked threads", () => {

@@ -20,8 +20,10 @@ import {
   markThreadSeen,
   readMessages,
   readThread,
+  setThreadStatus,
   type MessageKind,
   type ThreadKind,
+  type ThreadStatus,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import { acceptHandoff, assignTask, completeHandoff, sendHandoff } from "./orchestration-actions.js";
@@ -355,6 +357,26 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === "/threads/mark-seen") {
         const body = (await readJson(req)) as { threadId: string; session: string };
         const thread = markThreadSeen(body.threadId, body.session);
+        if (!thread) {
+          send(res, 404, { ok: false, error: "thread not found" });
+          return;
+        }
+        this.options.onChange?.();
+        send(res, 200, { ok: true, thread });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/threads/status") {
+        const body = (await readJson(req)) as {
+          threadId: string;
+          status: ThreadStatus;
+          owner?: string;
+          waitingOn?: string[];
+        };
+        const thread = setThreadStatus(body.threadId, body.status, {
+          owner: body.owner?.trim(),
+          waitingOn: body.waitingOn?.map((value) => value.trim()).filter(Boolean),
+        });
         if (!thread) {
           send(res, 404, { ok: false, error: "thread not found" });
           return;
