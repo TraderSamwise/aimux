@@ -261,6 +261,93 @@ fn ensure_daemon_project(project_path: String) -> Result<Value, String> {
   )
 }
 
+// ── Commands: agent lifecycle ──────────────────────────────────────
+
+#[tauri::command]
+fn agent_spawn(project_path: String, tool: String, worktree: Option<String>) -> Result<Value, String> {
+  let mut args = vec!["spawn", "--tool", &tool, "--project", &project_path, "--json"];
+  let wt_owned;
+  if let Some(ref wt) = worktree {
+    wt_owned = wt.clone();
+    args.push("--worktree");
+    args.push(&wt_owned);
+  }
+  run_aimux_json(Path::new(&project_path), &args, "agent spawn")
+}
+
+#[tauri::command]
+fn agent_stop(project_path: String, session_id: String) -> Result<Value, String> {
+  run_aimux_json(
+    Path::new(&project_path),
+    &["stop", &session_id, "--project", &project_path, "--json"],
+    "agent stop",
+  )
+}
+
+#[tauri::command]
+fn agent_kill(project_path: String, session_id: String) -> Result<Value, String> {
+  run_aimux_json(
+    Path::new(&project_path),
+    &["kill", &session_id, "--project", &project_path, "--json"],
+    "agent kill",
+  )
+}
+
+#[tauri::command]
+fn agent_fork(project_path: String, session_id: String, tool: Option<String>, worktree: Option<String>) -> Result<Value, String> {
+  let mut args = vec!["fork", &session_id, "--project", &project_path];
+  let tool_owned;
+  if let Some(ref t) = tool {
+    tool_owned = t.clone();
+    args.push("--tool");
+    args.push(&tool_owned);
+  }
+  let wt_owned;
+  if let Some(ref wt) = worktree {
+    wt_owned = wt.clone();
+    args.push("--worktree");
+    args.push(&wt_owned);
+  }
+  args.push("--json");
+  run_aimux_json(Path::new(&project_path), &args, "agent fork")
+}
+
+#[tauri::command]
+fn worktree_create(project_path: String, name: String) -> Result<Value, String> {
+  run_aimux_json(
+    Path::new(&project_path),
+    &["worktree", "create", &name, "--project", &project_path, "--json"],
+    "worktree create",
+  )
+}
+
+#[tauri::command]
+fn worktree_list(project_path: String) -> Result<Value, String> {
+  run_aimux_json(
+    Path::new(&project_path),
+    &["worktree", "list", "--project", &project_path, "--json"],
+    "worktree list",
+  )
+}
+
+#[tauri::command]
+fn graveyard_list(project_path: String) -> Result<Value, String> {
+  run_aimux_json(
+    Path::new(&project_path),
+    &["graveyard", "list", "--project", &project_path, "--json"],
+    "graveyard list",
+  )
+}
+
+#[tauri::command]
+fn graveyard_resurrect(project_path: String, session_id: String) -> Result<Value, String> {
+  run_aimux_json(
+    Path::new(&project_path),
+    &["graveyard", "resurrect", &session_id, "--project", &project_path, "--json"],
+    "graveyard resurrect",
+  )
+}
+
 // ── Commands: terminal PTY ────────────────────────────────────────
 
 #[tauri::command]
@@ -431,6 +518,14 @@ fn main() {
     .invoke_handler(tauri::generate_handler![
       heartbeat,
       ensure_daemon_project,
+      agent_spawn,
+      agent_stop,
+      agent_kill,
+      agent_fork,
+      worktree_create,
+      worktree_list,
+      graveyard_list,
+      graveyard_resurrect,
       spawn_aimux,
       write_terminal,
       resize_terminal,

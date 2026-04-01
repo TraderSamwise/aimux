@@ -14,7 +14,10 @@ cd desktop-ui && npx vite dev --port 1420
 cd src-tauri && cargo tauri dev
 ```
 
-Svelte changes hot-reload instantly. Rust changes trigger a recompile + app restart (~3-5s).
+**What triggers what:**
+- `desktop-ui/` Svelte changes → HMR picks up instantly (no restart)
+- `src-tauri/src/main.rs` Rust changes → `cargo tauri dev` auto-recompiles + restarts app
+- `src/*.ts` Node CLI changes → need `yarn build` so the desktop app sees updated `dist/` code
 
 ### Building the .app bundle
 
@@ -29,7 +32,23 @@ open target/debug/bundle/macos/Aimux\ Desktop.app
 ### Architecture
 
 - `desktop-ui/` — Svelte 5 frontend (Vite build)
-- `src-tauri/` — Rust backend (Tauri v2, PTY management, filesystem reads)
+- `src-tauri/` — Rust backend (Tauri v2, PTY management, daemon CLI bridge)
 - Frontend talks to backend via Tauri `invoke()` commands
-- Single `heartbeat` command polls all project state every 2s (reads `~/.aimux/projects.json` + per-project `statusline.json`)
-- Auto-spawns `aimux serve` for projects without a running host
+- Single `heartbeat` command calls `aimux daemon ensure` + `aimux daemon projects --json` every 2s
+- Per-project statusline read from `~/.aimux/projects/<id>/statusline.json`
+- Global daemon manages per-project services (MetadataServer, PluginRuntime, statusline writing)
+- Desktop app is a daemon client — does not manage project host ownership
+
+### GUI CLI Commands
+
+All commands support `--project <path>` and relevant ones support `--json`:
+
+- `aimux spawn --tool <tool> --project <path> [--worktree <path>]` — create new agent
+- `aimux stop <sessionId> --project <path>` — stop agent (running → offline)
+- `aimux kill <sessionId> --project <path>` — kill agent (send to graveyard)
+- `aimux fork <sourceSessionId> --tool <tool> [--worktree <path>] --project <path>` — fork agent
+- `aimux worktree create <name> --project <path>` — create worktree
+- `aimux worktree list --project <path> --json` — list worktrees
+- `aimux graveyard list --project <path> --json` — list dead agents
+- `aimux graveyard resurrect <id> --project <path>` — revive agent
+- `aimux desktop focus --project <path> --session <id>` — focus agent in terminal
