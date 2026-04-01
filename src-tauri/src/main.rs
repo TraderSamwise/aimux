@@ -66,8 +66,13 @@ struct ProjectInfo {
   id: String,
   name: String,
   path: String,
+  #[serde(default)]
   last_seen: Option<String>,
+  #[serde(default)]
   service_alive: bool,
+  #[serde(default)]
+  sessions: Vec<Value>,
+  #[serde(default)]
   statusline: Option<Value>,
 }
 

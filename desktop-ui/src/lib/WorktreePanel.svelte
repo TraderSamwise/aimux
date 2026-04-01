@@ -12,19 +12,25 @@
   let busy = $state(false);
   let errorMsg = $state(null);
 
-  // Group sessions by worktree using metadata context
+  // Group sessions by worktree.
+  // Base session list comes from daemon (includes offline/stopped).
+  // Statusline provides enrichment (label, role, headline, metadata).
   let worktrees = $derived.by(() => {
+    const daemonSessions = appState.daemonSessions;
     const sl = appState.statusline;
-    if (!sl) return [];
-    const sessions = sl.sessions ?? [];
-    const meta = sl.metadata ?? {};
+    const slSessions = sl?.sessions ?? [];
+    const meta = sl?.metadata ?? {};
+
+    // Build a lookup from statusline sessions for enrichment
+    const slById = new Map(slSessions.map((s) => [s.id, s]));
 
     const groups = new Map();
 
-    for (const s of sessions) {
+    for (const s of daemonSessions) {
+      const slData = slById.get(s.id);
       const m = meta[s.id];
       const ctx = m?.context;
-      const wtPath = s.worktreePath || ctx?.worktreePath || null;
+      const wtPath = s.worktreePath || slData?.worktreePath || ctx?.worktreePath || null;
       const wtName = ctx?.worktreeName || (wtPath ? wtPath.split("/").pop() : null);
       const branch = ctx?.branch || null;
       const key = wtPath || "__unassigned__";
@@ -34,7 +40,14 @@
       }
       const group = groups.get(key);
       if (branch && !group.branch) group.branch = branch;
-      group.agents.push({ ...s, meta: m || null, derived: m?.derived || null });
+
+      // Merge daemon + statusline + metadata
+      group.agents.push({
+        ...s,
+        ...(slData || {}),
+        meta: m || null,
+        derived: m?.derived || null,
+      });
     }
 
     // Merge in worktrees from worktree list that have no agents yet

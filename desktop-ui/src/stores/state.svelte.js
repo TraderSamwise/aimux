@@ -70,6 +70,10 @@ export function getState() {
       const project = projects.find((p) => p.path === selectedProjectPath);
       return project?.statusline || null;
     },
+    get daemonSessions() {
+      const project = projects.find((p) => p.path === selectedProjectPath);
+      return project?.sessions || [];
+    },
     get worktreeList() {
       return worktreeCache[selectedProjectPath] || [];
     },
@@ -87,6 +91,12 @@ export async function refreshWorktrees(projectPath) {
 }
 
 // ── Heartbeat (single loop for everything) ────────────────────────
+
+export async function forceTick() {
+  // Wait a beat for the CLI to complete, then refresh
+  await new Promise((r) => setTimeout(r, 1500));
+  await tick();
+}
 
 async function tick() {
   if (heartbeatInFlight) return;
