@@ -128,6 +128,7 @@ interface DashboardOrchestrationTarget {
   assignee?: string;
   tool?: string;
   worktreePath?: string;
+  recipientIds?: string[];
 }
 
 export class Multiplexer {
@@ -2249,6 +2250,15 @@ export class Multiplexer {
     const selected = this.getSelectedDashboardSessionForActions();
     const options: DashboardOrchestrationTarget[] = [];
     const focusedWorktreePath = this.mode === "dashboard" ? this.dashboardState.focusedWorktreePath : undefined;
+    const metadataState = loadMetadataState().sessions;
+    const candidates = this.sessions.map((session) => ({
+      id: session.id,
+      tool: this.sessionToolKeys.get(session.id) ?? session.command,
+      role: this.sessionRoles.get(session.id),
+      worktreePath: this.sessionWorktreePaths.get(session.id),
+      status: metadataState[session.id]?.derived?.activity,
+      exited: session.exited,
+    }));
 
     if (selected && !selected.remoteInstancePid) {
       options.push({
@@ -2259,20 +2269,32 @@ export class Multiplexer {
 
     const team = loadTeamConfig();
     for (const [role, cfg] of Object.entries(team.roles)) {
-      options.push({
-        label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}`,
+      const recipientIds = resolveOrchestrationRecipients({
+        candidates,
         assignee: role,
         worktreePath: focusedWorktreePath,
+      });
+      options.push({
+        label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${recipientIds.length > 0 ? ` [${recipientIds.length}]` : ""}`,
+        assignee: role,
+        worktreePath: focusedWorktreePath,
+        recipientIds,
       });
     }
 
     const config = loadConfig();
     for (const [toolKey, toolCfg] of Object.entries(config.tools)) {
       if (!toolCfg.enabled) continue;
-      options.push({
-        label: `Tool: ${toolKey}`,
+      const recipientIds = resolveOrchestrationRecipients({
+        candidates,
         tool: toolKey,
         worktreePath: focusedWorktreePath,
+      });
+      options.push({
+        label: `Tool: ${toolKey}${recipientIds.length > 0 ? ` [${recipientIds.length}]` : ""}`,
+        tool: toolKey,
+        worktreePath: focusedWorktreePath,
+        recipientIds,
       });
     }
 
@@ -2306,11 +2328,19 @@ export class Multiplexer {
     const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Handoff" : "Assign task";
     const actionLabel = mode === "task" ? "assign" : "send";
     const worktreeLine = target.worktreePath ? `  Worktree: ${target.worktreePath}` : null;
+    const recipientCount = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
+    const recipientPreview =
+      target.sessionId || recipientCount === 0
+        ? null
+        : mode === "task"
+          ? `  Route: best match from ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}`
+          : `  Recipients: ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}${target.recipientIds && target.recipientIds.length > 0 ? ` (${target.recipientIds.slice(0, 3).join(", ")}${target.recipientIds.length > 3 ? ", ..." : ""})` : ""}`;
     const lines = [
       `${modeLabel}:`,
       "",
       `  To: ${target.label}`,
       ...(worktreeLine ? [worktreeLine] : []),
+      ...(recipientPreview ? [recipientPreview] : []),
       `  Text: ${this.orchestrationInputBuffer}_`,
       "",
       `  [Enter] ${actionLabel}  [Esc] cancel`,
@@ -2477,14 +2507,18 @@ export class Multiplexer {
           ...requestBody,
           body,
         });
-        this.footerFlash = `✉ Message sent → ${target.label}`;
+        const count = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
+        this.footerFlash =
+          count > 1 ? `✉ Message sent → ${count} agents via ${target.label}` : `✉ Message sent → ${target.label}`;
       } else if (mode === "handoff") {
         await this.postToProjectService("/handoff", {
           ...requestBody,
           body,
           title: `Handoff to ${target.label}`,
         });
-        this.footerFlash = `⇢ Handoff sent → ${target.label}`;
+        const count = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
+        this.footerFlash =
+          count > 1 ? `⇢ Handoff sent → ${count} agents via ${target.label}` : `⇢ Handoff sent → ${target.label}`;
       } else {
         await this.postToProjectService("/tasks/assign", {
           from: "user",
@@ -2525,7 +2559,10 @@ export class Multiplexer {
             kind: "request",
             body,
           });
-          this.footerFlash = `✉ Message sent → ${target.label}`;
+          this.footerFlash =
+            localRecipients.length > 1
+              ? `✉ Message sent → ${localRecipients.length} agents via ${target.label}`
+              : `✉ Message sent → ${target.label}`;
         } else if (mode === "handoff") {
           this.sendHandoffMessage({
             from: "user",
@@ -2533,7 +2570,10 @@ export class Multiplexer {
             body,
             title: `Handoff to ${target.label}`,
           });
-          this.footerFlash = `⇢ Handoff sent → ${target.label}`;
+          this.footerFlash =
+            localRecipients.length > 1
+              ? `⇢ Handoff sent → ${localRecipients.length} agents via ${target.label}`
+              : `⇢ Handoff sent → ${target.label}`;
         } else {
           await assignTask({
             from: "user",
