@@ -265,14 +265,32 @@ fn ensure_daemon_project(project_path: String) -> Result<Value, String> {
 
 #[tauri::command]
 fn agent_spawn(project_path: String, tool: String, worktree: Option<String>) -> Result<Value, String> {
-  let mut args = vec!["spawn", "--tool", &tool, "--project", &project_path, "--json", "--no-open"];
-  let wt_owned;
-  if let Some(ref wt) = worktree {
-    wt_owned = wt.clone();
-    args.push("--worktree");
-    args.push(&wt_owned);
+  // Spawn in background — don't block the UI thread.
+  // The agent will appear in the next heartbeat once registered.
+  let mut cmd_args: Vec<String> = vec![
+    aimux_entrypoint().to_string_lossy().to_string(),
+    "spawn".into(),
+    "--tool".into(), tool,
+    "--project".into(), project_path.clone(),
+    "--json".into(),
+    "--no-open".into(),
+  ];
+  if let Some(wt) = worktree {
+    cmd_args.push("--worktree".into());
+    cmd_args.push(wt);
   }
-  run_aimux_json(Path::new(&project_path), &args, "agent spawn")
+
+  std::process::Command::new(resolve_node())
+    .args(&cmd_args)
+    .current_dir(&project_path)
+    .env("PATH", shell_path())
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null())
+    .spawn()
+    .map_err(|e| format!("failed to spawn agent: {e}"))?;
+
+  Ok(serde_json::json!({ "ok": true }))
 }
 
 #[tauri::command]
