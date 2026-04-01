@@ -1,4 +1,4 @@
-import { writeTask, type Task } from "./tasks.js";
+import { readTask, writeTask, type Task } from "./tasks.js";
 import {
   appendMessage,
   createThread,
@@ -9,6 +9,7 @@ import {
   updateThread,
 } from "./threads.js";
 import { sendThreadMessage, type SendMessageResult } from "./orchestration.js";
+import { TaskWorkflow } from "./task-workflow.js";
 
 export interface AssignTaskInput {
   from: string;
@@ -30,6 +31,12 @@ export interface AssignTaskResult {
 export interface HandoffLifecycleResult {
   thread: OrchestrationThread;
   message: OrchestrationMessage;
+}
+
+export interface TaskLifecycleResult {
+  task: Task;
+  thread?: OrchestrationThread;
+  message?: OrchestrationMessage;
 }
 
 function unique(values: Array<string | undefined>): string[] {
@@ -178,4 +185,104 @@ export function completeHandoff(input: { threadId: string; from: string; body?: 
   }));
   if (!updated) throw new Error(`thread disappeared after update: ${thread.id}`);
   return { thread: updated, message };
+}
+
+function requireTask(taskId: string): Task {
+  const task = readTask(taskId);
+  if (!task) throw new Error(`task not found: ${taskId}`);
+  return task;
+}
+
+function updateTaskThread(
+  task: Task,
+  input: {
+    from: string;
+    body: string;
+    action: "accepted" | "blocked" | "completed";
+    kind: "decision" | "reply" | "status";
+  },
+  transform: (thread: OrchestrationThread) => OrchestrationThread,
+): { thread?: OrchestrationThread; message?: OrchestrationMessage } {
+  if (!task.threadId) return {};
+  const thread = readThread(task.threadId);
+  if (!thread) return {};
+  const actor = input.from.trim();
+  const recipients = uniqueParticipants([thread.createdBy === actor ? undefined : thread.createdBy]);
+  const message = appendMessage(thread.id, {
+    from: actor,
+    to: recipients,
+    kind: input.kind,
+    body: input.body,
+    metadata: { taskId: task.id, taskAction: input.action },
+  });
+  const updated = updateThread(thread.id, (current) =>
+    transform({
+      ...current,
+      participants: uniqueParticipants([...current.participants, actor, ...recipients]),
+    }),
+  );
+  return { thread: updated ?? thread, message };
+}
+
+export async function acceptTask(input: { taskId: string; from: string; body?: string }): Promise<TaskLifecycleResult> {
+  const task = requireTask(input.taskId);
+  task.status = "in_progress";
+  task.assignedTo = input.from.trim() || task.assignedTo;
+  const body = input.body?.trim() || "Accepted task and started work.";
+  const threadResult = updateTaskThread(
+    task,
+    { from: input.from, body, action: "accepted", kind: "decision" },
+    (current) => ({
+      ...current,
+      owner: input.from.trim() || current.owner,
+      waitingOn: [],
+      status: "open",
+    }),
+  );
+  await writeTask(task);
+  return { task, ...threadResult };
+}
+
+export async function blockTask(input: { taskId: string; from: string; body?: string }): Promise<TaskLifecycleResult> {
+  const task = requireTask(input.taskId);
+  task.status = "blocked";
+  task.assignedTo = input.from.trim() || task.assignedTo;
+  task.error = input.body?.trim() || task.error || "Task is blocked.";
+  const threadResult = updateTaskThread(
+    task,
+    { from: input.from, body: task.error, action: "blocked", kind: "reply" },
+    (current) => ({
+      ...current,
+      owner: input.from.trim() || current.owner,
+      waitingOn: [task.assignedBy],
+      status: "blocked",
+    }),
+  );
+  await writeTask(task);
+  return { task, ...threadResult };
+}
+
+export async function completeTask(input: {
+  taskId: string;
+  from: string;
+  body?: string;
+}): Promise<TaskLifecycleResult> {
+  const task = requireTask(input.taskId);
+  task.status = "done";
+  task.assignedTo = input.from.trim() || task.assignedTo;
+  if (input.body?.trim()) task.result = input.body.trim();
+  task.notifiedAt = new Date().toISOString();
+  const threadResult = updateTaskThread(
+    task,
+    { from: input.from, body: task.result?.trim() || "Completed task.", action: "completed", kind: "status" },
+    (current) => ({
+      ...current,
+      owner: input.from.trim() || current.owner,
+      waitingOn: [task.assignedBy],
+      status: "waiting",
+    }),
+  );
+  await writeTask(task);
+  new TaskWorkflow().handleCompletion(task);
+  return { task, ...threadResult };
 }

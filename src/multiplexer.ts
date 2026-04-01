@@ -63,7 +63,15 @@ import {
   type ThreadSummary,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
-import { acceptHandoff, assignTask, completeHandoff, sendHandoff } from "./orchestration-actions.js";
+import {
+  acceptHandoff,
+  acceptTask,
+  assignTask,
+  blockTask,
+  completeHandoff,
+  completeTask,
+  sendHandoff,
+} from "./orchestration-actions.js";
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
 
@@ -1652,7 +1660,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a/c/b/o/x] act  [Enter] thread  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a] accept  [b] block  [c/x] complete  [Enter] thread  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -1779,6 +1787,20 @@ export class Multiplexer {
     if (key === "a" || key === "c" || key === "b" || key === "o" || key === "x") {
       const entry = this.workflowEntries[this.workflowIndex];
       if (!entry) return;
+      if (entry.task) {
+        if (key === "a") {
+          void this.runTaskLifecycleAction("accept", entry.task.id);
+          return;
+        }
+        if (key === "b") {
+          void this.runTaskLifecycleAction("block", entry.task.id);
+          return;
+        }
+        if (key === "c" || key === "x") {
+          void this.runTaskLifecycleAction("complete", entry.task.id);
+          return;
+        }
+      }
       if (key === "a" && entry.thread.kind === "handoff") {
         void this.runThreadHandoffAction("accept", entry.thread.id);
         return;
@@ -2361,6 +2383,42 @@ export class Multiplexer {
     this.threadEntries = this.buildThreadEntries();
     this.threadIndex = Math.min(this.threadIndex, Math.max(0, this.threadEntries.length - 1));
     this.renderThreads();
+  }
+
+  private async runTaskLifecycleAction(mode: "accept" | "block" | "complete", taskId: string): Promise<void> {
+    try {
+      if (mode === "accept") {
+        await this.postToProjectService("/tasks/accept", { taskId, from: "user" });
+        this.footerFlash = "⧫ Task accepted";
+      } else if (mode === "block") {
+        await this.postToProjectService("/tasks/block", { taskId, from: "user" });
+        this.footerFlash = "⧫ Task blocked";
+      } else {
+        await this.postToProjectService("/tasks/complete", { taskId, from: "user" });
+        this.footerFlash = "✓ Task completed";
+      }
+      this.footerFlashTicks = 3;
+    } catch {
+      try {
+        if (mode === "accept") {
+          await acceptTask({ taskId, from: "user" });
+          this.footerFlash = "⧫ Task accepted";
+        } else if (mode === "block") {
+          await blockTask({ taskId, from: "user" });
+          this.footerFlash = "⧫ Task blocked";
+        } else {
+          await completeTask({ taskId, from: "user" });
+          this.footerFlash = "✓ Task completed";
+        }
+        this.footerFlashTicks = 3;
+      } catch (error) {
+        this.showDashboardError(`Failed to ${mode} task`, [error instanceof Error ? error.message : String(error)]);
+        return;
+      }
+    }
+    this.workflowEntries = this.buildWorkflowEntries();
+    this.workflowIndex = Math.min(this.workflowIndex, Math.max(0, this.workflowEntries.length - 1));
+    this.renderWorkflow();
   }
 
   private handleThreadReplyKey(data: Buffer): void {

@@ -5,7 +5,15 @@ import { tmpdir } from "node:os";
 import { initPaths } from "./paths.js";
 import { readMessages, readThread } from "./threads.js";
 import { readTask } from "./tasks.js";
-import { acceptHandoff, assignTask, completeHandoff, sendHandoff } from "./orchestration-actions.js";
+import {
+  acceptHandoff,
+  acceptTask,
+  assignTask,
+  blockTask,
+  completeHandoff,
+  completeTask,
+  sendHandoff,
+} from "./orchestration-actions.js";
 
 describe("orchestration actions", () => {
   let repoRoot = "";
@@ -84,5 +92,43 @@ describe("orchestration actions", () => {
     expect(completed.thread.waitingOn).toEqual(["claude-lead"]);
     expect(completed.thread.status).toBe("waiting");
     expect(completed.message.metadata?.handoffAction).toBe("completed");
+  });
+
+  it("accepts blocks and completes tasks with matching thread updates", async () => {
+    const created = await assignTask({
+      from: "claude-lead",
+      to: "codex-worker",
+      description: "Audit the parser failure path",
+    });
+
+    const accepted = await acceptTask({
+      taskId: created.task.id,
+      from: "codex-worker",
+    });
+    expect(accepted.task.status).toBe("in_progress");
+    expect(accepted.thread?.status).toBe("open");
+    expect(accepted.thread?.owner).toBe("codex-worker");
+    expect(accepted.message?.metadata?.taskAction).toBe("accepted");
+
+    const blocked = await blockTask({
+      taskId: created.task.id,
+      from: "codex-worker",
+      body: "Need a failing reproduction case.",
+    });
+    expect(blocked.task.status).toBe("blocked");
+    expect(blocked.thread?.status).toBe("blocked");
+    expect(blocked.thread?.waitingOn).toEqual(["claude-lead"]);
+    expect(blocked.message?.metadata?.taskAction).toBe("blocked");
+
+    const completed = await completeTask({
+      taskId: created.task.id,
+      from: "codex-worker",
+      body: "Found and fixed the parser timeout branch.",
+    });
+    expect(completed.task.status).toBe("done");
+    expect(completed.task.result).toContain("fixed");
+    expect(completed.thread?.status).toBe("waiting");
+    expect(completed.thread?.waitingOn).toEqual(["claude-lead"]);
+    expect(completed.message?.metadata?.taskAction).toBe("completed");
   });
 });

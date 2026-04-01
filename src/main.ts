@@ -58,7 +58,15 @@ import {
   type ThreadStatus,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
-import { acceptHandoff, assignTask, completeHandoff, sendHandoff } from "./orchestration-actions.js";
+import {
+  acceptHandoff,
+  acceptTask,
+  assignTask,
+  blockTask,
+  completeHandoff,
+  completeTask,
+  sendHandoff,
+} from "./orchestration-actions.js";
 
 const program = new Command();
 
@@ -1133,6 +1141,87 @@ taskCmd
       }
     },
   );
+
+taskCmd
+  .command("accept")
+  .description("Accept an assigned task and mark it in progress")
+  .argument("<taskId>")
+  .option("--from <sessionId>", "Accepting session id", "user")
+  .option("--body <text>", "Optional acceptance note")
+  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
+    try {
+      const result = await postProjectServiceJson("/tasks/accept", {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+      return;
+    } catch {
+      const result = await acceptTask({
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+    }
+  });
+
+taskCmd
+  .command("block")
+  .description("Mark a task blocked and route it back for attention")
+  .argument("<taskId>")
+  .option("--from <sessionId>", "Blocking session id", "user")
+  .option("--body <text>", "Blocking reason")
+  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
+    try {
+      const result = await postProjectServiceJson("/tasks/block", {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+      return;
+    } catch {
+      const result = await blockTask({
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+    }
+  });
+
+taskCmd
+  .command("complete")
+  .description("Complete a task explicitly and publish the result")
+  .argument("<taskId>")
+  .option("--from <sessionId>", "Completing session id", "user")
+  .option("--body <text>", "Completion summary/result")
+  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
+    try {
+      const result = await postProjectServiceJson("/tasks/complete", {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+      return;
+    } catch {
+      const result = await completeTask({
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+    }
+  });
 
 worktreeCmd
   .command("list")

@@ -3,9 +3,11 @@ import { join } from "node:path";
 import * as lockfile from "proper-lockfile";
 import { getTasksDir } from "./paths.js";
 
+export type TaskStatus = "pending" | "assigned" | "in_progress" | "blocked" | "done" | "failed";
+
 export interface Task {
   id: string;
-  status: "pending" | "assigned" | "done" | "failed";
+  status: TaskStatus;
   assignedBy: string;
   assignedTo?: string;
   threadId?: string;
@@ -111,7 +113,7 @@ export async function writeTask(task: Task): Promise<void> {
  */
 export function hasActiveTask(sessionId: string): boolean {
   const all = readAllTasks();
-  return all.some((t) => t.status === "assigned" && t.assignedTo === sessionId);
+  return all.some((t) => ["assigned", "in_progress", "blocked"].includes(t.status) && t.assignedTo === sessionId);
 }
 
 /**

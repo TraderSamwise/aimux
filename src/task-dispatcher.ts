@@ -51,7 +51,7 @@ export class TaskDispatcher {
     this.sessionTasks.clear();
     for (const task of tasks) {
       if (task.status === "pending") pending++;
-      else if (task.status === "assigned") {
+      else if (task.status === "assigned" || task.status === "in_progress" || task.status === "blocked") {
         assigned++;
         if (task.assignedTo) {
           this.sessionTasks.set(task.assignedTo, task.description);
@@ -93,7 +93,11 @@ export class TaskDispatcher {
 
     // 3. Mark tasks as failed if assigned session has exited
     for (const task of tasks) {
-      if (task.status !== "assigned" || !task.assignedTo) continue;
+      if (
+        (task.status !== "assigned" && task.status !== "in_progress" && task.status !== "blocked") ||
+        !task.assignedTo
+      )
+        continue;
 
       if (!localSessionIds.includes(task.assignedTo)) continue;
       const session = this.getSession(task.assignedTo);

@@ -106,4 +106,50 @@ describe("MetadataServer threads API", () => {
     expect(task.task.threadId).toBeTruthy();
     expect(task.thread?.kind).toBe("task");
   });
+
+  it("updates task lifecycle over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const taskRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Audit the parser timeout path",
+      }),
+    });
+    const task = (await taskRes.json()) as { task: { id: string } };
+    expect(taskRes.ok).toBe(true);
+
+    const acceptRes = await fetch(`${base}/tasks/accept`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: task.task.id, from: "codex-1" }),
+    });
+    const accepted = (await acceptRes.json()) as { task: { status: string } };
+    expect(acceptRes.ok).toBe(true);
+    expect(accepted.task.status).toBe("in_progress");
+
+    const blockRes = await fetch(`${base}/tasks/block`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: task.task.id, from: "codex-1", body: "Need a repro case." }),
+    });
+    const blocked = (await blockRes.json()) as { task: { status: string } };
+    expect(blockRes.ok).toBe(true);
+    expect(blocked.task.status).toBe("blocked");
+
+    const completeRes = await fetch(`${base}/tasks/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: task.task.id, from: "codex-1", body: "Fixed the timeout branch." }),
+    });
+    const completed = (await completeRes.json()) as { task: { status: string; result?: string } };
+    expect(completeRes.ok).toBe(true);
+    expect(completed.task.status).toBe("done");
+    expect(completed.task.result).toContain("Fixed");
+  });
 });

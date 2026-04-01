@@ -26,7 +26,16 @@ import {
   type ThreadStatus,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
-import { acceptHandoff, assignTask, completeHandoff, sendHandoff } from "./orchestration-actions.js";
+import {
+  acceptHandoff,
+  acceptTask,
+  assignTask,
+  blockTask,
+  completeHandoff,
+  completeTask,
+  sendHandoff,
+  type TaskLifecycleResult,
+} from "./orchestration-actions.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -71,6 +80,21 @@ interface MetadataServerOptions {
       thread: unknown;
       message: unknown;
     };
+    acceptTask?: (input: {
+      taskId: string;
+      from?: string;
+      body?: string;
+    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
+    blockTask?: (input: {
+      taskId: string;
+      from?: string;
+      body?: string;
+    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
+    completeTask?: (input: {
+      taskId: string;
+      from?: string;
+      body?: string;
+    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
   };
 }
 
@@ -461,6 +485,48 @@ export class MetadataServer {
           diff: body.diff,
           worktreePath: body.worktreePath,
         });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/tasks/accept") {
+        const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
+        const result = this.options.actions?.acceptTask
+          ? await this.options.actions.acceptTask(body)
+          : await acceptTask({
+              taskId: body.taskId,
+              from: body.from?.trim() || "user",
+              body: body.body,
+            });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/tasks/block") {
+        const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
+        const result = this.options.actions?.blockTask
+          ? await this.options.actions.blockTask(body)
+          : await blockTask({
+              taskId: body.taskId,
+              from: body.from?.trim() || "user",
+              body: body.body,
+            });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/tasks/complete") {
+        const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
+        const result = this.options.actions?.completeTask
+          ? await this.options.actions.completeTask(body)
+          : await completeTask({
+              taskId: body.taskId,
+              from: body.from?.trim() || "user",
+              body: body.body,
+            });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
