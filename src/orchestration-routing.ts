@@ -9,7 +9,7 @@ export interface RoutingCandidate {
 
 export interface RouteTargetInput {
   candidates: RoutingCandidate[];
-  to?: string;
+  to?: string | string[];
   assignee?: string;
   tool?: string;
   worktreePath?: string;
@@ -17,6 +17,11 @@ export interface RouteTargetInput {
 
 function samePath(a?: string, b?: string): boolean {
   return (a ?? "") === (b ?? "");
+}
+
+function explicitRecipients(input: RouteTargetInput): string[] {
+  const explicit = Array.isArray(input.to) ? input.to : input.to ? [input.to] : [];
+  return [...new Set(explicit.map((value) => value.trim()).filter(Boolean))];
 }
 
 function scoreCandidate(candidate: RoutingCandidate, input: RouteTargetInput): number {
@@ -31,8 +36,11 @@ function scoreCandidate(candidate: RoutingCandidate, input: RouteTargetInput): n
 }
 
 export function resolveOrchestrationTarget(input: RouteTargetInput): RoutingCandidate | undefined {
-  if (input.to) {
-    return input.candidates.find((candidate) => candidate.id === input.to && !candidate.exited);
+  const explicit = explicitRecipients(input);
+  if (explicit.length > 0) {
+    return explicit
+      .map((id) => input.candidates.find((candidate) => candidate.id === id && !candidate.exited))
+      .find(Boolean);
   }
 
   const filtered = input.candidates.filter((candidate) => {
@@ -51,7 +59,20 @@ export function resolveOrchestrationTarget(input: RouteTargetInput): RoutingCand
 }
 
 export function resolveOrchestrationRecipients(input: RouteTargetInput): string[] {
-  if (input.to) return [input.to];
-  const target = resolveOrchestrationTarget(input);
-  return target ? [target.id] : [];
+  const explicit = explicitRecipients(input);
+  if (explicit.length > 0) {
+    const live = new Set(input.candidates.filter((candidate) => !candidate.exited).map((candidate) => candidate.id));
+    return explicit.filter((id) => live.has(id));
+  }
+
+  const filtered = input.candidates.filter((candidate) => {
+    if (candidate.exited) return false;
+    if (input.assignee && candidate.role !== input.assignee) return false;
+    if (input.tool && candidate.tool !== input.tool) return false;
+    if (input.worktreePath && !samePath(candidate.worktreePath, input.worktreePath)) return false;
+    return true;
+  });
+  return [...filtered]
+    .sort((a, b) => scoreCandidate(b, input) - scoreCandidate(a, input) || a.id.localeCompare(b.id))
+    .map((candidate) => candidate.id);
 }

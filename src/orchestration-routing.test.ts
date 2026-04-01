@@ -25,6 +25,14 @@ describe("orchestration routing", () => {
   it("returns routed recipients as a session id list", () => {
     expect(resolveOrchestrationRecipients({ candidates, assignee: "ui", worktreePath: "/repo/ui" })).toEqual([
       "claude-ui",
+      "codex-ui",
+    ]);
+  });
+
+  it("preserves explicit multi-recipient targeting order for live sessions", () => {
+    expect(resolveOrchestrationRecipients({ candidates, to: ["codex-coder", "claude-ui"] })).toEqual([
+      "codex-coder",
+      "claude-ui",
     ]);
   });
 });
