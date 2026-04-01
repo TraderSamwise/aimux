@@ -54,12 +54,13 @@ import {
   markMessageDelivered,
   markThreadSeen,
   type MessageKind,
+  type OrchestrationThread,
   readMessages,
   updateThread,
   type ThreadSummary,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
-import { assignTask, sendHandoff } from "./orchestration-actions.js";
+import { acceptHandoff, assignTask, completeHandoff, sendHandoff } from "./orchestration-actions.js";
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
 
@@ -1789,7 +1790,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [s] reply  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [s] reply  [a] accept  [c] complete  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -1845,6 +1846,9 @@ export class Multiplexer {
     lines.push(...this.wrapKeyValue("Created By", entry.thread.createdBy, width));
     lines.push(...this.wrapKeyValue("Participants", entry.thread.participants.join(", "), width));
     if (entry.thread.owner) lines.push(...this.wrapKeyValue("Owner", entry.thread.owner, width));
+    if (entry.thread.kind === "handoff") {
+      lines.push(...this.wrapKeyValue("Handoff", this.describeHandoffState(entry.thread), width));
+    }
     if ((entry.thread.waitingOn?.length ?? 0) > 0) {
       lines.push(...this.wrapKeyValue("Waiting On", entry.thread.waitingOn!.join(", "), width));
     }
@@ -1924,6 +1928,20 @@ export class Multiplexer {
       }
       return;
     }
+    if (key === "a") {
+      const entry = this.threadEntries[this.threadIndex];
+      if (entry?.thread.kind === "handoff") {
+        void this.runThreadHandoffAction("accept", entry.thread.id);
+      }
+      return;
+    }
+    if (key === "c") {
+      const entry = this.threadEntries[this.threadIndex];
+      if (entry?.thread.kind === "handoff") {
+        void this.runThreadHandoffAction("complete", entry.thread.id);
+      }
+      return;
+    }
     if (key === "down" || key === "j" || key === "n") {
       if (this.threadEntries.length > 1) {
         this.threadIndex = (this.threadIndex + 1) % this.threadEntries.length;
@@ -1997,6 +2015,55 @@ export class Multiplexer {
     }
     output += "\x1b8";
     process.stdout.write(output);
+  }
+
+  private describeHandoffState(thread: OrchestrationThread): string {
+    if (thread.status === "done") {
+      return `completed by ${thread.owner ?? "unknown"}`;
+    }
+    if ((thread.waitingOn?.length ?? 0) > 0) {
+      return `${thread.owner ?? thread.createdBy} waiting on ${thread.waitingOn!.join(", ")}`;
+    }
+    if (thread.owner && thread.owner !== thread.createdBy) {
+      return `accepted by ${thread.owner}`;
+    }
+    return `awaiting acceptance from ${thread.participants.filter((id) => id !== thread.createdBy).join(", ") || "recipient"}`;
+  }
+
+  private async runThreadHandoffAction(mode: "accept" | "complete", threadId: string): Promise<void> {
+    try {
+      if (mode === "accept") {
+        await this.postToProjectService("/handoff/accept", {
+          threadId,
+          from: "user",
+        });
+        this.footerFlash = "⇢ Handoff accepted";
+      } else {
+        await this.postToProjectService("/handoff/complete", {
+          threadId,
+          from: "user",
+        });
+        this.footerFlash = "⇢ Handoff completed";
+      }
+      this.footerFlashTicks = 3;
+    } catch {
+      try {
+        if (mode === "accept") {
+          acceptHandoff({ threadId, from: "user" });
+          this.footerFlash = "⇢ Handoff accepted";
+        } else {
+          completeHandoff({ threadId, from: "user" });
+          this.footerFlash = "⇢ Handoff completed";
+        }
+        this.footerFlashTicks = 3;
+      } catch (error) {
+        this.showDashboardError(`Failed to ${mode} handoff`, [error instanceof Error ? error.message : String(error)]);
+        return;
+      }
+    }
+    this.threadEntries = this.buildThreadEntries();
+    this.threadIndex = Math.min(this.threadIndex, Math.max(0, this.threadEntries.length - 1));
+    this.renderThreads();
   }
 
   private handleThreadReplyKey(data: Buffer): void {

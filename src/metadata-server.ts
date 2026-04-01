@@ -24,7 +24,7 @@ import {
   type ThreadKind,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
-import { assignTask, sendHandoff } from "./orchestration-actions.js";
+import { acceptHandoff, assignTask, completeHandoff, sendHandoff } from "./orchestration-actions.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -60,6 +60,14 @@ interface MetadataServerOptions {
       message: unknown;
       deliveredTo?: string[];
       threadCreated?: boolean;
+    };
+    acceptHandoff?: (input: { threadId: string; from?: string; body?: string }) => {
+      thread: unknown;
+      message: unknown;
+    };
+    completeHandoff?: (input: { threadId: string; from?: string; body?: string }) => {
+      thread: unknown;
+      message: unknown;
     };
   };
 }
@@ -374,6 +382,34 @@ export class MetadataServer {
               body: body.body,
               title: body.title,
               worktreePath: body.worktreePath,
+            });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/handoff/accept") {
+        const body = (await readJson(req)) as { threadId: string; from?: string; body?: string };
+        const result = this.options.actions?.acceptHandoff
+          ? this.options.actions.acceptHandoff(body)
+          : acceptHandoff({
+              threadId: body.threadId,
+              from: body.from?.trim() || "user",
+              body: body.body,
+            });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/handoff/complete") {
+        const body = (await readJson(req)) as { threadId: string; from?: string; body?: string };
+        const result = this.options.actions?.completeHandoff
+          ? this.options.actions.completeHandoff(body)
+          : completeHandoff({
+              threadId: body.threadId,
+              from: body.from?.trim() || "user",
+              body: body.body,
             });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });

@@ -56,7 +56,7 @@ import {
   type ThreadKind,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
-import { assignTask, sendHandoff } from "./orchestration-actions.js";
+import { acceptHandoff, assignTask, completeHandoff, sendHandoff } from "./orchestration-actions.js";
 
 const program = new Command();
 
@@ -980,6 +980,60 @@ handoffCmd
       }
     },
   );
+
+handoffCmd
+  .command("accept")
+  .description("Accept an existing handoff thread")
+  .argument("<threadId>")
+  .option("--from <sessionId>", "Accepting session id", "user")
+  .option("--body <text>", "Optional acceptance note")
+  .action(async (threadId: string, opts: { from?: string; body?: string }) => {
+    try {
+      const result = await postProjectServiceJson("/handoff/accept", {
+        threadId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+      return;
+    } catch {
+      const result = acceptHandoff({
+        threadId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+    }
+  });
+
+handoffCmd
+  .command("complete")
+  .description("Complete an existing handoff thread")
+  .argument("<threadId>")
+  .option("--from <sessionId>", "Completing session id", "user")
+  .option("--body <text>", "Optional completion note")
+  .action(async (threadId: string, opts: { from?: string; body?: string }) => {
+    try {
+      const result = await postProjectServiceJson("/handoff/complete", {
+        threadId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+      return;
+    } catch {
+      const result = completeHandoff({
+        threadId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+    }
+  });
 
 const taskCmd = program.command("task").description("Create and manage orchestrated tasks");
 

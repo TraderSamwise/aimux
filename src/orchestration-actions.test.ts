@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { initPaths } from "./paths.js";
 import { readMessages, readThread } from "./threads.js";
 import { readTask } from "./tasks.js";
-import { assignTask, sendHandoff } from "./orchestration-actions.js";
+import { acceptHandoff, assignTask, completeHandoff, sendHandoff } from "./orchestration-actions.js";
 
 describe("orchestration actions", () => {
   let repoRoot = "";
@@ -48,5 +48,41 @@ describe("orchestration actions", () => {
     expect(result.message.to).toEqual(["codex-worker"]);
     expect(readThread(result.thread.id)?.title).toBe("UI handoff");
     expect(readMessages(result.thread.id).at(-1)?.body).toContain("Take over the UI debug pass");
+  });
+
+  it("accepts a handoff without leaving the thread waiting", () => {
+    const created = sendHandoff({
+      from: "claude-lead",
+      to: ["codex-worker"],
+      body: "Take over the UI debug pass from here.",
+    });
+
+    const accepted = acceptHandoff({
+      threadId: created.thread.id,
+      from: "codex-worker",
+    });
+
+    expect(accepted.thread.owner).toBe("codex-worker");
+    expect(accepted.thread.waitingOn).toEqual([]);
+    expect(accepted.thread.status).toBe("open");
+    expect(accepted.message.metadata?.handoffAction).toBe("accepted");
+  });
+
+  it("completes a handoff and waits on the originator", () => {
+    const created = sendHandoff({
+      from: "claude-lead",
+      to: ["codex-worker"],
+      body: "Take over the UI debug pass from here.",
+    });
+
+    const completed = completeHandoff({
+      threadId: created.thread.id,
+      from: "codex-worker",
+    });
+
+    expect(completed.thread.owner).toBe("codex-worker");
+    expect(completed.thread.waitingOn).toEqual(["claude-lead"]);
+    expect(completed.thread.status).toBe("waiting");
+    expect(completed.message.metadata?.handoffAction).toBe("completed");
   });
 });

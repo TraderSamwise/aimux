@@ -1,5 +1,13 @@
 import { writeTask, type Task } from "./tasks.js";
-import { createThread, openTaskThread, type OrchestrationThread, updateThread } from "./threads.js";
+import {
+  appendMessage,
+  createThread,
+  openTaskThread,
+  readThread,
+  type OrchestrationMessage,
+  type OrchestrationThread,
+  updateThread,
+} from "./threads.js";
 import { sendThreadMessage, type SendMessageResult } from "./orchestration.js";
 
 export interface AssignTaskInput {
@@ -17,6 +25,11 @@ export interface AssignTaskInput {
 export interface AssignTaskResult {
   task: Task;
   thread?: OrchestrationThread;
+}
+
+export interface HandoffLifecycleResult {
+  thread: OrchestrationThread;
+  message: OrchestrationMessage;
 }
 
 function unique(values: Array<string | undefined>): string[] {
@@ -111,4 +124,58 @@ export function sendHandoff(input: {
     kind: "handoff",
     body: input.body,
   });
+}
+
+function uniqueParticipants(values: Array<string | undefined>): string[] {
+  return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])];
+}
+
+export function acceptHandoff(input: { threadId: string; from: string; body?: string }): HandoffLifecycleResult {
+  const thread = readThread(input.threadId);
+  if (!thread) throw new Error(`thread not found: ${input.threadId}`);
+  if (thread.kind !== "handoff") throw new Error(`thread ${input.threadId} is not a handoff`);
+  const actor = input.from.trim();
+  const recipients = uniqueParticipants([thread.createdBy === actor ? undefined : thread.createdBy]);
+  const body = input.body?.trim() || "Accepted handoff.";
+  const message = appendMessage(thread.id, {
+    from: actor,
+    to: recipients,
+    kind: "decision",
+    body,
+    metadata: { handoffAction: "accepted" },
+  });
+  const updated = updateThread(thread.id, (current) => ({
+    ...current,
+    participants: uniqueParticipants([...current.participants, actor, ...recipients]),
+    owner: actor,
+    waitingOn: [],
+    status: "open",
+  }));
+  if (!updated) throw new Error(`thread disappeared after update: ${thread.id}`);
+  return { thread: updated, message };
+}
+
+export function completeHandoff(input: { threadId: string; from: string; body?: string }): HandoffLifecycleResult {
+  const thread = readThread(input.threadId);
+  if (!thread) throw new Error(`thread not found: ${input.threadId}`);
+  if (thread.kind !== "handoff") throw new Error(`thread ${input.threadId} is not a handoff`);
+  const actor = input.from.trim();
+  const recipients = uniqueParticipants([thread.createdBy === actor ? undefined : thread.createdBy]);
+  const body = input.body?.trim() || "Completed handoff.";
+  const message = appendMessage(thread.id, {
+    from: actor,
+    to: recipients,
+    kind: "decision",
+    body,
+    metadata: { handoffAction: "completed" },
+  });
+  const updated = updateThread(thread.id, (current) => ({
+    ...current,
+    participants: uniqueParticipants([...current.participants, actor, ...recipients]),
+    owner: actor,
+    waitingOn: recipients,
+    status: recipients.length > 0 ? "waiting" : "done",
+  }));
+  if (!updated) throw new Error(`thread disappeared after update: ${thread.id}`);
+  return { thread: updated, message };
 }
