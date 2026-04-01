@@ -1,10 +1,14 @@
 <script>
-  import { getState, loadProjects, selectProject } from "../stores/state.svelte.js";
+  import { getState, selectProject } from "../stores/state.svelte.js";
 
   const state = getState();
 
+  function sessionCount(project) {
+    return project.statusline?.sessions?.length ?? 0;
+  }
+
   function liveCount(project) {
-    return project.sessions.filter((s) => s.status !== "offline").length;
+    return (project.statusline?.sessions ?? []).filter((s) => s.status !== "offline").length;
   }
 </script>
 
@@ -13,10 +17,6 @@
     <span class="brand-mark">aimux</span>
     <span class="brand-label">desktop</span>
   </div>
-
-  <button class="refresh-btn" onclick={() => loadProjects()} disabled={state.loading}>
-    {state.loading ? "Loading..." : "Refresh"}
-  </button>
 
   <div class="section-label">Projects</div>
 
@@ -32,13 +32,15 @@
         <div class="project-name">{project.name}</div>
         <div class="project-path">{project.path.replace(/^\/Users\/[^/]+\//, "~/")}</div>
         <div class="tags">
+          {#if project.hostAlive}
+            <span class="tag tag-green">host</span>
+          {:else}
+            <span class="tag tag-dim">no host</span>
+          {/if}
           {#if live > 0}
             <span class="tag tag-green">{live} live</span>
-          {:else}
-            <span class="tag tag-dim">idle</span>
-          {/if}
-          {#if project.serverRunning}
-            <span class="tag tag-green">server</span>
+          {:else if sessionCount(project) > 0}
+            <span class="tag tag-dim">{sessionCount(project)} idle</span>
           {/if}
         </div>
       </button>
@@ -78,21 +80,6 @@
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-  }
-
-  .refresh-btn {
-    padding: 6px 12px;
-    border-radius: var(--radius);
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    font-size: 12px;
-    color: var(--text-secondary);
-    transition: background 120ms, border-color 120ms;
-  }
-
-  .refresh-btn:hover:enabled {
-    background: var(--bg-surface-hover);
-    border-color: var(--border-hover);
   }
 
   .section-label {

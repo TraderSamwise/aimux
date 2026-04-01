@@ -1,18 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-// Reactive state using Svelte 5 runes
+// ── Reactive state ────────────────────────────────────────────────
+
 let projects = $state([]);
 let selectedProjectPath = $state(null);
 let selectedSessionId = $state(null);
 let terminalSessionId = $state(null);
 let terminalStatus = $state("Idle");
-let loading = $state(false);
-let statusline = $state(null);
 
 let unlistenOutput = null;
 let unlistenExit = null;
-let statuslinePollTimer = null;
+let heartbeatTimer = null;
+let lastHeartbeatJson = null;
+let ensuringHost = false;
 
 export function getState() {
   return {
@@ -23,71 +24,82 @@ export function getState() {
     set selectedSessionId(v) { selectedSessionId = v; },
     get terminalSessionId() { return terminalSessionId; },
     get terminalStatus() { return terminalStatus; },
-    get loading() { return loading; },
-    get statusline() { return statusline; },
     get selectedProject() {
       return projects.find((p) => p.path === selectedProjectPath) || null;
+    },
+    get statusline() {
+      const project = projects.find((p) => p.path === selectedProjectPath);
+      return project?.statusline || null;
     },
   };
 }
 
-export async function loadProjects() {
-  loading = true;
+// ── Heartbeat (single loop for everything) ────────────────────────
+
+async function tick() {
   try {
-    const response = await invoke("list_projects");
-    projects = response.projects || [];
+    const response = await invoke("heartbeat");
+    const incoming = response.projects || [];
+
+    // Only update reactive state if something changed
+    const json = JSON.stringify(incoming);
+    if (json !== lastHeartbeatJson) {
+      lastHeartbeatJson = json;
+      projects = incoming;
+    }
+
+    // Auto-select first project if none selected
     if (!selectedProjectPath && projects.length > 0) {
       selectedProjectPath = projects[0].path;
     }
+    // Fix stale selection
     if (selectedProjectPath && !projects.some((p) => p.path === selectedProjectPath)) {
       selectedProjectPath = projects[0]?.path || null;
       selectedSessionId = null;
     }
+
+    // Auto-ensure host for selected project
+    const selected = projects.find((p) => p.path === selectedProjectPath);
+    if (selected && !selected.hostAlive && !ensuringHost) {
+      ensuringHost = true;
+      try {
+        await invoke("ensure_host", { projectPath: selected.path });
+      } catch (error) {
+        console.error("Failed to ensure host:", error);
+      } finally {
+        ensuringHost = false;
+      }
+    }
   } catch (error) {
-    console.error("Failed to load projects:", error);
-    projects = [];
-  } finally {
-    loading = false;
+    console.error("Heartbeat failed:", error);
   }
 }
+
+export function startHeartbeat() {
+  stopHeartbeat();
+  tick();
+  heartbeatTimer = setInterval(tick, 2000);
+}
+
+export function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+}
+
+// ── Project / session selection ───────────────────────────────────
 
 export function selectProject(path) {
   selectedProjectPath = path;
   selectedSessionId = null;
-  statusline = null;
-  pollStatusline();
 }
 
 export function selectSession(id) {
   selectedSessionId = id;
 }
 
-// --- Statusline polling ---
-
-async function fetchStatusline() {
-  const project = projects.find((p) => p.path === selectedProjectPath);
-  if (!project) { statusline = null; return; }
-  try {
-    statusline = await invoke("read_statusline", { projectId: project.id });
-  } catch {
-    statusline = null;
-  }
-}
-
-export function pollStatusline() {
-  stopPollingStatusline();
-  fetchStatusline();
-  statuslinePollTimer = setInterval(fetchStatusline, 1500);
-}
-
-export function stopPollingStatusline() {
-  if (statuslinePollTimer) {
-    clearInterval(statuslinePollTimer);
-    statuslinePollTimer = null;
-  }
-}
-
-// --- Terminal ---
+// ── Terminal ──────────────────────────────────────────────────────
 
 async function detachListeners() {
   if (unlistenOutput) { await unlistenOutput(); unlistenOutput = null; }

@@ -1,18 +1,106 @@
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, State};
 
+// ── Helpers ───────────────────────────────────────────────────────
+
+fn aimux_global_dir() -> PathBuf {
+  dirs::home_dir()
+    .expect("HOME not set")
+    .join(".aimux")
+}
+
+fn repo_root() -> PathBuf {
+  Path::new(env!("CARGO_MANIFEST_DIR"))
+    .parent()
+    .expect("src-tauri should have a parent directory")
+    .to_path_buf()
+}
+
+fn aimux_entrypoint() -> PathBuf {
+  repo_root().join("bin").join("aimux")
+}
+
+fn resolve_node() -> PathBuf {
+  let candidates = [
+    "/opt/homebrew/bin/node",
+    "/usr/local/bin/node",
+    "/usr/bin/node",
+  ];
+  for candidate in &candidates {
+    if Path::new(candidate).exists() {
+      return PathBuf::from(candidate);
+    }
+  }
+  PathBuf::from("node")
+}
+
+fn shell_path() -> String {
+  let base = std::env::var("PATH").unwrap_or_default();
+  let extras = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+  let mut parts: Vec<&str> = if base.is_empty() {
+    vec![]
+  } else {
+    base.split(':').collect()
+  };
+  for extra in &extras {
+    if !parts.contains(extra) {
+      parts.push(extra);
+    }
+  }
+  parts.join(":")
+}
+
+fn is_pid_alive(pid: u32) -> bool {
+  unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+// ── Data types ────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ProjectsRegistry {
+  projects: Vec<ProjectEntry>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ProjectEntry {
+  id: String,
+  name: String,
+  repo_root: String,
+  last_seen: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MetadataEndpoint {
+  host: String,
+  port: u16,
+  pid: u32,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ProjectInfo {
+  id: String,
+  name: String,
+  path: String,
+  last_seen: Option<String>,
+  host_alive: bool,
+  host_port: Option<u16>,
+  statusline: Option<Value>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProjectsResponse {
-  projects: Vec<Value>,
+struct HeartbeatResponse {
+  projects: Vec<ProjectInfo>,
 }
 
 #[derive(Serialize, Clone)]
@@ -29,6 +117,8 @@ struct TerminalExitPayload {
   code: Option<i32>,
 }
 
+// ── Terminal registry ─────────────────────────────────────────────
+
 #[derive(Default)]
 struct TerminalRegistryInner {
   next_id: AtomicU32,
@@ -44,94 +134,123 @@ struct TerminalSession {
   child: Mutex<Box<dyn Child + Send>>,
 }
 
-fn repo_root() -> PathBuf {
-  Path::new(env!("CARGO_MANIFEST_DIR"))
-    .parent()
-    .expect("src-tauri should have a parent directory")
-    .to_path_buf()
+// ── Commands: unified heartbeat ───────────────────────────────────
+
+#[tauri::command]
+fn heartbeat() -> Result<HeartbeatResponse, String> {
+  let registry_path = aimux_global_dir().join("projects.json");
+  let content = fs::read_to_string(&registry_path)
+    .map_err(|e| format!("failed to read projects.json: {e}"))?;
+  let registry: ProjectsRegistry =
+    serde_json::from_str(&content).map_err(|e| format!("invalid projects.json: {e}"))?;
+
+  let projects = registry
+    .projects
+    .into_iter()
+    .map(|entry| {
+      let project_dir = aimux_global_dir().join("projects").join(&entry.id);
+      let (host_alive, host_port) = check_host(&project_dir);
+      let statusline = read_statusline_file(&project_dir);
+      ProjectInfo {
+        id: entry.id,
+        name: entry.name,
+        path: entry.repo_root,
+        last_seen: entry.last_seen,
+        host_alive,
+        host_port,
+        statusline,
+      }
+    })
+    .collect();
+
+  Ok(HeartbeatResponse { projects })
 }
 
-fn aimux_entrypoint() -> PathBuf {
-  repo_root().join("bin").join("aimux")
-}
-
-fn resolve_node() -> PathBuf {
-  // GUI apps on macOS don't inherit the shell PATH. Try common locations.
-  let candidates = [
-    "/opt/homebrew/bin/node",
-    "/usr/local/bin/node",
-    "/usr/bin/node",
-  ];
-  for candidate in &candidates {
-    if Path::new(candidate).exists() {
-      return PathBuf::from(candidate);
-    }
-  }
-  // Fallback — hope it's in PATH
-  PathBuf::from("node")
-}
-
-fn shell_path() -> String {
-  // Build a reasonable PATH for child processes
-  let base = std::env::var("PATH").unwrap_or_default();
-  let extras = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
-  let mut parts: Vec<&str> = if base.is_empty() {
-    vec![]
-  } else {
-    base.split(':').collect()
+fn check_host(project_dir: &Path) -> (bool, Option<u16>) {
+  let endpoint_path = project_dir.join("metadata-api.json");
+  let content = match fs::read_to_string(&endpoint_path) {
+    Ok(c) if !c.trim().is_empty() => c,
+    _ => return (false, None),
   };
-  for extra in &extras {
-    if !parts.contains(extra) {
-      parts.push(extra);
-    }
+  let endpoint: MetadataEndpoint = match serde_json::from_str(&content) {
+    Ok(e) => e,
+    Err(_) => return (false, None),
+  };
+  if is_pid_alive(endpoint.pid) {
+    (true, Some(endpoint.port))
+  } else {
+    (false, None)
   }
-  parts.join(":")
 }
 
-fn run_aimux_json(args: &[&str], cwd: &Path) -> Result<Value, String> {
-  let output = Command::new(resolve_node())
+fn read_statusline_file(project_dir: &Path) -> Option<Value> {
+  let path = project_dir.join("statusline.json");
+  let content = fs::read_to_string(&path).ok()?;
+  let mut data: Value = serde_json::from_str(&content).ok()?;
+
+  // Strip heavy fields the UI doesn't need
+  if let Some(meta) = data.get_mut("metadata").and_then(Value::as_object_mut) {
+    for (_key, entry) in meta.iter_mut() {
+      if let Some(obj) = entry.as_object_mut() {
+        obj.remove("logs");
+        if let Some(derived) = obj.get_mut("derived").and_then(Value::as_object_mut) {
+          derived.remove("events");
+        }
+      }
+    }
+  }
+  Some(data)
+}
+
+// ── Commands: host management ─────────────────────────────────────
+
+#[tauri::command]
+fn ensure_host(project_path: String) -> Result<Value, String> {
+  // Check if host is already running via `aimux host status --json`
+  let output = std::process::Command::new(resolve_node())
     .arg(aimux_entrypoint())
-    .args(args)
-    .current_dir(cwd)
+    .args(["host", "status", "--json"])
+    .current_dir(&project_path)
     .env("PATH", shell_path())
     .output()
-    .map_err(|error| format!("failed to launch aimux: {error}"))?;
+    .map_err(|e| format!("failed to check host status: {e}"))?;
 
-  if !output.status.success() {
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    return Err(if stderr.is_empty() {
-      format!("aimux exited with {}", output.status)
-    } else {
-      stderr
-    });
+  let status: Value = serde_json::from_slice(&output.stdout)
+    .map_err(|e| format!("invalid host status JSON: {e}"))?;
+
+  // If host is running, return its info
+  if status.get("host").is_some_and(|h| !h.is_null()) {
+    return Ok(status);
   }
 
-  serde_json::from_slice::<Value>(&output.stdout).map_err(|error| format!("invalid aimux JSON: {error}"))
+  // No host — spawn `aimux serve` in background
+  std::process::Command::new(resolve_node())
+    .arg(aimux_entrypoint())
+    .arg("serve")
+    .current_dir(&project_path)
+    .env("PATH", shell_path())
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null())
+    .spawn()
+    .map_err(|e| format!("failed to spawn aimux serve: {e}"))?;
+
+  // Give it a moment to start, then re-check
+  std::thread::sleep(std::time::Duration::from_millis(1500));
+
+  let output2 = std::process::Command::new(resolve_node())
+    .arg(aimux_entrypoint())
+    .args(["host", "status", "--json"])
+    .current_dir(&project_path)
+    .env("PATH", shell_path())
+    .output()
+    .map_err(|e| format!("failed to re-check host status: {e}"))?;
+
+  serde_json::from_slice(&output2.stdout)
+    .map_err(|e| format!("invalid host status JSON after spawn: {e}"))
 }
 
-#[tauri::command]
-fn read_statusline(project_id: String) -> Result<Value, String> {
-  let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-  let path = PathBuf::from(home)
-    .join(".aimux")
-    .join("projects")
-    .join(&project_id)
-    .join("statusline.json");
-  let content =
-    std::fs::read_to_string(&path).map_err(|e| format!("failed to read statusline: {e}"))?;
-  serde_json::from_str::<Value>(&content).map_err(|e| format!("invalid statusline JSON: {e}"))
-}
-
-#[tauri::command]
-fn list_projects() -> Result<ProjectsResponse, String> {
-  let value = run_aimux_json(&["projects", "list", "--json"], &repo_root())?;
-  let projects = value
-    .get("projects")
-    .and_then(Value::as_array)
-    .cloned()
-    .ok_or_else(|| "aimux did not return a projects array".to_string())?;
-  Ok(ProjectsResponse { projects })
-}
+// ── Commands: terminal PTY ────────────────────────────────────────
 
 #[tauri::command]
 fn spawn_aimux(
@@ -276,7 +395,7 @@ fn resize_terminal(state: State<TerminalRegistry>, session_id: u32, cols: u16, r
 
 #[tauri::command]
 fn close_terminal(state: State<TerminalRegistry>, session_id: u32) -> Result<(), String> {
-  let session = state
+  let session: Arc<TerminalSession> = state
     .0
     .sessions
     .lock()
@@ -293,12 +412,14 @@ fn close_terminal(state: State<TerminalRegistry>, session_id: u32) -> Result<(),
   result
 }
 
+// ── App entry ─────────────────────────────────────────────────────
+
 fn main() {
   tauri::Builder::default()
     .manage(TerminalRegistry::default())
     .invoke_handler(tauri::generate_handler![
-      list_projects,
-      read_statusline,
+      heartbeat,
+      ensure_host,
       spawn_aimux,
       write_terminal,
       resize_terminal,

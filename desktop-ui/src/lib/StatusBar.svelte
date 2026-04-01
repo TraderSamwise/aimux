@@ -5,7 +5,7 @@
   const state = getState();
   const termInstance = getTerminal();
 
-  // Merge session list with per-session metadata from statusline
+  // All sessions with merged metadata
   let sessions = $derived.by(() => {
     const sl = state.statusline;
     if (!sl?.sessions) return [];
@@ -16,7 +16,6 @@
     }));
   });
 
-  // The focused session's metadata (for the right-side detail)
   let focusedMeta = $derived.by(() => {
     if (!state.selectedSessionId || !state.statusline?.metadata) return null;
     return state.statusline.metadata[state.selectedSessionId] || null;
@@ -26,6 +25,10 @@
     if (!state.selectedSessionId) return null;
     return sessions.find((s) => s.id === state.selectedSessionId) || null;
   });
+
+  let dashboardScreen = $derived(state.statusline?.dashboardScreen || "dashboard");
+
+  const screens = ["dashboard", "activity", "threads", "plans", "graveyard"];
 
   function badge(derived) {
     if (!derived) return null;
@@ -55,76 +58,97 @@
     );
   }
 
-  function progressText(meta) {
-    if (!meta?.progress) return null;
-    const p = meta.progress;
-    const label = p.label ? `${p.label} ` : "";
-    return `${label}${p.current}/${p.total}`;
-  }
-
   function detailText(meta, session) {
     if (!meta) return null;
-    // Priority: headline > status.text > progress > last event
     if (session?.headline) return session.headline;
     if (meta.status?.text) return meta.status.text;
-    if (meta.progress) return progressText(meta);
+    if (meta.progress) {
+      const p = meta.progress;
+      const label = p.label ? `${p.label} ` : "";
+      return `${label}${p.current}/${p.total}`;
+    }
     if (meta.derived?.lastEvent?.message) return meta.derived.lastEvent.message;
     return null;
   }
 </script>
 
-{#if sessions.length > 0}
+{#if state.selectedProject}
   <footer class="statusbar">
-    <div class="chips">
-      {#each sessions as session (session.id)}
-        {@const b = badge(session.meta?.derived)}
-        {@const active = session.id === state.selectedSessionId}
-        {@const isCurrent = session.active}
-        <button
-          class="chip"
-          class:active
-          class:current={isCurrent}
-          onclick={() => focusChip(session)}
-          title={session.id}
-        >
-          <span class="chip-label">{chipLabel(session)}</span>
-          {#if session.role}
-            <span class="chip-role">{session.role}</span>
+    <div class="bar-row bar-chips">
+      <div class="chips">
+        {#each sessions as session (session.id)}
+          {@const b = badge(session.meta?.derived)}
+          {@const active = session.id === state.selectedSessionId}
+          <button
+            class="chip"
+            class:active
+            onclick={() => focusChip(session)}
+            title={session.id}
+          >
+            <span class="chip-label">{chipLabel(session)}</span>
+            {#if session.role}
+              <span class="chip-role">{session.role}</span>
+            {/if}
+            {#if b}
+              <span class="chip-badge" style="color: {b.color}">{b.glyph}</span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+
+      <div class="detail">
+        {#if focusedSession}
+          {@const text = detailText(focusedMeta, focusedSession)}
+          {#if text}
+            <span class="detail-text">{text}</span>
           {/if}
-          {#if b}
-            <span class="chip-badge" style="color: {b.color}">{b.glyph}</span>
+          {@const progress = focusedMeta?.progress}
+          {#if progress}
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: {Math.min(100, (progress.current / Math.max(1, progress.total)) * 100)}%"></div>
+            </div>
           {/if}
-        </button>
-      {/each}
+        {/if}
+      </div>
     </div>
 
-    <div class="detail">
-      {#if focusedSession}
-        {@const text = detailText(focusedMeta, focusedSession)}
-        {#if text}
-          <span class="detail-text">{text}</span>
-        {/if}
-        {@const progress = focusedMeta?.progress}
-        {#if progress}
-          <div class="progress-bar">
-            <div class="progress-fill" style="width: {Math.min(100, (progress.current / Math.max(1, progress.total)) * 100)}%"></div>
-          </div>
-        {/if}
-      {/if}
+    <div class="bar-row bar-tabs">
+      {#each screens as screen}
+        <button
+          class="tab"
+          class:active={dashboardScreen === screen}
+        >
+          {screen}
+        </button>
+      {/each}
     </div>
   </footer>
 {/if}
 
 <style>
   .statusbar {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    background: rgba(10, 15, 22, 0.6);
+  }
+
+  .bar-row {
     display: flex;
     align-items: center;
+    padding: 0 16px;
+    min-height: 32px;
+  }
+
+  .bar-chips {
     gap: 12px;
-    padding: 6px 16px;
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-    min-height: 36px;
-    background: rgba(10, 15, 22, 0.6);
+    padding-top: 4px;
+    padding-bottom: 2px;
+  }
+
+  .bar-tabs {
+    gap: 4px;
+    padding-bottom: 4px;
+    border-top: 1px solid rgba(148, 163, 184, 0.06);
   }
 
   .chips {
@@ -159,10 +183,6 @@
   .chip.active {
     background: var(--bg-surface-active);
     border-color: var(--border-active);
-  }
-
-  .chip.current:not(.active) {
-    border-color: rgba(148, 163, 184, 0.25);
   }
 
   .chip-label {
@@ -212,5 +232,23 @@
     background: var(--accent);
     border-radius: 2px;
     transition: width 300ms ease;
+  }
+
+  .tab {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 5px;
+    color: var(--text-dim);
+    transition: color 100ms, background 100ms;
+  }
+
+  .tab:hover {
+    color: var(--text-secondary);
+    background: var(--bg-surface);
+  }
+
+  .tab.active {
+    color: var(--text);
+    background: var(--bg-surface);
   }
 </style>

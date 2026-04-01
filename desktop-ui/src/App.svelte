@@ -2,15 +2,14 @@
   import { onMount } from "svelte";
   import Sidebar from "./lib/Sidebar.svelte";
   import WorkspaceHeader from "./lib/WorkspaceHeader.svelte";
-  import SessionPanel from "./lib/SessionPanel.svelte";
+  import WorktreePanel from "./lib/WorktreePanel.svelte";
   import TerminalPanel from "./lib/TerminalPanel.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
-  import { loadProjects, pollStatusline, stopPollingStatusline } from "./stores/state.svelte.js";
+  import { startHeartbeat, stopHeartbeat } from "./stores/state.svelte.js";
 
   onMount(() => {
-    loadProjects();
-    pollStatusline();
-    return () => stopPollingStatusline();
+    startHeartbeat();
+    return () => stopHeartbeat();
   });
 </script>
 
@@ -19,7 +18,7 @@
   <main class="workspace">
     <WorkspaceHeader />
     <div class="workspace-body">
-      <SessionPanel />
+      <WorktreePanel />
       <TerminalPanel />
     </div>
     <StatusBar />
