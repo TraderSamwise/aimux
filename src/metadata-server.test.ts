@@ -64,4 +64,46 @@ describe("MetadataServer threads API", () => {
     expect(detail.thread.id).toBe(opened.thread.id);
     expect(detail.messages.at(-1)?.body).toContain("parser error path");
   });
+
+  it("creates handoffs and task assignments over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const handoffRes = await fetch(`${base}/handoff`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: ["codex-1"],
+        body: "Take over the parser debugging path.",
+        title: "Parser handoff",
+      }),
+    });
+    const handoff = (await handoffRes.json()) as {
+      thread: { id: string; kind: string };
+      message: { kind: string };
+    };
+    expect(handoffRes.ok).toBe(true);
+    expect(handoff.thread.kind).toBe("handoff");
+    expect(handoff.message.kind).toBe("handoff");
+
+    const taskRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Audit the parser timeout path",
+      }),
+    });
+    const task = (await taskRes.json()) as {
+      task: { id: string; threadId?: string };
+      thread?: { id: string; kind: string };
+    };
+    expect(taskRes.ok).toBe(true);
+    expect(task.task.id).toContain("task-");
+    expect(task.task.threadId).toBeTruthy();
+    expect(task.thread?.kind).toBe("task");
+  });
 });

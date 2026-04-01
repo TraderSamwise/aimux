@@ -46,6 +46,7 @@ import {
   type ThreadKind,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
+import { assignTask, sendHandoff } from "./orchestration-actions.js";
 
 const program = new Command();
 
@@ -762,6 +763,106 @@ messageCmd
             });
         console.log(`thread ${result.thread.id}`);
         console.log(`message ${result.message.id}`);
+      }
+    },
+  );
+
+const handoffCmd = program.command("handoff").description("Send an explicit orchestration handoff");
+
+handoffCmd
+  .command("send")
+  .description("Open a handoff thread and transfer ownership/context to another agent")
+  .argument("<body>")
+  .requiredOption("--to <ids>", "Comma-separated recipient session ids")
+  .option("--from <sessionId>", "Sender session id", "user")
+  .option("--title <title>", "Handoff thread title")
+  .action(async (body: string, opts: { to: string; from?: string; title?: string }) => {
+    const to = opts.to
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    try {
+      const result = await postHostJson("/handoff", {
+        from: opts.from ?? "user",
+        to,
+        body,
+        title: opts.title,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+      if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
+        console.log(`delivered ${result.deliveredTo.join(",")}`);
+      }
+      return;
+    } catch {
+      const result = sendHandoff({
+        from: opts.from ?? "user",
+        to,
+        body,
+        title: opts.title,
+      });
+      console.log(`thread ${result.thread.id}`);
+      console.log(`message ${result.message.id}`);
+    }
+  });
+
+const taskCmd = program.command("task").description("Create and manage orchestrated tasks");
+
+taskCmd
+  .command("assign")
+  .description("Create a durable task assignment")
+  .argument("<description>")
+  .option("--from <sessionId>", "Assigning session id", "user")
+  .option("--to <sessionId>", "Specific assignee session id")
+  .option("--assignee <role>", "Role name to route to")
+  .option("--tool <tool>", "Tool key to route to")
+  .option("--prompt <text>", "Full task prompt")
+  .option("--type <type>", "task|review", "task")
+  .option("--diff <text>", "Optional diff snippet or review payload")
+  .option("--worktree <path>", "Associated worktree path")
+  .action(
+    async (
+      description: string,
+      opts: {
+        from?: string;
+        to?: string;
+        assignee?: string;
+        tool?: string;
+        prompt?: string;
+        type?: "task" | "review";
+        diff?: string;
+        worktree?: string;
+      },
+    ) => {
+      try {
+        const result = await postHostJson("/tasks/assign", {
+          from: opts.from ?? "user",
+          to: opts.to,
+          assignee: opts.assignee,
+          tool: opts.tool,
+          description,
+          prompt: opts.prompt,
+          type: opts.type,
+          diff: opts.diff,
+          worktreePath: opts.worktree,
+        });
+        console.log(`task ${result.task.id}`);
+        if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+        return;
+      } catch {
+        const result = await assignTask({
+          from: opts.from ?? "user",
+          to: opts.to,
+          assignee: opts.assignee,
+          tool: opts.tool,
+          description,
+          prompt: opts.prompt,
+          type: opts.type,
+          diff: opts.diff,
+          worktreePath: opts.worktree,
+        });
+        console.log(`task ${result.task.id}`);
+        if (result.thread?.id) console.log(`thread ${result.thread.id}`);
       }
     },
   );

@@ -24,6 +24,7 @@ import {
   type ThreadKind,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
+import { assignTask, sendHandoff } from "./orchestration-actions.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -329,6 +330,54 @@ export class MetadataServer {
         }
         this.options.onChange?.();
         send(res, 200, { ok: true, thread });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/handoff") {
+        const body = (await readJson(req)) as {
+          from?: string;
+          to?: string[];
+          body: string;
+          title?: string;
+          worktreePath?: string;
+        };
+        const result = sendHandoff({
+          from: body.from?.trim() || "user",
+          to: body.to ?? [],
+          body: body.body,
+          title: body.title,
+          worktreePath: body.worktreePath,
+        });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/tasks/assign") {
+        const body = (await readJson(req)) as {
+          from?: string;
+          to?: string;
+          assignee?: string;
+          tool?: string;
+          description: string;
+          prompt?: string;
+          type?: "task" | "review";
+          diff?: string;
+          worktreePath?: string;
+        };
+        const result = await assignTask({
+          from: body.from?.trim() || "user",
+          to: body.to?.trim(),
+          assignee: body.assignee?.trim(),
+          tool: body.tool?.trim(),
+          description: body.description,
+          prompt: body.prompt,
+          type: body.type,
+          diff: body.diff,
+          worktreePath: body.worktreePath,
+        });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
         return;
       }
     } catch (error) {
