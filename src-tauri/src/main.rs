@@ -263,76 +263,68 @@ fn ensure_daemon_project(project_path: String) -> Result<Value, String> {
 
 // ── Commands: agent lifecycle ──────────────────────────────────────
 
-#[tauri::command]
-fn agent_spawn(project_path: String, tool: String, worktree: Option<String>) -> Result<Value, String> {
-  // Spawn in background — don't block the UI thread.
-  // The agent will appear in the next heartbeat once registered.
-  let mut cmd_args: Vec<String> = vec![
-    aimux_entrypoint().to_string_lossy().to_string(),
-    "spawn".into(),
-    "--tool".into(), tool,
-    "--project".into(), project_path.clone(),
-    "--json".into(),
-    "--no-open".into(),
-  ];
-  if let Some(wt) = worktree {
-    cmd_args.push("--worktree".into());
-    cmd_args.push(wt);
-  }
+// Fire-and-forget: spawn CLI process and return immediately.
+// Result shows up in next heartbeat via statusline.
+fn fire_and_forget(project_path: &str, args: &[&str]) -> Result<Value, String> {
+  let mut cmd_args: Vec<String> = vec![aimux_entrypoint().to_string_lossy().to_string()];
+  cmd_args.extend(args.iter().map(|s| s.to_string()));
 
   std::process::Command::new(resolve_node())
     .args(&cmd_args)
-    .current_dir(&project_path)
+    .current_dir(project_path)
     .env("PATH", shell_path())
     .stdin(std::process::Stdio::null())
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::null())
     .spawn()
-    .map_err(|e| format!("failed to spawn agent: {e}"))?;
+    .map_err(|e| format!("failed to run command: {e}"))?;
 
   Ok(serde_json::json!({ "ok": true }))
 }
 
 #[tauri::command]
+fn agent_spawn(project_path: String, tool: String, worktree: Option<String>) -> Result<Value, String> {
+  let mut args = vec!["spawn", "--tool", &tool, "--project", &project_path, "--json", "--no-open"];
+  let wt_ref;
+  if let Some(ref wt) = worktree {
+    wt_ref = wt.as_str();
+    args.push("--worktree");
+    args.push(wt_ref);
+  }
+  fire_and_forget(&project_path, &args)
+}
+
+#[tauri::command]
 fn agent_stop(project_path: String, session_id: String) -> Result<Value, String> {
-  run_aimux_json(
-    Path::new(&project_path),
-    &["stop", &session_id, "--project", &project_path, "--json"],
-    "agent stop",
-  )
+  fire_and_forget(&project_path, &["stop", &session_id, "--project", &project_path, "--json"])
 }
 
 #[tauri::command]
 fn agent_kill(project_path: String, session_id: String) -> Result<Value, String> {
-  run_aimux_json(
-    Path::new(&project_path),
-    &["kill", &session_id, "--project", &project_path, "--json"],
-    "agent kill",
-  )
+  fire_and_forget(&project_path, &["kill", &session_id, "--project", &project_path, "--json"])
 }
 
 #[tauri::command]
 fn agent_fork(project_path: String, session_id: String, tool: Option<String>, worktree: Option<String>) -> Result<Value, String> {
-  let mut args = vec!["fork", &session_id, "--project", &project_path];
-  let tool_owned;
+  let mut args = vec!["fork", &session_id, "--project", &project_path, "--json", "--no-open"];
+  let tool_ref;
   if let Some(ref t) = tool {
-    tool_owned = t.clone();
+    tool_ref = t.as_str();
     args.push("--tool");
-    args.push(&tool_owned);
+    args.push(tool_ref);
   }
-  let wt_owned;
+  let wt_ref;
   if let Some(ref wt) = worktree {
-    wt_owned = wt.clone();
+    wt_ref = wt.as_str();
     args.push("--worktree");
-    args.push(&wt_owned);
+    args.push(wt_ref);
   }
-  args.push("--json");
-  args.push("--no-open");
-  run_aimux_json(Path::new(&project_path), &args, "agent fork")
+  fire_and_forget(&project_path, &args)
 }
 
 #[tauri::command]
 fn worktree_create(project_path: String, name: String) -> Result<Value, String> {
+  // Worktree create is fast (git operation) — keep synchronous so we can report errors
   run_aimux_json(
     Path::new(&project_path),
     &["worktree", "create", &name, "--project", &project_path, "--json"],
