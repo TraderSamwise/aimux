@@ -39,13 +39,32 @@ import {
   appendMessage,
   createThread,
   listThreadSummaries,
+  markThreadSeen,
   readMessages,
   readThread,
   type MessageKind,
   type ThreadKind,
 } from "./threads.js";
+import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 
 const program = new Command();
+
+async function postHostJson(path: string, body: unknown): Promise<any> {
+  const endpoint = loadMetadataEndpoint();
+  if (!endpoint) {
+    throw new Error("no live project host endpoint");
+  }
+  const res = await fetch(`http://${endpoint.host}:${endpoint.port}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${res.status}`);
+  }
+  return json;
+}
 
 function resolveProjectRoot(cwd: string): string {
   try {
@@ -669,14 +688,83 @@ threadCmd
       ?.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const message = appendMessage(threadId, {
+    const message = sendThreadMessage({
+      threadId,
       from: opts.from,
       to,
       kind: (opts.kind as MessageKind) ?? "note",
       body,
-    });
+    }).message;
     console.log(message.id);
   });
+
+threadCmd
+  .command("mark-seen")
+  .description("Mark a thread as seen for a participant")
+  .argument("<threadId>")
+  .requiredOption("--session <sessionId>", "Participant session id")
+  .action((threadId: string, opts: { session: string }) => {
+    const thread = markThreadSeen(threadId, opts.session);
+    if (!thread) {
+      console.error(`aimux: thread not found: ${threadId}`);
+      process.exit(1);
+    }
+    console.log("ok");
+  });
+
+const messageCmd = program.command("message").description("Send directed orchestration messages");
+
+messageCmd
+  .command("send")
+  .description("Send a direct message and open or reuse a conversation thread")
+  .argument("<body>")
+  .requiredOption("--to <ids>", "Comma-separated recipient session ids")
+  .option("--from <sessionId>", "Sender session id", "user")
+  .option("--title <title>", "Conversation title if a new thread is opened")
+  .option("--kind <kind>", "request|reply|status|decision|handoff|note", "request")
+  .option("--thread <threadId>", "Append to an existing thread instead of opening/reusing a conversation")
+  .action(
+    async (body: string, opts: { to: string; from?: string; title?: string; kind?: MessageKind; thread?: string }) => {
+      const to = opts.to
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      try {
+        const result = await postHostJson("/threads/send", {
+          threadId: opts.thread,
+          from: opts.from ?? "user",
+          to,
+          kind: (opts.kind as MessageKind) ?? "request",
+          body,
+          title: opts.title,
+        });
+        console.log(`thread ${result.thread.id}`);
+        console.log(`message ${result.message.id}`);
+        if (Array.isArray(result.deliveredTo) && result.deliveredTo.length > 0) {
+          console.log(`delivered ${result.deliveredTo.join(",")}`);
+        }
+        return;
+      } catch {
+        const result = opts.thread
+          ? sendThreadMessage({
+              threadId: opts.thread,
+              from: opts.from ?? "user",
+              to,
+              kind: (opts.kind as MessageKind) ?? "request",
+              body,
+            })
+          : sendDirectMessage({
+              from: opts.from ?? "user",
+              to,
+              body,
+              title: opts.title,
+              kind: (opts.kind as any) ?? "request",
+            });
+        console.log(`thread ${result.thread.id}`);
+        console.log(`message ${result.message.id}`);
+      }
+    },
+  );
 
 worktreeCmd
   .command("list")

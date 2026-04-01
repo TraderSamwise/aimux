@@ -1,6 +1,7 @@
 import { type Task, writeTask } from "./tasks.js";
 import { loadTeamConfig } from "./team.js";
-import { appendMessage, openTaskThread, updateThread } from "./threads.js";
+import { openTaskThread, updateThread } from "./threads.js";
+import { sendThreadMessage } from "./orchestration.js";
 import type { TaskEvent } from "./task-dispatcher.js";
 
 interface DispatchSession {
@@ -17,19 +18,14 @@ export class TaskWorkflow {
       kind: task.type === "review" ? "review" : "task",
     });
     task.threadId = thread.id;
-    appendMessage(thread.id, {
+    sendThreadMessage({
+      threadId: thread.id,
       from: task.assignedBy,
       to: [session.id],
       kind: "request",
       body: task.description,
-      taskId: task.id,
+      metadata: { taskId: task.id },
     });
-    updateThread(thread.id, (current) => ({
-      ...current,
-      status: "waiting",
-      owner: session.id,
-      waitingOn: [session.id],
-    }));
 
     const prefix =
       task.type === "review"
@@ -66,7 +62,8 @@ export class TaskWorkflow {
 
   notifyAssigner(session: DispatchSession, task: Task): void {
     if (task.threadId) {
-      appendMessage(task.threadId, {
+      sendThreadMessage({
+        threadId: task.threadId,
         from: task.assignedTo ?? task.assignedBy,
         to: [task.assignedBy],
         kind: task.status === "done" ? "status" : "reply",
@@ -74,7 +71,7 @@ export class TaskWorkflow {
           task.status === "done"
             ? `Completed: ${task.description}${task.result ? `\n\n${task.result}` : ""}`
             : `Failed: ${task.description}${task.error ? `\n\n${task.error}` : ""}`,
-        taskId: task.id,
+        metadata: { taskId: task.id, status: task.status },
       });
       updateThread(task.threadId, (current) => ({
         ...current,

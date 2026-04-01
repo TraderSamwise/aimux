@@ -54,10 +54,12 @@ import {
   createThread,
   listThreadSummaries,
   markThreadSeen,
+  type MessageKind,
   readMessages,
   updateThread,
   type ThreadSummary,
 } from "./threads.js";
+import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 
 interface StatuslineOwnerState {
   instanceId: string;
@@ -157,6 +159,8 @@ export class Multiplexer {
   private activityIndex = 0;
   private threadEntries: ThreadEntry[] = [];
   private threadIndex = 0;
+  private threadReplyActive = false;
+  private threadReplyBuffer = "";
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
   /** Quick switcher overlay state */
@@ -234,6 +238,9 @@ export class Multiplexer {
     if (this.metadataServer) return;
     this.claimStatuslineOwnership();
     this.metadataServer = new MetadataServer({
+      threads: {
+        sendMessage: (input) => this.sendOrchestrationMessage(input),
+      },
       onChange: () => {
         this.writeStatuslineFile();
         if (this.mode === "dashboard") {
@@ -256,6 +263,86 @@ export class Multiplexer {
       });
       await this.pluginRuntime.start();
     }
+  }
+
+  private composeOrchestrationPrompt(
+    threadId: string,
+    from: string,
+    body: string,
+    kind: MessageKind,
+    title?: string,
+  ): string {
+    const prefix = `[AIMUX MESSAGE ${threadId} from ${from}]`;
+    const headline = title ? `${title}\n\n` : "";
+    return (
+      `${prefix} ${headline}${body}\n\n` +
+      `Read .aimux/threads/${threadId}.json and .aimux/threads/${threadId}.jsonl for context. ` +
+      `This is a ${kind} message. Reply in-thread if needed.`
+    );
+  }
+
+  private deliverOrchestrationMessage(
+    recipients: string[],
+    threadId: string,
+    from: string,
+    body: string,
+    kind: MessageKind,
+    title?: string,
+  ): string[] {
+    const delivered: string[] = [];
+    for (const recipient of recipients) {
+      const session = this.sessions.find((candidate) => candidate.id === recipient && !candidate.exited);
+      if (!session) continue;
+      if (session.status !== "idle" && session.status !== "waiting") continue;
+      session.write(this.composeOrchestrationPrompt(threadId, from, body, kind, title) + "\r");
+      delivered.push(recipient);
+    }
+    return delivered;
+  }
+
+  private sendOrchestrationMessage(input: {
+    threadId?: string;
+    from?: string;
+    to?: string[];
+    kind?: MessageKind;
+    body: string;
+    title?: string;
+  }): { thread: unknown; message: unknown; deliveredTo: string[]; threadCreated: boolean } {
+    const from = input.from?.trim() || "user";
+    const kind = input.kind ?? "request";
+    const result = input.threadId
+      ? sendThreadMessage({
+          threadId: input.threadId,
+          from,
+          to: input.to,
+          kind,
+          body: input.body,
+        })
+      : sendDirectMessage({
+          from,
+          to: input.to ?? [],
+          kind: kind as any,
+          body: input.body,
+          title: input.title,
+        });
+    const deliveredTo = this.deliverOrchestrationMessage(
+      result.message.to ?? [],
+      result.thread.id,
+      from,
+      input.body,
+      kind,
+      result.thread.title,
+    );
+    this.writeStatuslineFile();
+    if (this.mode === "dashboard") {
+      this.renderCurrentDashboardView();
+    }
+    return {
+      thread: result.thread,
+      message: result.message,
+      deliveredTo,
+      threadCreated: result.threadCreated,
+    };
   }
 
   private async stopHostServices(): Promise<void> {
@@ -1564,7 +1651,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [Enter] focus owner  [r] refresh  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/t/p/g] screens  [s] reply  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -1675,6 +1762,14 @@ export class Multiplexer {
       this.renderThreads();
       return;
     }
+    if (key === "s") {
+      if (this.threadEntries[this.threadIndex]) {
+        this.threadReplyActive = true;
+        this.threadReplyBuffer = "";
+        this.renderThreadReply();
+      }
+      return;
+    }
     if (key === "down" || key === "j" || key === "n") {
       if (this.threadEntries.length > 1) {
         this.threadIndex = (this.threadIndex + 1) % this.threadEntries.length;
@@ -1708,6 +1803,96 @@ export class Multiplexer {
           void this.activateDashboardEntry(dashEntry);
         }
       }
+    }
+  }
+
+  private renderThreadReply(): void {
+    const entry = this.threadEntries[this.threadIndex];
+    if (!entry) return;
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const targets =
+      entry.thread.waitingOn?.length && entry.thread.waitingOn.length > 0
+        ? entry.thread.waitingOn
+        : entry.thread.participants.filter((participant) => participant !== "user");
+    const title = this.truncatePlain(entry.displayTitle, Math.max(16, cols - 24));
+    const buffer = this.truncatePlain(this.threadReplyBuffer, Math.max(12, cols - 24));
+    const lines = [
+      "Reply in thread:",
+      "",
+      `  Thread: ${title}`,
+      `  To: ${targets.join(", ") || "participants"}`,
+      "",
+      `  Message: ${buffer}_`,
+      "",
+      "  [Enter] send  [Esc] cancel",
+    ];
+    const boxWidth = Math.max(...lines.map((line) => this.stripAnsi(line).length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1]!;
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleThreadReplyKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const event = events[0];
+    const key = event.name || event.char;
+
+    if (key === "escape") {
+      this.threadReplyActive = false;
+      this.threadReplyBuffer = "";
+      this.renderThreads();
+      return;
+    }
+
+    if (key === "enter" || key === "return") {
+      const body = this.threadReplyBuffer.trim();
+      const entry = this.threadEntries[this.threadIndex];
+      this.threadReplyActive = false;
+      this.threadReplyBuffer = "";
+      if (!entry || !body) {
+        this.renderThreads();
+        return;
+      }
+      try {
+        this.sendOrchestrationMessage({
+          threadId: entry.thread.id,
+          from: "user",
+          kind: "reply",
+          body,
+        });
+      } catch (error) {
+        this.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]);
+        return;
+      }
+      this.threadEntries = this.buildThreadEntries();
+      this.threadIndex = Math.min(this.threadIndex, Math.max(0, this.threadEntries.length - 1));
+      this.renderThreads();
+      return;
+    }
+
+    if (key === "backspace" || key === "delete") {
+      this.threadReplyBuffer = this.threadReplyBuffer.slice(0, -1);
+      this.renderThreadReply();
+      return;
+    }
+
+    if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
+      this.threadReplyBuffer += event.char;
+      this.renderThreadReply();
     }
   }
 
@@ -1780,6 +1965,10 @@ export class Multiplexer {
       this.handleSwitcherKey(data);
       return true;
     }
+    if (this.threadReplyActive) {
+      this.handleThreadReplyKey(data);
+      return true;
+    }
     if (this.labelInputActive) {
       this.handleLabelInputKey(data);
       return true;
@@ -1802,6 +1991,10 @@ export class Multiplexer {
     }
     if (this.switcherActive) {
       this.renderSwitcher();
+      return true;
+    }
+    if (this.threadReplyActive) {
+      this.renderThreadReply();
       return true;
     }
     if (this.migratePickerActive) {

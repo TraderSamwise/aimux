@@ -14,9 +14,34 @@ import {
 import { notifyComplete, notifyPrompt } from "./notify.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
+import {
+  createThread,
+  listThreadSummaries,
+  markThreadSeen,
+  readMessages,
+  readThread,
+  type MessageKind,
+  type ThreadKind,
+} from "./threads.js";
+import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
+  threads?: {
+    sendMessage?: (input: {
+      threadId?: string;
+      from?: string;
+      to?: string[];
+      kind?: MessageKind;
+      body: string;
+      title?: string;
+    }) => {
+      thread: unknown;
+      message: unknown;
+      deliveredTo?: string[];
+      threadCreated?: boolean;
+    };
+  };
 }
 
 function desiredPort(): number {
@@ -87,17 +112,33 @@ export class MetadataServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method === "GET" && req.url === "/health") {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+
+    if (req.method === "GET" && url.pathname === "/health") {
       send(res, 200, { ok: true, projectStateDir: getProjectStateDir(), pid: process.pid });
       return;
     }
-    if (req.method === "GET" && req.url === "/state") {
+    if (req.method === "GET" && url.pathname === "/state") {
       send(res, 200, loadMetadataState());
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/threads") {
+      send(res, 200, listThreadSummaries(url.searchParams.get("session") ?? undefined));
+      return;
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/threads/")) {
+      const threadId = decodeURIComponent(url.pathname.slice("/threads/".length));
+      const thread = readThread(threadId);
+      if (!thread) {
+        send(res, 404, { ok: false, error: "thread not found" });
+        return;
+      }
+      send(res, 200, { thread, messages: readMessages(threadId) });
       return;
     }
 
     try {
-      if (req.method === "POST" && req.url === "/set-status") {
+      if (req.method === "POST" && url.pathname === "/set-status") {
         const body = (await readJson(req)) as { session: string; text: string; tone?: MetadataTone };
         updateSessionMetadata(body.session, (current) => ({
           ...current,
@@ -108,7 +149,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && req.url === "/set-progress") {
+      if (req.method === "POST" && url.pathname === "/set-progress") {
         const body = (await readJson(req)) as {
           session: string;
           current: number;
@@ -124,7 +165,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && req.url === "/set-context") {
+      if (req.method === "POST" && url.pathname === "/set-context") {
         const body = (await readJson(req)) as {
           session: string;
           context: SessionContextMetadata;
@@ -141,7 +182,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && req.url === "/set-services") {
+      if (req.method === "POST" && url.pathname === "/set-services") {
         const body = (await readJson(req)) as {
           session: string;
           services: SessionServiceMetadata[];
@@ -158,7 +199,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && req.url === "/log") {
+      if (req.method === "POST" && url.pathname === "/log") {
         const body = (await readJson(req)) as {
           session: string;
           message: string;
@@ -180,7 +221,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && req.url === "/event") {
+      if (req.method === "POST" && url.pathname === "/event") {
         const body = (await readJson(req)) as { session: string; event: AgentEvent };
         this.tracker.emit(body.session, body.event);
         this.options.onChange?.();
@@ -188,7 +229,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && req.url === "/mark-seen") {
+      if (req.method === "POST" && url.pathname === "/mark-seen") {
         const body = (await readJson(req)) as { session: string };
         this.tracker.markSeen(body.session);
         this.options.onChange?.();
@@ -196,7 +237,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && req.url === "/set-activity") {
+      if (req.method === "POST" && url.pathname === "/set-activity") {
         const body = (await readJson(req)) as { session: string; activity: AgentActivityState };
         this.tracker.setActivity(body.session, body.activity);
         this.options.onChange?.();
@@ -204,7 +245,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && req.url === "/set-attention") {
+      if (req.method === "POST" && url.pathname === "/set-attention") {
         const body = (await readJson(req)) as { session: string; attention: AgentAttentionState };
         this.tracker.setAttention(body.session, body.attention);
         this.options.onChange?.();
@@ -212,7 +253,7 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && req.url === "/clear-log") {
+      if (req.method === "POST" && url.pathname === "/clear-log") {
         const body = (await readJson(req)) as { session: string };
         clearSessionLogs(body.session);
         this.options.onChange?.();
@@ -220,11 +261,74 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && req.url === "/notify") {
+      if (req.method === "POST" && url.pathname === "/notify") {
         const body = (await readJson(req)) as { title?: string; message?: string; kind?: string };
         if (body.kind === "complete") notifyComplete(body.message ?? body.title ?? "aimux");
         else notifyPrompt(body.message ?? body.title ?? "aimux");
         send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/threads/open") {
+        const body = (await readJson(req)) as {
+          title: string;
+          from: string;
+          participants: string[];
+          kind?: ThreadKind;
+          worktreePath?: string;
+        };
+        const thread = createThread({
+          title: body.title,
+          createdBy: body.from,
+          participants: [...new Set([body.from, ...(body.participants ?? [])])],
+          kind: (body.kind as ThreadKind) ?? "conversation",
+          worktreePath: body.worktreePath,
+        });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, thread });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/threads/send") {
+        const body = (await readJson(req)) as {
+          threadId?: string;
+          from?: string;
+          to?: string[];
+          kind?: MessageKind;
+          body: string;
+          title?: string;
+        };
+        const result = this.options.threads?.sendMessage
+          ? this.options.threads.sendMessage(body)
+          : body.threadId
+            ? sendThreadMessage({
+                threadId: body.threadId,
+                from: body.from ?? "user",
+                to: body.to,
+                kind: body.kind,
+                body: body.body,
+              })
+            : sendDirectMessage({
+                from: body.from ?? "user",
+                to: body.to ?? [],
+                kind: body.kind as any,
+                body: body.body,
+                title: body.title,
+              });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/threads/mark-seen") {
+        const body = (await readJson(req)) as { threadId: string; session: string };
+        const thread = markThreadSeen(body.threadId, body.session);
+        if (!thread) {
+          send(res, 404, { ok: false, error: "thread not found" });
+          return;
+        }
+        this.options.onChange?.();
+        send(res, 200, { ok: true, thread });
         return;
       }
     } catch (error) {
