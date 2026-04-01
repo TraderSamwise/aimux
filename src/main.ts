@@ -719,17 +719,36 @@ messageCmd
   .command("send")
   .description("Send a direct message and open or reuse a conversation thread")
   .argument("<body>")
-  .requiredOption("--to <ids>", "Comma-separated recipient session ids")
+  .option("--to <ids>", "Comma-separated recipient session ids")
+  .option("--assignee <role>", "Route to a role if no explicit session id is provided")
+  .option("--tool <tool>", "Route to a tool if no explicit session id is provided")
+  .option("--worktree <path>", "Prefer a target in this worktree")
   .option("--from <sessionId>", "Sender session id", "user")
   .option("--title <title>", "Conversation title if a new thread is opened")
   .option("--kind <kind>", "request|reply|status|decision|handoff|note", "request")
   .option("--thread <threadId>", "Append to an existing thread instead of opening/reusing a conversation")
   .action(
-    async (body: string, opts: { to: string; from?: string; title?: string; kind?: MessageKind; thread?: string }) => {
+    async (
+      body: string,
+      opts: {
+        to?: string;
+        assignee?: string;
+        tool?: string;
+        worktree?: string;
+        from?: string;
+        title?: string;
+        kind?: MessageKind;
+        thread?: string;
+      },
+    ) => {
       const to = opts.to
-        .split(",")
+        ?.split(",")
         .map((value) => value.trim())
         .filter(Boolean);
+      if ((!to || to.length === 0) && !opts.thread) {
+        console.error("aimux: message send requires --to for now");
+        process.exit(1);
+      }
       try {
         const result = await postHostJson("/threads/send", {
           threadId: opts.thread,
@@ -756,7 +775,7 @@ messageCmd
             })
           : sendDirectMessage({
               from: opts.from ?? "user",
-              to,
+              to: to ?? [],
               body,
               title: opts.title,
               kind: (opts.kind as any) ?? "request",
