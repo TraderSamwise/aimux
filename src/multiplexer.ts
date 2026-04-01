@@ -261,7 +261,10 @@ export class Multiplexer {
     this.metadataServer = new MetadataServer({
       desktop: {
         getState: () => this.buildDesktopState(),
+        listWorktrees: () => this.listDesktopWorktrees(),
         createWorktree: ({ name }) => ({ path: createWorktree(name) }),
+        listGraveyard: () => this.listGraveyardEntries(),
+        resurrectGraveyard: ({ sessionId }) => this.resurrectGraveyardSession(sessionId),
       },
       threads: {
         sendMessage: (input) => this.sendOrchestrationMessage(input),
@@ -4132,37 +4135,27 @@ export class Multiplexer {
     if (idx < 0 || idx >= this.graveyardEntries.length) return;
     const entry = this.graveyardEntries[idx];
     if (!entry) return;
+    void this.resurrectGraveyardSession(entry.id)
+      .then(() => {
+        this.graveyardEntries = this.listGraveyardEntries();
+        if (this.graveyardEntries.length === 0) {
+          this.setDashboardScreen("dashboard");
+          if (this.mode === "dashboard") {
+            this.renderDashboard();
+          } else {
+            this.focusSession(this.activeIndex);
+          }
+          return;
+        }
 
-    this.graveyardEntries.splice(idx, 1);
-    writeFileSync(getGraveyardPath(), JSON.stringify(this.graveyardEntries, null, 2) + "\n");
-
-    this.offlineSessions.push(entry);
-    const statePath = getStatePath();
-    try {
-      let state: SavedState = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] };
-      if (existsSync(statePath)) {
-        state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
-      }
-      state.sessions.push(entry);
-      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-    } catch {}
-
-    debug(`resurrected ${entry.id} from graveyard`, "session");
-
-    if (this.graveyardEntries.length === 0) {
-      this.setDashboardScreen("dashboard");
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
-      return;
-    }
-
-    if (this.graveyardIndex >= this.graveyardEntries.length) {
-      this.graveyardIndex = this.graveyardEntries.length - 1;
-    }
-    this.renderGraveyard();
+        if (this.graveyardIndex >= this.graveyardEntries.length) {
+          this.graveyardIndex = this.graveyardEntries.length - 1;
+        }
+        this.renderGraveyard();
+      })
+      .catch((error) => {
+        debug(`failed to resurrect ${entry.id}: ${error instanceof Error ? error.message : String(error)}`, "session");
+      });
   }
 
   private showPlans(): void {
@@ -5383,8 +5376,47 @@ export class Multiplexer {
     return {
       sessions: this.getDashboardSessions(),
       statusline: this.buildStatuslineSnapshot(),
-      worktrees: listAllWorktrees().filter((wt) => !wt.isBare),
+      worktrees: this.listDesktopWorktrees(),
     };
+  }
+
+  private listDesktopWorktrees(): Array<{ name: string; path: string; branch: string; isBare: boolean }> {
+    return listAllWorktrees().filter((wt) => !wt.isBare);
+  }
+
+  private listGraveyardEntries(): SessionState[] {
+    try {
+      const content = readFileSync(getGraveyardPath(), "utf-8");
+      return JSON.parse(content) as SessionState[];
+    } catch {
+      return [];
+    }
+  }
+
+  async resurrectGraveyardSession(sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
+    this.loadOfflineSessions();
+    const graveyardEntries = this.listGraveyardEntries();
+    const entry = graveyardEntries.find((candidate) => candidate.id === sessionId);
+    if (!entry) {
+      throw new Error(`Graveyard session "${sessionId}" not found`);
+    }
+
+    const nextGraveyard = graveyardEntries.filter((candidate) => candidate.id !== sessionId);
+    writeFileSync(getGraveyardPath(), JSON.stringify(nextGraveyard, null, 2) + "\n");
+
+    this.offlineSessions.push(entry);
+    const statePath = getStatePath();
+    try {
+      let state: SavedState = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] };
+      if (existsSync(statePath)) {
+        state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
+      }
+      state.sessions.push(entry);
+      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    } catch {}
+
+    debug(`resurrected ${entry.id} from graveyard`, "session");
+    return { sessionId, status: "offline" };
   }
 
   /** Remove sessions file on exit */

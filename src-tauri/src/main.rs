@@ -477,27 +477,30 @@ fn worktree_create(project_path: String, name: String) -> Result<Value, String> 
 
 #[tauri::command]
 fn worktree_list(project_path: String) -> Result<Value, String> {
-  run_aimux_json(
-    Path::new(&project_path),
-    &["worktree", "list", "--project", &project_path, "--json"],
-    "worktree list",
-  )
+  let response: Value = project_service_json(&project_path, "GET", "/worktrees", None, "worktree list")?;
+  Ok(response
+    .get("worktrees")
+    .cloned()
+    .unwrap_or_else(|| Value::Array(Vec::new())))
 }
 
 #[tauri::command]
 fn graveyard_list(project_path: String) -> Result<Value, String> {
-  run_aimux_json(
-    Path::new(&project_path),
-    &["graveyard", "list", "--project", &project_path, "--json"],
-    "graveyard list",
-  )
+  let response: Value = project_service_json(&project_path, "GET", "/graveyard", None, "graveyard list")?;
+  Ok(response
+    .get("entries")
+    .cloned()
+    .unwrap_or_else(|| Value::Array(Vec::new())))
 }
 
 #[tauri::command]
 fn graveyard_resurrect(project_path: String, session_id: String) -> Result<Value, String> {
-  run_aimux_json(
-    Path::new(&project_path),
-    &["graveyard", "resurrect", &session_id, "--project", &project_path, "--json"],
+  let body = serde_json::json!({ "sessionId": session_id });
+  project_service_json(
+    &project_path,
+    "POST",
+    "/graveyard/resurrect",
+    Some(&body),
     "graveyard resurrect",
   )
 }

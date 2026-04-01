@@ -42,7 +42,15 @@ interface MetadataServerOptions {
   onChange?: () => void;
   desktop?: {
     getState?: () => Record<string, unknown>;
+    listWorktrees?: () => unknown[];
     createWorktree?: (input: { name: string }) => Promise<{ path: string }> | { path: string };
+    listGraveyard?: () => unknown[];
+    resurrectGraveyard?: (input: { sessionId: string }) =>
+      | Promise<{ sessionId: string; status: "offline" }>
+      | {
+          sessionId: string;
+          status: "offline";
+        };
   };
   threads?: {
     sendMessage?: (input: {
@@ -231,6 +239,22 @@ export class MetadataServer {
         return;
       }
       send(res, 200, { ok: true, ...this.options.desktop.getState() });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/worktrees") {
+      if (!this.options.desktop?.listWorktrees) {
+        send(res, 501, { ok: false, error: "worktree listing not supported by this service" });
+        return;
+      }
+      send(res, 200, { ok: true, worktrees: this.options.desktop.listWorktrees() });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/graveyard") {
+      if (!this.options.desktop?.listGraveyard) {
+        send(res, 501, { ok: false, error: "graveyard listing not supported by this service" });
+        return;
+      }
+      send(res, 200, { ok: true, entries: this.options.desktop.listGraveyard() });
       return;
     }
     if (req.method === "GET" && url.pathname === "/threads") {
@@ -678,6 +702,18 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.createWorktree(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/graveyard/resurrect") {
+        const body = (await readJson(req)) as { sessionId: string };
+        if (!this.options.desktop?.resurrectGraveyard) {
+          send(res, 501, { ok: false, error: "graveyard resurrect not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.resurrectGraveyard(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
