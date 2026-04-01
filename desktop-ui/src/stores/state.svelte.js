@@ -13,7 +13,7 @@ let unlistenOutput = null;
 let unlistenExit = null;
 let heartbeatTimer = null;
 let lastHeartbeatJson = null;
-let ensuringHost = false;
+let ensuringHosts = new Set();
 
 export function getState() {
   return {
@@ -41,6 +41,9 @@ async function tick() {
     const response = await invoke("heartbeat");
     const incoming = response.projects || [];
 
+    // Sort alphabetically for stable ordering
+    incoming.sort((a, b) => a.name.localeCompare(b.name));
+
     // Only update reactive state if something changed
     const json = JSON.stringify(incoming);
     if (json !== lastHeartbeatJson) {
@@ -58,16 +61,13 @@ async function tick() {
       selectedSessionId = null;
     }
 
-    // Auto-ensure host for selected project
-    const selected = projects.find((p) => p.path === selectedProjectPath);
-    if (selected && !selected.hostAlive && !ensuringHost) {
-      ensuringHost = true;
-      try {
-        await invoke("ensure_host", { projectPath: selected.path });
-      } catch (error) {
-        console.error("Failed to ensure host:", error);
-      } finally {
-        ensuringHost = false;
+    // Auto-ensure host for ALL projects without one
+    for (const project of projects) {
+      if (!project.hostAlive && !ensuringHosts.has(project.path)) {
+        ensuringHosts.add(project.path);
+        invoke("ensure_host", { projectPath: project.path })
+          .catch((e) => console.error(`Failed to ensure host for ${project.name}:`, e))
+          .finally(() => ensuringHosts.delete(project.path));
       }
     }
   } catch (error) {

@@ -32,11 +32,6 @@
         <div class="project-name">{project.name}</div>
         <div class="project-path">{project.path.replace(/^\/Users\/[^/]+\//, "~/")}</div>
         <div class="tags">
-          {#if project.hostAlive}
-            <span class="tag tag-green">host</span>
-          {:else}
-            <span class="tag tag-dim">no host</span>
-          {/if}
           {#if live > 0}
             <span class="tag tag-green">{live} live</span>
           {:else if sessionCount(project) > 0}
