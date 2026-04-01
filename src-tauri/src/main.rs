@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{Emitter, Manager, State};
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -168,12 +168,19 @@ struct TerminalSession {
 
 // ── Commands: unified heartbeat ───────────────────────────────────
 
+static LAST_STATUSLINES: LazyLock<Mutex<HashMap<String, Value>>> =
+  LazyLock::new(|| Mutex::new(HashMap::new()));
+
 #[tauri::command]
 fn heartbeat() -> Result<HeartbeatResponse, String> {
   let cwd = repo_root();
-  let _: Value = run_aimux_json(&cwd, &["daemon", "ensure", "--json"], "daemon ensure")?;
-  let response: HeartbeatResponse =
-    run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects")?;
+  let response: HeartbeatResponse = match run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects") {
+    Ok(response) => response,
+    Err(_) => {
+      let _: Value = run_aimux_json(&cwd, &["daemon", "ensure", "--json"], "daemon ensure")?;
+      run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects")?
+    }
+  };
 
   let projects = response
     .projects
@@ -191,41 +198,35 @@ fn heartbeat() -> Result<HeartbeatResponse, String> {
   Ok(HeartbeatResponse { projects })
 }
 
-fn read_statusline_cached(_project_id: &str, project_dir: &Path) -> Option<Value> {
-  // TODO: re-enable caching if statusline flicker returns.
-  // Previously the host would momentarily write sessions:[] during refresh,
-  // and this cache prevented that from reaching the UI. With the daemon model
-  // this should no longer happen — disabled to avoid masking bugs.
-  read_statusline_file(project_dir)
+fn read_statusline_cached(project_id: &str, project_dir: &Path) -> Option<Value> {
+  let fresh = read_statusline_file(project_dir);
+  let mut cache = LAST_STATUSLINES.lock().unwrap_or_else(|e| e.into_inner());
 
-  // let fresh = read_statusline_file(project_dir);
-  // let mut cache = LAST_STATUSLINES.lock().unwrap_or_else(|e| e.into_inner());
-  //
-  // match fresh {
-  //   Some(data) => {
-  //     let fresh_count = data
-  //       .get("sessions")
-  //       .and_then(Value::as_array)
-  //       .map(|a| a.len())
-  //       .unwrap_or(0);
-  //
-  //     if let Some(cached) = cache.get(project_id) {
-  //       let cached_count = cached
-  //         .get("sessions")
-  //         .and_then(Value::as_array)
-  //         .map(|a| a.len())
-  //         .unwrap_or(0);
-  //
-  //       if fresh_count == 0 && cached_count > 0 {
-  //         return Some(cached.clone());
-  //       }
-  //     }
-  //
-  //     cache.insert(project_id.to_string(), data.clone());
-  //     Some(data)
-  //   }
-  //   None => cache.get(project_id).cloned(),
-  // }
+  match fresh {
+    Some(data) => {
+      let fresh_count = data
+        .get("sessions")
+        .and_then(Value::as_array)
+        .map(|a| a.len())
+        .unwrap_or(0);
+
+      if let Some(cached) = cache.get(project_id) {
+        let cached_count = cached
+          .get("sessions")
+          .and_then(Value::as_array)
+          .map(|a| a.len())
+          .unwrap_or(0);
+
+        if fresh_count == 0 && cached_count > 0 {
+          return Some(cached.clone());
+        }
+      }
+
+      cache.insert(project_id.to_string(), data.clone());
+      Some(data)
+    }
+    None => cache.get(project_id).cloned(),
+  }
 }
 
 fn read_statusline_file(project_dir: &Path) -> Option<Value> {

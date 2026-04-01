@@ -13,6 +13,43 @@ let unlistenOutput = null;
 let unlistenExit = null;
 let heartbeatTimer = null;
 let ensuringHosts = new Set();
+let heartbeatInFlight = false;
+
+function scoreStatusline(statusline) {
+  if (!statusline) return 0;
+  const sessions = statusline.sessions?.length ?? 0;
+  const metadata = statusline.metadata ? Object.keys(statusline.metadata).length : 0;
+  const tasks = (statusline.tasks?.pending || 0) + (statusline.tasks?.assigned || 0);
+  return sessions * 100 + metadata * 10 + tasks;
+}
+
+function mergeProjects(existing, incoming) {
+  const incomingByPath = new Map(incoming.map((project) => [project.path, project]));
+  const merged = [];
+
+  for (const current of existing) {
+    const next = incomingByPath.get(current.path);
+    if (!next) {
+      merged.push(current);
+      continue;
+    }
+
+    const currentScore = scoreStatusline(current.statusline);
+    const nextScore = scoreStatusline(next.statusline);
+    merged.push({
+      ...next,
+      statusline: nextScore >= currentScore ? next.statusline : current.statusline,
+    });
+    incomingByPath.delete(current.path);
+  }
+
+  for (const next of incomingByPath.values()) {
+    merged.push(next);
+  }
+
+  merged.sort((a, b) => a.name.localeCompare(b.name));
+  return merged;
+}
 
 export function getState() {
   return {
@@ -36,12 +73,14 @@ export function getState() {
 // ── Heartbeat (single loop for everything) ────────────────────────
 
 async function tick() {
+  if (heartbeatInFlight) return;
+  heartbeatInFlight = true;
   try {
     const response = await invoke("heartbeat");
     const incoming = response.projects || [];
 
     incoming.sort((a, b) => a.name.localeCompare(b.name));
-    projects = incoming;
+    projects = mergeProjects(projects, incoming);
 
     // Auto-select first project if none selected
     if (!selectedProjectPath && projects.length > 0) {
@@ -64,13 +103,15 @@ async function tick() {
     }
   } catch (error) {
     console.error("Heartbeat failed:", error);
+  } finally {
+    heartbeatInFlight = false;
   }
 }
 
 export function startHeartbeat() {
   stopHeartbeat();
   tick();
-  heartbeatTimer = setInterval(tick, 2000);
+  heartbeatTimer = setInterval(tick, 3000);
 }
 
 export function stopHeartbeat() {
