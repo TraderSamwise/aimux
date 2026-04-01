@@ -53,6 +53,7 @@ import {
   appendMessage,
   createThread,
   listThreadSummaries,
+  markMessageDelivered,
   markThreadSeen,
   type MessageKind,
   readMessages,
@@ -60,6 +61,7 @@ import {
   type ThreadSummary,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
+import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 
 interface StatuslineOwnerState {
   instanceId: string;
@@ -181,6 +183,7 @@ export class Multiplexer {
     this.tmuxRuntimeManager.captureTarget(target, { startLine: -120 }),
   );
   private taskDispatcher: TaskDispatcher | null = null;
+  private orchestrationDispatcher: OrchestrationDispatcher | null = null;
   /** Maps session ID → toolConfigKey for state saving */
   private sessionToolKeys = new Map<string, string>();
   /** Maps session ID → original args (before preamble injection) */
@@ -288,6 +291,7 @@ export class Multiplexer {
     body: string,
     kind: MessageKind,
     title?: string,
+    messageId?: string,
   ): string[] {
     const delivered: string[] = [];
     for (const recipient of recipients) {
@@ -295,6 +299,9 @@ export class Multiplexer {
       if (!session) continue;
       if (session.status !== "idle" && session.status !== "waiting") continue;
       session.write(this.composeOrchestrationPrompt(threadId, from, body, kind, title) + "\r");
+      if (messageId) {
+        markMessageDelivered(threadId, messageId, recipient);
+      }
       delivered.push(recipient);
     }
     return delivered;
@@ -332,6 +339,7 @@ export class Multiplexer {
       input.body,
       kind,
       result.thread.title,
+      result.message.id,
     );
     this.writeStatuslineFile();
     if (this.mode === "dashboard") {
@@ -609,6 +617,7 @@ export class Multiplexer {
       (id) => this.sessionToolKeys.get(id),
       (id) => this.sessionRoles.get(id),
     );
+    this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
     this.loadOfflineSessions();
     this.defaultCommand = opts.command;
     this.defaultArgs = opts.args;
@@ -722,6 +731,7 @@ export class Multiplexer {
       (id) => this.sessionToolKeys.get(id),
       (id) => this.sessionRoles.get(id),
     );
+    this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
     this.writeInstructionFiles();
     await this.reconcileProjectHost();
 
@@ -4344,6 +4354,7 @@ export class Multiplexer {
     if (this.statusInterval) return;
     this.statusInterval = setInterval(() => {
       this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
+      this.orchestrationDispatcher?.tick(this.sessions.map((s) => s.id));
       if (this.isProjectHost) {
         this.writeStatuslineFile();
       }
@@ -4364,6 +4375,14 @@ export class Multiplexer {
           this.footerFlash = `↻ Changes requested: ${ev.description}`;
         }
         this.footerFlashTicks = 3;
+      }
+
+      const orchestrationEvents = this.orchestrationDispatcher?.drainEvents() ?? [];
+      for (const event of orchestrationEvents) {
+        if (event.type === "message_delivered") {
+          this.footerFlash = `✉ Message delivered → ${event.sessionId}`;
+          this.footerFlashTicks = 3;
+        }
       }
 
       if (this.footerFlashTicks > 0) this.footerFlashTicks--;
@@ -4720,6 +4739,7 @@ export class Multiplexer {
     this.clearDashboardBusy();
     this.stopHeartbeat();
     this.taskDispatcher = null;
+    this.orchestrationDispatcher = null;
     this.instanceDirectory.unregisterInstance(this.instanceId, process.cwd()).catch(() => {});
     this.saveState();
     this.stopStatusRefresh();

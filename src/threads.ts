@@ -36,6 +36,8 @@ export interface OrchestrationMessage {
   taskId?: string;
   planId?: string;
   metadata?: Record<string, string | number | boolean | null>;
+  deliveredTo?: string[];
+  deliveredAt?: string;
 }
 
 export interface ThreadSummary {
@@ -177,6 +179,44 @@ export function readMessages(threadId: string): OrchestrationMessage[] {
   } catch {
     return [];
   }
+}
+
+export function updateMessage(
+  threadId: string,
+  messageId: string,
+  updater: (current: OrchestrationMessage) => OrchestrationMessage,
+): OrchestrationMessage | undefined {
+  const messages = readMessages(threadId);
+  if (messages.length === 0) return undefined;
+  let updated: OrchestrationMessage | undefined;
+  const nextMessages = messages.map((message) => {
+    if (message.id !== messageId) return message;
+    updated = {
+      ...updater(message),
+      id: message.id,
+      threadId: message.threadId,
+      ts: message.ts,
+    };
+    return updated;
+  });
+  if (!updated) return undefined;
+  writeFileSync(messagesPath(threadId), nextMessages.map((message) => JSON.stringify(message)).join("\n") + "\n");
+  return updated;
+}
+
+export function markMessageDelivered(
+  threadId: string,
+  messageId: string,
+  recipient: string,
+): OrchestrationMessage | undefined {
+  return updateMessage(threadId, messageId, (current) => {
+    const deliveredTo = [...new Set([...(current.deliveredTo ?? []), recipient])];
+    return {
+      ...current,
+      deliveredTo,
+      deliveredAt: new Date().toISOString(),
+    };
+  });
 }
 
 export function markThreadSeen(threadId: string, sessionId: string): OrchestrationThread | undefined {
