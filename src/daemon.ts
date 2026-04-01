@@ -75,9 +75,12 @@ async function readJson(req: IncomingMessage): Promise<any> {
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
-  res.end(JSON.stringify(body));
+  res.setHeader("content-length", Buffer.byteLength(payload));
+  res.setHeader("connection", "close");
+  res.end(payload);
 }
 
 export function loadDaemonInfo(): AimuxDaemonInfo | null {

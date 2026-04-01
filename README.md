@@ -90,6 +90,12 @@ Each active project may have one daemon-managed project service. That project se
 
 There is no per-project host election anymore. Dashboard processes are clients, not control-plane owners.
 
+Desktop/Tauri now talks to the live control plane directly:
+
+- daemon HTTP is used for project discovery / service discovery
+- project-service HTTP is used for live project state and awaited lifecycle actions
+- `statusline.json` remains a derived artifact for tmux/status/debugging, not the desktop's primary transport
+
 Terminal clients are isolated from each other:
 
 - the shared per-project tmux runtime session owns agent windows

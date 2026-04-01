@@ -40,6 +40,10 @@ import { buildWorkflowEntries } from "./workflow.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
+  desktop?: {
+    getState?: () => Record<string, unknown>;
+    createWorktree?: (input: { name: string }) => Promise<{ path: string }> | { path: string };
+  };
   threads?: {
     sendMessage?: (input: {
       threadId?: string;
@@ -155,9 +159,12 @@ async function readJson(req: IncomingMessage): Promise<any> {
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
-  res.end(JSON.stringify(body));
+  res.setHeader("content-length", Buffer.byteLength(payload));
+  res.setHeader("connection", "close");
+  res.end(payload);
 }
 
 export class MetadataServer {
@@ -216,6 +223,14 @@ export class MetadataServer {
     }
     if (req.method === "GET" && url.pathname === "/state") {
       send(res, 200, loadMetadataState());
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/desktop-state") {
+      if (!this.options.desktop?.getState) {
+        send(res, 501, { ok: false, error: "desktop state not supported by this service" });
+        return;
+      }
+      send(res, 200, { ok: true, ...this.options.desktop.getState() });
       return;
     }
     if (req.method === "GET" && url.pathname === "/threads") {
@@ -651,6 +666,18 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.killAgent(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/worktrees/create") {
+        const body = (await readJson(req)) as { name: string };
+        if (!this.options.desktop?.createWorktree) {
+          send(res, 501, { ok: false, error: "worktree create not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.createWorktree(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;

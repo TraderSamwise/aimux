@@ -259,6 +259,10 @@ export class Multiplexer {
   private async startProjectServices(): Promise<void> {
     if (this.metadataServer) return;
     this.metadataServer = new MetadataServer({
+      desktop: {
+        getState: () => this.buildDesktopState(),
+        createWorktree: ({ name }) => ({ path: createWorktree(name) }),
+      },
       threads: {
         sendMessage: (input) => this.sendOrchestrationMessage(input),
       },
@@ -5322,29 +5326,65 @@ export class Multiplexer {
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
       const tmpPath = `${filePath}.tmp`;
-      const data = {
-        project: basename(process.cwd()),
-        dashboardScreen: this.dashboardState.screen,
-        sessions: this.sessions.map((s, i) => ({
-          id: s.id,
-          tool: s.command,
-          label: this.getSessionLabel(s.id),
-          windowName: this.getSessionLabel(s.id) || s.command,
-          headline: this.deriveHeadline(s.id),
-          status: s.status,
-          role: this.sessionRoles.get(s.id),
-          active: i === this.activeIndex,
-          worktreePath: this.sessionWorktreePaths.get(s.id),
-        })),
-        tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
-        flash: this.footerFlash,
-        metadata: loadMetadataState().sessions,
-        updatedAt: new Date().toISOString(),
-      };
+      const data = this.buildStatuslineSnapshot();
       writeFileSync(tmpPath, JSON.stringify(data) + "\n");
       renameSync(tmpPath, filePath);
       this.tmuxRuntimeManager.refreshStatus();
     } catch {}
+  }
+
+  private buildStatuslineSnapshot(): {
+    project: string;
+    dashboardScreen: DashboardScreen;
+    sessions: Array<{
+      id: string;
+      tool: string;
+      label?: string;
+      windowName: string;
+      headline?: string;
+      status: string;
+      role?: string;
+      active: boolean;
+      worktreePath?: string;
+    }>;
+    tasks: { pending: number; assigned: number };
+    flash: string | null;
+    metadata: ReturnType<typeof loadMetadataState>["sessions"];
+    updatedAt: string;
+  } {
+    return {
+      project: basename(process.cwd()),
+      dashboardScreen: this.dashboardState.screen,
+      sessions: this.sessions.map((s, i) => ({
+        id: s.id,
+        tool: s.command,
+        label: this.getSessionLabel(s.id),
+        windowName: this.getSessionLabel(s.id) || s.command,
+        headline: this.deriveHeadline(s.id),
+        status: s.status,
+        role: this.sessionRoles.get(s.id),
+        active: i === this.activeIndex,
+        worktreePath: this.sessionWorktreePaths.get(s.id),
+      })),
+      tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
+      flash: this.footerFlash,
+      metadata: loadMetadataState().sessions,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private buildDesktopState(): {
+    sessions: DashboardSession[];
+    statusline: ReturnType<Multiplexer["buildStatuslineSnapshot"]>;
+    worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+  } {
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+    return {
+      sessions: this.getDashboardSessions(),
+      statusline: this.buildStatuslineSnapshot(),
+      worktrees: listAllWorktrees().filter((wt) => !wt.isBare),
+    };
   }
 
   /** Remove sessions file on exit */

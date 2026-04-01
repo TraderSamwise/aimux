@@ -4,9 +4,11 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
+use std::net::{Shutdown, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State};
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -62,6 +64,22 @@ fn shell_path() -> String {
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+struct DaemonInfo {
+  pid: u32,
+  port: u16,
+  started_at: String,
+  updated_at: String,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ServiceEndpoint {
+  host: String,
+  port: u16,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct DaemonProject {
   id: String,
   name: String,
@@ -71,13 +89,24 @@ struct DaemonProject {
   #[serde(default)]
   service_alive: bool,
   #[serde(default)]
-  sessions: Vec<Value>,
+  service_endpoint: Option<ServiceEndpoint>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DaemonProjectsResponse {
   projects: Vec<DaemonProject>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct DesktopStateResponse {
+  #[serde(default)]
+  sessions: Vec<Value>,
+  #[serde(default)]
+  statusline: Option<Value>,
+  #[serde(default)]
+  worktrees: Vec<Value>,
 }
 
 // What the frontend actually receives — one flat blob per project
@@ -102,6 +131,140 @@ struct HeartbeatResponse {
 fn preview_bytes(bytes: &[u8], limit: usize) -> String {
   let take = bytes.len().min(limit);
   String::from_utf8_lossy(&bytes[..take]).trim().to_string()
+}
+
+fn daemon_info_path() -> PathBuf {
+  aimux_global_dir().join("daemon").join("daemon.json")
+}
+
+fn load_daemon_info() -> Option<DaemonInfo> {
+  let content = fs::read_to_string(daemon_info_path()).ok()?;
+  if content.trim().is_empty() {
+    return None;
+  }
+  serde_json::from_str(&content).ok()
+}
+
+fn http_json_request<T: DeserializeOwned>(
+  host: &str,
+  port: u16,
+  method: &str,
+  path: &str,
+  body: Option<&Value>,
+  context: &str,
+) -> Result<T, String> {
+  let address = format!("{host}:{port}");
+  let mut stream = TcpStream::connect(&address)
+    .map_err(|e| format!("{context}: failed to connect to {address}: {e}"))?;
+  let timeout = Some(Duration::from_secs(5));
+  let _ = stream.set_read_timeout(timeout);
+  let _ = stream.set_write_timeout(timeout);
+
+  let body_text = body.map(|value| value.to_string()).unwrap_or_default();
+  let request = if body.is_some() {
+    format!(
+      "{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+      body_text.len(),
+      body_text
+    )
+  } else {
+    format!("{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n")
+  };
+
+  stream
+    .write_all(request.as_bytes())
+    .and_then(|_| stream.flush())
+    .map_err(|e| format!("{context}: failed to write request: {e}"))?;
+  let _ = stream.shutdown(Shutdown::Write);
+
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .map_err(|e| format!("{context}: failed to read response: {e}"))?;
+
+  let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+    return Err(format!(
+      "{context}: invalid HTTP response from {address}: {:?}",
+      preview_bytes(&response, 400)
+    ));
+  };
+
+  let header_text = String::from_utf8_lossy(&response[..header_end]).to_string();
+  let body_bytes = &response[header_end + 4..];
+  let status_line = header_text.lines().next().unwrap_or_default();
+  let status_code = status_line
+    .split_whitespace()
+    .nth(1)
+    .and_then(|value| value.parse::<u16>().ok())
+    .unwrap_or(0);
+
+  if !(200..300).contains(&status_code) {
+    return Err(format!(
+      "{context}: server returned {status_code}\nresponse={:?}",
+      preview_bytes(body_bytes, 400)
+    ));
+  }
+
+  serde_json::from_slice(body_bytes).map_err(|e| {
+    format!(
+      "{context}: invalid JSON response\nresponse={:?}\nerror={e}",
+      preview_bytes(body_bytes, 400)
+    )
+  })
+}
+
+fn ensure_daemon_http() -> Result<DaemonInfo, String> {
+  if let Some(info) = load_daemon_info() {
+    if http_json_request::<Value>(&"127.0.0.1", info.port, "GET", "/health", None, "daemon health").is_ok() {
+      return Ok(info);
+    }
+  }
+  let _: Value = run_aimux_json(&repo_root(), &["daemon", "ensure", "--json"], "daemon ensure")?;
+  let info = load_daemon_info().ok_or_else(|| "daemon info file missing after startup".to_string())?;
+  let _: Value = http_json_request(&"127.0.0.1", info.port, "GET", "/health", None, "daemon health")?;
+  Ok(info)
+}
+
+fn daemon_json<T: DeserializeOwned>(
+  method: &str,
+  path: &str,
+  body: Option<&Value>,
+  context: &str,
+) -> Result<T, String> {
+  let info = ensure_daemon_http()?;
+  http_json_request("127.0.0.1", info.port, method, path, body, context)
+}
+
+fn project_service_endpoint(project_path: &str) -> Result<ServiceEndpoint, String> {
+  let ensure_body = serde_json::json!({ "projectRoot": project_path });
+  let _: Value = daemon_json("POST", "/projects/ensure", Some(&ensure_body), "daemon project ensure")?;
+
+  let deadline = Instant::now() + Duration::from_secs(5);
+  while Instant::now() < deadline {
+    let response: DaemonProjectsResponse = daemon_json("GET", "/projects", None, "daemon projects")?;
+    if let Some(project) = response.projects.into_iter().find(|project| project.path == project_path) {
+      if let Some(endpoint) = project.service_endpoint {
+        return Ok(endpoint);
+      }
+    }
+    std::thread::sleep(Duration::from_millis(100));
+  }
+
+  Err(format!(
+    "project service endpoint for {} did not become available in time",
+    project_path
+  ))
+}
+
+fn project_service_json<T: DeserializeOwned>(
+  project_path: &str,
+  method: &str,
+  path: &str,
+  body: Option<&Value>,
+  context: &str,
+) -> Result<T, String> {
+  let endpoint = project_service_endpoint(project_path)?;
+  http_json_request(&endpoint.host, endpoint.port, method, path, body, context)
 }
 
 fn run_aimux_json<T: DeserializeOwned>(
@@ -190,39 +353,37 @@ struct TerminalSession {
 
 // ── Heartbeat (background thread → event) ─────────────────────────
 
-static LAST_STATUSLINES: LazyLock<Mutex<HashMap<String, Value>>> =
-  LazyLock::new(|| Mutex::new(HashMap::new()));
-
 fn build_heartbeat() -> Option<HeartbeatResponse> {
-  let cwd = repo_root();
-  let response: DaemonProjectsResponse = run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects")
-    .or_else(|_| {
-      let _: Value = run_aimux_json(&cwd, &["daemon", "ensure", "--json"], "daemon ensure")?;
-      run_aimux_json(&cwd, &["daemon", "projects", "--json"], "daemon projects")
-    })
-    .ok()?;
+  let response: DaemonProjectsResponse = daemon_json("GET", "/projects", None, "daemon projects").ok()?;
 
   let projects = response
     .projects
     .into_iter()
     .map(|project| {
-      let project_dir = aimux_global_dir().join("projects").join(&project.id);
-      let statusline = read_statusline_cached(&project.id, &project_dir);
-
-      let worktrees = run_aimux_json::<Vec<Value>>(
-        Path::new(&project.path),
-        &["worktree", "list", "--project", &project.path, "--json"],
-        "worktree list",
-      ).unwrap_or_default();
+      let desktop_state = project
+        .service_endpoint
+        .as_ref()
+        .and_then(|endpoint| {
+          http_json_request::<DesktopStateResponse>(
+            &endpoint.host,
+            endpoint.port,
+            "GET",
+            "/desktop-state",
+            None,
+            "desktop state",
+          )
+          .ok()
+        })
+        .unwrap_or_default();
 
       ProjectSnapshot {
         id: project.id,
         name: project.name,
         path: project.path,
         service_alive: project.service_alive,
-        sessions: project.sessions,
-        statusline,
-        worktrees,
+        sessions: desktop_state.sessions,
+        statusline: desktop_state.statusline,
+        worktrees: desktop_state.worktrees,
       }
     })
     .collect();
@@ -241,159 +402,77 @@ fn start_heartbeat_thread(app: tauri::AppHandle) {
   });
 }
 
-fn read_statusline_cached(project_id: &str, project_dir: &Path) -> Option<Value> {
-  let fresh = read_statusline_file(project_dir);
-  let mut cache = LAST_STATUSLINES.lock().unwrap_or_else(|e| e.into_inner());
-
-  match fresh {
-    Some(data) => {
-      let fresh_count = data
-        .get("sessions")
-        .and_then(Value::as_array)
-        .map(|a| a.len())
-        .unwrap_or(0);
-
-      if let Some(cached) = cache.get(project_id) {
-        let cached_count = cached
-          .get("sessions")
-          .and_then(Value::as_array)
-          .map(|a| a.len())
-          .unwrap_or(0);
-
-        if fresh_count == 0 && cached_count > 0 {
-          return Some(cached.clone());
-        }
-      }
-
-      cache.insert(project_id.to_string(), data.clone());
-      Some(data)
-    }
-    None => cache.get(project_id).cloned(),
-  }
-}
-
-fn read_statusline_file(project_dir: &Path) -> Option<Value> {
-  let path = project_dir.join("statusline.json");
-  let content = fs::read_to_string(&path).ok()?;
-  let mut data: Value = serde_json::from_str(&content).ok()?;
-
-  // Strip heavy fields the UI doesn't need
-  if let Some(meta) = data.get_mut("metadata").and_then(Value::as_object_mut) {
-    for (_key, entry) in meta.iter_mut() {
-      if let Some(obj) = entry.as_object_mut() {
-        obj.remove("logs");
-        if let Some(derived) = obj.get_mut("derived").and_then(Value::as_object_mut) {
-          derived.remove("events");
-        }
-      }
-    }
-  }
-  Some(data)
-}
-
 // ── Commands: host management ─────────────────────────────────────
 
 #[tauri::command]
 fn ensure_daemon_project(project_path: String) -> Result<Value, String> {
-  let cwd = Path::new(&project_path);
-  let _: Value = run_aimux_json(&repo_root(), &["daemon", "ensure", "--json"], "daemon ensure")?;
-  run_aimux_json(
-    cwd,
-    &["daemon", "project-ensure", "--project", &project_path, "--json"],
-    "daemon project ensure",
-  )
+  let endpoint = project_service_endpoint(&project_path)?;
+  Ok(serde_json::json!({
+    "ok": true,
+    "serviceEndpoint": {
+      "host": endpoint.host,
+      "port": endpoint.port,
+    }
+  }))
 }
 
 // ── Commands: agent lifecycle ──────────────────────────────────────
 
-// Fire-and-forget: spawn CLI process and return immediately.
-// Result shows up in next heartbeat via statusline.
-fn fire_and_forget(project_path: &str, args: &[&str]) -> Result<Value, String> {
-  let mut cmd_args: Vec<String> = vec![aimux_entrypoint().to_string_lossy().to_string()];
-  cmd_args.extend(args.iter().map(|s| s.to_string()));
-
-  std::process::Command::new(resolve_node())
-    .args(&cmd_args)
-    .current_dir(project_path)
-    .env("PATH", shell_path())
-    .stdin(std::process::Stdio::null())
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null())
-    .spawn()
-    .map_err(|e| format!("failed to run command: {e}"))?;
-
-  Ok(serde_json::json!({ "ok": true }))
-}
-
 #[tauri::command]
 fn agent_spawn(project_path: String, tool: String, worktree: Option<String>) -> Result<Value, String> {
-  let mut args = vec!["spawn", "--tool", &tool, "--project", &project_path, "--json", "--no-open"];
-  let wt_ref;
-  if let Some(ref wt) = worktree {
-    wt_ref = wt.as_str();
-    args.push("--worktree");
-    args.push(wt_ref);
-  }
-  fire_and_forget(&project_path, &args)
+  let body = serde_json::json!({
+    "tool": tool,
+    "worktreePath": worktree,
+    "open": false,
+  });
+  project_service_json(&project_path, "POST", "/agents/spawn", Some(&body), "agent spawn")
 }
 
 #[tauri::command]
 fn agent_stop(project_path: String, session_id: String) -> Result<Value, String> {
-  // Run on a background thread so UI doesn't freeze, but let the process complete
-  let pp = project_path.clone();
-  let sid = session_id.clone();
-  std::thread::spawn(move || {
-    let _ = std::process::Command::new(resolve_node())
-      .arg(aimux_entrypoint())
-      .args(["stop", &sid, "--project", &pp, "--json"])
-      .current_dir(&pp)
-      .env("PATH", shell_path())
-      .output();
-  });
-  Ok(serde_json::json!({ "ok": true }))
+  let body = serde_json::json!({ "sessionId": session_id });
+  project_service_json(&project_path, "POST", "/agents/stop", Some(&body), "agent stop")
 }
 
 #[tauri::command]
 fn agent_kill(project_path: String, session_id: String) -> Result<Value, String> {
-  let pp = project_path.clone();
-  let sid = session_id.clone();
-  std::thread::spawn(move || {
-    let _ = std::process::Command::new(resolve_node())
-      .arg(aimux_entrypoint())
-      .args(["kill", &sid, "--project", &pp, "--json"])
-      .current_dir(&pp)
-      .env("PATH", shell_path())
-      .output();
-  });
-  Ok(serde_json::json!({ "ok": true }))
+  let body = serde_json::json!({ "sessionId": session_id });
+  project_service_json(&project_path, "POST", "/agents/kill", Some(&body), "agent kill")
 }
 
 #[tauri::command]
 fn agent_fork(project_path: String, session_id: String, tool: Option<String>, worktree: Option<String>) -> Result<Value, String> {
-  let mut args = vec!["fork", &session_id, "--project", &project_path, "--json", "--no-open"];
-  let tool_ref;
-  if let Some(ref t) = tool {
-    tool_ref = t.as_str();
-    args.push("--tool");
-    args.push(tool_ref);
-  }
-  let wt_ref;
-  if let Some(ref wt) = worktree {
-    wt_ref = wt.as_str();
-    args.push("--worktree");
-    args.push(wt_ref);
-  }
-  fire_and_forget(&project_path, &args)
+  let body = serde_json::json!({
+    "sourceSessionId": session_id,
+    "tool": tool.unwrap_or_else(|| "claude".to_string()),
+    "worktreePath": worktree,
+    "open": false,
+  });
+  project_service_json(&project_path, "POST", "/agents/fork", Some(&body), "agent fork")
+}
+
+#[tauri::command]
+fn agent_rename(project_path: String, session_id: String, label: Option<String>) -> Result<Value, String> {
+  let body = serde_json::json!({
+    "sessionId": session_id,
+    "label": label,
+  });
+  project_service_json(&project_path, "POST", "/agents/rename", Some(&body), "agent rename")
+}
+
+#[tauri::command]
+fn agent_migrate(project_path: String, session_id: String, worktree: String) -> Result<Value, String> {
+  let body = serde_json::json!({
+    "sessionId": session_id,
+    "worktreePath": worktree,
+  });
+  project_service_json(&project_path, "POST", "/agents/migrate", Some(&body), "agent migrate")
 }
 
 #[tauri::command]
 fn worktree_create(project_path: String, name: String) -> Result<Value, String> {
-  // Worktree create is fast (git operation) — keep synchronous so we can report errors
-  run_aimux_json(
-    Path::new(&project_path),
-    &["worktree", "create", &name, "--project", &project_path, "--json"],
-    "worktree create",
-  )
+  let body = serde_json::json!({ "name": name });
+  project_service_json(&project_path, "POST", "/worktrees/create", Some(&body), "worktree create")
 }
 
 #[tauri::command]
@@ -596,6 +675,8 @@ fn main() {
       agent_stop,
       agent_kill,
       agent_fork,
+      agent_rename,
+      agent_migrate,
       worktree_create,
       worktree_list,
       graveyard_list,

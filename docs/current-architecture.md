@@ -98,6 +98,13 @@ They:
 - attach to tmux dashboards/agent windows
 - call metadata/orchestration surfaces through the daemon-managed system
 
+Desktop transport is now HTTP-first:
+
+- desktop uses daemon HTTP for project discovery and project-service discovery
+- desktop uses project-service HTTP for live project snapshots and awaited lifecycle actions
+- desktop should not poll by spawning CLI subprocesses for routine heartbeat state
+- desktop should treat `statusline.json` as a derived/debug artifact, not as its primary live API
+
 The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
 
 ```bash
@@ -169,12 +176,14 @@ Desktop should be designed around:
 - one global daemon
 - daemon-managed project services
 - tmux as runtime authority
+- daemon/project-service HTTP as the primary desktop transport
 
 Desktop should not:
 
 - infer project liveness from stale project-local lease files
 - spawn replacement project hosts directly
 - assume the dashboard process owns shared control-plane state
+- rely on CLI subprocess polling for routine live updates
 
 ## Notes
 
