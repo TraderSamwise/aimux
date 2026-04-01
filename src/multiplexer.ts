@@ -2285,7 +2285,7 @@ export class Multiplexer {
         worktreePath: focusedWorktreePath,
       });
       options.push({
-        label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${recipientIds.length > 0 ? ` [${recipientIds.length}]` : ""}`,
+        label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${this.formatRoutePreview(recipientIds)}`,
         assignee: role,
         worktreePath: focusedWorktreePath,
         recipientIds,
@@ -2301,7 +2301,7 @@ export class Multiplexer {
         worktreePath: focusedWorktreePath,
       });
       options.push({
-        label: `Tool: ${toolKey}${recipientIds.length > 0 ? ` [${recipientIds.length}]` : ""}`,
+        label: `Tool: ${toolKey}${this.formatRoutePreview(recipientIds)}`,
         tool: toolKey,
         worktreePath: focusedWorktreePath,
         recipientIds,
@@ -2406,6 +2406,13 @@ export class Multiplexer {
     }
     output += "\x1b8";
     process.stdout.write(output);
+  }
+
+  private formatRoutePreview(recipientIds: string[]): string {
+    if (recipientIds.length === 0) return "";
+    const preview = recipientIds.slice(0, 2).join(", ");
+    const remainder = recipientIds.length > 2 ? `, +${recipientIds.length - 2}` : "";
+    return ` [${recipientIds.length}: ${preview}${remainder}]`;
   }
 
   private async postToProjectService(path: string, body: unknown): Promise<any> {
