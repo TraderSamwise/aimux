@@ -4,7 +4,7 @@
   import { createTerminal } from "./terminal-instance.svelte.js";
   import { getState, resizeTerminal, writeTerminal } from "../stores/state.svelte.js";
 
-  export let visible = false;
+  let { visible = false } = $props();
 
   const state = getState();
   let containerEl;
