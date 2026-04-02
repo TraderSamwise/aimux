@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { getAimuxDirFor, getProjectStateDirById, listProjects } from "./paths.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
@@ -260,8 +260,18 @@ export function scanAllProjects(): ProjectInfo[] {
 export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopProjectInfo[] {
   const scannedByPath = new Map(scanAllProjects().map((project) => [project.path, project]));
   const projects = new Map<string, DesktopProjectInfo>();
+  const osTmpDir = tmpdir();
+
+  function shouldHideDesktopProject(projectPath: string): boolean {
+    const name = basename(projectPath);
+    if (!projectPath.startsWith(osTmpDir)) {
+      return false;
+    }
+    return name.startsWith("aimux-metadata-server-") || name.startsWith("aimux-test-");
+  }
 
   for (const entry of listProjects()) {
+    if (shouldHideDesktopProject(entry.repoRoot)) continue;
     const scanned = scannedByPath.get(entry.repoRoot);
     const tmuxSession = tmux.getProjectSession(entry.repoRoot);
     projects.set(entry.repoRoot, {
@@ -275,6 +285,7 @@ export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopPro
   }
 
   for (const scanned of scannedByPath.values()) {
+    if (shouldHideDesktopProject(scanned.path)) continue;
     if (projects.has(scanned.path)) continue;
     const tmuxSession = tmux.getProjectSession(scanned.path);
     projects.set(scanned.path, {

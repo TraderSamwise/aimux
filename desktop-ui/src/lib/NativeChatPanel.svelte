@@ -165,18 +165,56 @@
     return null;
   }
 
+  function messagePromptText(message) {
+    if (!Array.isArray(message?.parts)) return "";
+    return message.parts
+      .map((part, index) => {
+        if (part?.type === "text") {
+          return String(part.text || "");
+        }
+        if (part?.type === "image") {
+          return `[image #${index + 1}]`;
+        }
+        return "";
+      })
+      .join("")
+      .trim();
+  }
+
+  function normalizePromptText(value) {
+    return String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  }
+
   let conversationEntries = $derived.by(() => {
     const promptBlocks = conversationBlocks.filter((block) => block.type === "prompt");
     const promptMessageByPromptIndex = new Map();
+    const matchedHistoryIndices = new Set();
     let historyIndex = historyMessages.length - 1;
     for (let promptIndex = promptBlocks.length - 1; promptIndex >= 0; promptIndex -= 1) {
-      const message = historyIndex >= 0 ? historyMessages[historyIndex] : null;
-      if (!message) continue;
-      promptMessageByPromptIndex.set(promptIndex, message);
-      historyIndex -= 1;
+      const block = promptBlocks[promptIndex];
+      const blockText = normalizePromptText(block?.text);
+      let matchedIndex = -1;
+      for (let candidateIndex = historyIndex; candidateIndex >= 0; candidateIndex -= 1) {
+        const candidateText = normalizePromptText(messagePromptText(historyMessages[candidateIndex]));
+        if (!candidateText) continue;
+        if (candidateText === blockText || candidateText.includes(blockText) || blockText.includes(candidateText)) {
+          matchedIndex = candidateIndex;
+          break;
+        }
+      }
+      if (matchedIndex === -1 && historyIndex >= 0) {
+        matchedIndex = historyIndex;
+      }
+      if (matchedIndex === -1) continue;
+      promptMessageByPromptIndex.set(promptIndex, historyMessages[matchedIndex]);
+      matchedHistoryIndices.add(matchedIndex);
+      historyIndex = matchedIndex - 1;
     }
     let promptIndex = 0;
-    return conversationBlocks.map((block, index) => {
+    const entries = conversationBlocks.map((block, index) => {
       if (block.type !== "prompt") {
         return {
           id: `response:${index}`,
@@ -193,6 +231,22 @@
         parts: Array.isArray(message?.parts) ? message.parts : null,
       };
     });
+
+    const trailingStart =
+      matchedHistoryIndices.size > 0 ? Math.max(...matchedHistoryIndices) + 1 : 0;
+    const trailingUnmatchedHistory = historyMessages.filter(
+      (_, index) => index >= trailingStart && !matchedHistoryIndices.has(index),
+    );
+    for (const message of trailingUnmatchedHistory) {
+      entries.push({
+        id: message?.id || `history:${entries.length}`,
+        type: "prompt",
+        text: messagePromptText(message),
+        parts: Array.isArray(message?.parts) ? message.parts : null,
+      });
+    }
+
+    return entries;
   });
 
   async function fileToImageInput(file) {

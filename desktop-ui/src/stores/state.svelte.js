@@ -1122,14 +1122,23 @@ export async function sendNativeChatMessage() {
   if (!projectPath || !sessionId || outboundParts.length === 0) return;
 
   const parts = [];
+  const historyParts = [];
   for (const part of outboundParts) {
     if (part.type === "text") {
       parts.push({ type: "text", text: part.text });
+      historyParts.push({ type: "text", text: part.text });
     } else {
       parts.push({
         type: "image",
         attachmentId: part.attachmentId,
         alt: part.name,
+      });
+      historyParts.push({
+        type: "image",
+        attachmentId: part.attachmentId,
+        filename: part.name || "image",
+        mimeType: part.mimeType || undefined,
+        contentUrl: part.contentUrl || undefined,
       });
     }
   }
@@ -1151,8 +1160,16 @@ export async function sendNativeChatMessage() {
       }),
   );
 
+  nativeChatHistory = [
+    ...nativeChatHistory,
+    {
+      id: `local-${crypto.randomUUID()}`,
+      role: "user",
+      ts: new Date().toISOString(),
+      parts: historyParts,
+    },
+  ];
   setNativeChatDraftPartsForSession(sessionId, [createNativeChatTextPart("")]);
-  syncNativeChatSelection({ preserveSnapshot: true });
 }
 
 export async function restartControlPlane() {
