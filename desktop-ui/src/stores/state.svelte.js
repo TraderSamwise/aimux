@@ -599,7 +599,12 @@ async function pollNativeChat(projectPath, sessionId, token, delayMs = 0) {
 
   nativeChatPollTimer = setTimeout(async () => {
     if (token !== nativeChatPollToken) return;
-    if (nativeChatPollInFlight) return;
+    if (nativeChatPollInFlight) {
+      if (token === nativeChatPollToken) {
+        void pollNativeChat(projectPath, sessionId, token, 150);
+      }
+      return;
+    }
 
     nativeChatPollInFlight = true;
     try {
@@ -634,6 +639,11 @@ function syncNativeChatSelection() {
     return;
   }
 
+  if (nativeChatPollTimer) {
+    clearTimeout(nativeChatPollTimer);
+    nativeChatPollTimer = null;
+  }
+  nativeChatPollInFlight = false;
   beginNativeChatSelection(selectedProjectPath, selectedSessionId);
   nativeChatPollToken += 1;
   const token = nativeChatPollToken;
