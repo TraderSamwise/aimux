@@ -1045,6 +1045,7 @@ fn focus_terminal_agent(
   project_path: String,
   agent_id: String,
 ) -> Result<(), String> {
+  let started = Instant::now();
   let sessions = state
     .0
     .sessions
@@ -1067,8 +1068,21 @@ fn focus_terminal_agent(
     .tty_path
     .clone()
     .ok_or_else(|| format!("terminal session {} has no PTY tty path", session_id))?;
+  let located_at = Instant::now();
   let window_id = find_window_for_session(&project_path, &agent_id)?;
-  switch_tmux_client_to_window(&client_tty, &window_id)
+  let resolved_at = Instant::now();
+  switch_tmux_client_to_window(&client_tty, &window_id)?;
+  let finished_at = Instant::now();
+  eprintln!(
+    "[desktop-focus-agent] terminal_session={} agent={} lookup_ms={} resolve_ms={} switch_ms={} total_ms={}",
+    session_id,
+    agent_id,
+    located_at.duration_since(started).as_millis(),
+    resolved_at.duration_since(located_at).as_millis(),
+    finished_at.duration_since(resolved_at).as_millis(),
+    finished_at.duration_since(started).as_millis()
+  );
+  Ok(())
 }
 
 #[tauri::command]
@@ -1077,6 +1091,7 @@ fn focus_terminal_dashboard(
   session_id: u32,
   project_path: String,
 ) -> Result<(), String> {
+  let started = Instant::now();
   let sessions = state
     .0
     .sessions
@@ -1099,8 +1114,20 @@ fn focus_terminal_dashboard(
     .tty_path
     .clone()
     .ok_or_else(|| format!("terminal session {} has no PTY tty path", session_id))?;
+  let located_at = Instant::now();
   let window_id = find_dashboard_window(&project_path)?;
-  switch_tmux_client_to_window(&client_tty, &window_id)
+  let resolved_at = Instant::now();
+  switch_tmux_client_to_window(&client_tty, &window_id)?;
+  let finished_at = Instant::now();
+  eprintln!(
+    "[desktop-focus-dashboard] terminal_session={} lookup_ms={} resolve_ms={} switch_ms={} total_ms={}",
+    session_id,
+    located_at.duration_since(started).as_millis(),
+    resolved_at.duration_since(located_at).as_millis(),
+    finished_at.duration_since(resolved_at).as_millis(),
+    finished_at.duration_since(started).as_millis()
+  );
+  Ok(())
 }
 
 #[tauri::command]
