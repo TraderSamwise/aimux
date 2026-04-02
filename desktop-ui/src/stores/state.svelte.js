@@ -11,6 +11,7 @@ let interactionMode = $state("terminal");
 let terminalSessionId = $state(null);
 let terminalStatus = $state("Idle");
 let terminalProjectPath = $state(null);
+let terminalSwitching = $state(false);
 let nativeChatOutput = $state("");
 let nativeChatBlocks = $state([]);
 let nativeChatHistory = $state([]);
@@ -837,6 +838,7 @@ export function getState() {
     set interactionMode(v) { interactionMode = v; },
     get terminalSessionId() { return terminalSessionId; },
     get terminalStatus() { return terminalStatus; },
+    get terminalSwitching() { return terminalSwitching; },
     get currentAction() { return currentAction; },
     get inFlightActions() { return inFlightActions; },
     get currentAlert() { return currentAlert; },
@@ -996,17 +998,21 @@ async function stopTerminalSession() {
   try { await invoke("close_terminal", { sessionId: terminalSessionId }); } catch {}
   terminalSessionId = null;
   terminalProjectPath = null;
+  terminalSwitching = false;
 }
 
 export async function runTerminal(terminal, projectPath, args, label) {
   await detachListeners();
   await stopTerminalSession();
   terminal.reset();
+  terminal.writeln(`\x1b[38;5;81mOpening ${label}...\x1b[0m`);
   terminalStatus = label;
   terminalProjectPath = projectPath;
+  terminalSwitching = true;
 
   unlistenOutput = await listen("terminal-output", (event) => {
     if (event.payload.sessionId !== terminalSessionId) return;
+    terminalSwitching = false;
     terminal.write(event.payload.data);
   });
 
@@ -1015,6 +1021,7 @@ export async function runTerminal(terminal, projectPath, args, label) {
     terminalStatus = `Exited${event.payload.code == null ? "" : ` (${event.payload.code})`}`;
     terminalSessionId = null;
     terminalProjectPath = null;
+    terminalSwitching = false;
   });
 
   terminalSessionId = await invoke("spawn_aimux", {
@@ -1025,14 +1032,18 @@ export async function runTerminal(terminal, projectPath, args, label) {
   });
 }
 
-export async function focusTerminalAgent(terminal, projectPath, sessionId, label) {
+export async function focusTerminalAgent(terminal, projectPath, sessionId, label, windowId = null) {
+  terminal.reset();
+  terminal.writeln(`\x1b[38;5;81mSwitching to ${label}...\x1b[0m`);
   terminalStatus = label;
+  terminalSwitching = true;
   if (terminalSessionId && terminalProjectPath === projectPath) {
     try {
       await invoke("focus_terminal_agent", {
         sessionId: terminalSessionId,
         projectPath,
         agentId: sessionId,
+        windowId,
       });
       return;
     } catch {}
@@ -1053,11 +1064,16 @@ export async function openSession(terminal, projectPath, sessionId, label) {
     return;
   }
   if (!terminal) return;
-  void focusTerminalAgent(terminal, projectPath, sessionId, label).catch(() => {});
+  const project = projects.find((entry) => entry.path === projectPath) || null;
+  const session = (project?.sessions || []).find((entry) => entry.id === sessionId) || null;
+  void focusTerminalAgent(terminal, projectPath, sessionId, label, session?.tmuxWindowId || null).catch(() => {});
 }
 
 export async function openTerminalDashboard(terminal, projectPath, label) {
+  terminal.reset();
+  terminal.writeln(`\x1b[38;5;81mOpening ${label}...\x1b[0m`);
   terminalStatus = label;
+  terminalSwitching = true;
   if (terminalSessionId && terminalProjectPath === projectPath) {
     try {
       await invoke("focus_terminal_dashboard", {

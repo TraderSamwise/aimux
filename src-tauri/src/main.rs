@@ -12,6 +12,7 @@ use std::net::{Shutdown, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State};
 
@@ -175,6 +176,30 @@ struct HeartbeatResponse {
 struct PickedImage {
   path: String,
   name: String,
+}
+
+static TMUX_TARGET_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+fn tmux_target_cache() -> &'static Mutex<HashMap<String, String>> {
+  TMUX_TARGET_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cache_key_for_agent(project_path: &str, agent_id: &str) -> String {
+  format!("agent:{project_path}:{agent_id}")
+}
+
+fn cache_key_for_dashboard(project_path: &str) -> String {
+  format!("dashboard:{project_path}")
+}
+
+fn load_cached_tmux_target(key: &str) -> Option<String> {
+  tmux_target_cache().lock().ok()?.get(key).cloned()
+}
+
+fn save_cached_tmux_target(key: String, window_id: String) {
+  if let Ok(mut cache) = tmux_target_cache().lock() {
+    cache.insert(key, window_id);
+  }
 }
 
 fn preview_bytes(bytes: &[u8], limit: usize) -> String {
@@ -1388,6 +1413,7 @@ async fn focus_terminal_agent(
   session_id: u32,
   project_path: String,
   agent_id: String,
+  window_id: Option<String>,
 ) -> Result<(), String> {
   let session = {
     let sessions = state
@@ -1410,8 +1436,22 @@ async fn focus_terminal_agent(
     }
 
     let client_tty = terminal_client_tty(session_id, &session)?;
-    let window_id = find_window_for_session(&project_path, &agent_id)?;
-    switch_tmux_client_to_window(&client_tty, &window_id)
+    let cache_key = cache_key_for_agent(&project_path, &agent_id);
+    let target_window_id = match window_id {
+      Some(window_id) if !window_id.trim().is_empty() => window_id,
+      _ => load_cached_tmux_target(&cache_key).unwrap_or_else(|| "".to_string()),
+    };
+    if !target_window_id.trim().is_empty() {
+      if switch_tmux_client_to_window(&client_tty, &target_window_id).is_ok() {
+        save_cached_tmux_target(cache_key, target_window_id);
+        return Ok(());
+      }
+    }
+
+    let refreshed_window_id = find_window_for_session(&project_path, &agent_id)?;
+    switch_tmux_client_to_window(&client_tty, &refreshed_window_id)?;
+    save_cached_tmux_target(cache_key, refreshed_window_id);
+    Ok(())
   })
   .await
   .map_err(|error| format!("failed to join terminal focus task: {error}"))?
@@ -1444,8 +1484,16 @@ async fn focus_terminal_dashboard(
     }
 
     let client_tty = terminal_client_tty(session_id, &session)?;
+    let cache_key = cache_key_for_dashboard(&project_path);
+    if let Some(window_id) = load_cached_tmux_target(&cache_key) {
+      if switch_tmux_client_to_window(&client_tty, &window_id).is_ok() {
+        return Ok(());
+      }
+    }
     let window_id = find_dashboard_window(&project_path)?;
-    switch_tmux_client_to_window(&client_tty, &window_id)
+    switch_tmux_client_to_window(&client_tty, &window_id)?;
+    save_cached_tmux_target(cache_key, window_id);
+    Ok(())
   })
   .await
   .map_err(|error| format!("failed to join terminal dashboard focus task: {error}"))?

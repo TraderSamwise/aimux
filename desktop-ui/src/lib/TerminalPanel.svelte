@@ -82,7 +82,17 @@
     <span class="section-label">Terminal</span>
     <span class="status">{state.terminalStatus}</span>
   </div>
-  <div class="terminal-container" bind:this={containerEl}></div>
+  <div class="terminal-shell">
+    <div class="terminal-container" bind:this={containerEl}></div>
+    {#if state.terminalSwitching}
+      <div class="terminal-overlay">
+        <div class="terminal-overlay-card">
+          <div class="terminal-overlay-kicker">Switching</div>
+          <div class="terminal-overlay-title">{state.terminalStatus}</div>
+        </div>
+      </div>
+    {/if}
+  </div>
 </section>
 
 <style>
@@ -128,7 +138,52 @@
     padding: 0 12px 12px;
   }
 
+  .terminal-shell {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
   .terminal-container :global(.xterm) {
     height: 100%;
+  }
+
+  .terminal-overlay {
+    position: absolute;
+    inset: 0 12px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, rgba(9, 14, 24, 0.82), rgba(9, 14, 24, 0.9));
+    border: 1px solid rgba(125, 211, 252, 0.12);
+    border-radius: 12px;
+    backdrop-filter: blur(2px);
+    z-index: 5;
+    pointer-events: none;
+  }
+
+  .terminal-overlay-card {
+    padding: 18px 22px;
+    border-radius: 16px;
+    border: 1px solid rgba(125, 211, 252, 0.2);
+    background: rgba(8, 13, 22, 0.88);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+    text-align: center;
+  }
+
+  .terminal-overlay-kicker {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--accent);
+  }
+
+  .terminal-overlay-title {
+    margin-top: 8px;
+    font-size: 14px;
+    color: var(--text);
   }
 </style>
