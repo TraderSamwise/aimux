@@ -1,5 +1,5 @@
 <script>
-  import { getState, runTerminal } from "../stores/state.svelte.js";
+  import { getState, openTerminalDashboard } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const state = getState();
@@ -12,10 +12,9 @@
   async function openDashboard() {
     const project = state.selectedProject;
     if (!project || !termInstance.terminal) return;
-    await runTerminal(
+    await openTerminalDashboard(
       termInstance.terminal,
       project.path,
-      ["desktop", "open", "--project", project.path],
       `Dashboard · ${project.name}`,
     );
   }

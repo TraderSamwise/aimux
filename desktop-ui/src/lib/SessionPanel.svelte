@@ -1,5 +1,5 @@
 <script>
-  import { getState, selectSession, runTerminal } from "../stores/state.svelte.js";
+  import { getState, selectSession, focusTerminalAgent } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const state = getState();
@@ -9,10 +9,10 @@
     selectSession(session.id);
     const project = state.selectedProject;
     if (!project || !termInstance.terminal) return;
-    await runTerminal(
+    await focusTerminalAgent(
       termInstance.terminal,
       project.path,
-      ["desktop", "focus", "--project", project.path, "--session", session.id],
+      session.id,
       `${session.label || session.id}`,
     );
   }

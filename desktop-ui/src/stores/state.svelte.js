@@ -9,6 +9,7 @@ let selectedSessionId = $state(null);
 let selectedScreen = $state("dashboard");
 let terminalSessionId = $state(null);
 let terminalStatus = $state("Idle");
+let terminalProjectPath = $state(null);
 
 let unlistenOutput = null;
 let unlistenExit = null;
@@ -436,6 +437,7 @@ async function stopTerminalSession() {
   if (!terminalSessionId) return;
   try { await invoke("close_terminal", { sessionId: terminalSessionId }); } catch {}
   terminalSessionId = null;
+  terminalProjectPath = null;
 }
 
 export async function runTerminal(terminal, projectPath, args, label) {
@@ -443,6 +445,7 @@ export async function runTerminal(terminal, projectPath, args, label) {
   await stopTerminalSession();
   terminal.reset();
   terminalStatus = label;
+  terminalProjectPath = projectPath;
 
   unlistenOutput = await listen("terminal-output", (event) => {
     if (event.payload.sessionId !== terminalSessionId) return;
@@ -453,6 +456,7 @@ export async function runTerminal(terminal, projectPath, args, label) {
     if (event.payload.sessionId !== terminalSessionId) return;
     terminalStatus = `Exited${event.payload.code == null ? "" : ` (${event.payload.code})`}`;
     terminalSessionId = null;
+    terminalProjectPath = null;
   });
 
   terminalSessionId = await invoke("spawn_aimux", {
@@ -461,6 +465,47 @@ export async function runTerminal(terminal, projectPath, args, label) {
     cols: terminal.cols,
     rows: terminal.rows,
   });
+}
+
+export async function focusTerminalAgent(terminal, projectPath, sessionId, label) {
+  terminalStatus = label;
+  if (terminalSessionId && terminalProjectPath === projectPath) {
+    try {
+      await invoke("focus_terminal_agent", {
+        sessionId: terminalSessionId,
+        projectPath,
+        agentId: sessionId,
+      });
+      return;
+    } catch {}
+  }
+
+  await runTerminal(
+    terminal,
+    projectPath,
+    ["desktop", "focus", "--project", projectPath, "--session", sessionId],
+    label,
+  );
+}
+
+export async function openTerminalDashboard(terminal, projectPath, label) {
+  terminalStatus = label;
+  if (terminalSessionId && terminalProjectPath === projectPath) {
+    try {
+      await invoke("focus_terminal_dashboard", {
+        sessionId: terminalSessionId,
+        projectPath,
+      });
+      return;
+    } catch {}
+  }
+
+  await runTerminal(
+    terminal,
+    projectPath,
+    ["desktop", "open", "--project", projectPath],
+    label,
+  );
 }
 
 export async function resizeTerminal(terminal) {

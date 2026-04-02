@@ -2,8 +2,10 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::fs;
 use std::io::{Read, Write};
+use std::process::Command;
 use std::net::{Shutdown, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -349,6 +351,118 @@ struct TerminalSession {
   master: Mutex<Box<dyn MasterPty + Send>>,
   writer: Mutex<Box<dyn Write + Send>>,
   child: Mutex<Box<dyn Child + Send>>,
+  project_path: String,
+  tty_path: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TmuxWindowMetadata {
+  session_id: String,
+}
+
+fn tmux_output(args: &[&str], context: &str) -> Result<String, String> {
+  let output = Command::new("tmux")
+    .args(args)
+    .env("PATH", shell_path())
+    .output()
+    .map_err(|error| format!("{context}: failed to spawn tmux: {error}"))?;
+  if !output.status.success() {
+    return Err(format!(
+      "{context}: tmux {} failed: {}",
+      args.join(" "),
+      preview_bytes(&output.stderr, 400)
+    ));
+  }
+  Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn pty_tty_path(master: &dyn MasterPty) -> Option<String> {
+  #[cfg(unix)]
+  {
+    let fd = master.as_raw_fd()?;
+    let ptr = unsafe { libc::ttyname(fd) };
+    if ptr.is_null() {
+      return None;
+    }
+    return Some(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().to_string());
+  }
+  #[allow(unreachable_code)]
+  None
+}
+
+fn find_project_sessions(project_path: &str) -> Result<Vec<String>, String> {
+  let output = tmux_output(&["list-sessions", "-F", "#{session_name}"], "tmux list sessions")?;
+  let mut matches = Vec::new();
+  for session_name in output.lines().filter(|line| !line.trim().is_empty()) {
+    let root = tmux_output(
+      &["show-options", "-v", "-t", session_name, "@aimux-project-root"],
+      "tmux show project root",
+    )
+    .unwrap_or_default();
+    if root == project_path {
+      matches.push(session_name.to_string());
+    }
+  }
+  Ok(matches)
+}
+
+fn find_window_for_session(project_path: &str, aimux_session_id: &str) -> Result<String, String> {
+  for session_name in find_project_sessions(project_path)? {
+    let output = tmux_output(
+      &["list-windows", "-t", &session_name, "-F", "#{window_id}"],
+      "tmux list windows",
+    )?;
+    for window_id in output.lines().filter(|line| !line.trim().is_empty()) {
+      let raw = match tmux_output(
+        &["show-window-options", "-v", "-t", window_id, "@aimux-meta"],
+        "tmux show window metadata",
+      ) {
+        Ok(value) => value,
+        Err(_) => continue,
+      };
+      let Ok(metadata) = serde_json::from_str::<TmuxWindowMetadata>(&raw) else {
+        continue;
+      };
+      if metadata.session_id == aimux_session_id {
+        return Ok(window_id.to_string());
+      }
+    }
+  }
+  Err(format!(
+    "no tmux window found for session {} in {}",
+    aimux_session_id, project_path
+  ))
+}
+
+fn find_dashboard_window(project_path: &str) -> Result<String, String> {
+  for session_name in find_project_sessions(project_path)? {
+    let output = tmux_output(
+      &["list-windows", "-t", &session_name, "-F", "#{window_id}\t#{window_name}"],
+      "tmux list windows",
+    )?;
+    for line in output.lines().filter(|line| !line.trim().is_empty()) {
+      let mut parts = line.split('\t');
+      let Some(window_id) = parts.next() else {
+        continue;
+      };
+      let Some(window_name) = parts.next() else {
+        continue;
+      };
+      if window_name == "dashboard" || window_name.starts_with("dashboard-") {
+        return Ok(window_id.to_string());
+      }
+    }
+  }
+  Err(format!("no dashboard tmux window found in {}", project_path))
+}
+
+fn switch_tmux_client_to_window(client_tty: &str, window_id: &str) -> Result<(), String> {
+  let _ = tmux_output(
+    &["switch-client", "-c", client_tty, "-t", window_id],
+    "tmux switch client",
+  )?;
+  Ok(())
 }
 
 // ── Heartbeat (background thread → event) ─────────────────────────
@@ -854,13 +968,14 @@ fn spawn_aimux(
   for arg in args {
     command.arg(arg);
   }
-  command.cwd(project);
+  command.cwd(&project);
   command.env("PATH", shell_path());
 
   let child = pair
     .slave
     .spawn_command(command)
     .map_err(|error| format!("failed to spawn aimux terminal: {error}"))?;
+  let tty_path = pty_tty_path(&*pair.master);
 
   let writer = pair
     .master
@@ -876,6 +991,8 @@ fn spawn_aimux(
     master: Mutex::new(pair.master),
     writer: Mutex::new(writer),
     child: Mutex::new(child),
+    project_path: project.clone(),
+    tty_path,
   });
   state
     .0
@@ -919,6 +1036,71 @@ fn spawn_aimux(
   });
 
   Ok(session_id)
+}
+
+#[tauri::command]
+fn focus_terminal_agent(
+  state: State<TerminalRegistry>,
+  session_id: u32,
+  project_path: String,
+  agent_id: String,
+) -> Result<(), String> {
+  let sessions = state
+    .0
+    .sessions
+    .lock()
+    .map_err(|_| "terminal session registry is poisoned".to_string())?;
+  let session = sessions
+    .get(&session_id)
+    .cloned()
+    .ok_or_else(|| format!("terminal session {session_id} not found"))?;
+  drop(sessions);
+
+  if session.project_path != project_path {
+    return Err(format!(
+      "terminal session {} is attached to {}, not {}",
+      session_id, session.project_path, project_path
+    ));
+  }
+
+  let client_tty = session
+    .tty_path
+    .clone()
+    .ok_or_else(|| format!("terminal session {} has no PTY tty path", session_id))?;
+  let window_id = find_window_for_session(&project_path, &agent_id)?;
+  switch_tmux_client_to_window(&client_tty, &window_id)
+}
+
+#[tauri::command]
+fn focus_terminal_dashboard(
+  state: State<TerminalRegistry>,
+  session_id: u32,
+  project_path: String,
+) -> Result<(), String> {
+  let sessions = state
+    .0
+    .sessions
+    .lock()
+    .map_err(|_| "terminal session registry is poisoned".to_string())?;
+  let session = sessions
+    .get(&session_id)
+    .cloned()
+    .ok_or_else(|| format!("terminal session {session_id} not found"))?;
+  drop(sessions);
+
+  if session.project_path != project_path {
+    return Err(format!(
+      "terminal session {} is attached to {}, not {}",
+      session_id, session.project_path, project_path
+    ));
+  }
+
+  let client_tty = session
+    .tty_path
+    .clone()
+    .ok_or_else(|| format!("terminal session {} has no PTY tty path", session_id))?;
+  let window_id = find_dashboard_window(&project_path)?;
+  switch_tmux_client_to_window(&client_tty, &window_id)
 }
 
 #[tauri::command]
@@ -1024,6 +1206,8 @@ fn main() {
       review_approve,
       review_request_changes,
       spawn_aimux,
+      focus_terminal_agent,
+      focus_terminal_dashboard,
       write_terminal,
       resize_terminal,
       close_terminal
