@@ -29,6 +29,7 @@ let unlistenExit = null;
 let unlistenHeartbeat = null;
 let nativeChatHistoryTimer = null;
 let nativeChatReconnectTimer = null;
+let nativeChatResyncTimer = null;
 let nativeChatStream = null;
 let nativeChatStreamToken = 0;
 let nativeChatHistoryInFlight = false;
@@ -489,12 +490,27 @@ function stopNativeChatStreaming({ clear = false } = {}) {
     clearTimeout(nativeChatReconnectTimer);
     nativeChatReconnectTimer = null;
   }
+  if (nativeChatResyncTimer) {
+    clearInterval(nativeChatResyncTimer);
+    nativeChatResyncTimer = null;
+  }
   if (nativeChatStream) {
     nativeChatStream.close();
     nativeChatStream = null;
   }
   nativeChatLoading = false;
   if (clear) clearNativeChatSnapshot();
+}
+
+function startNativeChatResync(projectPath, sessionId, token, intervalMs = 1000) {
+  if (nativeChatResyncTimer) {
+    clearInterval(nativeChatResyncTimer);
+    nativeChatResyncTimer = null;
+  }
+  nativeChatResyncTimer = setInterval(() => {
+    if (token !== nativeChatStreamToken) return;
+    void fetchNativeChatSnapshot(projectPath, sessionId, token);
+  }, intervalMs);
 }
 
 async function refreshNativeChatHistory(projectPath, sessionId, token) {
@@ -581,6 +597,7 @@ function startNativeChatStream(projectPath, sessionId, endpoint, token) {
 
   const stream = new EventSource(url.toString());
   nativeChatStream = stream;
+  startNativeChatResync(projectPath, sessionId, token, 1000);
 
   stream.addEventListener("ready", () => {
     if (token !== nativeChatStreamToken) return;
