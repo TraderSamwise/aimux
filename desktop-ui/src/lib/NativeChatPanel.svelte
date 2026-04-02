@@ -191,7 +191,8 @@
           {#if conversationBlocks.length > 0}
             <div class="message-list">
               {#each conversationBlocks as block, index (`${block.type}:${index}`)}
-                <article class="message" class:prompt={block.type === "prompt"} class:response={block.type === "response"}>
+                <article class="turn" class:prompt-turn={block.type === "prompt"} class:response-turn={block.type === "response"}>
+                  <article class="message" class:prompt={block.type === "prompt"} class:response={block.type === "response"}>
                   <div class="message-kind">
                     {#if block.type === "prompt"}
                       You
@@ -200,6 +201,7 @@
                     {/if}
                   </div>
                   <pre class="message-text">{block.text}</pre>
+                  </article>
                 </article>
               {/each}
             </div>
@@ -385,10 +387,23 @@
   .message-list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 14px;
     overflow: auto;
     min-height: 0;
     padding-right: 4px;
+  }
+
+  .turn {
+    display: flex;
+    width: 100%;
+  }
+
+  .turn.prompt-turn {
+    justify-content: flex-end;
+  }
+
+  .turn.response-turn {
+    justify-content: flex-start;
   }
 
   .side-list {
@@ -408,13 +423,16 @@
   }
 
   .message.prompt {
-    background: rgba(56, 189, 248, 0.08);
-    border-color: rgba(125, 211, 252, 0.22);
+    width: min(72%, 540px);
+    background: linear-gradient(135deg, rgba(56, 189, 248, 0.14), rgba(56, 189, 248, 0.08));
+    border-color: rgba(125, 211, 252, 0.32);
+    box-shadow: inset 0 1px 0 rgba(125, 211, 252, 0.08);
   }
 
   .message.response {
-    background: rgba(52, 211, 153, 0.06);
-    border-color: rgba(52, 211, 153, 0.18);
+    width: min(88%, 820px);
+    background: rgba(52, 211, 153, 0.05);
+    border-color: rgba(52, 211, 153, 0.16);
   }
 
   .message.status {
@@ -439,6 +457,14 @@
     text-transform: uppercase;
     letter-spacing: 0.12em;
     color: var(--text-dim);
+  }
+
+  .message.prompt .message-kind {
+    color: var(--accent);
+  }
+
+  .message.response .message-kind {
+    color: rgba(52, 211, 153, 0.9);
   }
 
   .message-text,
