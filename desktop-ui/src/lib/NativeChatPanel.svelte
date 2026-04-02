@@ -18,6 +18,14 @@
     return (state.selectedProject.sessions || []).find((session) => session.id === state.selectedSessionId) || null;
   });
   let draft = $derived.by(() => state.nativeChatDraft || "");
+  let conversationBlocks = $derived.by(() =>
+    (state.nativeChatBlocks || []).filter((block) => block.type === "prompt" || block.type === "response"),
+  );
+  let sideBlocks = $derived.by(() =>
+    (state.nativeChatBlocks || []).filter(
+      (block) => block.type === "status" || block.type === "meta" || block.type === "raw",
+    ),
+  );
 
   function sessionLabel(session) {
     return session?.label || session?.tool || session?.id || "session";
@@ -56,17 +64,17 @@
     <div class="header-actions">
       <button
         class="header-btn"
-        class:active={!state.nativeChatRawMode}
-        onclick={() => { state.nativeChatRawMode = false; }}
-      >
-        Parsed
-      </button>
-      <button
-        class="header-btn"
         class:active={state.nativeChatRawMode}
         onclick={() => { state.nativeChatRawMode = true; }}
       >
-        Raw
+        Raw Pane
+      </button>
+      <button
+        class="header-btn"
+        class:active={!state.nativeChatRawMode}
+        onclick={() => { state.nativeChatRawMode = false; }}
+      >
+        Split View
       </button>
       <button
         class="header-btn primary"
@@ -88,27 +96,57 @@
     {:else if state.nativeChatError}
       <div class="error">{state.nativeChatError}</div>
     {:else if state.nativeChatRawMode}
-      <pre class="raw-output">{state.nativeChatOutput || "No output captured yet."}</pre>
+      <div class="raw-shell">
+        <div class="rail-title">Raw Pane</div>
+        <pre class="raw-output">{state.nativeChatOutput || "No output captured yet."}</pre>
+      </div>
     {:else if state.nativeChatBlocks.length > 0}
-      <div class="message-list">
-        {#each state.nativeChatBlocks as block, index (`${block.type}:${index}`)}
-          <article class="message" class:prompt={block.type === "prompt"} class:response={block.type === "response"} class:status={block.type === "status"} class:raw={block.type === "raw"} class:meta={block.type === "meta"}>
-            <div class="message-kind">
-              {#if block.type === "prompt"}
-                You
-              {:else if block.type === "response"}
-                Agent
-              {:else if block.type === "status"}
-                Status
-              {:else if block.type === "meta"}
-                Context
-              {:else}
-                Raw
-              {/if}
+      <div class="split-layout">
+        <div class="chat-pane">
+          <div class="pane-title">Conversation</div>
+          {#if conversationBlocks.length > 0}
+            <div class="message-list">
+              {#each conversationBlocks as block, index (`${block.type}:${index}`)}
+                <article class="message" class:prompt={block.type === "prompt"} class:response={block.type === "response"}>
+                  <div class="message-kind">
+                    {#if block.type === "prompt"}
+                      You
+                    {:else}
+                      Agent
+                    {/if}
+                  </div>
+                  <pre class="message-text">{block.text}</pre>
+                </article>
+              {/each}
             </div>
-            <pre class="message-text">{block.text}</pre>
-          </article>
-        {/each}
+          {:else}
+            <div class="empty-inline">No parsed conversation turns yet.</div>
+          {/if}
+        </div>
+
+        <aside class="side-pane">
+          <div class="pane-title">Context</div>
+          {#if sideBlocks.length > 0}
+            <div class="side-list">
+              {#each sideBlocks as block, index (`side:${block.type}:${index}`)}
+                <article class="message" class:status={block.type === "status"} class:raw={block.type === "raw"} class:meta={block.type === "meta"}>
+                  <div class="message-kind">
+                    {#if block.type === "status"}
+                      Status
+                    {:else if block.type === "meta"}
+                      Context
+                    {:else}
+                      Raw
+                    {/if}
+                  </div>
+                  <pre class="message-text">{block.text}</pre>
+                </article>
+              {/each}
+            </div>
+          {:else}
+            <div class="empty-inline">No extra context blocks.</div>
+          {/if}
+        </aside>
       </div>
     {:else}
       <div class="empty">No transcript captured yet.</div>
@@ -210,14 +248,58 @@
   .transcript {
     flex: 1;
     min-height: 0;
-    overflow: auto;
     padding: 16px;
+    overflow: hidden;
+  }
+
+  .split-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
+    gap: 14px;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .chat-pane,
+  .side-pane,
+  .raw-shell {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .chat-pane,
+  .side-pane {
+    overflow: hidden;
+  }
+
+  .pane-title,
+  .rail-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-dim);
+    padding: 0 2px;
   }
 
   .message-list {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    overflow: auto;
+    min-height: 0;
+    padding-right: 4px;
+  }
+
+  .side-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: auto;
+    min-height: 0;
+    padding-right: 4px;
   }
 
   .message {
@@ -272,7 +354,21 @@
   }
 
   .raw-output {
-    min-height: 100%;
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    background: rgba(148, 163, 184, 0.04);
+  }
+
+  .empty-inline {
+    padding: 14px;
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    color: var(--text-dim);
+    background: rgba(255, 255, 255, 0.02);
   }
 
   .composer {
@@ -337,5 +433,11 @@
     border-style: solid;
     border-color: rgba(251, 113, 133, 0.22);
     background: rgba(251, 113, 133, 0.06);
+  }
+
+  @media (max-width: 1100px) {
+    .split-layout {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
