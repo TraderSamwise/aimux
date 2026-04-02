@@ -1,9 +1,12 @@
+import type { SessionAvailability } from "./session-semantics.js";
+
 export interface RoutingCandidate {
   id: string;
   tool?: string;
   role?: string;
   worktreePath?: string;
   status?: string;
+  availability?: SessionAvailability;
   exited?: boolean;
 }
 
@@ -29,6 +32,9 @@ function scoreCandidate(candidate: RoutingCandidate, input: RouteTargetInput): n
   if (input.worktreePath && samePath(candidate.worktreePath, input.worktreePath)) score += 10;
   if (input.assignee && candidate.role === input.assignee) score += 8;
   if (input.tool && candidate.tool === input.tool) score += 6;
+  if (candidate.availability === "available") score += 5;
+  else if (candidate.availability === "busy") score += 3;
+  else if (candidate.availability === "needs_input") score += 1;
   if (candidate.status === "idle") score += 3;
   else if (candidate.status === "waiting") score += 2;
   else if (candidate.status === "running") score += 1;
@@ -45,6 +51,7 @@ export function resolveOrchestrationTarget(input: RouteTargetInput): RoutingCand
 
   const filtered = input.candidates.filter((candidate) => {
     if (candidate.exited) return false;
+    if (candidate.availability === "blocked" || candidate.availability === "offline") return false;
     if (input.assignee && candidate.role !== input.assignee) return false;
     if (input.tool && candidate.tool !== input.tool) return false;
     if (input.worktreePath && !samePath(candidate.worktreePath, input.worktreePath)) return false;
@@ -67,6 +74,7 @@ export function resolveOrchestrationRecipients(input: RouteTargetInput): string[
 
   const filtered = input.candidates.filter((candidate) => {
     if (candidate.exited) return false;
+    if (candidate.availability === "blocked" || candidate.availability === "offline") return false;
     if (input.assignee && candidate.role !== input.assignee) return false;
     if (input.tool && candidate.tool !== input.tool) return false;
     if (input.worktreePath && !samePath(candidate.worktreePath, input.worktreePath)) return false;

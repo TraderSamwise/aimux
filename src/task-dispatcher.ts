@@ -1,6 +1,7 @@
 import { type Task, readAllTasks, writeTask, cleanupTasks, hasActiveTask } from "./tasks.js";
 import { loadTeamConfig } from "./team.js";
 import { TaskWorkflow } from "./task-workflow.js";
+import type { SessionAvailability } from "./session-semantics.js";
 
 interface DispatchSession {
   id: string;
@@ -20,6 +21,7 @@ export class TaskDispatcher {
   private getSession: (id: string) => DispatchSession | undefined;
   private getSessionTool: (id: string) => string | undefined;
   private getSessionRole: (id: string) => string | undefined;
+  private getSessionAvailability: (id: string) => SessionAvailability | undefined;
   private tickCount = 0;
   private lastCounts = { pending: 0, assigned: 0 };
   private workflow = new TaskWorkflow();
@@ -32,10 +34,12 @@ export class TaskDispatcher {
     getSession: (id: string) => DispatchSession | undefined,
     getSessionTool: (id: string) => string | undefined,
     getSessionRole?: (id: string) => string | undefined,
+    getSessionAvailability?: (id: string) => SessionAvailability | undefined,
   ) {
     this.getSession = getSession;
     this.getSessionTool = getSessionTool;
     this.getSessionRole = getSessionRole ?? (() => undefined);
+    this.getSessionAvailability = getSessionAvailability ?? (() => undefined);
   }
 
   /**
@@ -123,7 +127,14 @@ export class TaskDispatcher {
       if (id === task.assignedBy) return undefined; // don't delegate to self
       if (hasActiveTask(id)) return undefined; // already working a task
       const session = this.getSession(id);
-      if (session && !session.exited && session.status === "idle") return session;
+      const availability = this.getSessionAvailability(id);
+      if (
+        session &&
+        !session.exited &&
+        (availability === "available" || (availability === undefined && session.status === "idle"))
+      ) {
+        return session;
+      }
       return undefined;
     };
 

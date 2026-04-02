@@ -70,6 +70,7 @@ import { serializeAgentInput, type AgentInputPart } from "./agent-message-parts.
 import { resolveAttachmentPath } from "./attachment-store.js";
 import { appendSessionMessage, readSessionMessages } from "./session-message-history.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
+import { deriveSessionSemantics, sessionSemanticAttentionScore } from "./session-semantics.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -279,6 +280,17 @@ export class Multiplexer {
     this.eventBus.publishAlert(input);
   }
 
+  private deriveSessionSemanticState(sessionId: string, status?: DashboardSession["status"]) {
+    const derived = loadMetadataState().sessions[sessionId]?.derived;
+    return deriveSessionSemantics({
+      status: status ?? this.sessions.find((session) => session.id === sessionId)?.status ?? "offline",
+      activity: derived?.activity,
+      attention: derived?.attention,
+      unseenCount: derived?.unseenCount,
+      hasActiveTask: Boolean(this.taskDispatcher?.getSessionTask(sessionId)),
+    });
+  }
+
   private isTmuxBackend(): boolean {
     return true;
   }
@@ -382,7 +394,9 @@ export class Multiplexer {
     for (const recipient of recipients) {
       const session = this.sessions.find((candidate) => candidate.id === recipient && !candidate.exited);
       if (!session) continue;
-      if (session.status !== "idle" && session.status !== "waiting") continue;
+      const availability = this.deriveSessionSemanticState(session.id, session.status).availability;
+      if (availability === "blocked" || availability === "offline" || availability === "needs_input") continue;
+      if (availability !== "available" && availability !== "busy") continue;
       session.write(this.composeOrchestrationPrompt(threadId, from, body, kind, title) + "\r");
       if (messageId) {
         markMessageDelivered(threadId, messageId, recipient);
@@ -415,6 +429,7 @@ export class Multiplexer {
               role: this.sessionRoles.get(session.id),
               worktreePath: this.sessionWorktreePaths.get(session.id),
               status: session.status,
+              availability: this.deriveSessionSemanticState(session.id, session.status).availability,
               exited: session.exited,
             })),
             to: input.to,
@@ -476,6 +491,7 @@ export class Multiplexer {
         role: this.sessionRoles.get(session.id),
         worktreePath: this.sessionWorktreePaths.get(session.id),
         status: session.status,
+        availability: this.deriveSessionSemanticState(session.id, session.status).availability,
         exited: session.exited,
       })),
       to: input.to,
@@ -817,19 +833,16 @@ export class Multiplexer {
       debug(`quick crash: ${runtime.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
     }
 
-    this.publishAlert({
-      kind: _code === 0 ? "task_done" : "task_failed",
-      sessionId: runtime.id,
-      title: _code === 0 ? `${runtime.id} finished` : `${runtime.id} failed`,
-      message:
-        _code === 0
-          ? "Agent exited successfully."
-          : errorHint
-            ? `Agent exited with code ${_code}${errorHint}`
-            : `Agent exited with code ${_code}.`,
-      dedupeKey: `${_code === 0 ? "exit-done" : "exit-failed"}:${runtime.id}`,
-      cooldownMs: 15_000,
-    });
+    if (_code !== 0) {
+      this.publishAlert({
+        kind: "task_failed",
+        sessionId: runtime.id,
+        title: `${runtime.id} failed`,
+        message: errorHint ? `Agent exited with code ${_code}${errorHint}` : `Agent exited with code ${_code}.`,
+        dedupeKey: `exit-failed:${runtime.id}`,
+        cooldownMs: 15_000,
+      });
+    }
     captureGitContext(runtime.id, runtime.command).catch(() => {});
 
     const idx = this.sessions.indexOf(runtime);
@@ -911,6 +924,7 @@ export class Multiplexer {
       (id) => this.sessions.find((s) => s.id === id),
       (id) => this.sessionToolKeys.get(id),
       (id) => this.sessionRoles.get(id),
+      (id) => this.deriveSessionSemanticState(id).availability,
     );
     this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
     this.loadOfflineSessions();
@@ -1026,6 +1040,7 @@ export class Multiplexer {
       (id) => this.sessions.find((s) => s.id === id),
       (id) => this.sessionToolKeys.get(id),
       (id) => this.sessionRoles.get(id),
+      (id) => this.deriveSessionSemanticState(id).availability,
     );
     this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
     this.writeInstructionFiles();
@@ -1784,6 +1799,7 @@ export class Multiplexer {
   }
 
   private attentionScore(entry: DashboardSession): number {
+    if (entry.semantic) return sessionSemanticAttentionScore(entry.semantic);
     if (entry.attention === "error") return 5;
     if (entry.attention === "needs_input") return 4;
     if (entry.attention === "blocked") return 3;
@@ -2952,6 +2968,14 @@ export class Multiplexer {
       role: this.sessionRoles.get(session.id),
       worktreePath: this.sessionWorktreePaths.get(session.id),
       status: metadataState[session.id]?.derived?.activity,
+      availability: this.deriveSessionSemanticState(
+        session.id,
+        metadataState[session.id]?.derived?.activity === "running"
+          ? "running"
+          : metadataState[session.id]?.derived?.activity === "waiting"
+            ? "waiting"
+            : session.status,
+      ).availability,
       exited: session.exited,
     }));
 
@@ -3247,6 +3271,14 @@ export class Multiplexer {
                 role: this.sessionRoles.get(session.id),
                 worktreePath: this.sessionWorktreePaths.get(session.id),
                 status: metadataState[session.id]?.derived?.activity,
+                availability: this.deriveSessionSemanticState(
+                  session.id,
+                  metadataState[session.id]?.derived?.activity === "running"
+                    ? "running"
+                    : metadataState[session.id]?.derived?.activity === "waiting"
+                      ? "waiting"
+                      : session.status,
+                ).availability,
                 exited: session.exited,
               })),
               assignee: target.assignee,
@@ -5459,6 +5491,7 @@ export class Multiplexer {
       getSessionDerived: (sessionId) => metadata[sessionId]?.derived,
     }).map((session) => {
       const stats = threadStats.get(session.id);
+      const workflow = workflowStats.get(session.id);
       return {
         ...session,
         threadUnreadCount: stats?.unread ?? 0,
@@ -5468,11 +5501,25 @@ export class Multiplexer {
         threadPendingCount: stats?.pending ?? 0,
         threadId: session.threadId ?? stats?.latestId,
         threadName: session.threadName ?? stats?.latestTitle,
-        workflowOnMeCount: workflowStats.get(session.id)?.onMe ?? 0,
-        workflowBlockedCount: workflowStats.get(session.id)?.blocked ?? 0,
-        workflowFamilyCount: workflowStats.get(session.id)?.families.size ?? 0,
-        workflowTopLabel: workflowStats.get(session.id)?.topLabel,
-        workflowNextAction: workflowStats.get(session.id)?.nextAction,
+        workflowOnMeCount: workflow?.onMe ?? 0,
+        workflowBlockedCount: workflow?.blocked ?? 0,
+        workflowFamilyCount: workflow?.families.size ?? 0,
+        workflowTopLabel: workflow?.topLabel,
+        workflowNextAction: workflow?.nextAction,
+        semantic: deriveSessionSemantics({
+          status: session.status,
+          activity: session.activity,
+          attention: session.attention,
+          unseenCount: session.unseenCount,
+          threadUnreadCount: stats?.unread ?? 0,
+          threadPendingCount: stats?.pending ?? 0,
+          threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
+          threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
+          workflowOnMeCount: workflow?.onMe ?? 0,
+          workflowBlockedCount: workflow?.blocked ?? 0,
+          workflowFamilyCount: workflow?.families.size ?? 0,
+          hasActiveTask: Boolean(session.taskDescription),
+        }),
       };
     });
   }

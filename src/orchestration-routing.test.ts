@@ -3,9 +3,30 @@ import { resolveOrchestrationRecipients, resolveOrchestrationTarget } from "./or
 
 describe("orchestration routing", () => {
   const candidates = [
-    { id: "claude-ui", tool: "claude", role: "ui", worktreePath: "/repo/ui", status: "idle" },
-    { id: "codex-ui", tool: "codex", role: "ui", worktreePath: "/repo/ui", status: "running" },
-    { id: "codex-coder", tool: "codex", role: "coder", worktreePath: "/repo/api", status: "waiting" },
+    {
+      id: "claude-ui",
+      tool: "claude",
+      role: "ui",
+      worktreePath: "/repo/ui",
+      status: "idle",
+      availability: "available" as const,
+    },
+    {
+      id: "codex-ui",
+      tool: "codex",
+      role: "ui",
+      worktreePath: "/repo/ui",
+      status: "running",
+      availability: "busy" as const,
+    },
+    {
+      id: "codex-coder",
+      tool: "codex",
+      role: "coder",
+      worktreePath: "/repo/api",
+      status: "waiting",
+      availability: "busy" as const,
+    },
   ];
 
   it("prefers direct session targeting when provided", () => {
@@ -34,5 +55,21 @@ describe("orchestration routing", () => {
       "codex-coder",
       "claude-ui",
     ]);
+  });
+
+  it("prefers semantically available recipients over merely busy ones", () => {
+    expect(resolveOrchestrationTarget({ candidates, assignee: "ui" })?.id).toBe("claude-ui");
+  });
+
+  it("filters blocked recipients from implicit routing", () => {
+    expect(
+      resolveOrchestrationRecipients({
+        candidates: [
+          ...candidates,
+          { id: "blocked-ui", role: "ui", tool: "claude", status: "idle", availability: "blocked" as const },
+        ],
+        assignee: "ui",
+      }),
+    ).toEqual(["claude-ui", "codex-ui"]);
   });
 });

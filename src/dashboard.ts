@@ -1,6 +1,8 @@
 import type { SessionStatus } from "./status-detector.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import type { SessionServiceMetadata } from "./metadata-store.js";
+import type { SessionSemanticState } from "./session-semantics.js";
+import { sessionSemanticStatusLabel } from "./session-semantics.js";
 
 export type DashboardSessionStatus = SessionStatus;
 
@@ -50,6 +52,7 @@ export interface DashboardSession {
   workflowFamilyCount?: number;
   workflowTopLabel?: string;
   workflowNextAction?: string;
+  semantic?: SessionSemanticState;
 }
 
 export interface WorktreeGroup {
@@ -82,6 +85,9 @@ const STATUS_LABELS: Record<DashboardSessionStatus, string> = {
 };
 
 function derivedStatusLabel(session: DashboardSession): string {
+  if (session.semantic) {
+    return sessionSemanticStatusLabel(session.semantic, session.status);
+  }
   if (session.attention === "error") return "error";
   if (session.attention === "needs_input") return "needs input";
   if (session.attention === "blocked") return "blocked";
