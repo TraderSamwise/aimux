@@ -1,12 +1,18 @@
 <script>
   import { getState } from "../stores/state.svelte.js";
   const appState = getState();
+
+  let actions = $derived(appState.inFlightActions || []);
+  let primaryAction = $derived(actions.length > 0 ? actions[actions.length - 1] : null);
 </script>
 
-{#if appState.currentAction}
+{#if primaryAction}
   <div class="action-bar">
     <span class="spinner"></span>
-    <span class="action-text">{appState.currentAction}</span>
+    <span class="action-text">{primaryAction.message}</span>
+    {#if actions.length > 1}
+      <span class="action-count">+{actions.length - 1}</span>
+    {/if}
   </div>
 {/if}
 
@@ -25,6 +31,12 @@
   .action-text {
     font-size: 11px;
     color: var(--accent);
+  }
+
+  .action-count {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-dim);
   }
 
   .spinner {

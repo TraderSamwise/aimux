@@ -29,6 +29,7 @@ export function beginAction(action) {
     ...action,
     key: action.key || crypto.randomUUID(),
     startedAt: Date.now(),
+    phase: action.phase || "requesting",
   };
   inFlightActions = [...inFlightActions, next];
   syncCurrentAction();
@@ -44,20 +45,23 @@ export function failAction(key) {
   finishAction(key);
 }
 
+export function updateAction(key, patch) {
+  inFlightActions = inFlightActions.map((action) =>
+    action.key === key ? { ...action, ...patch } : action
+  );
+  syncCurrentAction();
+}
+
 export async function trackAction(action, run) {
   const key = beginAction(action);
-  const minVisibleMs = action.minVisibleMs ?? 0;
-  const startedAt = Date.now();
   try {
-    return await run();
+    const result = await run();
+    updateAction(key, { phase: "done" });
+    return result;
   } catch (error) {
+    updateAction(key, { phase: "error", error: String(error) });
     throw error;
   } finally {
-    const elapsed = Date.now() - startedAt;
-    const remaining = minVisibleMs - elapsed;
-    if (remaining > 0) {
-      await new Promise((resolve) => setTimeout(resolve, remaining));
-    }
     finishAction(key);
   }
 }
@@ -66,6 +70,84 @@ export function isActionPending(match = {}) {
   return inFlightActions.some((action) =>
     Object.entries(match).every(([key, value]) => action[key] === value)
   );
+}
+
+function applyActionOverlays(project) {
+  if (!project) return null;
+  const actions = inFlightActions.filter((action) => action.projectPath === project.path);
+  if (actions.length === 0) return project;
+
+  const next = {
+    ...project,
+    sessions: [...(project.sessions || [])],
+    worktrees: [...(project.worktrees || [])],
+    statusline: project.statusline
+      ? {
+          ...project.statusline,
+          sessions: [...(project.statusline.sessions || [])],
+        }
+      : null,
+  };
+
+  for (const action of actions) {
+    if (action.kind === "spawn") {
+      const pendingId = `pending-spawn:${action.key}`;
+      const pendingSession = {
+        id: pendingId,
+        tool: action.tool,
+        label: action.tool,
+        status: "starting",
+        pending: true,
+        worktreePath: action.worktreePath || null,
+      };
+      if (!next.sessions.some((session) => session.id === pendingId)) {
+        next.sessions = [pendingSession, ...next.sessions];
+      }
+      if (next.statusline && !next.statusline.sessions.some((session) => session.id === pendingId)) {
+        next.statusline.sessions = [pendingSession, ...next.statusline.sessions];
+      }
+    }
+
+    if (action.kind === "create-worktree") {
+      const pendingPath = `pending-worktree:${action.key}`;
+      const pendingWorktree = {
+        name: action.worktreeName,
+        path: pendingPath,
+        branch: "creating",
+        pending: true,
+      };
+      if (!next.worktrees.some((worktree) => worktree.path === pendingPath)) {
+        next.worktrees = [...next.worktrees, pendingWorktree];
+      }
+    }
+
+    if (action.kind === "stop" || action.kind === "kill") {
+      next.sessions = next.sessions.map((session) =>
+        session.id === action.sessionId
+          ? {
+              ...session,
+              pending: true,
+              pendingAction: action.kind,
+              status: action.kind === "stop" ? "stopping" : "killing",
+            }
+          : session
+      );
+      if (next.statusline) {
+        next.statusline.sessions = next.statusline.sessions.map((session) =>
+          session.id === action.sessionId
+            ? {
+                ...session,
+                pending: true,
+                pendingAction: action.kind,
+                status: action.kind === "stop" ? "stopping" : "killing",
+              }
+            : session
+        );
+      }
+    }
+  }
+
+  return next;
 }
 
 // ── State getters ─────────────────────────────────────────────────
@@ -82,18 +164,18 @@ export function getState() {
     get currentAction() { return currentAction; },
     get inFlightActions() { return inFlightActions; },
     get selectedProject() {
-      return projects.find((p) => p.path === selectedProjectPath) || null;
+      return applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
     },
     get statusline() {
-      const project = projects.find((p) => p.path === selectedProjectPath);
+      const project = applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
       return project?.statusline || null;
     },
     get daemonSessions() {
-      const project = projects.find((p) => p.path === selectedProjectPath);
+      const project = applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
       return project?.sessions || [];
     },
     get worktreeList() {
-      const project = projects.find((p) => p.path === selectedProjectPath);
+      const project = applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
       return project?.worktrees || [];
     },
   };

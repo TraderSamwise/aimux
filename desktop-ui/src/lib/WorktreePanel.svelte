@@ -20,9 +20,6 @@
     const slSessions = sl?.sessions ?? [];
     const meta = sl?.metadata ?? {};
     const listedWorktrees = appState.worktreeList ?? [];
-    const pendingActions = (appState.inFlightActions ?? []).filter(
-      (action) => action.projectPath === appState.selectedProject?.path,
-    );
 
     // Build a lookup from statusline sessions for enrichment
     const slById = new Map(slSessions.map((s) => [s.id, s]));
@@ -64,42 +61,12 @@
       });
     }
 
-    for (const action of pendingActions) {
-      if (action.kind === "spawn") {
-        const wtPath = action.worktreePath || null;
-        const key = wtPath || "__unassigned__";
-        const listed = wtPath ? listedWorktrees.find((wt) => wt.path === wtPath) : null;
-        const group = ensureGroup(key, () => ({
-          path: wtPath,
-          name: listed?.name || (wtPath ? wtPath.split("/").pop() : "Unassigned"),
-          branch: listed?.branch || null,
-          agents: [],
-        }));
-        group.agents.unshift({
-          id: `pending-spawn:${action.key}`,
-          tool: action.tool,
-          label: action.tool,
-          status: "starting",
-          pending: true,
-          worktreePath: wtPath,
-        });
-      }
-      if (action.kind === "create-worktree") {
-        const key = `pending-worktree:${action.key}`;
-        ensureGroup(key, () => ({
-          path: null,
-          name: action.worktreeName,
-          branch: "creating",
-          agents: [],
-          pending: true,
-        }));
-      }
-    }
-
     const result = orderedKeys.map((key) => groups.get(key));
 
     return result.sort((a, b) => {
-      if (Boolean(a.pending) !== Boolean(b.pending)) return a.pending ? 1 : -1;
+      const aPendingCreate = String(a.path || "").startsWith("pending-worktree:");
+      const bPendingCreate = String(b.path || "").startsWith("pending-worktree:");
+      if (aPendingCreate !== bPendingCreate) return aPendingCreate ? 1 : -1;
       const aUnassigned = a.path === null;
       const bUnassigned = b.path === null;
       if (aUnassigned !== bUnassigned) return aUnassigned ? 1 : -1;
@@ -124,6 +91,8 @@
 
   function agentStatusLabel(agent) {
     if (agent.pending && agent.status === "starting") return "starting";
+    if (agent.pending && agent.status === "stopping") return "stopping";
+    if (agent.pending && agent.status === "killing") return "killing";
     return agent.status || "idle";
   }
 
