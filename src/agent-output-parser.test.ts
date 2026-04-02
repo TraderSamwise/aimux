@@ -2,6 +2,27 @@ import { describe, expect, it } from "vitest";
 import { parseAgentOutput } from "./agent-output-parser.js";
 
 describe("parseAgentOutput", () => {
+  it("ignores a trailing visible Codex prompt without a response yet", () => {
+    const raw = [
+      "› write me a poem",
+      "",
+      "• Small lights wait in the screen at night,",
+      "  a city built from thought and code.",
+      "",
+      "› Summarize recent commits",
+      "",
+      "  gpt-5.4 medium · 99% left · ~/cs/glyde-frontend/.aimux/worktrees/test3",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "response", "status"]);
+    expect(parsed.blocks[0]?.text).toBe("write me a poem");
+    expect(parsed.blocks[1]?.text).toContain("Small lights wait");
+    expect(parsed.blocks[2]?.text).toContain("gpt-5.4 medium");
+    expect(parsed.blocks.some((block) => block.text.includes("Summarize recent commits"))).toBe(false);
+  });
+
   it("splits Claude prompt, response, and footer status from a live pane snapshot", () => {
     const raw = [
       "  the estimate was never wrong.",

@@ -233,5 +233,36 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[]): AgentOutputBlock
     merged.push(block);
   }
 
-  return merged;
+  return stripTrailingVisiblePrompt(merged);
+}
+
+function stripTrailingVisiblePrompt(blocks: AgentOutputBlock[]): AgentOutputBlock[] {
+  const promptIndex = findLastIndex(blocks, (block) => block.type === "prompt");
+  if (promptIndex === -1) {
+    return blocks;
+  }
+
+  const hasResponseAfterPrompt = blocks.slice(promptIndex + 1).some((block) => block.type === "response");
+  if (hasResponseAfterPrompt) {
+    return blocks;
+  }
+
+  const trailingBlocks = blocks.slice(promptIndex + 1);
+  const hasOnlyNonConversationTail = trailingBlocks.every(
+    (block) => block.type === "status" || block.type === "meta" || block.type === "raw",
+  );
+  if (!hasOnlyNonConversationTail) {
+    return blocks;
+  }
+
+  return blocks.filter((_, index) => index !== promptIndex);
+}
+
+function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (predicate(items[index]!)) {
+      return index;
+    }
+  }
+  return -1;
 }
