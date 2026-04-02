@@ -14,8 +14,11 @@
   const appState = getState();
   const termInstance = getTerminal();
   let rawOutputEl = $state(null);
+  let messageListEl = $state(null);
   let lastRawOutput = "";
   let lastRawSessionKey = "";
+  let lastConversationSignature = "";
+  let lastConversationSessionKey = "";
 
   let selectedSession = $derived.by(() => {
     if (!appState.selectedProject || !appState.selectedSessionId) return null;
@@ -110,6 +113,14 @@
     }
   }
 
+  async function syncConversationScroll(force = false) {
+    await tick();
+    if (!messageListEl) return;
+    if (force) {
+      messageListEl.scrollTop = messageListEl.scrollHeight;
+    }
+  }
+
   $effect(() => {
     const rawMode = appState.nativeChatRawMode;
     const output = appState.nativeChatOutput || "";
@@ -130,6 +141,31 @@
 
     if (shouldStick && (sessionChanged || nearBottomBeforeUpdate)) {
       void syncRawScroll(true);
+    }
+  });
+
+  $effect(() => {
+    const rawMode = appState.nativeChatRawMode;
+    const sessionKey = rawSessionKey();
+    const signature = (conversationBlocks || [])
+      .map((block) => `${block.type}:${block.text}`)
+      .join("\n---\n");
+
+    if (rawMode) {
+      lastConversationSignature = signature;
+      lastConversationSessionKey = sessionKey;
+      return;
+    }
+
+    const sessionChanged = sessionKey !== lastConversationSessionKey;
+    const contentChanged = signature !== lastConversationSignature;
+    const nearBottomBeforeUpdate = isNearBottom(messageListEl);
+
+    lastConversationSignature = signature;
+    lastConversationSessionKey = sessionKey;
+
+    if ((sessionChanged || contentChanged) && (sessionChanged || nearBottomBeforeUpdate)) {
+      void syncConversationScroll(true);
     }
   });
 </script>
@@ -189,7 +225,7 @@
         <div class="chat-pane">
           <div class="pane-title">Conversation</div>
           {#if conversationBlocks.length > 0}
-            <div class="message-list">
+            <div class="message-list" bind:this={messageListEl}>
               {#each conversationBlocks as block, index (`${block.type}:${index}`)}
                 <article class="turn" class:prompt-turn={block.type === "prompt"} class:response-turn={block.type === "response"}>
                   <article class="message" class:prompt={block.type === "prompt"} class:response={block.type === "response"}>

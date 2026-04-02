@@ -369,11 +369,13 @@ function setNativeChatSnapshot(projectPath, sessionId, snapshot) {
   nativeChatError = null;
 }
 
-function beginNativeChatSelection(projectPath, sessionId) {
+function beginNativeChatSelection(projectPath, sessionId, { preserveSnapshot = false } = {}) {
   nativeChatProjectPath = projectPath;
   nativeChatSessionId = sessionId;
-  nativeChatOutput = "";
-  nativeChatBlocks = [];
+  if (!preserveSnapshot) {
+    nativeChatOutput = "";
+    nativeChatBlocks = [];
+  }
   nativeChatLoading = true;
   nativeChatError = null;
 }
@@ -436,7 +438,7 @@ async function pollNativeChat(projectPath, sessionId, token, delayMs = 0) {
   }, delayMs);
 }
 
-function syncNativeChatSelection() {
+function syncNativeChatSelection({ preserveSnapshot = false } = {}) {
   if (interactionMode !== "native-chat") {
     stopNativeChatPolling();
     return;
@@ -451,7 +453,7 @@ function syncNativeChatSelection() {
     nativeChatPollTimer = null;
   }
   nativeChatPollInFlight = false;
-  beginNativeChatSelection(selectedProjectPath, selectedSessionId);
+  beginNativeChatSelection(selectedProjectPath, selectedSessionId, { preserveSnapshot });
   nativeChatPollToken += 1;
   const token = nativeChatPollToken;
   void pollNativeChat(selectedProjectPath, selectedSessionId, token, 0);
@@ -707,5 +709,5 @@ export async function sendNativeChatMessage() {
     ...nativeChatDrafts,
     [sessionId]: "",
   };
-  syncNativeChatSelection();
+  syncNativeChatSelection({ preserveSnapshot: true });
 }
