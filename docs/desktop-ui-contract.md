@@ -22,6 +22,14 @@ Do not use:
 
 `statusline.json` remains a derived artifact for tmux/status/debugging.
 
+The embedded desktop terminal is separate from that HTTP model:
+
+- it hosts a real tmux client inside a PTY
+- once that PTY is attached for a project, desktop should retarget the existing tmux client for session/dashboard switches
+- desktop should not respawn `node bin/aimux ...` on every chip click or focus change
+
+Cold terminal spawn is acceptable only when there is no live embedded terminal for the current project yet.
+
 ## Read Model
 
 Desktop heartbeat should be driven by:
@@ -145,6 +153,12 @@ In practice:
 
 - Tauri commands for desktop actions should be async
 - blocking Rust work should run via `spawn_blocking`
+
+For embedded terminal navigation:
+
+- prefer direct Tauri tmux retarget commands over CLI respawn wrappers
+- reuse the existing terminal PTY for same-project agent switching
+- use CLI spawn only as the fallback that creates the initial attached tmux client
 
 ## Ordering Rules
 

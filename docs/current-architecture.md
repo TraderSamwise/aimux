@@ -109,6 +109,12 @@ Desktop transport is now HTTP-first:
 - desktop secondary screens may call project-service HTTP directly for workflow, threads, and graveyard views
 - desktop orchestration actions should also go directly through project-service HTTP, not CLI wrappers
 
+Desktop terminal control is tmux-client-first:
+
+- the embedded terminal pane hosts a real attached tmux client
+- same-project agent/dashboard switching should retarget that live tmux client
+- desktop should only cold-spawn `aimux desktop open|focus ...` when it needs to create a new attached terminal session
+
 Project-service HTTP now exposes the live orchestration surface, including:
 
 - `GET /workflow`
