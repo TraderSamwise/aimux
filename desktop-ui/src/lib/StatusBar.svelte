@@ -26,7 +26,7 @@
     return sessions.find((s) => s.id === state.selectedSessionId) || null;
   });
 
-  let selectedScreen = $derived(state.selectedScreen || "dashboard");
+  let selectedScreen = $derived.by(() => state.selectedScreen || "dashboard");
 
   const screens = ["dashboard", "activity", "threads", "plans", "graveyard"];
 

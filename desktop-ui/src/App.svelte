@@ -13,6 +13,7 @@
   import { getState, startHeartbeat, stopHeartbeat } from "./stores/state.svelte.js";
 
   const state = getState();
+  let selectedScreen = $derived.by(() => state.selectedScreen || "dashboard");
 
   onMount(() => {
     startHeartbeat();
@@ -24,18 +25,18 @@
   <Sidebar />
   <main class="workspace">
     <WorkspaceHeader />
-    {#if state.selectedScreen === "dashboard"}
+    {#if selectedScreen === "dashboard"}
       <div class="workspace-body">
         <WorktreePanel />
         <TerminalPanel />
       </div>
-    {:else if state.selectedScreen === "activity"}
+    {:else if selectedScreen === "activity"}
       <ActivityPanel visible={true} />
-    {:else if state.selectedScreen === "threads"}
+    {:else if selectedScreen === "threads"}
       <ThreadsPanel visible={true} />
-    {:else if state.selectedScreen === "plans"}
+    {:else if selectedScreen === "plans"}
       <PlansPanel />
-    {:else if state.selectedScreen === "graveyard"}
+    {:else if selectedScreen === "graveyard"}
       <GraveyardPanel visible={true} />
     {/if}
     <StatusBar />
