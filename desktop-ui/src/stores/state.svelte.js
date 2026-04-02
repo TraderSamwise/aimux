@@ -1053,7 +1053,7 @@ export async function openSession(terminal, projectPath, sessionId, label) {
     return;
   }
   if (!terminal) return;
-  await focusTerminalAgent(terminal, projectPath, sessionId, label);
+  void focusTerminalAgent(terminal, projectPath, sessionId, label).catch(() => {});
 }
 
 export async function openTerminalDashboard(terminal, projectPath, label) {

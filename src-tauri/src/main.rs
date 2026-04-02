@@ -1383,62 +1383,72 @@ fn spawn_aimux(
 }
 
 #[tauri::command]
-fn focus_terminal_agent(
-  state: State<TerminalRegistry>,
+async fn focus_terminal_agent(
+  state: State<'_, TerminalRegistry>,
   session_id: u32,
   project_path: String,
   agent_id: String,
 ) -> Result<(), String> {
-  let sessions = state
-    .0
-    .sessions
-    .lock()
-    .map_err(|_| "terminal session registry is poisoned".to_string())?;
-  let session = sessions
-    .get(&session_id)
-    .cloned()
-    .ok_or_else(|| format!("terminal session {session_id} not found"))?;
-  drop(sessions);
+  let session = {
+    let sessions = state
+      .0
+      .sessions
+      .lock()
+      .map_err(|_| "terminal session registry is poisoned".to_string())?;
+    sessions
+      .get(&session_id)
+      .cloned()
+      .ok_or_else(|| format!("terminal session {session_id} not found"))?
+  };
 
-  if session.project_path != project_path {
-    return Err(format!(
-      "terminal session {} is attached to {}, not {}",
-      session_id, session.project_path, project_path
-    ));
-  }
+  tauri::async_runtime::spawn_blocking(move || {
+    if session.project_path != project_path {
+      return Err(format!(
+        "terminal session {} is attached to {}, not {}",
+        session_id, session.project_path, project_path
+      ));
+    }
 
-  let client_tty = terminal_client_tty(session_id, &session)?;
-  let window_id = find_window_for_session(&project_path, &agent_id)?;
-  switch_tmux_client_to_window(&client_tty, &window_id)
+    let client_tty = terminal_client_tty(session_id, &session)?;
+    let window_id = find_window_for_session(&project_path, &agent_id)?;
+    switch_tmux_client_to_window(&client_tty, &window_id)
+  })
+  .await
+  .map_err(|error| format!("failed to join terminal focus task: {error}"))?
 }
 
 #[tauri::command]
-fn focus_terminal_dashboard(
-  state: State<TerminalRegistry>,
+async fn focus_terminal_dashboard(
+  state: State<'_, TerminalRegistry>,
   session_id: u32,
   project_path: String,
 ) -> Result<(), String> {
-  let sessions = state
-    .0
-    .sessions
-    .lock()
-    .map_err(|_| "terminal session registry is poisoned".to_string())?;
-  let session = sessions
-    .get(&session_id)
-    .cloned()
-    .ok_or_else(|| format!("terminal session {session_id} not found"))?;
-  drop(sessions);
+  let session = {
+    let sessions = state
+      .0
+      .sessions
+      .lock()
+      .map_err(|_| "terminal session registry is poisoned".to_string())?;
+    sessions
+      .get(&session_id)
+      .cloned()
+      .ok_or_else(|| format!("terminal session {session_id} not found"))?
+  };
 
-  if session.project_path != project_path {
-    return Err(format!(
-      "terminal session {} is attached to {}, not {}",
-      session_id, session.project_path, project_path
-    ));
-  }
+  tauri::async_runtime::spawn_blocking(move || {
+    if session.project_path != project_path {
+      return Err(format!(
+        "terminal session {} is attached to {}, not {}",
+        session_id, session.project_path, project_path
+      ));
+    }
 
-  let client_tty = terminal_client_tty(session_id, &session)?;
-  let window_id = find_dashboard_window(&project_path)?;
-  switch_tmux_client_to_window(&client_tty, &window_id)
+    let client_tty = terminal_client_tty(session_id, &session)?;
+    let window_id = find_dashboard_window(&project_path)?;
+    switch_tmux_client_to_window(&client_tty, &window_id)
+  })
+  .await
+  .map_err(|error| format!("failed to join terminal dashboard focus task: {error}"))?
 }
 
 #[tauri::command]
