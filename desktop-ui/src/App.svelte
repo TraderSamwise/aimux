@@ -16,7 +16,7 @@
   const state = getState();
   let selectedScreen = $derived.by(() => state.selectedScreen || "dashboard");
   let interactionMode = $derived.by(() => state.interactionMode || "terminal");
-  let controlPlane = $derived(state.controlPlane || {});
+  let controlPlane = $derived.by(() => state.controlPlane || {});
   let showControlOverlay = $derived.by(() =>
     Boolean(state.selectedProject) &&
     (controlPlane.projectStatus === "outdated" || controlPlane.daemonStatus !== "ok"),
@@ -36,8 +36,11 @@
       <div class="workspace-body" class:active={selectedScreen === "dashboard"} class:inactive={selectedScreen !== "dashboard"}>
         <WorktreePanel />
         <div class="surface-stack">
-          <TerminalPanel visible={selectedScreen === "dashboard" && interactionMode === "terminal"} />
-          <NativeChatPanel visible={selectedScreen === "dashboard" && interactionMode === "native-chat"} />
+          {#if selectedScreen === "dashboard" && interactionMode === "terminal"}
+            <TerminalPanel visible={true} />
+          {:else if selectedScreen === "dashboard" && interactionMode === "native-chat"}
+            <NativeChatPanel visible={true} />
+          {/if}
         </div>
       </div>
 
@@ -154,6 +157,7 @@
     background: rgba(244, 114, 182, 0.12);
     color: rgb(251, 207, 232);
   }
+
 
   .workspace-body {
     display: grid;

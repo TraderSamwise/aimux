@@ -25,7 +25,6 @@ let currentAlert = $state(null);
 let recentAlerts = $state([]);
 let expectedServiceInfo = $state(null);
 let controlPlaneError = $state(null);
-const autoRepairAttempts = new Map();
 
 let unlistenOutput = null;
 let unlistenExit = null;
@@ -933,14 +932,6 @@ function onHeartbeat(event) {
   if (!selectedOutdated && selectedProject?.serviceEndpointAlive !== false && selectedProject?.serviceAlive !== false) {
     controlPlaneError = null;
   }
-  if (selectedOutdated && selectedProjectPath) {
-    const repairKey = `${selectedProjectPath}:${expectedServiceInfo?.buildStamp || "unknown"}`;
-    const lastAttemptAt = autoRepairAttempts.get(repairKey) || 0;
-    if (!isActionPending({ kind: "restart-project-service", projectPath: selectedProjectPath }) && Date.now() - lastAttemptAt > 60_000) {
-      autoRepairAttempts.set(repairKey, Date.now());
-      void restartProjectService({ auto: true }).catch(() => {});
-    }
-  }
 }
 
 export async function startHeartbeat() {
@@ -1123,7 +1114,8 @@ function createNativeChatImagePart(image) {
 }
 
 function getNativeChatDraftPartsForSession(sessionId) {
-  return normalizeNativeChatDraftParts(nativeChatDraftParts[sessionId] || [createNativeChatTextPart("")]);
+  const existing = nativeChatDraftParts[sessionId];
+  return existing && existing.length > 0 ? existing : [createNativeChatTextPart("")];
 }
 
 function normalizeNativeChatDraftParts(parts) {

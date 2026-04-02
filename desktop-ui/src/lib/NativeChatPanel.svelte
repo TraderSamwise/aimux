@@ -155,6 +155,16 @@
     return animatedResponseTextById[entry.id] ?? entry.text;
   }
 
+  function sameAnimatedResponseMap(a, b) {
+    const aKeys = Object.keys(a || {});
+    const bKeys = Object.keys(b || {});
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+      if ((a?.[key] ?? "") !== (b?.[key] ?? "")) return false;
+    }
+    return true;
+  }
+
   async function openInTerminal() {
     const project = appState.selectedProject;
     const session = selectedSession;
@@ -553,17 +563,20 @@
       return;
     }
 
+    const currentAnimated = animatedResponseTextById;
     const nextAnimated = {};
     for (const entry of responseEntries) {
-      nextAnimated[entry.id] = animatedResponseTextById[entry.id] ?? entry.text;
+      nextAnimated[entry.id] = currentAnimated[entry.id] ?? entry.text;
     }
-    for (const existingId of Object.keys(animatedResponseTextById)) {
+    for (const existingId of Object.keys(currentAnimated)) {
       if (!responseIds.has(existingId)) {
         stopResponseAnimation(existingId);
         responseAnimationTargets.delete(existingId);
       }
     }
-    animatedResponseTextById = nextAnimated;
+    if (!sameAnimatedResponseMap(currentAnimated, nextAnimated)) {
+      animatedResponseTextById = nextAnimated;
+    }
 
     const activeResponseId = responseEntries.length > 0 ? responseEntries[responseEntries.length - 1].id : null;
     for (const entry of responseEntries) {
