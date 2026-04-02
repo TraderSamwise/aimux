@@ -272,6 +272,17 @@ describe("MetadataServer threads API", () => {
           sessionId,
           startLine: startLine ?? -120,
           output: `output for ${sessionId} @ ${startLine ?? -120}`,
+          parsed: {
+            blocks: [
+              { type: "prompt", text: "write me a poem" },
+              { type: "response", text: `output for ${sessionId} @ ${startLine ?? -120}` },
+            ],
+            parser: {
+              tool: "codex",
+              version: 1,
+              confidence: "heuristic" as const,
+            },
+          },
         }),
       },
     });
@@ -300,11 +311,24 @@ describe("MetadataServer threads API", () => {
       sessionId: string;
       startLine: number;
       output: string;
+      parsed: {
+        blocks: Array<{ type: string; text: string }>;
+        parser: { tool: string; version: number; confidence: string };
+      };
     };
     expect(outputRes.ok).toBe(true);
     expect(outputJson.sessionId).toBe("codex-1");
     expect(outputJson.startLine).toBe(-80);
     expect(outputJson.output).toContain("codex-1");
+    expect(outputJson.parsed.blocks).toEqual([
+      { type: "prompt", text: "write me a poem" },
+      { type: "response", text: "output for codex-1 @ -80" },
+    ]);
+    expect(outputJson.parsed.parser).toMatchObject({
+      tool: "codex",
+      version: 1,
+      confidence: "heuristic",
+    });
   });
 
   it("passes submit intent with agent input over HTTP", async () => {
@@ -380,6 +404,14 @@ describe("MetadataServer threads API", () => {
             sessionId,
             startLine: startLine ?? -120,
             output: reads >= 2 ? "updated output" : "initial output",
+            parsed: {
+              blocks: [{ type: "response", text: reads >= 2 ? "updated output" : "initial output" }],
+              parser: {
+                tool: "codex",
+                version: 1,
+                confidence: "heuristic" as const,
+              },
+            },
           };
         },
       },
@@ -406,5 +438,8 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"startLine":-50');
     expect(text).toContain("event: output");
     expect(text).toContain('"output":"updated output"');
+    expect(text).toContain(
+      '"parsed":{"blocks":[{"type":"response","text":"updated output"}],"parser":{"tool":"codex","version":1,"confidence":"heuristic"}}',
+    );
   });
 });

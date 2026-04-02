@@ -65,6 +65,7 @@ import {
 } from "./orchestration-actions.js";
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
+import { parseAgentOutput, type ParsedAgentOutput } from "./agent-output-parser.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -654,7 +655,7 @@ export class Multiplexer {
   async readAgentOutput(
     sessionId: string,
     startLine?: number,
-  ): Promise<{ sessionId: string; output: string; startLine?: number }> {
+  ): Promise<{ sessionId: string; output: string; startLine?: number; parsed: ParsedAgentOutput }> {
     this.resolveRunningSession(sessionId);
     const target = this.sessionTmuxTargets.get(sessionId);
     if (!target) {
@@ -663,7 +664,14 @@ export class Multiplexer {
     const output = this.tmuxRuntimeManager.captureTarget(target, {
       startLine: startLine ?? -120,
     });
-    return { sessionId, output, startLine: startLine ?? -120 };
+    return {
+      sessionId,
+      output,
+      startLine: startLine ?? -120,
+      parsed: parseAgentOutput(output, {
+        tool: this.sessionToolKeys.get(sessionId),
+      }),
+    };
   }
 
   private registerManagedSession(

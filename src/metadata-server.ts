@@ -40,6 +40,7 @@ import {
   type TaskLifecycleResult,
 } from "./orchestration-actions.js";
 import { buildWorkflowEntries } from "./workflow.js";
+import type { ParsedAgentOutput } from "./agent-output-parser.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -177,8 +178,8 @@ interface MetadataServerOptions {
       sessionId: string;
       startLine?: number;
     }) =>
-      | Promise<{ sessionId: string; output: string; startLine?: number }>
-      | { sessionId: string; output: string; startLine?: number };
+      | Promise<{ sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput }>
+      | { sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput };
   };
 }
 
@@ -361,6 +362,7 @@ export class MetadataServer {
               sessionId: result.sessionId,
               output: result.output,
               startLine: result.startLine ?? startLine ?? -120,
+              parsed: result.parsed,
             });
           } else {
             res.write(": keepalive\n\n");
