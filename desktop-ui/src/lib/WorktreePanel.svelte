@@ -564,33 +564,34 @@
 
                   {#if renameSessionId === agent.id}
                     <!-- svelte-ignore a11y_autofocus -->
-                    <div class="agent-inline" onclick={(e) => e.stopPropagation()}>
+                    <div class="agent-inline">
                       <input
                         class="agent-inline-input"
                         bind:value={renameDraft}
                         placeholder="agent label..."
                         autofocus
+                        onclick={(e) => e.stopPropagation()}
                         onkeydown={(e) => {
                           if (e.key === "Enter") renameAgent(agent);
                           if (e.key === "Escape") closeAgentMenus();
                         }}
                       />
-                      <button class="inline-chip confirm" onclick={() => renameAgent(agent)} disabled={isRenamePending(agent.id)}>
+                      <button class="inline-chip confirm" onclick={(e) => { e.stopPropagation(); renameAgent(agent); }} disabled={isRenamePending(agent.id)}>
                         {isRenamePending(agent.id) ? "saving..." : "save"}
                       </button>
-                      <button class="inline-chip" onclick={closeAgentMenus}>cancel</button>
+                      <button class="inline-chip" onclick={(e) => { e.stopPropagation(); closeAgentMenus(); }}>cancel</button>
                     </div>
                   {/if}
 
                   {#if forkMenu?.sessionId === agent.id}
-                    <div class="agent-inline stacked" onclick={(e) => e.stopPropagation()}>
+                    <div class="agent-inline stacked">
                       <div class="inline-label">Fork into</div>
                       <div class="inline-options">
                         {#each availableWorktreeTargets(agent) as target}
                           <button
                             class="inline-chip"
                             class:selected={forkMenu.worktreePath === target.path}
-                            onclick={() => { forkMenu = { ...forkMenu, worktreePath: target.path }; }}
+                            onclick={(e) => { e.stopPropagation(); forkMenu = { ...forkMenu, worktreePath: target.path }; }}
                           >
                             {target.name}
                           </button>
@@ -598,7 +599,7 @@
                         <button
                           class="inline-chip"
                           class:selected={forkMenu.worktreePath === (agent.worktreePath || wt.path || null)}
-                          onclick={() => { forkMenu = { ...forkMenu, worktreePath: agent.worktreePath || wt.path || null }; }}
+                          onclick={(e) => { e.stopPropagation(); forkMenu = { ...forkMenu, worktreePath: agent.worktreePath || wt.path || null }; }}
                         >
                           current
                         </button>
@@ -607,25 +608,25 @@
                         {#each tools as tool}
                           <button
                             class="inline-chip confirm"
-                            onclick={() => forkAgent(agent, tool, forkMenu.worktreePath)}
+                            onclick={(e) => { e.stopPropagation(); forkAgent(agent, tool, forkMenu.worktreePath); }}
                             disabled={isForkPending(agent.id)}
                           >
                             {isForkPending(agent.id) ? `forking ${tool}...` : `fork ${tool}`}
                           </button>
                         {/each}
-                        <button class="inline-chip" onclick={closeAgentMenus}>cancel</button>
+                        <button class="inline-chip" onclick={(e) => { e.stopPropagation(); closeAgentMenus(); }}>cancel</button>
                       </div>
                     </div>
                   {/if}
 
                   {#if migrateSessionId === agent.id}
-                    <div class="agent-inline stacked" onclick={(e) => e.stopPropagation()}>
+                    <div class="agent-inline stacked">
                       <div class="inline-label">Move to worktree</div>
                       <div class="inline-options">
                         {#each availableWorktreeTargets(agent) as target}
                           <button
                             class="inline-chip confirm"
-                            onclick={() => migrateAgent(agent, target.path)}
+                            onclick={(e) => { e.stopPropagation(); migrateAgent(agent, target.path); }}
                             disabled={isMigratePending(agent.id)}
                           >
                             {target.name}
@@ -634,7 +635,7 @@
                         {#if availableWorktreeTargets(agent).length === 0}
                           <span class="inline-hint">No alternate worktrees.</span>
                         {/if}
-                        <button class="inline-chip" onclick={closeAgentMenus}>cancel</button>
+                        <button class="inline-chip" onclick={(e) => { e.stopPropagation(); closeAgentMenus(); }}>cancel</button>
                       </div>
                     </div>
                   {/if}
