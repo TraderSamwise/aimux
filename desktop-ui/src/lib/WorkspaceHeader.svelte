@@ -1,5 +1,5 @@
 <script>
-  import { getState, openTerminalDashboard, restartControlPlane, selectInteractionMode } from "../stores/state.svelte.js";
+  import { getState, openTerminalDashboard, selectInteractionMode } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const state = getState();
@@ -9,15 +9,6 @@
   let flash = $derived(state.statusline?.flash);
   let tasks = $derived(state.statusline?.tasks);
   let hasTasks = $derived(tasks && (tasks.pending > 0 || tasks.assigned > 0));
-  let controlPlane = $derived(state.controlPlane);
-  let controlPlaneLabel = $derived.by(() => {
-    if (!controlPlane) return "Control";
-    if (controlPlane.status === "down") return "Control Down";
-    if (controlPlane.status === "outdated") return "Control Outdated";
-    if (controlPlane.status === "degraded") return "Control Degraded";
-    return "Control OK";
-  });
-
   async function openDashboard() {
     const project = state.selectedProject;
     if (!project || !termInstance.terminal) return;
@@ -48,9 +39,6 @@
         tasks {tasks.assigned}/{tasks.pending + tasks.assigned}
       </span>
     {/if}
-    <button class="pill pill-control" class:down={controlPlane?.status === "down"} class:degraded={controlPlane?.status === "degraded"} class:outdated={controlPlane?.status === "outdated"} onclick={restartControlPlane}>
-      {controlPlaneLabel}
-    </button>
     {#if flash}
       <span class="flash">{flash}</span>
     {/if}
@@ -157,34 +145,6 @@
     background: rgba(56, 189, 248, 0.1);
     color: var(--accent);
     white-space: nowrap;
-  }
-
-  .pill-control {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: rgba(52, 211, 153, 0.1);
-    color: rgba(110, 231, 183, 0.95);
-    white-space: nowrap;
-    border: 1px solid rgba(52, 211, 153, 0.18);
-  }
-
-  .pill-control.degraded {
-    background: rgba(251, 191, 36, 0.1);
-    color: var(--yellow);
-    border-color: rgba(251, 191, 36, 0.18);
-  }
-
-  .pill-control.outdated {
-    background: rgba(244, 114, 182, 0.1);
-    color: rgb(249, 168, 212);
-    border-color: rgba(244, 114, 182, 0.18);
-  }
-
-  .pill-control.down {
-    background: rgba(248, 113, 113, 0.1);
-    color: var(--red);
-    border-color: rgba(248, 113, 113, 0.2);
   }
 
   .flash {

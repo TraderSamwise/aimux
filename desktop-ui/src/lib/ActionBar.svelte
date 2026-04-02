@@ -7,6 +7,12 @@
   let idle = $derived(!primaryAction);
   let controlPlane = $derived(appState.controlPlane);
   let unhealthy = $derived(controlPlane && controlPlane.status !== "ok");
+  let controlButtonLabel = $derived.by(() => {
+    if (!controlPlane || controlPlane.status === "ok") return "Control OK";
+    if (controlPlane.status === "outdated") return "Control Outdated · Restart";
+    if (controlPlane.status === "down") return "Control Down · Restart";
+    return "Control Degraded · Restart";
+  });
   let controlHint = $derived.by(() => {
     if (!controlPlane || controlPlane.status === "ok") return null;
     if (controlPlane.status === "outdated") return "Project service is outdated for this desktop build.";
@@ -26,9 +32,16 @@
     <span class="spinner ghost"></span>
     <span class="action-text idle-text">{controlHint || "Ready"}</span>
   {/if}
-  {#if unhealthy}
-    <button class="restart-btn" onclick={restartControlPlane}>Restart control</button>
-  {/if}
+  <button
+    class="control-btn"
+    class:degraded={controlPlane?.status === "degraded"}
+    class:outdated={controlPlane?.status === "outdated"}
+    class:down={controlPlane?.status === "down"}
+    disabled={!unhealthy}
+    onclick={restartControlPlane}
+  >
+    {controlButtonLabel}
+  </button>
 </div>
 
 <style>
@@ -63,14 +76,43 @@
     color: var(--text-dim);
   }
 
-  .restart-btn {
+  .control-btn {
     margin-left: auto;
     font-size: 11px;
     padding: 3px 10px;
     border-radius: 999px;
+    color: rgba(110, 231, 183, 0.95);
+    background: rgba(52, 211, 153, 0.08);
+    border: 1px solid rgba(52, 211, 153, 0.18);
+    transition: background 120ms, border-color 120ms, color 120ms, opacity 120ms;
+  }
+
+  .control-btn:disabled {
+    cursor: default;
+    opacity: 0.9;
+  }
+
+  .control-btn.degraded {
+    color: var(--yellow);
+    background: rgba(251, 191, 36, 0.08);
+    border-color: rgba(251, 191, 36, 0.18);
+  }
+
+  .control-btn.outdated {
+    color: rgb(249, 168, 212);
+    background: rgba(244, 114, 182, 0.08);
+    border-color: rgba(244, 114, 182, 0.18);
+  }
+
+  .control-btn.down {
     color: var(--red);
     background: rgba(248, 113, 113, 0.08);
-    border: 1px solid rgba(248, 113, 113, 0.18);
+    border-color: rgba(248, 113, 113, 0.18);
+  }
+
+  .control-btn:not(:disabled):hover {
+    background: rgba(248, 113, 113, 0.14);
+    border-color: rgba(248, 113, 113, 0.28);
   }
 
   .spinner {
