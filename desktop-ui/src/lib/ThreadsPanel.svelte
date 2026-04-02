@@ -4,7 +4,7 @@
 
   let { visible = false } = $props();
 
-  const state = getState();
+  const appState = getState();
 
   let loading = $state(false);
   let error = $state(null);
@@ -30,7 +30,7 @@
   }
 
   async function loadThreads() {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!visible || !project) {
       threads = [];
       selectedThreadId = null;
@@ -54,7 +54,7 @@
   }
 
   async function loadThreadDetail() {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!visible || !project || !selectedThreadId) {
       selectedThread = null;
       threadMessages = [];
@@ -78,7 +78,7 @@
   }
 
   async function sendCompose() {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!project || !composeBody.trim()) return;
     const body = composeBody.trim();
     const recipients = recipientsArray(composeRecipients);
@@ -150,7 +150,7 @@
   }
 
   async function sendReply() {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!project || !selectedThreadId || !threadReply.trim()) return;
     const body = threadReply.trim();
     try {
@@ -183,7 +183,7 @@
   }
 
   async function updateThreadStatus(status) {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!project || !selectedThreadId) return;
     try {
       await trackAction(
@@ -208,7 +208,7 @@
   }
 
   async function acceptHandoff() {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!project || !selectedThreadId) return;
     try {
       await trackAction(
@@ -222,7 +222,7 @@
   }
 
   async function completeHandoff() {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!project || !selectedThreadId) return;
     try {
       await trackAction(
@@ -236,7 +236,7 @@
   }
 
   $effect(() => {
-    state.selectedProject?.path;
+    appState.selectedProject?.path;
     if (visible) {
       void loadThreads();
     }
@@ -286,7 +286,7 @@
 
   <div class="thread-layout">
     <aside class="thread-list">
-      {#if !state.selectedProject}
+      {#if !appState.selectedProject}
         <div class="empty">Select a project to view threads.</div>
       {:else if loading && threads.length === 0}
         <div class="empty">Loading threads…</div>

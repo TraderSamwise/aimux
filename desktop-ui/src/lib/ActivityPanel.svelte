@@ -4,14 +4,14 @@
 
   let { visible = false } = $props();
 
-  const state = getState();
+  const appState = getState();
 
   let loading = $state(false);
   let error = $state(null);
   let entries = $state([]);
 
   async function load() {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!visible || !project) {
       entries = [];
       return;
@@ -32,7 +32,7 @@
   }
 
   async function runTaskAction(kind, taskId) {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!project || !taskId) return;
     const commandByKind = {
       accept: "task_accept",
@@ -73,7 +73,7 @@
   }
 
   async function runHandoffAction(kind, threadId) {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!project || !threadId) return;
     try {
       await trackAction(
@@ -119,8 +119,8 @@
   }
 
   $effect(() => {
-    state.selectedProject?.path;
-    state.projects;
+    appState.selectedProject?.path;
+    appState.projects;
     if (visible) {
       void load();
     }
@@ -133,7 +133,7 @@
   </div>
 
   <div class="panel-body">
-    {#if !state.selectedProject}
+    {#if !appState.selectedProject}
       <div class="empty">Select a project to view workflow activity.</div>
     {:else if loading && entries.length === 0}
       <div class="empty">Loading workflow…</div>
