@@ -13,6 +13,9 @@
   } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
+  const conversationScrollMemory = new Map();
+  const rawScrollMemory = new Map();
+
   let { visible = false } = $props();
 
   const appState = getState();
@@ -24,6 +27,8 @@
   let lastConversationSignature = "";
   let lastConversationSessionKey = "";
   let lastAnimatedResponseSessionKey = "";
+  let lastRestoredConversationKey = "";
+  let lastRestoredRawKey = "";
   let forceConversationStick = false;
   let animatedResponseTextById = $state({});
   const responseAnimationTargets = new Map();
@@ -398,9 +403,57 @@
     return `${appState.nativeChatProjectPath || ""}:${appState.nativeChatSessionId || ""}`;
   }
 
-  function isNearBottom(element, threshold = 28) {
+  function conversationScrollKey() {
+    return `${rawSessionKey()}:conversation`;
+  }
+
+  function rawScrollKey() {
+    return `${rawSessionKey()}:raw`;
+  }
+
+  function isNearBottom(element, threshold = 48) {
     if (!element) return false;
     return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+  }
+
+  function saveConversationScrollPosition() {
+    if (!messageListEl) return;
+    conversationScrollMemory.set(conversationScrollKey(), {
+      scrollTop: messageListEl.scrollTop,
+      stickToBottom: isNearBottom(messageListEl),
+    });
+  }
+
+  function saveRawScrollPosition() {
+    if (!rawOutputEl) return;
+    rawScrollMemory.set(rawScrollKey(), {
+      scrollTop: rawOutputEl.scrollTop,
+      stickToBottom: isNearBottom(rawOutputEl),
+    });
+  }
+
+  async function restoreConversationScrollPosition() {
+    await tick();
+    if (!messageListEl) return;
+    const saved = conversationScrollMemory.get(conversationScrollKey());
+    if (!saved || saved.stickToBottom) {
+      messageListEl.scrollTop = messageListEl.scrollHeight;
+      return;
+    }
+    const maxScrollTop = Math.max(0, messageListEl.scrollHeight - messageListEl.clientHeight);
+    messageListEl.scrollTop = Math.min(saved.scrollTop, maxScrollTop);
+  }
+
+  async function restoreRawScrollPosition() {
+    await tick();
+    if (!rawOutputEl) return;
+    const saved = rawScrollMemory.get(rawScrollKey());
+    if (!saved || saved.stickToBottom) {
+      rawOutputEl.scrollTop = rawOutputEl.scrollHeight;
+      return;
+    }
+    const maxScrollTop = Math.max(0, rawOutputEl.scrollHeight - rawOutputEl.clientHeight);
+    rawOutputEl.scrollTop = Math.min(saved.scrollTop, maxScrollTop);
   }
 
   async function syncRawScroll(force = false) {
@@ -422,48 +475,63 @@
   $effect(() => {
     const rawMode = appState.nativeChatRawMode;
     const output = appState.nativeChatOutput || "";
-    const sessionKey = rawSessionKey();
+    const baseSessionKey = rawSessionKey();
+    const scrollKey = rawScrollKey();
     if (!rawMode) {
       lastRawOutput = output;
-      lastRawSessionKey = sessionKey;
+      lastRawSessionKey = baseSessionKey;
       return;
     }
 
-    const sessionChanged = sessionKey !== lastRawSessionKey;
+    const sessionChanged = baseSessionKey !== lastRawSessionKey;
     const outputChanged = output !== lastRawOutput;
     const nearBottomBeforeUpdate = isNearBottom(rawOutputEl);
     const shouldStick = sessionChanged || outputChanged;
 
     lastRawOutput = output;
-    lastRawSessionKey = sessionKey;
+    lastRawSessionKey = baseSessionKey;
 
-    if (shouldStick && (sessionChanged || nearBottomBeforeUpdate)) {
+    if (sessionChanged && lastRestoredRawKey !== scrollKey) {
+      lastRestoredRawKey = scrollKey;
+      void restoreRawScrollPosition();
+      return;
+    }
+
+    if (shouldStick && nearBottomBeforeUpdate) {
       void syncRawScroll(true);
     }
   });
 
   $effect(() => {
     const rawMode = appState.nativeChatRawMode;
-    const sessionKey = rawSessionKey();
+    const baseSessionKey = rawSessionKey();
+    const scrollKey = conversationScrollKey();
     const signature = (conversationBlocks || [])
       .map((block) => `${block.type}:${block.text}`)
       .join("\n---\n");
 
     if (rawMode) {
       lastConversationSignature = signature;
-      lastConversationSessionKey = sessionKey;
+      lastConversationSessionKey = baseSessionKey;
       return;
     }
 
-    const sessionChanged = sessionKey !== lastConversationSessionKey;
+    const sessionChanged = baseSessionKey !== lastConversationSessionKey;
     const contentChanged = signature !== lastConversationSignature;
     const nearBottomBeforeUpdate = isNearBottom(messageListEl);
     const shouldForceStick = forceConversationStick;
 
     lastConversationSignature = signature;
-    lastConversationSessionKey = sessionKey;
+    lastConversationSessionKey = baseSessionKey;
 
-    if ((sessionChanged || contentChanged) && (shouldForceStick || sessionChanged || nearBottomBeforeUpdate)) {
+    if (sessionChanged && lastRestoredConversationKey !== scrollKey) {
+      lastRestoredConversationKey = scrollKey;
+      forceConversationStick = false;
+      void restoreConversationScrollPosition();
+      return;
+    }
+
+    if (contentChanged && (shouldForceStick || nearBottomBeforeUpdate)) {
       forceConversationStick = false;
       void syncConversationScroll(true);
     }
@@ -522,6 +590,22 @@
       }
     }
   });
+
+  $effect(() => {
+    const scrollKey = conversationScrollKey();
+    if (appState.nativeChatRawMode || !messageListEl || !selectedSession) return;
+    if (lastRestoredConversationKey === scrollKey) return;
+    lastRestoredConversationKey = scrollKey;
+    void restoreConversationScrollPosition();
+  });
+
+  $effect(() => {
+    const scrollKey = rawScrollKey();
+    if (!appState.nativeChatRawMode || !rawOutputEl || !selectedSession) return;
+    if (lastRestoredRawKey === scrollKey) return;
+    lastRestoredRawKey = scrollKey;
+    void restoreRawScrollPosition();
+  });
 </script>
 
 <section class="panel" class:hidden={!visible}>
@@ -572,14 +656,14 @@
     {:else if appState.nativeChatRawMode}
       <div class="raw-shell">
         <div class="rail-title">Raw Pane</div>
-        <pre class="raw-output" bind:this={rawOutputEl}>{appState.nativeChatOutput || "No output captured yet."}</pre>
+        <pre class="raw-output" bind:this={rawOutputEl} onscroll={saveRawScrollPosition}>{appState.nativeChatOutput || "No output captured yet."}</pre>
       </div>
     {:else if appState.nativeChatBlocks.length > 0}
       <div class="split-layout">
         <div class="chat-pane">
           <div class="pane-title">Conversation</div>
           {#if conversationBlocks.length > 0}
-            <div class="message-list" bind:this={messageListEl}>
+            <div class="message-list" bind:this={messageListEl} onscroll={saveConversationScrollPosition}>
               {#each conversationEntries as entry (`${entry.id}`)}
                 <article class="turn" class:prompt-turn={entry.type === "prompt"} class:response-turn={entry.type === "response"}>
                   <article class="message" class:prompt={entry.type === "prompt"} class:response={entry.type === "response"}>
