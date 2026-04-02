@@ -508,6 +508,16 @@ async fn worktree_create(project_path: String, name: String) -> Result<Value, St
 }
 
 #[tauri::command]
+async fn worktree_remove(project_path: String, path: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({ "path": path });
+    project_service_json(&project_path, "POST", "/worktrees/remove", Some(&body), "worktree remove")
+  })
+  .await
+  .map_err(|error| format!("worktree_remove task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn worktree_list(project_path: String) -> Result<Value, String> {
   tauri::async_runtime::spawn_blocking(move || {
     let response: Value = project_service_json(&project_path, "GET", "/worktrees", None, "worktree list")?;
@@ -725,6 +735,7 @@ fn main() {
       agent_rename,
       agent_migrate,
       worktree_create,
+      worktree_remove,
       worktree_list,
       graveyard_list,
       graveyard_resurrect,

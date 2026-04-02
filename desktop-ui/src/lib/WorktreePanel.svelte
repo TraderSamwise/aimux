@@ -9,6 +9,7 @@
   let showNewWorktreeInput = $state(false);
   let newWorktreeName = $state("");
   let showSpawnMenu = $state(null);
+  let removeWorktreePath = $state(null);
   let renameSessionId = $state(null);
   let renameDraft = $state("");
   let forkMenu = $state(null);
@@ -206,6 +207,11 @@
     migrateSessionId = null;
   }
 
+  function closeWorktreeMenus() {
+    showSpawnMenu = null;
+    removeWorktreePath = null;
+  }
+
   function openRename(e, agent) {
     e.stopPropagation();
     renameSessionId = renameSessionId === agent.id ? null : agent.id;
@@ -338,6 +344,26 @@
     }
   }
 
+  async function removeWorktree(path, name) {
+    const project = appState.selectedProject;
+    if (!project || isRemoveWorktreePending(path)) return;
+    try {
+      await trackAction(
+        {
+          kind: "remove-worktree",
+          message: `Removing ${name}...`,
+          projectPath: project.path,
+          worktreePath: path,
+          reconcile: () => ({ worktreePath: path }),
+        },
+        () => invoke("worktree_remove", { projectPath: project.path, path }),
+      );
+      removeWorktreePath = null;
+    } catch (err) {
+      showError(`Worktree remove failed: ${err}`);
+    }
+  }
+
   function isAgentActionPending(sessionId) {
     return isActionPending({ projectPath: appState.selectedProject?.path, sessionId });
   }
@@ -379,6 +405,14 @@
     return isActionPending({
       projectPath: appState.selectedProject?.path,
       kind: "create-worktree",
+    });
+  }
+
+  function isRemoveWorktreePending(path) {
+    return isActionPending({
+      projectPath: appState.selectedProject?.path,
+      kind: "remove-worktree",
+      worktreePath: path,
     });
   }
 
@@ -446,6 +480,14 @@
               {#if wt.branch}
                 <span class="worktree-branch">{wt.branch}</span>
               {/if}
+              {#if !wt.pending}
+                <button
+                  class="wt-action wt-action-danger"
+                  title={wt.agents.length > 0 ? "Worktree has agents attached" : "Remove worktree"}
+                  disabled={Boolean(wt.pending) || wt.agents.length > 0 || isRemoveWorktreePending(wt.path)}
+                  onclick={() => { removeWorktreePath = removeWorktreePath === wt.path ? null : wt.path; showSpawnMenu = null; }}
+                >×</button>
+              {/if}
               <button
                 class="wt-action"
                 title="Spawn agent in this worktree"
@@ -464,6 +506,16 @@
                   {isSpawnPending(tool, wt.path) ? `spawning ${tool}...` : `spawn ${tool}`}
                 </button>
               {/each}
+            </div>
+          {/if}
+
+          {#if removeWorktreePath === wt.path && wt.path}
+            <div class="worktree-confirm">
+              <span class="inline-hint">Remove {wt.name}? This deletes the checkout.</span>
+              <button class="inline-chip confirm" onclick={() => removeWorktree(wt.path, wt.name)} disabled={isRemoveWorktreePending(wt.path)}>
+                {isRemoveWorktreePending(wt.path) ? "removing..." : "remove"}
+              </button>
+              <button class="inline-chip" onclick={() => { removeWorktreePath = null; }}>cancel</button>
             </div>
           {/if}
 
@@ -793,6 +845,10 @@
     color: var(--text);
   }
 
+  .wt-action-danger:hover {
+    color: var(--red);
+  }
+
   .wt-action:disabled {
     opacity: 0.35;
     cursor: default;
@@ -808,6 +864,14 @@
     flex-direction: column;
     gap: 1px;
     padding: 2px 0 0;
+  }
+
+  .worktree-confirm {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px 6px 20px;
+    flex-wrap: wrap;
   }
 
   .agent-block {

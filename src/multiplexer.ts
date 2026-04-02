@@ -274,6 +274,7 @@ export class Multiplexer {
         getState: () => this.buildDesktopState(),
         listWorktrees: () => this.listDesktopWorktrees(),
         createWorktree: ({ name }) => ({ path: createWorktree(name) }),
+        removeWorktree: ({ path }) => this.removeDesktopWorktree(path),
         listGraveyard: () => this.listGraveyardEntries(),
         resurrectGraveyard: ({ sessionId }) => this.resurrectGraveyardSession(sessionId),
       },
@@ -5510,6 +5511,62 @@ export class Multiplexer {
 
   private listDesktopWorktrees(): Array<{ name: string; path: string; branch: string; isBare: boolean }> {
     return listAllWorktrees().filter((wt) => !wt.isBare);
+  }
+
+  async removeDesktopWorktree(path: string): Promise<{ path: string }> {
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+
+    const mainRepo = findMainRepo();
+    if (path === mainRepo) {
+      throw new Error("Cannot remove the main checkout");
+    }
+
+    const matching = this.listDesktopWorktrees().find((worktree) => worktree.path === path);
+    if (!matching) {
+      throw new Error(`Worktree "${path}" not found`);
+    }
+
+    const attachedSession = this.getDashboardSessions().find((session) => session.worktreePath === path);
+    if (attachedSession) {
+      throw new Error(
+        `Cannot remove "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
+      );
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let stderr = "";
+      let child;
+      try {
+        child = spawn("git", ["worktree", "remove", path, "--force"], {
+          cwd: mainRepo,
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        const detail = stderr
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .at(-1);
+        reject(new Error(detail || `git worktree remove exited with code ${code ?? 1}`));
+      });
+    });
+
+    return { path };
   }
 
   private listGraveyardEntries(): SessionState[] {

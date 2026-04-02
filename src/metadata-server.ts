@@ -47,6 +47,7 @@ interface MetadataServerOptions {
     getState?: () => Record<string, unknown>;
     listWorktrees?: () => unknown[];
     createWorktree?: (input: { name: string }) => Promise<{ path: string }> | { path: string };
+    removeWorktree?: (input: { path: string }) => Promise<{ path: string }> | { path: string };
     listGraveyard?: () => unknown[];
     resurrectGraveyard?: (input: { sessionId: string }) =>
       | Promise<{ sessionId: string; status: "offline" }>
@@ -720,6 +721,18 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.createWorktree(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/worktrees/remove") {
+        const body = (await readJson(req)) as { path: string };
+        if (!this.options.desktop?.removeWorktree) {
+          send(res, 501, { ok: false, error: "worktree remove not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.removeWorktree(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
