@@ -41,6 +41,8 @@ let heartbeatTicker = $state(Date.now());
 let lastHeartbeatAt = $state(0);
 let heartbeatInterval = null;
 const projectAlertStreams = new Map();
+let lastControlPlaneSignature = null;
+let lastControlPlaneSnapshot = null;
 
 // ── In-progress actions ───────────────────────────────────────────
 
@@ -280,6 +282,104 @@ function manifestsMatch(expected, actual) {
   const expectedCapabilities = expected.capabilities || {};
   const actualCapabilities = actual.capabilities || {};
   return Object.entries(expectedCapabilities).every(([key, value]) => actualCapabilities[key] === value);
+}
+
+function buildControlPlaneSnapshot(project) {
+  const heartbeatAgeMs = lastHeartbeatAt > 0 ? Math.max(0, heartbeatTicker - lastHeartbeatAt) : Number.POSITIVE_INFINITY;
+  const daemonConnected = heartbeatAgeMs < 5000;
+  const serviceInfo = getProjectServiceInfo(project);
+  const missingCapabilities = getMissingProjectServiceCapabilities(project);
+  const manifestMatches = manifestsMatch(expectedServiceInfo, serviceInfo);
+  const buildMismatch =
+    Boolean(project?.serviceEndpointAlive) &&
+    Boolean(expectedServiceInfo?.buildStamp) &&
+    Boolean(serviceInfo?.buildStamp) &&
+    !manifestMatches;
+  const serviceOutdated =
+    Boolean(project?.serviceEndpointAlive) &&
+    (
+      !serviceInfo ||
+      Number(serviceInfo.apiVersion || 0) < REQUIRED_PROJECT_SERVICE_API_VERSION ||
+      missingCapabilities.length > 0 ||
+      buildMismatch
+    );
+  const daemonStatus = daemonConnected ? "ok" : "down";
+  const projectStatus =
+    !project
+      ? "unselected"
+      : serviceOutdated
+        ? "outdated"
+        : project?.serviceEndpointAlive === false
+          ? "degraded"
+          : project?.serviceAlive === false
+            ? "degraded"
+            : "ok";
+  const reason =
+    !daemonConnected
+      ? "Daemon is disconnected."
+      : buildMismatch
+        ? "Project service build is stale for this desktop build."
+        : !serviceInfo
+          ? "Project service is missing manifest information."
+          : Number(serviceInfo.apiVersion || 0) < REQUIRED_PROJECT_SERVICE_API_VERSION
+            ? "Project service API version is outdated."
+            : missingCapabilities.length > 0
+              ? `Project service is missing capabilities: ${missingCapabilities.join(", ")}`
+              : project?.serviceEndpointAlive === false
+                ? "Project service endpoint is unreachable."
+                : project?.serviceAlive === false
+                  ? "Project service is not running."
+                  : null;
+  const status =
+    !daemonConnected
+      ? "down"
+      : serviceOutdated
+        ? "outdated"
+        : project?.serviceEndpointAlive === false
+          ? "degraded"
+          : project?.serviceAlive === false
+            ? "degraded"
+            : "ok";
+
+  const signature = JSON.stringify({
+    projectPath: project?.path || null,
+    heartbeatBucket: Number.isFinite(heartbeatAgeMs) ? Math.floor(heartbeatAgeMs / 1000) : "inf",
+    daemonConnected,
+    serviceAlive: Boolean(project?.serviceAlive),
+    serviceEndpointAlive: Boolean(project?.serviceEndpointAlive),
+    expectedBuildStamp: expectedServiceInfo?.buildStamp || null,
+    actualBuildStamp: serviceInfo?.buildStamp || null,
+    actualApiVersion: Number(serviceInfo?.apiVersion || 0),
+    missingCapabilities,
+    buildMismatch,
+    daemonStatus,
+    projectStatus,
+    status,
+    reason,
+    error: controlPlaneError,
+  });
+
+  if (signature === lastControlPlaneSignature && lastControlPlaneSnapshot) {
+    return lastControlPlaneSnapshot;
+  }
+
+  lastControlPlaneSignature = signature;
+  lastControlPlaneSnapshot = {
+    daemonConnected,
+    heartbeatAgeMs,
+    serviceAlive: Boolean(project?.serviceAlive),
+    serviceEndpointAlive: Boolean(project?.serviceEndpointAlive),
+    expectedServiceInfo,
+    serviceInfo,
+    buildMismatch,
+    missingCapabilities,
+    error: controlPlaneError,
+    reason,
+    daemonStatus,
+    projectStatus,
+    status,
+  };
+  return lastControlPlaneSnapshot;
 }
 
 function applyActionOverlays(project) {
@@ -738,74 +838,7 @@ export function getState() {
     },
     get controlPlane() {
       const project = applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
-      const heartbeatAgeMs = lastHeartbeatAt > 0 ? Math.max(0, heartbeatTicker - lastHeartbeatAt) : Number.POSITIVE_INFINITY;
-      const daemonConnected = heartbeatAgeMs < 5000;
-      const serviceInfo = getProjectServiceInfo(project);
-      const missingCapabilities = getMissingProjectServiceCapabilities(project);
-      const manifestMatches = manifestsMatch(expectedServiceInfo, serviceInfo);
-      const buildMismatch =
-        Boolean(project?.serviceEndpointAlive) &&
-        Boolean(expectedServiceInfo?.buildStamp) &&
-        Boolean(serviceInfo?.buildStamp) &&
-        !manifestMatches;
-      const serviceOutdated =
-        Boolean(project?.serviceEndpointAlive) &&
-        (
-          !serviceInfo ||
-          Number(serviceInfo.apiVersion || 0) < REQUIRED_PROJECT_SERVICE_API_VERSION ||
-          missingCapabilities.length > 0 ||
-          buildMismatch
-        );
-      const daemonStatus = daemonConnected ? "ok" : "down";
-      const projectStatus =
-        !project
-          ? "unselected"
-          : serviceOutdated
-            ? "outdated"
-            : project?.serviceEndpointAlive === false
-              ? "degraded"
-              : project?.serviceAlive === false
-                ? "degraded"
-                : "ok";
-      return {
-        daemonConnected,
-        heartbeatAgeMs,
-        serviceAlive: Boolean(project?.serviceAlive),
-        serviceEndpointAlive: Boolean(project?.serviceEndpointAlive),
-        expectedServiceInfo,
-        serviceInfo,
-        buildMismatch,
-        missingCapabilities,
-        error: controlPlaneError,
-        reason:
-          !daemonConnected
-            ? "Daemon is disconnected."
-            : buildMismatch
-              ? "Project service build is stale for this desktop build."
-              : !serviceInfo
-                ? "Project service is missing manifest information."
-                : Number(serviceInfo.apiVersion || 0) < REQUIRED_PROJECT_SERVICE_API_VERSION
-                  ? "Project service API version is outdated."
-                  : missingCapabilities.length > 0
-                    ? `Project service is missing capabilities: ${missingCapabilities.join(", ")}`
-                    : project?.serviceEndpointAlive === false
-                      ? "Project service endpoint is unreachable."
-                      : project?.serviceAlive === false
-                        ? "Project service is not running."
-                        : null,
-        daemonStatus,
-        projectStatus,
-        status:
-          !daemonConnected
-            ? "down"
-            : serviceOutdated
-              ? "outdated"
-            : project?.serviceEndpointAlive === false
-              ? "degraded"
-              : project?.serviceAlive === false
-                ? "degraded"
-                : "ok",
-      };
+      return buildControlPlaneSnapshot(project);
     },
   };
 }
