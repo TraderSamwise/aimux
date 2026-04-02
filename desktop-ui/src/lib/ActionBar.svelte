@@ -1,54 +1,73 @@
 <script>
-  import { getState, restartControlPlane } from "../stores/state.svelte.js";
+  import { getState, restartDaemonControl, restartProjectService } from "../stores/state.svelte.js";
   const appState = getState();
 
   let actions = $derived(appState.inFlightActions || []);
   let primaryAction = $derived(actions.length > 0 ? actions[actions.length - 1] : null);
   let idle = $derived(!primaryAction);
-  let controlPlane = $derived(appState.controlPlane);
-  let unhealthy = $derived(controlPlane && controlPlane.status !== "ok");
-  let controlButtonLabel = $derived.by(() => {
-    if (!controlPlane || controlPlane.status === "ok") return "Control OK";
-    if (controlPlane.status === "outdated") return "Control Outdated · Restart";
-    if (controlPlane.status === "down") return "Control Down · Restart";
-    return "Control Degraded · Restart";
+  let controlPlane = $derived(appState.controlPlane || {});
+  let daemonStatus = $derived(controlPlane.daemonStatus || "down");
+  let projectStatus = $derived(controlPlane.projectStatus || "degraded");
+  let projectSelected = $derived(Boolean(appState.selectedProject));
+  let daemonButtonLabel = $derived.by(() => {
+    if (daemonStatus === "ok") return "Daemon OK";
+    return "Daemon Down · Restart";
+  });
+  let projectButtonLabel = $derived.by(() => {
+    if (!projectSelected) return "Project Unselected";
+    if (projectStatus === "ok") return "Project OK";
+    if (projectStatus === "outdated") return "Project Outdated · Restart";
+    return "Project Degraded · Restart";
   });
   let controlHint = $derived.by(() => {
-    if (!controlPlane || controlPlane.status === "ok") return null;
-    if (controlPlane.status === "outdated") return "Project service is outdated for this desktop build.";
-    if (controlPlane.status === "down") return "Control plane is disconnected.";
-    return "Control plane is degraded.";
+    if (daemonStatus !== "ok") return "Daemon is disconnected.";
+    if (!projectSelected) return null;
+    if (projectStatus === "outdated") return "Project service is outdated for this desktop build.";
+    if (projectStatus === "degraded") return "Project service is degraded.";
+    return null;
   });
 </script>
 
 <div class="action-bar" class:idle>
-  {#if primaryAction}
-    <span class="spinner"></span>
-    <span class="action-text">{primaryAction.message}</span>
-    {#if actions.length > 1}
-      <span class="action-count">+{actions.length - 1}</span>
+  <div class="action-main">
+    {#if primaryAction}
+      <span class="spinner"></span>
+      <span class="action-text">{primaryAction.message}</span>
+      {#if actions.length > 1}
+        <span class="action-count">+{actions.length - 1}</span>
+      {/if}
+    {:else}
+      <span class="spinner ghost"></span>
+      <span class="action-text idle-text">{controlHint || "Ready"}</span>
     {/if}
-  {:else}
-    <span class="spinner ghost"></span>
-    <span class="action-text idle-text">{controlHint || "Ready"}</span>
-  {/if}
-  <button
-    class="control-btn"
-    class:degraded={controlPlane?.status === "degraded"}
-    class:outdated={controlPlane?.status === "outdated"}
-    class:down={controlPlane?.status === "down"}
-    disabled={!unhealthy}
-    onclick={restartControlPlane}
-  >
-    {controlButtonLabel}
-  </button>
+  </div>
+  <div class="action-right">
+    <button
+      class="control-btn daemon"
+      class:down={daemonStatus !== "ok"}
+      disabled={daemonStatus === "ok"}
+      onclick={restartDaemonControl}
+    >
+      {daemonButtonLabel}
+    </button>
+    <button
+      class="control-btn project"
+      class:degraded={projectStatus === "degraded"}
+      class:outdated={projectStatus === "outdated"}
+      disabled={!projectSelected || projectStatus === "ok"}
+      onclick={restartProjectService}
+    >
+      {projectButtonLabel}
+    </button>
+  </div>
 </div>
 
 <style>
   .action-bar {
     display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: space-between;
+    gap: 12px;
     padding: 5px 16px;
     background: rgba(56, 189, 248, 0.06);
     border-top: 1px solid rgba(125, 211, 252, 0.12);
@@ -61,9 +80,26 @@
     border-top-color: rgba(148, 163, 184, 0.08);
   }
 
+  .action-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .action-right {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
   .action-text {
     font-size: 11px;
     color: var(--accent);
+    min-width: 0;
   }
 
   .idle-text {
@@ -71,13 +107,11 @@
   }
 
   .action-count {
-    margin-left: auto;
     font-size: 10px;
     color: var(--text-dim);
   }
 
   .control-btn {
-    margin-left: auto;
     font-size: 11px;
     padding: 3px 10px;
     border-radius: 999px;
@@ -90,6 +124,12 @@
   .control-btn:disabled {
     cursor: default;
     opacity: 0.9;
+  }
+
+  .control-btn.daemon.down {
+    color: var(--red);
+    background: rgba(248, 113, 113, 0.08);
+    border-color: rgba(248, 113, 113, 0.18);
   }
 
   .control-btn.degraded {

@@ -540,6 +540,17 @@ export function getState() {
           Number(serviceInfo.apiVersion || 0) < REQUIRED_PROJECT_SERVICE_API_VERSION ||
           missingCapabilities.length > 0
         );
+      const daemonStatus = daemonConnected ? "ok" : "down";
+      const projectStatus =
+        !project
+          ? "unselected"
+          : serviceOutdated
+            ? "outdated"
+            : project?.serviceEndpointAlive === false
+              ? "degraded"
+              : project?.serviceAlive === false
+                ? "degraded"
+                : "ok";
       return {
         daemonConnected,
         heartbeatAgeMs,
@@ -547,6 +558,8 @@ export function getState() {
         serviceEndpointAlive: Boolean(project?.serviceEndpointAlive),
         serviceInfo,
         missingCapabilities,
+        daemonStatus,
+        projectStatus,
         status:
           !daemonConnected
             ? "down"
@@ -971,5 +984,28 @@ export async function restartControlPlane() {
       projectPath,
     },
     () => invoke("restart_control_plane", { projectPath }),
+  );
+}
+
+export async function restartProjectService() {
+  const projectPath = selectedProjectPath;
+  if (!projectPath) return;
+  await trackAction(
+    {
+      kind: "restart-project-service",
+      message: "Restarting project service...",
+      projectPath,
+    },
+    () => invoke("restart_project_service", { projectPath }),
+  );
+}
+
+export async function restartDaemonControl() {
+  await trackAction(
+    {
+      kind: "restart-daemon",
+      message: "Restarting daemon and recovering projects...",
+    },
+    () => invoke("restart_daemon"),
   );
 }
