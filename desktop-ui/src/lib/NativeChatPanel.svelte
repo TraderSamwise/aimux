@@ -167,7 +167,14 @@
 
   let conversationEntries = $derived.by(() => {
     const promptBlocks = conversationBlocks.filter((block) => block.type === "prompt");
-    const offset = Math.max(0, historyMessages.length - promptBlocks.length);
+    const promptMessageByPromptIndex = new Map();
+    let historyIndex = historyMessages.length - 1;
+    for (let promptIndex = promptBlocks.length - 1; promptIndex >= 0; promptIndex -= 1) {
+      const message = historyIndex >= 0 ? historyMessages[historyIndex] : null;
+      if (!message) continue;
+      promptMessageByPromptIndex.set(promptIndex, message);
+      historyIndex -= 1;
+    }
     let promptIndex = 0;
     return conversationBlocks.map((block, index) => {
       if (block.type !== "prompt") {
@@ -177,7 +184,7 @@
           text: block.text,
         };
       }
-      const message = historyMessages[offset + promptIndex];
+      const message = promptMessageByPromptIndex.get(promptIndex) || null;
       promptIndex += 1;
       return {
         id: message?.id || `prompt:${index}`,
@@ -221,11 +228,24 @@
       .filter(Boolean);
   }
 
+  function dedupeImageFiles(files) {
+    const seen = new Set();
+    const unique = [];
+    for (const file of files || []) {
+      if (!file) continue;
+      const key = `${file.name || ""}:${file.size || 0}:${file.type || ""}:${file.lastModified || 0}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(file);
+    }
+    return unique;
+  }
+
   async function handleDraftTextPaste(partId, event) {
-    const files = [
+    const files = dedupeImageFiles([
       ...extractImageFiles(event.clipboardData?.items),
       ...[...(event.clipboardData?.files || [])].filter((file) => file?.type?.startsWith("image/")),
-    ];
+    ]);
     if (files.length === 0) return;
     event.preventDefault();
     activeDraftTextPartId = partId;
@@ -239,10 +259,10 @@
   }
 
   async function handleComposerDrop(event) {
-    const files = [
+    const files = dedupeImageFiles([
       ...extractImageFiles(event.dataTransfer?.items),
       ...[...(event.dataTransfer?.files || [])].filter((file) => file?.type?.startsWith("image/")),
-    ];
+    ]);
     if (files.length === 0) return;
     event.preventDefault();
     await handleImageFiles(files);
