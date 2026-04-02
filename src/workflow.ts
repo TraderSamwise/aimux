@@ -15,6 +15,8 @@ export interface WorkflowEntry extends ThreadEntry {
   familyTaskIds: string[];
 }
 
+export type WorkflowFilter = "all" | "on_me" | "blocked" | "families";
+
 export function buildThreadEntries(): ThreadEntry[] {
   return listThreadSummaries()
     .map((summary) => {
@@ -86,4 +88,19 @@ export function buildWorkflowEntries(currentParticipant = "user"): WorkflowEntry
       };
     })
     .sort((a, b) => b.urgency - a.urgency || (a.thread.updatedAt < b.thread.updatedAt ? 1 : -1));
+}
+
+export function filterWorkflowEntries(
+  entries: WorkflowEntry[],
+  filter: WorkflowFilter,
+  currentParticipant = "user",
+): WorkflowEntry[] {
+  if (filter === "all") return entries;
+  if (filter === "on_me") {
+    return entries.filter((entry) => (entry.thread.waitingOn ?? []).includes(currentParticipant));
+  }
+  if (filter === "blocked") {
+    return entries.filter((entry) => entry.thread.status === "blocked" || entry.task?.status === "blocked");
+  }
+  return entries.filter((entry) => entry.familyTaskIds.length > 1);
 }

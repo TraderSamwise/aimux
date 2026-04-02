@@ -76,7 +76,14 @@ import {
 } from "./orchestration-actions.js";
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
-import { buildThreadEntries, buildWorkflowEntries, type ThreadEntry, type WorkflowEntry } from "./workflow.js";
+import {
+  buildThreadEntries,
+  buildWorkflowEntries,
+  filterWorkflowEntries,
+  type ThreadEntry,
+  type WorkflowEntry,
+  type WorkflowFilter,
+} from "./workflow.js";
 
 export type MuxMode = "dashboard" | "project-service";
 
@@ -182,6 +189,7 @@ export class Multiplexer {
   private activityIndex = 0;
   private workflowEntries: WorkflowEntry[] = [];
   private workflowIndex = 0;
+  private workflowFilter: WorkflowFilter = "all";
   private threadEntries: ThreadEntry[] = [];
   private threadIndex = 0;
   private threadReplyActive = false;
@@ -1623,7 +1631,7 @@ export class Multiplexer {
   }
 
   private buildWorkflowEntries(): WorkflowEntry[] {
-    return buildWorkflowEntries("user");
+    return filterWorkflowEntries(buildWorkflowEntries("user"), this.workflowFilter, "user");
   }
 
   private showWorkflow(): void {
@@ -1642,11 +1650,13 @@ export class Multiplexer {
     const rows = process.stdout.rows ?? 24;
     const header: string[] = [];
     header.push("");
-    header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — workflow", cols));
+    header.push(
+      this.centerInWidth(`\x1b[1maimux\x1b[0m — workflow \x1b[2m[${this.describeWorkflowFilter()}]\x1b[0m`, cols),
+    );
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a] accept  [b] block  [c/x] complete  [P] approve  [J] changes  [E] reopen  [Enter] thread  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [f] filter  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a] accept  [b] block  [c/x] complete  [P] approve  [J] changes  [E] reopen  [Enter] thread  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -1762,6 +1772,10 @@ export class Multiplexer {
     if (this.handleDashboardSubscreenNavigationKey(key, "workflow")) return;
     if (key === "?") {
       this.showHelp();
+      return;
+    }
+    if (key === "f") {
+      this.cycleWorkflowFilter();
       return;
     }
     if (key === "s") {
@@ -2447,6 +2461,24 @@ export class Multiplexer {
     }
     this.workflowEntries = this.buildWorkflowEntries();
     this.workflowIndex = Math.min(this.workflowIndex, Math.max(0, this.workflowEntries.length - 1));
+    this.renderWorkflow();
+  }
+
+  private describeWorkflowFilter(): string {
+    if (this.workflowFilter === "on_me") return "waiting on me";
+    if (this.workflowFilter === "blocked") return "blocked";
+    if (this.workflowFilter === "families") return "families";
+    return "all";
+  }
+
+  private cycleWorkflowFilter(): void {
+    const order: WorkflowFilter[] = ["all", "on_me", "blocked", "families"];
+    const current = order.indexOf(this.workflowFilter);
+    this.workflowFilter = order[(current + 1) % order.length] ?? "all";
+    this.workflowEntries = this.buildWorkflowEntries();
+    this.workflowIndex = Math.min(this.workflowIndex, Math.max(0, this.workflowEntries.length - 1));
+    this.footerFlash = `Workflow filter: ${this.describeWorkflowFilter()}`;
+    this.footerFlashTicks = 3;
     this.renderWorkflow();
   }
 
