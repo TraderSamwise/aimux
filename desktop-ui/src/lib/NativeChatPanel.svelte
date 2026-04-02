@@ -26,6 +26,37 @@
       (block) => block.type === "status" || block.type === "meta" || block.type === "raw",
     ),
   );
+  let collapsedSideBlocks = $derived.by(() => {
+    const next = [];
+    const normalizedSeen = new Set();
+
+    for (const block of sideBlocks || []) {
+      const normalized = String(block.text || "").replace(/\s+/g, " ").trim();
+      if (!normalized) continue;
+
+      if (block.type === "raw") {
+        if (next.length === 0 || next[next.length - 1].type !== "raw") {
+          next.push({ ...block, text: normalized });
+        }
+        continue;
+      }
+
+      const key = `${block.type}:${normalized}`;
+      if (normalizedSeen.has(key)) continue;
+      normalizedSeen.add(key);
+      next.push(block);
+    }
+
+    const statusBlocks = next.filter((block) => block.type === "status");
+    const metaBlocks = next.filter((block) => block.type === "meta");
+    const rawBlocks = next.filter((block) => block.type === "raw");
+
+    return [
+      ...metaBlocks.slice(-2),
+      ...statusBlocks.slice(-3),
+      ...rawBlocks.slice(-1),
+    ];
+  });
 
   function sessionLabel(session) {
     return session?.label || session?.tool || session?.id || "session";
@@ -126,9 +157,9 @@
 
         <aside class="side-pane">
           <div class="pane-title">Context</div>
-          {#if sideBlocks.length > 0}
+          {#if collapsedSideBlocks.length > 0}
             <div class="side-list">
-              {#each sideBlocks as block, index (`side:${block.type}:${index}`)}
+              {#each collapsedSideBlocks as block, index (`side:${block.type}:${index}`)}
                 <article class="message" class:status={block.type === "status"} class:raw={block.type === "raw"} class:meta={block.type === "meta"}>
                   <div class="message-kind">
                     {#if block.type === "status"}
@@ -272,6 +303,7 @@
   .chat-pane,
   .side-pane {
     overflow: hidden;
+    position: relative;
   }
 
   .pane-title,
@@ -282,6 +314,16 @@
     letter-spacing: 0.12em;
     color: var(--text-dim);
     padding: 0 2px;
+  }
+
+  .side-pane .pane-title,
+  .raw-shell .rail-title {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: linear-gradient(180deg, rgba(11, 18, 29, 0.98), rgba(11, 18, 29, 0.88));
+    padding: 6px 2px 8px;
+    margin: -6px 0 0;
   }
 
   .message-list {
@@ -299,7 +341,7 @@
     gap: 10px;
     overflow: auto;
     min-height: 0;
-    padding-right: 4px;
+    padding: 0 4px 0 0;
   }
 
   .message {
@@ -331,6 +373,7 @@
 
   .message.raw {
     background: rgba(148, 163, 184, 0.04);
+    opacity: 0.88;
   }
 
   .message-kind {
