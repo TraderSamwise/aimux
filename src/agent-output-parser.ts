@@ -63,7 +63,9 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     if (!trimmed) return false;
     return (
       (/^([A-Za-z0-9._-]+@[^ ]+|~\/|\/)/.test(trimmed) && /(context\)|%\s|[$#]\s)/.test(trimmed)) ||
+      /^[A-Za-z0-9._-]+@[^ ]+\s+(~\/|\/)/.test(trimmed) ||
       (/^([›>]|▶)\s/.test(trimmed) && /(permissions|cycle|cwd|context)/i.test(trimmed)) ||
+      /^⏵⏵\s/.test(trimmed) ||
       /gpt-|claude|context\)|bypass permissions|shift\+tab|to cycle/i.test(trimmed)
     );
   };
@@ -73,6 +75,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     return (
       /^■\s?/.test(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
+      /^⏵⏵\s/.test(trimmed) ||
       /^\*\s+[A-Z][A-Za-z-]+(?:\.\.\.|…)?$/.test(trimmed) ||
       /^[╰└]\s*Tip:/i.test(trimmed) ||
       /^Tip:\s/i.test(trimmed) ||
@@ -83,10 +86,10 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   };
   const isPromptLine = (line: string) => {
     const trimmed = line.trimStart();
-    return /^›\s?/.test(trimmed) || /^>\s?/.test(trimmed);
+    return /^›\s?/.test(trimmed) || /^>\s?/.test(trimmed) || /^❯\s?/.test(trimmed);
   };
-  const stripPromptMarker = (line: string) => line.trimStart().replace(/^(›|>)\s?/, "");
-  const stripResponseMarker = (line: string) => line.trimStart().replace(/^•\s?/, "");
+  const stripPromptMarker = (line: string) => line.trimStart().replace(/^(›|>|❯)\s?/, "");
+  const stripResponseMarker = (line: string) => line.trimStart().replace(/^(•|⏺)\s?/, "");
   const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|\*\s+)\s?/, "");
 
   for (const line of lines) {
@@ -94,12 +97,18 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
 
     if (isDivider(trimmed)) continue;
     if (isPromptLine(trimmed)) {
-      pushLine("prompt", stripPromptMarker(trimmed));
+      const promptText = stripPromptMarker(trimmed);
+      if (!promptText.trim()) {
+        flush();
+        expectingResponse = false;
+        continue;
+      }
+      pushLine("prompt", promptText);
       sawPrompt = true;
       expectingResponse = true;
       continue;
     }
-    if (/^•\s?/.test(trimmed) && !/^•\s?Working\b/.test(trimmed)) {
+    if (/^(•|⏺)\s?/.test(trimmed) && !/^•\s?Working\b/.test(trimmed)) {
       pushLine("response", stripResponseMarker(trimmed));
       sawPrompt = true;
       expectingResponse = false;
@@ -174,16 +183,20 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[]): AgentOutputBlock
 
     const prev = next[i - 1] || null;
     const following = next[i + 1] || null;
+    const nextConversationIndex = next.findIndex(
+      (block, index) => index > i && (block.type === "prompt" || block.type === "response"),
+    );
 
     const betweenConversationTurns =
       (prev?.type === "response" || prev?.type === "prompt") &&
       (following?.type === "prompt" || following?.type === "response");
     const leadingAssistantCarryover =
       !prev && (following?.type === "prompt" || following?.type === "response" || following?.type === "status");
+    const leadingAssistantPrelude = !prev && nextConversationIndex !== -1;
     const responseContinuation = prev?.type === "response";
 
     if (
-      (betweenConversationTurns || leadingAssistantCarryover || responseContinuation) &&
+      (betweenConversationTurns || leadingAssistantCarryover || leadingAssistantPrelude || responseContinuation) &&
       looksLikeAssistantText(current.text)
     ) {
       current.type = "response";
