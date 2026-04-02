@@ -178,6 +178,19 @@ These commands are additive control-plane helpers on top of the existing `aimux 
 
 For desktop / GUI callers, prefer explicit `--project` usage instead of relying on launcher cwd.
 
+Daemon rebuild quirk:
+
+- The global daemon and each project service run from the built `dist/` output, not directly from `src/`.
+- If you change project-service HTTP behavior, rebuild first with `yarn build`.
+- If a daemon is already running, restart the daemon too, not just the project service, or the old daemon will keep spawning old project-service code.
+
+```bash
+yarn build
+aimux daemon restart
+cd /abs/path/to/repo
+aimux host restart --serve
+```
+
 The desktop app now exposes these flows directly over daemon/project-service HTTP:
 
 - dashboard worktree/agent management
