@@ -16,7 +16,16 @@ export interface AlertEvent {
   dedupeKey?: string;
 }
 
-export type ProjectStreamEvent = AlertEvent;
+export interface HistoryUpdateEvent {
+  type: "history_update";
+  projectId: string;
+  sessionId: string;
+  ts: string;
+  messages: unknown[];
+  lastN?: number;
+}
+
+export type ProjectStreamEvent = AlertEvent | HistoryUpdateEvent;
 
 type ProjectEventListener = (event: ProjectStreamEvent) => void;
 
@@ -35,6 +44,17 @@ export class ProjectEventBus {
     for (const listener of this.listeners) {
       listener(event);
     }
+  }
+
+  publishHistoryUpdate(input: Omit<HistoryUpdateEvent, "type" | "projectId" | "ts">): void {
+    this.publish({
+      type: "history_update",
+      projectId: getProjectId(),
+      ts: new Date().toISOString(),
+      sessionId: input.sessionId,
+      messages: input.messages,
+      lastN: input.lastN,
+    });
   }
 
   publishAlert(

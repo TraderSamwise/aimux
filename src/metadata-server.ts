@@ -328,6 +328,20 @@ export class MetadataServer {
 
     if (req.method === "GET" && url.pathname === "/events") {
       const sessionFilter = url.searchParams.get("sessionId")?.trim() || null;
+      const startLineRaw = url.searchParams.get("startLine");
+      const intervalMsRaw = url.searchParams.get("intervalMs");
+      const startLine =
+        startLineRaw === null || startLineRaw.trim() === "" ? undefined : Number.parseInt(startLineRaw, 10);
+      if (startLineRaw !== null && Number.isNaN(startLine)) {
+        send(res, 400, { ok: false, error: "startLine must be an integer" });
+        return;
+      }
+      const intervalMs =
+        intervalMsRaw === null || intervalMsRaw.trim() === "" ? 500 : Number.parseInt(intervalMsRaw, 10);
+      if (Number.isNaN(intervalMs) || intervalMs < 100) {
+        send(res, 400, { ok: false, error: "intervalMs must be an integer >= 100" });
+        return;
+      }
       res.statusCode = 200;
       res.setHeader("content-type", "text/event-stream");
       res.setHeader("cache-control", "no-cache, no-transform");
@@ -338,6 +352,8 @@ export class MetadataServer {
 
       let closed = false;
       let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+      let outputPollTimer: ReturnType<typeof setInterval> | null = null;
+      let lastOutput: string | undefined;
       const unsubscribe = this.eventBus.subscribe((event) => {
         if (closed) return;
         if (sessionFilter && event.sessionId && event.sessionId !== sessionFilter) return;
@@ -351,6 +367,8 @@ export class MetadataServer {
         unsubscribe();
         if (keepaliveTimer) clearInterval(keepaliveTimer);
         keepaliveTimer = null;
+        if (outputPollTimer) clearInterval(outputPollTimer);
+        outputPollTimer = null;
         res.end();
       };
 
@@ -358,7 +376,43 @@ export class MetadataServer {
       req.on("aborted", cleanup);
       res.on("close", cleanup);
 
-      sendSseEvent(res, "ready", { projectId: getProjectId(), ts: new Date().toISOString() });
+      const pollSessionOutput = async () => {
+        if (closed || !sessionFilter || !this.options.lifecycle?.readAgentOutput) return;
+        try {
+          const result = await this.options.lifecycle.readAgentOutput({ sessionId: sessionFilter, startLine });
+          if (closed) return;
+          if (result.output !== lastOutput) {
+            lastOutput = result.output;
+            sendSseEvent(res, "agent_output", {
+              sessionId: result.sessionId,
+              output: result.output,
+              startLine: result.startLine ?? startLine ?? -120,
+              parsed: result.parsed,
+            });
+          }
+        } catch (error) {
+          sendSseEvent(res, "error", {
+            sessionId: sessionFilter,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          cleanup();
+        }
+      };
+
+      sendSseEvent(res, "ready", {
+        projectId: getProjectId(),
+        ts: new Date().toISOString(),
+        sessionId: sessionFilter,
+        startLine: startLine ?? -120,
+        intervalMs,
+      });
+      if (sessionFilter && this.options.lifecycle?.readAgentOutput) {
+        await pollSessionOutput();
+        outputPollTimer = setInterval(() => {
+          void pollSessionOutput();
+        }, intervalMs);
+        outputPollTimer.unref?.();
+      }
       keepaliveTimer = setInterval(() => {
         if (closed) return;
         res.write(": keepalive\n\n");
@@ -1002,6 +1056,18 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.writeAgentInput(body);
+        if (this.options.lifecycle.readAgentHistory) {
+          try {
+            const history = await this.options.lifecycle.readAgentHistory({ sessionId: body.sessionId, lastN: 20 });
+            this.eventBus.publishHistoryUpdate({
+              sessionId: history.sessionId,
+              messages: history.messages,
+              lastN: history.lastN,
+            });
+          } catch {
+            // History update is best-effort; the write result should still succeed.
+          }
+        }
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;

@@ -359,6 +359,74 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"sessionId":"codex-1"');
   });
 
+  it("streams session chat events over SSE", async () => {
+    server?.stop();
+    let reads = 0;
+    server = new MetadataServer({
+      lifecycle: {
+        writeAgentInput: ({ sessionId }) => ({ sessionId }),
+        readAgentOutput: ({ sessionId, startLine }) => {
+          reads += 1;
+          return {
+            sessionId,
+            startLine: startLine ?? -120,
+            output: reads >= 2 ? "updated output" : "initial output",
+            parsed: {
+              blocks: [{ type: "response", text: reads >= 2 ? "updated output" : "initial output" }],
+              parser: {
+                tool: "codex",
+                version: 1,
+                confidence: "heuristic" as const,
+              },
+            },
+          };
+        },
+        readAgentHistory: ({ sessionId, lastN }) => ({
+          sessionId,
+          lastN: lastN ?? 20,
+          messages: [
+            {
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            },
+          ],
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events?sessionId=codex-1&startLine=-50&intervalMs=100`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(
+      streamRes.body!,
+      (text) => text.includes("event: agent_output") && text.includes("event: history_update"),
+    );
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "codex-1",
+        data: "hello\r",
+      }),
+    });
+    expect(inputRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: ready");
+    expect(text).toContain("event: agent_output");
+    expect(text).toContain('"sessionId":"codex-1"');
+    expect(text).toContain('"output":"initial output"');
+    expect(text).toContain("event: history_update");
+    expect(text).toContain('"messages":[{"role":"user","parts":[{"type":"text","text":"hello"}]}]');
+  });
+
   it("maps legacy notify calls onto the alert SSE stream", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
