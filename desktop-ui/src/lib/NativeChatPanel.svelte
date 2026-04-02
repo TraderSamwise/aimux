@@ -23,7 +23,11 @@
   let lastRawSessionKey = "";
   let lastConversationSignature = "";
   let lastConversationSessionKey = "";
+  let lastAnimatedResponseSessionKey = "";
   let forceConversationStick = false;
+  let animatedResponseTextById = $state({});
+  const responseAnimationTargets = new Map();
+  const responseAnimationTimers = new Map();
 
   let selectedSession = $derived.by(() => {
     if (!appState.selectedProject || !appState.selectedSessionId) return null;
@@ -87,6 +91,63 @@
 
   function sessionLabel(session) {
     return session?.label || session?.tool || session?.id || "session";
+  }
+
+  function stopResponseAnimation(id) {
+    const timer = responseAnimationTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      responseAnimationTimers.delete(id);
+    }
+  }
+
+  function stopAllResponseAnimations() {
+    for (const id of responseAnimationTimers.keys()) {
+      stopResponseAnimation(id);
+    }
+    responseAnimationTargets.clear();
+  }
+
+  function setAnimatedResponseText(id, text) {
+    if (animatedResponseTextById[id] === text) return;
+    animatedResponseTextById = {
+      ...animatedResponseTextById,
+      [id]: text,
+    };
+  }
+
+  function scheduleResponseAnimation(id) {
+    stopResponseAnimation(id);
+
+    const step = () => {
+      const target = responseAnimationTargets.get(id) || "";
+      const current = animatedResponseTextById[id] ?? "";
+      if (!target.startsWith(current)) {
+        setAnimatedResponseText(id, target);
+        stopResponseAnimation(id);
+        return;
+      }
+
+      if (current === target) {
+        stopResponseAnimation(id);
+        return;
+      }
+
+      const remaining = target.length - current.length;
+      const chunkSize = Math.min(Math.max(1, Math.ceil(remaining / 12)), 8);
+      setAnimatedResponseText(id, target.slice(0, current.length + chunkSize));
+      if (current.length + chunkSize < target.length) {
+        responseAnimationTimers.set(id, setTimeout(step, 18));
+      } else {
+        stopResponseAnimation(id);
+      }
+    };
+
+    responseAnimationTimers.set(id, setTimeout(step, 18));
+  }
+
+  function displayedResponseText(entry) {
+    return animatedResponseTextById[entry.id] ?? entry.text;
   }
 
   async function openInTerminal() {
@@ -407,6 +468,60 @@
       void syncConversationScroll(true);
     }
   });
+
+  $effect(() => {
+    const sessionKey = rawSessionKey();
+    const entries = conversationEntries || [];
+    const responseEntries = entries.filter((entry) => entry.type === "response");
+    const responseIds = new Set(responseEntries.map((entry) => entry.id));
+
+    if (sessionKey !== lastAnimatedResponseSessionKey) {
+      lastAnimatedResponseSessionKey = sessionKey;
+      stopAllResponseAnimations();
+      animatedResponseTextById = Object.fromEntries(responseEntries.map((entry) => [entry.id, entry.text]));
+      for (const entry of responseEntries) {
+        responseAnimationTargets.set(entry.id, entry.text);
+      }
+      return;
+    }
+
+    const nextAnimated = {};
+    for (const entry of responseEntries) {
+      nextAnimated[entry.id] = animatedResponseTextById[entry.id] ?? entry.text;
+    }
+    for (const existingId of Object.keys(animatedResponseTextById)) {
+      if (!responseIds.has(existingId)) {
+        stopResponseAnimation(existingId);
+        responseAnimationTargets.delete(existingId);
+      }
+    }
+    animatedResponseTextById = nextAnimated;
+
+    const activeResponseId = responseEntries.length > 0 ? responseEntries[responseEntries.length - 1].id : null;
+    for (const entry of responseEntries) {
+      const previousTarget = responseAnimationTargets.get(entry.id);
+      const displayed = nextAnimated[entry.id] ?? "";
+      responseAnimationTargets.set(entry.id, entry.text);
+
+      if (previousTarget == null) {
+        setAnimatedResponseText(entry.id, entry.text);
+        continue;
+      }
+
+      if (entry.text === displayed) {
+        stopResponseAnimation(entry.id);
+        continue;
+      }
+
+      const isAppend = entry.text.startsWith(displayed) && entry.text.length > displayed.length;
+      if (entry.id === activeResponseId && isAppend) {
+        scheduleResponseAnimation(entry.id);
+      } else {
+        stopResponseAnimation(entry.id);
+        setAnimatedResponseText(entry.id, entry.text);
+      }
+    }
+  });
 </script>
 
 <section class="panel" class:hidden={!visible}>
@@ -492,7 +607,7 @@
                       {/each}
                     </div>
                   {:else}
-                    <pre class="message-text">{entry.text}</pre>
+                    <pre class="message-text">{entry.type === "response" ? displayedResponseText(entry) : entry.text}</pre>
                   {/if}
                   </article>
                 </article>
