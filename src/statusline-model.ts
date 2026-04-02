@@ -42,6 +42,10 @@ export interface StatuslineData {
   dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "threads" | "help";
   sessions?: StatuslineSession[];
   metadata?: Record<string, StatuslineMetadataEntry>;
+  controlPlane?: {
+    daemonAlive?: boolean;
+    projectServiceAlive?: boolean;
+  };
   tasks?: {
     pending?: number;
     assigned?: number;

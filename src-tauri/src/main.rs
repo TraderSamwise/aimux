@@ -118,7 +118,9 @@ struct ProjectSnapshot {
   id: String,
   name: String,
   path: String,
+  daemon_alive: bool,
   service_alive: bool,
+  service_endpoint_alive: bool,
   sessions: Vec<Value>,
   statusline: Option<Value>,
   worktrees: Vec<Value>,
@@ -127,6 +129,7 @@ struct ProjectSnapshot {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HeartbeatResponse {
+  daemon_alive: bool,
   projects: Vec<ProjectSnapshot>,
 }
 
@@ -523,21 +526,27 @@ fn build_heartbeat() -> Option<HeartbeatResponse> {
           )
           .ok()
         })
-        .unwrap_or_default();
+        .map(|state| (state, true))
+        .unwrap_or_else(|| (DesktopStateResponse::default(), false));
 
       ProjectSnapshot {
         id: project.id,
         name: project.name,
         path: project.path,
+        daemon_alive: true,
         service_alive: project.service_alive,
-        sessions: desktop_state.sessions,
-        statusline: desktop_state.statusline,
-        worktrees: desktop_state.worktrees,
+        service_endpoint_alive: desktop_state.1,
+        sessions: desktop_state.0.sessions,
+        statusline: desktop_state.0.statusline,
+        worktrees: desktop_state.0.worktrees,
       }
     })
     .collect();
 
-  Some(HeartbeatResponse { projects })
+  Some(HeartbeatResponse {
+    daemon_alive: true,
+    projects,
+  })
 }
 
 fn start_heartbeat_thread(app: tauri::AppHandle) {
@@ -567,6 +576,104 @@ async fn ensure_daemon_project(project_path: String) -> Result<Value, String> {
   })
   .await
   .map_err(|error| format!("ensure_daemon_project task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn restart_daemon() -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let node = resolve_node();
+    let entrypoint = aimux_entrypoint();
+    let output = Command::new(&node)
+      .arg(&entrypoint)
+      .args(["daemon", "restart"])
+      .current_dir(repo_root())
+      .env("PATH", shell_path())
+      .output()
+      .map_err(|e| format!("restart_daemon: failed to spawn command: {e}"))?;
+
+    if !output.status.success() {
+      return Err(format!(
+        "restart_daemon: command failed\nstdout={:?}\nstderr={:?}",
+        preview_bytes(&output.stdout, 400),
+        preview_bytes(&output.stderr, 400)
+      ));
+    }
+
+    Ok(serde_json::json!({ "ok": true }))
+  })
+  .await
+  .map_err(|error| format!("restart_daemon task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn restart_project_service(project_path: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let node = resolve_node();
+    let entrypoint = aimux_entrypoint();
+    let output = Command::new(&node)
+      .arg(&entrypoint)
+      .args(["host", "restart", "--serve"])
+      .current_dir(&project_path)
+      .env("PATH", shell_path())
+      .output()
+      .map_err(|e| format!("restart_project_service: failed to spawn command: {e}"))?;
+
+    if !output.status.success() {
+      return Err(format!(
+        "restart_project_service: command failed\nstdout={:?}\nstderr={:?}",
+        preview_bytes(&output.stdout, 400),
+        preview_bytes(&output.stderr, 400)
+      ));
+    }
+
+    Ok(serde_json::json!({ "ok": true }))
+  })
+  .await
+  .map_err(|error| format!("restart_project_service task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn restart_control_plane(project_path: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let node = resolve_node();
+    let entrypoint = aimux_entrypoint();
+
+    let daemon_restart = Command::new(&node)
+      .arg(&entrypoint)
+      .args(["daemon", "restart"])
+      .current_dir(repo_root())
+      .env("PATH", shell_path())
+      .output()
+      .map_err(|e| format!("restart_control_plane: failed to restart daemon: {e}"))?;
+    if !daemon_restart.status.success() {
+      return Err(format!(
+        "restart_control_plane: daemon restart failed\nstdout={:?}\nstderr={:?}",
+        preview_bytes(&daemon_restart.stdout, 400),
+        preview_bytes(&daemon_restart.stderr, 400)
+      ));
+    }
+
+    std::thread::sleep(Duration::from_millis(500));
+
+    let service_restart = Command::new(&node)
+      .arg(&entrypoint)
+      .args(["host", "restart", "--serve"])
+      .current_dir(&project_path)
+      .env("PATH", shell_path())
+      .output()
+      .map_err(|e| format!("restart_control_plane: failed to restart project service: {e}"))?;
+    if !service_restart.status.success() {
+      return Err(format!(
+        "restart_control_plane: project service restart failed\nstdout={:?}\nstderr={:?}",
+        preview_bytes(&service_restart.stdout, 400),
+        preview_bytes(&service_restart.stderr, 400)
+      ));
+    }
+
+    Ok(serde_json::json!({ "ok": true }))
+  })
+  .await
+  .map_err(|error| format!("restart_control_plane task failed: {error}"))?
 }
 
 // ── Commands: agent lifecycle ──────────────────────────────────────
@@ -1245,6 +1352,9 @@ fn main() {
     .manage(TerminalRegistry::default())
     .invoke_handler(tauri::generate_handler![
       ensure_daemon_project,
+      restart_daemon,
+      restart_project_service,
+      restart_control_plane,
       agent_spawn,
       agent_stop,
       agent_kill,

@@ -26,6 +26,9 @@ let unlistenHeartbeat = null;
 let nativeChatPollTimer = null;
 let nativeChatPollToken = 0;
 let nativeChatPollInFlight = false;
+let heartbeatTicker = $state(Date.now());
+let lastHeartbeatAt = $state(0);
+let heartbeatInterval = null;
 
 // ── In-progress actions ───────────────────────────────────────────
 
@@ -500,6 +503,25 @@ export function getState() {
       const project = applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
       return project?.worktrees || [];
     },
+    get controlPlane() {
+      const project = applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
+      const heartbeatAgeMs = lastHeartbeatAt > 0 ? Math.max(0, heartbeatTicker - lastHeartbeatAt) : Number.POSITIVE_INFINITY;
+      const daemonConnected = heartbeatAgeMs < 5000;
+      return {
+        daemonConnected,
+        heartbeatAgeMs,
+        serviceAlive: Boolean(project?.serviceAlive),
+        serviceEndpointAlive: Boolean(project?.serviceEndpointAlive),
+        status:
+          !daemonConnected
+            ? "down"
+            : project?.serviceEndpointAlive === false
+              ? "degraded"
+              : project?.serviceAlive === false
+                ? "degraded"
+                : "ok",
+      };
+    },
   };
 }
 
@@ -508,6 +530,7 @@ export function getState() {
 function onHeartbeat(event) {
   const incoming = event.payload?.projects || [];
   incoming.sort((a, b) => a.name.localeCompare(b.name));
+  lastHeartbeatAt = Date.now();
   reconcileActions(incoming);
   projects = incoming;
 
@@ -531,6 +554,11 @@ function onHeartbeat(event) {
 
 export async function startHeartbeat() {
   stopHeartbeat();
+  lastHeartbeatAt = Date.now();
+  heartbeatTicker = Date.now();
+  heartbeatInterval = setInterval(() => {
+    heartbeatTicker = Date.now();
+  }, 1000);
   unlistenHeartbeat = await listen("heartbeat", onHeartbeat);
 }
 
@@ -538,6 +566,10 @@ export function stopHeartbeat() {
   if (unlistenHeartbeat) {
     unlistenHeartbeat();
     unlistenHeartbeat = null;
+  }
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
   }
 }
 
@@ -710,4 +742,17 @@ export async function sendNativeChatMessage() {
     [sessionId]: "",
   };
   syncNativeChatSelection({ preserveSnapshot: true });
+}
+
+export async function restartControlPlane() {
+  const projectPath = selectedProjectPath;
+  if (!projectPath) return;
+  await trackAction(
+    {
+      kind: "restart-control-plane",
+      message: "Restarting control plane...",
+      projectPath,
+    },
+    () => invoke("restart_control_plane", { projectPath }),
+  );
 }

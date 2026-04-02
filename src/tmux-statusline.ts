@@ -26,6 +26,19 @@ function loadStatusline(projectRoot: string): StatuslineData | null {
   }
 }
 
+function isStatuslineStale(data: StatuslineData): boolean {
+  const updatedAt = data.updatedAt ? Date.parse(data.updatedAt) : Number.NaN;
+  if (!Number.isFinite(updatedAt)) return true;
+  return Date.now() - updatedAt > 8_000;
+}
+
+function renderControlPlane(data: StatuslineData): string {
+  if (isStatuslineStale(data)) return "ctl stale";
+  if (data.controlPlane?.projectServiceAlive === false) return "ctl svc↓";
+  if (data.controlPlane?.daemonAlive === false) return "ctl daemon↓";
+  return "ctl ok";
+}
+
 function renderProjectIdentity(projectRoot: string): string {
   return `aimux ${basename(projectRoot)}`;
 }
@@ -154,6 +167,7 @@ function renderTopLine(
   const tmuxRuntimeManager = new TmuxRuntimeManager();
   const segments = [
     renderProjectIdentity(projectRoot),
+    data ? renderControlPlane(data) : "ctl down",
     data
       ? renderActiveContext(
           data,

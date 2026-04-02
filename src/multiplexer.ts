@@ -37,6 +37,7 @@ import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
+import { loadDaemonInfo } from "./daemon.js";
 import {
   appendMessage,
   createThread,
@@ -5600,6 +5601,10 @@ export class Multiplexer {
       worktreePath?: string;
     }>;
     tasks: { pending: number; assigned: number };
+    controlPlane: {
+      daemonAlive: boolean;
+      projectServiceAlive: boolean;
+    };
     flash: string | null;
     metadata: ReturnType<typeof loadMetadataState>["sessions"];
     updatedAt: string;
@@ -5619,6 +5624,10 @@ export class Multiplexer {
         worktreePath: this.sessionWorktreePaths.get(s.id),
       })),
       tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
+      controlPlane: {
+        daemonAlive: Boolean(loadDaemonInfo()),
+        projectServiceAlive: true,
+      },
       flash: this.footerFlash,
       metadata: loadMetadataState().sessions,
       updatedAt: new Date().toISOString(),

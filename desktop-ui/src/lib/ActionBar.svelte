@@ -1,10 +1,12 @@
 <script>
-  import { getState } from "../stores/state.svelte.js";
+  import { getState, restartControlPlane } from "../stores/state.svelte.js";
   const appState = getState();
 
   let actions = $derived(appState.inFlightActions || []);
   let primaryAction = $derived(actions.length > 0 ? actions[actions.length - 1] : null);
   let idle = $derived(!primaryAction);
+  let controlPlane = $derived(appState.controlPlane);
+  let unhealthy = $derived(controlPlane && controlPlane.status !== "ok");
 </script>
 
 <div class="action-bar" class:idle>
@@ -17,6 +19,9 @@
   {:else}
     <span class="spinner ghost"></span>
     <span class="action-text idle-text">Ready</span>
+  {/if}
+  {#if unhealthy}
+    <button class="restart-btn" onclick={restartControlPlane}>Restart control</button>
   {/if}
 </div>
 
@@ -50,6 +55,16 @@
     margin-left: auto;
     font-size: 10px;
     color: var(--text-dim);
+  }
+
+  .restart-btn {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    color: var(--red);
+    background: rgba(248, 113, 113, 0.08);
+    border: 1px solid rgba(248, 113, 113, 0.18);
   }
 
   .spinner {

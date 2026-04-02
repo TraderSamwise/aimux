@@ -203,6 +203,19 @@ Example:
 }
 ```
 
+Control-plane health:
+
+- The desktop UI now surfaces daemon / project-service health and exposes a `Restart control` action.
+- The tmux statusline shows `ctl ok`, `ctl daemon↓`, or `ctl stale`.
+- `ctl stale` means the project-service `statusline.json` snapshot has stopped updating, which usually means the project service died.
+- Manual recovery is still:
+
+```bash
+aimux daemon restart
+cd /abs/path/to/repo
+aimux host restart --serve
+```
+
 Daemon rebuild quirk:
 
 - The global daemon and each project service run from the built `dist/` output, not directly from `src/`.
