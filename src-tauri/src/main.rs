@@ -2,6 +2,7 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 use rfd::FileDialog;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
+use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::fs;
@@ -61,6 +62,36 @@ fn shell_path() -> String {
     }
   }
   parts.join(":")
+}
+
+fn expected_project_service_manifest() -> Option<Value> {
+  let candidates = [
+    repo_root().join("dist").join("main.js"),
+    repo_root().join("src").join("main.ts"),
+  ];
+  let entry = candidates.into_iter().find(|candidate| candidate.exists())?;
+  let metadata = fs::metadata(&entry).ok()?;
+  let content = fs::read(&entry).ok()?;
+  let mut hasher = Sha1::new();
+  hasher.update(&content);
+  let hash_hex = format!("{:x}", hasher.finalize());
+  let modified_ms = metadata
+    .modified()
+    .ok()?
+    .duration_since(std::time::UNIX_EPOCH)
+    .ok()?
+    .as_millis();
+  Some(serde_json::json!({
+    "apiVersion": 4,
+    "capabilities": {
+      "structuredAgentInput": true,
+      "parsedAgentOutput": true,
+      "attachments": true,
+      "agentHistory": true,
+      "chatEventStream": true
+    },
+    "buildStamp": format!("{}-{}", modified_ms, &hash_hex[..12]),
+  }))
 }
 
 // ── Data types ────────────────────────────────────────────────────
@@ -135,6 +166,7 @@ struct ProjectSnapshot {
 #[serde(rename_all = "camelCase")]
 struct HeartbeatResponse {
   daemon_alive: bool,
+  expected_service_info: Option<Value>,
   projects: Vec<ProjectSnapshot>,
 }
 
@@ -559,6 +591,7 @@ fn build_heartbeat() -> Option<HeartbeatResponse> {
 
   Some(HeartbeatResponse {
     daemon_alive: true,
+    expected_service_info: expected_project_service_manifest(),
     projects,
   })
 }
@@ -674,6 +707,25 @@ async fn restart_project_service(project_path: String) -> Result<Value, String> 
   tauri::async_runtime::spawn_blocking(move || {
     let node = resolve_node();
     let entrypoint = aimux_entrypoint();
+    let kill_output = Command::new(&node)
+      .arg(&entrypoint)
+      .args(["host", "kill"])
+      .current_dir(&project_path)
+      .env("PATH", shell_path())
+      .output()
+      .map_err(|e| format!("restart_project_service: failed to kill existing service: {e}"))?;
+
+    if !kill_output.status.success() {
+      let stderr_preview = preview_bytes(&kill_output.stderr, 400);
+      if !stderr_preview.contains("No live project service to kill.") {
+        return Err(format!(
+          "restart_project_service: kill failed\nstdout={:?}\nstderr={:?}",
+          preview_bytes(&kill_output.stdout, 400),
+          stderr_preview
+        ));
+      }
+    }
+
     let output = Command::new(&node)
       .arg(&entrypoint)
       .args(["host", "restart", "--serve"])

@@ -10,6 +10,8 @@
   let daemonStatus = $derived(controlPlane.daemonStatus || "down");
   let projectStatus = $derived(controlPlane.projectStatus || "degraded");
   let projectSelected = $derived(Boolean(appState.selectedProject));
+  let controlReason = $derived(controlPlane.reason || null);
+  let controlError = $derived(controlPlane.error || null);
   let alertKind = $derived(currentAlert?.kind || null);
   function alertTone(kind) {
     if (kind === "task_done") return "success";
@@ -43,7 +45,7 @@
       : `${prefix} · ${detail}`;
   });
   let daemonButtonLabel = $derived.by(() => {
-    if (daemonStatus === "ok") return "Daemon OK";
+    if (daemonStatus === "ok") return "Daemon OK · Restart";
     return "Daemon Down · Restart";
   });
   let projectButtonLabel = $derived.by(() => {
@@ -53,10 +55,8 @@
     return "Project Degraded · Restart";
   });
   let controlHint = $derived.by(() => {
-    if (daemonStatus !== "ok") return "Daemon is disconnected.";
-    if (!projectSelected) return null;
-    if (projectStatus === "outdated") return "Project service is outdated for this desktop build.";
-    if (projectStatus === "degraded") return "Project service is degraded.";
+    if (controlError) return controlError;
+    if (controlReason) return controlReason;
     return null;
   });
 </script>
@@ -87,7 +87,7 @@
     <button
       class="control-btn daemon"
       class:down={daemonStatus !== "ok"}
-      onclick={restartDaemonControl}
+      onclick={() => { void restartDaemonControl().catch(() => {}); }}
     >
       {daemonButtonLabel}
     </button>
@@ -96,7 +96,7 @@
       class:degraded={projectStatus === "degraded"}
       class:outdated={projectStatus === "outdated"}
       disabled={!projectSelected}
-      onclick={restartProjectService}
+      onclick={() => { void restartProjectService().catch(() => {}); }}
     >
       {projectButtonLabel}
     </button>

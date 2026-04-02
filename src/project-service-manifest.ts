@@ -39,6 +39,22 @@ export function getProjectServiceManifest(): ProjectServiceManifest {
   };
 }
 
+export function computeCurrentProjectServiceManifest(): ProjectServiceManifest {
+  return {
+    apiVersion: PROJECT_SERVICE_API_VERSION,
+    capabilities: { ...PROJECT_SERVICE_CAPABILITIES },
+    buildStamp: computeBuildStamp(),
+  };
+}
+
+export function hasProjectServiceBuildDrift(): boolean {
+  try {
+    return computeCurrentProjectServiceManifest().buildStamp !== PROJECT_SERVICE_BUILD_STAMP;
+  } catch {
+    return false;
+  }
+}
+
 export function manifestsMatch(
   expected: ProjectServiceManifest,
   actual: Partial<ProjectServiceManifest> | null | undefined,

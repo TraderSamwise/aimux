@@ -23,6 +23,9 @@ let nativeChatRawMode = $state(false);
 let nativeChatDraftParts = $state({});
 let currentAlert = $state(null);
 let recentAlerts = $state([]);
+let expectedServiceInfo = $state(null);
+let controlPlaneError = $state(null);
+const autoRepairAttempts = new Map();
 
 let unlistenOutput = null;
 let unlistenExit = null;
@@ -268,6 +271,15 @@ function getProjectServiceInfo(project) {
 function getMissingProjectServiceCapabilities(project) {
   const capabilities = getProjectServiceInfo(project)?.capabilities || {};
   return REQUIRED_PROJECT_SERVICE_CAPABILITIES.filter((key) => capabilities[key] !== true);
+}
+
+function manifestsMatch(expected, actual) {
+  if (!expected || !actual) return false;
+  if (Number(actual.apiVersion || 0) !== Number(expected.apiVersion || 0)) return false;
+  if (String(actual.buildStamp || "") !== String(expected.buildStamp || "")) return false;
+  const expectedCapabilities = expected.capabilities || {};
+  const actualCapabilities = actual.capabilities || {};
+  return Object.entries(expectedCapabilities).every(([key, value]) => actualCapabilities[key] === value);
 }
 
 function applyActionOverlays(project) {
@@ -730,12 +742,19 @@ export function getState() {
       const daemonConnected = heartbeatAgeMs < 5000;
       const serviceInfo = getProjectServiceInfo(project);
       const missingCapabilities = getMissingProjectServiceCapabilities(project);
+      const manifestMatches = manifestsMatch(expectedServiceInfo, serviceInfo);
+      const buildMismatch =
+        Boolean(project?.serviceEndpointAlive) &&
+        Boolean(expectedServiceInfo?.buildStamp) &&
+        Boolean(serviceInfo?.buildStamp) &&
+        !manifestMatches;
       const serviceOutdated =
         Boolean(project?.serviceEndpointAlive) &&
         (
           !serviceInfo ||
           Number(serviceInfo.apiVersion || 0) < REQUIRED_PROJECT_SERVICE_API_VERSION ||
-          missingCapabilities.length > 0
+          missingCapabilities.length > 0 ||
+          buildMismatch
         );
       const daemonStatus = daemonConnected ? "ok" : "down";
       const projectStatus =
@@ -753,8 +772,27 @@ export function getState() {
         heartbeatAgeMs,
         serviceAlive: Boolean(project?.serviceAlive),
         serviceEndpointAlive: Boolean(project?.serviceEndpointAlive),
+        expectedServiceInfo,
         serviceInfo,
+        buildMismatch,
         missingCapabilities,
+        error: controlPlaneError,
+        reason:
+          !daemonConnected
+            ? "Daemon is disconnected."
+            : buildMismatch
+              ? "Project service build is stale for this desktop build."
+              : !serviceInfo
+                ? "Project service is missing manifest information."
+                : Number(serviceInfo.apiVersion || 0) < REQUIRED_PROJECT_SERVICE_API_VERSION
+                  ? "Project service API version is outdated."
+                  : missingCapabilities.length > 0
+                    ? `Project service is missing capabilities: ${missingCapabilities.join(", ")}`
+                    : project?.serviceEndpointAlive === false
+                      ? "Project service endpoint is unreachable."
+                      : project?.serviceAlive === false
+                        ? "Project service is not running."
+                        : null,
         daemonStatus,
         projectStatus,
         status:
@@ -776,6 +814,7 @@ export function getState() {
 
 function onHeartbeat(event) {
   const incoming = event.payload?.projects || [];
+  expectedServiceInfo = event.payload?.expectedServiceInfo || null;
   incoming.sort((a, b) => a.name.localeCompare(b.name));
   lastHeartbeatAt = Date.now();
   reconcileActions(incoming);
@@ -807,6 +846,34 @@ function onHeartbeat(event) {
       } else if (desiredUrl && nativeChatStream?.url !== desiredUrl) {
         syncNativeChatSelection({ preserveSnapshot: true });
       }
+    }
+  }
+
+  const selectedProject = incoming.find((project) => project.path === selectedProjectPath);
+  const selectedServiceInfo = getProjectServiceInfo(selectedProject);
+  const selectedMissingCapabilities = getMissingProjectServiceCapabilities(selectedProject);
+  const selectedBuildMismatch =
+    Boolean(selectedProject?.serviceEndpointAlive) &&
+    Boolean(expectedServiceInfo?.buildStamp) &&
+    Boolean(selectedServiceInfo?.buildStamp) &&
+    !manifestsMatch(expectedServiceInfo, selectedServiceInfo);
+  const selectedOutdated =
+    Boolean(selectedProject?.serviceEndpointAlive) &&
+    (
+      !selectedServiceInfo ||
+      Number(selectedServiceInfo.apiVersion || 0) < REQUIRED_PROJECT_SERVICE_API_VERSION ||
+      selectedMissingCapabilities.length > 0 ||
+      selectedBuildMismatch
+    );
+  if (!selectedOutdated && selectedProject?.serviceEndpointAlive !== false && selectedProject?.serviceAlive !== false) {
+    controlPlaneError = null;
+  }
+  if (selectedOutdated && selectedProjectPath) {
+    const repairKey = `${selectedProjectPath}:${expectedServiceInfo?.buildStamp || "unknown"}`;
+    const lastAttemptAt = autoRepairAttempts.get(repairKey) || 0;
+    if (!isActionPending({ kind: "restart-project-service", projectPath: selectedProjectPath }) && Date.now() - lastAttemptAt > 60_000) {
+      autoRepairAttempts.set(repairKey, Date.now());
+      void restartProjectService({ auto: true }).catch(() => {});
     }
   }
 }
@@ -1216,25 +1283,37 @@ export async function restartControlPlane() {
   );
 }
 
-export async function restartProjectService() {
+export async function restartProjectService(opts = {}) {
   const projectPath = selectedProjectPath;
   if (!projectPath) return;
-  await trackAction(
-    {
-      kind: "restart-project-service",
-      message: "Restarting project service...",
-      projectPath,
-    },
-    () => invoke("restart_project_service", { projectPath }),
-  );
+  controlPlaneError = null;
+  try {
+    await trackAction(
+      {
+        kind: "restart-project-service",
+        message: opts.auto ? "Repairing stale project service..." : "Restarting project service...",
+        projectPath,
+      },
+      () => invoke("restart_project_service", { projectPath }),
+    );
+  } catch (error) {
+    controlPlaneError = String(error);
+    throw error;
+  }
 }
 
 export async function restartDaemonControl() {
-  await trackAction(
-    {
-      kind: "restart-daemon",
-      message: "Restarting daemon and recovering projects...",
-    },
-    () => invoke("restart_daemon"),
-  );
+  controlPlaneError = null;
+  try {
+    await trackAction(
+      {
+        kind: "restart-daemon",
+        message: "Restarting daemon and recovering projects...",
+      },
+      () => invoke("restart_daemon"),
+    );
+  } catch (error) {
+    controlPlaneError = String(error);
+    throw error;
+  }
 }
