@@ -1,6 +1,6 @@
 <script>
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import {
     addNativeChatImages,
     getState,
@@ -30,9 +30,13 @@
   let lastRestoredConversationKey = "";
   let lastRestoredRawKey = "";
   let forceConversationStick = false;
+  let conversationPinnedToBottom = $state(true);
+  let rawPinnedToBottom = $state(true);
   let animatedResponseTextById = $state({});
   const responseAnimationTargets = new Map();
-  const responseAnimationTimers = new Map();
+  const responseAnimationFrameState = new Map();
+  let conversationScrollRaf = 0;
+  let rawScrollRaf = 0;
 
   let selectedSession = $derived.by(() => {
     if (!appState.selectedProject || !appState.selectedSessionId) return null;
@@ -99,56 +103,130 @@
   }
 
   function stopResponseAnimation(id) {
-    const timer = responseAnimationTimers.get(id);
-    if (timer) {
-      clearTimeout(timer);
-      responseAnimationTimers.delete(id);
+    const state = responseAnimationFrameState.get(id);
+    if (state?.frame) {
+      cancelAnimationFrame(state.frame);
     }
+    responseAnimationFrameState.delete(id);
   }
 
   function stopAllResponseAnimations() {
-    for (const id of responseAnimationTimers.keys()) {
+    for (const id of responseAnimationFrameState.keys()) {
       stopResponseAnimation(id);
     }
     responseAnimationTargets.clear();
   }
 
   function setAnimatedResponseText(id, text) {
-    if (animatedResponseTextById[id] === text) return;
+    const currentMap = untrack(() => animatedResponseTextById);
+    if (currentMap[id] === text) return;
     animatedResponseTextById = {
-      ...animatedResponseTextById,
+      ...currentMap,
       [id]: text,
     };
   }
 
+  function stopConversationPinnedScroll() {
+    if (conversationScrollRaf) {
+      cancelAnimationFrame(conversationScrollRaf);
+      conversationScrollRaf = 0;
+    }
+  }
+
+  function stopRawPinnedScroll() {
+    if (rawScrollRaf) {
+      cancelAnimationFrame(rawScrollRaf);
+      rawScrollRaf = 0;
+    }
+  }
+
+  function startConversationPinnedScroll(frames = 12) {
+    stopConversationPinnedScroll();
+    const step = (remaining) => {
+      if (!messageListEl) {
+        conversationScrollRaf = 0;
+        return;
+      }
+      messageListEl.scrollTop = messageListEl.scrollHeight;
+      if (remaining <= 1) {
+        conversationScrollRaf = 0;
+        return;
+      }
+      conversationScrollRaf = requestAnimationFrame(() => step(remaining - 1));
+    };
+    conversationScrollRaf = requestAnimationFrame(() => step(frames));
+  }
+
+  function startRawPinnedScroll(frames = 8) {
+    stopRawPinnedScroll();
+    const step = (remaining) => {
+      if (!rawOutputEl) {
+        rawScrollRaf = 0;
+        return;
+      }
+      rawOutputEl.scrollTop = rawOutputEl.scrollHeight;
+      if (remaining <= 1) {
+        rawScrollRaf = 0;
+        return;
+      }
+      rawScrollRaf = requestAnimationFrame(() => step(remaining - 1));
+    };
+    rawScrollRaf = requestAnimationFrame(() => step(frames));
+  }
+
   function scheduleResponseAnimation(id) {
     stopResponseAnimation(id);
+    const state = {
+      frame: 0,
+      lastTs: 0,
+      carry: 0,
+    };
+    const charsPerSecond = 90;
+    const leadBufferMs = 350;
 
-    const step = () => {
+    const step = (ts) => {
       const target = responseAnimationTargets.get(id) || "";
-      const current = animatedResponseTextById[id] ?? "";
+      const currentMap = untrack(() => animatedResponseTextById);
+      const current = currentMap[id] ?? "";
       if (!target.startsWith(current)) {
         setAnimatedResponseText(id, target);
         stopResponseAnimation(id);
         return;
       }
-
       if (current === target) {
         stopResponseAnimation(id);
         return;
       }
 
-      const remaining = target.length - current.length;
-      const chunkSize = Math.min(Math.max(1, Math.ceil(remaining / 12)), 8);
-      setAnimatedResponseText(id, target.slice(0, current.length + chunkSize));
-      if (current.length + chunkSize < target.length) {
-        responseAnimationTimers.set(id, setTimeout(step, 18));
-      } else {
-        stopResponseAnimation(id);
+      if (!state.lastTs) {
+        state.lastTs = ts;
       }
+      const delta = Math.max(16, ts - state.lastTs);
+      state.lastTs = ts;
+      state.carry += (charsPerSecond * delta) / 1000;
+
+      const backlog = target.length - current.length;
+      const desiredLagChars = Math.max(0, Math.floor((charsPerSecond * leadBufferMs) / 1000));
+      const releasableBacklog = Math.max(1, backlog - Math.min(backlog - 1, desiredLagChars));
+      const chunkSize = Math.min(backlog, Math.max(releasableBacklog, Math.floor(state.carry)));
+      if (chunkSize <= 0) {
+        state.frame = requestAnimationFrame(step);
+        responseAnimationFrameState.set(id, state);
+        return;
+      }
+
+      state.carry = Math.max(0, state.carry - chunkSize);
+      setAnimatedResponseText(id, target.slice(0, current.length + chunkSize));
+      if (isNearBottom(messageListEl, 72) || forceConversationStick) {
+        startConversationPinnedScroll(6);
+      }
+
+      state.frame = requestAnimationFrame(step);
+      responseAnimationFrameState.set(id, state);
     };
 
-    responseAnimationTimers.set(id, setTimeout(step, 18));
+    state.frame = requestAnimationFrame(step);
+    responseAnimationFrameState.set(id, state);
   }
 
   function displayedResponseText(entry) {
@@ -428,17 +506,26 @@
 
   function saveConversationScrollPosition() {
     if (!messageListEl) return;
+    conversationPinnedToBottom = isNearBottom(messageListEl, 72);
+    if (!conversationPinnedToBottom) {
+      forceConversationStick = false;
+      stopConversationPinnedScroll();
+    }
     conversationScrollMemory.set(conversationScrollKey(), {
       scrollTop: messageListEl.scrollTop,
-      stickToBottom: isNearBottom(messageListEl),
+      stickToBottom: conversationPinnedToBottom,
     });
   }
 
   function saveRawScrollPosition() {
     if (!rawOutputEl) return;
+    rawPinnedToBottom = isNearBottom(rawOutputEl, 72);
+    if (!rawPinnedToBottom) {
+      stopRawPinnedScroll();
+    }
     rawScrollMemory.set(rawScrollKey(), {
       scrollTop: rawOutputEl.scrollTop,
-      stickToBottom: isNearBottom(rawOutputEl),
+      stickToBottom: rawPinnedToBottom,
     });
   }
 
@@ -446,8 +533,9 @@
     await tick();
     if (!messageListEl) return;
     const saved = conversationScrollMemory.get(conversationScrollKey());
+    conversationPinnedToBottom = !saved || saved.stickToBottom;
     if (!saved || saved.stickToBottom) {
-      messageListEl.scrollTop = messageListEl.scrollHeight;
+      startConversationPinnedScroll(14);
       return;
     }
     const maxScrollTop = Math.max(0, messageListEl.scrollHeight - messageListEl.clientHeight);
@@ -458,8 +546,9 @@
     await tick();
     if (!rawOutputEl) return;
     const saved = rawScrollMemory.get(rawScrollKey());
+    rawPinnedToBottom = !saved || saved.stickToBottom;
     if (!saved || saved.stickToBottom) {
-      rawOutputEl.scrollTop = rawOutputEl.scrollHeight;
+      startRawPinnedScroll(10);
       return;
     }
     const maxScrollTop = Math.max(0, rawOutputEl.scrollHeight - rawOutputEl.clientHeight);
@@ -470,7 +559,7 @@
     await tick();
     if (!rawOutputEl) return;
     if (force) {
-      rawOutputEl.scrollTop = rawOutputEl.scrollHeight;
+      startRawPinnedScroll(8);
     }
   }
 
@@ -478,7 +567,7 @@
     await tick();
     if (!messageListEl) return;
     if (force) {
-      messageListEl.scrollTop = messageListEl.scrollHeight;
+      startConversationPinnedScroll(12);
     }
   }
 
@@ -495,7 +584,6 @@
 
     const sessionChanged = baseSessionKey !== lastRawSessionKey;
     const outputChanged = output !== lastRawOutput;
-    const nearBottomBeforeUpdate = isNearBottom(rawOutputEl);
     const shouldStick = sessionChanged || outputChanged;
 
     lastRawOutput = output;
@@ -507,7 +595,7 @@
       return;
     }
 
-    if (shouldStick && nearBottomBeforeUpdate) {
+    if (shouldStick && rawPinnedToBottom) {
       void syncRawScroll(true);
     }
   });
@@ -528,7 +616,6 @@
 
     const sessionChanged = baseSessionKey !== lastConversationSessionKey;
     const contentChanged = signature !== lastConversationSignature;
-    const nearBottomBeforeUpdate = isNearBottom(messageListEl);
     const shouldForceStick = forceConversationStick;
 
     lastConversationSignature = signature;
@@ -541,10 +628,28 @@
       return;
     }
 
-    if (contentChanged && (shouldForceStick || nearBottomBeforeUpdate)) {
+    if (contentChanged && (shouldForceStick || conversationPinnedToBottom)) {
       forceConversationStick = false;
       void syncConversationScroll(true);
     }
+  });
+
+  $effect(() => {
+    if (appState.nativeChatRawMode || !messageListEl || !conversationPinnedToBottom) {
+      stopConversationPinnedScroll();
+      return;
+    }
+    startConversationPinnedScroll(120);
+    return () => stopConversationPinnedScroll();
+  });
+
+  $effect(() => {
+    if (!appState.nativeChatRawMode || !rawOutputEl || !rawPinnedToBottom) {
+      stopRawPinnedScroll();
+      return;
+    }
+    startRawPinnedScroll(120);
+    return () => stopRawPinnedScroll();
   });
 
   $effect(() => {
@@ -563,7 +668,7 @@
       return;
     }
 
-    const currentAnimated = animatedResponseTextById;
+    const currentAnimated = untrack(() => animatedResponseTextById);
     const nextAnimated = {};
     for (const entry of responseEntries) {
       nextAnimated[entry.id] = currentAnimated[entry.id] ?? entry.text;
