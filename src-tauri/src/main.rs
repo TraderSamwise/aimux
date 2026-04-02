@@ -667,12 +667,14 @@ async fn agent_send(
   project_path: String,
   session_id: String,
   data: String,
+  parts: Option<Value>,
   submit: Option<bool>,
 ) -> Result<Value, String> {
   tauri::async_runtime::spawn_blocking(move || {
     let body = serde_json::json!({
       "sessionId": session_id,
       "data": data,
+      "parts": parts,
       "submit": submit.unwrap_or(true),
     });
     project_service_json(&project_path, "POST", "/agents/input", Some(&body), "agent send")

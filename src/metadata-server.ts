@@ -41,6 +41,7 @@ import {
 } from "./orchestration-actions.js";
 import { buildWorkflowEntries } from "./workflow.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
+import type { AgentInputPart } from "./agent-message-parts.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -171,7 +172,8 @@ interface MetadataServerOptions {
         };
     writeAgentInput?: (input: {
       sessionId: string;
-      data: string;
+      data?: string;
+      parts?: AgentInputPart[];
       submit?: boolean;
     }) => Promise<{ sessionId: string }> | { sessionId: string };
     readAgentOutput?: (input: {
@@ -815,7 +817,12 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/agents/input") {
-        const body = (await readJson(req)) as { sessionId: string; data: string; submit?: boolean };
+        const body = (await readJson(req)) as {
+          sessionId: string;
+          data?: string;
+          parts?: AgentInputPart[];
+          submit?: boolean;
+        };
         if (!this.options.lifecycle?.writeAgentInput) {
           send(res, 501, { ok: false, error: "agent input not supported by this service" });
           return;

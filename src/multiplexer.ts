@@ -66,6 +66,7 @@ import {
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
 import { parseAgentOutput, type ParsedAgentOutput } from "./agent-output-parser.js";
+import { serializeAgentInput, type AgentInputPart } from "./agent-message-parts.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -294,7 +295,7 @@ export class Multiplexer {
         renameAgent: (input) => this.renameAgent(input.sessionId, input.label),
         migrateAgent: (input) => this.migrateAgentSession(input.sessionId, input.worktreePath),
         killAgent: (input) => this.sendAgentToGraveyard(input.sessionId),
-        writeAgentInput: (input) => this.writeAgentInput(input.sessionId, input.data, input.submit),
+        writeAgentInput: (input) => this.writeAgentInput(input.sessionId, input.data, input.parts, input.submit),
         readAgentOutput: (input) => this.readAgentOutput(input.sessionId, input.startLine),
       },
       onChange: () => {
@@ -632,12 +633,18 @@ export class Multiplexer {
     step();
   }
 
-  async writeAgentInput(sessionId: string, data: string, submit = false): Promise<{ sessionId: string }> {
-    const normalizedData = this.normalizeAgentInput(data, submit);
+  async writeAgentInput(
+    sessionId: string,
+    data = "",
+    parts?: AgentInputPart[],
+    submit = false,
+  ): Promise<{ sessionId: string }> {
+    const session = this.resolveRunningSession(sessionId);
+    const serializedData = serializeAgentInput({ data, parts }, { tool: this.sessionToolKeys.get(sessionId) });
+    const normalizedData = this.normalizeAgentInput(serializedData, submit);
     if (!normalizedData && !submit) {
       throw new Error("input data is required");
     }
-    const session = this.resolveRunningSession(sessionId);
     if (session.transport instanceof TmuxSessionTransport) {
       if (normalizedData) {
         this.writeTmuxAgentInput(sessionId, session.transport, normalizedData);

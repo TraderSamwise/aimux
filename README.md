@@ -178,6 +178,31 @@ These commands are additive control-plane helpers on top of the existing `aimux 
 
 For desktop / GUI callers, prefer explicit `--project` usage instead of relying on launcher cwd.
 
+Structured message parts:
+
+- `POST /agents/input` accepts either plain `data` or ordered `parts`.
+- `parts` currently supports:
+  - `{ "type": "text", "text": "..." }`
+  - `{ "type": "image", "path": "/abs/path.png", "alt": "..." }`
+  - `{ "type": "image", "url": "https://...", "alt": "..." }`
+  - `{ "type": "image", "attachmentId": "att_123", "alt": "..." }`
+- Parts preserve inline ordering for GUI / HTTP callers.
+- Today, tmux-backed agent sessions still receive image parts as explicit inline image descriptors in the prompt text. This preserves message structure now, but it is not yet binary image upload/attachment transport.
+
+Example:
+
+```json
+{
+  "sessionId": "claude-1",
+  "parts": [
+    { "type": "text", "text": "Compare these two layouts." },
+    { "type": "image", "url": "https://example.com/a.png", "alt": "first screenshot" },
+    { "type": "text", "text": "The spacing issue is around the header." }
+  ],
+  "submit": true
+}
+```
+
 Daemon rebuild quirk:
 
 - The global daemon and each project service run from the built `dist/` output, not directly from `src/`.

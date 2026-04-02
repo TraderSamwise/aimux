@@ -361,6 +361,57 @@ describe("MetadataServer threads API", () => {
     expect(writes).toEqual([{ sessionId: "codex-1", data: "hello from http", submit: true }]);
   });
 
+  it("passes structured input parts with agent input over HTTP", async () => {
+    server?.stop();
+    const writes: Array<{
+      sessionId: string;
+      data?: string;
+      parts?: Array<Record<string, unknown>>;
+      submit?: boolean;
+    }> = [];
+    server = new MetadataServer({
+      lifecycle: {
+        writeAgentInput: ({ sessionId, data, parts, submit }) => {
+          writes.push({ sessionId, data, parts, submit });
+          return { sessionId };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "claude-1",
+        parts: [
+          { type: "text", text: "Compare these" },
+          { type: "image", url: "https://example.com/a.png", alt: "first screenshot" },
+          { type: "text", text: "against this one" },
+        ],
+        submit: true,
+      }),
+    });
+
+    expect(inputRes.ok).toBe(true);
+    expect(writes).toEqual([
+      {
+        sessionId: "claude-1",
+        data: undefined,
+        parts: [
+          { type: "text", text: "Compare these" },
+          { type: "image", url: "https://example.com/a.png", alt: "first screenshot" },
+          { type: "text", text: "against this one" },
+        ],
+        submit: true,
+      },
+    ]);
+  });
+
   it("validates agent output query parameters over HTTP", async () => {
     server?.stop();
     server = new MetadataServer({
