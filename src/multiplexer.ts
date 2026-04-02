@@ -5176,6 +5176,16 @@ export class Multiplexer {
         latestTitle?: string;
       }
     >();
+    const workflowStats = new Map<
+      string,
+      {
+        onMe: number;
+        blocked: number;
+        families: Set<string>;
+        topUrgency: number;
+        topLabel?: string;
+      }
+    >();
     for (const summary of threadSummaries) {
       const messages = readMessages(summary.thread.id);
       const pendingByParticipant = new Map<string, number>();
@@ -5208,6 +5218,25 @@ export class Multiplexer {
           current.latestTitle = summary.thread.title;
         }
         threadStats.set(participant, current);
+      }
+    }
+    for (const entry of buildWorkflowEntries("user")) {
+      const familyKey = entry.familyRootTaskId ?? entry.thread.id;
+      for (const participant of entry.thread.participants) {
+        const current = workflowStats.get(participant) ?? {
+          onMe: 0,
+          blocked: 0,
+          families: new Set<string>(),
+          topUrgency: -1,
+        };
+        if ((entry.thread.waitingOn ?? []).includes(participant)) current.onMe += 1;
+        if (entry.thread.status === "blocked" || entry.task?.status === "blocked") current.blocked += 1;
+        if (entry.familyTaskIds.length > 1) current.families.add(familyKey);
+        if (entry.urgency > current.topUrgency) {
+          current.topUrgency = entry.urgency;
+          current.topLabel = `${entry.displayTitle} (${entry.stateLabel})`;
+        }
+        workflowStats.set(participant, current);
       }
     }
     let mainRepoPath: string | undefined;
@@ -5243,6 +5272,10 @@ export class Multiplexer {
         threadPendingCount: stats?.pending ?? 0,
         threadId: session.threadId ?? stats?.latestId,
         threadName: session.threadName ?? stats?.latestTitle,
+        workflowOnMeCount: workflowStats.get(session.id)?.onMe ?? 0,
+        workflowBlockedCount: workflowStats.get(session.id)?.blocked ?? 0,
+        workflowFamilyCount: workflowStats.get(session.id)?.families.size ?? 0,
+        workflowTopLabel: workflowStats.get(session.id)?.topLabel,
       };
     });
   }

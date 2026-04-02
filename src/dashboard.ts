@@ -45,6 +45,10 @@ export interface DashboardSession {
   threadWaitingOnMeCount?: number;
   threadWaitingOnThemCount?: number;
   threadPendingCount?: number;
+  workflowOnMeCount?: number;
+  workflowBlockedCount?: number;
+  workflowFamilyCount?: number;
+  workflowTopLabel?: string;
 }
 
 export interface WorktreeGroup {
@@ -214,6 +218,12 @@ export class Dashboard {
         : "";
     const pendingBadge =
       (session.threadPendingCount ?? 0) > 0 ? ` \x1b[2;31m⇢ ${session.threadPendingCount}\x1b[0m` : "";
+    const workflowBadge =
+      (session.workflowOnMeCount ?? 0) > 0 ||
+      (session.workflowBlockedCount ?? 0) > 0 ||
+      (session.workflowFamilyCount ?? 0) > 0
+        ? ` \x1b[2;35mwf ${session.workflowOnMeCount ?? 0}/${session.workflowBlockedCount ?? 0}/${session.workflowFamilyCount ?? 0}\x1b[0m`
+        : "";
     const attentionBadge =
       session.attention === "error"
         ? " \x1b[31m✗\x1b[0m"
@@ -231,7 +241,7 @@ export class Dashboard {
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${attentionBadge}${unseenBadge} — ${ownerTag}${marker}`;
+      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${attentionBadge}${unseenBadge} — ${ownerTag}${marker}`;
     }
 
     const icon = STATUS_ICONS[session.status];
@@ -239,7 +249,7 @@ export class Dashboard {
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${attentionBadge}${unseenBadge}${marker}`;
+    return `${indent}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${attentionBadge}${unseenBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {
@@ -422,6 +432,22 @@ export class Dashboard {
           width,
         ),
       );
+    }
+    if (
+      (selected.workflowOnMeCount ?? 0) > 0 ||
+      (selected.workflowBlockedCount ?? 0) > 0 ||
+      (selected.workflowFamilyCount ?? 0) > 0 ||
+      selected.workflowTopLabel
+    ) {
+      const summary = [
+        `${selected.workflowOnMeCount ?? 0} on me`,
+        `${selected.workflowBlockedCount ?? 0} blocked`,
+        `${selected.workflowFamilyCount ?? 0} families`,
+        selected.workflowTopLabel ? `top: ${selected.workflowTopLabel}` : undefined,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      lines.push(...wrapKeyValue("Workflow", summary, width));
     }
     if ((selected.services?.length ?? 0) > 0) {
       lines.push(...wrapKeyValue("Services", selected.services!.map((s) => s.url ?? `:${s.port}`).join(", "), width));
