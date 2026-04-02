@@ -365,6 +365,8 @@ function splitTranscriptBlocks(output) {
   const lines = String(output || "").replace(/\r/g, "").split("\n");
   const blocks = [];
   let current = null;
+  let sawPrompt = false;
+  let expectingResponse = false;
 
   const flush = () => {
     if (!current) return;
@@ -381,28 +383,110 @@ function splitTranscriptBlocks(output) {
     current.lines.push(line);
   };
 
+  const isDivider = (line) => {
+    const trimmed = line.trim();
+    return Boolean(trimmed) && /^[\u2500-\u257f\-_=\s]+$/.test(trimmed);
+  };
+
+  const isPathLike = (line) => /(^~\/|^\/|^[A-Za-z]:\\)/.test(line.trim());
+  const isClaudePreludeLine = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return current?.type === "meta";
+    return (
+      trimmed.includes("Claude Code") ||
+      trimmed.includes("Claude Max") ||
+      trimmed.includes("Sonnet") ||
+      trimmed.includes("Opus") ||
+      (isPathLike(trimmed) && !sawPrompt) ||
+      (/context\)/.test(trimmed) && !sawPrompt)
+    );
+  };
+  const isFooterLine = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    return (
+      /^([A-Za-z0-9._-]+@[^ ]+|~\/|\/)/.test(trimmed) && /(context\)|%\s|[$#]\s)/.test(trimmed) ||
+      /^([›>]|▶)\s/.test(trimmed) && /(permissions|cycle|cwd|context)/i.test(trimmed) ||
+      /gpt-|claude|context\)|bypass permissions|shift\+tab|to cycle/i.test(trimmed)
+    );
+  };
+  const isStatusLine = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    return (
+      /^■\s?/.test(trimmed) ||
+      /^•\s?Working\b/.test(trimmed) ||
+      /Conversation interrupted/i.test(trimmed) ||
+      /\bWorking \(\d+s/.test(trimmed)
+    );
+  };
+  const isPromptLine = (line) => {
+    const trimmed = line.trimStart();
+    if (/^›\s?/.test(trimmed)) return true;
+    if (/^>\s?/.test(trimmed)) return true;
+    return false;
+  };
+  const stripPromptMarker = (line) => line.trimStart().replace(/^(›|>)\s?/, "");
+  const stripResponseMarker = (line) => line.trimStart().replace(/^•\s?/, "");
+  const stripStatusMarker = (line) => line.trimStart().replace(/^■\s?/, "");
+
   for (const line of lines) {
-    if (/^›\s?/.test(line)) {
-      pushLine("prompt", line.replace(/^›\s?/, ""));
+    const trimmed = line.trimEnd();
+
+    if (isDivider(trimmed)) {
       continue;
     }
-    if (/^•\s?/.test(line)) {
-      pushLine("response", line.replace(/^•\s?/, ""));
+    if (isPromptLine(trimmed)) {
+      pushLine("prompt", stripPromptMarker(trimmed));
+      sawPrompt = true;
+      expectingResponse = true;
       continue;
     }
-    if (/^■\s?/.test(line)) {
-      pushLine("status", line.replace(/^■\s?/, ""));
+    if (/^•\s?/.test(trimmed) && !/^•\s?Working\b/.test(trimmed)) {
+      pushLine("response", stripResponseMarker(trimmed));
+      sawPrompt = true;
+      expectingResponse = false;
       continue;
     }
-    if (/^\s{2,}\S/.test(line) && current) {
-      current.lines.push(line.trimEnd());
+    if (isStatusLine(trimmed)) {
+      pushLine("status", stripStatusMarker(trimmed));
+      expectingResponse = false;
       continue;
     }
-    pushLine("raw", line);
+    if (!sawPrompt && isClaudePreludeLine(trimmed)) {
+      pushLine("meta", trimmed);
+      continue;
+    }
+    if (isFooterLine(trimmed)) {
+      pushLine("status", trimmed);
+      expectingResponse = false;
+      continue;
+    }
+    if (!trimmed.trim()) {
+      if (current && current.type !== "raw") {
+        current.lines.push("");
+        continue;
+      }
+      flush();
+      continue;
+    }
+    if (expectingResponse || current?.type === "response") {
+      pushLine("response", trimmed);
+      continue;
+    }
+    if (current?.type === "meta" && isClaudePreludeLine(trimmed)) {
+      current.lines.push(trimmed);
+      continue;
+    }
+    if (current?.type === "status") {
+      current.lines.push(trimmed);
+      continue;
+    }
+    pushLine("raw", trimmed);
   }
 
   flush();
-  return blocks;
+  return blocks.filter((block) => block.text.trim().length > 0);
 }
 
 function setNativeChatSnapshot(projectPath, sessionId, output) {

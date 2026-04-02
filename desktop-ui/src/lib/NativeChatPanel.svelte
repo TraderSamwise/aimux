@@ -92,7 +92,7 @@
     {:else if state.nativeChatBlocks.length > 0}
       <div class="message-list">
         {#each state.nativeChatBlocks as block, index (`${block.type}:${index}`)}
-          <article class="message" class:prompt={block.type === "prompt"} class:response={block.type === "response"} class:status={block.type === "status"} class:raw={block.type === "raw"}>
+          <article class="message" class:prompt={block.type === "prompt"} class:response={block.type === "response"} class:status={block.type === "status"} class:raw={block.type === "raw"} class:meta={block.type === "meta"}>
             <div class="message-kind">
               {#if block.type === "prompt"}
                 You
@@ -100,6 +100,8 @@
                 Agent
               {:else if block.type === "status"}
                 Status
+              {:else if block.type === "meta"}
+                Context
               {:else}
                 Raw
               {/if}
@@ -238,6 +240,11 @@
   .message.status {
     background: rgba(251, 191, 36, 0.06);
     border-color: rgba(251, 191, 36, 0.18);
+  }
+
+  .message.meta {
+    background: rgba(125, 211, 252, 0.05);
+    border-color: rgba(125, 211, 252, 0.14);
   }
 
   .message.raw {
