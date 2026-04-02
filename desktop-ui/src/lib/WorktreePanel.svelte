@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { getState, selectSession, runTerminal, pushAction } from "../stores/state.svelte.js";
+  import { getState, selectSession, runTerminal, isActionPending, trackAction } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const appState = getState();
@@ -9,7 +9,6 @@
   let showNewWorktreeInput = $state(false);
   let newWorktreeName = $state("");
   let showSpawnMenu = $state(null);
-  let busy = $state(false);
   let errorMsg = $state(null);
 
   // Group sessions by worktree.
@@ -115,68 +114,105 @@
   async function killAgent(e, agent) {
     e.stopPropagation();
     const project = appState.selectedProject;
-    if (!project || busy) return;
-    busy = true;
+    if (!project || isAgentActionPending(agent.id)) return;
     try {
-      pushAction(`Killing ${agentLabel(agent)}...`);
-      await invoke("agent_kill", { projectPath: project.path, sessionId: agent.id });
+      await trackAction(
+        {
+          kind: "kill",
+          message: `Killing ${agentLabel(agent)}...`,
+          projectPath: project.path,
+          sessionId: agent.id,
+        },
+        () => invoke("agent_kill", { projectPath: project.path, sessionId: agent.id }),
+      );
     } catch (err) {
       showError(`Kill failed: ${err}`);
-    } finally {
-      busy = false;
     }
   }
 
   async function stopAgent(e, agent) {
     e.stopPropagation();
     const project = appState.selectedProject;
-    if (!project || busy) return;
-    busy = true;
+    if (!project || isAgentActionPending(agent.id)) return;
     try {
-      pushAction(`Stopping ${agentLabel(agent)}...`);
-      await invoke("agent_stop", { projectPath: project.path, sessionId: agent.id });
+      await trackAction(
+        {
+          kind: "stop",
+          message: `Stopping ${agentLabel(agent)}...`,
+          projectPath: project.path,
+          sessionId: agent.id,
+        },
+        () => invoke("agent_stop", { projectPath: project.path, sessionId: agent.id }),
+      );
     } catch (err) {
       showError(`Stop failed: ${err}`);
-    } finally {
-      busy = false;
     }
   }
 
   async function spawnAgent(tool, worktreePath) {
     const project = appState.selectedProject;
-    if (!project || busy) return;
+    if (!project || isSpawnPending(tool, worktreePath)) return;
     showSpawnMenu = null;
-    busy = true;
     try {
-      pushAction(`Spawning ${tool}...`);
-      await invoke("agent_spawn", {
-        projectPath: project.path,
-        tool,
-        worktree: worktreePath || null,
-      });
+      await trackAction(
+        {
+          kind: "spawn",
+          message: `Spawning ${tool}...`,
+          projectPath: project.path,
+          tool,
+          worktreePath: worktreePath || null,
+        },
+        () =>
+          invoke("agent_spawn", {
+            projectPath: project.path,
+            tool,
+            worktree: worktreePath || null,
+          }),
+      );
     } catch (err) {
       showError(`Spawn failed: ${err}`);
-    } finally {
-      busy = false;
     }
   }
 
   async function createWorktree() {
     const project = appState.selectedProject;
     const name = newWorktreeName.trim();
-    if (!project || !name || busy) return;
-    busy = true;
+    if (!project || !name || isCreateWorktreePending()) return;
     try {
-      pushAction(`Creating worktree "${name}"...`);
-      await invoke("worktree_create", { projectPath: project.path, name });
+      await trackAction(
+        {
+          kind: "create-worktree",
+          message: `Creating worktree "${name}"...`,
+          projectPath: project.path,
+          worktreeName: name,
+        },
+        () => invoke("worktree_create", { projectPath: project.path, name }),
+      );
       newWorktreeName = "";
       showNewWorktreeInput = false;
-      // Will appear on next heartbeat tick
     } catch (err) {
       showError(`Worktree create failed: ${err}`);
-    } finally {
-      busy = false;
     }
+  }
+
+  function isAgentActionPending(sessionId) {
+    return isActionPending({ projectPath: appState.selectedProject?.path, sessionId });
+  }
+
+  function isSpawnPending(tool, worktreePath) {
+    return isActionPending({
+      projectPath: appState.selectedProject?.path,
+      kind: "spawn",
+      tool,
+      worktreePath: worktreePath || null,
+    });
+  }
+
+  function isCreateWorktreePending() {
+    return isActionPending({
+      projectPath: appState.selectedProject?.path,
+      kind: "create-worktree",
+    });
   }
 
   function handleWorktreeKeydown(e) {
@@ -210,16 +246,21 @@
         placeholder="worktree name..."
         bind:value={newWorktreeName}
         onkeydown={handleWorktreeKeydown}
+        disabled={isCreateWorktreePending()}
         autofocus
       />
-      <button class="input-btn" onclick={createWorktree} disabled={!newWorktreeName.trim() || busy}>create</button>
+      <button class="input-btn" onclick={createWorktree} disabled={!newWorktreeName.trim() || isCreateWorktreePending()}>
+        {isCreateWorktreePending() ? "creating..." : "create"}
+      </button>
     </div>
   {/if}
 
   {#if showSpawnMenu === "__root__"}
     <div class="spawn-menu">
       {#each tools as tool}
-        <button class="spawn-btn" onclick={() => spawnAgent(tool, null)}>spawn {tool}</button>
+        <button class="spawn-btn" onclick={() => spawnAgent(tool, null)} disabled={isSpawnPending(tool, null)}>
+          {isSpawnPending(tool, null) ? `spawning ${tool}...` : `spawn ${tool}`}
+        </button>
       {/each}
     </div>
   {/if}
@@ -251,7 +292,9 @@
           {#if showSpawnMenu === wt.path && wt.path}
             <div class="spawn-menu">
               {#each tools as tool}
-                <button class="spawn-btn" onclick={() => spawnAgent(tool, wt.path)}>spawn {tool}</button>
+                <button class="spawn-btn" onclick={() => spawnAgent(tool, wt.path)} disabled={isSpawnPending(tool, wt.path)}>
+                  {isSpawnPending(tool, wt.path) ? `spawning ${tool}...` : `spawn ${tool}`}
+                </button>
               {/each}
             </div>
           {/if}
@@ -277,9 +320,13 @@
                   <span class="agent-status">{agent.status || "idle"}</span>
                   <span class="agent-actions">
                     {#if agent.status === "running"}
-                      <button class="agent-action" title="Stop" onclick={(e) => stopAgent(e, agent)}>&#x25A0;</button>
+                      <button class="agent-action" title="Stop" onclick={(e) => stopAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                        {isAgentActionPending(agent.id) ? "..." : "■"}
+                      </button>
                     {/if}
-                    <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)}>&times;</button>
+                    <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                      {isAgentActionPending(agent.id) ? "..." : "×"}
+                    </button>
                   </span>
                 </div>
               {/each}
@@ -380,6 +427,13 @@
     background: rgba(56, 189, 248, 0.18);
   }
 
+  .input-btn:disabled,
+  .spawn-btn:disabled,
+  .agent-action:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
   .spawn-menu {
     display: flex;
     gap: 4px;
@@ -400,6 +454,12 @@
     background: var(--bg-surface-hover);
     border-color: var(--border-hover);
     color: var(--text);
+  }
+
+  .spawn-btn:disabled:hover {
+    background: var(--bg-surface);
+    border-color: var(--border);
+    color: var(--text-secondary);
   }
 
   .worktree-list {
@@ -553,6 +613,11 @@
   .agent-action:hover {
     background: var(--bg-surface-hover);
     color: var(--text);
+  }
+
+  .agent-action:disabled:hover {
+    background: transparent;
+    color: var(--text-dim);
   }
 
   .agent-action-kill:hover {

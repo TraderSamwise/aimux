@@ -13,23 +13,52 @@ let unlistenOutput = null;
 let unlistenExit = null;
 let unlistenHeartbeat = null;
 
-// ── In-progress action queue ──────────────────────────────────────
+// ── In-progress actions ───────────────────────────────────────────
 
-let tickNumber = $state(0);
-let pendingActions = $state([]);
+let inFlightActions = $state([]);
 let currentAction = $state(null);
 
-export function pushAction(message) {
-  pendingActions.push({ message, tickCreated: tickNumber });
-  currentAction = message;
+function syncCurrentAction() {
+  currentAction = inFlightActions.length > 0
+    ? inFlightActions[inFlightActions.length - 1].message
+    : null;
 }
 
-function drainActions() {
-  const cutoff = tickNumber - 2;
-  pendingActions = pendingActions.filter((a) => a.tickCreated > cutoff);
-  currentAction = pendingActions.length > 0
-    ? pendingActions[pendingActions.length - 1].message
-    : null;
+export function beginAction(action) {
+  const next = {
+    ...action,
+    key: action.key || crypto.randomUUID(),
+    startedAt: Date.now(),
+  };
+  inFlightActions = [...inFlightActions, next];
+  syncCurrentAction();
+  return next.key;
+}
+
+export function finishAction(key) {
+  inFlightActions = inFlightActions.filter((action) => action.key !== key);
+  syncCurrentAction();
+}
+
+export function failAction(key) {
+  finishAction(key);
+}
+
+export async function trackAction(action, run) {
+  const key = beginAction(action);
+  try {
+    return await run();
+  } catch (error) {
+    throw error;
+  } finally {
+    finishAction(key);
+  }
+}
+
+export function isActionPending(match = {}) {
+  return inFlightActions.some((action) =>
+    Object.entries(match).every(([key, value]) => action[key] === value)
+  );
 }
 
 // ── State getters ─────────────────────────────────────────────────
@@ -44,6 +73,7 @@ export function getState() {
     get terminalSessionId() { return terminalSessionId; },
     get terminalStatus() { return terminalStatus; },
     get currentAction() { return currentAction; },
+    get inFlightActions() { return inFlightActions; },
     get selectedProject() {
       return projects.find((p) => p.path === selectedProjectPath) || null;
     },
@@ -65,9 +95,6 @@ export function getState() {
 // ── Heartbeat listener (Rust pushes events, JS just receives) ─────
 
 function onHeartbeat(event) {
-  tickNumber++;
-  drainActions();
-
   const incoming = event.payload?.projects || [];
   incoming.sort((a, b) => a.name.localeCompare(b.name));
   projects = incoming;
