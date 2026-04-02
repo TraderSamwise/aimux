@@ -110,6 +110,20 @@ Desktop transport is now HTTP-first:
 - desktop secondary screens may call project-service HTTP directly for workflow, threads, and graveyard views
 - desktop orchestration actions should also go directly through project-service HTTP, not CLI wrappers
 
+Semantic projection is shared across features:
+
+- session semantics are the canonical projection for session-level meaning
+- workflow/thread state is the canonical projection for collaboration-level meaning
+
+Features should render or route from those shared semantics instead of inventing local interpretations:
+
+- chips
+- footer/status bars
+- alerts
+- compact labels/suffixes
+- tmux statusline projections
+- orchestration routing
+
 Desktop terminal control is tmux-client-first:
 
 - the embedded terminal pane hosts a real attached tmux client

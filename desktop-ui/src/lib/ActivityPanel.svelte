@@ -101,6 +101,36 @@
     return entry?.latestMessage?.body || entry?.task?.description || null;
   }
 
+  function semanticState(entry) {
+    if (!entry) return { label: "unknown", tone: "neutral" };
+    if (entry.thread?.status === "blocked" || entry.task?.status === "blocked") {
+      return { label: "blocked", tone: "error" };
+    }
+    if (entry.task?.reviewStatus === "changes_requested") {
+      return { label: "changes requested", tone: "error" };
+    }
+    if ((entry.thread?.waitingOn || []).includes("user")) {
+      return { label: "on you", tone: "waiting" };
+    }
+    if ((entry.thread?.waitingOn || []).length > 0) {
+      return { label: `on ${entry.thread.waitingOn.join(", ")}`, tone: "busy" };
+    }
+    if (entry.task?.status === "done" || entry.thread?.status === "done") {
+      return { label: "done", tone: "success" };
+    }
+    if (entry.task?.status === "in_progress") {
+      return { label: "in progress", tone: "busy" };
+    }
+    if (entry.task?.status === "assigned" || entry.task?.status === "pending") {
+      return { label: "queued", tone: "waiting" };
+    }
+    return { label: entry.stateLabel || entry.thread?.status || "open", tone: "neutral" };
+  }
+
+  function semanticToneClass(entry) {
+    return `tone-${semanticState(entry).tone}`;
+  }
+
   function actionButtons(entry) {
     const task = entry.task;
     if (!task && entry.thread.kind === "handoff") {
@@ -150,9 +180,12 @@
                 <div class="entry-title">{entry.displayTitle || entry.thread.title || entry.thread.id}</div>
                 <div class="entry-meta">
                   <span>{entry.thread.kind}</span>
-                  <span>{entry.stateLabel || entry.thread.status}</span>
+                  <span class={`state-pill ${semanticToneClass(entry)}`}>{semanticState(entry).label}</span>
                   {#if entry.task?.status}
                     <span>task: {entry.task.status}</span>
+                  {/if}
+                  {#if entry.urgency > 0}
+                    <span>urgency {entry.urgency}</span>
                   {/if}
                 </div>
               </div>
@@ -240,6 +273,37 @@
     margin-top: 6px;
     font-size: 11px;
     color: var(--text-dim);
+  }
+
+  .state-pill {
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(148, 163, 184, 0.08);
+  }
+
+  .state-pill.tone-success {
+    color: rgb(134, 239, 172);
+    background: rgba(74, 222, 128, 0.1);
+    border-color: rgba(74, 222, 128, 0.2);
+  }
+
+  .state-pill.tone-error {
+    color: rgb(254, 202, 202);
+    background: rgba(248, 113, 113, 0.1);
+    border-color: rgba(248, 113, 113, 0.2);
+  }
+
+  .state-pill.tone-waiting {
+    color: rgb(253, 224, 71);
+    background: rgba(251, 191, 36, 0.12);
+    border-color: rgba(251, 191, 36, 0.22);
+  }
+
+  .state-pill.tone-busy {
+    color: rgb(125, 211, 252);
+    background: rgba(56, 189, 248, 0.1);
+    border-color: rgba(56, 189, 248, 0.2);
   }
 
   .entry-actions {

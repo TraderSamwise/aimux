@@ -53,6 +53,33 @@ Desktop alerts should be treated as ephemeral event-stream UI, not persisted not
 - do not scrape files or poll CLI for alert delivery
 - do not build seen/dismissed notification state unless the product explicitly needs an inbox later
 
+## Semantic Source Of Truth
+
+Do not derive session meaning separately in each surface.
+
+Session-oriented UI should use the shared session semantic layer as the source of truth:
+
+- alerts
+- compact agent rows
+- bottom chips
+- TUI dashboard rows
+- tmux/statusline compact chips
+- orchestration availability and tie-breaking
+
+That semantic layer should answer:
+
+- availability
+- attention
+- workflow waiting pressure
+- unread/pending pressure
+
+Workflow/thread panels should use workflow/thread state as their primary semantic source:
+
+- `buildWorkflowEntries(...)` for workflow cards and next-action style labels
+- thread `status`, `owner`, and `waitingOn` for thread cards/detail
+
+Do not re-infer "on you", "blocked", or "done" differently in different desktop panels.
+
 ## Action Model
 
 Desktop actions should call awaited project-service endpoints:

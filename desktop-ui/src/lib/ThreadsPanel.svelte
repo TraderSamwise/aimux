@@ -29,6 +29,19 @@
       .filter(Boolean);
   }
 
+  function threadSemantic(thread) {
+    if (!thread) return { label: "unknown", tone: "neutral" };
+    if (thread.status === "blocked") return { label: "blocked", tone: "error" };
+    if ((thread.waitingOn || []).includes("user")) return { label: "on you", tone: "waiting" };
+    if ((thread.waitingOn || []).length > 0) return { label: `on ${thread.waitingOn.join(", ")}`, tone: "busy" };
+    if (thread.status === "done") return { label: "done", tone: "success" };
+    return { label: thread.status || "open", tone: "neutral" };
+  }
+
+  function threadToneClass(thread) {
+    return `tone-${threadSemantic(thread).tone}`;
+  }
+
   async function loadThreads() {
     const project = appState.selectedProject;
     if (!visible || !project) {
@@ -298,7 +311,10 @@
         {#each threads as entry (entry.thread.id)}
           <button class="thread-chip" class:active={selectedThreadId === entry.thread.id} onclick={() => { selectedThreadId = entry.thread.id; }}>
             <div class="thread-chip-title">{entry.thread.title || entry.thread.id}</div>
-            <div class="thread-chip-meta">{entry.thread.kind} · {entry.thread.status}</div>
+            <div class="thread-chip-meta">
+              <span>{entry.thread.kind}</span>
+              <span class={`state-pill ${threadToneClass(entry.thread)}`}>{threadSemantic(entry.thread).label}</span>
+            </div>
           </button>
         {/each}
       {/if}
@@ -309,7 +325,10 @@
         <div class="detail-header">
           <div>
             <div class="detail-title">{selectedThread.title || selectedThread.id}</div>
-            <div class="detail-meta">{selectedThread.kind} · {selectedThread.status}</div>
+            <div class="detail-meta">
+              <span>{selectedThread.kind}</span>
+              <span class={`state-pill ${threadToneClass(selectedThread)}`}>{threadSemantic(selectedThread).label}</span>
+            </div>
           </div>
           <div class="detail-actions">
             {#each ["open", "waiting", "blocked", "done"] as status}
@@ -480,6 +499,46 @@
   .message-kind {
     font-size: 11px;
     color: var(--text-dim);
+  }
+
+  .thread-chip-meta,
+  .detail-meta {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 6px;
+  }
+
+  .state-pill {
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(148, 163, 184, 0.08);
+  }
+
+  .state-pill.tone-success {
+    color: rgb(134, 239, 172);
+    background: rgba(74, 222, 128, 0.1);
+    border-color: rgba(74, 222, 128, 0.2);
+  }
+
+  .state-pill.tone-error {
+    color: rgb(254, 202, 202);
+    background: rgba(248, 113, 113, 0.1);
+    border-color: rgba(248, 113, 113, 0.2);
+  }
+
+  .state-pill.tone-waiting {
+    color: rgb(253, 224, 71);
+    background: rgba(251, 191, 36, 0.12);
+    border-color: rgba(251, 191, 36, 0.22);
+  }
+
+  .state-pill.tone-busy {
+    color: rgb(125, 211, 252);
+    background: rgba(56, 189, 248, 0.1);
+    border-color: rgba(56, 189, 248, 0.2);
   }
 
   .detail-header {
