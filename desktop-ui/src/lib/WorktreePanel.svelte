@@ -122,6 +122,27 @@
     return agent.status || "idle";
   }
 
+  function agentStatusParts(agent) {
+    const raw = agentStatusLabel(agent);
+    const [primary, secondary] = raw.split(" · ");
+    return {
+      primary: primary || raw,
+      secondary: secondary || null,
+    };
+  }
+
+  function agentStatusTone(agent) {
+    const semantic = agent.semantic || null;
+    if (semantic?.attention === "error") return "error";
+    if (semantic?.workflowState === "blocked" || semantic?.attention === "blocked") return "blocked";
+    if (semantic?.workflowState === "waiting_on_me" || semantic?.availability === "needs_input") return "waiting";
+    if ((semantic?.unreadCount ?? 0) > 0 || (semantic?.pendingDeliveryCount ?? 0) > 0) return "info";
+    if (semantic?.activity === "done") return "success";
+    if (semantic?.activity === "running" || semantic?.activity === "waiting") return "active";
+    if (agent.status === "running") return "active";
+    return "neutral";
+  }
+
   function showError(raw) {
     // Extract clean error from verbose debug output
     const str = String(raw);
@@ -544,6 +565,7 @@
                 {@const active = agent.id === appState.selectedSessionId}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <div class="agent-block">
+                  {@const status = agentStatusParts(agent)}
                   <div
                     class="agent-row"
                     class:active
@@ -557,7 +579,12 @@
                     {#if agent.role}
                       <span class="agent-role">({agent.role})</span>
                     {/if}
-                    <span class="agent-status">{agentStatusLabel(agent)}</span>
+                    <span class="agent-status" data-tone={agentStatusTone(agent)}>
+                      <span class="agent-status-primary">{status.primary}</span>
+                      {#if status.secondary}
+                        <span class="agent-status-secondary">{status.secondary}</span>
+                      {/if}
+                    </span>
                     <span class="agent-actions" class:visible={agent.pending || renameSessionId === agent.id || forkMenu?.sessionId === agent.id || migrateSessionId === agent.id}>
                       {#if agent.status === "running"}
                         <button class="agent-action" title="Fork" onclick={(e) => openFork(e, agent, wt.path)} disabled={isAgentActionPending(agent.id)}>
@@ -932,17 +959,59 @@
   .agent-label {
     font-weight: 500;
     color: var(--text);
+    min-width: 0;
   }
 
   .agent-role {
     color: var(--text-dim);
     font-size: 11px;
+    flex-shrink: 0;
   }
 
   .agent-status {
     margin-left: auto;
-    color: var(--text-dim);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+    min-width: 68px;
+    max-width: 96px;
+    text-align: right;
     font-size: 10px;
+    line-height: 1.15;
+    flex-shrink: 0;
+  }
+
+  .agent-status-primary {
+    color: var(--text-dim);
+  }
+
+  .agent-status-secondary {
+    color: rgba(148, 163, 184, 0.92);
+  }
+
+  .agent-status[data-tone="active"] .agent-status-primary {
+    color: rgba(167, 243, 208, 0.96);
+  }
+
+  .agent-status[data-tone="success"] .agent-status-primary {
+    color: rgba(187, 247, 208, 0.98);
+  }
+
+  .agent-status[data-tone="waiting"] .agent-status-primary,
+  .agent-status[data-tone="waiting"] .agent-status-secondary {
+    color: rgba(253, 224, 71, 0.96);
+  }
+
+  .agent-status[data-tone="blocked"] .agent-status-primary,
+  .agent-status[data-tone="blocked"] .agent-status-secondary,
+  .agent-status[data-tone="error"] .agent-status-primary,
+  .agent-status[data-tone="error"] .agent-status-secondary {
+    color: rgba(252, 165, 165, 0.98);
+  }
+
+  .agent-status[data-tone="info"] .agent-status-secondary {
+    color: rgba(125, 211, 252, 0.95);
   }
 
   .agent-actions {
