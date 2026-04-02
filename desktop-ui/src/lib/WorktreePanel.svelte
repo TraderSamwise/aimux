@@ -563,6 +563,7 @@
             <div class="agent-list">
               {#each wt.agents as agent (agent.id)}
                 {@const active = agent.id === appState.selectedSessionId}
+                {@const statusParts = agentStatusParts(agent)}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <div class="agent-block">
                   <div
@@ -574,36 +575,40 @@
                     title={agent.id}
                   >
                     <span class="agent-dot" style="background: {statusDot(agent)}"></span>
-                    <span class="agent-label">{agentLabel(agent)}</span>
-                    {#if agent.role}
-                      <span class="agent-role">({agent.role})</span>
-                    {/if}
-                    <span class="agent-status" data-tone={agentStatusTone(agent)}>
-                      <span class="agent-status-primary">{agentStatusParts(agent).primary}</span>
-                      {#if agentStatusParts(agent).secondary}
-                        <span class="agent-status-secondary">{agentStatusParts(agent).secondary}</span>
+                    <span class="agent-identity">
+                      <span class="agent-label">{agentLabel(agent)}</span>
+                      {#if agent.role}
+                        <span class="agent-role">({agent.role})</span>
                       {/if}
                     </span>
-                    <span class="agent-actions" class:visible={agent.pending || renameSessionId === agent.id || forkMenu?.sessionId === agent.id || migrateSessionId === agent.id}>
-                      {#if agent.status === "running"}
-                        <button class="agent-action" title="Fork" onclick={(e) => openFork(e, agent, wt.path)} disabled={isAgentActionPending(agent.id)}>
-                          ↗
-                        </button>
-                        <button class="agent-action" title="Rename" onclick={(e) => openRename(e, agent)} disabled={isAgentActionPending(agent.id)}>
-                          ✎
-                        </button>
-                        <button class="agent-action" title="Migrate" onclick={(e) => openMigrate(e, agent)} disabled={isAgentActionPending(agent.id)}>
-                          ⇄
-                        </button>
-                        <button class="agent-action" title="Stop" onclick={(e) => stopAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
-                          {isAgentActionPending(agent.id) ? "..." : "■"}
-                        </button>
-                      {/if}
-                      {#if !agent.pending}
-                        <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
-                          {isAgentActionPending(agent.id) ? "..." : "×"}
-                        </button>
-                      {/if}
+                    <span class="agent-meta">
+                      <span class="agent-status" data-tone={agentStatusTone(agent)}>
+                        <span class="agent-status-primary">{statusParts.primary}</span>
+                        {#if statusParts.secondary}
+                          <span class="agent-status-secondary">{statusParts.secondary}</span>
+                        {/if}
+                      </span>
+                      <span class="agent-actions" class:visible={agent.pending || renameSessionId === agent.id || forkMenu?.sessionId === agent.id || migrateSessionId === agent.id}>
+                        {#if agent.status === "running"}
+                          <button class="agent-action" title="Fork" onclick={(e) => openFork(e, agent, wt.path)} disabled={isAgentActionPending(agent.id)}>
+                            ↗
+                          </button>
+                          <button class="agent-action" title="Rename" onclick={(e) => openRename(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                            ✎
+                          </button>
+                          <button class="agent-action" title="Migrate" onclick={(e) => openMigrate(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                            ⇄
+                          </button>
+                          <button class="agent-action" title="Stop" onclick={(e) => stopAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                            {isAgentActionPending(agent.id) ? "..." : "■"}
+                          </button>
+                        {/if}
+                        {#if !agent.pending}
+                          <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                            {isAgentActionPending(agent.id) ? "..." : "×"}
+                          </button>
+                        {/if}
+                      </span>
                     </span>
                   </div>
 
@@ -956,9 +961,21 @@
   }
 
   .agent-label {
+    flex: 1;
     font-weight: 500;
     color: var(--text);
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .agent-identity {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
   }
 
   .agent-role {
@@ -967,14 +984,21 @@
     flex-shrink: 0;
   }
 
-  .agent-status {
+  .agent-meta {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .agent-status {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
     gap: 1px;
-    min-width: 68px;
-    max-width: 96px;
+    min-width: 76px;
+    max-width: 104px;
     text-align: right;
     font-size: 10px;
     line-height: 1.15;
@@ -1018,6 +1042,7 @@
     gap: 2px;
     opacity: 0;
     transition: opacity 100ms;
+    flex-shrink: 0;
   }
 
   .agent-row:hover .agent-actions {
