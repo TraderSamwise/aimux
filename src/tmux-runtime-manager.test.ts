@@ -112,6 +112,9 @@ describe("TmuxRuntimeManager", () => {
           args: ["unbind-key", "-T", "root", "S-Enter"],
         }),
         expect.objectContaining({
+          args: ["unbind-key", "-T", "root", "WheelUpPane"],
+        }),
+        expect.objectContaining({
           args: [
             "bind-key",
             "-T",
@@ -135,6 +138,19 @@ describe("TmuxRuntimeManager", () => {
             "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
             "send-keys -H 1b 5b 31 33 3b 32 75",
             "send-keys S-Enter",
+          ],
+        }),
+        expect.objectContaining({
+          args: [
+            "bind-key",
+            "-T",
+            "root",
+            "WheelUpPane",
+            "if-shell",
+            "-F",
+            "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+            "copy-mode -e",
+            "if-shell -F '#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -e'",
           ],
         }),
         expect.objectContaining({

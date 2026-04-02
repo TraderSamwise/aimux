@@ -80,7 +80,7 @@ export function isDashboardWindowName(name: string): boolean {
 export const MANAGED_TMUX_SESSION_OPTIONS = Object.freeze({
   prefix: "C-a",
   prefix2: "C-b",
-  mouse: "off",
+  mouse: "on",
   extendedKeys: "always",
   extendedKeysFormat: "csi-u",
 });
@@ -678,6 +678,7 @@ export class TmuxRuntimeManager {
     }
     this.exec(["unbind-key", "-T", "root", "C-j"]);
     this.exec(["unbind-key", "-T", "root", "S-Enter"]);
+    this.exec(["unbind-key", "-T", "root", "WheelUpPane"]);
     this.exec([
       "bind-key",
       "-T",
@@ -699,6 +700,17 @@ export class TmuxRuntimeManager {
       "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
       `send-keys -H ${MODIFIED_ENTER_HEX}`,
       "send-keys S-Enter",
+    ]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "root",
+      "WheelUpPane",
+      "if-shell",
+      "-F",
+      "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
+      "copy-mode -e",
+      "if-shell -F '#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -e'",
     ]);
     this.exec(["unbind-key", "-T", "prefix", "s"]);
     this.exec(["unbind-key", "-T", "prefix", "n"]);

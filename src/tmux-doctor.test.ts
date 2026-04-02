@@ -12,7 +12,7 @@ function createDoctorExec(): TmuxExec {
     if (joined === "display-message -p #{window_name}") return "codex";
     if (joined === "show-options -v -t aimux-mobile-abc prefix") return "C-a";
     if (joined === "show-options -v -t aimux-mobile-abc prefix2") return "C-b";
-    if (joined === "show-options -v -t aimux-mobile-abc mouse") return "off";
+    if (joined === "show-options -v -t aimux-mobile-abc mouse") return "on";
     if (joined === "show-options -v -t aimux-mobile-abc extended-keys") return "always";
     if (joined === "show-options -v -t aimux-mobile-abc extended-keys-format") return "csi-u";
     if (joined === "show-options -v -t aimux-mobile-abc terminal-features") {
