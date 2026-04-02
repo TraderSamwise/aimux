@@ -658,7 +658,7 @@
       stopRawPinnedScroll();
       return;
     }
-    startRawPinnedScroll(120);
+    startRawPinnedScroll(12);
     return () => stopRawPinnedScroll();
   });
 

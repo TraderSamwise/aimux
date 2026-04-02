@@ -2,7 +2,13 @@
   import { onMount } from "svelte";
   import "@xterm/xterm/css/xterm.css";
   import { createTerminal } from "./terminal-instance.svelte.js";
-  import { getState, resizeTerminal, writeTerminal } from "../stores/state.svelte.js";
+  import {
+    getState,
+    openSession,
+    openTerminalDashboard,
+    resizeTerminal,
+    writeTerminal,
+  } from "../stores/state.svelte.js";
 
   let { visible = false } = $props();
 
@@ -10,6 +16,24 @@
   let containerEl;
   let mountedTerminal = null;
   let mountedFitAddon = null;
+
+  async function syncTerminalTarget() {
+    if (!visible || !mountedTerminal) return;
+    const project = state.selectedProject;
+    if (!project?.path) return;
+    if (state.selectedSessionId) {
+      const session =
+        (project.sessions || []).find((entry) => entry.id === state.selectedSessionId) || null;
+      await openSession(
+        mountedTerminal,
+        project.path,
+        state.selectedSessionId,
+        session?.label || session?.tool || state.selectedSessionId,
+      );
+      return;
+    }
+    await openTerminalDashboard(mountedTerminal, project.path, project.name || project.path);
+  }
 
   onMount(() => {
     const { terminal, fitAddon } = createTerminal(containerEl);
@@ -32,6 +56,10 @@
     const resizeObserver = new ResizeObserver(onResize);
     resizeObserver.observe(containerEl);
     window.addEventListener("resize", onResize);
+
+    queueMicrotask(() => {
+      void syncTerminalTarget();
+    });
 
     return () => {
       resizeObserver.disconnect();
