@@ -682,18 +682,42 @@ async fn restart_daemon() -> Result<Value, String> {
       ));
     }
 
-    std::thread::sleep(Duration::from_millis(500));
+    let start = Instant::now();
+    let mut daemon_ready = false;
+    while start.elapsed() < Duration::from_secs(4) {
+      if daemon_json::<Value>("GET", "/projects", None, "daemon projects").is_ok() {
+        daemon_ready = true;
+        break;
+      }
+      std::thread::sleep(Duration::from_millis(100));
+    }
+    if !daemon_ready {
+      return Err("restart_daemon: daemon did not become ready in time".to_string());
+    }
+
+    let mut handles = Vec::new();
+    for project_path in managed_project_paths {
+      let node = node.clone();
+      let entrypoint = entrypoint.clone();
+      let path_env = shell_path();
+      handles.push(std::thread::spawn(move || {
+        let result = Command::new(&node)
+          .arg(&entrypoint)
+          .args(["host", "restart", "--serve"])
+          .current_dir(&project_path)
+          .env("PATH", path_env)
+          .output();
+        (project_path, result)
+      }));
+    }
 
     let mut restarted_projects = Vec::new();
     let mut restart_errors = Vec::new();
-    for project_path in managed_project_paths {
-      match Command::new(&node)
-        .arg(&entrypoint)
-        .args(["host", "restart", "--serve"])
-        .current_dir(&project_path)
-        .env("PATH", shell_path())
-        .output()
-      {
+    for handle in handles {
+      let (project_path, result) = handle
+        .join()
+        .map_err(|_| "restart_daemon: failed to join project restart task".to_string())?;
+      match result {
         Ok(project_output) if project_output.status.success() => {
           restarted_projects.push(project_path);
         }

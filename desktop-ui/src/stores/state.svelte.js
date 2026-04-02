@@ -1045,8 +1045,11 @@ export async function focusTerminalAgent(terminal, projectPath, sessionId, label
         agentId: sessionId,
         windowId,
       });
+      terminalSwitching = false;
       return;
-    } catch {}
+    } catch {
+      terminalSwitching = false;
+    }
   }
 
   await runTerminal(
@@ -1080,8 +1083,11 @@ export async function openTerminalDashboard(terminal, projectPath, label) {
         sessionId: terminalSessionId,
         projectPath,
       });
+      terminalSwitching = false;
       return;
-    } catch {}
+    } catch {
+      terminalSwitching = false;
+    }
   }
 
   await runTerminal(

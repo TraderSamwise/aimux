@@ -12,23 +12,25 @@
 
   let { visible = false } = $props();
 
-  const state = getState();
+  const appState = getState();
   let containerEl;
   let mountedTerminal = null;
   let mountedFitAddon = null;
+  let showSwitchOverlay = $state(false);
+  let switchOverlayTimer = null;
 
   async function syncTerminalTarget() {
     if (!visible || !mountedTerminal) return;
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     if (!project?.path) return;
-    if (state.selectedSessionId) {
+    if (appState.selectedSessionId) {
       const session =
-        (project.sessions || []).find((entry) => entry.id === state.selectedSessionId) || null;
+        (project.sessions || []).find((entry) => entry.id === appState.selectedSessionId) || null;
       await openSession(
         mountedTerminal,
         project.path,
-        state.selectedSessionId,
-        session?.label || session?.tool || state.selectedSessionId,
+        appState.selectedSessionId,
+        session?.label || session?.tool || appState.selectedSessionId,
       );
       return;
     }
@@ -62,6 +64,10 @@
     });
 
     return () => {
+      if (switchOverlayTimer) {
+        clearTimeout(switchOverlayTimer);
+        switchOverlayTimer = null;
+      }
       resizeObserver.disconnect();
       window.removeEventListener("resize", onResize);
       terminal.dispose();
@@ -75,20 +81,39 @@
       resizeTerminal(mountedTerminal);
     });
   });
+
+  $effect(() => {
+    const switching = visible && appState.terminalSwitching;
+    if (switching) {
+      if (!switchOverlayTimer) {
+        switchOverlayTimer = setTimeout(() => {
+          showSwitchOverlay = true;
+          switchOverlayTimer = null;
+        }, 140);
+      }
+      return;
+    }
+
+    if (switchOverlayTimer) {
+      clearTimeout(switchOverlayTimer);
+      switchOverlayTimer = null;
+    }
+    showSwitchOverlay = false;
+  });
 </script>
 
 <section class="panel" class:hidden={!visible}>
   <div class="panel-header">
     <span class="section-label">Terminal</span>
-    <span class="status">{state.terminalStatus}</span>
+    <span class="status">{appState.terminalStatus}</span>
   </div>
   <div class="terminal-shell">
     <div class="terminal-container" bind:this={containerEl}></div>
-    {#if state.terminalSwitching}
+    {#if showSwitchOverlay}
       <div class="terminal-overlay">
         <div class="terminal-overlay-card">
           <div class="terminal-overlay-kicker">Switching</div>
-          <div class="terminal-overlay-title">{state.terminalStatus}</div>
+          <div class="terminal-overlay-title">{appState.terminalStatus}</div>
         </div>
       </div>
     {/if}
