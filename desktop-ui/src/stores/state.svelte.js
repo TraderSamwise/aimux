@@ -46,11 +46,18 @@ export function failAction(key) {
 
 export async function trackAction(action, run) {
   const key = beginAction(action);
+  const minVisibleMs = action.minVisibleMs ?? 0;
+  const startedAt = Date.now();
   try {
     return await run();
   } catch (error) {
     throw error;
   } finally {
+    const elapsed = Date.now() - startedAt;
+    const remaining = minVisibleMs - elapsed;
+    if (remaining > 0) {
+      await new Promise((resolve) => setTimeout(resolve, remaining));
+    }
     finishAction(key);
   }
 }
