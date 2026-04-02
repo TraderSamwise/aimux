@@ -486,7 +486,52 @@ function splitTranscriptBlocks(output) {
   }
 
   flush();
-  return blocks.filter((block) => block.text.trim().length > 0);
+  return normalizeTranscriptBlocks(blocks.filter((block) => block.text.trim().length > 0));
+}
+
+function normalizeTranscriptBlocks(blocks) {
+  const next = blocks.map((block) => ({ ...block }));
+
+  const looksLikeAssistantText = (text) => {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return false;
+    if (/^(sam@|[A-Za-z0-9._-]+@|~\/|\/)/.test(trimmed)) return false;
+    if (/^(bypass permissions|shift\+tab|context\)|gpt-|claude )/i.test(trimmed)) return false;
+    if (/^[\u2500-\u257f\-_=\s]+$/.test(trimmed)) return false;
+    return /[A-Za-z]/.test(trimmed);
+  };
+
+  for (let i = 0; i < next.length; i += 1) {
+    const current = next[i];
+    if (!current || current.type !== "raw") continue;
+
+    const prev = next[i - 1] || null;
+    const following = next[i + 1] || null;
+
+    const betweenConversationTurns =
+      (prev?.type === "response" || prev?.type === "prompt") &&
+      (following?.type === "prompt" || following?.type === "response");
+    const leadingAssistantCarryover =
+      !prev &&
+      (following?.type === "prompt" || following?.type === "response" || following?.type === "status");
+    const responseContinuation = prev?.type === "response";
+
+    if ((betweenConversationTurns || leadingAssistantCarryover || responseContinuation) && looksLikeAssistantText(current.text)) {
+      current.type = "response";
+    }
+  }
+
+  const merged = [];
+  for (const block of next) {
+    const previous = merged[merged.length - 1];
+    if (previous && previous.type === block.type) {
+      previous.text = `${previous.text}\n\n${block.text}`.trim();
+      continue;
+    }
+    merged.push(block);
+  }
+
+  return merged;
 }
 
 function setNativeChatSnapshot(projectPath, sessionId, output) {
