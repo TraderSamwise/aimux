@@ -37,6 +37,9 @@ let heartbeatInterval = null;
 let inFlightActions = $state([]);
 let currentAction = $state(null);
 
+const REQUIRED_PROJECT_SERVICE_CAPABILITIES = ["structuredAgentInput", "parsedAgentOutput", "attachments", "agentHistory"];
+const REQUIRED_PROJECT_SERVICE_API_VERSION = 2;
+
 function syncCurrentAction() {
   currentAction = inFlightActions.length > 0
     ? inFlightActions[inFlightActions.length - 1].message
@@ -186,6 +189,15 @@ function reconcileActions(incomingProjects) {
   for (const key of finished) {
     finishAction(key);
   }
+}
+
+function getProjectServiceInfo(project) {
+  return project?.serviceInfo || null;
+}
+
+function getMissingProjectServiceCapabilities(project) {
+  const capabilities = getProjectServiceInfo(project)?.capabilities || {};
+  return REQUIRED_PROJECT_SERVICE_CAPABILITIES.filter((key) => capabilities[key] !== true);
 }
 
 function applyActionOverlays(project) {
@@ -519,14 +531,27 @@ export function getState() {
       const project = applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
       const heartbeatAgeMs = lastHeartbeatAt > 0 ? Math.max(0, heartbeatTicker - lastHeartbeatAt) : Number.POSITIVE_INFINITY;
       const daemonConnected = heartbeatAgeMs < 5000;
+      const serviceInfo = getProjectServiceInfo(project);
+      const missingCapabilities = getMissingProjectServiceCapabilities(project);
+      const serviceOutdated =
+        Boolean(project?.serviceEndpointAlive) &&
+        (
+          !serviceInfo ||
+          Number(serviceInfo.apiVersion || 0) < REQUIRED_PROJECT_SERVICE_API_VERSION ||
+          missingCapabilities.length > 0
+        );
       return {
         daemonConnected,
         heartbeatAgeMs,
         serviceAlive: Boolean(project?.serviceAlive),
         serviceEndpointAlive: Boolean(project?.serviceEndpointAlive),
+        serviceInfo,
+        missingCapabilities,
         status:
           !daemonConnected
             ? "down"
+            : serviceOutdated
+              ? "outdated"
             : project?.serviceEndpointAlive === false
               ? "degraded"
               : project?.serviceAlive === false

@@ -110,6 +110,8 @@ struct DesktopStateResponse {
   statusline: Option<Value>,
   #[serde(default)]
   worktrees: Vec<Value>,
+  #[serde(default)]
+  service_info: Option<Value>,
 }
 
 // What the frontend actually receives — one flat blob per project
@@ -122,6 +124,7 @@ struct ProjectSnapshot {
   daemon_alive: bool,
   service_alive: bool,
   service_endpoint_alive: bool,
+  service_info: Option<Value>,
   sessions: Vec<Value>,
   statusline: Option<Value>,
   worktrees: Vec<Value>,
@@ -544,6 +547,7 @@ fn build_heartbeat() -> Option<HeartbeatResponse> {
         daemon_alive: true,
         service_alive: project.service_alive,
         service_endpoint_alive: desktop_state.1,
+        service_info: desktop_state.0.service_info,
         sessions: desktop_state.0.sessions,
         statusline: desktop_state.0.statusline,
         worktrees: desktop_state.0.worktrees,

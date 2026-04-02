@@ -13,6 +13,7 @@
   let controlPlaneLabel = $derived.by(() => {
     if (!controlPlane) return "Control";
     if (controlPlane.status === "down") return "Control Down";
+    if (controlPlane.status === "outdated") return "Control Outdated";
     if (controlPlane.status === "degraded") return "Control Degraded";
     return "Control OK";
   });
@@ -47,7 +48,7 @@
         tasks {tasks.assigned}/{tasks.pending + tasks.assigned}
       </span>
     {/if}
-    <button class="pill pill-control" class:down={controlPlane?.status === "down"} class:degraded={controlPlane?.status === "degraded"} onclick={restartControlPlane}>
+    <button class="pill pill-control" class:down={controlPlane?.status === "down"} class:degraded={controlPlane?.status === "degraded"} class:outdated={controlPlane?.status === "outdated"} onclick={restartControlPlane}>
       {controlPlaneLabel}
     </button>
     {#if flash}
@@ -172,6 +173,12 @@
     background: rgba(251, 191, 36, 0.1);
     color: var(--yellow);
     border-color: rgba(251, 191, 36, 0.18);
+  }
+
+  .pill-control.outdated {
+    background: rgba(244, 114, 182, 0.1);
+    color: rgb(249, 168, 212);
+    border-color: rgba(244, 114, 182, 0.18);
   }
 
   .pill-control.down {

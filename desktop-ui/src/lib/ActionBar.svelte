@@ -7,6 +7,12 @@
   let idle = $derived(!primaryAction);
   let controlPlane = $derived(appState.controlPlane);
   let unhealthy = $derived(controlPlane && controlPlane.status !== "ok");
+  let controlHint = $derived.by(() => {
+    if (!controlPlane || controlPlane.status === "ok") return null;
+    if (controlPlane.status === "outdated") return "Project service is outdated for this desktop build.";
+    if (controlPlane.status === "down") return "Control plane is disconnected.";
+    return "Control plane is degraded.";
+  });
 </script>
 
 <div class="action-bar" class:idle>
@@ -18,7 +24,7 @@
     {/if}
   {:else}
     <span class="spinner ghost"></span>
-    <span class="action-text idle-text">Ready</span>
+    <span class="action-text idle-text">{controlHint || "Ready"}</span>
   {/if}
   {#if unhealthy}
     <button class="restart-btn" onclick={restartControlPlane}>Restart control</button>

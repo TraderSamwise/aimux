@@ -49,6 +49,14 @@ import {
   ingestAttachmentFromPath,
 } from "./attachment-store.js";
 
+export const PROJECT_SERVICE_API_VERSION = 2;
+export const PROJECT_SERVICE_CAPABILITIES = {
+  structuredAgentInput: true,
+  parsedAgentOutput: true,
+  attachments: true,
+  agentHistory: true,
+} as const;
+
 interface MetadataServerOptions {
   onChange?: () => void;
   desktop?: {
@@ -285,7 +293,15 @@ export class MetadataServer {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
     if (req.method === "GET" && url.pathname === "/health") {
-      send(res, 200, { ok: true, projectStateDir: getProjectStateDir(), pid: process.pid });
+      send(res, 200, {
+        ok: true,
+        projectStateDir: getProjectStateDir(),
+        pid: process.pid,
+        serviceInfo: {
+          apiVersion: PROJECT_SERVICE_API_VERSION,
+          capabilities: PROJECT_SERVICE_CAPABILITIES,
+        },
+      });
       return;
     }
     if (req.method === "GET" && url.pathname === "/state") {
@@ -297,7 +313,14 @@ export class MetadataServer {
         send(res, 501, { ok: false, error: "desktop state not supported by this service" });
         return;
       }
-      send(res, 200, { ok: true, ...this.options.desktop.getState() });
+      send(res, 200, {
+        ok: true,
+        serviceInfo: {
+          apiVersion: PROJECT_SERVICE_API_VERSION,
+          capabilities: PROJECT_SERVICE_CAPABILITIES,
+        },
+        ...this.options.desktop.getState(),
+      });
       return;
     }
     if (req.method === "GET" && url.pathname === "/worktrees") {
