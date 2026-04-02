@@ -600,6 +600,234 @@ async fn thread_get(project_path: String, thread_id: String) -> Result<Value, St
   .map_err(|error| format!("thread_get task failed: {error}"))?
 }
 
+#[tauri::command]
+async fn thread_send(
+  project_path: String,
+  thread_id: Option<String>,
+  from: Option<String>,
+  to: Option<Vec<String>>,
+  assignee: Option<String>,
+  tool: Option<String>,
+  worktree_path: Option<String>,
+  kind: Option<String>,
+  body: String,
+  title: Option<String>,
+) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "threadId": thread_id,
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "to": to,
+      "assignee": assignee,
+      "tool": tool,
+      "worktreePath": worktree_path,
+      "kind": kind.unwrap_or_else(|| "request".to_string()),
+      "body": body,
+      "title": title,
+    });
+    project_service_json(&project_path, "POST", "/threads/send", Some(&payload), "thread send")
+  })
+  .await
+  .map_err(|error| format!("thread_send task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn thread_status(
+  project_path: String,
+  thread_id: String,
+  status: String,
+  owner: Option<String>,
+  waiting_on: Option<Vec<String>>,
+) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "threadId": thread_id,
+      "status": status,
+      "owner": owner,
+      "waitingOn": waiting_on,
+    });
+    project_service_json(&project_path, "POST", "/threads/status", Some(&payload), "thread status")
+  })
+  .await
+  .map_err(|error| format!("thread_status task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn handoff_send(
+  project_path: String,
+  body: String,
+  to: Option<Vec<String>>,
+  assignee: Option<String>,
+  tool: Option<String>,
+  worktree_path: Option<String>,
+  from: Option<String>,
+  title: Option<String>,
+) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "to": to,
+      "assignee": assignee,
+      "tool": tool,
+      "body": body,
+      "title": title,
+      "worktreePath": worktree_path,
+    });
+    project_service_json(&project_path, "POST", "/handoff", Some(&payload), "handoff send")
+  })
+  .await
+  .map_err(|error| format!("handoff_send task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn handoff_accept(project_path: String, thread_id: String, from: Option<String>, body: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "threadId": thread_id,
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "body": body,
+    });
+    project_service_json(&project_path, "POST", "/handoff/accept", Some(&payload), "handoff accept")
+  })
+  .await
+  .map_err(|error| format!("handoff_accept task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn handoff_complete(project_path: String, thread_id: String, from: Option<String>, body: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "threadId": thread_id,
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "body": body,
+    });
+    project_service_json(&project_path, "POST", "/handoff/complete", Some(&payload), "handoff complete")
+  })
+  .await
+  .map_err(|error| format!("handoff_complete task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn task_assign(
+  project_path: String,
+  description: String,
+  to: Option<String>,
+  assignee: Option<String>,
+  tool: Option<String>,
+  prompt: Option<String>,
+  kind: Option<String>,
+  diff: Option<String>,
+  worktree_path: Option<String>,
+  from: Option<String>,
+) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "to": to,
+      "assignee": assignee,
+      "tool": tool,
+      "description": description,
+      "prompt": prompt,
+      "type": kind.unwrap_or_else(|| "task".to_string()),
+      "diff": diff,
+      "worktreePath": worktree_path,
+    });
+    project_service_json(&project_path, "POST", "/tasks/assign", Some(&payload), "task assign")
+  })
+  .await
+  .map_err(|error| format!("task_assign task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn task_accept(project_path: String, task_id: String, from: Option<String>, body: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "taskId": task_id,
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "body": body,
+    });
+    project_service_json(&project_path, "POST", "/tasks/accept", Some(&payload), "task accept")
+  })
+  .await
+  .map_err(|error| format!("task_accept task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn task_block(project_path: String, task_id: String, from: Option<String>, body: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "taskId": task_id,
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "body": body,
+    });
+    project_service_json(&project_path, "POST", "/tasks/block", Some(&payload), "task block")
+  })
+  .await
+  .map_err(|error| format!("task_block task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn task_complete(project_path: String, task_id: String, from: Option<String>, body: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "taskId": task_id,
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "body": body,
+    });
+    project_service_json(&project_path, "POST", "/tasks/complete", Some(&payload), "task complete")
+  })
+  .await
+  .map_err(|error| format!("task_complete task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn task_reopen(project_path: String, task_id: String, from: Option<String>, body: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "taskId": task_id,
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "body": body,
+    });
+    project_service_json(&project_path, "POST", "/tasks/reopen", Some(&payload), "task reopen")
+  })
+  .await
+  .map_err(|error| format!("task_reopen task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn review_approve(project_path: String, task_id: String, from: Option<String>, body: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "taskId": task_id,
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "body": body,
+    });
+    project_service_json(&project_path, "POST", "/reviews/approve", Some(&payload), "review approve")
+  })
+  .await
+  .map_err(|error| format!("review_approve task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn review_request_changes(project_path: String, task_id: String, from: Option<String>, body: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let payload = serde_json::json!({
+      "taskId": task_id,
+      "from": from.unwrap_or_else(|| "user".to_string()),
+      "body": body,
+    });
+    project_service_json(
+      &project_path,
+      "POST",
+      "/reviews/request-changes",
+      Some(&payload),
+      "review request changes",
+    )
+  })
+  .await
+  .map_err(|error| format!("review_request_changes task failed: {error}"))?
+}
+
 // ── Commands: terminal PTY ────────────────────────────────────────
 
 #[tauri::command]
@@ -783,6 +1011,18 @@ fn main() {
       workflow_list,
       threads_list,
       thread_get,
+      thread_send,
+      thread_status,
+      handoff_send,
+      handoff_accept,
+      handoff_complete,
+      task_assign,
+      task_accept,
+      task_block,
+      task_complete,
+      task_reopen,
+      review_approve,
+      review_request_changes,
       spawn_aimux,
       write_terminal,
       resize_terminal,
