@@ -1,13 +1,15 @@
 <script>
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import { tick } from "svelte";
   import {
+    addNativeChatImages,
     getState,
     focusTerminalAgent,
     pickNativeChatImages,
-    removeNativeChatDraftImage,
+    removeNativeChatDraftPart,
     selectInteractionMode,
     sendNativeChatMessage,
-    setNativeChatDraft,
+    setNativeChatDraftTextPart,
   } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
@@ -36,8 +38,10 @@
         action.sessionId === appState.selectedSessionId,
     );
   });
-  let draft = $derived.by(() => appState.nativeChatDraft || "");
-  let draftImages = $derived.by(() => appState.nativeChatDraftImages || []);
+  let draftParts = $derived.by(() => appState.nativeChatDraftParts || []);
+  let hasDraftContent = $derived.by(() =>
+    draftParts.some((part) => (part.type === "image" ? Boolean(part.attachmentId) : String(part.text || "").trim().length > 0)),
+  );
   let conversationBlocks = $derived.by(() =>
     (appState.nativeChatBlocks || []).filter((block) => block.type === "prompt" || block.type === "response"),
   );
@@ -77,6 +81,7 @@
       ...rawBlocks.slice(-1),
     ];
   });
+  let activeDraftTextPartId = $state(null);
 
   function sessionLabel(session) {
     return session?.label || session?.tool || session?.id || "session";
@@ -96,8 +101,17 @@
     await sendNativeChatMessage();
   }
 
-  async function addImages() {
-    await pickNativeChatImages();
+  function findLastDraftTextPartId() {
+    const lastTextPart = [...draftParts].reverse().find((part) => part.type === "text");
+    return lastTextPart?.id || null;
+  }
+
+  function getInsertionTextPartId(preferredPartId = null) {
+    return preferredPartId || activeDraftTextPartId || findLastDraftTextPartId();
+  }
+
+  async function addImages(afterTextPartId = null) {
+    await pickNativeChatImages(getInsertionTextPartId(afterTextPartId));
   }
 
   async function handleComposerKeydown(event) {
@@ -105,6 +119,110 @@
     event.preventDefault();
     await submitDraft();
   }
+
+  async function handleDraftTextKeydown(partId, event) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      await submitDraft();
+      return;
+    }
+
+    const currentValue = event.currentTarget.value || "";
+    const currentIndex = draftParts.findIndex((part) => part.id === partId);
+    if (currentIndex === -1 || currentValue.length > 0) return;
+
+    if (event.key === "Backspace") {
+      const previousPart = draftParts[currentIndex - 1];
+      if (previousPart?.type === "image") {
+        event.preventDefault();
+        removeNativeChatDraftPart(previousPart.id);
+      }
+    }
+
+    if (event.key === "Delete") {
+      const nextPart = draftParts[currentIndex + 1];
+      if (nextPart?.type === "image") {
+        event.preventDefault();
+        removeNativeChatDraftPart(nextPart.id);
+      }
+    }
+  }
+
+  function imageOrdinal(partId) {
+    let ordinal = 0;
+    for (const part of draftParts) {
+      if (part.type !== "image") continue;
+      ordinal += 1;
+      if (part.id === partId) {
+        return ordinal;
+      }
+    }
+    return ordinal || 1;
+  }
+
+  function imagePreviewSrc(imagePart) {
+    if (imagePart.previewUrl) return imagePart.previewUrl;
+    if (imagePart.path) return convertFileSrc(imagePart.path);
+    return null;
+  }
+
+  async function fileToImageInput(file) {
+    const contentBase64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error || new Error("failed to read image"));
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        resolve(result.includes(",") ? result.split(",")[1] : result);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    return {
+      name: file.name || "image",
+      mimeType: file.type || "application/octet-stream",
+      contentBase64,
+      previewUrl: URL.createObjectURL(file),
+    };
+  }
+
+  async function handleImageFiles(files, afterTextPartId = null) {
+    const imageFiles = [...files].filter((file) => file?.type?.startsWith("image/"));
+    if (imageFiles.length === 0) return;
+    const inputs = await Promise.all(imageFiles.map((file) => fileToImageInput(file)));
+    await addNativeChatImages(inputs, getInsertionTextPartId(afterTextPartId));
+  }
+
+  async function handleDraftTextPaste(partId, event) {
+    const files = [...(event.clipboardData?.files || [])].filter((file) => file?.type?.startsWith("image/"));
+    if (files.length === 0) return;
+    event.preventDefault();
+    activeDraftTextPartId = partId;
+    await handleImageFiles(files, partId);
+  }
+
+  function handleComposerDragOver(event) {
+    const hasImage = [...(event.dataTransfer?.items || [])].some((item) => item.type?.startsWith("image/"));
+    if (!hasImage) return;
+    event.preventDefault();
+  }
+
+  async function handleComposerDrop(event) {
+    const files = [...(event.dataTransfer?.files || [])].filter((file) => file?.type?.startsWith("image/"));
+    if (files.length === 0) return;
+    event.preventDefault();
+    await handleImageFiles(files);
+  }
+
+  function handleImageTokenKeydown(partId, event) {
+    if (event.key !== "Backspace" && event.key !== "Delete" && event.key !== "Enter") return;
+    event.preventDefault();
+    removeNativeChatDraftPart(partId);
+  }
+
+  $effect(() => {
+    if (draftParts.some((part) => part.id === activeDraftTextPartId)) return;
+    activeDraftTextPartId = findLastDraftTextPartId();
+  });
 
   function rawSessionKey() {
     return `${appState.nativeChatProjectPath || ""}:${appState.nativeChatSessionId || ""}`;
@@ -287,34 +405,57 @@
     {/if}
   </div>
 
-  <div class="composer">
-    <textarea
-      class="composer-input"
-      placeholder={selectedSession ? `Message ${sessionLabel(selectedSession)}…` : "Select a session first…"}
-      value={draft}
-      disabled={!selectedSession}
-      oninput={(event) => setNativeChatDraft(event.currentTarget.value)}
-      onkeydown={handleComposerKeydown}
-    ></textarea>
-    {#if draftImages.length > 0}
-      <div class="draft-images">
-        {#each draftImages as image (`${image.path}`)}
-          <div class="draft-image">
-            <div class="draft-image-meta">
-              <div class="draft-image-name">{image.name}</div>
-              <div class="draft-image-path">{image.path}</div>
+  <div class="composer" role="group" aria-label="Native chat composer" ondragover={handleComposerDragOver} ondrop={handleComposerDrop}>
+    <div class="composer-flow">
+      {#each draftParts as part, index (part.id)}
+        {#if part.type === "text"}
+          <textarea
+            class="composer-input"
+            class:composer-input-compact={index > 0}
+            placeholder={selectedSession
+              ? (index === 0 ? `Message ${sessionLabel(selectedSession)}…` : "Continue message…")
+              : "Select a session first…"}
+            value={part.text}
+            disabled={!selectedSession}
+            onfocus={() => { activeDraftTextPartId = part.id; }}
+            oninput={(event) => setNativeChatDraftTextPart(part.id, event.currentTarget.value)}
+            onkeydown={(event) => handleDraftTextKeydown(part.id, event)}
+            onpaste={(event) => handleDraftTextPaste(part.id, event)}
+          ></textarea>
+        {:else}
+          <div class="draft-image-block">
+            <button
+              type="button"
+              class="inline-image-token"
+              onclick={() => { activeDraftTextPartId = findLastDraftTextPartId(); }}
+              onkeydown={(event) => handleImageTokenKeydown(part.id, event)}
+            >
+              [image #{imageOrdinal(part.id)}]
+            </button>
+            <div class="draft-image-preview">
+              <div class="draft-image-meta">
+                <div class="draft-image-name">{part.name}</div>
+                <div class="draft-image-path">{part.path || part.attachmentId}</div>
+              </div>
+              {#if imagePreviewSrc(part)}
+                <img class="draft-image-thumb" src={imagePreviewSrc(part)} alt={part.name} />
+              {:else}
+                <div class="draft-image-placeholder">Preview unavailable</div>
+              {/if}
+              <button type="button" class="draft-image-remove" onclick={() => removeNativeChatDraftPart(part.id)}>
+                Remove
+              </button>
             </div>
-            <button class="draft-image-remove" onclick={() => removeNativeChatDraftImage(image.path)}>Remove</button>
           </div>
-        {/each}
-      </div>
-    {/if}
+        {/if}
+      {/each}
+    </div>
     <div class="composer-row">
-      <span class="composer-hint">Enter to send, Shift+Enter for newline</span>
+      <span class="composer-hint">Enter to send, Shift+Enter for newline. Paste or drop images inline.</span>
       <button
         class="attach-btn"
         disabled={!selectedSession || sendPending}
-        onclick={addImages}
+        onclick={() => addImages()}
       >
         Add Image
       </button>
@@ -323,7 +464,7 @@
       {/if}
       <button
         class="send-btn"
-        disabled={!selectedSession || (!draft.trim() && draftImages.length === 0) || sendPending}
+        disabled={!selectedSession || !hasDraftContent || sendPending}
         onclick={submitDraft}
       >
         {sendPending ? "Sending…" : "Send"}
@@ -573,8 +714,14 @@
     background: rgba(8, 12, 20, 0.9);
   }
 
+  .composer-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
   .composer-input {
-    min-height: 92px;
+    min-height: 84px;
     resize: vertical;
     border: 1px solid rgba(125, 211, 252, 0.16);
     border-radius: 14px;
@@ -590,16 +737,37 @@
     border-color: rgba(125, 211, 252, 0.45);
   }
 
-  .draft-images {
+  .composer-input-compact {
+    min-height: 64px;
+  }
+
+  .draft-image-block {
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
 
-  .draft-image {
+  .inline-image-token {
+    align-self: flex-start;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(125, 211, 252, 0.2);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .inline-image-token:focus {
+    outline: none;
+    border-color: rgba(125, 211, 252, 0.45);
+  }
+
+  .draft-image-preview {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    align-items: flex-start;
     gap: 12px;
     border: 1px solid rgba(125, 211, 252, 0.14);
     border-radius: 12px;
@@ -622,7 +790,27 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 620px;
+    max-width: 360px;
+  }
+
+  .draft-image-thumb,
+  .draft-image-placeholder {
+    width: 84px;
+    height: 84px;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(255, 255, 255, 0.04);
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+
+  .draft-image-placeholder {
+    display: grid;
+    place-items: center;
+    padding: 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-align: center;
   }
 
   .composer-row {
@@ -652,6 +840,11 @@
     color: var(--text-secondary);
     font-size: 11px;
     flex-shrink: 0;
+  }
+
+  .draft-image-remove {
+    margin-left: auto;
+    align-self: center;
   }
 
   .send-btn {
