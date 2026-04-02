@@ -49,15 +49,7 @@ import {
   ingestAttachmentFromPath,
 } from "./attachment-store.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
-
-export const PROJECT_SERVICE_API_VERSION = 3;
-export const PROJECT_SERVICE_CAPABILITIES = {
-  structuredAgentInput: true,
-  parsedAgentOutput: true,
-  attachments: true,
-  agentHistory: true,
-  chatEventStream: true,
-} as const;
+import { getProjectServiceManifest } from "./project-service-manifest.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -427,10 +419,7 @@ export class MetadataServer {
         ok: true,
         projectStateDir: getProjectStateDir(),
         pid: process.pid,
-        serviceInfo: {
-          apiVersion: PROJECT_SERVICE_API_VERSION,
-          capabilities: PROJECT_SERVICE_CAPABILITIES,
-        },
+        serviceInfo: getProjectServiceManifest(),
       });
       return;
     }
@@ -445,10 +434,7 @@ export class MetadataServer {
       }
       send(res, 200, {
         ok: true,
-        serviceInfo: {
-          apiVersion: PROJECT_SERVICE_API_VERSION,
-          capabilities: PROJECT_SERVICE_CAPABILITIES,
-        },
+        serviceInfo: getProjectServiceManifest(),
         ...this.options.desktop.getState(),
       });
       return;

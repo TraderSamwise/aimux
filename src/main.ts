@@ -46,6 +46,7 @@ import {
   stopDaemon,
   stopProjectService,
 } from "./daemon.js";
+import { getProjectServiceManifest, manifestsMatch, type ProjectServiceManifest } from "./project-service-manifest.js";
 import {
   createThread,
   listThreadSummaries,
@@ -72,6 +73,52 @@ import {
 } from "./orchestration-actions.js";
 
 const program = new Command();
+
+async function fetchProjectServiceHealth(endpoint: { host: string; port: number }): Promise<{
+  serviceInfo?: ProjectServiceManifest;
+  pid?: number;
+}> {
+  const res = await fetch(`http://${endpoint.host}:${endpoint.port}/health`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json?.ok === false) {
+    throw new Error(json?.error || `health request failed: ${res.status}`);
+  }
+  return json as { serviceInfo?: ProjectServiceManifest; pid?: number };
+}
+
+async function waitForVerifiedProjectService(
+  projectRoot: string,
+  opts?: { timeoutMs?: number },
+): Promise<{
+  endpoint: { host: string; port: number };
+  health: { serviceInfo?: ProjectServiceManifest; pid?: number };
+}> {
+  const expected = getProjectServiceManifest();
+  const deadline = Date.now() + (opts?.timeoutMs ?? 8000);
+  let lastError = "project service did not become reachable";
+  let lastServiceInfo: unknown = null;
+
+  while (Date.now() < deadline) {
+    const endpoint = await resolveProjectServiceEndpoint(projectRoot);
+    if (endpoint) {
+      try {
+        const health = await fetchProjectServiceHealth(endpoint);
+        lastServiceInfo = health.serviceInfo ?? null;
+        if (manifestsMatch(expected, health.serviceInfo)) {
+          return { endpoint, health };
+        }
+        lastError = `project service manifest mismatch: expected ${JSON.stringify(expected)} actual ${JSON.stringify(health.serviceInfo ?? null)}`;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    } else {
+      lastError = "no live project service metadata endpoint";
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+
+  throw new Error(`${lastError}${lastServiceInfo ? `; last serviceInfo=${JSON.stringify(lastServiceInfo)}` : ""}`);
+}
 
 async function postProjectServiceJson(path: string, body: unknown): Promise<any> {
   let endpoint = await resolveProjectServiceEndpoint();
@@ -165,6 +212,7 @@ async function readAllStdin(): Promise<string> {
 async function ensureDaemonProjectReady(projectRoot: string): Promise<void> {
   await ensureDaemonRunning();
   await ensureProjectService(projectRoot);
+  await waitForVerifiedProjectService(projectRoot);
 }
 
 function resolveProjectRoot(cwd: string): string {
@@ -390,6 +438,13 @@ hostCmd
     const projectRoot = resolveProjectRoot(process.cwd());
     const project = await projectServiceStatus(projectRoot);
     const endpoint = await resolveProjectServiceEndpoint(projectRoot);
+    const expectedServiceManifest = getProjectServiceManifest();
+    let liveServiceHealth: { serviceInfo?: ProjectServiceManifest; pid?: number } | null = null;
+    if (endpoint) {
+      try {
+        liveServiceHealth = await fetchProjectServiceHealth(endpoint);
+      } catch {}
+    }
     const tmux = new TmuxRuntimeManager();
     const session = tmux.getProjectSession(projectRoot);
     const payload = {
@@ -398,6 +453,8 @@ hostCmd
       daemon: loadDaemonInfo(),
       projectService: project,
       metadataEndpoint: endpoint,
+      expectedServiceManifest,
+      liveServiceHealth,
     };
     if (opts.json) {
       console.log(JSON.stringify(payload, null, 2));
@@ -410,6 +467,10 @@ hostCmd
     console.log(`Service pid=${project.pid}`);
     console.log(`Started: ${project.startedAt}`);
     console.log(`Metadata: ${endpoint ? `http://${endpoint.host}:${endpoint.port}` : "not running"}`);
+    console.log(`Expected manifest: ${JSON.stringify(expectedServiceManifest)}`);
+    if (liveServiceHealth?.serviceInfo) {
+      console.log(`Live manifest: ${JSON.stringify(liveServiceHealth.serviceInfo)}`);
+    }
     console.log(`Tmux session: ${session.sessionName}`);
   });
 
@@ -454,7 +515,10 @@ hostCmd
     await stopProjectService(projectRoot);
     removeMetadataEndpoint();
     await ensureDaemonProjectReady(projectRoot);
-    if (opts.serve) return;
+    if (opts.serve) {
+      console.log(`Restarted project service for ${projectRoot}`);
+      return;
+    }
     const tmux = new TmuxRuntimeManager();
     ensureTmuxAvailable(tmux);
     const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
