@@ -5,15 +5,32 @@
   const state = getState();
   const termInstance = getTerminal();
 
+  function sessionWorktreePath(session, meta) {
+    return session?.worktreePath || meta?.context?.worktreePath || null;
+  }
+
+  let currentWorktreePath = $derived.by(() => {
+    if (!state.selectedSessionId) return null;
+    const sl = state.statusline;
+    const selected = sl?.sessions?.find((session) => session.id === state.selectedSessionId);
+    if (!selected) return null;
+    const meta = sl?.metadata?.[selected.id] || null;
+    return sessionWorktreePath(selected, meta);
+  });
+
   // All sessions with merged metadata
   let sessions = $derived.by(() => {
     const sl = state.statusline;
     if (!sl?.sessions) return [];
     const meta = sl.metadata || {};
-    return sl.sessions.map((s) => ({
+    const merged = sl.sessions.map((s) => ({
       ...s,
       meta: meta[s.id] || null,
     }));
+    if (currentWorktreePath == null) {
+      return merged;
+    }
+    return merged.filter((session) => sessionWorktreePath(session, session.meta) === currentWorktreePath);
   });
 
   let focusedMeta = $derived.by(() => {
