@@ -3,6 +3,8 @@
   import {
     getState,
     focusTerminalAgent,
+    pickNativeChatImages,
+    removeNativeChatDraftImage,
     selectInteractionMode,
     sendNativeChatMessage,
     setNativeChatDraft,
@@ -35,6 +37,7 @@
     );
   });
   let draft = $derived.by(() => appState.nativeChatDraft || "");
+  let draftImages = $derived.by(() => appState.nativeChatDraftImages || []);
   let conversationBlocks = $derived.by(() =>
     (appState.nativeChatBlocks || []).filter((block) => block.type === "prompt" || block.type === "response"),
   );
@@ -91,6 +94,10 @@
     forceConversationStick = true;
     void syncConversationScroll(true);
     await sendNativeChatMessage();
+  }
+
+  async function addImages() {
+    await pickNativeChatImages();
   }
 
   async function handleComposerKeydown(event) {
@@ -289,14 +296,34 @@
       oninput={(event) => setNativeChatDraft(event.currentTarget.value)}
       onkeydown={handleComposerKeydown}
     ></textarea>
+    {#if draftImages.length > 0}
+      <div class="draft-images">
+        {#each draftImages as image (`${image.path}`)}
+          <div class="draft-image">
+            <div class="draft-image-meta">
+              <div class="draft-image-name">{image.name}</div>
+              <div class="draft-image-path">{image.path}</div>
+            </div>
+            <button class="draft-image-remove" onclick={() => removeNativeChatDraftImage(image.path)}>Remove</button>
+          </div>
+        {/each}
+      </div>
+    {/if}
     <div class="composer-row">
       <span class="composer-hint">Enter to send, Shift+Enter for newline</span>
+      <button
+        class="attach-btn"
+        disabled={!selectedSession || sendPending}
+        onclick={addImages}
+      >
+        Add Image
+      </button>
       {#if sendPending}
         <span class="composer-status">Sending…</span>
       {/if}
       <button
         class="send-btn"
-        disabled={!selectedSession || !draft.trim() || sendPending}
+        disabled={!selectedSession || (!draft.trim() && draftImages.length === 0) || sendPending}
         onclick={submitDraft}
       >
         {sendPending ? "Sending…" : "Send"}
@@ -563,6 +590,41 @@
     border-color: rgba(125, 211, 252, 0.45);
   }
 
+  .draft-images {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .draft-image {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid rgba(125, 211, 252, 0.14);
+    border-radius: 12px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .draft-image-meta {
+    min-width: 0;
+  }
+
+  .draft-image-name {
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .draft-image-path {
+    font-size: 11px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 620px;
+  }
+
   .composer-row {
     display: flex;
     align-items: center;
@@ -579,6 +641,17 @@
   .composer-status {
     font-size: 11px;
     color: var(--accent);
+  }
+
+  .attach-btn,
+  .draft-image-remove {
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    color: var(--text-secondary);
+    font-size: 11px;
+    flex-shrink: 0;
   }
 
   .send-btn {

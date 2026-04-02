@@ -19,6 +19,7 @@ let nativeChatProjectPath = $state(null);
 let nativeChatSessionId = $state(null);
 let nativeChatRawMode = $state(false);
 let nativeChatDrafts = $state({});
+let nativeChatDraftImages = $state({});
 
 let unlistenOutput = null;
 let unlistenExit = null;
@@ -488,6 +489,7 @@ export function getState() {
     get nativeChatRawMode() { return nativeChatRawMode; },
     set nativeChatRawMode(v) { nativeChatRawMode = v; },
     get nativeChatDraft() { return selectedSessionId ? nativeChatDrafts[selectedSessionId] || "" : ""; },
+    get nativeChatDraftImages() { return selectedSessionId ? nativeChatDraftImages[selectedSessionId] || [] : []; },
     get selectedProject() {
       return applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
     },
@@ -715,11 +717,42 @@ export function setNativeChatDraft(value) {
   };
 }
 
+export async function pickNativeChatImages() {
+  if (!selectedSessionId) return;
+  const picked = await invoke("pick_images");
+  if (!Array.isArray(picked) || picked.length === 0) return;
+  nativeChatDraftImages = {
+    ...nativeChatDraftImages,
+    [selectedSessionId]: [...(nativeChatDraftImages[selectedSessionId] || []), ...picked],
+  };
+}
+
+export function removeNativeChatDraftImage(path) {
+  if (!selectedSessionId) return;
+  nativeChatDraftImages = {
+    ...nativeChatDraftImages,
+    [selectedSessionId]: (nativeChatDraftImages[selectedSessionId] || []).filter((image) => image.path !== path),
+  };
+}
+
 export async function sendNativeChatMessage() {
   const projectPath = selectedProjectPath;
   const sessionId = selectedSessionId;
   const draft = sessionId ? nativeChatDrafts[sessionId] || "" : "";
-  if (!projectPath || !sessionId || !draft.trim()) return;
+  const draftImages = sessionId ? nativeChatDraftImages[sessionId] || [] : [];
+  if (!projectPath || !sessionId || (!draft.trim() && draftImages.length === 0)) return;
+
+  const parts = [];
+  if (draft.trim()) {
+    parts.push({ type: "text", text: draft });
+  }
+  for (const image of draftImages) {
+    parts.push({
+      type: "image",
+      path: image.path,
+      alt: image.name,
+    });
+  }
 
   await trackAction(
     {
@@ -733,6 +766,7 @@ export async function sendNativeChatMessage() {
         projectPath,
         sessionId,
         data: draft,
+        parts,
         submit: true,
       }),
   );
@@ -740,6 +774,10 @@ export async function sendNativeChatMessage() {
   nativeChatDrafts = {
     ...nativeChatDrafts,
     [sessionId]: "",
+  };
+  nativeChatDraftImages = {
+    ...nativeChatDraftImages,
+    [sessionId]: [],
   };
   syncNativeChatSelection({ preserveSnapshot: true });
 }

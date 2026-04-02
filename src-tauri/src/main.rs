@@ -1,4 +1,5 @@
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use rfd::FileDialog;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -131,6 +132,13 @@ struct ProjectSnapshot {
 struct HeartbeatResponse {
   daemon_alive: bool,
   projects: Vec<ProjectSnapshot>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PickedImage {
+  path: String,
+  name: String,
 }
 
 fn preview_bytes(bytes: &[u8], limit: usize) -> String {
@@ -674,6 +682,26 @@ async fn restart_control_plane(project_path: String) -> Result<Value, String> {
   })
   .await
   .map_err(|error| format!("restart_control_plane task failed: {error}"))?
+}
+
+#[tauri::command]
+fn pick_images() -> Result<Vec<PickedImage>, String> {
+  let files = FileDialog::new()
+    .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+    .pick_files()
+    .unwrap_or_default();
+
+  Ok(files
+    .into_iter()
+    .map(|path| PickedImage {
+      name: path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("image")
+        .to_string(),
+      path: path.to_string_lossy().to_string(),
+    })
+    .collect())
 }
 
 // ── Commands: agent lifecycle ──────────────────────────────────────
@@ -1352,6 +1380,7 @@ fn main() {
     .manage(TerminalRegistry::default())
     .invoke_handler(tauri::generate_handler![
       ensure_daemon_project,
+      pick_images,
       restart_daemon,
       restart_project_service,
       restart_control_plane,
