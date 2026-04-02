@@ -19,6 +19,7 @@
   let lastRawSessionKey = "";
   let lastConversationSignature = "";
   let lastConversationSessionKey = "";
+  let forceConversationStick = false;
 
   let selectedSession = $derived.by(() => {
     if (!appState.selectedProject || !appState.selectedSessionId) return null;
@@ -87,6 +88,8 @@
   }
 
   async function submitDraft() {
+    forceConversationStick = true;
+    void syncConversationScroll(true);
     await sendNativeChatMessage();
   }
 
@@ -160,11 +163,13 @@
     const sessionChanged = sessionKey !== lastConversationSessionKey;
     const contentChanged = signature !== lastConversationSignature;
     const nearBottomBeforeUpdate = isNearBottom(messageListEl);
+    const shouldForceStick = forceConversationStick;
 
     lastConversationSignature = signature;
     lastConversationSessionKey = sessionKey;
 
-    if ((sessionChanged || contentChanged) && (sessionChanged || nearBottomBeforeUpdate)) {
+    if ((sessionChanged || contentChanged) && (shouldForceStick || sessionChanged || nearBottomBeforeUpdate)) {
+      forceConversationStick = false;
       void syncConversationScroll(true);
     }
   });
