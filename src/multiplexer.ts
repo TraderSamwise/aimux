@@ -68,6 +68,7 @@ import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
 import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
 import { parseAgentOutput, type ParsedAgentOutput } from "./agent-output-parser.js";
 import { serializeAgentInput, type AgentInputPart } from "./agent-message-parts.js";
+import { resolveAttachmentPath } from "./attachment-store.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -641,7 +642,13 @@ export class Multiplexer {
     submit = false,
   ): Promise<{ sessionId: string }> {
     const session = this.resolveRunningSession(sessionId);
-    const serializedData = serializeAgentInput({ data, parts }, { tool: this.sessionToolKeys.get(sessionId) });
+    const serializedData = serializeAgentInput(
+      { data, parts },
+      {
+        tool: this.sessionToolKeys.get(sessionId),
+        resolveAttachmentPath,
+      },
+    );
     const normalizedData = this.normalizeAgentInput(serializedData, submit);
     if (!normalizedData && !submit) {
       throw new Error("input data is required");

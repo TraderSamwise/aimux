@@ -28,4 +28,18 @@ describe("serializeAgentInput", () => {
   it("falls back to data when no parts are provided", () => {
     expect(serializeAgentInput({ data: "hello" }, { tool: "codex" })).toBe("hello");
   });
+
+  it("resolves attachment ids to local content paths when provided", () => {
+    const serialized = serializeAgentInput(
+      {
+        parts: [{ type: "image", attachmentId: "att_123", alt: "picked screenshot" }],
+      },
+      {
+        tool: "codex",
+        resolveAttachmentPath: (attachmentId) => (attachmentId === "att_123" ? "/tmp/att_123.png" : null),
+      },
+    );
+
+    expect(serialized).toBe("[inline image for codex]\nsource: /tmp/att_123.png\nalt: picked screenshot");
+  });
 });

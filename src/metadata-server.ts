@@ -42,6 +42,12 @@ import {
 import { buildWorkflowEntries } from "./workflow.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
 import type { AgentInputPart } from "./agent-message-parts.js";
+import {
+  getAttachment,
+  getAttachmentContent,
+  ingestAttachmentFromBase64,
+  ingestAttachmentFromPath,
+} from "./attachment-store.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -206,6 +212,15 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.setHeader("content-length", Buffer.byteLength(payload));
   res.setHeader("connection", "close");
   res.end(payload);
+}
+
+function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: string): void {
+  res.statusCode = status;
+  res.setHeader("content-type", mimeType);
+  res.setHeader("content-length", body.byteLength);
+  res.setHeader("cache-control", "private, max-age=31536000, immutable");
+  res.setHeader("connection", "close");
+  res.end(body);
 }
 
 function sendSseEvent(res: ServerResponse, event: string, data: unknown): void {
@@ -830,6 +845,46 @@ export class MetadataServer {
         const result = await this.options.lifecycle.writeAgentInput(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/attachments") {
+        const body = (await readJson(req)) as {
+          path?: string;
+          filename?: string;
+          mimeType?: string;
+          contentBase64?: string;
+        };
+        const attachment = body.path?.trim()
+          ? ingestAttachmentFromPath(body.path)
+          : ingestAttachmentFromBase64({
+              filename: body.filename,
+              mimeType: body.mimeType,
+              contentBase64: String(body.contentBase64 ?? ""),
+            });
+        send(res, 200, { ok: true, attachment });
+        return;
+      }
+
+      const attachmentMatch = url.pathname.match(/^\/attachments\/([^/]+)$/);
+      if (req.method === "GET" && attachmentMatch) {
+        const attachment = getAttachment(decodeURIComponent(attachmentMatch[1] || ""));
+        if (!attachment) {
+          send(res, 404, { ok: false, error: "attachment not found" });
+          return;
+        }
+        send(res, 200, { ok: true, attachment });
+        return;
+      }
+
+      const attachmentContentMatch = url.pathname.match(/^\/attachments\/([^/]+)\/content$/);
+      if (req.method === "GET" && attachmentContentMatch) {
+        const content = getAttachmentContent(decodeURIComponent(attachmentContentMatch[1] || ""));
+        if (!content) {
+          send(res, 404, { ok: false, error: "attachment not found" });
+          return;
+        }
+        sendBytes(res, 200, content.buffer, content.attachment.mimeType);
         return;
       }
 

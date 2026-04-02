@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "./paths.js";
@@ -410,6 +410,64 @@ describe("MetadataServer threads API", () => {
         submit: true,
       },
     ]);
+  });
+
+  it("ingests path attachments and serves metadata plus content over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const imagePath = join(repoRoot, "shot.png");
+    const imageBytes = Buffer.from("fake-image-bytes");
+    writeFileSync(imagePath, imageBytes);
+
+    const createRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: imagePath }),
+    });
+    const created = (await createRes.json()) as {
+      ok: boolean;
+      attachment: { id: string; filename: string; mimeType: string; contentUrl: string };
+    };
+    expect(createRes.ok).toBe(true);
+    expect(created.attachment.id).toContain("att_");
+    expect(created.attachment.filename).toBe("shot.png");
+    expect(created.attachment.mimeType).toBe("image/png");
+
+    const showRes = await fetch(`${base}/attachments/${created.attachment.id}`);
+    const shown = (await showRes.json()) as { ok: boolean; attachment: { id: string; contentUrl: string } };
+    expect(showRes.ok).toBe(true);
+    expect(shown.attachment.id).toBe(created.attachment.id);
+    expect(shown.attachment.contentUrl).toBe(`/attachments/${created.attachment.id}/content`);
+
+    const contentRes = await fetch(`${base}${created.attachment.contentUrl}`);
+    const contentBytes = Buffer.from(await contentRes.arrayBuffer());
+    expect(contentRes.ok).toBe(true);
+    expect(contentRes.headers.get("content-type")).toBe("image/png");
+    expect(contentBytes.equals(imageBytes)).toBe(true);
+  });
+
+  it("ingests base64 attachments over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const createRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "clip.webp",
+        mimeType: "image/webp",
+        contentBase64: Buffer.from("webp-ish").toString("base64"),
+      }),
+    });
+    const created = (await createRes.json()) as {
+      ok: boolean;
+      attachment: { id: string; filename: string; mimeType: string };
+    };
+    expect(createRes.ok).toBe(true);
+    expect(created.attachment.filename).toBe("clip.webp");
+    expect(created.attachment.mimeType).toBe("image/webp");
   });
 
   it("validates agent output query parameters over HTTP", async () => {

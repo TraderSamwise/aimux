@@ -718,12 +718,25 @@ export function setNativeChatDraft(value) {
 }
 
 export async function pickNativeChatImages() {
-  if (!selectedSessionId) return;
+  if (!selectedSessionId || !selectedProjectPath) return;
   const picked = await invoke("pick_images");
   if (!Array.isArray(picked) || picked.length === 0) return;
+  const ingested = await Promise.all(
+    picked.map(async (image) => {
+      const result = await invoke("attachment_ingest_path", {
+        projectPath: selectedProjectPath,
+        path: image.path,
+      });
+      return {
+        ...image,
+        attachmentId: result?.attachment?.id || null,
+        contentUrl: result?.attachment?.contentUrl || null,
+      };
+    }),
+  );
   nativeChatDraftImages = {
     ...nativeChatDraftImages,
-    [selectedSessionId]: [...(nativeChatDraftImages[selectedSessionId] || []), ...picked],
+    [selectedSessionId]: [...(nativeChatDraftImages[selectedSessionId] || []), ...ingested.filter((image) => image.attachmentId)],
   };
 }
 
@@ -749,7 +762,7 @@ export async function sendNativeChatMessage() {
   for (const image of draftImages) {
     parts.push({
       type: "image",
-      path: image.path,
+      attachmentId: image.attachmentId,
       alt: image.name,
     });
   }

@@ -819,6 +819,18 @@ async fn agent_send(
 }
 
 #[tauri::command]
+async fn attachment_ingest_path(project_path: String, path: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({
+      "path": path,
+    });
+    project_service_json(&project_path, "POST", "/attachments", Some(&body), "attachment ingest")
+  })
+  .await
+  .map_err(|error| format!("attachment_ingest_path task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn worktree_create(project_path: String, name: String) -> Result<Value, String> {
   tauri::async_runtime::spawn_blocking(move || {
     let body = serde_json::json!({ "name": name });
@@ -1392,6 +1404,7 @@ fn main() {
       agent_migrate,
       agent_read,
       agent_send,
+      attachment_ingest_path,
       worktree_create,
       worktree_remove,
       worktree_list,
