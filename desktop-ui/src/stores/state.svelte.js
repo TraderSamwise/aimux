@@ -13,6 +13,7 @@ let terminalStatus = $state("Idle");
 let terminalProjectPath = $state(null);
 let nativeChatOutput = $state("");
 let nativeChatBlocks = $state([]);
+let nativeChatHistory = $state([]);
 let nativeChatLoading = $state(false);
 let nativeChatError = $state(null);
 let nativeChatComposerError = $state(null);
@@ -370,6 +371,7 @@ function setNativeChatSnapshot(projectPath, sessionId, snapshot) {
   nativeChatSessionId = sessionId;
   nativeChatOutput = String(snapshot?.output ?? "");
   nativeChatBlocks = Array.isArray(snapshot?.parsed?.blocks) ? snapshot.parsed.blocks : [];
+  nativeChatHistory = Array.isArray(snapshot?.history?.messages) ? snapshot.history.messages : [];
   nativeChatError = null;
 }
 
@@ -379,6 +381,7 @@ function beginNativeChatSelection(projectPath, sessionId, { preserveSnapshot = f
   if (!preserveSnapshot) {
     nativeChatOutput = "";
     nativeChatBlocks = [];
+    nativeChatHistory = [];
   }
   nativeChatLoading = true;
   nativeChatError = null;
@@ -389,6 +392,7 @@ function clearNativeChatSnapshot() {
   nativeChatSessionId = null;
   nativeChatOutput = "";
   nativeChatBlocks = [];
+  nativeChatHistory = [];
   nativeChatLoading = false;
   nativeChatError = null;
 }
@@ -426,8 +430,13 @@ async function pollNativeChat(projectPath, sessionId, token, delayMs = 0) {
         sessionId,
         startLine: -120,
       });
+      const history = await invoke("agent_history", {
+        projectPath,
+        sessionId,
+        lastN: 20,
+      });
       if (token !== nativeChatPollToken) return;
-      setNativeChatSnapshot(projectPath, sessionId, result);
+      setNativeChatSnapshot(projectPath, sessionId, { ...result, history });
       nativeChatLoading = false;
     } catch (error) {
       if (token !== nativeChatPollToken) return;
@@ -482,6 +491,7 @@ export function getState() {
     get inFlightActions() { return inFlightActions; },
     get nativeChatOutput() { return nativeChatOutput; },
     get nativeChatBlocks() { return nativeChatBlocks; },
+    get nativeChatHistory() { return nativeChatHistory; },
     get nativeChatLoading() { return nativeChatLoading; },
     get nativeChatError() { return nativeChatError; },
     get nativeChatComposerError() { return nativeChatComposerError; },

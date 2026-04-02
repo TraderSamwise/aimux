@@ -69,6 +69,7 @@ import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
 import { parseAgentOutput, type ParsedAgentOutput } from "./agent-output-parser.js";
 import { serializeAgentInput, type AgentInputPart } from "./agent-message-parts.js";
 import { resolveAttachmentPath } from "./attachment-store.js";
+import { appendSessionMessage, readSessionMessages } from "./session-message-history.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -299,6 +300,7 @@ export class Multiplexer {
         killAgent: (input) => this.sendAgentToGraveyard(input.sessionId),
         writeAgentInput: (input) => this.writeAgentInput(input.sessionId, input.data, input.parts, input.submit),
         readAgentOutput: (input) => this.readAgentOutput(input.sessionId, input.startLine),
+        readAgentHistory: (input) => this.readAgentHistory(input.sessionId, input.lastN),
       },
       onChange: () => {
         this.writeStatuslineFile();
@@ -642,6 +644,7 @@ export class Multiplexer {
     submit = false,
   ): Promise<{ sessionId: string }> {
     const session = this.resolveRunningSession(sessionId);
+    appendSessionMessage(sessionId, { data, parts });
     const serializedData = serializeAgentInput(
       { data, parts },
       {
@@ -665,6 +668,18 @@ export class Multiplexer {
       session.write(submit ? `${normalizedData}\r` : normalizedData);
     }
     return { sessionId };
+  }
+
+  async readAgentHistory(
+    sessionId: string,
+    lastN?: number,
+  ): Promise<{ sessionId: string; messages: ReturnType<typeof readSessionMessages>; lastN?: number }> {
+    this.resolveRunningSession(sessionId);
+    return {
+      sessionId,
+      messages: readSessionMessages(sessionId, { lastN: lastN ?? 20 }),
+      lastN: lastN ?? 20,
+    };
   }
 
   async readAgentOutput(

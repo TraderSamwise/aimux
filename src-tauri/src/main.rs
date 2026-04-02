@@ -798,6 +798,22 @@ async fn agent_read(project_path: String, session_id: String, start_line: Option
 }
 
 #[tauri::command]
+async fn agent_history(project_path: String, session_id: String, last_n: Option<i32>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let last_n = last_n.unwrap_or(20);
+    project_service_json(
+      &project_path,
+      "GET",
+      &format!("/agents/history?sessionId={session_id}&lastN={last_n}"),
+      None,
+      "agent history",
+    )
+  })
+  .await
+  .map_err(|error| format!("agent_history task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn agent_send(
   project_path: String,
   session_id: String,
@@ -1422,6 +1438,7 @@ fn main() {
       agent_rename,
       agent_migrate,
       agent_read,
+      agent_history,
       agent_send,
       attachment_ingest_path,
       attachment_ingest_base64,

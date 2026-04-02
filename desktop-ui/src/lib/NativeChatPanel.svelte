@@ -42,6 +42,7 @@
   let hasDraftContent = $derived.by(() =>
     draftParts.some((part) => (part.type === "image" ? Boolean(part.attachmentId) : String(part.text || "").trim().length > 0)),
   );
+  let historyMessages = $derived.by(() => appState.nativeChatHistory || []);
   let conversationBlocks = $derived.by(() =>
     (appState.nativeChatBlocks || []).filter((block) => block.type === "prompt" || block.type === "response"),
   );
@@ -82,6 +83,7 @@
     ];
   });
   let activeDraftTextPartId = $state(null);
+  let selectedProjectServiceEndpoint = $derived.by(() => appState.selectedProject?.serviceEndpoint || null);
 
   function sessionLabel(session) {
     return session?.label || session?.tool || session?.id || "session";
@@ -157,8 +159,34 @@
   function imagePreviewSrc(imagePart) {
     if (imagePart.previewUrl) return imagePart.previewUrl;
     if (imagePart.path) return convertFileSrc(imagePart.path);
+    if (imagePart.contentUrl && selectedProjectServiceEndpoint) {
+      return `http://${selectedProjectServiceEndpoint.host}:${selectedProjectServiceEndpoint.port}${imagePart.contentUrl}`;
+    }
     return null;
   }
+
+  let conversationEntries = $derived.by(() => {
+    const promptBlocks = conversationBlocks.filter((block) => block.type === "prompt");
+    const offset = Math.max(0, historyMessages.length - promptBlocks.length);
+    let promptIndex = 0;
+    return conversationBlocks.map((block, index) => {
+      if (block.type !== "prompt") {
+        return {
+          id: `response:${index}`,
+          type: "response",
+          text: block.text,
+        };
+      }
+      const message = historyMessages[offset + promptIndex];
+      promptIndex += 1;
+      return {
+        id: message?.id || `prompt:${index}`,
+        type: "prompt",
+        text: block.text,
+        parts: Array.isArray(message?.parts) ? message.parts : null,
+      };
+    });
+  });
 
   async function fileToImageInput(file) {
     const contentBase64 = await new Promise((resolve, reject) => {
@@ -363,17 +391,35 @@
           <div class="pane-title">Conversation</div>
           {#if conversationBlocks.length > 0}
             <div class="message-list" bind:this={messageListEl}>
-              {#each conversationBlocks as block, index (`${block.type}:${index}`)}
-                <article class="turn" class:prompt-turn={block.type === "prompt"} class:response-turn={block.type === "response"}>
-                  <article class="message" class:prompt={block.type === "prompt"} class:response={block.type === "response"}>
+              {#each conversationEntries as entry (`${entry.id}`)}
+                <article class="turn" class:prompt-turn={entry.type === "prompt"} class:response-turn={entry.type === "response"}>
+                  <article class="message" class:prompt={entry.type === "prompt"} class:response={entry.type === "response"}>
                   <div class="message-kind">
-                    {#if block.type === "prompt"}
+                    {#if entry.type === "prompt"}
                       You
                     {:else}
                       Agent
                     {/if}
                   </div>
-                  <pre class="message-text">{block.text}</pre>
+                  {#if entry.type === "prompt" && entry.parts}
+                    <div class="message-parts">
+                      {#each entry.parts as part, partIndex (`${entry.id}:part:${partIndex}`)}
+                        {#if part.type === "text"}
+                          <pre class="message-text">{part.text}</pre>
+                        {:else}
+                          <div class="history-image">
+                            <div class="history-image-token">[image #{partIndex + 1}]</div>
+                            {#if imagePreviewSrc(part)}
+                              <img class="history-image-thumb" src={imagePreviewSrc(part)} alt={part.alt || part.filename || "image"} />
+                            {/if}
+                            <div class="history-image-label">{part.alt || part.filename || "image"}</div>
+                          </div>
+                        {/if}
+                      {/each}
+                    </div>
+                  {:else}
+                    <pre class="message-text">{entry.text}</pre>
+                  {/if}
                   </article>
                 </article>
               {/each}
@@ -705,6 +751,45 @@
     border-radius: 14px;
     padding: 14px;
     background: rgba(148, 163, 184, 0.04);
+  }
+
+  .message-parts {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .history-image {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .history-image-token {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(125, 211, 252, 0.2);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .history-image-thumb {
+    width: min(280px, 100%);
+    max-height: 220px;
+    object-fit: cover;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .history-image-label {
+    font-size: 11px;
+    color: var(--text-dim);
   }
 
   .empty-inline {
