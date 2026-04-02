@@ -6,7 +6,13 @@
   import TerminalPanel from "./lib/TerminalPanel.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
   import ActionBar from "./lib/ActionBar.svelte";
-  import { startHeartbeat, stopHeartbeat } from "./stores/state.svelte.js";
+  import ActivityPanel from "./lib/ActivityPanel.svelte";
+  import ThreadsPanel from "./lib/ThreadsPanel.svelte";
+  import PlansPanel from "./lib/PlansPanel.svelte";
+  import GraveyardPanel from "./lib/GraveyardPanel.svelte";
+  import { getState, startHeartbeat, stopHeartbeat } from "./stores/state.svelte.js";
+
+  const state = getState();
 
   onMount(() => {
     startHeartbeat();
@@ -18,10 +24,20 @@
   <Sidebar />
   <main class="workspace">
     <WorkspaceHeader />
-    <div class="workspace-body">
-      <WorktreePanel />
-      <TerminalPanel />
-    </div>
+    {#if state.selectedScreen === "dashboard"}
+      <div class="workspace-body">
+        <WorktreePanel />
+        <TerminalPanel />
+      </div>
+    {:else if state.selectedScreen === "activity"}
+      <ActivityPanel visible={true} />
+    {:else if state.selectedScreen === "threads"}
+      <ThreadsPanel visible={true} />
+    {:else if state.selectedScreen === "plans"}
+      <PlansPanel />
+    {:else if state.selectedScreen === "graveyard"}
+      <GraveyardPanel visible={true} />
+    {/if}
     <StatusBar />
     <ActionBar />
   </main>

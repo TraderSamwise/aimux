@@ -559,6 +559,47 @@ async fn graveyard_resurrect(project_path: String, session_id: String) -> Result
   .map_err(|error| format!("graveyard_resurrect task failed: {error}"))?
 }
 
+#[tauri::command]
+async fn workflow_list(project_path: String, participant: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let mut path = String::from("/workflow");
+    if let Some(participant) = participant.filter(|value| !value.trim().is_empty()) {
+      path.push_str(&format!("?participant={participant}"));
+    }
+    project_service_json(&project_path, "GET", &path, None, "workflow list")
+  })
+  .await
+  .map_err(|error| format!("workflow_list task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn threads_list(project_path: String, session_id: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let mut path = String::from("/threads");
+    if let Some(session_id) = session_id.filter(|value| !value.trim().is_empty()) {
+      path.push_str(&format!("?session={session_id}"));
+    }
+    project_service_json(&project_path, "GET", &path, None, "threads list")
+  })
+  .await
+  .map_err(|error| format!("threads_list task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn thread_get(project_path: String, thread_id: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    project_service_json(
+      &project_path,
+      "GET",
+      &format!("/threads/{thread_id}"),
+      None,
+      "thread get",
+    )
+  })
+  .await
+  .map_err(|error| format!("thread_get task failed: {error}"))?
+}
+
 // ── Commands: terminal PTY ────────────────────────────────────────
 
 #[tauri::command]
@@ -739,6 +780,9 @@ fn main() {
       worktree_list,
       graveyard_list,
       graveyard_resurrect,
+      workflow_list,
+      threads_list,
+      thread_get,
       spawn_aimux,
       write_terminal,
       resize_terminal,

@@ -1,5 +1,5 @@
 <script>
-  import { getState, selectSession, runTerminal } from "../stores/state.svelte.js";
+  import { getState, selectScreen, selectSession, runTerminal } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const state = getState();
@@ -26,7 +26,7 @@
     return sessions.find((s) => s.id === state.selectedSessionId) || null;
   });
 
-  let dashboardScreen = $derived(state.statusline?.dashboardScreen || "dashboard");
+  let selectedScreen = $derived(state.selectedScreen || "dashboard");
 
   const screens = ["dashboard", "activity", "threads", "plans", "graveyard"];
 
@@ -116,7 +116,8 @@
       {#each screens as screen}
         <button
           class="tab"
-          class:active={dashboardScreen === screen}
+          class:active={selectedScreen === screen}
+          onclick={() => selectScreen(screen)}
         >
           {screen}
         </button>

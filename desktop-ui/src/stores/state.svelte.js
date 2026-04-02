@@ -6,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 let projects = $state([]);
 let selectedProjectPath = $state(null);
 let selectedSessionId = $state(null);
+let selectedScreen = $state("dashboard");
 let terminalSessionId = $state(null);
 let terminalStatus = $state("Idle");
 
@@ -356,6 +357,8 @@ export function getState() {
     set selectedProjectPath(v) { selectedProjectPath = v; },
     get selectedSessionId() { return selectedSessionId; },
     set selectedSessionId(v) { selectedSessionId = v; },
+    get selectedScreen() { return selectedScreen; },
+    set selectedScreen(v) { selectedScreen = v; },
     get terminalSessionId() { return terminalSessionId; },
     get terminalStatus() { return terminalStatus; },
     get currentAction() { return currentAction; },
@@ -416,6 +419,10 @@ export function selectProject(path) {
 
 export function selectSession(id) {
   selectedSessionId = id;
+}
+
+export function selectScreen(screen) {
+  selectedScreen = screen;
 }
 
 // ── Terminal ──────────────────────────────────────────────────────
