@@ -134,7 +134,7 @@
           message: `Killing ${agentLabel(agent)}...`,
           projectPath: project.path,
           sessionId: agent.id,
-          minVisibleMs: 400,
+          reconcile: () => ({ sessionId: agent.id }),
         },
         () => invoke("agent_kill", { projectPath: project.path, sessionId: agent.id }),
       );
@@ -154,7 +154,7 @@
           message: `Stopping ${agentLabel(agent)}...`,
           projectPath: project.path,
           sessionId: agent.id,
-          minVisibleMs: 400,
+          reconcile: () => ({ sessionId: agent.id }),
         },
         () => invoke("agent_stop", { projectPath: project.path, sessionId: agent.id }),
       );
@@ -175,7 +175,7 @@
           projectPath: project.path,
           tool,
           worktreePath: worktreePath || null,
-          minVisibleMs: 700,
+          reconcile: (result) => ({ sessionId: result?.sessionId }),
         },
         () =>
           invoke("agent_spawn", {
@@ -200,7 +200,7 @@
           message: `Creating worktree "${name}"...`,
           projectPath: project.path,
           worktreeName: name,
-          minVisibleMs: 700,
+          reconcile: (result) => ({ worktreePath: result?.path }),
         },
         () => invoke("worktree_create", { projectPath: project.path, name }),
       );

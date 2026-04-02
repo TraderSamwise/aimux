@@ -52,17 +52,27 @@ export function updateAction(key, patch) {
   syncCurrentAction();
 }
 
+async function waitForPaint() {
+  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 export async function trackAction(action, run) {
   const key = beginAction(action);
+  await waitForPaint();
   try {
     const result = await run();
-    updateAction(key, { phase: "done" });
+    const reconcile = typeof action.reconcile === "function" ? action.reconcile(result) : null;
+    if (reconcile) {
+      updateAction(key, { phase: "awaiting-sync", ...reconcile });
+    } else {
+      updateAction(key, { phase: "done" });
+      finishAction(key);
+    }
     return result;
   } catch (error) {
     updateAction(key, { phase: "error", error: String(error) });
-    throw error;
-  } finally {
     finishAction(key);
+    throw error;
   }
 }
 
@@ -70,6 +80,50 @@ export function isActionPending(match = {}) {
   return inFlightActions.some((action) =>
     Object.entries(match).every(([key, value]) => action[key] === value)
   );
+}
+
+function reconcileActions(incomingProjects) {
+  const byPath = new Map(incomingProjects.map((project) => [project.path, project]));
+  const finished = [];
+
+  for (const action of inFlightActions) {
+    if (action.phase !== "awaiting-sync") continue;
+    const project = byPath.get(action.projectPath);
+    if (!project) continue;
+
+    if (action.kind === "spawn" && action.sessionId) {
+      if ((project.sessions || []).some((session) => session.id === action.sessionId)) {
+        finished.push(action.key);
+      }
+      continue;
+    }
+
+    if (action.kind === "create-worktree" && action.worktreePath) {
+      if ((project.worktrees || []).some((worktree) => worktree.path === action.worktreePath)) {
+        finished.push(action.key);
+      }
+      continue;
+    }
+
+    if (action.kind === "stop" && action.sessionId) {
+      const session = (project.sessions || []).find((entry) => entry.id === action.sessionId);
+      if (session?.status === "offline") {
+        finished.push(action.key);
+      }
+      continue;
+    }
+
+    if (action.kind === "kill" && action.sessionId) {
+      const exists = (project.sessions || []).some((entry) => entry.id === action.sessionId);
+      if (!exists) {
+        finished.push(action.key);
+      }
+    }
+  }
+
+  for (const key of finished) {
+    finishAction(key);
+  }
 }
 
 function applyActionOverlays(project) {
@@ -186,6 +240,7 @@ export function getState() {
 function onHeartbeat(event) {
   const incoming = event.payload?.projects || [];
   incoming.sort((a, b) => a.name.localeCompare(b.name));
+  reconcileActions(incoming);
   projects = incoming;
 
   if (!selectedProjectPath && projects.length > 0) {
