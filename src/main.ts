@@ -16,6 +16,7 @@ import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
+import { getProjectStateDirFor } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
 import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux-runtime-manager.js";
@@ -74,10 +75,10 @@ import {
 const program = new Command();
 
 async function postProjectServiceJson(path: string, body: unknown): Promise<any> {
-  let endpoint = loadMetadataEndpoint();
+  let endpoint = await resolveProjectServiceEndpoint();
   if (!endpoint) {
     await ensureProjectService(resolveProjectRoot(process.cwd()));
-    endpoint = loadMetadataEndpoint();
+    endpoint = await resolveProjectServiceEndpoint();
   }
   if (!endpoint) {
     throw new Error("no live project service metadata endpoint");
@@ -92,6 +93,74 @@ async function postProjectServiceJson(path: string, body: unknown): Promise<any>
     throw new Error(json?.error || `request failed: ${res.status}`);
   }
   return json;
+}
+
+async function getProjectServiceJson(path: string): Promise<any> {
+  let endpoint = await resolveProjectServiceEndpoint();
+  if (!endpoint) {
+    await ensureProjectService(resolveProjectRoot(process.cwd()));
+    endpoint = await resolveProjectServiceEndpoint();
+  }
+  if (!endpoint) {
+    throw new Error("no live project service metadata endpoint");
+  }
+  const res = await fetch(`http://${endpoint.host}:${endpoint.port}${path}`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${res.status}`);
+  }
+  return json;
+}
+
+function loadHostMetadataEndpoint(projectRoot: string): { host: string; port: number } | null {
+  try {
+    const hostPath = pathJoin(getProjectStateDirFor(projectRoot), "host.json");
+    if (!existsSync(hostPath)) return null;
+    const raw = readFileSync(hostPath, "utf-8").trim();
+    if (!raw || raw === "null") return null;
+    const parsed = JSON.parse(raw) as { metadataPort?: number };
+    if (!parsed.metadataPort || !Number.isFinite(parsed.metadataPort)) return null;
+    return {
+      host: "127.0.0.1",
+      port: parsed.metadataPort,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function resolveProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
+  host: string;
+  port: number;
+} | null> {
+  const metadataEndpoint = loadMetadataEndpoint(projectRoot);
+  if (metadataEndpoint) {
+    return { host: metadataEndpoint.host, port: metadataEndpoint.port };
+  }
+  return loadHostMetadataEndpoint(projectRoot);
+}
+
+async function getProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
+  host: string;
+  port: number;
+}> {
+  let endpoint = await resolveProjectServiceEndpoint(projectRoot);
+  if (!endpoint) {
+    await ensureProjectService(projectRoot);
+    endpoint = await resolveProjectServiceEndpoint(projectRoot);
+  }
+  if (!endpoint) {
+    throw new Error("no live project service metadata endpoint");
+  }
+  return endpoint;
+}
+
+async function readAllStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function ensureDaemonProjectReady(projectRoot: string): Promise<void> {
@@ -321,7 +390,7 @@ hostCmd
     await ensureDaemonRunning();
     const projectRoot = resolveProjectRoot(process.cwd());
     const project = await projectServiceStatus(projectRoot);
-    const endpoint = loadMetadataEndpoint(projectRoot);
+    const endpoint = await resolveProjectServiceEndpoint(projectRoot);
     const tmux = new TmuxRuntimeManager();
     const session = tmux.getProjectSession(projectRoot);
     const payload = {
@@ -395,6 +464,148 @@ hostCmd
       return;
     }
     console.log(`Restarted project service for ${dashboardSession.sessionName}`);
+  });
+
+hostCmd
+  .command("agent-send")
+  .description("Send raw input to a running agent session over the project HTTP service")
+  .argument("<sessionId>", "Agent session ID")
+  .argument("[data...]", "Input to send")
+  .option("--stdin", "Read the full input payload from stdin")
+  .option("--submit", "Submit after writing the input")
+  .action(async (sessionId: string, data: string[], opts: { stdin?: boolean; submit?: boolean }) => {
+    await initPaths();
+    const payload = opts.stdin === true ? await readAllStdin() : data.join(" ");
+    if (!payload) {
+      throw new Error("input data is required");
+    }
+    const result = await postProjectServiceJson("/agents/input", {
+      sessionId,
+      data: payload,
+      submit: opts.submit === true,
+    });
+    console.log(`sent input to ${result.sessionId}`);
+  });
+
+hostCmd
+  .command("agent-read")
+  .description("Read captured output from a running agent session over the project HTTP service")
+  .argument("<sessionId>", "Agent session ID")
+  .option("--start-line <number>", "tmux capture-pane start line", "-120")
+  .action(async (sessionId: string, opts: { startLine?: string }) => {
+    await initPaths();
+    const startLine = Number.parseInt(opts.startLine ?? "-120", 10);
+    if (Number.isNaN(startLine)) {
+      throw new Error("--start-line must be an integer");
+    }
+    const result = await getProjectServiceJson(
+      `/agents/output?sessionId=${encodeURIComponent(sessionId)}&startLine=${encodeURIComponent(String(startLine))}`,
+    );
+    process.stdout.write(result.output ?? "");
+    if ((result.output ?? "").length > 0 && !String(result.output).endsWith("\n")) {
+      process.stdout.write("\n");
+    }
+  });
+
+hostCmd
+  .command("agent-stream")
+  .description("Stream live captured output from a running agent session over SSE")
+  .argument("<sessionId>", "Agent session ID")
+  .option("--start-line <number>", "tmux capture-pane start line", "-120")
+  .option("--interval-ms <number>", "Polling interval in milliseconds", "500")
+  .action(async (sessionId: string, opts: { startLine?: string; intervalMs?: string }) => {
+    await initPaths();
+    const startLine = Number.parseInt(opts.startLine ?? "-120", 10);
+    const intervalMs = Number.parseInt(opts.intervalMs ?? "500", 10);
+    if (Number.isNaN(startLine)) {
+      throw new Error("--start-line must be an integer");
+    }
+    if (Number.isNaN(intervalMs) || intervalMs < 100) {
+      throw new Error("--interval-ms must be an integer >= 100");
+    }
+
+    const endpoint = await getProjectServiceEndpoint();
+    const controller = new AbortController();
+    const shutdown = () => controller.abort();
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+
+    try {
+      const res = await fetch(
+        `http://${endpoint.host}:${endpoint.port}/agents/output/stream?sessionId=${encodeURIComponent(
+          sessionId,
+        )}&startLine=${encodeURIComponent(String(startLine))}&intervalMs=${encodeURIComponent(String(intervalMs))}`,
+        {
+          signal: controller.signal,
+          headers: {
+            accept: "text/event-stream",
+          },
+        },
+      );
+      if (!res.ok || !res.body) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json?.error || `request failed: ${res.status}`);
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let lastOutput = "";
+
+      const flushEventBlock = (block: string) => {
+        const lines = block.split("\n");
+        let eventName = "message";
+        const dataLines: string[] = [];
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            eventName = line.slice("event:".length).trim();
+            continue;
+          }
+          if (line.startsWith("data:")) {
+            dataLines.push(line.slice("data:".length).trim());
+          }
+        }
+        if (eventName === "ready") return;
+        if (eventName === "error") {
+          const payload = dataLines.length > 0 ? JSON.parse(dataLines.join("\n")) : {};
+          throw new Error(payload?.error || `stream error for ${sessionId}`);
+        }
+        if (eventName !== "output" || dataLines.length === 0) return;
+        const payload = JSON.parse(dataLines.join("\n")) as { output?: string };
+        if (typeof payload.output === "string") {
+          const nextOutput = payload.output;
+          const renderText = nextOutput.startsWith(lastOutput)
+            ? nextOutput.slice(lastOutput.length)
+            : `${lastOutput ? "\n[aimux stream resync]\n" : ""}${nextOutput}`;
+          lastOutput = nextOutput;
+          if (!renderText) return;
+          process.stdout.write(renderText);
+          if (renderText.length > 0 && !renderText.endsWith("\n")) {
+            process.stdout.write("\n");
+          }
+        }
+      };
+
+      for await (const chunk of res.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary !== -1) {
+          const block = buffer.slice(0, boundary).replace(/\r/g, "");
+          buffer = buffer.slice(boundary + 2);
+          if (block && !block.startsWith(":")) {
+            flushEventBlock(block);
+          }
+          boundary = buffer.indexOf("\n\n");
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        return;
+      }
+      throw error;
+    } finally {
+      process.off("SIGINT", shutdown);
+      process.off("SIGTERM", shutdown);
+    }
   });
 
 hostCmd.action(() => {

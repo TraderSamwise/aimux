@@ -168,6 +168,17 @@ interface MetadataServerOptions {
           status: "graveyard";
           previousStatus: "running" | "offline";
         };
+    writeAgentInput?: (input: {
+      sessionId: string;
+      data: string;
+      submit?: boolean;
+    }) => Promise<{ sessionId: string }> | { sessionId: string };
+    readAgentOutput?: (input: {
+      sessionId: string;
+      startLine?: number;
+    }) =>
+      | Promise<{ sessionId: string; output: string; startLine?: number }>
+      | { sessionId: string; output: string; startLine?: number };
   };
 }
 
@@ -192,6 +203,11 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.setHeader("content-length", Buffer.byteLength(payload));
   res.setHeader("connection", "close");
   res.end(payload);
+}
+
+function sendSseEvent(res: ServerResponse, event: string, data: unknown): void {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
 export class MetadataServer {
@@ -282,6 +298,88 @@ export class MetadataServer {
     }
     if (req.method === "GET" && url.pathname === "/workflow") {
       send(res, 200, buildWorkflowEntries(url.searchParams.get("participant") ?? "user"));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/agents/output/stream") {
+      const sessionId = url.searchParams.get("sessionId")?.trim();
+      const startLineRaw = url.searchParams.get("startLine");
+      const intervalMsRaw = url.searchParams.get("intervalMs");
+      if (!sessionId) {
+        send(res, 400, { ok: false, error: "sessionId is required" });
+        return;
+      }
+      if (!this.options.lifecycle?.readAgentOutput) {
+        send(res, 501, { ok: false, error: "agent output stream not supported by this service" });
+        return;
+      }
+
+      const startLine =
+        startLineRaw === null || startLineRaw.trim() === "" ? undefined : Number.parseInt(startLineRaw, 10);
+      if (startLineRaw !== null && Number.isNaN(startLine)) {
+        send(res, 400, { ok: false, error: "startLine must be an integer" });
+        return;
+      }
+
+      const intervalMs =
+        intervalMsRaw === null || intervalMsRaw.trim() === "" ? 500 : Number.parseInt(intervalMsRaw, 10);
+      if (Number.isNaN(intervalMs) || intervalMs < 100) {
+        send(res, 400, { ok: false, error: "intervalMs must be an integer >= 100" });
+        return;
+      }
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/event-stream");
+      res.setHeader("cache-control", "no-cache, no-transform");
+      res.setHeader("connection", "keep-alive");
+      res.setHeader("x-accel-buffering", "no");
+      res.flushHeaders?.();
+
+      let closed = false;
+      let lastOutput: string | undefined;
+      let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = null;
+        res.end();
+      };
+
+      req.on("close", cleanup);
+      req.on("aborted", cleanup);
+      res.on("close", cleanup);
+
+      const poll = async () => {
+        if (closed) return;
+        try {
+          const result = await this.options.lifecycle!.readAgentOutput!({ sessionId, startLine });
+          if (closed) return;
+          if (result.output !== lastOutput) {
+            lastOutput = result.output;
+            sendSseEvent(res, "output", {
+              sessionId: result.sessionId,
+              output: result.output,
+              startLine: result.startLine ?? startLine ?? -120,
+            });
+          } else {
+            res.write(": keepalive\n\n");
+          }
+        } catch (error) {
+          sendSseEvent(res, "error", {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          cleanup();
+        }
+      };
+
+      sendSseEvent(res, "ready", { sessionId, startLine: startLine ?? -120, intervalMs });
+      await poll();
+      pollTimer = setInterval(() => {
+        void poll();
+      }, intervalMs);
+      pollTimer.unref?.();
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/threads/")) {
@@ -710,6 +808,40 @@ export class MetadataServer {
         }
         const result = await this.options.lifecycle.killAgent(body);
         this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/input") {
+        const body = (await readJson(req)) as { sessionId: string; data: string; submit?: boolean };
+        if (!this.options.lifecycle?.writeAgentInput) {
+          send(res, 501, { ok: false, error: "agent input not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.writeAgentInput(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/agents/output") {
+        const sessionId = url.searchParams.get("sessionId")?.trim();
+        const startLineRaw = url.searchParams.get("startLine");
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        if (!this.options.lifecycle?.readAgentOutput) {
+          send(res, 501, { ok: false, error: "agent output not supported by this service" });
+          return;
+        }
+        const startLine =
+          startLineRaw === null || startLineRaw.trim() === "" ? undefined : Number.parseInt(startLineRaw, 10);
+        if (startLineRaw !== null && Number.isNaN(startLine)) {
+          send(res, 400, { ok: false, error: "startLine must be an integer" });
+          return;
+        }
+        const result = await this.options.lifecycle.readAgentOutput({ sessionId, startLine });
         send(res, 200, { ok: true, ...result });
         return;
       }

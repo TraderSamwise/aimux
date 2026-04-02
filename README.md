@@ -160,6 +160,22 @@ aimux worktree create feature-x --project /abs/path/to/repo --json
 aimux desktop focus --project /abs/path/to/repo --session <sessionId>
 ```
 
+HTTP-backed agent I/O helpers:
+
+```bash
+# Send raw input to a running agent through the project service
+aimux host agent-send <sessionId> "hello\r"
+printf 'hello\r' | aimux host agent-send <sessionId> --stdin
+
+# Read a tmux pane snapshot for a running agent
+aimux host agent-read <sessionId> --start-line -80
+
+# Stream live pane output over SSE through the project service
+aimux host agent-stream <sessionId> --start-line -80 --interval-ms 250
+```
+
+These commands are additive control-plane helpers on top of the existing `aimux -> tmux -> codex/claude` runtime. They do not replace the native TUI path; they reuse the same session write path and tmux pane capture path through the project HTTP service.
+
 For desktop / GUI callers, prefer explicit `--project` usage instead of relying on launcher cwd.
 
 The desktop app now exposes these flows directly over daemon/project-service HTTP:

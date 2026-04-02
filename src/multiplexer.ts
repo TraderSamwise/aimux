@@ -304,6 +304,8 @@ export class Multiplexer {
         renameAgent: (input) => this.renameAgent(input.sessionId, input.label),
         migrateAgent: (input) => this.migrateAgentSession(input.sessionId, input.worktreePath),
         killAgent: (input) => this.sendAgentToGraveyard(input.sessionId),
+        writeAgentInput: (input) => this.writeAgentInput(input.sessionId, input.data, input.submit),
+        readAgentOutput: (input) => this.readAgentOutput(input.sessionId, input.startLine),
       },
       onChange: () => {
         this.writeStatuslineFile();
@@ -553,6 +555,126 @@ export class Multiplexer {
     } catch {}
 
     return undefined;
+  }
+
+  private resolveRunningSession(sessionId: string): ManagedSession {
+    const session = this.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session || session.exited) {
+      throw new Error(`Session "${sessionId}" is not running`);
+    }
+    return session;
+  }
+
+  private writeTmuxAgentInput(sessionId: string, transport: TmuxSessionTransport, data: string): void {
+    const target = this.sessionTmuxTargets.get(sessionId) ?? transport.tmuxTarget;
+    let textBuffer = "";
+    const flushText = () => {
+      if (!textBuffer) return;
+      this.tmuxRuntimeManager.sendText(target, textBuffer);
+      textBuffer = "";
+    };
+
+    for (const ch of data) {
+      if (ch === "\r") {
+        flushText();
+        this.tmuxRuntimeManager.sendEnter(target);
+        continue;
+      }
+      if (ch === "\n") {
+        flushText();
+        this.tmuxRuntimeManager.sendKey(target, "C-j");
+        continue;
+      }
+      textBuffer += ch;
+    }
+
+    flushText();
+  }
+
+  private normalizeAgentInput(data: string, submit: boolean): string {
+    if (!submit) return data;
+    return data.replace(/(?:\r\n|\r|\n)+$/g, "");
+  }
+
+  private paneStillContainsAgentDraft(target: TmuxTarget, draft: string): boolean {
+    try {
+      const pane = this.tmuxRuntimeManager.captureTarget(target, { startLine: -60 });
+      const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+      const normalizedDraft = normalize(draft);
+      if (!normalizedDraft) return false;
+      return normalize(pane).includes(normalizedDraft);
+    } catch {
+      return false;
+    }
+  }
+
+  private scheduleTmuxAgentSubmit(sessionId: string, target: TmuxTarget, draft: string): void {
+    const submitOnce = () => {
+      try {
+        this.tmuxRuntimeManager.sendEnter(target);
+      } catch {}
+    };
+
+    const step = (attempt = 1) => {
+      if (attempt > 4) return;
+      setTimeout(
+        () => {
+          try {
+            const currentTarget = this.sessionTmuxTargets.get(sessionId);
+            if (!currentTarget || currentTarget.windowId !== target.windowId) {
+              return;
+            }
+            submitOnce();
+            if (attempt >= 4) return;
+            setTimeout(() => {
+              try {
+                if (this.paneStillContainsAgentDraft(target, draft)) {
+                  step(attempt + 1);
+                }
+              } catch {}
+            }, 700);
+          } catch {}
+        },
+        attempt === 1 ? 150 : 700,
+      );
+    };
+
+    step();
+  }
+
+  async writeAgentInput(sessionId: string, data: string, submit = false): Promise<{ sessionId: string }> {
+    const normalizedData = this.normalizeAgentInput(data, submit);
+    if (!normalizedData && !submit) {
+      throw new Error("input data is required");
+    }
+    const session = this.resolveRunningSession(sessionId);
+    if (session.transport instanceof TmuxSessionTransport) {
+      if (normalizedData) {
+        this.writeTmuxAgentInput(sessionId, session.transport, normalizedData);
+      }
+      if (submit) {
+        const target = this.sessionTmuxTargets.get(sessionId) ?? session.transport.tmuxTarget;
+        this.scheduleTmuxAgentSubmit(sessionId, target, normalizedData);
+      }
+    } else {
+      session.write(submit ? `${normalizedData}\r` : normalizedData);
+    }
+    return { sessionId };
+  }
+
+  async readAgentOutput(
+    sessionId: string,
+    startLine?: number,
+  ): Promise<{ sessionId: string; output: string; startLine?: number }> {
+    this.resolveRunningSession(sessionId);
+    const target = this.sessionTmuxTargets.get(sessionId);
+    if (!target) {
+      throw new Error(`Session "${sessionId}" does not have a tmux target`);
+    }
+    const output = this.tmuxRuntimeManager.captureTarget(target, {
+      startLine: startLine ?? -120,
+    });
+    return { sessionId, output, startLine: startLine ?? -120 };
   }
 
   private registerManagedSession(

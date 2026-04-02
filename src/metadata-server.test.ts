@@ -5,6 +5,23 @@ import { tmpdir } from "node:os";
 import { initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 
+async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      if (predicate(text)) return text;
+    }
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 describe("MetadataServer threads API", () => {
   let repoRoot = "";
   let server: MetadataServer | null = null;
@@ -240,5 +257,154 @@ describe("MetadataServer threads API", () => {
     expect(workflow.some((entry) => entry.stateLabel.includes("on codex-1") || entry.stateLabel === "on me")).toBe(
       true,
     );
+  });
+
+  it("writes agent input and reads agent output over HTTP", async () => {
+    server?.stop();
+    const writes: Array<{ sessionId: string; data: string }> = [];
+    server = new MetadataServer({
+      lifecycle: {
+        writeAgentInput: ({ sessionId, data }) => {
+          writes.push({ sessionId, data });
+          return { sessionId };
+        },
+        readAgentOutput: ({ sessionId, startLine }) => ({
+          sessionId,
+          startLine: startLine ?? -120,
+          output: `output for ${sessionId} @ ${startLine ?? -120}`,
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "codex-1",
+        data: "hello\r",
+      }),
+    });
+    const inputJson = (await inputRes.json()) as { ok: boolean; sessionId: string };
+    expect(inputRes.ok).toBe(true);
+    expect(inputJson.sessionId).toBe("codex-1");
+    expect(writes).toEqual([{ sessionId: "codex-1", data: "hello\r" }]);
+
+    const outputRes = await fetch(`${base}/agents/output?sessionId=codex-1&startLine=-80`);
+    const outputJson = (await outputRes.json()) as {
+      ok: boolean;
+      sessionId: string;
+      startLine: number;
+      output: string;
+    };
+    expect(outputRes.ok).toBe(true);
+    expect(outputJson.sessionId).toBe("codex-1");
+    expect(outputJson.startLine).toBe(-80);
+    expect(outputJson.output).toContain("codex-1");
+  });
+
+  it("passes submit intent with agent input over HTTP", async () => {
+    server?.stop();
+    const writes: Array<{ sessionId: string; data: string; submit?: boolean }> = [];
+    server = new MetadataServer({
+      lifecycle: {
+        writeAgentInput: ({ sessionId, data, submit }) => {
+          writes.push({ sessionId, data, submit });
+          return { sessionId };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "codex-1",
+        data: "hello from http",
+        submit: true,
+      }),
+    });
+    expect(inputRes.ok).toBe(true);
+    expect(writes).toEqual([{ sessionId: "codex-1", data: "hello from http", submit: true }]);
+  });
+
+  it("validates agent output query parameters over HTTP", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => ({
+          sessionId,
+          startLine,
+          output: "",
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const missingRes = await fetch(`${base}/agents/output`);
+    expect(missingRes.status).toBe(400);
+    await expect(missingRes.json()).resolves.toMatchObject({
+      ok: false,
+      error: "sessionId is required",
+    });
+
+    const invalidRes = await fetch(`${base}/agents/output?sessionId=codex-1&startLine=abc`);
+    expect(invalidRes.status).toBe(400);
+    await expect(invalidRes.json()).resolves.toMatchObject({
+      ok: false,
+      error: "startLine must be an integer",
+    });
+  });
+
+  it("streams agent output over SSE", async () => {
+    server?.stop();
+    let reads = 0;
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => {
+          reads += 1;
+          return {
+            sessionId,
+            startLine: startLine ?? -120,
+            output: reads >= 2 ? "updated output" : "initial output",
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const controller = new AbortController();
+
+    const res = await fetch(`${base}/agents/output/stream?sessionId=codex-1&startLine=-50&intervalMs=100`, {
+      signal: controller.signal,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    expect(res.body).toBeTruthy();
+
+    const text = await readSseUntil(res.body!, (value) => value.includes('"output":"updated output"'));
+    controller.abort();
+
+    expect(text).toContain("event: ready");
+    expect(text).toContain('"sessionId":"codex-1"');
+    expect(text).toContain('"startLine":-50');
+    expect(text).toContain("event: output");
+    expect(text).toContain('"output":"updated output"');
   });
 });
