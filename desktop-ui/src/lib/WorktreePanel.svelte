@@ -988,7 +988,7 @@
     margin-left: auto;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     flex-shrink: 0;
   }
 
@@ -997,8 +997,8 @@
     flex-direction: column;
     align-items: flex-end;
     gap: 1px;
-    min-width: 76px;
-    max-width: 104px;
+    min-width: 64px;
+    max-width: 88px;
     text-align: right;
     font-size: 10px;
     line-height: 1.15;
@@ -1040,16 +1040,20 @@
   .agent-actions {
     display: flex;
     gap: 2px;
+    max-width: 0;
+    overflow: hidden;
     opacity: 0;
-    transition: opacity 100ms;
+    transition: opacity 100ms, max-width 100ms;
     flex-shrink: 0;
   }
 
   .agent-row:hover .agent-actions {
+    max-width: 120px;
     opacity: 1;
   }
 
   .agent-actions.visible {
+    max-width: 120px;
     opacity: 1;
   }
 
