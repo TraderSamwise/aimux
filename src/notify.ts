@@ -47,7 +47,16 @@ export function notifyAlert(event: AlertEvent): void {
   const config = getNotifyConfig();
   if (!config.enabled) return;
 
-  if (event.kind === "needs_input" && !config.onPrompt) return;
+  if (
+    (event.kind === "needs_input" ||
+      event.kind === "message_waiting" ||
+      event.kind === "handoff_waiting" ||
+      event.kind === "task_assigned" ||
+      event.kind === "review_waiting") &&
+    !config.onPrompt
+  ) {
+    return;
+  }
   if (event.kind === "task_done" && !config.onComplete) return;
   if ((event.kind === "task_failed" || event.kind === "blocked") && !config.onError) return;
 

@@ -455,6 +455,123 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"message":"Finished parser audit."');
   });
 
+  it("emits message waiting alerts for thread sends", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events?sessionId=codex-1`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"kind":"message_waiting"'));
+
+    const sendRes = await fetch(`${base}/threads/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: ["codex-1"],
+        kind: "request",
+        body: "Please inspect the timeout parser branch.",
+        title: "Parser request",
+      }),
+    });
+    expect(sendRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: alert");
+    expect(text).toContain('"kind":"message_waiting"');
+    expect(text).toContain('"sessionId":"codex-1"');
+  });
+
+  it("emits handoff waiting alerts for handoffs", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events?sessionId=codex-1`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"kind":"handoff_waiting"'));
+
+    const handoffRes = await fetch(`${base}/handoff`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: ["codex-1"],
+        body: "Take over the timeout parser investigation.",
+        title: "Parser handoff",
+      }),
+    });
+    expect(handoffRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: alert");
+    expect(text).toContain('"kind":"handoff_waiting"');
+    expect(text).toContain('"sessionId":"codex-1"');
+  });
+
+  it("emits review waiting alerts for assigned reviews", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events?sessionId=codex-1`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"kind":"review_waiting"'));
+
+    const reviewRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Review the timeout parser patch",
+        type: "review",
+      }),
+    });
+    expect(reviewRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: alert");
+    expect(text).toContain('"kind":"review_waiting"');
+    expect(text).toContain('"sessionId":"codex-1"');
+  });
+
+  it("emits task assigned alerts for assigned tasks", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events?sessionId=codex-1`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"kind":"task_assigned"'));
+
+    const taskRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Audit the timeout parser branch",
+        type: "task",
+      }),
+    });
+    expect(taskRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: alert");
+    expect(text).toContain('"kind":"task_assigned"');
+    expect(text).toContain('"sessionId":"codex-1"');
+  });
+
   it("passes submit intent with agent input over HTTP", async () => {
     server?.stop();
     const writes: Array<{ sessionId: string; data: string; submit?: boolean }> = [];

@@ -1,6 +1,14 @@
 import { getProjectId } from "./paths.js";
 
-export type AlertKind = "needs_input" | "task_done" | "task_failed" | "blocked";
+export type AlertKind =
+  | "needs_input"
+  | "task_done"
+  | "task_failed"
+  | "blocked"
+  | "message_waiting"
+  | "handoff_waiting"
+  | "task_assigned"
+  | "review_waiting";
 
 export interface AlertEvent {
   type: "alert";

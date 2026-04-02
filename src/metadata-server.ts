@@ -316,6 +316,77 @@ export class MetadataServer {
     this.eventBus.publishAlert(input);
   }
 
+  private emitThreadWaitingAlert(input: {
+    kind: Extract<AlertKind, "message_waiting" | "handoff_waiting">;
+    threadId: string;
+    from?: string;
+    recipients?: string[];
+    title: string;
+    message: string;
+    worktreePath?: string;
+    cooldownMs?: number;
+  }): void {
+    for (const recipient of [...new Set((input.recipients ?? []).map((value) => value?.trim()).filter(Boolean))]) {
+      if (recipient === input.from?.trim()) continue;
+      this.emitAlert({
+        kind: input.kind,
+        sessionId: recipient,
+        threadId: input.threadId,
+        worktreePath: input.worktreePath,
+        title: input.title,
+        message: input.message,
+        dedupeKey: `${input.kind}:${input.threadId}:${recipient}`,
+        cooldownMs: input.cooldownMs ?? 15_000,
+      });
+    }
+  }
+
+  private emitAssignedTaskAlert(input: {
+    task: {
+      id: string;
+      description: string;
+      assignedTo?: string;
+      type?: "task" | "review";
+    };
+    thread?: {
+      id?: string;
+      worktreePath?: string;
+    };
+  }): void {
+    const recipient = input.task.assignedTo?.trim();
+    if (!recipient) return;
+    const kind = input.task.type === "review" ? "review_waiting" : "task_assigned";
+    const noun = input.task.type === "review" ? "Review" : "Task";
+    this.emitAlert({
+      kind,
+      sessionId: recipient,
+      taskId: input.task.id,
+      threadId: input.thread?.id,
+      worktreePath: input.thread?.worktreePath,
+      title: `${noun} assigned: ${input.task.description}`,
+      message:
+        input.task.type === "review"
+          ? "A review is waiting for your attention."
+          : "A task is waiting for your attention.",
+      dedupeKey: `${kind}:${input.task.id}:${recipient}`,
+      cooldownMs: 15_000,
+    });
+  }
+
+  private resolveAlertRecipients(
+    explicit: string[] | undefined,
+    message: unknown,
+    fallback: string[] | undefined,
+  ): string[] {
+    const fromExplicit = explicit?.map((value) => value?.trim()).filter(Boolean);
+    if (fromExplicit && fromExplicit.length > 0) return [...new Set(fromExplicit)];
+    const payload = message as { deliveredTo?: string[]; to?: string[] } | undefined;
+    const fromMessage = payload?.deliveredTo?.map((value) => value?.trim()).filter(Boolean);
+    if (fromMessage && fromMessage.length > 0) return [...new Set(fromMessage)];
+    const fallbackRecipients = payload?.to ?? fallback ?? [];
+    return [...new Set(fallbackRecipients.map((value) => value?.trim()).filter(Boolean))];
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
@@ -772,6 +843,16 @@ export class MetadataServer {
                 title: body.title,
                 worktreePath: body.worktreePath,
               });
+        const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+        this.emitThreadWaitingAlert({
+          kind: "message_waiting",
+          threadId: (result.thread as { id: string }).id,
+          from: body.from ?? "user",
+          recipients,
+          title: `Message for ${recipients.join(", ") || "agent"}`,
+          message: body.body.trim() || "A new message is waiting.",
+          worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
+        });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
@@ -828,6 +909,16 @@ export class MetadataServer {
               title: body.title,
               worktreePath: body.worktreePath,
             });
+        const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+        this.emitThreadWaitingAlert({
+          kind: "handoff_waiting",
+          threadId: (result.thread as { id: string }).id,
+          from: body.from?.trim() || "user",
+          recipients,
+          title: `Handoff for ${recipients.join(", ") || "agent"}`,
+          message: body.body.trim() || "A handoff is waiting for you.",
+          worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
+        });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
@@ -884,6 +975,7 @@ export class MetadataServer {
           diff: body.diff,
           worktreePath: body.worktreePath,
         });
+        this.emitAssignedTaskAlert(result);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
