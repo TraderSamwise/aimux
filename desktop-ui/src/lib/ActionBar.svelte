@@ -11,14 +11,36 @@
   let projectStatus = $derived(controlPlane.projectStatus || "degraded");
   let projectSelected = $derived(Boolean(appState.selectedProject));
   let alertKind = $derived(currentAlert?.kind || null);
+  function alertTone(kind) {
+    if (kind === "task_done") return "success";
+    if (kind === "task_failed" || kind === "blocked") return "error";
+    if (kind === "message_waiting") return "message";
+    if (kind === "handoff_waiting") return "handoff";
+    if (kind === "task_assigned" || kind === "review_waiting" || kind === "needs_input") return "waiting";
+    return "waiting";
+  }
+  function alertPrefix(kind) {
+    if (kind === "message_waiting") return "Message";
+    if (kind === "handoff_waiting") return "Handoff";
+    if (kind === "task_assigned") return "Task";
+    if (kind === "review_waiting") return "Review";
+    if (kind === "needs_input") return "Input";
+    if (kind === "task_done") return "Done";
+    if (kind === "task_failed") return "Failed";
+    if (kind === "blocked") return "Blocked";
+    return "Alert";
+  }
+  let alertToneKind = $derived(alertTone(alertKind));
   let alertText = $derived.by(() => {
     if (!currentAlert) return null;
     const project = (appState.projects || []).find((entry) => entry.id === currentAlert.projectId);
     const projectName = project?.name || null;
     const sessionPart = currentAlert.sessionId ? `${currentAlert.sessionId}` : projectName;
+    const prefix = alertPrefix(currentAlert.kind);
+    const detail = currentAlert.message || currentAlert.title || currentAlert.kind;
     return sessionPart
-      ? `${sessionPart} · ${currentAlert.message || currentAlert.title || currentAlert.kind}`
-      : (currentAlert.message || currentAlert.title || currentAlert.kind);
+      ? `${prefix} · ${sessionPart} · ${detail}`
+      : `${prefix} · ${detail}`;
   });
   let daemonButtonLabel = $derived.by(() => {
     if (daemonStatus === "ok") return "Daemon OK";
@@ -39,7 +61,13 @@
   });
 </script>
 
-<div class="action-bar" class:idle class:alerting={!primaryAction && !!currentAlert} data-alert-kind={alertKind || ""}>
+<div
+  class="action-bar"
+  class:idle
+  class:alerting={!primaryAction && !!currentAlert}
+  data-alert-kind={alertKind || ""}
+  data-alert-tone={alertToneKind || ""}
+>
   <div class="action-main">
     {#if primaryAction}
       <span class="spinner"></span>
@@ -98,15 +126,24 @@
     border-top-color: rgba(251, 191, 36, 0.16);
   }
 
-  .action-bar.alerting[data-alert-kind="task_done"] {
+  .action-bar.alerting[data-alert-tone="success"] {
     background: rgba(74, 222, 128, 0.07);
     border-top-color: rgba(74, 222, 128, 0.18);
   }
 
-  .action-bar.alerting[data-alert-kind="task_failed"],
-  .action-bar.alerting[data-alert-kind="blocked"] {
+  .action-bar.alerting[data-alert-tone="error"] {
     background: rgba(248, 113, 113, 0.08);
     border-top-color: rgba(248, 113, 113, 0.18);
+  }
+
+  .action-bar.alerting[data-alert-tone="message"] {
+    background: rgba(56, 189, 248, 0.08);
+    border-top-color: rgba(56, 189, 248, 0.18);
+  }
+
+  .action-bar.alerting[data-alert-tone="handoff"] {
+    background: rgba(45, 212, 191, 0.09);
+    border-top-color: rgba(45, 212, 191, 0.2);
   }
 
   .action-main {
@@ -139,13 +176,20 @@
     color: rgba(255, 244, 214, 0.96);
   }
 
-  .action-bar.alerting[data-alert-kind="task_done"] .alert-text {
+  .action-bar.alerting[data-alert-tone="success"] .alert-text {
     color: rgba(220, 252, 231, 0.98);
   }
 
-  .action-bar.alerting[data-alert-kind="task_failed"] .alert-text,
-  .action-bar.alerting[data-alert-kind="blocked"] .alert-text {
+  .action-bar.alerting[data-alert-tone="error"] .alert-text {
     color: rgba(254, 226, 226, 0.98);
+  }
+
+  .action-bar.alerting[data-alert-tone="message"] .alert-text {
+    color: rgba(224, 242, 254, 0.98);
+  }
+
+  .action-bar.alerting[data-alert-tone="handoff"] .alert-text {
+    color: rgba(204, 251, 241, 0.98);
   }
 
   .alert-dot {
@@ -157,15 +201,24 @@
     flex-shrink: 0;
   }
 
-  .action-bar.alerting[data-alert-kind="task_done"] .alert-dot {
+  .action-bar.alerting[data-alert-tone="success"] .alert-dot {
     background: rgb(74, 222, 128);
     box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.14);
   }
 
-  .action-bar.alerting[data-alert-kind="task_failed"] .alert-dot,
-  .action-bar.alerting[data-alert-kind="blocked"] .alert-dot {
+  .action-bar.alerting[data-alert-tone="error"] .alert-dot {
     background: rgb(248, 113, 113);
     box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.14);
+  }
+
+  .action-bar.alerting[data-alert-tone="message"] .alert-dot {
+    background: rgb(56, 189, 248);
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.14);
+  }
+
+  .action-bar.alerting[data-alert-tone="handoff"] .alert-dot {
+    background: rgb(45, 212, 191);
+    box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.14);
   }
 
   .action-count {

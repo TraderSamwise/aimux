@@ -247,6 +247,14 @@ export class Multiplexer {
       if (event.type !== "alert") return;
       if (event.kind === "needs_input") {
         this.footerFlash = `◉ ${event.sessionId ?? "agent"} needs input`;
+      } else if (event.kind === "message_waiting") {
+        this.footerFlash = `✉ Message waiting → ${event.sessionId ?? "agent"}`;
+      } else if (event.kind === "handoff_waiting") {
+        this.footerFlash = `⇢ Handoff waiting → ${event.sessionId ?? "agent"}`;
+      } else if (event.kind === "task_assigned") {
+        this.footerFlash = `⧫ Task assigned → ${event.sessionId ?? "agent"}`;
+      } else if (event.kind === "review_waiting") {
+        this.footerFlash = `◌ Review waiting → ${event.sessionId ?? "agent"}`;
       } else if (event.kind === "blocked") {
         this.footerFlash = `⧗ ${event.title}`;
       } else if (event.kind === "task_done") {
