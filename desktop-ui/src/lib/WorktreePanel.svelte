@@ -565,7 +565,6 @@
                 {@const active = agent.id === appState.selectedSessionId}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <div class="agent-block">
-                  {@const status = agentStatusParts(agent)}
                   <div
                     class="agent-row"
                     class:active
@@ -580,9 +579,9 @@
                       <span class="agent-role">({agent.role})</span>
                     {/if}
                     <span class="agent-status" data-tone={agentStatusTone(agent)}>
-                      <span class="agent-status-primary">{status.primary}</span>
-                      {#if status.secondary}
-                        <span class="agent-status-secondary">{status.secondary}</span>
+                      <span class="agent-status-primary">{agentStatusParts(agent).primary}</span>
+                      {#if agentStatusParts(agent).secondary}
+                        <span class="agent-status-secondary">{agentStatusParts(agent).secondary}</span>
                       {/if}
                     </span>
                     <span class="agent-actions" class:visible={agent.pending || renameSessionId === agent.id || forkMenu?.sessionId === agent.id || migrateSessionId === agent.id}>

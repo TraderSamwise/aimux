@@ -37,6 +37,8 @@
   const responseAnimationFrameState = new Map();
   let conversationScrollRaf = 0;
   let rawScrollRaf = 0;
+  let suppressConversationScrollEvent = false;
+  let suppressRawScrollEvent = false;
 
   let selectedSession = $derived.by(() => {
     if (!appState.selectedProject || !appState.selectedSessionId) return null;
@@ -147,7 +149,11 @@
         conversationScrollRaf = 0;
         return;
       }
+      suppressConversationScrollEvent = true;
       messageListEl.scrollTop = messageListEl.scrollHeight;
+      requestAnimationFrame(() => {
+        suppressConversationScrollEvent = false;
+      });
       if (remaining <= 1) {
         conversationScrollRaf = 0;
         return;
@@ -164,7 +170,11 @@
         rawScrollRaf = 0;
         return;
       }
+      suppressRawScrollEvent = true;
       rawOutputEl.scrollTop = rawOutputEl.scrollHeight;
+      requestAnimationFrame(() => {
+        suppressRawScrollEvent = false;
+      });
       if (remaining <= 1) {
         rawScrollRaf = 0;
         return;
@@ -181,8 +191,8 @@
       lastTs: 0,
       carry: 0,
     };
-    const charsPerSecond = 90;
-    const leadBufferMs = 350;
+    const charsPerSecond = 36;
+    const maxChunkSize = 2;
 
     const step = (ts) => {
       const target = responseAnimationTargets.get(id) || "";
@@ -206,9 +216,7 @@
       state.carry += (charsPerSecond * delta) / 1000;
 
       const backlog = target.length - current.length;
-      const desiredLagChars = Math.max(0, Math.floor((charsPerSecond * leadBufferMs) / 1000));
-      const releasableBacklog = Math.max(1, backlog - Math.min(backlog - 1, desiredLagChars));
-      const chunkSize = Math.min(backlog, Math.max(releasableBacklog, Math.floor(state.carry)));
+      const chunkSize = Math.min(backlog, Math.max(1, Math.min(maxChunkSize, Math.floor(state.carry))));
       if (chunkSize <= 0) {
         state.frame = requestAnimationFrame(step);
         responseAnimationFrameState.set(id, state);
@@ -506,6 +514,7 @@
 
   function saveConversationScrollPosition() {
     if (!messageListEl) return;
+    if (suppressConversationScrollEvent) return;
     conversationPinnedToBottom = isNearBottom(messageListEl, 72);
     if (!conversationPinnedToBottom) {
       forceConversationStick = false;
@@ -519,6 +528,7 @@
 
   function saveRawScrollPosition() {
     if (!rawOutputEl) return;
+    if (suppressRawScrollEvent) return;
     rawPinnedToBottom = isNearBottom(rawOutputEl, 72);
     if (!rawPinnedToBottom) {
       stopRawPinnedScroll();
@@ -781,7 +791,14 @@
         <div class="chat-pane">
           <div class="pane-title">Conversation</div>
           {#if conversationBlocks.length > 0}
-            <div class="message-list" bind:this={messageListEl} onscroll={saveConversationScrollPosition}>
+            <div
+              class="message-list"
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions text"
+              bind:this={messageListEl}
+              onscroll={saveConversationScrollPosition}
+            >
               {#each conversationEntries as entry (`${entry.id}`)}
                 <article class="turn" class:prompt-turn={entry.type === "prompt"} class:response-turn={entry.type === "response"}>
                   <article class="message" class:prompt={entry.type === "prompt"} class:response={entry.type === "response"}>
@@ -1047,6 +1064,12 @@
     overflow: auto;
     min-height: 0;
     padding-right: 4px;
+    scrollbar-width: none;
+  }
+
+  .message-list::-webkit-scrollbar {
+    width: 0;
+    height: 0;
   }
 
   .turn {
