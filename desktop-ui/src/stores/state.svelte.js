@@ -28,6 +28,7 @@ let unlistenOutput = null;
 let unlistenExit = null;
 let unlistenHeartbeat = null;
 let nativeChatHistoryTimer = null;
+let nativeChatReconnectTimer = null;
 let nativeChatStream = null;
 let nativeChatStreamToken = 0;
 let nativeChatHistoryInFlight = false;
@@ -484,6 +485,10 @@ function stopNativeChatStreaming({ clear = false } = {}) {
     clearTimeout(nativeChatHistoryTimer);
     nativeChatHistoryTimer = null;
   }
+  if (nativeChatReconnectTimer) {
+    clearTimeout(nativeChatReconnectTimer);
+    nativeChatReconnectTimer = null;
+  }
   if (nativeChatStream) {
     nativeChatStream.close();
     nativeChatStream = null;
@@ -516,6 +521,17 @@ function scheduleNativeChatHistoryRefresh(projectPath, sessionId, token, delayMs
   nativeChatHistoryTimer = setTimeout(() => {
     if (token !== nativeChatStreamToken) return;
     void refreshNativeChatHistory(projectPath, sessionId, token);
+  }, delayMs);
+}
+
+function scheduleNativeChatReconnect(projectPath, sessionId, endpoint, token, delayMs = 1000) {
+  if (nativeChatReconnectTimer) {
+    clearTimeout(nativeChatReconnectTimer);
+    nativeChatReconnectTimer = null;
+  }
+  nativeChatReconnectTimer = setTimeout(() => {
+    if (token !== nativeChatStreamToken) return;
+    startNativeChatStream(projectPath, sessionId, endpoint, token);
   }, delayMs);
 }
 
@@ -553,6 +569,10 @@ function startNativeChatStream(projectPath, sessionId, endpoint, token) {
     nativeChatStream.close();
     nativeChatStream = null;
   }
+  if (nativeChatReconnectTimer) {
+    clearTimeout(nativeChatReconnectTimer);
+    nativeChatReconnectTimer = null;
+  }
 
   const url = new URL(`http://${endpoint.host}:${endpoint.port}/agents/output/stream`);
   url.searchParams.set("sessionId", sessionId);
@@ -564,6 +584,7 @@ function startNativeChatStream(projectPath, sessionId, endpoint, token) {
 
   stream.addEventListener("ready", () => {
     if (token !== nativeChatStreamToken) return;
+    nativeChatError = null;
     scheduleNativeChatHistoryRefresh(projectPath, sessionId, token, 0);
   });
 
@@ -581,9 +602,14 @@ function startNativeChatStream(projectPath, sessionId, endpoint, token) {
 
   stream.addEventListener("error", () => {
     if (token !== nativeChatStreamToken) return;
+    if (nativeChatStream === stream) {
+      nativeChatStream.close();
+      nativeChatStream = null;
+    }
     if (!nativeChatOutput) {
       void fetchNativeChatSnapshot(projectPath, sessionId, token);
     }
+    scheduleNativeChatReconnect(projectPath, sessionId, endpoint, token, 1000);
   });
 }
 
@@ -726,6 +752,20 @@ function onHeartbeat(event) {
     if (!sessionStillExists) {
       selectedSessionId = null;
       stopNativeChatStreaming({ clear: true });
+      return;
+    }
+
+    if (interactionMode === "native-chat") {
+      const endpoint = selectedProject?.serviceEndpoint || null;
+      const desiredUrl =
+        endpoint?.host && endpoint?.port
+          ? `http://${endpoint.host}:${endpoint.port}/agents/output/stream?sessionId=${selectedSessionId}&startLine=-120&intervalMs=250`
+          : null;
+      if (!desiredUrl && nativeChatStream) {
+        syncNativeChatSelection({ preserveSnapshot: true });
+      } else if (desiredUrl && nativeChatStream?.url !== desiredUrl) {
+        syncNativeChatSelection({ preserveSnapshot: true });
+      }
     }
   }
 }
