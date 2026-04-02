@@ -21,16 +21,21 @@ let nativeChatProjectPath = $state(null);
 let nativeChatSessionId = $state(null);
 let nativeChatRawMode = $state(false);
 let nativeChatDraftParts = $state({});
+let currentAlert = $state(null);
+let recentAlerts = $state([]);
 
 let unlistenOutput = null;
 let unlistenExit = null;
 let unlistenHeartbeat = null;
-let nativeChatPollTimer = null;
-let nativeChatPollToken = 0;
-let nativeChatPollInFlight = false;
+let nativeChatHistoryTimer = null;
+let nativeChatStream = null;
+let nativeChatStreamToken = 0;
+let nativeChatHistoryInFlight = false;
+let alertDismissTimer = null;
 let heartbeatTicker = $state(Date.now());
 let lastHeartbeatAt = $state(0);
 let heartbeatInterval = null;
+const projectAlertStreams = new Map();
 
 // ── In-progress actions ───────────────────────────────────────────
 
@@ -44,6 +49,69 @@ function syncCurrentAction() {
   currentAction = inFlightActions.length > 0
     ? inFlightActions[inFlightActions.length - 1].message
     : null;
+}
+
+function pushAlert(event) {
+  const next = {
+    key: `${event.projectId}:${event.sessionId || "project"}:${event.kind}:${event.ts}`,
+    receivedAt: Date.now(),
+    ...event,
+  };
+  currentAlert = next;
+  recentAlerts = [...recentAlerts.filter((entry) => entry.key !== next.key), next].slice(-20);
+  if (alertDismissTimer) {
+    clearTimeout(alertDismissTimer);
+  }
+  alertDismissTimer = setTimeout(() => {
+    if (currentAlert?.key === next.key) {
+      currentAlert = null;
+    }
+  }, 8000);
+}
+
+function stopProjectAlertStream(projectPath) {
+  const existing = projectAlertStreams.get(projectPath);
+  if (existing) {
+    existing.close();
+    projectAlertStreams.delete(projectPath);
+  }
+}
+
+function syncProjectAlertStreams(nextProjects = projects) {
+  if (typeof EventSource === "undefined") return;
+
+  const desired = new Map(
+    nextProjects
+      .filter((project) => project?.serviceEndpointAlive && project?.serviceEndpoint?.host && project?.serviceEndpoint?.port)
+      .map((project) => [
+        project.path,
+        `http://${project.serviceEndpoint.host}:${project.serviceEndpoint.port}/events`,
+      ])
+  );
+
+  for (const [projectPath] of projectAlertStreams) {
+    if (!desired.has(projectPath)) {
+      stopProjectAlertStream(projectPath);
+    }
+  }
+
+  for (const [projectPath, url] of desired) {
+    const existing = projectAlertStreams.get(projectPath);
+    if (existing?.url === url) continue;
+    stopProjectAlertStream(projectPath);
+
+    const stream = new EventSource(url);
+    stream.addEventListener("alert", (event) => {
+      try {
+        pushAlert(JSON.parse(event.data || "{}"));
+      } catch {}
+    });
+    stream.addEventListener("error", () => {});
+    projectAlertStreams.set(projectPath, {
+      url,
+      close: () => stream.close(),
+    });
+  }
 }
 
 export function beginAction(action) {
@@ -409,79 +477,136 @@ function clearNativeChatSnapshot() {
   nativeChatError = null;
 }
 
-function stopNativeChatPolling({ clear = false } = {}) {
-  nativeChatPollToken += 1;
-  nativeChatPollInFlight = false;
-  if (nativeChatPollTimer) {
-    clearTimeout(nativeChatPollTimer);
-    nativeChatPollTimer = null;
+function stopNativeChatStreaming({ clear = false } = {}) {
+  nativeChatStreamToken += 1;
+  nativeChatHistoryInFlight = false;
+  if (nativeChatHistoryTimer) {
+    clearTimeout(nativeChatHistoryTimer);
+    nativeChatHistoryTimer = null;
+  }
+  if (nativeChatStream) {
+    nativeChatStream.close();
+    nativeChatStream = null;
   }
   nativeChatLoading = false;
   if (clear) clearNativeChatSnapshot();
 }
 
-async function pollNativeChat(projectPath, sessionId, token, delayMs = 0) {
-  if (nativeChatPollTimer) {
-    clearTimeout(nativeChatPollTimer);
-    nativeChatPollTimer = null;
+async function refreshNativeChatHistory(projectPath, sessionId, token) {
+  if (nativeChatHistoryInFlight) return;
+  nativeChatHistoryInFlight = true;
+  try {
+    const history = await invoke("agent_history", {
+      projectPath,
+      sessionId,
+      lastN: 20,
+    });
+    if (token !== nativeChatStreamToken) return;
+    nativeChatHistory = Array.isArray(history?.messages) ? history.messages : [];
+  } finally {
+    nativeChatHistoryInFlight = false;
   }
+}
 
-  nativeChatPollTimer = setTimeout(async () => {
-    if (token !== nativeChatPollToken) return;
-    if (nativeChatPollInFlight) {
-      if (token === nativeChatPollToken) {
-        void pollNativeChat(projectPath, sessionId, token, 150);
-      }
-      return;
-    }
+function scheduleNativeChatHistoryRefresh(projectPath, sessionId, token, delayMs = 0) {
+  if (nativeChatHistoryTimer) {
+    clearTimeout(nativeChatHistoryTimer);
+    nativeChatHistoryTimer = null;
+  }
+  nativeChatHistoryTimer = setTimeout(() => {
+    if (token !== nativeChatStreamToken) return;
+    void refreshNativeChatHistory(projectPath, sessionId, token);
+  }, delayMs);
+}
 
-    nativeChatPollInFlight = true;
-    try {
-      const result = await invoke("agent_read", {
+async function fetchNativeChatSnapshot(projectPath, sessionId, token) {
+  try {
+    const [result, history] = await Promise.all([
+      invoke("agent_read", {
         projectPath,
         sessionId,
         startLine: -120,
-      });
-      const history = await invoke("agent_history", {
+      }),
+      invoke("agent_history", {
         projectPath,
         sessionId,
         lastN: 20,
-      });
-      if (token !== nativeChatPollToken) return;
-      setNativeChatSnapshot(projectPath, sessionId, { ...result, history });
-      nativeChatLoading = false;
-    } catch (error) {
-      if (token !== nativeChatPollToken) return;
-      nativeChatError = String(error);
-      nativeChatLoading = false;
-    } finally {
-      nativeChatPollInFlight = false;
-      if (token === nativeChatPollToken) {
-        void pollNativeChat(projectPath, sessionId, token, 750);
-      }
+      }),
+    ]);
+    if (token !== nativeChatStreamToken) return;
+    setNativeChatSnapshot(projectPath, sessionId, { ...result, history });
+    nativeChatLoading = false;
+  } catch (error) {
+    if (token !== nativeChatStreamToken) return;
+    nativeChatError = String(error);
+    nativeChatLoading = false;
+  }
+}
+
+function startNativeChatStream(projectPath, sessionId, endpoint, token) {
+  if (!endpoint?.host || !endpoint?.port || typeof EventSource === "undefined") {
+    void fetchNativeChatSnapshot(projectPath, sessionId, token);
+    return;
+  }
+
+  if (nativeChatStream) {
+    nativeChatStream.close();
+    nativeChatStream = null;
+  }
+
+  const url = new URL(`http://${endpoint.host}:${endpoint.port}/agents/output/stream`);
+  url.searchParams.set("sessionId", sessionId);
+  url.searchParams.set("startLine", "-120");
+  url.searchParams.set("intervalMs", "250");
+
+  const stream = new EventSource(url.toString());
+  nativeChatStream = stream;
+
+  stream.addEventListener("ready", () => {
+    if (token !== nativeChatStreamToken) return;
+    scheduleNativeChatHistoryRefresh(projectPath, sessionId, token, 0);
+  });
+
+  stream.addEventListener("output", (event) => {
+    if (token !== nativeChatStreamToken) return;
+    const payload = JSON.parse(event.data || "{}");
+    setNativeChatSnapshot(projectPath, sessionId, {
+      output: payload.output,
+      parsed: payload.parsed,
+      history: { messages: nativeChatHistory },
+    });
+    nativeChatLoading = false;
+    scheduleNativeChatHistoryRefresh(projectPath, sessionId, token, 50);
+  });
+
+  stream.addEventListener("error", () => {
+    if (token !== nativeChatStreamToken) return;
+    if (!nativeChatOutput) {
+      void fetchNativeChatSnapshot(projectPath, sessionId, token);
     }
-  }, delayMs);
+  });
 }
 
 function syncNativeChatSelection({ preserveSnapshot = false } = {}) {
   if (interactionMode !== "native-chat") {
-    stopNativeChatPolling();
+    stopNativeChatStreaming();
     return;
   }
   if (!selectedProjectPath || !selectedSessionId) {
-    stopNativeChatPolling({ clear: true });
+    stopNativeChatStreaming({ clear: true });
     return;
   }
 
-  if (nativeChatPollTimer) {
-    clearTimeout(nativeChatPollTimer);
-    nativeChatPollTimer = null;
+  if (nativeChatHistoryTimer) {
+    clearTimeout(nativeChatHistoryTimer);
+    nativeChatHistoryTimer = null;
   }
-  nativeChatPollInFlight = false;
+  nativeChatHistoryInFlight = false;
   beginNativeChatSelection(selectedProjectPath, selectedSessionId, { preserveSnapshot });
-  nativeChatPollToken += 1;
-  const token = nativeChatPollToken;
-  void pollNativeChat(selectedProjectPath, selectedSessionId, token, 0);
+  nativeChatStreamToken += 1;
+  const token = nativeChatStreamToken;
+  const project = projects.find((p) => p.path === selectedProjectPath) || null;
+  startNativeChatStream(selectedProjectPath, selectedSessionId, project?.serviceEndpoint || null, token);
 }
 
 // ── State getters ─────────────────────────────────────────────────
@@ -501,6 +626,8 @@ export function getState() {
     get terminalStatus() { return terminalStatus; },
     get currentAction() { return currentAction; },
     get inFlightActions() { return inFlightActions; },
+    get currentAlert() { return currentAlert; },
+    get recentAlerts() { return recentAlerts; },
     get nativeChatOutput() { return nativeChatOutput; },
     get nativeChatBlocks() { return nativeChatBlocks; },
     get nativeChatHistory() { return nativeChatHistory; },
@@ -583,6 +710,7 @@ function onHeartbeat(event) {
   lastHeartbeatAt = Date.now();
   reconcileActions(incoming);
   projects = incoming;
+  syncProjectAlertStreams(projects);
 
   if (!selectedProjectPath && projects.length > 0) {
     selectedProjectPath = projects[0].path;
@@ -597,7 +725,7 @@ function onHeartbeat(event) {
     const sessionStillExists = (selectedProject?.sessions || []).some((session) => session.id === selectedSessionId);
     if (!sessionStillExists) {
       selectedSessionId = null;
-      stopNativeChatPolling({ clear: true });
+      stopNativeChatStreaming({ clear: true });
     }
   }
 }
@@ -621,6 +749,9 @@ export function stopHeartbeat() {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
   }
+  for (const [projectPath] of projectAlertStreams) {
+    stopProjectAlertStream(projectPath);
+  }
 }
 
 // ── Project / session selection ───────────────────────────────────
@@ -632,7 +763,7 @@ export async function selectProject(path) {
   }
   selectedProjectPath = path;
   selectedSessionId = null;
-  stopNativeChatPolling({ clear: true });
+  stopNativeChatStreaming({ clear: true });
 }
 
 export function selectSession(id) {

@@ -11,7 +11,7 @@ import {
   type SessionContextMetadata,
   type SessionServiceMetadata,
 } from "./metadata-store.js";
-import { notifyComplete, notifyPrompt } from "./notify.js";
+import { notifyAlert } from "./notify.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import {
@@ -228,6 +228,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
   res.setHeader("content-length", Buffer.byteLength(payload));
+  res.setHeader("access-control-allow-origin", "*");
   res.setHeader("connection", "close");
   res.end(payload);
 }
@@ -237,6 +238,7 @@ function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: 
   res.setHeader("content-type", mimeType);
   res.setHeader("content-length", body.byteLength);
   res.setHeader("cache-control", "private, max-age=31536000, immutable");
+  res.setHeader("access-control-allow-origin", "*");
   res.setHeader("connection", "close");
   res.end(body);
 }
@@ -251,9 +253,14 @@ export class MetadataServer {
   private port = 0;
   private tracker = new AgentTracker();
   private readonly eventBus: ProjectEventBus;
+  private unsubscribeAlertSink: (() => void) | null = null;
 
   constructor(private readonly options: MetadataServerOptions = {}) {
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
+    this.unsubscribeAlertSink = this.eventBus.subscribe((event) => {
+      if (event.type !== "alert") return;
+      notifyAlert(event);
+    });
   }
 
   async start(): Promise<void> {
@@ -275,6 +282,8 @@ export class MetadataServer {
   stop(): void {
     this.server?.close();
     this.server = null;
+    this.unsubscribeAlertSink?.();
+    this.unsubscribeAlertSink = null;
   }
 
   getAddress(): { host: string; port: number } | null {
@@ -324,6 +333,7 @@ export class MetadataServer {
       res.setHeader("cache-control", "no-cache, no-transform");
       res.setHeader("connection", "keep-alive");
       res.setHeader("x-accel-buffering", "no");
+      res.setHeader("access-control-allow-origin", "*");
       res.flushHeaders?.();
 
       let closed = false;
@@ -444,6 +454,7 @@ export class MetadataServer {
       res.setHeader("cache-control", "no-cache, no-transform");
       res.setHeader("connection", "keep-alive");
       res.setHeader("x-accel-buffering", "no");
+      res.setHeader("access-control-allow-origin", "*");
       res.flushHeaders?.();
 
       let closed = false;
@@ -660,8 +671,12 @@ export class MetadataServer {
 
       if (req.method === "POST" && url.pathname === "/notify") {
         const body = (await readJson(req)) as { title?: string; message?: string; kind?: string };
-        if (body.kind === "complete") notifyComplete(body.message ?? body.title ?? "aimux");
-        else notifyPrompt(body.message ?? body.title ?? "aimux");
+        this.emitAlert({
+          kind: body.kind === "complete" ? "task_done" : "needs_input",
+          title: body.title?.trim() || "aimux",
+          message: body.message?.trim() || body.title?.trim() || "aimux",
+          dedupeKey: body.kind === "complete" ? `notify:complete:${body.title ?? body.message ?? "aimux"}` : undefined,
+        });
         send(res, 200, { ok: true });
         return;
       }
