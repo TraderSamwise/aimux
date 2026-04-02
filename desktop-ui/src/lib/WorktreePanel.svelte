@@ -9,6 +9,10 @@
   let showNewWorktreeInput = $state(false);
   let newWorktreeName = $state("");
   let showSpawnMenu = $state(null);
+  let renameSessionId = $state(null);
+  let renameDraft = $state("");
+  let forkMenu = $state(null);
+  let migrateSessionId = $state(null);
   let errorMsg = $state(null);
 
   // Group sessions by worktree.
@@ -93,6 +97,7 @@
     if (agent.pending && agent.status === "starting") return "starting";
     if (agent.pending && agent.status === "stopping") return "stopping";
     if (agent.pending && agent.status === "killing") return "killing";
+    if (agent.pending && agent.status === "migrating") return "migrating";
     return agent.status || "idle";
   }
 
@@ -189,6 +194,128 @@
     }
   }
 
+  function availableWorktreeTargets(agent) {
+    const currentPath = agent.worktreePath || null;
+    return worktrees.filter((wt) => wt.path && wt.path !== currentPath && !wt.pending);
+  }
+
+  function closeAgentMenus() {
+    renameSessionId = null;
+    renameDraft = "";
+    forkMenu = null;
+    migrateSessionId = null;
+  }
+
+  function openRename(e, agent) {
+    e.stopPropagation();
+    renameSessionId = renameSessionId === agent.id ? null : agent.id;
+    renameDraft = agent.label || "";
+    forkMenu = null;
+    migrateSessionId = null;
+  }
+
+  function openFork(e, agent, defaultWorktreePath) {
+    e.stopPropagation();
+    const next =
+      forkMenu?.sessionId === agent.id
+        ? null
+        : {
+            sessionId: agent.id,
+            worktreePath: agent.worktreePath || defaultWorktreePath || null,
+          };
+    forkMenu = next;
+    renameSessionId = null;
+    migrateSessionId = null;
+  }
+
+  function openMigrate(e, agent) {
+    e.stopPropagation();
+    migrateSessionId = migrateSessionId === agent.id ? null : agent.id;
+    renameSessionId = null;
+    forkMenu = null;
+  }
+
+  async function forkAgent(agent, tool, worktreePath) {
+    const project = appState.selectedProject;
+    if (!project || isForkPending(agent.id)) return;
+    forkMenu = null;
+    try {
+      await trackAction(
+        {
+          kind: "fork",
+          message: `Forking ${agentLabel(agent)} to ${tool}...`,
+          projectPath: project.path,
+          sourceSessionId: agent.id,
+          tool,
+          worktreePath: worktreePath || null,
+          reconcile: (result) => ({ sessionId: result?.sessionId }),
+        },
+        () =>
+          invoke("agent_fork", {
+            projectPath: project.path,
+            sessionId: agent.id,
+            tool,
+            worktree: worktreePath || null,
+          }),
+      );
+    } catch (err) {
+      showError(`Fork failed: ${err}`);
+    }
+  }
+
+  async function renameAgent(agent) {
+    const project = appState.selectedProject;
+    if (!project || isRenamePending(agent.id)) return;
+    const label = renameDraft.trim();
+    try {
+      await trackAction(
+        {
+          kind: "rename",
+          message: `Renaming ${agentLabel(agent)}...`,
+          projectPath: project.path,
+          sessionId: agent.id,
+          label,
+          reconcile: () => ({ sessionId: agent.id }),
+        },
+        () =>
+          invoke("agent_rename", {
+            projectPath: project.path,
+            sessionId: agent.id,
+            label,
+          }),
+      );
+      closeAgentMenus();
+    } catch (err) {
+      showError(`Rename failed: ${err}`);
+    }
+  }
+
+  async function migrateAgent(agent, worktreePath) {
+    const project = appState.selectedProject;
+    if (!project || isMigratePending(agent.id)) return;
+    migrateSessionId = null;
+    try {
+      await trackAction(
+        {
+          kind: "migrate",
+          message: `Migrating ${agentLabel(agent)}...`,
+          projectPath: project.path,
+          sessionId: agent.id,
+          worktreePath,
+          reconcile: () => ({ sessionId: agent.id, worktreePath }),
+        },
+        () =>
+          invoke("agent_migrate", {
+            projectPath: project.path,
+            sessionId: agent.id,
+            worktree: worktreePath,
+          }),
+      );
+    } catch (err) {
+      showError(`Migrate failed: ${err}`);
+    }
+  }
+
   async function createWorktree() {
     const project = appState.selectedProject;
     const name = newWorktreeName.trim();
@@ -213,6 +340,30 @@
 
   function isAgentActionPending(sessionId) {
     return isActionPending({ projectPath: appState.selectedProject?.path, sessionId });
+  }
+
+  function isForkPending(sessionId) {
+    return isActionPending({
+      projectPath: appState.selectedProject?.path,
+      kind: "fork",
+      sourceSessionId: sessionId,
+    });
+  }
+
+  function isRenamePending(sessionId) {
+    return isActionPending({
+      projectPath: appState.selectedProject?.path,
+      kind: "rename",
+      sessionId,
+    });
+  }
+
+  function isMigratePending(sessionId) {
+    return isActionPending({
+      projectPath: appState.selectedProject?.path,
+      kind: "migrate",
+      sessionId,
+    });
   }
 
   function isSpawnPending(tool, worktreePath) {
@@ -321,32 +472,120 @@
               {#each wt.agents as agent (agent.id)}
                 {@const active = agent.id === appState.selectedSessionId}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
-                <div
-                  class="agent-row"
-                  class:active
-                  onclick={() => focusAgent(agent)}
-                  role="button"
-                  tabindex="0"
-                  title={agent.id}
-                >
-                  <span class="agent-dot" style="background: {statusDot(agent)}"></span>
-                  <span class="agent-label">{agentLabel(agent)}</span>
-                  {#if agent.role}
-                    <span class="agent-role">({agent.role})</span>
+                <div class="agent-block">
+                  <div
+                    class="agent-row"
+                    class:active
+                    onclick={() => focusAgent(agent)}
+                    role="button"
+                    tabindex="0"
+                    title={agent.id}
+                  >
+                    <span class="agent-dot" style="background: {statusDot(agent)}"></span>
+                    <span class="agent-label">{agentLabel(agent)}</span>
+                    {#if agent.role}
+                      <span class="agent-role">({agent.role})</span>
+                    {/if}
+                    <span class="agent-status">{agentStatusLabel(agent)}</span>
+                    <span class="agent-actions" class:visible={agent.pending || renameSessionId === agent.id || forkMenu?.sessionId === agent.id || migrateSessionId === agent.id}>
+                      {#if agent.status === "running"}
+                        <button class="agent-action" title="Fork" onclick={(e) => openFork(e, agent, wt.path)} disabled={isAgentActionPending(agent.id)}>
+                          ↗
+                        </button>
+                        <button class="agent-action" title="Rename" onclick={(e) => openRename(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                          ✎
+                        </button>
+                        <button class="agent-action" title="Migrate" onclick={(e) => openMigrate(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                          ⇄
+                        </button>
+                        <button class="agent-action" title="Stop" onclick={(e) => stopAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                          {isAgentActionPending(agent.id) ? "..." : "■"}
+                        </button>
+                      {/if}
+                      {#if !agent.pending}
+                        <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                          {isAgentActionPending(agent.id) ? "..." : "×"}
+                        </button>
+                      {/if}
+                    </span>
+                  </div>
+
+                  {#if renameSessionId === agent.id}
+                    <!-- svelte-ignore a11y_autofocus -->
+                    <div class="agent-inline" onclick={(e) => e.stopPropagation()}>
+                      <input
+                        class="agent-inline-input"
+                        bind:value={renameDraft}
+                        placeholder="agent label..."
+                        autofocus
+                        onkeydown={(e) => {
+                          if (e.key === "Enter") renameAgent(agent);
+                          if (e.key === "Escape") closeAgentMenus();
+                        }}
+                      />
+                      <button class="inline-chip confirm" onclick={() => renameAgent(agent)} disabled={isRenamePending(agent.id)}>
+                        {isRenamePending(agent.id) ? "saving..." : "save"}
+                      </button>
+                      <button class="inline-chip" onclick={closeAgentMenus}>cancel</button>
+                    </div>
                   {/if}
-                  <span class="agent-status">{agentStatusLabel(agent)}</span>
-                  <span class="agent-actions" class:visible={agent.pending}>
-                    {#if agent.status === "running"}
-                      <button class="agent-action" title="Stop" onclick={(e) => stopAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
-                        {isAgentActionPending(agent.id) ? "..." : "■"}
-                      </button>
-                    {/if}
-                    {#if !agent.pending}
-                      <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
-                        {isAgentActionPending(agent.id) ? "..." : "×"}
-                      </button>
-                    {/if}
-                  </span>
+
+                  {#if forkMenu?.sessionId === agent.id}
+                    <div class="agent-inline stacked" onclick={(e) => e.stopPropagation()}>
+                      <div class="inline-label">Fork into</div>
+                      <div class="inline-options">
+                        {#each availableWorktreeTargets(agent) as target}
+                          <button
+                            class="inline-chip"
+                            class:selected={forkMenu.worktreePath === target.path}
+                            onclick={() => { forkMenu = { ...forkMenu, worktreePath: target.path }; }}
+                          >
+                            {target.name}
+                          </button>
+                        {/each}
+                        <button
+                          class="inline-chip"
+                          class:selected={forkMenu.worktreePath === (agent.worktreePath || wt.path || null)}
+                          onclick={() => { forkMenu = { ...forkMenu, worktreePath: agent.worktreePath || wt.path || null }; }}
+                        >
+                          current
+                        </button>
+                      </div>
+                      <div class="inline-options">
+                        {#each tools as tool}
+                          <button
+                            class="inline-chip confirm"
+                            onclick={() => forkAgent(agent, tool, forkMenu.worktreePath)}
+                            disabled={isForkPending(agent.id)}
+                          >
+                            {isForkPending(agent.id) ? `forking ${tool}...` : `fork ${tool}`}
+                          </button>
+                        {/each}
+                        <button class="inline-chip" onclick={closeAgentMenus}>cancel</button>
+                      </div>
+                    </div>
+                  {/if}
+
+                  {#if migrateSessionId === agent.id}
+                    <div class="agent-inline stacked" onclick={(e) => e.stopPropagation()}>
+                      <div class="inline-label">Move to worktree</div>
+                      <div class="inline-options">
+                        {#each availableWorktreeTargets(agent) as target}
+                          <button
+                            class="inline-chip confirm"
+                            onclick={() => migrateAgent(agent, target.path)}
+                            disabled={isMigratePending(agent.id)}
+                          >
+                            {target.name}
+                          </button>
+                        {/each}
+                        {#if availableWorktreeTargets(agent).length === 0}
+                          <span class="inline-hint">No alternate worktrees.</span>
+                        {/if}
+                        <button class="inline-chip" onclick={closeAgentMenus}>cancel</button>
+                      </div>
+                    </div>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -571,6 +810,12 @@
     padding: 2px 0 0;
   }
 
+  .agent-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
   .agent-row {
     display: flex;
     align-items: center;
@@ -655,6 +900,77 @@
 
   .agent-action-kill:hover {
     color: var(--red);
+  }
+
+  .agent-inline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px 6px 32px;
+  }
+
+  .agent-inline.stacked {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .agent-inline-input {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    outline: none;
+  }
+
+  .agent-inline-input:focus {
+    border-color: var(--border-active);
+  }
+
+  .inline-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+  }
+
+  .inline-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .inline-chip {
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    transition: background 100ms, border-color 100ms, color 100ms;
+  }
+
+  .inline-chip:hover {
+    background: var(--bg-surface-hover);
+    border-color: var(--border-hover);
+    color: var(--text);
+  }
+
+  .inline-chip.selected,
+  .inline-chip.confirm {
+    border-color: rgba(125, 211, 252, 0.25);
+    background: rgba(56, 189, 248, 0.1);
+    color: var(--accent);
+  }
+
+  .inline-hint {
+    font-size: 11px;
+    color: var(--text-dim);
   }
 
   .empty {

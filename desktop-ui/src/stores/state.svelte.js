@@ -118,6 +118,49 @@ function reconcileActions(incomingProjects) {
       if (!exists) {
         finished.push(action.key);
       }
+      continue;
+    }
+
+    if (action.kind === "fork" && action.sessionId) {
+      if ((project.sessions || []).some((session) => session.id === action.sessionId)) {
+        finished.push(action.key);
+      }
+      continue;
+    }
+
+    if (action.kind === "rename" && action.sessionId) {
+      const session = (project.sessions || []).find((entry) => entry.id === action.sessionId);
+      if (!session) continue;
+      const nextLabel = action.label?.trim() || null;
+      const currentLabel = session.label?.trim() || null;
+      if (currentLabel === nextLabel) {
+        finished.push(action.key);
+      }
+      continue;
+    }
+
+    if (action.kind === "migrate" && action.sessionId && action.worktreePath) {
+      const session = (project.sessions || []).find((entry) => entry.id === action.sessionId);
+      if (!session) continue;
+      if ((session.worktreePath || null) === action.worktreePath) {
+        finished.push(action.key);
+      }
+      continue;
+    }
+
+    if (action.kind === "resurrect" && action.sessionId) {
+      const session = (project.sessions || []).find((entry) => entry.id === action.sessionId);
+      if (session?.status === "offline") {
+        finished.push(action.key);
+      }
+      continue;
+    }
+
+    if (action.kind === "remove-worktree" && action.worktreePath) {
+      const exists = (project.worktrees || []).some((worktree) => worktree.path === action.worktreePath);
+      if (!exists) {
+        finished.push(action.key);
+      }
     }
   }
 
@@ -146,6 +189,24 @@ function applyActionOverlays(project) {
   for (const action of actions) {
     if (action.kind === "spawn") {
       const pendingId = `pending-spawn:${action.key}`;
+      const pendingSession = {
+        id: pendingId,
+        tool: action.tool,
+        label: action.tool,
+        status: "starting",
+        pending: true,
+        worktreePath: action.worktreePath || null,
+      };
+      if (!next.sessions.some((session) => session.id === pendingId)) {
+        next.sessions = [pendingSession, ...next.sessions];
+      }
+      if (next.statusline && !next.statusline.sessions.some((session) => session.id === pendingId)) {
+        next.statusline.sessions = [pendingSession, ...next.statusline.sessions];
+      }
+    }
+
+    if (action.kind === "fork") {
+      const pendingId = `pending-fork:${action.key}`;
       const pendingSession = {
         id: pendingId,
         tool: action.tool,
@@ -198,6 +259,88 @@ function applyActionOverlays(project) {
             : session
         );
       }
+    }
+
+    if (action.kind === "rename" && action.sessionId) {
+      next.sessions = next.sessions.map((session) =>
+        session.id === action.sessionId
+          ? {
+              ...session,
+              label: action.label,
+              pending: true,
+              pendingAction: action.kind,
+            }
+          : session
+      );
+      if (next.statusline) {
+        next.statusline.sessions = next.statusline.sessions.map((session) =>
+          session.id === action.sessionId
+            ? {
+                ...session,
+                label: action.label,
+                pending: true,
+                pendingAction: action.kind,
+              }
+            : session
+        );
+      }
+    }
+
+    if (action.kind === "migrate" && action.sessionId) {
+      next.sessions = next.sessions.map((session) =>
+        session.id === action.sessionId
+          ? {
+              ...session,
+              pending: true,
+              pendingAction: action.kind,
+              status: "migrating",
+              worktreePath: action.worktreePath || session.worktreePath || null,
+            }
+          : session
+      );
+      if (next.statusline) {
+        next.statusline.sessions = next.statusline.sessions.map((session) =>
+          session.id === action.sessionId
+            ? {
+                ...session,
+                pending: true,
+                pendingAction: action.kind,
+                status: "migrating",
+                worktreePath: action.worktreePath || session.worktreePath || null,
+              }
+            : session
+        );
+      }
+    }
+
+    if (action.kind === "resurrect") {
+      const pendingSession = {
+        id: action.sessionId,
+        tool: action.tool,
+        label: action.label || action.tool || action.sessionId,
+        role: action.role,
+        status: "offline",
+        pending: true,
+        worktreePath: action.worktreePath || null,
+      };
+      if (!next.sessions.some((session) => session.id === action.sessionId)) {
+        next.sessions = [pendingSession, ...next.sessions];
+      }
+      if (next.statusline && !next.statusline.sessions.some((session) => session.id === action.sessionId)) {
+        next.statusline.sessions = [pendingSession, ...next.statusline.sessions];
+      }
+    }
+
+    if (action.kind === "remove-worktree" && action.worktreePath) {
+      next.worktrees = next.worktrees.map((worktree) =>
+        worktree.path === action.worktreePath
+          ? {
+              ...worktree,
+              pending: true,
+              removing: true,
+            }
+          : worktree
+      );
     }
   }
 
