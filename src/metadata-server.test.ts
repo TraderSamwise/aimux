@@ -359,6 +359,34 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"sessionId":"codex-1"');
   });
 
+  it("maps legacy notify calls onto the alert SSE stream", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"kind":"task_done"'));
+
+    const notifyRes = await fetch(`${base}/notify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "complete",
+        title: "claude-1 finished",
+        message: "Finished parser audit.",
+      }),
+    });
+    expect(notifyRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: alert");
+    expect(text).toContain('"kind":"task_done"');
+    expect(text).toContain('"message":"Finished parser audit."');
+  });
+
   it("passes submit intent with agent input over HTTP", async () => {
     server?.stop();
     const writes: Array<{ sessionId: string; data: string; submit?: boolean }> = [];

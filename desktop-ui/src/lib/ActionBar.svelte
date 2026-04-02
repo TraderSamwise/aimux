@@ -4,11 +4,22 @@
 
   let actions = $derived(appState.inFlightActions || []);
   let primaryAction = $derived(actions.length > 0 ? actions[actions.length - 1] : null);
+  let currentAlert = $derived(appState.currentAlert);
   let idle = $derived(!primaryAction);
   let controlPlane = $derived(appState.controlPlane || {});
   let daemonStatus = $derived(controlPlane.daemonStatus || "down");
   let projectStatus = $derived(controlPlane.projectStatus || "degraded");
   let projectSelected = $derived(Boolean(appState.selectedProject));
+  let alertKind = $derived(currentAlert?.kind || null);
+  let alertText = $derived.by(() => {
+    if (!currentAlert) return null;
+    const project = (appState.projects || []).find((entry) => entry.id === currentAlert.projectId);
+    const projectName = project?.name || null;
+    const sessionPart = currentAlert.sessionId ? `${currentAlert.sessionId}` : projectName;
+    return sessionPart
+      ? `${sessionPart} · ${currentAlert.message || currentAlert.title || currentAlert.kind}`
+      : (currentAlert.message || currentAlert.title || currentAlert.kind);
+  });
   let daemonButtonLabel = $derived.by(() => {
     if (daemonStatus === "ok") return "Daemon OK";
     return "Daemon Down · Restart";
@@ -28,7 +39,7 @@
   });
 </script>
 
-<div class="action-bar" class:idle>
+<div class="action-bar" class:idle class:alerting={!primaryAction && !!currentAlert} data-alert-kind={alertKind || ""}>
   <div class="action-main">
     {#if primaryAction}
       <span class="spinner"></span>
@@ -36,6 +47,9 @@
       {#if actions.length > 1}
         <span class="action-count">+{actions.length - 1}</span>
       {/if}
+    {:else if currentAlert}
+      <span class="alert-dot" aria-hidden="true"></span>
+      <span class="action-text alert-text">{alertText}</span>
     {:else}
       <span class="spinner ghost"></span>
       <span class="action-text idle-text">{controlHint || "Ready"}</span>
@@ -79,6 +93,22 @@
     border-top-color: rgba(148, 163, 184, 0.08);
   }
 
+  .action-bar.alerting {
+    background: rgba(251, 191, 36, 0.07);
+    border-top-color: rgba(251, 191, 36, 0.16);
+  }
+
+  .action-bar.alerting[data-alert-kind="task_done"] {
+    background: rgba(74, 222, 128, 0.07);
+    border-top-color: rgba(74, 222, 128, 0.18);
+  }
+
+  .action-bar.alerting[data-alert-kind="task_failed"],
+  .action-bar.alerting[data-alert-kind="blocked"] {
+    background: rgba(248, 113, 113, 0.08);
+    border-top-color: rgba(248, 113, 113, 0.18);
+  }
+
   .action-main {
     display: flex;
     align-items: center;
@@ -103,6 +133,39 @@
 
   .idle-text {
     color: var(--text-dim);
+  }
+
+  .alert-text {
+    color: rgba(255, 244, 214, 0.96);
+  }
+
+  .action-bar.alerting[data-alert-kind="task_done"] .alert-text {
+    color: rgba(220, 252, 231, 0.98);
+  }
+
+  .action-bar.alerting[data-alert-kind="task_failed"] .alert-text,
+  .action-bar.alerting[data-alert-kind="blocked"] .alert-text {
+    color: rgba(254, 226, 226, 0.98);
+  }
+
+  .alert-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: rgb(251, 191, 36);
+    box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.14);
+    flex-shrink: 0;
+  }
+
+  .action-bar.alerting[data-alert-kind="task_done"] .alert-dot {
+    background: rgb(74, 222, 128);
+    box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.14);
+  }
+
+  .action-bar.alerting[data-alert-kind="task_failed"] .alert-dot,
+  .action-bar.alerting[data-alert-kind="blocked"] .alert-dot {
+    background: rgb(248, 113, 113);
+    box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.14);
   }
 
   .action-count {

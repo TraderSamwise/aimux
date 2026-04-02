@@ -21,7 +21,6 @@ import {
 } from "./paths.js";
 import { debug, closeDebug } from "./debug.js";
 import { createWorktree, findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
-import { notifyPrompt, notifyComplete } from "./notify.js";
 import { type InstanceSessionRef } from "./instance-registry.js";
 import { TaskDispatcher, requestReview } from "./task-dispatcher.js";
 import { loadTeamConfig } from "./team.js";
@@ -70,7 +69,7 @@ import { parseAgentOutput, type ParsedAgentOutput } from "./agent-output-parser.
 import { serializeAgentInput, type AgentInputPart } from "./agent-message-parts.js";
 import { resolveAttachmentPath } from "./attachment-store.js";
 import { appendSessionMessage, readSessionMessages } from "./session-message-history.js";
-import { ProjectEventBus } from "./project-events.js";
+import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -243,6 +242,19 @@ export class Multiplexer {
     this.terminalHost = new TerminalHost();
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
+    this.eventBus.subscribe((event) => {
+      if (event.type !== "alert") return;
+      if (event.kind === "needs_input") {
+        this.footerFlash = `◉ ${event.sessionId ?? "agent"} needs input`;
+      } else if (event.kind === "blocked") {
+        this.footerFlash = `⧗ ${event.title}`;
+      } else if (event.kind === "task_done") {
+        this.footerFlash = `✓ ${event.title}`;
+      } else if (event.kind === "task_failed") {
+        this.footerFlash = `✗ ${event.title}`;
+      }
+      this.footerFlashTicks = 4;
+    });
   }
 
   get sessionCount(): number {
@@ -251,6 +263,20 @@ export class Multiplexer {
 
   get activeSession(): ManagedSession | null {
     return this.sessions[this.activeIndex] ?? null;
+  }
+
+  private publishAlert(input: {
+    kind: AlertKind;
+    sessionId?: string;
+    title: string;
+    message: string;
+    threadId?: string;
+    taskId?: string;
+    worktreePath?: string;
+    dedupeKey?: string;
+    cooldownMs?: number;
+  }): void {
+    this.eventBus.publishAlert(input);
   }
 
   private isTmuxBackend(): boolean {
@@ -763,8 +789,8 @@ export class Multiplexer {
     debug(`session exited: ${runtime.id} (code=${_code})`, "session");
 
     const uptime = runtime.startTime ? Date.now() - runtime.startTime : Infinity;
+    let errorHint = "";
     if (_code !== 0 && uptime < 10_000) {
-      let errorHint = "";
       const sessionCwd = this.sessionWorktreePaths.get(runtime.id);
       const searchDirs = [getProjectStateDir(), sessionCwd ? getAimuxDirFor(sessionCwd) : null].filter(
         Boolean,
@@ -791,7 +817,19 @@ export class Multiplexer {
       debug(`quick crash: ${runtime.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
     }
 
-    notifyComplete(runtime.id);
+    this.publishAlert({
+      kind: _code === 0 ? "task_done" : "task_failed",
+      sessionId: runtime.id,
+      title: _code === 0 ? `${runtime.id} finished` : `${runtime.id} failed`,
+      message:
+        _code === 0
+          ? "Agent exited successfully."
+          : errorHint
+            ? `Agent exited with code ${_code}${errorHint}`
+            : `Agent exited with code ${_code}.`,
+      dedupeKey: `${_code === 0 ? "exit-done" : "exit-failed"}:${runtime.id}`,
+      cooldownMs: 15_000,
+    });
     captureGitContext(runtime.id, runtime.command).catch(() => {});
 
     const idx = this.sessions.indexOf(runtime);
@@ -5863,7 +5901,14 @@ export class Multiplexer {
         const prev = this.prevStatuses.get(session.id);
         const curr = session.status;
         if (prev && prev !== curr && curr === "idle" && prev === "running") {
-          notifyPrompt(session.id);
+          this.publishAlert({
+            kind: "needs_input",
+            sessionId: session.id,
+            title: `${session.id} needs input`,
+            message: "Agent is waiting for input.",
+            dedupeKey: `idle-needs-input:${session.id}`,
+            cooldownMs: 15_000,
+          });
         }
         this.prevStatuses.set(session.id, curr);
       }

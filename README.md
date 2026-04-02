@@ -27,6 +27,7 @@ aimux uses `tmux` as its terminal runtime substrate. Each project gets its own m
 - **Fully config-driven** — all tool behavior (prompt detection, session capture, resume, compaction) is declarative config, not code
 - **Configurable** — global (`~/.aimux/config.json`) and project-level (`.aimux/config.json`) configuration with deep merge
 - **Notifications** — cross-platform notifications (macOS, Linux, Windows) when agents need attention or complete tasks
+- **Project event stream** — each project service exposes an SSE stream for ephemeral alerts and other live GUI/web events
 - **Custom instructions** — `~/AIMUX.md` (global) and `./AIMUX.md` (project) are injected into every agent's preamble
 
 ## Install
@@ -172,6 +173,13 @@ aimux host agent-read <sessionId> --start-line -80
 
 # Stream live pane output over SSE through the project service
 aimux host agent-stream <sessionId> --start-line -80 --interval-ms 250
+```
+
+Ephemeral project events:
+
+```bash
+# Subscribe to per-project alerts/events over SSE
+curl -N http://127.0.0.1:<project-service-port>/events
 ```
 
 These commands are additive control-plane helpers on top of the existing `aimux -> tmux -> codex/claude` runtime. They do not replace the native TUI path; they reuse the same session write path and tmux pane capture path through the project HTTP service.

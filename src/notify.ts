@@ -1,6 +1,7 @@
 import notifier from "node-notifier";
 import { loadConfig, type NotificationConfig } from "./config.js";
 import { debug } from "./debug.js";
+import type { AlertEvent } from "./project-events.js";
 
 let cachedConfig: NotificationConfig | null = null;
 
@@ -40,4 +41,15 @@ export function notifyError(sessionId: string, message?: string): void {
 export function notifyComplete(sessionId: string): void {
   if (!getNotifyConfig().onComplete) return;
   send("aimux", `${sessionId} finished`);
+}
+
+export function notifyAlert(event: AlertEvent): void {
+  const config = getNotifyConfig();
+  if (!config.enabled) return;
+
+  if (event.kind === "needs_input" && !config.onPrompt) return;
+  if (event.kind === "task_done" && !config.onComplete) return;
+  if ((event.kind === "task_failed" || event.kind === "blocked") && !config.onError) return;
+
+  send(event.title || "aimux", event.message || event.sessionId || event.kind);
 }

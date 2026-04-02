@@ -103,6 +103,7 @@ Desktop transport is now HTTP-first:
 
 - desktop uses daemon HTTP for project discovery and project-service discovery
 - desktop uses project-service HTTP for live project snapshots and awaited lifecycle actions
+- desktop uses project-service SSE for ephemeral live events such as alerts and streaming output
 - desktop should not poll by spawning CLI subprocesses for routine heartbeat state
 - desktop should treat `statusline.json` as a derived/debug artifact, not as its primary live API
 - desktop pending UI should remain active until heartbeat reconciles the expected state change
@@ -117,6 +118,7 @@ Desktop terminal control is tmux-client-first:
 
 Project-service HTTP now exposes the live orchestration surface, including:
 
+- `GET /events` (SSE project event stream)
 - `GET /workflow`
 - `GET /threads`
 - `GET /threads/:id`
