@@ -416,6 +416,10 @@ function splitTranscriptBlocks(output) {
     return (
       /^■\s?/.test(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
+      /^\*\s+[A-Z][A-Za-z-]+(?:\.\.\.|…)?$/.test(trimmed) ||
+      /^[╰└]\s*Tip:/i.test(trimmed) ||
+      /^Tip:\s/i.test(trimmed) ||
+      /(Plan Mode|default permission mode)/i.test(trimmed) ||
       /Conversation interrupted/i.test(trimmed) ||
       /\bWorking \(\d+s/.test(trimmed)
     );
@@ -428,7 +432,7 @@ function splitTranscriptBlocks(output) {
   };
   const stripPromptMarker = (line) => line.trimStart().replace(/^(›|>)\s?/, "");
   const stripResponseMarker = (line) => line.trimStart().replace(/^•\s?/, "");
-  const stripStatusMarker = (line) => line.trimStart().replace(/^■\s?/, "");
+  const stripStatusMarker = (line) => line.trimStart().replace(/^(■|\*\s+)\s?/, "");
 
   for (const line of lines) {
     const trimmed = line.trimEnd();
