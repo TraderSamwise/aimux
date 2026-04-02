@@ -27,7 +27,7 @@
       <button
         class="project-card"
         class:active
-        onclick={() => selectProject(project.path)}
+        onclick={() => void selectProject(project.path)}
       >
         <div class="project-name">{project.name}</div>
         <div class="project-path">{project.path.replace(/^\/Users\/[^/]+\//, "~/")}</div>

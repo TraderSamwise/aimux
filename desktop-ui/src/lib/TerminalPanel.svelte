@@ -1,14 +1,20 @@
 <script>
   import { onMount } from "svelte";
   import "@xterm/xterm/css/xterm.css";
-  import { createTerminal, getTerminal } from "./terminal-instance.svelte.js";
+  import { createTerminal } from "./terminal-instance.svelte.js";
   import { getState, resizeTerminal, writeTerminal } from "../stores/state.svelte.js";
+
+  export let visible = false;
 
   const state = getState();
   let containerEl;
+  let mountedTerminal = null;
+  let mountedFitAddon = null;
 
   onMount(() => {
     const { terminal, fitAddon } = createTerminal(containerEl);
+    mountedTerminal = terminal;
+    mountedFitAddon = fitAddon;
 
     terminal.writeln("\x1b[38;5;75mAimux Desktop Shell\x1b[0m");
     terminal.writeln("");
@@ -33,9 +39,17 @@
       terminal.dispose();
     };
   });
+
+  $effect(() => {
+    if (!visible || !mountedTerminal || !mountedFitAddon) return;
+    requestAnimationFrame(() => {
+      mountedFitAddon.fit();
+      resizeTerminal(mountedTerminal);
+    });
+  });
 </script>
 
-<section class="panel">
+<section class="panel" class:hidden={!visible}>
   <div class="panel-header">
     <span class="section-label">Terminal</span>
     <span class="status">{state.terminalStatus}</span>
@@ -49,6 +63,11 @@
     flex-direction: column;
     overflow: hidden;
     min-width: 0;
+  }
+
+  .panel.hidden {
+    visibility: hidden;
+    pointer-events: none;
   }
 
   .panel-header {

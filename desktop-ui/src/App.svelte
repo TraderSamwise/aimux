@@ -25,20 +25,24 @@
   <Sidebar />
   <main class="workspace">
     <WorkspaceHeader />
-    {#if selectedScreen === "dashboard"}
-      <div class="workspace-body">
+    <div class="workspace-stack">
+      <div class="workspace-body" class:active={selectedScreen === "dashboard"} class:inactive={selectedScreen !== "dashboard"}>
         <WorktreePanel />
-        <TerminalPanel />
+        <TerminalPanel visible={selectedScreen === "dashboard"} />
       </div>
-    {:else if selectedScreen === "activity"}
-      <ActivityPanel visible={true} />
-    {:else if selectedScreen === "threads"}
-      <ThreadsPanel visible={true} />
-    {:else if selectedScreen === "plans"}
-      <PlansPanel />
-    {:else if selectedScreen === "graveyard"}
-      <GraveyardPanel visible={true} />
-    {/if}
+
+      <div class="secondary-body" class:active={selectedScreen !== "dashboard"} class:inactive={selectedScreen === "dashboard"}>
+        {#if selectedScreen === "activity"}
+          <ActivityPanel visible={true} />
+        {:else if selectedScreen === "threads"}
+          <ThreadsPanel visible={true} />
+        {:else if selectedScreen === "plans"}
+          <PlansPanel />
+        {:else if selectedScreen === "graveyard"}
+          <GraveyardPanel visible={true} />
+        {/if}
+      </div>
+    </div>
     <StatusBar />
     <ActionBar />
   </main>
@@ -59,11 +63,35 @@
     overflow: hidden;
   }
 
+  .workspace-stack {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+  }
+
   .workspace-body {
     display: grid;
     grid-template-columns: 300px 1fr;
-    flex: 1;
+    position: absolute;
+    inset: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .secondary-body {
+    position: absolute;
+    inset: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .active {
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  .inactive {
+    visibility: hidden;
+    pointer-events: none;
   }
 </style>

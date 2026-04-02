@@ -413,7 +413,11 @@ export function stopHeartbeat() {
 
 // ── Project / session selection ───────────────────────────────────
 
-export function selectProject(path) {
+export async function selectProject(path) {
+  if (terminalProjectPath && terminalProjectPath !== path) {
+    await detachListeners();
+    await stopTerminalSession();
+  }
   selectedProjectPath = path;
   selectedSessionId = null;
 }
