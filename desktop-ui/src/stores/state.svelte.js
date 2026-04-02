@@ -43,8 +43,8 @@ const projectAlertStreams = new Map();
 let inFlightActions = $state([]);
 let currentAction = $state(null);
 
-const REQUIRED_PROJECT_SERVICE_CAPABILITIES = ["structuredAgentInput", "parsedAgentOutput", "attachments", "agentHistory"];
-const REQUIRED_PROJECT_SERVICE_API_VERSION = 2;
+const REQUIRED_PROJECT_SERVICE_CAPABILITIES = ["structuredAgentInput", "parsedAgentOutput", "attachments", "agentHistory", "chatEventStream"];
+const REQUIRED_PROJECT_SERVICE_API_VERSION = 3;
 
 function syncCurrentAction() {
   currentAction = inFlightActions.length > 0
@@ -586,6 +586,7 @@ function startNativeChatStream(projectPath, sessionId, endpoint, token) {
     if (token !== nativeChatStreamToken) return;
     nativeChatError = null;
     scheduleNativeChatHistoryRefresh(projectPath, sessionId, token, 0);
+    void fetchNativeChatSnapshot(projectPath, sessionId, token);
   });
 
   stream.addEventListener("agent_output", (event) => {

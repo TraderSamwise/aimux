@@ -50,12 +50,13 @@ import {
 } from "./attachment-store.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 
-export const PROJECT_SERVICE_API_VERSION = 2;
+export const PROJECT_SERVICE_API_VERSION = 3;
 export const PROJECT_SERVICE_CAPABILITIES = {
   structuredAgentInput: true,
   parsedAgentOutput: true,
   attachments: true,
   agentHistory: true,
+  chatEventStream: true,
 } as const;
 
 interface MetadataServerOptions {
