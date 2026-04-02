@@ -10,7 +10,6 @@ let selectedScreen = $state("dashboard");
 let terminalSessionId = $state(null);
 let terminalStatus = $state("Idle");
 let terminalProjectPath = $state(null);
-let pendingTerminalTrace = null;
 
 let unlistenOutput = null;
 let unlistenExit = null;
@@ -454,23 +453,6 @@ export async function runTerminal(terminal, projectPath, args, label) {
 
   unlistenOutput = await listen("terminal-output", (event) => {
     if (event.payload.sessionId !== terminalSessionId) return;
-    if (pendingTerminalTrace && pendingTerminalTrace.sessionId === terminalSessionId && !pendingTerminalTrace.firstOutputAt) {
-      pendingTerminalTrace.firstOutputAt = performance.now();
-      console.info("[desktop-terminal-trace:first-output]", {
-        kind: pendingTerminalTrace.kind,
-        label: pendingTerminalTrace.label,
-        sessionId: pendingTerminalTrace.targetSessionId,
-        invokeMs:
-          pendingTerminalTrace.invokeReturnedAt == null
-            ? null
-            : Math.round(pendingTerminalTrace.invokeReturnedAt - pendingTerminalTrace.startedAt),
-        postInvokeToOutputMs:
-          pendingTerminalTrace.invokeReturnedAt == null
-            ? null
-            : Math.round(pendingTerminalTrace.firstOutputAt - pendingTerminalTrace.invokeReturnedAt),
-        totalMs: Math.round(pendingTerminalTrace.firstOutputAt - pendingTerminalTrace.startedAt),
-      });
-    }
     terminal.write(event.payload.data);
   });
 
@@ -490,39 +472,18 @@ export async function runTerminal(terminal, projectPath, args, label) {
 }
 
 export async function focusTerminalAgent(terminal, projectPath, sessionId, label) {
-  const startedAt = performance.now();
   terminalStatus = label;
   if (terminalSessionId && terminalProjectPath === projectPath) {
-    pendingTerminalTrace = {
-      kind: "focus-agent",
-      label,
-      startedAt,
-      sessionId: terminalSessionId,
-      targetSessionId: sessionId,
-      invokeReturnedAt: null,
-      firstOutputAt: null,
-    };
     try {
       await invoke("focus_terminal_agent", {
         sessionId: terminalSessionId,
         projectPath,
         agentId: sessionId,
       });
-      pendingTerminalTrace.invokeReturnedAt = performance.now();
-      console.info("[desktop-terminal-trace:invoke-return]", {
-        kind: "focus-agent",
-        label,
-        sessionId,
-        ms: Math.round(pendingTerminalTrace.invokeReturnedAt - startedAt),
-      });
       return;
-    } catch (error) {
-      pendingTerminalTrace = null;
-      console.warn("[desktop-terminal-trace:invoke-error]", { kind: "focus-agent", label, sessionId, error: String(error) });
-    }
+    } catch {}
   }
 
-  pendingTerminalTrace = null;
   await runTerminal(
     terminal,
     projectPath,
@@ -532,41 +493,17 @@ export async function focusTerminalAgent(terminal, projectPath, sessionId, label
 }
 
 export async function openTerminalDashboard(terminal, projectPath, label) {
-  const startedAt = performance.now();
   terminalStatus = label;
   if (terminalSessionId && terminalProjectPath === projectPath) {
-    pendingTerminalTrace = {
-      kind: "focus-dashboard",
-      label,
-      startedAt,
-      sessionId: terminalSessionId,
-      targetSessionId: null,
-      invokeReturnedAt: null,
-      firstOutputAt: null,
-    };
     try {
       await invoke("focus_terminal_dashboard", {
         sessionId: terminalSessionId,
         projectPath,
       });
-      pendingTerminalTrace.invokeReturnedAt = performance.now();
-      console.info("[desktop-terminal-trace:invoke-return]", {
-        kind: "focus-dashboard",
-        label,
-        ms: Math.round(pendingTerminalTrace.invokeReturnedAt - startedAt),
-      });
       return;
-    } catch (error) {
-      pendingTerminalTrace = null;
-      console.warn("[desktop-terminal-trace:invoke-error]", {
-        kind: "focus-dashboard",
-        label,
-        error: String(error),
-      });
-    }
+    } catch {}
   }
 
-  pendingTerminalTrace = null;
   await runTerminal(
     terminal,
     projectPath,

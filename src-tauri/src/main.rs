@@ -391,6 +391,25 @@ fn pty_tty_path(master: &dyn MasterPty) -> Option<String> {
   None
 }
 
+fn tty_path_for_pid(pid: u32) -> Option<String> {
+  let output = Command::new("ps")
+    .args(["-o", "tty=", "-p", &pid.to_string()])
+    .env("PATH", shell_path())
+    .output()
+    .ok()?;
+  if !output.status.success() {
+    return None;
+  }
+  let tty = String::from_utf8_lossy(&output.stdout).trim().to_string();
+  if tty.is_empty() || tty == "?" || tty == "??" {
+    return None;
+  }
+  if tty.starts_with('/') {
+    return Some(tty);
+  }
+  Some(format!("/dev/{tty}"))
+}
+
 fn find_project_sessions(project_path: &str) -> Result<Vec<String>, String> {
   let output = tmux_output(&["list-sessions", "-F", "#{session_name}"], "tmux list sessions")?;
   let mut matches = Vec::new();
@@ -463,6 +482,22 @@ fn switch_tmux_client_to_window(client_tty: &str, window_id: &str) -> Result<(),
     "tmux switch client",
   )?;
   Ok(())
+}
+
+fn terminal_client_tty(session_id: u32, session: &TerminalSession) -> Result<String, String> {
+  if let Some(tty_path) = session.tty_path.clone() {
+    return Ok(tty_path);
+  }
+
+  let child_pid = session
+    .child
+    .lock()
+    .map_err(|_| "terminal child lock is poisoned".to_string())?
+    .process_id()
+    .ok_or_else(|| format!("terminal session {session_id} has no child pid"))?;
+
+  tty_path_for_pid(child_pid)
+    .ok_or_else(|| format!("terminal session {session_id} has no PTY tty path"))
 }
 
 // ── Heartbeat (background thread → event) ─────────────────────────
@@ -1045,7 +1080,6 @@ fn focus_terminal_agent(
   project_path: String,
   agent_id: String,
 ) -> Result<(), String> {
-  let started = Instant::now();
   let sessions = state
     .0
     .sessions
@@ -1064,25 +1098,9 @@ fn focus_terminal_agent(
     ));
   }
 
-  let client_tty = session
-    .tty_path
-    .clone()
-    .ok_or_else(|| format!("terminal session {} has no PTY tty path", session_id))?;
-  let located_at = Instant::now();
+  let client_tty = terminal_client_tty(session_id, &session)?;
   let window_id = find_window_for_session(&project_path, &agent_id)?;
-  let resolved_at = Instant::now();
-  switch_tmux_client_to_window(&client_tty, &window_id)?;
-  let finished_at = Instant::now();
-  eprintln!(
-    "[desktop-focus-agent] terminal_session={} agent={} lookup_ms={} resolve_ms={} switch_ms={} total_ms={}",
-    session_id,
-    agent_id,
-    located_at.duration_since(started).as_millis(),
-    resolved_at.duration_since(located_at).as_millis(),
-    finished_at.duration_since(resolved_at).as_millis(),
-    finished_at.duration_since(started).as_millis()
-  );
-  Ok(())
+  switch_tmux_client_to_window(&client_tty, &window_id)
 }
 
 #[tauri::command]
@@ -1091,7 +1109,6 @@ fn focus_terminal_dashboard(
   session_id: u32,
   project_path: String,
 ) -> Result<(), String> {
-  let started = Instant::now();
   let sessions = state
     .0
     .sessions
@@ -1110,24 +1127,9 @@ fn focus_terminal_dashboard(
     ));
   }
 
-  let client_tty = session
-    .tty_path
-    .clone()
-    .ok_or_else(|| format!("terminal session {} has no PTY tty path", session_id))?;
-  let located_at = Instant::now();
+  let client_tty = terminal_client_tty(session_id, &session)?;
   let window_id = find_dashboard_window(&project_path)?;
-  let resolved_at = Instant::now();
-  switch_tmux_client_to_window(&client_tty, &window_id)?;
-  let finished_at = Instant::now();
-  eprintln!(
-    "[desktop-focus-dashboard] terminal_session={} lookup_ms={} resolve_ms={} switch_ms={} total_ms={}",
-    session_id,
-    located_at.duration_since(started).as_millis(),
-    resolved_at.duration_since(located_at).as_millis(),
-    finished_at.duration_since(resolved_at).as_millis(),
-    finished_at.duration_since(started).as_millis()
-  );
-  Ok(())
+  switch_tmux_client_to_window(&client_tty, &window_id)
 }
 
 #[tauri::command]
