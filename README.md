@@ -95,6 +95,7 @@ Desktop/Tauri now talks to the live control plane directly:
 - daemon HTTP is used for project discovery / service discovery
 - project-service HTTP is used for live project state and awaited lifecycle actions
 - `statusline.json` remains a derived artifact for tmux/status/debugging, not the desktop's primary transport
+- desktop loading state should clear on heartbeat reconciliation of the expected state change, not on HTTP return alone
 
 Terminal clients are isolated from each other:
 
@@ -152,6 +153,7 @@ aimux desktop focus --project /abs/path/to/repo --session <sessionId>
 For desktop / GUI callers, prefer explicit `--project` usage instead of relying on launcher cwd.
 
 For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
+For desktop UI integration details, see [docs/desktop-ui-contract.md](docs/desktop-ui-contract.md).
 For the migration rationale, see [docs/global-control-plane-rfc.md](docs/global-control-plane-rfc.md).
 
 ## Tmux Compatibility

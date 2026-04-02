@@ -104,6 +104,7 @@ Desktop transport is now HTTP-first:
 - desktop uses project-service HTTP for live project snapshots and awaited lifecycle actions
 - desktop should not poll by spawning CLI subprocesses for routine heartbeat state
 - desktop should treat `statusline.json` as a derived/debug artifact, not as its primary live API
+- desktop pending UI should remain active until heartbeat reconciles the expected state change
 
 The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
 
@@ -189,3 +190,4 @@ Desktop should not:
 
 - [docs/global-control-plane-rfc.md](./global-control-plane-rfc.md) explains why the architecture changed.
 - [docs/project-host-model.md](./project-host-model.md) is historical only.
+- [docs/desktop-ui-contract.md](./desktop-ui-contract.md) is the desktop/Tauri UI integration contract.
