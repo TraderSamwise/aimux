@@ -114,3 +114,14 @@ export function sessionSemanticAttentionScore(semantic: SessionSemanticState): n
   if (semantic.activity === "done") return 1;
   return 0;
 }
+
+export function sessionSemanticCompactHint(semantic: SessionSemanticState): string | null {
+  if (semantic.attention === "error") return "error";
+  if (semantic.workflowState === "blocked" || semantic.attention === "blocked") return "blocked";
+  if (semantic.workflowState === "waiting_on_me" || semantic.availability === "needs_input") return "on you";
+  if (semantic.workflowState === "waiting_on_them") return "on them";
+  if (semantic.unreadCount > 0) return `${Math.min(semantic.unreadCount, 99)} unread`;
+  if (semantic.pendingDeliveryCount > 0) return `${Math.min(semantic.pendingDeliveryCount, 99)} pending`;
+  if (semantic.hasActiveTask && semantic.availability === "available") return "task";
+  return null;
+}

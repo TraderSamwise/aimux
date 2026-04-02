@@ -99,6 +99,26 @@
     if (agent.pending && agent.status === "stopping") return "stopping";
     if (agent.pending && agent.status === "killing") return "killing";
     if (agent.pending && agent.status === "migrating") return "migrating";
+    const semantic = agent.semantic || null;
+    if (semantic) {
+      let base = agent.status || "idle";
+      if (semantic.attention === "error") base = "error";
+      else if (semantic.workflowState === "blocked" || semantic.attention === "blocked") base = "blocked";
+      else if (semantic.activity === "done") base = "done";
+      else if (semantic.activity === "waiting") base = "waiting";
+      else if (semantic.activity === "running") base = "working";
+      else if (semantic.workflowState === "waiting_on_me" || semantic.availability === "needs_input") base = "needs input";
+      else if (agent.status === "running") base = "working";
+      else if (agent.status === "waiting") base = "thinking";
+
+      let hint = null;
+      if (semantic.workflowState === "waiting_on_me" || semantic.availability === "needs_input") hint = "on you";
+      else if (semantic.workflowState === "waiting_on_them") hint = "on them";
+      else if ((semantic.unreadCount ?? 0) > 0) hint = `${Math.min(semantic.unreadCount, 99)} unread`;
+      else if ((semantic.pendingDeliveryCount ?? 0) > 0) hint = `${Math.min(semantic.pendingDeliveryCount, 99)} pending`;
+
+      return hint && hint !== base ? `${base} · ${hint}` : base;
+    }
     return agent.status || "idle";
   }
 

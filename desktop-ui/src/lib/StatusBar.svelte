@@ -21,11 +21,16 @@
   // All sessions with merged metadata
   let sessions = $derived.by(() => {
     const sl = state.statusline;
-    if (!sl?.sessions) return [];
+    const daemonSessions = state.daemonSessions || [];
+    if (!sl?.sessions && daemonSessions.length === 0) return [];
     const meta = sl.metadata || {};
-    const merged = sl.sessions.map((s) => ({
+    const daemonById = new Map(daemonSessions.map((session) => [session.id, session]));
+    const source = sl?.sessions?.length ? sl.sessions : daemonSessions;
+    const merged = source.map((s) => ({
+      ...(daemonById.get(s.id) || {}),
       ...s,
       meta: meta[s.id] || null,
+      semantic: s.semantic || daemonById.get(s.id)?.semantic || null,
     }));
     if (currentWorktreePath == null) {
       return merged;
@@ -47,15 +52,29 @@
 
   const screens = ["dashboard", "activity", "threads", "plans", "graveyard"];
 
-  function badge(derived) {
-    if (!derived) return null;
-    if (derived.attention === "error") return { glyph: "\u2717", color: "var(--red)" };
-    if (derived.attention === "needs_input") return { glyph: "?", color: "var(--yellow)" };
-    if (derived.attention === "blocked") return { glyph: "!", color: "var(--red)" };
-    if ((derived.unseenCount ?? 0) > 0) return { glyph: String(Math.min(derived.unseenCount, 9)), color: "var(--accent)" };
-    if (derived.activity === "done") return { glyph: "\u2713", color: "var(--green)" };
-    if (derived.activity === "running") return { glyph: "\u21bb", color: "var(--green)" };
-    if (derived.activity === "waiting") return { glyph: "\u2026", color: "var(--yellow)" };
+  function badge(session) {
+    const derived = session?.meta?.derived || null;
+    const semantic = session?.semantic || null;
+    if (semantic?.attention === "error") return { glyph: "\u2717", color: "var(--red)" };
+    if (semantic?.workflowState === "blocked" || semantic?.attention === "blocked") return { glyph: "!", color: "var(--red)" };
+    if (semantic?.workflowState === "waiting_on_me" || semantic?.availability === "needs_input") return { glyph: "?", color: "var(--yellow)" };
+    const unread = semantic?.unreadCount ?? derived?.unseenCount ?? 0;
+    if (unread > 0) return { glyph: String(Math.min(unread, 9)), color: "var(--accent)" };
+    if (semantic?.activity === "done" || derived?.activity === "done") return { glyph: "\u2713", color: "var(--green)" };
+    if (semantic?.activity === "running" || derived?.activity === "running") return { glyph: "\u21bb", color: "var(--green)" };
+    if (semantic?.activity === "waiting" || derived?.activity === "waiting") return { glyph: "\u2026", color: "var(--yellow)" };
+    return null;
+  }
+
+  function compactHint(session) {
+    const semantic = session?.semantic || null;
+    if (!semantic) return null;
+    if (semantic.attention === "error") return "error";
+    if (semantic.workflowState === "blocked" || semantic.attention === "blocked") return "blocked";
+    if (semantic.workflowState === "waiting_on_me" || semantic.availability === "needs_input") return "on you";
+    if (semantic.workflowState === "waiting_on_them") return "on them";
+    if ((semantic.unreadCount ?? 0) > 0) return `${Math.min(semantic.unreadCount, 99)} unread`;
+    if ((semantic.pendingDeliveryCount ?? 0) > 0) return `${Math.min(semantic.pendingDeliveryCount, 99)} pending`;
     return null;
   }
 
@@ -93,7 +112,7 @@
     <div class="bar-row bar-chips">
       <div class="chips">
         {#each sessions as session (session.id)}
-          {@const b = badge(session.meta?.derived)}
+          {@const b = badge(session)}
           {@const active = session.id === state.selectedSessionId}
           <button
             class="chip"
@@ -104,6 +123,9 @@
             <span class="chip-label">{chipLabel(session)}</span>
             {#if session.role}
               <span class="chip-role">{session.role}</span>
+            {/if}
+            {#if compactHint(session)}
+              <span class="chip-hint">{compactHint(session)}</span>
             {/if}
             {#if b}
               <span class="chip-badge" style="color: {b.color}">{b.glyph}</span>
@@ -208,6 +230,11 @@
   }
 
   .chip-role {
+    color: var(--text-dim);
+    font-size: 10px;
+  }
+
+  .chip-hint {
     color: var(--text-dim);
     font-size: 10px;
   }

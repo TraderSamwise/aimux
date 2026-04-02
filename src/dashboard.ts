@@ -2,7 +2,7 @@ import type { SessionStatus } from "./status-detector.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import type { SessionServiceMetadata } from "./metadata-store.js";
 import type { SessionSemanticState } from "./session-semantics.js";
-import { sessionSemanticStatusLabel } from "./session-semantics.js";
+import { sessionSemanticCompactHint, sessionSemanticStatusLabel } from "./session-semantics.js";
 
 export type DashboardSessionStatus = SessionStatus;
 
@@ -256,10 +256,14 @@ export class Dashboard {
 
     const icon = STATUS_ICONS[session.status];
     const statusLabel = derivedStatusLabel(session);
+    const compactHint =
+      session.semantic && sessionSemanticCompactHint(session.semantic) !== statusLabel
+        ? ` \x1b[2m· ${sessionSemanticCompactHint(session.semantic)}\x1b[0m`
+        : "";
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${marker}`;
+    return `${indent}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {

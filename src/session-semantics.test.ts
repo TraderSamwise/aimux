@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveSessionSemantics,
+  sessionSemanticCompactHint,
   sessionSemanticAttentionScore,
   sessionSemanticStatusLabel,
 } from "./session-semantics.js";
@@ -40,5 +41,27 @@ describe("session semantics", () => {
     expect(semantic.availability).toBe("available");
     expect(semantic.workflowState).toBe("none");
     expect(sessionSemanticAttentionScore(semantic)).toBe(0);
+  });
+
+  it("produces compact hints for waiting-on-me and unread semantics", () => {
+    expect(
+      sessionSemanticCompactHint(
+        deriveSessionSemantics({
+          status: "idle",
+          attention: "normal",
+          workflowOnMeCount: 1,
+        }),
+      ),
+    ).toBe("on you");
+
+    expect(
+      sessionSemanticCompactHint(
+        deriveSessionSemantics({
+          status: "idle",
+          attention: "normal",
+          unseenCount: 3,
+        }),
+      ),
+    ).toBe("3 unread");
   });
 });
