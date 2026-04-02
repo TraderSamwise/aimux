@@ -551,6 +551,23 @@ function scheduleNativeChatReconnect(projectPath, sessionId, endpoint, token, de
   }, delayMs);
 }
 
+function supportsChatEventStream(serviceInfo) {
+  return Boolean(serviceInfo?.capabilities?.chatEventStream);
+}
+
+function buildNativeChatStreamUrl(endpoint, sessionId, serviceInfo) {
+  if (!endpoint?.host || !endpoint?.port) return null;
+  const url = new URL(
+    supportsChatEventStream(serviceInfo)
+      ? `http://${endpoint.host}:${endpoint.port}/events`
+      : `http://${endpoint.host}:${endpoint.port}/agents/output/stream`,
+  );
+  url.searchParams.set("sessionId", sessionId);
+  url.searchParams.set("startLine", "-120");
+  url.searchParams.set("intervalMs", "250");
+  return url.toString();
+}
+
 async function fetchNativeChatSnapshot(projectPath, sessionId, token) {
   try {
     const [result, history] = await Promise.all([
@@ -575,7 +592,7 @@ async function fetchNativeChatSnapshot(projectPath, sessionId, token) {
   }
 }
 
-function startNativeChatStream(projectPath, sessionId, endpoint, token) {
+function startNativeChatStream(projectPath, sessionId, endpoint, serviceInfo, token) {
   if (!endpoint?.host || !endpoint?.port || typeof EventSource === "undefined") {
     void fetchNativeChatSnapshot(projectPath, sessionId, token);
     return;
@@ -590,12 +607,12 @@ function startNativeChatStream(projectPath, sessionId, endpoint, token) {
     nativeChatReconnectTimer = null;
   }
 
-  const url = new URL(`http://${endpoint.host}:${endpoint.port}/events`);
-  url.searchParams.set("sessionId", sessionId);
-  url.searchParams.set("startLine", "-120");
-  url.searchParams.set("intervalMs", "250");
-
-  const stream = new EventSource(url.toString());
+  const streamUrl = buildNativeChatStreamUrl(endpoint, sessionId, serviceInfo);
+  if (!streamUrl) {
+    void fetchNativeChatSnapshot(projectPath, sessionId, token);
+    return;
+  }
+  const stream = new EventSource(streamUrl);
   nativeChatStream = stream;
   startNativeChatResync(projectPath, sessionId, token, 1000);
 
@@ -606,7 +623,7 @@ function startNativeChatStream(projectPath, sessionId, endpoint, token) {
     void fetchNativeChatSnapshot(projectPath, sessionId, token);
   });
 
-  stream.addEventListener("agent_output", (event) => {
+  const handleOutput = (event) => {
     if (token !== nativeChatStreamToken) return;
     const payload = JSON.parse(event.data || "{}");
     setNativeChatSnapshot(projectPath, sessionId, {
@@ -615,18 +632,25 @@ function startNativeChatStream(projectPath, sessionId, endpoint, token) {
       history: { messages: nativeChatHistory },
     });
     nativeChatLoading = false;
-  });
+    if (!supportsChatEventStream(serviceInfo)) {
+      scheduleNativeChatHistoryRefresh(projectPath, sessionId, token, 50);
+    }
+  };
 
-  stream.addEventListener("history_update", (event) => {
-    if (token !== nativeChatStreamToken) return;
-    const payload = JSON.parse(event.data || "{}");
-    setNativeChatSnapshot(projectPath, sessionId, {
-      output: nativeChatOutput,
-      parsed: { blocks: nativeChatBlocks },
-      history: { messages: Array.isArray(payload.messages) ? payload.messages : [] },
+  stream.addEventListener(supportsChatEventStream(serviceInfo) ? "agent_output" : "output", handleOutput);
+
+  if (supportsChatEventStream(serviceInfo)) {
+    stream.addEventListener("history_update", (event) => {
+      if (token !== nativeChatStreamToken) return;
+      const payload = JSON.parse(event.data || "{}");
+      setNativeChatSnapshot(projectPath, sessionId, {
+        output: nativeChatOutput,
+        parsed: { blocks: nativeChatBlocks },
+        history: { messages: Array.isArray(payload.messages) ? payload.messages : [] },
+      });
+      nativeChatLoading = false;
     });
-    nativeChatLoading = false;
-  });
+  }
 
   stream.addEventListener("error", () => {
     if (token !== nativeChatStreamToken) return;
@@ -660,7 +684,13 @@ function syncNativeChatSelection({ preserveSnapshot = false } = {}) {
   nativeChatStreamToken += 1;
   const token = nativeChatStreamToken;
   const project = projects.find((p) => p.path === selectedProjectPath) || null;
-  startNativeChatStream(selectedProjectPath, selectedSessionId, project?.serviceEndpoint || null, token);
+  startNativeChatStream(
+    selectedProjectPath,
+    selectedSessionId,
+    project?.serviceEndpoint || null,
+    project?.serviceInfo || null,
+    token,
+  );
 }
 
 // ── State getters ─────────────────────────────────────────────────
@@ -785,10 +815,7 @@ function onHeartbeat(event) {
 
     if (interactionMode === "native-chat") {
       const endpoint = selectedProject?.serviceEndpoint || null;
-      const desiredUrl =
-        endpoint?.host && endpoint?.port
-          ? `http://${endpoint.host}:${endpoint.port}/events?sessionId=${selectedSessionId}&startLine=-120&intervalMs=250`
-          : null;
+      const desiredUrl = buildNativeChatStreamUrl(endpoint, selectedSessionId, selectedProject?.serviceInfo || null);
       if (!desiredUrl && nativeChatStream) {
         syncNativeChatSelection({ preserveSnapshot: true });
       } else if (desiredUrl && nativeChatStream?.url !== desiredUrl) {
