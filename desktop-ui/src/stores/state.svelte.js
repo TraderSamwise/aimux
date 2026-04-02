@@ -760,23 +760,29 @@ function normalizeNativeChatDraftParts(parts) {
     }
   }
 
-  if (next.length === 0 || next[0]?.type !== "text") {
-    next.unshift(createNativeChatTextPart(""));
-  }
-  if (next[next.length - 1]?.type !== "text") {
-    next.push(createNativeChatTextPart(""));
-  }
-
-  const normalized = [];
-  for (const part of next) {
-    normalized.push(part);
-    if (part.type === "image") {
-      normalized.push(createNativeChatTextPart(""));
+  const withTextBoundaries = [];
+  for (let index = 0; index < next.length; index += 1) {
+    const part = next[index];
+    const previousPart = withTextBoundaries[withTextBoundaries.length - 1];
+    if (part.type === "image" && previousPart?.type !== "text") {
+      withTextBoundaries.push(createNativeChatTextPart(""));
+    }
+    withTextBoundaries.push(part);
+    const followingPart = next[index + 1];
+    if (part.type === "image" && followingPart?.type !== "text") {
+      withTextBoundaries.push(createNativeChatTextPart(""));
     }
   }
 
+  if (withTextBoundaries.length === 0 || withTextBoundaries[0]?.type !== "text") {
+    withTextBoundaries.unshift(createNativeChatTextPart(""));
+  }
+  if (withTextBoundaries[withTextBoundaries.length - 1]?.type !== "text") {
+    withTextBoundaries.push(createNativeChatTextPart(""));
+  }
+
   const deduped = [];
-  for (const part of normalized) {
+  for (const part of withTextBoundaries) {
     if (part.type === "text" && deduped[deduped.length - 1]?.type === "text") {
       deduped[deduped.length - 1] = {
         ...deduped[deduped.length - 1],
