@@ -69,6 +69,7 @@ That project service owns the project-scoped sidecars:
 - `MetadataServer`
 - `PluginRuntime`
 - project `statusline.json` writing
+- project-scoped orchestration and workflow APIs
 
 This is not an elected lease anymore.
 
@@ -107,6 +108,26 @@ Desktop transport is now HTTP-first:
 - desktop pending UI should remain active until heartbeat reconciles the expected state change
 - desktop secondary screens may call project-service HTTP directly for workflow, threads, and graveyard views
 - desktop orchestration actions should also go directly through project-service HTTP, not CLI wrappers
+
+Project-service HTTP now exposes the live orchestration surface, including:
+
+- `GET /workflow`
+- `GET /threads`
+- `GET /threads/:id`
+- `POST /threads/open`
+- `POST /threads/send`
+- `POST /threads/mark-seen`
+- `POST /threads/status`
+- `POST /handoff`
+- `POST /handoff/accept`
+- `POST /handoff/complete`
+- `POST /tasks/assign`
+- `POST /tasks/accept`
+- `POST /tasks/block`
+- `POST /tasks/complete`
+- `POST /tasks/reopen`
+- `POST /reviews/approve`
+- `POST /reviews/request-changes`
 
 The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
 
@@ -181,6 +202,7 @@ Desktop should be designed around:
 - tmux as runtime authority
 - daemon/project-service HTTP as the primary desktop transport
 - explicit desktop screens for dashboard, activity, threads, plans, and graveyard
+- explicit workflow-aware orchestration screens and actions on top of project-service HTTP
 
 Desktop should not:
 

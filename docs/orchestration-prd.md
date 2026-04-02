@@ -2,23 +2,31 @@
 
 ## Status
 
-In progress.
+Mostly implemented.
 
 Implemented so far:
 
 - durable thread/message storage under `.aimux/threads/`
 - thread inbox/dashboard screen
 - direct messaging, handoff, and task-assignment CLI verbs
-- host API endpoints for threads, handoffs, and task assignment
+- project-service API endpoints for threads, handoffs, task assignment, and workflow actions
 - durable message delivery when recipients are busy
 - dashboard-native orchestration actions and quick reply/jump flows
 - routing by explicit session, role, tool, and worktree
+- fan-out routing to all matching recipients
+- workflow screen with grouped task/review/revision families
+- explicit handoff accept/complete lifecycle
+- explicit task accept/block/complete/reopen lifecycle
+- explicit review approve/request-changes lifecycle
+- workflow filters for actionable states
+- main-dashboard workflow pressure badges and next-action hints
 
 Still open:
 
 - richer automation on top of the current verbs
-- clearer dependency-graph views beyond per-thread/per-session summaries
-- higher-level workflow primitives above direct send/handoff/assign
+- suggestions / auto-routing on top of the current workflow model
+- richer dependency-graph views beyond workflow families
+- desktop/UI polish on top of the shipped project-service surface
 
 ## Summary
 
@@ -38,7 +46,7 @@ What it did not yet have at the start of this PRD was a true orchestration layer
 - durable coordination primitives above raw task files
 - clear UI for "who is waiting on whom" and "what needs my attention"
 
-This PRD defines that orchestration layer.
+This PRD defined that orchestration layer. Most of the original Phase 1 and Phase 2 goals are now shipped; the remaining work is primarily higher-level automation and visibility polish.
 
 ## Problem
 

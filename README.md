@@ -19,6 +19,8 @@ aimux uses `tmux` as its terminal runtime substrate. Each project gets its own m
 - **Task delegation** — agents can delegate work to each other via `.aimux/tasks/`, with automatic dispatch, completion notifications, and dashboard badges
 - **Threaded orchestration** — direct messages, handoffs, and task assignment all flow through durable `.aimux/threads/` state with queued delivery when recipients are busy
 - **Dashboard orchestration actions** — from the main dashboard, use `S` to send a message, `H` to send a handoff, `T` to assign a task, `o` to jump to the most relevant thread, and `R` to reply when something is waiting on you
+- **Workflow view** — a dedicated workflow screen groups related task/review/revision chains, supports actionable filters, and exposes explicit accept/block/complete/reopen/review controls
+- **Next-action guidance** — dashboard rows and details surface `on me`, `blocked`, family-chain pressure, and the single most relevant next orchestration step
 - **Context sharing** — agents can read each other's conversation history via `.aimux/context/`
 - **Session resume** — resume previous sessions using each tool's native resume (`--resume`) or injected history (`--restore`)
 - **Git worktree support** — first-class worktree management for parallel feature work, with per-worktree agent isolation
@@ -122,6 +124,14 @@ Orchestration commands:
 aimux message send "Need UI review on the login flow" --assignee ui --worktree /abs/path/to/worktree
 aimux handoff send "Take over the sidebar polish from here" --tool claude
 aimux task assign "Audit the websocket reconnect path" --assignee reviewer
+aimux handoff accept <threadId>
+aimux handoff complete <threadId>
+aimux task accept <taskId>
+aimux task block <taskId> --reason "Waiting on API decision"
+aimux task complete <taskId>
+aimux task reopen <taskId>
+aimux review approve <taskId>
+aimux review request-changes <taskId> --body "Handle reconnect backoff edge cases"
 aimux thread list
 ```
 
@@ -158,8 +168,9 @@ The desktop app now exposes these flows directly over daemon/project-service HTT
 - spawn, fork, rename, migrate, stop, kill
 - graveyard browse + resurrect
 - worktree create + remove
-- activity, threads, plans, and graveyard secondary screens
+- activity, workflow, threads, plans, and graveyard secondary screens
 - direct message compose, handoff send/accept/complete, and task/review workflow actions
+- thread state updates and per-message delivery visibility
 
 For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
 For desktop UI integration details, see [docs/desktop-ui-contract.md](docs/desktop-ui-contract.md).
@@ -215,6 +226,29 @@ Dashboard hotkeys use the `Ctrl+A` leader prefix:
 | `Ctrl+A Ctrl+A` | Send literal Ctrl+A inside the dashboard |
 
 When you are inside an agent window, tmux owns the terminal. Use normal tmux window navigation or run `aimux` again to return to the dashboard window.
+
+Main dashboard orchestration shortcuts:
+
+| Key | Action |
+|---|---|
+| `S` | Send direct message from the selected agent row |
+| `H` | Send handoff from the selected agent row |
+| `T` | Assign task from the selected agent row |
+| `o` | Jump to the most relevant thread for the selected agent |
+| `R` | Open quick reply when that agent has something waiting on you |
+
+Workflow screen shortcuts:
+
+| Key | Action |
+|---|---|
+| `f` | Cycle workflow filters: all / waiting on me / blocked / families |
+| `a` | Accept selected handoff |
+| `c` | Complete selected handoff |
+| `b` | Mark selected thread blocked |
+| `x` | Mark selected thread done |
+| `P` | Approve selected review |
+| `J` | Request changes on selected review |
+| `E` | Reopen selected task chain |
 
 Recommended tmux mental model:
 
