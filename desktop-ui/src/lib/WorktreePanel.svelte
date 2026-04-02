@@ -19,11 +19,28 @@
     const sl = appState.statusline;
     const slSessions = sl?.sessions ?? [];
     const meta = sl?.metadata ?? {};
+    const listedWorktrees = appState.worktreeList ?? [];
+    const pendingActions = (appState.inFlightActions ?? []).filter(
+      (action) => action.projectPath === appState.selectedProject?.path,
+    );
 
     // Build a lookup from statusline sessions for enrichment
     const slById = new Map(slSessions.map((s) => [s.id, s]));
 
     const groups = new Map();
+    const orderedKeys = [];
+
+    function ensureGroup(key, build) {
+      if (!groups.has(key)) {
+        groups.set(key, build());
+        orderedKeys.push(key);
+      }
+      return groups.get(key);
+    }
+
+    for (const wt of listedWorktrees) {
+      ensureGroup(wt.path, () => ({ path: wt.path, name: wt.name, branch: wt.branch, agents: [] }));
+    }
 
     for (const s of daemonSessions) {
       const slData = slById.get(s.id);
@@ -34,11 +51,9 @@
       const branch = ctx?.branch || null;
       const key = wtPath || "__unassigned__";
 
-      if (!groups.has(key)) {
-        groups.set(key, { path: wtPath, name: wtName || "Unassigned", branch, agents: [] });
-      }
-      const group = groups.get(key);
+      const group = ensureGroup(key, () => ({ path: wtPath, name: wtName || "Unassigned", branch, agents: [] }));
       if (branch && !group.branch) group.branch = branch;
+      if (wtName && (!group.name || group.name === "Unassigned")) group.name = wtName;
 
       // Merge daemon + statusline + metadata
       group.agents.push({
@@ -49,23 +64,46 @@
       });
     }
 
-    // Merge in worktrees from worktree list that have no agents yet
-    for (const wt of appState.worktreeList) {
-      if (!groups.has(wt.path)) {
-        groups.set(wt.path, { path: wt.path, name: wt.name, branch: wt.branch, agents: [] });
+    for (const action of pendingActions) {
+      if (action.kind === "spawn") {
+        const wtPath = action.worktreePath || null;
+        const key = wtPath || "__unassigned__";
+        const listed = wtPath ? listedWorktrees.find((wt) => wt.path === wtPath) : null;
+        const group = ensureGroup(key, () => ({
+          path: wtPath,
+          name: listed?.name || (wtPath ? wtPath.split("/").pop() : "Unassigned"),
+          branch: listed?.branch || null,
+          agents: [],
+        }));
+        group.agents.unshift({
+          id: `pending-spawn:${action.key}`,
+          tool: action.tool,
+          label: action.tool,
+          status: "starting",
+          pending: true,
+          worktreePath: wtPath,
+        });
+      }
+      if (action.kind === "create-worktree") {
+        const key = `pending-worktree:${action.key}`;
+        ensureGroup(key, () => ({
+          path: null,
+          name: action.worktreeName,
+          branch: "creating",
+          agents: [],
+          pending: true,
+        }));
       }
     }
 
-    const result = [...groups.values()];
+    const result = orderedKeys.map((key) => groups.get(key));
 
     return result.sort((a, b) => {
-      // Unassigned always last
-      if (a.path === null && b.path !== null) return 1;
-      if (b.path === null && a.path !== null) return -1;
-      const aLive = a.agents.some((ag) => ag.status === "running");
-      const bLive = b.agents.some((ag) => ag.status === "running");
-      if (aLive !== bLive) return aLive ? -1 : 1;
-      return a.name.localeCompare(b.name);
+      if (Boolean(a.pending) !== Boolean(b.pending)) return a.pending ? 1 : -1;
+      const aUnassigned = a.path === null;
+      const bUnassigned = b.path === null;
+      if (aUnassigned !== bUnassigned) return aUnassigned ? 1 : -1;
+      return 0;
     });
   });
 
@@ -82,6 +120,11 @@
 
   function agentLabel(agent) {
     return agent.label || agent.tool || agent.id;
+  }
+
+  function agentStatusLabel(agent) {
+    if (agent.pending && agent.status === "starting") return "starting";
+    return agent.status || "idle";
   }
 
   function showError(raw) {
@@ -282,10 +325,11 @@
               <button
                 class="wt-action"
                 title="Spawn agent in this worktree"
+                disabled={Boolean(wt.pending)}
                 onclick={() => { showSpawnMenu = showSpawnMenu === wt.path ? null : wt.path; }}
               >+</button>
             {:else}
-              <span class="worktree-name dim">Pending assignment...</span>
+              <span class="worktree-name dim">{wt.pending ? `${wt.name}...` : "Pending assignment..."}</span>
             {/if}
           </div>
 
@@ -317,16 +361,18 @@
                   {#if agent.role}
                     <span class="agent-role">({agent.role})</span>
                   {/if}
-                  <span class="agent-status">{agent.status || "idle"}</span>
-                  <span class="agent-actions">
+                  <span class="agent-status">{agentStatusLabel(agent)}</span>
+                  <span class="agent-actions" class:visible={agent.pending}>
                     {#if agent.status === "running"}
                       <button class="agent-action" title="Stop" onclick={(e) => stopAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
                         {isAgentActionPending(agent.id) ? "..." : "■"}
                       </button>
                     {/if}
-                    <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
-                      {isAgentActionPending(agent.id) ? "..." : "×"}
-                    </button>
+                    {#if !agent.pending}
+                      <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                        {isAgentActionPending(agent.id) ? "..." : "×"}
+                      </button>
+                    {/if}
                   </span>
                 </div>
               {/each}
@@ -535,6 +581,16 @@
     color: var(--text);
   }
 
+  .wt-action:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .wt-action:disabled:hover {
+    background: transparent;
+    color: var(--text-dim);
+  }
+
   .agent-list {
     display: flex;
     flex-direction: column;
@@ -595,6 +651,10 @@
   }
 
   .agent-row:hover .agent-actions {
+    opacity: 1;
+  }
+
+  .agent-actions.visible {
     opacity: 1;
   }
 
