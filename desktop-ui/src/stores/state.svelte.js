@@ -15,6 +15,7 @@ let nativeChatOutput = $state("");
 let nativeChatBlocks = $state([]);
 let nativeChatLoading = $state(false);
 let nativeChatError = $state(null);
+let nativeChatComposerError = $state(null);
 let nativeChatProjectPath = $state(null);
 let nativeChatSessionId = $state(null);
 let nativeChatRawMode = $state(false);
@@ -483,6 +484,7 @@ export function getState() {
     get nativeChatBlocks() { return nativeChatBlocks; },
     get nativeChatLoading() { return nativeChatLoading; },
     get nativeChatError() { return nativeChatError; },
+    get nativeChatComposerError() { return nativeChatComposerError; },
     get nativeChatProjectPath() { return nativeChatProjectPath; },
     get nativeChatSessionId() { return nativeChatSessionId; },
     get nativeChatRawMode() { return nativeChatRawMode; },
@@ -817,41 +819,55 @@ export function setNativeChatDraftTextPart(partId, value) {
 
 export async function addNativeChatImages(imageInputs, afterTextPartId) {
   if (!selectedSessionId || !selectedProjectPath || !Array.isArray(imageInputs) || imageInputs.length === 0) return;
-  const ingested = await Promise.all(
-    imageInputs.map(async (image) => {
-      let result;
-      if (image.path) {
-        result = await invoke("attachment_ingest_path", {
-          projectPath: selectedProjectPath,
-          path: image.path,
-        });
-      } else {
-        result = await invoke("attachment_ingest_base64", {
-          projectPath: selectedProjectPath,
-          filename: image.name || image.filename || "image",
-          mimeType: image.mimeType || "application/octet-stream",
-          contentBase64: image.contentBase64,
-        });
-      }
-      return {
-        ...image,
-        attachmentId: result?.attachment?.id || null,
-        contentUrl: result?.attachment?.contentUrl || null,
-      };
-    }),
+  nativeChatComposerError = null;
+  const sessionId = selectedSessionId;
+  const projectPath = selectedProjectPath;
+  const ingested = await trackAction(
+    {
+      kind: "agent-attach",
+      message: `Adding image${imageInputs.length > 1 ? "s" : ""}...`,
+      projectPath,
+      sessionId,
+    },
+    () =>
+      Promise.all(
+        imageInputs.map(async (image) => {
+          let result;
+          if (image.path) {
+            result = await invoke("attachment_ingest_path", {
+              projectPath,
+              path: image.path,
+            });
+          } else {
+            result = await invoke("attachment_ingest_base64", {
+              projectPath,
+              filename: image.name || image.filename || "image",
+              mimeType: image.mimeType || "application/octet-stream",
+              contentBase64: image.contentBase64,
+            });
+          }
+          return {
+            ...image,
+            attachmentId: result?.attachment?.id || null,
+            contentUrl: result?.attachment?.contentUrl || null,
+          };
+        }),
+      ),
   );
-  insertNativeChatImageParts(
-    selectedSessionId,
-    ingested.filter((image) => image.attachmentId),
-    afterTextPartId,
-  );
+  insertNativeChatImageParts(sessionId, ingested.filter((image) => image.attachmentId), afterTextPartId);
 }
 
 export async function pickNativeChatImages(afterTextPartId) {
   if (!selectedSessionId || !selectedProjectPath) return;
+  nativeChatComposerError = null;
   const picked = await invoke("pick_images");
   if (!Array.isArray(picked) || picked.length === 0) return;
-  await addNativeChatImages(picked, afterTextPartId);
+  try {
+    await addNativeChatImages(picked, afterTextPartId);
+  } catch (error) {
+    nativeChatComposerError = String(error);
+    throw error;
+  }
 }
 
 export function removeNativeChatDraftPart(partId) {
@@ -863,6 +879,7 @@ export function removeNativeChatDraftPart(partId) {
 export async function sendNativeChatMessage() {
   const projectPath = selectedProjectPath;
   const sessionId = selectedSessionId;
+  nativeChatComposerError = null;
   const draftParts = sessionId ? getNativeChatDraftPartsForSession(sessionId) : [];
   const outboundParts = draftParts.filter((part) =>
     part.type === "image" ? Boolean(part.attachmentId) : String(part.text || "").trim().length > 0

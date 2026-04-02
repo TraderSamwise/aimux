@@ -33,7 +33,7 @@
     if (!appState.selectedProjectPath || !appState.selectedSessionId) return false;
     return (appState.inFlightActions || []).some(
       (action) =>
-        action.kind === "agent-send" &&
+        (action.kind === "agent-send" || action.kind === "agent-attach") &&
         action.projectPath === appState.selectedProjectPath &&
         action.sessionId === appState.selectedSessionId,
     );
@@ -114,12 +114,6 @@
     await pickNativeChatImages(getInsertionTextPartId(afterTextPartId));
   }
 
-  async function handleComposerKeydown(event) {
-    if (event.key !== "Enter" || event.shiftKey) return;
-    event.preventDefault();
-    await submitDraft();
-  }
-
   async function handleDraftTextKeydown(partId, event) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -192,8 +186,18 @@
     await addNativeChatImages(inputs, getInsertionTextPartId(afterTextPartId));
   }
 
+  function extractImageFiles(itemList) {
+    return [...(itemList || [])]
+      .filter((item) => item?.type?.startsWith("image/"))
+      .map((item) => item.getAsFile?.())
+      .filter(Boolean);
+  }
+
   async function handleDraftTextPaste(partId, event) {
-    const files = [...(event.clipboardData?.files || [])].filter((file) => file?.type?.startsWith("image/"));
+    const files = [
+      ...extractImageFiles(event.clipboardData?.items),
+      ...[...(event.clipboardData?.files || [])].filter((file) => file?.type?.startsWith("image/")),
+    ];
     if (files.length === 0) return;
     event.preventDefault();
     activeDraftTextPartId = partId;
@@ -207,7 +211,10 @@
   }
 
   async function handleComposerDrop(event) {
-    const files = [...(event.dataTransfer?.files || [])].filter((file) => file?.type?.startsWith("image/"));
+    const files = [
+      ...extractImageFiles(event.dataTransfer?.items),
+      ...[...(event.dataTransfer?.files || [])].filter((file) => file?.type?.startsWith("image/")),
+    ];
     if (files.length === 0) return;
     event.preventDefault();
     await handleImageFiles(files);
@@ -450,6 +457,9 @@
         {/if}
       {/each}
     </div>
+    {#if appState.nativeChatComposerError}
+      <div class="composer-error">{appState.nativeChatComposerError}</div>
+    {/if}
     <div class="composer-row">
       <span class="composer-hint">Enter to send, Shift+Enter for newline. Paste or drop images inline.</span>
       <button
@@ -829,6 +839,17 @@
   .composer-status {
     font-size: 11px;
     color: var(--accent);
+  }
+
+  .composer-error {
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(251, 113, 133, 0.24);
+    background: rgba(251, 113, 133, 0.08);
+    color: var(--red);
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   .attach-btn,
