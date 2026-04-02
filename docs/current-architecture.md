@@ -105,6 +105,7 @@ Desktop transport is now HTTP-first:
 - desktop should not poll by spawning CLI subprocesses for routine heartbeat state
 - desktop should treat `statusline.json` as a derived/debug artifact, not as its primary live API
 - desktop pending UI should remain active until heartbeat reconciles the expected state change
+- desktop secondary screens may call project-service HTTP directly for workflow, threads, and graveyard views
 
 The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
 
@@ -178,6 +179,7 @@ Desktop should be designed around:
 - daemon-managed project services
 - tmux as runtime authority
 - daemon/project-service HTTP as the primary desktop transport
+- explicit desktop screens for dashboard, activity, threads, plans, and graveyard
 
 Desktop should not:
 

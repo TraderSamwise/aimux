@@ -29,6 +29,12 @@ Desktop heartbeat should be driven by:
 - daemon project discovery
 - project-service `GET /desktop-state`
 
+Supplementary desktop views can read directly from project-service HTTP too:
+
+- `GET /workflow` for activity-style workflow/task feeds
+- `GET /threads` and `GET /threads/:id` for thread browsing
+- `GET /graveyard` for graveyard browsing
+
 Heartbeat is for reconciliation and external changes, not for action initiation.
 
 ## Action Model
@@ -42,6 +48,7 @@ Desktop actions should call awaited project-service endpoints:
 - `POST /agents/migrate`
 - `POST /agents/kill`
 - `POST /worktrees/create`
+- `POST /worktrees/remove`
 - `POST /graveyard/resurrect`
 
 These are not fire-and-forget actions.
@@ -81,9 +88,14 @@ Suggested phases:
 The store should apply pending overlays to the selected project so the UI updates immediately:
 
 - spawn: insert a temporary `starting` agent row
+- fork: insert a temporary `starting` agent row for the fork target
 - create worktree: insert a temporary `creating` worktree row
+- remove worktree: keep the target worktree visible as `removing` until heartbeat drops it
 - stop: mark the target agent as `stopping`
 - kill: mark the target agent as `killing`
+- rename: optimistically update the agent label
+- migrate: optimistically move the agent to the target worktree and mark it `migrating`
+- resurrect: optimistically reinsert the offline agent row
 
 These overlays should remain visible until heartbeat confirms the real state transition.
 
@@ -93,6 +105,7 @@ Preferred feedback model:
 
 - inline pending state at the point of action
 - global footer/action bar for summarized in-flight actions
+- dedicated desktop screens for dashboard, activity, threads, plans, and graveyard
 
 Do not use tick-based loading heuristics.
 

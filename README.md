@@ -152,6 +152,14 @@ aimux desktop focus --project /abs/path/to/repo --session <sessionId>
 
 For desktop / GUI callers, prefer explicit `--project` usage instead of relying on launcher cwd.
 
+The desktop app now exposes these flows directly over daemon/project-service HTTP:
+
+- dashboard worktree/agent management
+- spawn, fork, rename, migrate, stop, kill
+- graveyard browse + resurrect
+- worktree create + remove
+- activity, threads, plans, and graveyard secondary screens
+
 For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
 For desktop UI integration details, see [docs/desktop-ui-contract.md](docs/desktop-ui-contract.md).
 For the migration rationale, see [docs/global-control-plane-rfc.md](docs/global-control-plane-rfc.md).
@@ -164,15 +172,16 @@ Managed session policy today:
 
 - `prefix = C-a`
 - `prefix2 = C-b`
-- `mouse = off` so the outer terminal can own command-click and text selection
+- `mouse = on` so tmux can own wheel events and enter pane scrollback reliably
 - `extended-keys = always`
 - `extended-keys-format = csi-u`
 - `terminal-features` includes `xterm*:extkeys`
 - `terminal-features` includes `xterm*:hyperlinks`
 - managed Claude/Codex windows get `allow-passthrough = on`
 - managed Claude/Codex windows get scoped modified-enter bindings for multiline input compatibility
+- managed Claude/Codex windows remap wheel-up into tmux copy-mode scrollback instead of forwarding it into the app
 
-This is why aimux can support features like `Ctrl+J`, `Shift+Enter`, and command-clicked links inside managed tmux sessions without depending on user-specific tmux configuration.
+This is why aimux can support features like `Ctrl+J`, `Shift+Enter`, and reliable tmux-native wheel scrollback inside managed tmux sessions without depending on user-specific tmux configuration.
 
 To inspect the live state for the current project:
 
