@@ -79,6 +79,7 @@ import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
+  describeWorkflowNextAction,
   filterWorkflowEntries,
   type ThreadEntry,
   type WorkflowEntry,
@@ -5185,6 +5186,7 @@ export class Multiplexer {
         families: Set<string>;
         topUrgency: number;
         topLabel?: string;
+        nextAction?: string;
       }
     >();
     for (const summary of threadSummaries) {
@@ -5236,6 +5238,7 @@ export class Multiplexer {
         if (entry.urgency > current.topUrgency) {
           current.topUrgency = entry.urgency;
           current.topLabel = `${entry.displayTitle} (${entry.stateLabel})`;
+          current.nextAction = describeWorkflowNextAction(entry, participant);
         }
         workflowStats.set(participant, current);
       }
@@ -5277,6 +5280,7 @@ export class Multiplexer {
         workflowBlockedCount: workflowStats.get(session.id)?.blocked ?? 0,
         workflowFamilyCount: workflowStats.get(session.id)?.families.size ?? 0,
         workflowTopLabel: workflowStats.get(session.id)?.topLabel,
+        workflowNextAction: workflowStats.get(session.id)?.nextAction,
       };
     });
   }

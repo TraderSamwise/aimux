@@ -49,6 +49,7 @@ export interface DashboardSession {
   workflowBlockedCount?: number;
   workflowFamilyCount?: number;
   workflowTopLabel?: string;
+  workflowNextAction?: string;
 }
 
 export interface WorktreeGroup {
@@ -224,6 +225,9 @@ export class Dashboard {
       (session.workflowFamilyCount ?? 0) > 0
         ? ` \x1b[2;35mwf ${session.workflowOnMeCount ?? 0}/${session.workflowBlockedCount ?? 0}/${session.workflowFamilyCount ?? 0}\x1b[0m`
         : "";
+    const workflowHint = session.workflowNextAction
+      ? ` \x1b[2;33m→ ${truncate(session.workflowNextAction, 24)}\x1b[0m`
+      : "";
     const attentionBadge =
       session.attention === "error"
         ? " \x1b[31m✗\x1b[0m"
@@ -241,7 +245,7 @@ export class Dashboard {
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${attentionBadge}${unseenBadge} — ${ownerTag}${marker}`;
+      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge} — ${ownerTag}${marker}`;
     }
 
     const icon = STATUS_ICONS[session.status];
@@ -249,7 +253,7 @@ export class Dashboard {
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${attentionBadge}${unseenBadge}${marker}`;
+    return `${indent}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${marker}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {
@@ -444,6 +448,7 @@ export class Dashboard {
         `${selected.workflowBlockedCount ?? 0} blocked`,
         `${selected.workflowFamilyCount ?? 0} families`,
         selected.workflowTopLabel ? `top: ${selected.workflowTopLabel}` : undefined,
+        selected.workflowNextAction ? `next: ${selected.workflowNextAction}` : undefined,
       ]
         .filter(Boolean)
         .join(" · ");

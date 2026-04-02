@@ -104,3 +104,27 @@ export function filterWorkflowEntries(
   }
   return entries.filter((entry) => entry.familyTaskIds.length > 1);
 }
+
+export function describeWorkflowNextAction(entry: WorkflowEntry, currentParticipant = "user"): string {
+  const waitsOnMe = (entry.thread.waitingOn ?? []).includes(currentParticipant);
+  if (entry.thread.kind === "handoff") {
+    if (waitsOnMe && entry.thread.owner === entry.thread.createdBy) return "accept handoff";
+    if (waitsOnMe) return "reply to handoff";
+    return "check handoff";
+  }
+  if (entry.task?.type === "review") {
+    if (waitsOnMe) return "review decision";
+    if (entry.task.reviewStatus === "changes_requested") return "follow up changes";
+    return "review thread";
+  }
+  if (entry.task) {
+    if (entry.task.status === "assigned") return "accept task";
+    if (entry.task.status === "blocked") return "unblock task";
+    if (entry.task.status === "in_progress") return "continue task";
+    if (entry.familyTaskIds.length > 1) return "continue chain";
+    if (waitsOnMe) return "reply in thread";
+  }
+  if (waitsOnMe) return "reply";
+  if (entry.thread.status === "blocked") return "inspect blocked thread";
+  return "open thread";
+}
