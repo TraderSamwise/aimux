@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { type ToolConfig } from "./config.js";
-import { getContextDir, getHistoryDir, getPlansDir, getStatusDir, type ProjectEntry } from "./paths.js";
+import { getContextDir, getHistoryDir, getPlansDir, getStatusDir } from "./paths.js";
 import { readHistory } from "./context/history.js";
 import { debug, debugPreamble } from "./debug.js";
 import { listWorktrees as listAllWorktrees } from "./worktree.js";
@@ -32,7 +32,7 @@ export class SessionBootstrapService {
     worktreePath?: string;
     extraPreamble?: string;
   }): string {
-    const { sessionId, command, worktreePath, extraPreamble } = opts;
+    const { sessionId, worktreePath, extraPreamble } = opts;
     let preamble =
       "You are running inside aimux, an agent multiplexer. " +
       "Other agents may be working on this codebase simultaneously.\n" +

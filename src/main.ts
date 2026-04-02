@@ -47,7 +47,6 @@ import {
   stopProjectService,
 } from "./daemon.js";
 import {
-  appendMessage,
   createThread,
   listThreadSummaries,
   markThreadSeen,

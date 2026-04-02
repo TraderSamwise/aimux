@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
-import { getAimuxDirFor, getProjectStateDirById, listProjects, type ProjectEntry } from "./paths.js";
+import { getAimuxDirFor, getProjectStateDirById, listProjects } from "./paths.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
 export interface GlobalSession {

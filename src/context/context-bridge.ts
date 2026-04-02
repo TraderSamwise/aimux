@@ -240,7 +240,6 @@ export class ContextWatcher {
     if (!normalized) return;
     const hash = simpleHash(normalized);
     const { promptVisible } = classifyToolPane(session.command, text);
-    const previousPromptVisible = this.panePromptVisible.get(session.id) ?? false;
     this.panePromptVisible.set(session.id, promptVisible);
     if (this.paneSnapshotHashes.get(session.id) === hash) return;
     this.paneSnapshotHashes.set(session.id, hash);

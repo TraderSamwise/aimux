@@ -1,14 +1,4 @@
-import {
-  writeFileSync,
-  mkdirSync,
-  existsSync,
-  unlinkSync,
-  readFileSync,
-  readdirSync,
-  cpSync,
-  copyFileSync,
-  renameSync,
-} from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync, readdirSync, renameSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -47,7 +37,6 @@ import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
-import { readTask, type Task } from "./tasks.js";
 import {
   appendMessage,
   createThread,
