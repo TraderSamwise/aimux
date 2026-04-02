@@ -106,6 +106,7 @@ Desktop transport is now HTTP-first:
 - desktop should treat `statusline.json` as a derived/debug artifact, not as its primary live API
 - desktop pending UI should remain active until heartbeat reconciles the expected state change
 - desktop secondary screens may call project-service HTTP directly for workflow, threads, and graveyard views
+- desktop orchestration actions should also go directly through project-service HTTP, not CLI wrappers
 
 The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
 

@@ -159,6 +159,7 @@ The desktop app now exposes these flows directly over daemon/project-service HTT
 - graveyard browse + resurrect
 - worktree create + remove
 - activity, threads, plans, and graveyard secondary screens
+- direct message compose, handoff send/accept/complete, and task/review workflow actions
 
 For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
 For desktop UI integration details, see [docs/desktop-ui-contract.md](docs/desktop-ui-contract.md).

@@ -50,6 +50,18 @@ Desktop actions should call awaited project-service endpoints:
 - `POST /worktrees/create`
 - `POST /worktrees/remove`
 - `POST /graveyard/resurrect`
+- `POST /threads/send`
+- `POST /threads/status`
+- `POST /handoff`
+- `POST /handoff/accept`
+- `POST /handoff/complete`
+- `POST /tasks/assign`
+- `POST /tasks/accept`
+- `POST /tasks/block`
+- `POST /tasks/complete`
+- `POST /tasks/reopen`
+- `POST /reviews/approve`
+- `POST /reviews/request-changes`
 
 These are not fire-and-forget actions.
 
@@ -106,6 +118,16 @@ Preferred feedback model:
 - inline pending state at the point of action
 - global footer/action bar for summarized in-flight actions
 - dedicated desktop screens for dashboard, activity, threads, plans, and graveyard
+
+Desktop orchestration UI can now:
+
+- compose direct messages
+- send handoffs
+- assign tasks
+- browse thread history
+- update thread status
+- accept or complete handoffs
+- accept, block, complete, reopen, approve, and request changes on workflow items
 
 Do not use tick-based loading heuristics.
 
