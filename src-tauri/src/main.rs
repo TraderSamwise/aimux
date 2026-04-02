@@ -647,6 +647,41 @@ async fn agent_migrate(project_path: String, session_id: String, worktree: Strin
 }
 
 #[tauri::command]
+async fn agent_read(project_path: String, session_id: String, start_line: Option<i32>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let start_line = start_line.unwrap_or(-120);
+    project_service_json(
+      &project_path,
+      "GET",
+      &format!("/agents/output?sessionId={session_id}&startLine={start_line}"),
+      None,
+      "agent read",
+    )
+  })
+  .await
+  .map_err(|error| format!("agent_read task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn agent_send(
+  project_path: String,
+  session_id: String,
+  data: String,
+  submit: Option<bool>,
+) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({
+      "sessionId": session_id,
+      "data": data,
+      "submit": submit.unwrap_or(true),
+    });
+    project_service_json(&project_path, "POST", "/agents/input", Some(&body), "agent send")
+  })
+  .await
+  .map_err(|error| format!("agent_send task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn worktree_create(project_path: String, name: String) -> Result<Value, String> {
   tauri::async_runtime::spawn_blocking(move || {
     let body = serde_json::json!({ "name": name });
@@ -1214,6 +1249,8 @@ fn main() {
       agent_fork,
       agent_rename,
       agent_migrate,
+      agent_read,
+      agent_send,
       worktree_create,
       worktree_remove,
       worktree_list,

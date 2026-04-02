@@ -59,10 +59,13 @@
 
 <style>
   .panel {
+    position: absolute;
+    inset: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
     min-width: 0;
+    min-height: 0;
   }
 
   .panel.hidden {

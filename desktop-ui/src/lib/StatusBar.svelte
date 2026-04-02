@@ -1,5 +1,5 @@
 <script>
-  import { getState, selectScreen, selectSession, focusTerminalAgent } from "../stores/state.svelte.js";
+  import { getState, selectScreen, openSession } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const state = getState();
@@ -64,10 +64,9 @@
   }
 
   async function focusChip(session) {
-    selectSession(session.id);
     const project = state.selectedProject;
-    if (!project || !termInstance.terminal) return;
-    await focusTerminalAgent(
+    if (!project) return;
+    await openSession(
       termInstance.terminal,
       project.path,
       session.id,

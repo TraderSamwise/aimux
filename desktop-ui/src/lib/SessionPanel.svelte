@@ -1,15 +1,14 @@
 <script>
-  import { getState, selectSession, focusTerminalAgent } from "../stores/state.svelte.js";
+  import { getState, openSession } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const state = getState();
   const termInstance = getTerminal();
 
   async function focusSession(session) {
-    selectSession(session.id);
     const project = state.selectedProject;
-    if (!project || !termInstance.terminal) return;
-    await focusTerminalAgent(
+    if (!project) return;
+    await openSession(
       termInstance.terminal,
       project.path,
       session.id,

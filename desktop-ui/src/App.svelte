@@ -4,6 +4,7 @@
   import WorkspaceHeader from "./lib/WorkspaceHeader.svelte";
   import WorktreePanel from "./lib/WorktreePanel.svelte";
   import TerminalPanel from "./lib/TerminalPanel.svelte";
+  import NativeChatPanel from "./lib/NativeChatPanel.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
   import ActionBar from "./lib/ActionBar.svelte";
   import ActivityPanel from "./lib/ActivityPanel.svelte";
@@ -14,6 +15,7 @@
 
   const state = getState();
   let selectedScreen = $derived.by(() => state.selectedScreen || "dashboard");
+  let interactionMode = $derived.by(() => state.interactionMode || "terminal");
 
   onMount(() => {
     startHeartbeat();
@@ -28,7 +30,10 @@
     <div class="workspace-stack">
       <div class="workspace-body" class:active={selectedScreen === "dashboard"} class:inactive={selectedScreen !== "dashboard"}>
         <WorktreePanel />
-        <TerminalPanel visible={selectedScreen === "dashboard"} />
+        <div class="surface-stack">
+          <TerminalPanel visible={selectedScreen === "dashboard" && interactionMode === "terminal"} />
+          <NativeChatPanel visible={selectedScreen === "dashboard" && interactionMode === "native-chat"} />
+        </div>
       </div>
 
       <div class="secondary-body" class:active={selectedScreen !== "dashboard"} class:inactive={selectedScreen === "dashboard"}>
@@ -83,6 +88,12 @@
     inset: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .surface-stack {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
   }
 
   .active {

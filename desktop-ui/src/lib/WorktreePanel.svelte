@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { getState, selectSession, focusTerminalAgent, isActionPending, trackAction } from "../stores/state.svelte.js";
+  import { getState, openSession, isActionPending, trackAction } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const appState = getState();
@@ -118,10 +118,9 @@
   }
 
   async function focusAgent(agent) {
-    selectSession(agent.id);
     const project = appState.selectedProject;
-    if (!project || !termInstance.terminal) return;
-    await focusTerminalAgent(
+    if (!project) return;
+    await openSession(
       termInstance.terminal,
       project.path,
       agent.id,

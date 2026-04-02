@@ -7,13 +7,25 @@ let projects = $state([]);
 let selectedProjectPath = $state(null);
 let selectedSessionId = $state(null);
 let selectedScreen = $state("dashboard");
+let interactionMode = $state("terminal");
 let terminalSessionId = $state(null);
 let terminalStatus = $state("Idle");
 let terminalProjectPath = $state(null);
+let nativeChatOutput = $state("");
+let nativeChatBlocks = $state([]);
+let nativeChatLoading = $state(false);
+let nativeChatError = $state(null);
+let nativeChatProjectPath = $state(null);
+let nativeChatSessionId = $state(null);
+let nativeChatRawMode = $state(false);
+let nativeChatDrafts = $state({});
 
 let unlistenOutput = null;
 let unlistenExit = null;
 let unlistenHeartbeat = null;
+let nativeChatPollTimer = null;
+let nativeChatPollToken = 0;
+let nativeChatPollInFlight = false;
 
 // ── In-progress actions ───────────────────────────────────────────
 
@@ -349,6 +361,128 @@ function applyActionOverlays(project) {
   return next;
 }
 
+function splitTranscriptBlocks(output) {
+  const lines = String(output || "").replace(/\r/g, "").split("\n");
+  const blocks = [];
+  let current = null;
+
+  const flush = () => {
+    if (!current) return;
+    const text = current.lines.join("\n").trimEnd();
+    if (text) blocks.push({ type: current.type, text });
+    current = null;
+  };
+
+  const pushLine = (type, line) => {
+    if (!current || current.type !== type) {
+      flush();
+      current = { type, lines: [] };
+    }
+    current.lines.push(line);
+  };
+
+  for (const line of lines) {
+    if (/^›\s?/.test(line)) {
+      pushLine("prompt", line.replace(/^›\s?/, ""));
+      continue;
+    }
+    if (/^•\s?/.test(line)) {
+      pushLine("response", line.replace(/^•\s?/, ""));
+      continue;
+    }
+    if (/^■\s?/.test(line)) {
+      pushLine("status", line.replace(/^■\s?/, ""));
+      continue;
+    }
+    if (/^\s{2,}\S/.test(line) && current) {
+      current.lines.push(line.trimEnd());
+      continue;
+    }
+    pushLine("raw", line);
+  }
+
+  flush();
+  return blocks;
+}
+
+function setNativeChatSnapshot(projectPath, sessionId, output) {
+  nativeChatProjectPath = projectPath;
+  nativeChatSessionId = sessionId;
+  nativeChatOutput = output;
+  nativeChatBlocks = splitTranscriptBlocks(output);
+  nativeChatError = null;
+}
+
+function clearNativeChatSnapshot() {
+  nativeChatProjectPath = null;
+  nativeChatSessionId = null;
+  nativeChatOutput = "";
+  nativeChatBlocks = [];
+  nativeChatLoading = false;
+  nativeChatError = null;
+}
+
+function stopNativeChatPolling({ clear = false } = {}) {
+  nativeChatPollToken += 1;
+  nativeChatPollInFlight = false;
+  if (nativeChatPollTimer) {
+    clearTimeout(nativeChatPollTimer);
+    nativeChatPollTimer = null;
+  }
+  nativeChatLoading = false;
+  if (clear) clearNativeChatSnapshot();
+}
+
+async function pollNativeChat(projectPath, sessionId, token, delayMs = 0) {
+  if (nativeChatPollTimer) {
+    clearTimeout(nativeChatPollTimer);
+    nativeChatPollTimer = null;
+  }
+
+  nativeChatPollTimer = setTimeout(async () => {
+    if (token !== nativeChatPollToken) return;
+    if (nativeChatPollInFlight) return;
+
+    nativeChatPollInFlight = true;
+    try {
+      const result = await invoke("agent_read", {
+        projectPath,
+        sessionId,
+        startLine: -120,
+      });
+      if (token !== nativeChatPollToken) return;
+      setNativeChatSnapshot(projectPath, sessionId, result?.output ?? "");
+      nativeChatLoading = false;
+    } catch (error) {
+      if (token !== nativeChatPollToken) return;
+      nativeChatError = String(error);
+      nativeChatLoading = false;
+    } finally {
+      nativeChatPollInFlight = false;
+      if (token === nativeChatPollToken) {
+        void pollNativeChat(projectPath, sessionId, token, 750);
+      }
+    }
+  }, delayMs);
+}
+
+function syncNativeChatSelection() {
+  if (interactionMode !== "native-chat") {
+    stopNativeChatPolling();
+    return;
+  }
+  if (!selectedProjectPath || !selectedSessionId) {
+    stopNativeChatPolling({ clear: true });
+    return;
+  }
+
+  nativeChatLoading = true;
+  nativeChatError = null;
+  nativeChatPollToken += 1;
+  const token = nativeChatPollToken;
+  void pollNativeChat(selectedProjectPath, selectedSessionId, token, 0);
+}
+
 // ── State getters ─────────────────────────────────────────────────
 
 export function getState() {
@@ -360,10 +494,21 @@ export function getState() {
     set selectedSessionId(v) { selectedSessionId = v; },
     get selectedScreen() { return selectedScreen; },
     set selectedScreen(v) { selectedScreen = v; },
+    get interactionMode() { return interactionMode; },
+    set interactionMode(v) { interactionMode = v; },
     get terminalSessionId() { return terminalSessionId; },
     get terminalStatus() { return terminalStatus; },
     get currentAction() { return currentAction; },
     get inFlightActions() { return inFlightActions; },
+    get nativeChatOutput() { return nativeChatOutput; },
+    get nativeChatBlocks() { return nativeChatBlocks; },
+    get nativeChatLoading() { return nativeChatLoading; },
+    get nativeChatError() { return nativeChatError; },
+    get nativeChatProjectPath() { return nativeChatProjectPath; },
+    get nativeChatSessionId() { return nativeChatSessionId; },
+    get nativeChatRawMode() { return nativeChatRawMode; },
+    set nativeChatRawMode(v) { nativeChatRawMode = v; },
+    get nativeChatDraft() { return selectedSessionId ? nativeChatDrafts[selectedSessionId] || "" : ""; },
     get selectedProject() {
       return applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
     },
@@ -397,6 +542,15 @@ function onHeartbeat(event) {
     selectedProjectPath = projects[0]?.path || null;
     selectedSessionId = null;
   }
+
+  if (selectedProjectPath && selectedSessionId) {
+    const selectedProject = projects.find((project) => project.path === selectedProjectPath);
+    const sessionStillExists = (selectedProject?.sessions || []).some((session) => session.id === selectedSessionId);
+    if (!sessionStillExists) {
+      selectedSessionId = null;
+      stopNativeChatPolling({ clear: true });
+    }
+  }
 }
 
 export async function startHeartbeat() {
@@ -420,14 +574,21 @@ export async function selectProject(path) {
   }
   selectedProjectPath = path;
   selectedSessionId = null;
+  stopNativeChatPolling({ clear: true });
 }
 
 export function selectSession(id) {
   selectedSessionId = id;
+  syncNativeChatSelection();
 }
 
 export function selectScreen(screen) {
   selectedScreen = screen;
+}
+
+export function selectInteractionMode(mode) {
+  interactionMode = mode === "native-chat" ? "native-chat" : "terminal";
+  syncNativeChatSelection();
 }
 
 // ── Terminal ──────────────────────────────────────────────────────
@@ -492,6 +653,16 @@ export async function focusTerminalAgent(terminal, projectPath, sessionId, label
   );
 }
 
+export async function openSession(terminal, projectPath, sessionId, label) {
+  selectSession(sessionId);
+  selectedScreen = "dashboard";
+  if (interactionMode === "native-chat") {
+    return;
+  }
+  if (!terminal) return;
+  await focusTerminalAgent(terminal, projectPath, sessionId, label);
+}
+
 export async function openTerminalDashboard(terminal, projectPath, label) {
   terminalStatus = label;
   if (terminalSessionId && terminalProjectPath === projectPath) {
@@ -526,4 +697,41 @@ export async function resizeTerminal(terminal) {
 export async function writeTerminal(data) {
   if (!terminalSessionId) return;
   await invoke("write_terminal", { sessionId: terminalSessionId, data });
+}
+
+export function setNativeChatDraft(value) {
+  if (!selectedSessionId) return;
+  nativeChatDrafts = {
+    ...nativeChatDrafts,
+    [selectedSessionId]: value,
+  };
+}
+
+export async function sendNativeChatMessage() {
+  const projectPath = selectedProjectPath;
+  const sessionId = selectedSessionId;
+  const draft = sessionId ? nativeChatDrafts[sessionId] || "" : "";
+  if (!projectPath || !sessionId || !draft.trim()) return;
+
+  await trackAction(
+    {
+      kind: "agent-send",
+      message: `Sending to ${sessionId}...`,
+      projectPath,
+      sessionId,
+    },
+    () =>
+      invoke("agent_send", {
+        projectPath,
+        sessionId,
+        data: draft,
+        submit: true,
+      }),
+  );
+
+  nativeChatDrafts = {
+    ...nativeChatDrafts,
+    [sessionId]: "",
+  };
+  syncNativeChatSelection();
 }

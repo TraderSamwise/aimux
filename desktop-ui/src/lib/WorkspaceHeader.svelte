@@ -1,9 +1,10 @@
 <script>
-  import { getState, openTerminalDashboard } from "../stores/state.svelte.js";
+  import { getState, openTerminalDashboard, selectInteractionMode } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const state = getState();
   const termInstance = getTerminal();
+  const modes = ["terminal", "native-chat"];
 
   let flash = $derived(state.statusline?.flash);
   let tasks = $derived(state.statusline?.tasks);
@@ -45,6 +46,17 @@
   </div>
 
   <div class="header-right">
+    <div class="mode-toggle">
+      {#each modes as mode}
+        <button
+          class="mode-btn"
+          class:active={state.interactionMode === mode}
+          onclick={() => selectInteractionMode(mode)}
+        >
+          {mode === "native-chat" ? "Native Chat" : "Terminal"}
+        </button>
+      {/each}
+    </div>
     <button
       class="action-btn"
       disabled={!state.selectedProject}
@@ -82,7 +94,37 @@
   }
 
   .header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     flex-shrink: 0;
+  }
+
+  .mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid var(--border);
+  }
+
+  .mode-btn {
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--text-dim);
+    transition: color 120ms, background 120ms;
+  }
+
+  .mode-btn:hover {
+    color: var(--text-secondary);
+  }
+
+  .mode-btn.active {
+    background: rgba(56, 189, 248, 0.14);
+    color: var(--accent);
   }
 
   .title {
