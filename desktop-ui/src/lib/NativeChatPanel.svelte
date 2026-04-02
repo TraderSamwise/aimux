@@ -1,4 +1,5 @@
 <script>
+  import { tick } from "svelte";
   import {
     getState,
     focusTerminalAgent,
@@ -10,19 +11,22 @@
 
   let { visible = false } = $props();
 
-  const state = getState();
+  const appState = getState();
   const termInstance = getTerminal();
+  let rawOutputEl = $state(null);
+  let lastRawOutput = "";
+  let lastRawSessionKey = "";
 
   let selectedSession = $derived.by(() => {
-    if (!state.selectedProject || !state.selectedSessionId) return null;
-    return (state.selectedProject.sessions || []).find((session) => session.id === state.selectedSessionId) || null;
+    if (!appState.selectedProject || !appState.selectedSessionId) return null;
+    return (appState.selectedProject.sessions || []).find((session) => session.id === appState.selectedSessionId) || null;
   });
-  let draft = $derived.by(() => state.nativeChatDraft || "");
+  let draft = $derived.by(() => appState.nativeChatDraft || "");
   let conversationBlocks = $derived.by(() =>
-    (state.nativeChatBlocks || []).filter((block) => block.type === "prompt" || block.type === "response"),
+    (appState.nativeChatBlocks || []).filter((block) => block.type === "prompt" || block.type === "response"),
   );
   let sideBlocks = $derived.by(() =>
-    (state.nativeChatBlocks || []).filter(
+    (appState.nativeChatBlocks || []).filter(
       (block) => block.type === "status" || block.type === "meta" || block.type === "raw",
     ),
   );
@@ -63,7 +67,7 @@
   }
 
   async function openInTerminal() {
-    const project = state.selectedProject;
+    const project = appState.selectedProject;
     const session = selectedSession;
     if (!project || !session || !termInstance.terminal) return;
     selectInteractionMode("terminal");
@@ -79,6 +83,46 @@
     event.preventDefault();
     await submitDraft();
   }
+
+  function rawSessionKey() {
+    return `${appState.nativeChatProjectPath || ""}:${appState.nativeChatSessionId || ""}`;
+  }
+
+  function isNearBottom(element, threshold = 28) {
+    if (!element) return false;
+    return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+  }
+
+  async function syncRawScroll(force = false) {
+    await tick();
+    if (!rawOutputEl) return;
+    if (force) {
+      rawOutputEl.scrollTop = rawOutputEl.scrollHeight;
+    }
+  }
+
+  $effect(() => {
+    const rawMode = appState.nativeChatRawMode;
+    const output = appState.nativeChatOutput || "";
+    const sessionKey = rawSessionKey();
+    if (!rawMode) {
+      lastRawOutput = output;
+      lastRawSessionKey = sessionKey;
+      return;
+    }
+
+    const sessionChanged = sessionKey !== lastRawSessionKey;
+    const outputChanged = output !== lastRawOutput;
+    const nearBottomBeforeUpdate = isNearBottom(rawOutputEl);
+    const shouldStick = sessionChanged || outputChanged;
+
+    lastRawOutput = output;
+    lastRawSessionKey = sessionKey;
+
+    if (shouldStick && (sessionChanged || nearBottomBeforeUpdate)) {
+      void syncRawScroll(true);
+    }
+  });
 </script>
 
 <section class="panel" class:hidden={!visible}>
@@ -95,15 +139,15 @@
     <div class="header-actions">
       <button
         class="header-btn"
-        class:active={state.nativeChatRawMode}
-        onclick={() => { state.nativeChatRawMode = true; }}
+        class:active={appState.nativeChatRawMode}
+        onclick={() => { appState.nativeChatRawMode = true; }}
       >
         Raw Pane
       </button>
       <button
         class="header-btn"
-        class:active={!state.nativeChatRawMode}
-        onclick={() => { state.nativeChatRawMode = false; }}
+        class:active={!appState.nativeChatRawMode}
+        onclick={() => { appState.nativeChatRawMode = false; }}
       >
         Split View
       </button>
@@ -118,20 +162,20 @@
   </div>
 
   <div class="transcript">
-    {#if !state.selectedProject}
+    {#if !appState.selectedProject}
       <div class="empty">Select a project to use native chat.</div>
     {:else if !selectedSession}
       <div class="empty">Select a session from the worktree list or status chips.</div>
-    {:else if state.nativeChatLoading && !state.nativeChatOutput}
+    {:else if appState.nativeChatLoading && !appState.nativeChatOutput}
       <div class="empty">Loading transcript…</div>
-    {:else if state.nativeChatError}
-      <div class="error">{state.nativeChatError}</div>
-    {:else if state.nativeChatRawMode}
+    {:else if appState.nativeChatError}
+      <div class="error">{appState.nativeChatError}</div>
+    {:else if appState.nativeChatRawMode}
       <div class="raw-shell">
         <div class="rail-title">Raw Pane</div>
-        <pre class="raw-output">{state.nativeChatOutput || "No output captured yet."}</pre>
+        <pre class="raw-output" bind:this={rawOutputEl}>{appState.nativeChatOutput || "No output captured yet."}</pre>
       </div>
-    {:else if state.nativeChatBlocks.length > 0}
+    {:else if appState.nativeChatBlocks.length > 0}
       <div class="split-layout">
         <div class="chat-pane">
           <div class="pane-title">Conversation</div>

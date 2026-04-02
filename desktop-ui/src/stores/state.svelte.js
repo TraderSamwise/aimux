@@ -497,6 +497,15 @@ function setNativeChatSnapshot(projectPath, sessionId, output) {
   nativeChatError = null;
 }
 
+function beginNativeChatSelection(projectPath, sessionId) {
+  nativeChatProjectPath = projectPath;
+  nativeChatSessionId = sessionId;
+  nativeChatOutput = "";
+  nativeChatBlocks = [];
+  nativeChatLoading = true;
+  nativeChatError = null;
+}
+
 function clearNativeChatSnapshot() {
   nativeChatProjectPath = null;
   nativeChatSessionId = null;
@@ -560,8 +569,7 @@ function syncNativeChatSelection() {
     return;
   }
 
-  nativeChatLoading = true;
-  nativeChatError = null;
+  beginNativeChatSelection(selectedProjectPath, selectedSessionId);
   nativeChatPollToken += 1;
   const token = nativeChatPollToken;
   void pollNativeChat(selectedProjectPath, selectedSessionId, token, 0);
