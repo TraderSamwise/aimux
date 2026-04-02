@@ -4,17 +4,21 @@
 
   let actions = $derived(appState.inFlightActions || []);
   let primaryAction = $derived(actions.length > 0 ? actions[actions.length - 1] : null);
+  let idle = $derived(!primaryAction);
 </script>
 
-{#if primaryAction}
-  <div class="action-bar">
+<div class="action-bar" class:idle>
+  {#if primaryAction}
     <span class="spinner"></span>
     <span class="action-text">{primaryAction.message}</span>
     {#if actions.length > 1}
       <span class="action-count">+{actions.length - 1}</span>
     {/if}
-  </div>
-{/if}
+  {:else}
+    <span class="spinner ghost"></span>
+    <span class="action-text idle-text">Ready</span>
+  {/if}
+</div>
 
 <style>
   .action-bar {
@@ -28,9 +32,18 @@
     min-height: 28px;
   }
 
+  .action-bar.idle {
+    background: rgba(255, 255, 255, 0.02);
+    border-top-color: rgba(148, 163, 184, 0.08);
+  }
+
   .action-text {
     font-size: 11px;
     color: var(--accent);
+  }
+
+  .idle-text {
+    color: var(--text-dim);
   }
 
   .action-count {
@@ -47,6 +60,12 @@
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
     flex-shrink: 0;
+  }
+
+  .spinner.ghost {
+    animation: none;
+    border-color: rgba(148, 163, 184, 0.16);
+    border-top-color: rgba(148, 163, 184, 0.16);
   }
 
   @keyframes spin {

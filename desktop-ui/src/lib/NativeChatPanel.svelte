@@ -21,6 +21,15 @@
     if (!appState.selectedProject || !appState.selectedSessionId) return null;
     return (appState.selectedProject.sessions || []).find((session) => session.id === appState.selectedSessionId) || null;
   });
+  let sendPending = $derived.by(() => {
+    if (!appState.selectedProjectPath || !appState.selectedSessionId) return false;
+    return (appState.inFlightActions || []).some(
+      (action) =>
+        action.kind === "agent-send" &&
+        action.projectPath === appState.selectedProjectPath &&
+        action.sessionId === appState.selectedSessionId,
+    );
+  });
   let draft = $derived.by(() => appState.nativeChatDraft || "");
   let conversationBlocks = $derived.by(() =>
     (appState.nativeChatBlocks || []).filter((block) => block.type === "prompt" || block.type === "response"),
@@ -239,12 +248,15 @@
     ></textarea>
     <div class="composer-row">
       <span class="composer-hint">Enter to send, Shift+Enter for newline</span>
+      {#if sendPending}
+        <span class="composer-status">Sending…</span>
+      {/if}
       <button
         class="send-btn"
-        disabled={!selectedSession || !draft.trim()}
+        disabled={!selectedSession || !draft.trim() || sendPending}
         onclick={submitDraft}
       >
-        Send
+        {sendPending ? "Sending…" : "Send"}
       </button>
     </div>
   </div>
@@ -487,13 +499,19 @@
   .composer-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 12px;
   }
 
   .composer-hint {
     font-size: 11px;
     color: var(--text-dim);
+    margin-right: auto;
+  }
+
+  .composer-status {
+    font-size: 11px;
+    color: var(--accent);
   }
 
   .send-btn {
