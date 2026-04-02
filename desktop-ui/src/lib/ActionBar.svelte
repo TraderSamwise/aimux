@@ -15,7 +15,7 @@
   });
   let projectButtonLabel = $derived.by(() => {
     if (!projectSelected) return "Project Unselected";
-    if (projectStatus === "ok") return "Project OK";
+    if (projectStatus === "ok") return "Project OK · Restart";
     if (projectStatus === "outdated") return "Project Outdated · Restart";
     return "Project Degraded · Restart";
   });
@@ -45,7 +45,6 @@
     <button
       class="control-btn daemon"
       class:down={daemonStatus !== "ok"}
-      disabled={daemonStatus === "ok"}
       onclick={restartDaemonControl}
     >
       {daemonButtonLabel}
@@ -54,7 +53,7 @@
       class="control-btn project"
       class:degraded={projectStatus === "degraded"}
       class:outdated={projectStatus === "outdated"}
-      disabled={!projectSelected || projectStatus === "ok"}
+      disabled={!projectSelected}
       onclick={restartProjectService}
     >
       {projectButtonLabel}
@@ -123,7 +122,7 @@
 
   .control-btn:disabled {
     cursor: default;
-    opacity: 0.9;
+    opacity: 0.5;
   }
 
   .control-btn.daemon.down {
@@ -151,8 +150,7 @@
   }
 
   .control-btn:not(:disabled):hover {
-    background: rgba(248, 113, 113, 0.14);
-    border-color: rgba(248, 113, 113, 0.28);
+    filter: brightness(1.12);
   }
 
   .spinner {
