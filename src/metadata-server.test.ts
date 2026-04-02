@@ -331,6 +331,34 @@ describe("MetadataServer threads API", () => {
     });
   });
 
+  it("streams alert events over SSE", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("event: alert"));
+
+    const attentionRes = await fetch(`${base}/set-attention`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        session: "codex-1",
+        attention: "needs_input",
+      }),
+    });
+    expect(attentionRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain("event: ready");
+    expect(text).toContain("event: alert");
+    expect(text).toContain('"kind":"needs_input"');
+    expect(text).toContain('"sessionId":"codex-1"');
+  });
+
   it("passes submit intent with agent input over HTTP", async () => {
     server?.stop();
     const writes: Array<{ sessionId: string; data: string; submit?: boolean }> = [];

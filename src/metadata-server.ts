@@ -48,6 +48,7 @@ import {
   ingestAttachmentFromBase64,
   ingestAttachmentFromPath,
 } from "./attachment-store.js";
+import { ProjectEventBus, type AlertKind } from "./project-events.js";
 
 export const PROJECT_SERVICE_API_VERSION = 2;
 export const PROJECT_SERVICE_CAPABILITIES = {
@@ -59,6 +60,9 @@ export const PROJECT_SERVICE_CAPABILITIES = {
 
 interface MetadataServerOptions {
   onChange?: () => void;
+  events?: {
+    bus?: ProjectEventBus;
+  };
   desktop?: {
     getState?: () => Record<string, unknown>;
     listWorktrees?: () => unknown[];
@@ -246,8 +250,11 @@ export class MetadataServer {
   private server: Server | null = null;
   private port = 0;
   private tracker = new AgentTracker();
+  private readonly eventBus: ProjectEventBus;
 
-  constructor(private readonly options: MetadataServerOptions = {}) {}
+  constructor(private readonly options: MetadataServerOptions = {}) {
+    this.eventBus = options.events?.bus ?? new ProjectEventBus();
+  }
 
   async start(): Promise<void> {
     if (this.server) return;
@@ -275,6 +282,10 @@ export class MetadataServer {
     return { host: "127.0.0.1", port: this.port };
   }
 
+  getEventBus(): ProjectEventBus {
+    return this.eventBus;
+  }
+
   private listen(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!this.server) return reject(new Error("server not initialized"));
@@ -289,8 +300,62 @@ export class MetadataServer {
     });
   }
 
+  private emitAlert(input: {
+    kind: AlertKind;
+    sessionId?: string;
+    title: string;
+    message: string;
+    threadId?: string;
+    taskId?: string;
+    worktreePath?: string;
+    dedupeKey?: string;
+    cooldownMs?: number;
+  }): void {
+    this.eventBus.publishAlert(input);
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
+
+    if (req.method === "GET" && url.pathname === "/events") {
+      const sessionFilter = url.searchParams.get("sessionId")?.trim() || null;
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/event-stream");
+      res.setHeader("cache-control", "no-cache, no-transform");
+      res.setHeader("connection", "keep-alive");
+      res.setHeader("x-accel-buffering", "no");
+      res.flushHeaders?.();
+
+      let closed = false;
+      let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+      const unsubscribe = this.eventBus.subscribe((event) => {
+        if (closed) return;
+        if (sessionFilter && event.sessionId && event.sessionId !== sessionFilter) return;
+        if (sessionFilter && !event.sessionId) return;
+        sendSseEvent(res, event.type, event);
+      });
+
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        unsubscribe();
+        if (keepaliveTimer) clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+        res.end();
+      };
+
+      req.on("close", cleanup);
+      req.on("aborted", cleanup);
+      res.on("close", cleanup);
+
+      sendSseEvent(res, "ready", { projectId: getProjectId(), ts: new Date().toISOString() });
+      keepaliveTimer = setInterval(() => {
+        if (closed) return;
+        res.write(": keepalive\n\n");
+      }, 15_000);
+      keepaliveTimer.unref?.();
+      return;
+    }
 
     if (req.method === "GET" && url.pathname === "/health") {
       send(res, 200, {
@@ -552,6 +617,34 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === "/set-attention") {
         const body = (await readJson(req)) as { session: string; attention: AgentAttentionState };
         this.tracker.setAttention(body.session, body.attention);
+        if (body.attention === "needs_input") {
+          this.emitAlert({
+            kind: "needs_input",
+            sessionId: body.session,
+            title: `${body.session} needs input`,
+            message: "Agent is waiting for input.",
+            dedupeKey: `needs_input:${body.session}`,
+            cooldownMs: 15_000,
+          });
+        } else if (body.attention === "blocked") {
+          this.emitAlert({
+            kind: "blocked",
+            sessionId: body.session,
+            title: `${body.session} is blocked`,
+            message: "Agent reported a blocked state.",
+            dedupeKey: `blocked:${body.session}`,
+            cooldownMs: 15_000,
+          });
+        } else if (body.attention === "error") {
+          this.emitAlert({
+            kind: "task_failed",
+            sessionId: body.session,
+            title: `${body.session} errored`,
+            message: "Agent reported an error state.",
+            dedupeKey: `error:${body.session}`,
+            cooldownMs: 15_000,
+          });
+        }
         this.options.onChange?.();
         send(res, 200, { ok: true });
         return;
@@ -763,6 +856,17 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
+        this.emitAlert({
+          kind: "blocked",
+          sessionId: result.task.assignedTo,
+          taskId: result.task.id,
+          threadId: result.thread?.id,
+          worktreePath: result.thread?.worktreePath,
+          title: `Task blocked: ${result.task.description}`,
+          message: result.task.error || body.body || "Task is blocked.",
+          dedupeKey: `task-blocked:${result.task.id}`,
+          cooldownMs: 15_000,
+        });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
@@ -777,6 +881,17 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
+        this.emitAlert({
+          kind: "task_done",
+          sessionId: result.task.assignedTo,
+          taskId: result.task.id,
+          threadId: result.thread?.id,
+          worktreePath: result.thread?.worktreePath,
+          title: `Task done: ${result.task.description}`,
+          message: body.body?.trim() || result.message?.body || "Task completed.",
+          dedupeKey: `task-done:${result.task.id}`,
+          cooldownMs: 15_000,
+        });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
@@ -895,17 +1010,6 @@ export class MetadataServer {
         return;
       }
 
-      const attachmentMatch = url.pathname.match(/^\/attachments\/([^/]+)$/);
-      if (req.method === "GET" && attachmentMatch) {
-        const attachment = getAttachment(decodeURIComponent(attachmentMatch[1] || ""));
-        if (!attachment) {
-          send(res, 404, { ok: false, error: "attachment not found" });
-          return;
-        }
-        send(res, 200, { ok: true, attachment });
-        return;
-      }
-
       const attachmentContentMatch = url.pathname.match(/^\/attachments\/([^/]+)\/content$/);
       if (req.method === "GET" && attachmentContentMatch) {
         const content = getAttachmentContent(decodeURIComponent(attachmentContentMatch[1] || ""));
@@ -914,6 +1018,17 @@ export class MetadataServer {
           return;
         }
         sendBytes(res, 200, content.buffer, content.attachment.mimeType);
+        return;
+      }
+
+      const attachmentMatch = url.pathname.match(/^\/attachments\/([^/]+)$/);
+      if (req.method === "GET" && attachmentMatch) {
+        const attachment = getAttachment(decodeURIComponent(attachmentMatch[1] || ""));
+        if (!attachment) {
+          send(res, 404, { ok: false, error: "attachment not found" });
+          return;
+        }
+        send(res, 200, { ok: true, attachment });
         return;
       }
 

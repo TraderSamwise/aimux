@@ -70,6 +70,7 @@ import { parseAgentOutput, type ParsedAgentOutput } from "./agent-output-parser.
 import { serializeAgentInput, type AgentInputPart } from "./agent-message-parts.js";
 import { resolveAttachmentPath } from "./attachment-store.js";
 import { appendSessionMessage, readSessionMessages } from "./session-message-history.js";
+import { ProjectEventBus } from "./project-events.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -234,6 +235,7 @@ export class Multiplexer {
   });
   private sessionTmuxTargets = new Map<string, TmuxTarget>();
   private metadataServer: MetadataServer | null = null;
+  private eventBus = new ProjectEventBus();
   private pluginRuntime: PluginRuntime | null = null;
   private projectServiceInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -265,6 +267,9 @@ export class Multiplexer {
   private async startProjectServices(): Promise<void> {
     if (this.metadataServer) return;
     this.metadataServer = new MetadataServer({
+      events: {
+        bus: this.eventBus,
+      },
       desktop: {
         getState: () => this.buildDesktopState(),
         listWorktrees: () => this.listDesktopWorktrees(),
