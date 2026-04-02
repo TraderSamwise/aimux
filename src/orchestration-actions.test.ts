@@ -7,11 +7,14 @@ import { readMessages, readThread } from "./threads.js";
 import { readTask } from "./tasks.js";
 import {
   acceptHandoff,
+  approveReview,
   acceptTask,
   assignTask,
   blockTask,
   completeHandoff,
   completeTask,
+  reopenTask,
+  requestTaskChanges,
   sendHandoff,
 } from "./orchestration-actions.js";
 
@@ -130,5 +133,48 @@ describe("orchestration actions", () => {
     expect(completed.thread?.status).toBe("waiting");
     expect(completed.thread?.waitingOn).toEqual(["claude-lead"]);
     expect(completed.message?.metadata?.taskAction).toBe("completed");
+  });
+
+  it("approves reviews, requests changes, and reopens workflow chains", async () => {
+    const review = await assignTask({
+      from: "claude-lead",
+      to: "codex-reviewer",
+      description: "Review the parser fix",
+      type: "review",
+    });
+
+    const approved = await approveReview({
+      taskId: review.task.id,
+      from: "codex-reviewer",
+      body: "Looks good.",
+    });
+    expect(approved.task.reviewStatus).toBe("approved");
+    expect(approved.task.status).toBe("done");
+    expect(approved.thread?.status).toBe("waiting");
+
+    const secondReview = await assignTask({
+      from: "claude-lead",
+      to: "codex-reviewer",
+      description: "Review follow-up parser fix",
+      type: "review",
+    });
+
+    const changes = await requestTaskChanges({
+      taskId: secondReview.task.id,
+      from: "codex-reviewer",
+      body: "Please tighten the timeout assertions.",
+    });
+    expect(changes.task.reviewStatus).toBe("changes_requested");
+    expect(changes.followUpTask?.id).toBeTruthy();
+    expect(changes.followUpTask?.status).toBe("pending");
+
+    const reopened = await reopenTask({
+      taskId: secondReview.task.id,
+      from: "claude-lead",
+      body: "Retry the review chain with the latest patch.",
+    });
+    expect(reopened.task.id).not.toBe(secondReview.task.id);
+    expect(reopened.task.status).toBe("pending");
+    expect(reopened.task.reviewOf).toBe(secondReview.task.reviewOf ?? secondReview.task.id);
   });
 });

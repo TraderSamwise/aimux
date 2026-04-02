@@ -28,11 +28,14 @@ import {
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import {
   acceptHandoff,
+  approveReview,
   acceptTask,
   assignTask,
   blockTask,
   completeHandoff,
   completeTask,
+  reopenTask,
+  requestTaskChanges,
   sendHandoff,
   type TaskLifecycleResult,
 } from "./orchestration-actions.js";
@@ -104,6 +107,21 @@ interface MetadataServerOptions {
       body?: string;
     }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
     completeTask?: (input: {
+      taskId: string;
+      from?: string;
+      body?: string;
+    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
+    approveReview?: (input: {
+      taskId: string;
+      from?: string;
+      body?: string;
+    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
+    requestTaskChanges?: (input: {
+      taskId: string;
+      from?: string;
+      body?: string;
+    }) => Promise<TaskLifecycleResult> | TaskLifecycleResult;
+    reopenTask?: (input: {
       taskId: string;
       from?: string;
       body?: string;
@@ -714,6 +732,48 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.resurrectGraveyard(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/reviews/approve") {
+        const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
+        const result = this.options.actions?.approveReview
+          ? await this.options.actions.approveReview(body)
+          : await approveReview({
+              taskId: body.taskId,
+              from: body.from?.trim() || "user",
+              body: body.body,
+            });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/reviews/request-changes") {
+        const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
+        const result = this.options.actions?.requestTaskChanges
+          ? await this.options.actions.requestTaskChanges(body)
+          : await requestTaskChanges({
+              taskId: body.taskId,
+              from: body.from?.trim() || "user",
+              body: body.body,
+            });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/tasks/reopen") {
+        const body = (await readJson(req)) as { taskId: string; from?: string; body?: string };
+        const result = this.options.actions?.reopenTask
+          ? await this.options.actions.reopenTask(body)
+          : await reopenTask({
+              taskId: body.taskId,
+              from: body.from?.trim() || "user",
+              body: body.body,
+            });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;

@@ -153,6 +153,67 @@ describe("MetadataServer threads API", () => {
     expect(completed.task.result).toContain("Fixed");
   });
 
+  it("handles review approval, changes, and reopen over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const reviewRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Review the parser timeout patch",
+        type: "review",
+      }),
+    });
+    const review = (await reviewRes.json()) as { task: { id: string } };
+    expect(reviewRes.ok).toBe(true);
+
+    const approveRes = await fetch(`${base}/reviews/approve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: review.task.id, from: "codex-1", body: "Looks good." }),
+    });
+    const approved = (await approveRes.json()) as { task: { status: string; reviewStatus: string } };
+    expect(approveRes.ok).toBe(true);
+    expect(approved.task.status).toBe("done");
+    expect(approved.task.reviewStatus).toBe("approved");
+
+    const reviewRes2 = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Review the parser timeout follow-up",
+        type: "review",
+      }),
+    });
+    const review2 = (await reviewRes2.json()) as { task: { id: string } };
+
+    const changesRes = await fetch(`${base}/reviews/request-changes`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: review2.task.id, from: "codex-1", body: "Please tighten the tests." }),
+    });
+    const changes = (await changesRes.json()) as { task: { reviewStatus: string }; followUpTask?: { id: string } };
+    expect(changesRes.ok).toBe(true);
+    expect(changes.task.reviewStatus).toBe("changes_requested");
+    expect(changes.followUpTask?.id).toBeTruthy();
+
+    const reopenRes = await fetch(`${base}/tasks/reopen`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId: review2.task.id, from: "claude-lead", body: "Try another pass." }),
+    });
+    const reopened = (await reopenRes.json()) as { task: { id: string; status: string } };
+    expect(reopenRes.ok).toBe(true);
+    expect(reopened.task.id).not.toBe(review2.task.id);
+    expect(reopened.task.status).toBe("pending");
+  });
+
   it("returns workflow entries over HTTP", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

@@ -60,11 +60,14 @@ import {
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import {
   acceptHandoff,
+  approveReview,
   acceptTask,
   assignTask,
   blockTask,
   completeHandoff,
   completeTask,
+  reopenTask,
+  requestTaskChanges,
   sendHandoff,
 } from "./orchestration-actions.js";
 
@@ -1219,6 +1222,91 @@ taskCmd
         body: opts.body,
       });
       console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+    }
+  });
+
+taskCmd
+  .command("reopen")
+  .description("Reopen a completed or blocked task chain")
+  .argument("<taskId>")
+  .option("--from <sessionId>", "Reopening session id", "user")
+  .option("--body <text>", "Optional reopening note")
+  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
+    try {
+      const result = await postProjectServiceJson("/tasks/reopen", {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+      return;
+    } catch {
+      const result = await reopenTask({
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+    }
+  });
+
+const reviewCmd = program.command("review").description("Manage review workflow tasks");
+
+reviewCmd
+  .command("approve")
+  .description("Approve a review task")
+  .argument("<taskId>")
+  .option("--from <sessionId>", "Reviewer session id", "user")
+  .option("--body <text>", "Optional approval note")
+  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
+    try {
+      const result = await postProjectServiceJson("/reviews/approve", {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+      return;
+    } catch {
+      const result = await approveReview({
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+    }
+  });
+
+reviewCmd
+  .command("request-changes")
+  .description("Request changes on a review task")
+  .argument("<taskId>")
+  .option("--from <sessionId>", "Reviewer session id", "user")
+  .option("--body <text>", "Requested changes")
+  .action(async (taskId: string, opts: { from?: string; body?: string }) => {
+    try {
+      const result = await postProjectServiceJson("/reviews/request-changes", {
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
+      if (result.thread?.id) console.log(`thread ${result.thread.id}`);
+      return;
+    } catch {
+      const result = await requestTaskChanges({
+        taskId,
+        from: opts.from ?? "user",
+        body: opts.body,
+      });
+      console.log(`task ${result.task.id}`);
+      if (result.followUpTask?.id) console.log(`follow-up ${result.followUpTask.id}`);
       if (result.thread?.id) console.log(`thread ${result.thread.id}`);
     }
   });

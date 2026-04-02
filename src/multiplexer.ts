@@ -64,11 +64,14 @@ import {
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import {
   acceptHandoff,
+  approveReview,
   acceptTask,
   assignTask,
   blockTask,
   completeHandoff,
   completeTask,
+  reopenTask,
+  requestTaskChanges,
   sendHandoff,
 } from "./orchestration-actions.js";
 import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
@@ -1643,7 +1646,7 @@ export class Multiplexer {
     header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
     header.push("");
     const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a] accept  [b] block  [c/x] complete  [Enter] thread  [Esc] dashboard  [q] quit",
+      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a] accept  [b] block  [c/x] complete  [P] approve  [J] changes  [E] reopen  [Enter] thread  [Esc] dashboard  [q] quit",
       cols,
     );
     const viewportHeight = rows - header.length - 2;
@@ -1697,6 +1700,9 @@ export class Multiplexer {
     lines.push(...this.wrapKeyValue("State", entry.stateLabel, width));
     if (entry.task) {
       lines.push(...this.wrapKeyValue("Task Status", entry.task.status, width));
+      if (entry.task.type === "review" && entry.task.reviewStatus) {
+        lines.push(...this.wrapKeyValue("Review", entry.task.reviewStatus, width));
+      }
       if (entry.familyTaskIds.length > 1) {
         lines.push(...this.wrapKeyValue("Workflow Root", entry.familyRootTaskId ?? entry.task.id, width));
         lines.push(...this.wrapKeyValue("Chain Size", String(entry.familyTaskIds.length), width));
@@ -1802,6 +1808,22 @@ export class Multiplexer {
       const status = statusMap[key];
       if (status) {
         void this.runThreadStatusAction(entry.thread.id, status);
+      }
+      return;
+    }
+    if (key === "P" || key === "J" || key === "E") {
+      const entry = this.workflowEntries[this.workflowIndex];
+      if (!entry?.task) return;
+      if (key === "P") {
+        void this.runReviewLifecycleAction("approve", entry.task.id);
+        return;
+      }
+      if (key === "J") {
+        void this.runReviewLifecycleAction("request_changes", entry.task.id);
+        return;
+      }
+      if (key === "E") {
+        void this.runTaskLifecycleAction("reopen", entry.task.id);
       }
       return;
     }
@@ -2351,7 +2373,10 @@ export class Multiplexer {
     this.renderThreads();
   }
 
-  private async runTaskLifecycleAction(mode: "accept" | "block" | "complete", taskId: string): Promise<void> {
+  private async runTaskLifecycleAction(
+    mode: "accept" | "block" | "complete" | "reopen",
+    taskId: string,
+  ): Promise<void> {
     try {
       if (mode === "accept") {
         await this.postToProjectService("/tasks/accept", { taskId, from: "user" });
@@ -2359,6 +2384,9 @@ export class Multiplexer {
       } else if (mode === "block") {
         await this.postToProjectService("/tasks/block", { taskId, from: "user" });
         this.footerFlash = "⧫ Task blocked";
+      } else if (mode === "reopen") {
+        await this.postToProjectService("/tasks/reopen", { taskId, from: "user" });
+        this.footerFlash = "↺ Task reopened";
       } else {
         await this.postToProjectService("/tasks/complete", { taskId, from: "user" });
         this.footerFlash = "✓ Task completed";
@@ -2372,6 +2400,9 @@ export class Multiplexer {
         } else if (mode === "block") {
           await blockTask({ taskId, from: "user" });
           this.footerFlash = "⧫ Task blocked";
+        } else if (mode === "reopen") {
+          await reopenTask({ taskId, from: "user" });
+          this.footerFlash = "↺ Task reopened";
         } else {
           await completeTask({ taskId, from: "user" });
           this.footerFlash = "✓ Task completed";
@@ -2379,6 +2410,38 @@ export class Multiplexer {
         this.footerFlashTicks = 3;
       } catch (error) {
         this.showDashboardError(`Failed to ${mode} task`, [error instanceof Error ? error.message : String(error)]);
+        return;
+      }
+    }
+    this.workflowEntries = this.buildWorkflowEntries();
+    this.workflowIndex = Math.min(this.workflowIndex, Math.max(0, this.workflowEntries.length - 1));
+    this.renderWorkflow();
+  }
+
+  private async runReviewLifecycleAction(mode: "approve" | "request_changes", taskId: string): Promise<void> {
+    try {
+      if (mode === "approve") {
+        await this.postToProjectService("/reviews/approve", { taskId, from: "user" });
+        this.footerFlash = "✓ Review approved";
+      } else {
+        await this.postToProjectService("/reviews/request-changes", { taskId, from: "user" });
+        this.footerFlash = "↺ Changes requested";
+      }
+      this.footerFlashTicks = 3;
+    } catch {
+      try {
+        if (mode === "approve") {
+          await approveReview({ taskId, from: "user" });
+          this.footerFlash = "✓ Review approved";
+        } else {
+          await requestTaskChanges({ taskId, from: "user" });
+          this.footerFlash = "↺ Changes requested";
+        }
+        this.footerFlashTicks = 3;
+      } catch (error) {
+        this.showDashboardError(`Failed to ${mode === "approve" ? "approve review" : "request changes"}`, [
+          error instanceof Error ? error.message : String(error),
+        ]);
         return;
       }
     }
