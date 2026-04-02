@@ -1,6 +1,8 @@
 import { basename } from "node:path";
 import { execSync } from "node:child_process";
 import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
+import type { SessionSemanticState } from "./session-semantics.js";
+import { sessionSemanticCompactHint } from "./session-semantics.js";
 import type { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 
@@ -14,6 +16,7 @@ export interface StatuslineSession {
   role?: string;
   active?: boolean;
   worktreePath?: string;
+  semantic?: SessionSemanticState;
 }
 
 export interface StatuslineMetadataEntry {
@@ -45,6 +48,7 @@ export interface StatuslineData {
   controlPlane?: {
     daemonAlive?: boolean;
     projectServiceAlive?: boolean;
+    projectServiceOutdated?: boolean;
   };
   tasks?: {
     pending?: number;
@@ -103,6 +107,22 @@ export function renderDerivedBadge(derived: StatuslineMetadataEntry["derived"]):
   if (derived.activity === "done") return "✓";
   if (derived.activity === "running") return "↻";
   if (derived.activity === "waiting") return "…";
+  return null;
+}
+
+export function renderSessionCompactHint(session: {
+  semantic?: SessionSemanticState;
+  derived?: StatuslineMetadataEntry["derived"];
+}): string | null {
+  if (session.semantic) {
+    return sessionSemanticCompactHint(session.semantic);
+  }
+  if (session.derived?.attention === "error") return "error";
+  if (session.derived?.attention === "needs_input") return "on you";
+  if (session.derived?.attention === "blocked") return "blocked";
+  if ((session.derived?.unseenCount ?? 0) > 0) {
+    return `${Math.min(session.derived?.unseenCount ?? 0, 99)} unread`;
+  }
   return null;
 }
 
@@ -211,6 +231,7 @@ export function resolveScopedSessions(
       return {
         ...session,
         derived: resolvedMetadata?.derived,
+        semantic: session.semantic,
         metadata: resolvedMetadata,
         isCurrent: currentWindowId
           ? target.windowId === currentWindowId

@@ -6,6 +6,7 @@ import {
   currentPathContext,
   renderDashboardScreens,
   renderDerivedBadge,
+  renderSessionCompactHint,
   resolveCurrentSessionId,
   resolveSessionMetadata,
   resolveScopedSessions,
@@ -34,6 +35,7 @@ function isStatuslineStale(data: StatuslineData): boolean {
 
 function renderControlPlane(data: StatuslineData): string {
   if (isStatuslineStale(data)) return "ctl stale";
+  if (data.controlPlane?.projectServiceOutdated === true) return "ctl old";
   if (data.controlPlane?.projectServiceAlive === false) return "ctl svc↓";
   if (data.controlPlane?.daemonAlive === false) return "ctl daemon↓";
   return "ctl ok";
@@ -201,7 +203,8 @@ function renderTopLine(
 function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[number]): string {
   const identity = trim(sessionIdentity(session), 16);
   const badge = renderDerivedBadge(session.derived);
-  const label = trim(`${identity}${badge ? ` ${badge}` : ""}`, 20);
+  const hint = renderSessionCompactHint(session);
+  const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 24);
   return session.isCurrent ? `[${label}]` : label;
 }
 

@@ -71,6 +71,7 @@ import { resolveAttachmentPath } from "./attachment-store.js";
 import { appendSessionMessage, readSessionMessages } from "./session-message-history.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { deriveSessionSemantics, sessionSemanticAttentionScore } from "./session-semantics.js";
+import { hasProjectServiceBuildDrift } from "./project-service-manifest.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -389,6 +390,17 @@ export class Multiplexer {
     );
   }
 
+  private orchestrationWorkflowPressure(sessionId: string, status?: DashboardSession["status"]): number {
+    const semantic = this.deriveSessionSemanticState(sessionId, status);
+    return (
+      semantic.waitingOnMeCount * 5 +
+      semantic.blockedCount * 6 +
+      semantic.pendingDeliveryCount * 3 +
+      semantic.unreadCount * 2 +
+      semantic.waitingOnThemCount
+    );
+  }
+
   private deliverOrchestrationMessage(
     recipients: string[],
     threadId: string,
@@ -438,6 +450,7 @@ export class Multiplexer {
               worktreePath: this.sessionWorktreePaths.get(session.id),
               status: session.status,
               availability: this.deriveSessionSemanticState(session.id, session.status).availability,
+              workflowPressure: this.orchestrationWorkflowPressure(session.id, session.status),
               exited: session.exited,
             })),
             to: input.to,
@@ -500,6 +513,7 @@ export class Multiplexer {
         worktreePath: this.sessionWorktreePaths.get(session.id),
         status: session.status,
         availability: this.deriveSessionSemanticState(session.id, session.status).availability,
+        workflowPressure: this.orchestrationWorkflowPressure(session.id, session.status),
         exited: session.exited,
       })),
       to: input.to,
@@ -2984,6 +2998,14 @@ export class Multiplexer {
             ? "waiting"
             : session.status,
       ).availability,
+      workflowPressure: this.orchestrationWorkflowPressure(
+        session.id,
+        metadataState[session.id]?.derived?.activity === "running"
+          ? "running"
+          : metadataState[session.id]?.derived?.activity === "waiting"
+            ? "waiting"
+            : session.status,
+      ),
       exited: session.exited,
     }));
 
@@ -3287,6 +3309,14 @@ export class Multiplexer {
                       ? "waiting"
                       : session.status,
                 ).availability,
+                workflowPressure: this.orchestrationWorkflowPressure(
+                  session.id,
+                  metadataState[session.id]?.derived?.activity === "running"
+                    ? "running"
+                    : metadataState[session.id]?.derived?.activity === "waiting"
+                      ? "waiting"
+                      : session.status,
+                ),
                 exited: session.exited,
               })),
               assignee: target.assignee,
@@ -5724,11 +5754,13 @@ export class Multiplexer {
     controlPlane: {
       daemonAlive: boolean;
       projectServiceAlive: boolean;
+      projectServiceOutdated: boolean;
     };
     flash: string | null;
     metadata: ReturnType<typeof loadMetadataState>["sessions"];
     updatedAt: string;
   } {
+    const projectServiceOutdated = hasProjectServiceBuildDrift();
     return {
       project: basename(process.cwd()),
       dashboardScreen: this.dashboardState.screen,
@@ -5747,8 +5779,9 @@ export class Multiplexer {
       controlPlane: {
         daemonAlive: Boolean(loadDaemonInfo()),
         projectServiceAlive: true,
+        projectServiceOutdated,
       },
-      flash: this.footerFlash,
+      flash: this.footerFlash || (projectServiceOutdated ? "Project service outdated: restart this project." : null),
       metadata: loadMetadataState().sessions,
       updatedAt: new Date().toISOString(),
     };

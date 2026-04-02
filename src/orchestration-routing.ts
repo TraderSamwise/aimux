@@ -7,6 +7,7 @@ export interface RoutingCandidate {
   worktreePath?: string;
   status?: string;
   availability?: SessionAvailability;
+  workflowPressure?: number;
   exited?: boolean;
 }
 
@@ -38,6 +39,7 @@ function scoreCandidate(candidate: RoutingCandidate, input: RouteTargetInput): n
   if (candidate.status === "idle") score += 3;
   else if (candidate.status === "waiting") score += 2;
   else if (candidate.status === "running") score += 1;
+  score -= Math.min(candidate.workflowPressure ?? 0, 20);
   return score;
 }
 

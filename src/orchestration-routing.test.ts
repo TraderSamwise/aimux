@@ -10,6 +10,7 @@ describe("orchestration routing", () => {
       worktreePath: "/repo/ui",
       status: "idle",
       availability: "available" as const,
+      workflowPressure: 0,
     },
     {
       id: "codex-ui",
@@ -18,6 +19,7 @@ describe("orchestration routing", () => {
       worktreePath: "/repo/ui",
       status: "running",
       availability: "busy" as const,
+      workflowPressure: 4,
     },
     {
       id: "codex-coder",
@@ -26,6 +28,7 @@ describe("orchestration routing", () => {
       worktreePath: "/repo/api",
       status: "waiting",
       availability: "busy" as const,
+      workflowPressure: 2,
     },
   ];
 
@@ -71,5 +74,31 @@ describe("orchestration routing", () => {
         assignee: "ui",
       }),
     ).toEqual(["claude-ui", "codex-ui"]);
+  });
+
+  it("prefers lower workflow pressure among equally available candidates", () => {
+    expect(
+      resolveOrchestrationTarget({
+        candidates: [
+          {
+            id: "claude-ui-light",
+            role: "ui",
+            tool: "claude",
+            status: "idle",
+            availability: "available" as const,
+            workflowPressure: 0,
+          },
+          {
+            id: "claude-ui-loaded",
+            role: "ui",
+            tool: "claude",
+            status: "idle",
+            availability: "available" as const,
+            workflowPressure: 6,
+          },
+        ],
+        assignee: "ui",
+      })?.id,
+    ).toBe("claude-ui-light");
   });
 });
