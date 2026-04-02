@@ -43,6 +43,9 @@ let heartbeatInterval = null;
 const projectAlertStreams = new Map();
 let lastControlPlaneSignature = null;
 let lastControlPlaneSnapshot = null;
+let lastOverlayInputProject = null;
+let lastOverlaySignature = null;
+let lastOverlayResult = null;
 
 // ── In-progress actions ───────────────────────────────────────────
 
@@ -382,10 +385,36 @@ function buildControlPlaneSnapshot(project) {
   return lastControlPlaneSnapshot;
 }
 
+function overlayActionSignature(project) {
+  return JSON.stringify(
+    inFlightActions
+      .filter((action) => action.projectPath === project.path)
+      .map((action) => ({
+        key: action.key,
+        kind: action.kind,
+        phase: action.phase,
+        sessionId: action.sessionId || null,
+        worktreePath: action.worktreePath || null,
+        label: action.label || null,
+        tool: action.tool || null,
+      })),
+  );
+}
+
 function applyActionOverlays(project) {
   if (!project) return null;
+  const signature = overlayActionSignature(project);
+  if (project === lastOverlayInputProject && signature === lastOverlaySignature) {
+    return lastOverlayResult;
+  }
+
   const actions = inFlightActions.filter((action) => action.projectPath === project.path);
-  if (actions.length === 0) return project;
+  if (actions.length === 0) {
+    lastOverlayInputProject = project;
+    lastOverlaySignature = signature;
+    lastOverlayResult = project;
+    return project;
+  }
 
   const next = {
     ...project,
@@ -557,6 +586,9 @@ function applyActionOverlays(project) {
     }
   }
 
+  lastOverlayInputProject = project;
+  lastOverlaySignature = signature;
+  lastOverlayResult = next;
   return next;
 }
 
