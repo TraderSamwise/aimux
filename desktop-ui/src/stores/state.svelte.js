@@ -521,6 +521,26 @@ function normalizeTranscriptBlocks(blocks) {
     }
   }
 
+  const hasConversationTurns = next.some((block) => block.type === "prompt" || block.type === "response");
+  if (!hasConversationTurns) {
+    for (const block of next) {
+      if (block.type !== "raw") continue;
+      if (!looksLikeAssistantText(block.text)) continue;
+      block.type = "response";
+    }
+  }
+
+  let sawConversationTurn = false;
+  for (const block of next) {
+    if (block.type === "prompt" || block.type === "response") {
+      sawConversationTurn = true;
+      continue;
+    }
+    if (block.type === "raw" && sawConversationTurn && looksLikeAssistantText(block.text)) {
+      block.type = "response";
+    }
+  }
+
   const merged = [];
   for (const block of next) {
     const previous = merged[merged.length - 1];
