@@ -405,104 +405,148 @@ fn start_heartbeat_thread(app: tauri::AppHandle) {
 // ── Commands: host management ─────────────────────────────────────
 
 #[tauri::command]
-fn ensure_daemon_project(project_path: String) -> Result<Value, String> {
-  let endpoint = project_service_endpoint(&project_path)?;
-  Ok(serde_json::json!({
-    "ok": true,
-    "serviceEndpoint": {
-      "host": endpoint.host,
-      "port": endpoint.port,
-    }
-  }))
+async fn ensure_daemon_project(project_path: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let endpoint = project_service_endpoint(&project_path)?;
+    Ok(serde_json::json!({
+      "ok": true,
+      "serviceEndpoint": {
+        "host": endpoint.host,
+        "port": endpoint.port,
+      }
+    }))
+  })
+  .await
+  .map_err(|error| format!("ensure_daemon_project task failed: {error}"))?
 }
 
 // ── Commands: agent lifecycle ──────────────────────────────────────
 
 #[tauri::command]
-fn agent_spawn(project_path: String, tool: String, worktree: Option<String>) -> Result<Value, String> {
-  let body = serde_json::json!({
-    "tool": tool,
-    "worktreePath": worktree,
-    "open": false,
-  });
-  project_service_json(&project_path, "POST", "/agents/spawn", Some(&body), "agent spawn")
+async fn agent_spawn(project_path: String, tool: String, worktree: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({
+      "tool": tool,
+      "worktreePath": worktree,
+      "open": false,
+    });
+    project_service_json(&project_path, "POST", "/agents/spawn", Some(&body), "agent spawn")
+  })
+  .await
+  .map_err(|error| format!("agent_spawn task failed: {error}"))?
 }
 
 #[tauri::command]
-fn agent_stop(project_path: String, session_id: String) -> Result<Value, String> {
-  let body = serde_json::json!({ "sessionId": session_id });
-  project_service_json(&project_path, "POST", "/agents/stop", Some(&body), "agent stop")
+async fn agent_stop(project_path: String, session_id: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({ "sessionId": session_id });
+    project_service_json(&project_path, "POST", "/agents/stop", Some(&body), "agent stop")
+  })
+  .await
+  .map_err(|error| format!("agent_stop task failed: {error}"))?
 }
 
 #[tauri::command]
-fn agent_kill(project_path: String, session_id: String) -> Result<Value, String> {
-  let body = serde_json::json!({ "sessionId": session_id });
-  project_service_json(&project_path, "POST", "/agents/kill", Some(&body), "agent kill")
+async fn agent_kill(project_path: String, session_id: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({ "sessionId": session_id });
+    project_service_json(&project_path, "POST", "/agents/kill", Some(&body), "agent kill")
+  })
+  .await
+  .map_err(|error| format!("agent_kill task failed: {error}"))?
 }
 
 #[tauri::command]
-fn agent_fork(project_path: String, session_id: String, tool: Option<String>, worktree: Option<String>) -> Result<Value, String> {
-  let body = serde_json::json!({
-    "sourceSessionId": session_id,
-    "tool": tool.unwrap_or_else(|| "claude".to_string()),
-    "worktreePath": worktree,
-    "open": false,
-  });
-  project_service_json(&project_path, "POST", "/agents/fork", Some(&body), "agent fork")
+async fn agent_fork(project_path: String, session_id: String, tool: Option<String>, worktree: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({
+      "sourceSessionId": session_id,
+      "tool": tool.unwrap_or_else(|| "claude".to_string()),
+      "worktreePath": worktree,
+      "open": false,
+    });
+    project_service_json(&project_path, "POST", "/agents/fork", Some(&body), "agent fork")
+  })
+  .await
+  .map_err(|error| format!("agent_fork task failed: {error}"))?
 }
 
 #[tauri::command]
-fn agent_rename(project_path: String, session_id: String, label: Option<String>) -> Result<Value, String> {
-  let body = serde_json::json!({
-    "sessionId": session_id,
-    "label": label,
-  });
-  project_service_json(&project_path, "POST", "/agents/rename", Some(&body), "agent rename")
+async fn agent_rename(project_path: String, session_id: String, label: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({
+      "sessionId": session_id,
+      "label": label,
+    });
+    project_service_json(&project_path, "POST", "/agents/rename", Some(&body), "agent rename")
+  })
+  .await
+  .map_err(|error| format!("agent_rename task failed: {error}"))?
 }
 
 #[tauri::command]
-fn agent_migrate(project_path: String, session_id: String, worktree: String) -> Result<Value, String> {
-  let body = serde_json::json!({
-    "sessionId": session_id,
-    "worktreePath": worktree,
-  });
-  project_service_json(&project_path, "POST", "/agents/migrate", Some(&body), "agent migrate")
+async fn agent_migrate(project_path: String, session_id: String, worktree: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({
+      "sessionId": session_id,
+      "worktreePath": worktree,
+    });
+    project_service_json(&project_path, "POST", "/agents/migrate", Some(&body), "agent migrate")
+  })
+  .await
+  .map_err(|error| format!("agent_migrate task failed: {error}"))?
 }
 
 #[tauri::command]
-fn worktree_create(project_path: String, name: String) -> Result<Value, String> {
-  let body = serde_json::json!({ "name": name });
-  project_service_json(&project_path, "POST", "/worktrees/create", Some(&body), "worktree create")
+async fn worktree_create(project_path: String, name: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({ "name": name });
+    project_service_json(&project_path, "POST", "/worktrees/create", Some(&body), "worktree create")
+  })
+  .await
+  .map_err(|error| format!("worktree_create task failed: {error}"))?
 }
 
 #[tauri::command]
-fn worktree_list(project_path: String) -> Result<Value, String> {
-  let response: Value = project_service_json(&project_path, "GET", "/worktrees", None, "worktree list")?;
-  Ok(response
-    .get("worktrees")
-    .cloned()
-    .unwrap_or_else(|| Value::Array(Vec::new())))
+async fn worktree_list(project_path: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let response: Value = project_service_json(&project_path, "GET", "/worktrees", None, "worktree list")?;
+    Ok(response
+      .get("worktrees")
+      .cloned()
+      .unwrap_or_else(|| Value::Array(Vec::new())))
+  })
+  .await
+  .map_err(|error| format!("worktree_list task failed: {error}"))?
 }
 
 #[tauri::command]
-fn graveyard_list(project_path: String) -> Result<Value, String> {
-  let response: Value = project_service_json(&project_path, "GET", "/graveyard", None, "graveyard list")?;
-  Ok(response
-    .get("entries")
-    .cloned()
-    .unwrap_or_else(|| Value::Array(Vec::new())))
+async fn graveyard_list(project_path: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let response: Value = project_service_json(&project_path, "GET", "/graveyard", None, "graveyard list")?;
+    Ok(response
+      .get("entries")
+      .cloned()
+      .unwrap_or_else(|| Value::Array(Vec::new())))
+  })
+  .await
+  .map_err(|error| format!("graveyard_list task failed: {error}"))?
 }
 
 #[tauri::command]
-fn graveyard_resurrect(project_path: String, session_id: String) -> Result<Value, String> {
-  let body = serde_json::json!({ "sessionId": session_id });
-  project_service_json(
-    &project_path,
-    "POST",
-    "/graveyard/resurrect",
-    Some(&body),
-    "graveyard resurrect",
-  )
+async fn graveyard_resurrect(project_path: String, session_id: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({ "sessionId": session_id });
+    project_service_json(
+      &project_path,
+      "POST",
+      "/graveyard/resurrect",
+      Some(&body),
+      "graveyard resurrect",
+    )
+  })
+  .await
+  .map_err(|error| format!("graveyard_resurrect task failed: {error}"))?
 }
 
 // ── Commands: terminal PTY ────────────────────────────────────────
