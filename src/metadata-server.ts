@@ -373,6 +373,36 @@ export class MetadataServer {
     });
   }
 
+  private emitReviewOutcomeAlert(input: {
+    task: {
+      id: string;
+      description: string;
+      assignedBy: string;
+      reviewFeedback?: string;
+    };
+    thread?: {
+      id?: string;
+      worktreePath?: string;
+    };
+    kind: Extract<AlertKind, "task_done" | "blocked">;
+    fallbackMessage: string;
+  }): void {
+    const recipient = input.task.assignedBy?.trim();
+    if (!recipient) return;
+    const isBlocked = input.kind === "blocked";
+    this.emitAlert({
+      kind: input.kind,
+      sessionId: recipient,
+      taskId: input.task.id,
+      threadId: input.thread?.id,
+      worktreePath: input.thread?.worktreePath,
+      title: `${isBlocked ? "Changes requested" : "Review approved"}: ${input.task.description}`,
+      message: input.task.reviewFeedback?.trim() || input.fallbackMessage,
+      dedupeKey: `${isBlocked ? "review-blocked" : "review-approved"}:${input.task.id}:${recipient}`,
+      cooldownMs: 15_000,
+    });
+  }
+
   private resolveAlertRecipients(
     explicit: string[] | undefined,
     message: unknown,
@@ -843,16 +873,30 @@ export class MetadataServer {
                 title: body.title,
                 worktreePath: body.worktreePath,
               });
-        const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
-        this.emitThreadWaitingAlert({
-          kind: "message_waiting",
-          threadId: (result.thread as { id: string }).id,
-          from: body.from ?? "user",
-          recipients,
-          title: `Message for ${recipients.join(", ") || "agent"}`,
-          message: body.body.trim() || "A new message is waiting.",
-          worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
-        });
+        const messageKind = body.kind ?? "request";
+        if (messageKind === "handoff") {
+          const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+          this.emitThreadWaitingAlert({
+            kind: "handoff_waiting",
+            threadId: (result.thread as { id: string }).id,
+            from: body.from ?? "user",
+            recipients,
+            title: `Handoff for ${recipients.join(", ") || "agent"}`,
+            message: body.body.trim() || "A handoff is waiting for you.",
+            worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
+          });
+        } else if (messageKind === "request" || messageKind === "reply" || messageKind === "note") {
+          const recipients = this.resolveAlertRecipients(body.to, result.message, body.to);
+          this.emitThreadWaitingAlert({
+            kind: "message_waiting",
+            threadId: (result.thread as { id: string }).id,
+            from: body.from ?? "user",
+            recipients,
+            title: `Message for ${recipients.join(", ") || "agent"}`,
+            message: body.body.trim() || "A new message is waiting.",
+            worktreePath: (result.thread as { worktreePath?: string }).worktreePath ?? body.worktreePath,
+          });
+        }
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
@@ -1280,6 +1324,12 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
+        this.emitReviewOutcomeAlert({
+          kind: "task_done",
+          task: result.task,
+          thread: result.thread,
+          fallbackMessage: body.body?.trim() || result.message?.body || "Review approved.",
+        });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
@@ -1294,6 +1344,12 @@ export class MetadataServer {
               from: body.from?.trim() || "user",
               body: body.body,
             });
+        this.emitReviewOutcomeAlert({
+          kind: "blocked",
+          task: result.task,
+          thread: result.thread,
+          fallbackMessage: body.body?.trim() || result.message?.body || "Changes requested.",
+        });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;

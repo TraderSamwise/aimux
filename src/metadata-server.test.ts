@@ -572,6 +572,112 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"sessionId":"codex-1"');
   });
 
+  it("does not emit generic message alerts for status messages", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const streamRes = await fetch(`${base}/events?sessionId=codex-1`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const sendRes = await fetch(`${base}/threads/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: ["codex-1"],
+        kind: "status",
+        body: "Status update only.",
+        title: "Status",
+      }),
+    });
+    expect(sendRes.ok).toBe(true);
+
+    const text = await readSseUntil(streamRes.body!, (value) => value.includes(": keepalive") || value.length > 128);
+    expect(text).not.toContain('"kind":"message_waiting"');
+  });
+
+  it("emits review approval alerts to the original assigner", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const assignRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Review the timeout parser patch",
+        type: "review",
+      }),
+    });
+    const assigned = (await assignRes.json()) as { task: { id: string } };
+    expect(assignRes.ok).toBe(true);
+
+    const streamRes = await fetch(`${base}/events?sessionId=claude-lead`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"Review approved:'));
+
+    const approveRes = await fetch(`${base}/reviews/approve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        taskId: assigned.task.id,
+        from: "codex-1",
+        body: "Looks good.",
+      }),
+    });
+    expect(approveRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain('"kind":"task_done"');
+    expect(text).toContain('"sessionId":"claude-lead"');
+  });
+
+  it("emits review changes-requested alerts to the original assigner", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const assignRes = await fetch(`${base}/tasks/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        to: "codex-1",
+        description: "Review the timeout parser follow-up",
+        type: "review",
+      }),
+    });
+    const assigned = (await assignRes.json()) as { task: { id: string } };
+    expect(assignRes.ok).toBe(true);
+
+    const streamRes = await fetch(`${base}/events?sessionId=claude-lead`);
+    expect(streamRes.ok).toBe(true);
+    expect(streamRes.body).toBeTruthy();
+
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"Changes requested:'));
+
+    const changesRes = await fetch(`${base}/reviews/request-changes`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        taskId: assigned.task.id,
+        from: "codex-1",
+        body: "Please tighten the tests.",
+      }),
+    });
+    expect(changesRes.ok).toBe(true);
+
+    const text = await streamRead;
+    expect(text).toContain('"kind":"blocked"');
+    expect(text).toContain('"sessionId":"claude-lead"');
+  });
+
   it("passes submit intent with agent input over HTTP", async () => {
     server?.stop();
     const writes: Array<{ sessionId: string; data: string; submit?: boolean }> = [];
