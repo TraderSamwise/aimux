@@ -52,6 +52,9 @@ function renderActiveContext(
   currentWindowId?: string,
   currentPath?: string,
 ): string | null {
+  if (currentWindow && isDashboardWindowName(currentWindow)) {
+    return null;
+  }
   const activeSessionId = resolveCurrentSessionId(
     data,
     currentSession,
@@ -113,6 +116,9 @@ function renderActiveMetadata(
   currentWindowId?: string,
   currentPath?: string,
 ): string | null {
+  if (currentWindow && isDashboardWindowName(currentWindow)) {
+    return null;
+  }
   const activeSessionId = resolveCurrentSessionId(
     data,
     currentSession,
