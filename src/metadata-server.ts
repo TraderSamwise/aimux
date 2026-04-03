@@ -57,6 +57,14 @@ import {
 } from "./attachment-store.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
+import {
+  listSwitchableAgentItems,
+  resolveAttentionAgent,
+  resolveNextAgent,
+  resolvePrevAgent,
+  serializeFastControlItem,
+} from "./fast-control.js";
+import { TmuxRuntimeManager, isDashboardWindowName } from "./tmux-runtime-manager.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -167,6 +175,11 @@ interface MetadataServerOptions {
           sessionId: string;
           status: "offline";
         };
+    interruptAgent?: (input: { sessionId: string }) =>
+      | Promise<{ sessionId: string }>
+      | {
+          sessionId: string;
+        };
     renameAgent?: (input: { sessionId: string; label?: string }) =>
       | Promise<{ sessionId: string; label?: string }>
       | {
@@ -192,6 +205,7 @@ interface MetadataServerOptions {
       sessionId: string;
       data?: string;
       parts?: AgentInputPart[];
+      clientMessageId?: string;
       submit?: boolean;
     }) => Promise<{ sessionId: string }> | { sessionId: string };
     readAgentOutput?: (input: {
@@ -583,6 +597,24 @@ export class MetadataServer {
       send(res, 200, buildWorkflowEntries(url.searchParams.get("participant") ?? "user"));
       return;
     }
+    if (req.method === "GET" && url.pathname === "/control/switchable-agents") {
+      const currentClientSession = url.searchParams.get("currentClientSession")?.trim() || undefined;
+      const currentWindow = url.searchParams.get("currentWindow")?.trim() || undefined;
+      const currentWindowId = url.searchParams.get("currentWindowId")?.trim() || undefined;
+      const currentPath = url.searchParams.get("currentPath")?.trim() || undefined;
+      const items = listSwitchableAgentItems(
+        {
+          projectRoot: process.cwd(),
+          currentClientSession,
+          currentWindow,
+          currentWindowId,
+          currentPath,
+        },
+        new TmuxRuntimeManager(),
+      ).map(serializeFastControlItem);
+      send(res, 200, { ok: true, items });
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/agents/output/stream") {
       const sessionId = url.searchParams.get("sessionId")?.trim();
       const startLineRaw = url.searchParams.get("startLine");
@@ -687,6 +719,110 @@ export class MetadataServer {
         }));
         this.options.onChange?.();
         send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/control/open-dashboard") {
+        const body = (await readJson(req)) as {
+          currentClientSession?: string;
+        };
+        const currentClientSession = body.currentClientSession?.trim() || undefined;
+        if (!currentClientSession) {
+          send(res, 400, { ok: false, error: "currentClientSession is required" });
+          return;
+        }
+        const tmux = new TmuxRuntimeManager();
+        const targetWindow = tmux
+          .listWindows(currentClientSession)
+          .find((window) => isDashboardWindowName(window.name));
+        if (!targetWindow) {
+          send(res, 404, { ok: false, error: "dashboard window not found in current client session" });
+          return;
+        }
+        send(res, 200, {
+          ok: true,
+          target: {
+            sessionName: currentClientSession,
+            windowId: targetWindow.id,
+            windowIndex: targetWindow.index,
+            windowName: targetWindow.name,
+          },
+        });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/control/switch-next") {
+        const body = (await readJson(req)) as {
+          currentClientSession?: string;
+          currentWindow?: string;
+          currentWindowId?: string;
+          currentPath?: string;
+        };
+        const item = resolveNextAgent(
+          {
+            projectRoot: process.cwd(),
+            currentClientSession: body.currentClientSession?.trim() || undefined,
+            currentWindow: body.currentWindow?.trim() || undefined,
+            currentWindowId: body.currentWindowId?.trim() || undefined,
+            currentPath: body.currentPath?.trim() || undefined,
+          },
+          new TmuxRuntimeManager(),
+        );
+        if (!item) {
+          send(res, 404, { ok: false, error: "no switchable agent found" });
+          return;
+        }
+        send(res, 200, { ok: true, item: serializeFastControlItem(item) });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/control/switch-prev") {
+        const body = (await readJson(req)) as {
+          currentClientSession?: string;
+          currentWindow?: string;
+          currentWindowId?: string;
+          currentPath?: string;
+        };
+        const item = resolvePrevAgent(
+          {
+            projectRoot: process.cwd(),
+            currentClientSession: body.currentClientSession?.trim() || undefined,
+            currentWindow: body.currentWindow?.trim() || undefined,
+            currentWindowId: body.currentWindowId?.trim() || undefined,
+            currentPath: body.currentPath?.trim() || undefined,
+          },
+          new TmuxRuntimeManager(),
+        );
+        if (!item) {
+          send(res, 404, { ok: false, error: "no switchable agent found" });
+          return;
+        }
+        send(res, 200, { ok: true, item: serializeFastControlItem(item) });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/control/switch-attention") {
+        const body = (await readJson(req)) as {
+          currentClientSession?: string;
+          currentWindow?: string;
+          currentWindowId?: string;
+          currentPath?: string;
+        };
+        const item = resolveAttentionAgent(
+          {
+            projectRoot: process.cwd(),
+            currentClientSession: body.currentClientSession?.trim() || undefined,
+            currentWindow: body.currentWindow?.trim() || undefined,
+            currentWindowId: body.currentWindowId?.trim() || undefined,
+            currentPath: body.currentPath?.trim() || undefined,
+          },
+          new TmuxRuntimeManager(),
+        );
+        if (!item) {
+          send(res, 404, { ok: false, error: "no attention target found" });
+          return;
+        }
+        send(res, 200, { ok: true, item: serializeFastControlItem(item) });
         return;
       }
 
@@ -1215,6 +1351,18 @@ export class MetadataServer {
         return;
       }
 
+      if (req.method === "POST" && url.pathname === "/agents/interrupt") {
+        const body = (await readJson(req)) as { sessionId: string };
+        if (!this.options.lifecycle?.interruptAgent) {
+          send(res, 501, { ok: false, error: "agent interrupt not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.interruptAgent(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/agents/rename") {
         const body = (await readJson(req)) as { sessionId: string; label?: string };
         if (!this.options.lifecycle?.renameAgent) {
@@ -1256,6 +1404,7 @@ export class MetadataServer {
           sessionId: string;
           data?: string;
           parts?: AgentInputPart[];
+          clientMessageId?: string;
           submit?: boolean;
         };
         if (!this.options.lifecycle?.writeAgentInput) {

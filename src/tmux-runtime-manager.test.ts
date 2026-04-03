@@ -172,7 +172,26 @@ describe("TmuxRuntimeManager", () => {
           args: ["bind-key", "-T", "prefix", "C-a", "send-prefix"],
         }),
         expect.objectContaining({
-          args: ["bind-key", "-T", "prefix", "s", "run-shell", "-b", expect.stringContaining("aimux tmux-switch menu")],
+          args: [
+            "bind-key",
+            "-T",
+            "prefix",
+            "s",
+            "run-shell",
+            "-b",
+            expect.stringContaining("#{@aimux-fast-control-command} menu"),
+          ],
+        }),
+        expect.objectContaining({
+          args: [
+            "bind-key",
+            "-T",
+            "prefix",
+            "n",
+            "run-shell",
+            "-b",
+            expect.stringContaining("#{@aimux-fast-control-command} next"),
+          ],
         }),
         expect.objectContaining({
           args: [
@@ -183,6 +202,17 @@ describe("TmuxRuntimeManager", () => {
             "run-shell",
             "-b",
             expect.stringContaining("--current-window-id '#{window_id}'"),
+          ],
+        }),
+        expect.objectContaining({
+          args: [
+            "bind-key",
+            "-T",
+            "prefix",
+            "p",
+            "run-shell",
+            "-b",
+            expect.stringContaining("#{@aimux-fast-control-command} prev"),
           ],
         }),
         expect.objectContaining({
@@ -204,7 +234,7 @@ describe("TmuxRuntimeManager", () => {
             "u",
             "run-shell",
             "-b",
-            expect.stringContaining("aimux tmux-switch attention"),
+            expect.stringContaining("#{@aimux-fast-control-command} attention"),
           ],
         }),
         expect.objectContaining({
@@ -215,7 +245,7 @@ describe("TmuxRuntimeManager", () => {
             "d",
             "run-shell",
             "-b",
-            expect.stringContaining("aimux tmux-switch dashboard"),
+            expect.stringContaining("#{@aimux-fast-control-command} dashboard"),
           ],
         }),
         expect.objectContaining({

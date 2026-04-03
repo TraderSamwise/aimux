@@ -310,6 +310,15 @@ function resolveProjectRoot(cwd: string): string {
   }
 }
 
+function resolveScopedWorktreePath(projectRoot: string, currentPath?: string): string {
+  const fallback = pathResolve(currentPath || projectRoot);
+  const worktrees = listWorktrees(projectRoot)
+    .map((worktree) => pathResolve(worktree.path))
+    .sort((a, b) => b.length - a.length);
+  const match = worktrees.find((worktreePath) => fallback === worktreePath || fallback.startsWith(`${worktreePath}/`));
+  return match ?? fallback;
+}
+
 function ensureTmuxAvailable(tmux: TmuxRuntimeManager): void {
   if (!tmux.isAvailable()) {
     console.error("aimux: tmux is not installed or not available in PATH");
@@ -319,8 +328,10 @@ function ensureTmuxAvailable(tmux: TmuxRuntimeManager): void {
 
 function getDashboardCommandSpec(projectRoot: string) {
   const scriptPath = fileURLToPath(import.meta.url);
+  const fastControlScriptPath = pathJoin(pathDirname(scriptPath), "tmux-fast-control.js");
   return {
     scriptPath,
+    fastControlCommand: `${JSON.stringify(process.execPath)} ${JSON.stringify(fastControlScriptPath)}`,
     dashboardBuildStamp: String(statSync(scriptPath).mtimeMs),
     dashboardCommand: {
       cwd: projectRoot,
@@ -335,7 +346,8 @@ function getDashboardCommandSpec(projectRoot: string) {
 }
 
 function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
-  const { dashboardBuildStamp, dashboardCommand, statuslineCommand } = getDashboardCommandSpec(projectRoot);
+  const { dashboardBuildStamp, dashboardCommand, statuslineCommand, fastControlCommand } =
+    getDashboardCommandSpec(projectRoot);
   const dashboardSession = tmux.ensureProjectSession(
     projectRoot,
     {
@@ -346,6 +358,10 @@ function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManage
     statuslineCommand,
   );
   const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
+  tmux.setSessionOption(dashboardSession.sessionName, "@aimux-fast-control-command", fastControlCommand);
+  if (openSessionName !== dashboardSession.sessionName) {
+    tmux.setSessionOption(openSessionName, "@aimux-fast-control-command", fastControlCommand);
+  }
   const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
   const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
   const shouldRespawnDashboard = !tmux.isWindowAlive(dashboardTarget) || currentBuildStamp !== dashboardBuildStamp;
@@ -357,7 +373,8 @@ function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManage
 }
 
 function forceReloadDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
-  const { dashboardBuildStamp, dashboardCommand, statuslineCommand } = getDashboardCommandSpec(projectRoot);
+  const { dashboardBuildStamp, dashboardCommand, statuslineCommand, fastControlCommand } =
+    getDashboardCommandSpec(projectRoot);
   const dashboardSession = tmux.ensureProjectSession(
     projectRoot,
     {
@@ -368,6 +385,10 @@ function forceReloadDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeM
     statuslineCommand,
   );
   const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
+  tmux.setSessionOption(dashboardSession.sessionName, "@aimux-fast-control-command", fastControlCommand);
+  if (openSessionName !== dashboardSession.sessionName) {
+    tmux.setSessionOption(openSessionName, "@aimux-fast-control-command", fastControlCommand);
+  }
   const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
   tmux.respawnWindow(dashboardTarget, dashboardCommand);
   tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
@@ -2176,17 +2197,31 @@ program
         }
         tmux.openTarget(target, { insideTmux: Boolean(currentClientSession) });
       };
+      const currentClientSession = tmux.currentClientSession();
       const tmuxSession = tmux.getProjectSession(opts.projectRoot);
-      const managed = tmux
+      const scopedWorktreePath = resolveScopedWorktreePath(opts.projectRoot, opts.currentPath);
+      let managed = tmux
         .listManagedWindows(tmuxSession.sessionName)
         .filter(({ target, metadata }) => {
           if (isDashboardWindowName(target.windowName)) return false;
           if (action === "attention") return true;
           if (opts.currentWindow && isDashboardWindowName(opts.currentWindow)) return false;
           const worktreePath = metadata.worktreePath || opts.projectRoot;
-          return worktreePath === opts.currentPath;
+          return pathResolve(worktreePath) === scopedWorktreePath;
         })
         .sort((a, b) => a.target.windowIndex - b.target.windowIndex);
+
+      if (currentClientSession) {
+        const managedByWindowId = new Map(managed.map((entry) => [entry.target.windowId, entry] as const));
+        const clientOrderedManaged = tmux
+          .listWindows(currentClientSession)
+          .filter((window) => !isDashboardWindowName(window.name))
+          .map((window) => managedByWindowId.get(window.id))
+          .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+        if (clientOrderedManaged.length > 0) {
+          managed = clientOrderedManaged;
+        }
+      }
 
       if (managed.length === 0) return;
       const metadataState = loadMetadataState(opts.projectRoot);
@@ -2206,7 +2241,7 @@ program
         const candidates = managed
           .map((entry) => ({ ...entry, urgency: urgency(entry.metadata.sessionId) }))
           .filter((entry) => entry.urgency > 0)
-          .sort((a, b) => b.urgency - a.urgency || a.target.windowIndex - b.target.windowIndex);
+          .sort((a, b) => b.urgency - a.urgency || managed.indexOf(a) - managed.indexOf(b));
         if (candidates.length === 0) return;
         const nonCurrent = candidates.find(
           ({ target, metadata }) => target.windowName !== opts.currentWindow && metadata.label !== opts.currentWindow,
@@ -2215,13 +2250,16 @@ program
         return;
       }
 
-      const currentIndex = managed.findIndex(({ target, metadata }) => {
-        return (
-          target.windowId === opts.currentWindowId ||
-          target.windowName === opts.currentWindow ||
-          metadata.label === opts.currentWindow
-        );
-      });
+      const currentIndexById = opts.currentWindowId
+        ? managed.findIndex(({ target }) => target.windowId === opts.currentWindowId)
+        : -1;
+      const currentIndex =
+        currentIndexById >= 0
+          ? currentIndexById
+          : managed.findIndex(
+              ({ target, metadata }) =>
+                target.windowName === opts.currentWindow || metadata.label === opts.currentWindow,
+            );
       const resolvedIndex = currentIndex >= 0 ? currentIndex : 0;
 
       if (action === "next") {
