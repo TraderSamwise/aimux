@@ -5,6 +5,8 @@
   let actions = $derived(appState.inFlightActions || []);
   let primaryAction = $derived(actions.length > 0 ? actions[actions.length - 1] : null);
   let currentAlert = $derived(appState.currentAlert);
+  let notificationSummary = $derived(appState.notificationSummary || { unreadCount: 0, unreadBySession: {} });
+  let totalUnreadNotifications = $derived(appState.totalUnreadNotifications || 0);
   let idle = $derived(!primaryAction);
   let controlPlane = $derived(appState.controlPlane || {});
   let daemonStatus = $derived(controlPlane.daemonStatus || "down");
@@ -55,6 +57,9 @@
     return "Project Degraded · Restart";
   });
   let controlHint = $derived.by(() => {
+    const selectedUnread = Number(notificationSummary?.unreadCount || 0);
+    if (selectedUnread > 0) return `${selectedUnread} unread notification${selectedUnread === 1 ? "" : "s"}`;
+    if (totalUnreadNotifications > 0) return `${totalUnreadNotifications} unread notification${totalUnreadNotifications === 1 ? "" : "s"} across projects`;
     if (controlError) return controlError;
     if (controlReason) return controlReason;
     return null;

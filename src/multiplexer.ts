@@ -73,6 +73,7 @@ import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { deriveSessionSemantics, sessionSemanticAttentionScore } from "./session-semantics.js";
 import { hasProjectServiceBuildDrift } from "./project-service-manifest.js";
 import { injectClaudeHookArgs } from "./claude-hooks.js";
+import { markNotificationsRead } from "./notifications.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -1420,6 +1421,7 @@ export class Multiplexer {
     const sid = this.sessions[index].id;
     this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
     this.agentTracker.markSeen(sid);
+    markNotificationsRead({ sessionId: sid });
     const target = this.sessionTmuxTargets.get(sid);
     if (target) {
       this.saveState();

@@ -24,6 +24,7 @@ let nativeChatRawMode = $state(false);
 let nativeChatDraftParts = $state({});
 let currentAlert = $state(null);
 let recentAlerts = $state([]);
+let notificationSummaries = $state({});
 let expectedServiceInfo = $state(null);
 let controlPlaneError = $state(null);
 
@@ -69,6 +70,24 @@ function pushAlert(event) {
   };
   currentAlert = next;
   recentAlerts = [...recentAlerts.filter((entry) => entry.key !== next.key), next].slice(-20);
+  if (next.projectId) {
+    const project = projects.find((entry) => entry.id === next.projectId) || null;
+    const projectPath = project?.path || null;
+    if (projectPath) {
+      const current = notificationSummaries[projectPath] || { unreadCount: 0, unreadBySession: {} };
+      const nextUnreadBySession = { ...(current.unreadBySession || {}) };
+      if (next.sessionId) {
+        nextUnreadBySession[next.sessionId] = (nextUnreadBySession[next.sessionId] || 0) + 1;
+      }
+      notificationSummaries = {
+        ...notificationSummaries,
+        [projectPath]: {
+          unreadCount: (current.unreadCount || 0) + 1,
+          unreadBySession: nextUnreadBySession,
+        },
+      };
+    }
+  }
   if (alertDismissTimer) {
     clearTimeout(alertDismissTimer);
   }
@@ -77,6 +96,88 @@ function pushAlert(event) {
       currentAlert = null;
     }
   }, 8000);
+}
+
+async function fetchProjectNotificationSummary(project) {
+  if (!project?.path) {
+    return;
+  }
+  if (!project?.serviceEndpointAlive || !project?.serviceEndpoint?.host || !project?.serviceEndpoint?.port) {
+    notificationSummaries = {
+      ...notificationSummaries,
+      [project.path]: { unreadCount: 0, unreadBySession: {} },
+    };
+    return;
+  }
+  try {
+    const url = new URL(`http://${project.serviceEndpoint.host}:${project.serviceEndpoint.port}/notifications`);
+    url.searchParams.set("unread", "1");
+    const res = await fetch(url);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.ok === false) return;
+    const unreadBySession = {};
+    for (const notification of json.notifications || []) {
+      if (!notification?.sessionId) continue;
+      unreadBySession[notification.sessionId] = (unreadBySession[notification.sessionId] || 0) + 1;
+    }
+    notificationSummaries = {
+      ...notificationSummaries,
+      [project.path]: {
+        unreadCount: Number(json.unreadCount || 0),
+        unreadBySession,
+      },
+    };
+  } catch {}
+}
+
+function syncNotificationSummaries(nextProjects = projects) {
+  const livePaths = new Set(nextProjects.map((project) => project.path));
+  const nextSummaries = {};
+  for (const [projectPath, summary] of Object.entries(notificationSummaries)) {
+    if (livePaths.has(projectPath)) {
+      nextSummaries[projectPath] = summary;
+    }
+  }
+  notificationSummaries = nextSummaries;
+  for (const project of nextProjects) {
+    void fetchProjectNotificationSummary(project);
+  }
+}
+
+async function markSessionSeen(projectPath, sessionId) {
+  if (!projectPath || !sessionId) return;
+  const project = projects.find((entry) => entry.path === projectPath) || null;
+  const endpoint = project?.serviceEndpoint || null;
+
+  const currentSummary = notificationSummaries[projectPath] || { unreadCount: 0, unreadBySession: {} };
+  const unreadForSession = Number(currentSummary.unreadBySession?.[sessionId] || 0);
+  if (unreadForSession > 0) {
+    const nextUnreadBySession = { ...(currentSummary.unreadBySession || {}) };
+    delete nextUnreadBySession[sessionId];
+    notificationSummaries = {
+      ...notificationSummaries,
+      [projectPath]: {
+        unreadCount: Math.max(0, Number(currentSummary.unreadCount || 0) - unreadForSession),
+        unreadBySession: nextUnreadBySession,
+      },
+    };
+  }
+
+  if (!endpoint?.host || !endpoint?.port) return;
+  try {
+    await Promise.all([
+      fetch(`http://${endpoint.host}:${endpoint.port}/mark-seen`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session: sessionId }),
+      }),
+      fetch(`http://${endpoint.host}:${endpoint.port}/notifications/read`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      }),
+    ]);
+  } catch {}
 }
 
 function stopProjectAlertStream(projectPath) {
@@ -843,6 +944,12 @@ export function getState() {
     get inFlightActions() { return inFlightActions; },
     get currentAlert() { return currentAlert; },
     get recentAlerts() { return recentAlerts; },
+    get notificationSummary() {
+      return selectedProjectPath ? (notificationSummaries[selectedProjectPath] || { unreadCount: 0, unreadBySession: {} }) : { unreadCount: 0, unreadBySession: {} };
+    },
+    get totalUnreadNotifications() {
+      return Object.values(notificationSummaries).reduce((sum, entry) => sum + Number(entry?.unreadCount || 0), 0);
+    },
     get nativeChatOutput() { return nativeChatOutput; },
     get nativeChatBlocks() { return nativeChatBlocks; },
     get nativeChatHistory() { return nativeChatHistory; },
@@ -886,6 +993,7 @@ function onHeartbeat(event) {
   reconcileActions(incoming);
   projects = incoming;
   syncProjectAlertStreams(projects);
+  syncNotificationSummaries(projects);
 
   if (!selectedProjectPath && projects.length > 0) {
     selectedProjectPath = projects[0].path;
@@ -974,6 +1082,7 @@ export async function selectProject(path) {
 
 export function selectSession(id) {
   selectedSessionId = id;
+  void markSessionSeen(selectedProjectPath, id);
   syncNativeChatSelection();
 }
 

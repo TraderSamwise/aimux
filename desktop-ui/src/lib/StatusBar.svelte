@@ -57,16 +57,18 @@
   });
 
   let selectedScreen = $derived.by(() => state.selectedScreen || "dashboard");
+  let notificationSummary = $derived.by(() => state.notificationSummary || { unreadCount: 0, unreadBySession: {} });
 
   const screens = ["dashboard", "activity", "threads", "plans", "graveyard"];
 
   function badge(session) {
     const derived = session?.meta?.derived || null;
     const semantic = session?.semantic || null;
+    const notificationUnread = Number(notificationSummary?.unreadBySession?.[session?.id] || 0);
     if (semantic?.attention === "error") return { glyph: "\u2717", color: "var(--red)" };
     if (semantic?.workflowState === "blocked" || semantic?.attention === "blocked") return { glyph: "!", color: "var(--red)" };
     if (semantic?.workflowState === "waiting_on_me" || semantic?.availability === "needs_input") return { glyph: "?", color: "var(--yellow)" };
-    const unread = isActiveNativeChatSession(session) ? 0 : (semantic?.unreadCount ?? derived?.unseenCount ?? 0);
+    const unread = isActiveNativeChatSession(session) ? 0 : Math.max(notificationUnread, semantic?.unreadCount ?? derived?.unseenCount ?? 0);
     if (unread > 0) return { glyph: String(Math.min(unread, 9)), color: "var(--accent)" };
     if (semantic?.activity === "done" || derived?.activity === "done") return { glyph: "\u2713", color: "var(--green)" };
     if (semantic?.activity === "running" || derived?.activity === "running") return { glyph: "\u21bb", color: "var(--green)" };
