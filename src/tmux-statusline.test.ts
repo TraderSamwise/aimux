@@ -33,18 +33,54 @@ describe("renderTmuxStatusline", () => {
       statusPath,
       JSON.stringify({
         updatedAt: freshUpdatedAt(),
-        sessions: [],
+        sessions: [
+          {
+            id: "a",
+            tool: "codex",
+            label: "coder",
+            windowName: "coder",
+            role: "coder",
+            tmuxWindowId: "@1",
+            status: "running",
+            active: true,
+            headline: "Fix auth flow",
+            worktreePath: repoRoot,
+          },
+          { id: "b", tool: "claude", status: "idle", windowName: "claude", worktreePath: repoRoot },
+        ],
+        metadata: {
+          a: {
+            context: {
+              worktreeName: "mobile",
+              branch: "feat/mobile-auth",
+              pr: { number: 123 },
+            },
+            derived: {
+              activity: "running",
+              attention: "needs_input",
+              unseenCount: 2,
+              services: [{ url: "http://localhost:3000", port: 3000 }],
+            },
+          },
+        },
+        tasks: { pending: 2, assigned: 1 },
       }),
     );
     const rendered = renderTmuxStatusline(repoRoot, "top", {
       currentWindow: "coder",
+      currentWindowId: "@1",
       currentPath: repoRoot,
       currentSession: "aimux-mobile",
       width: 220,
     });
     expect(rendered).toContain("aimux");
     expect(rendered).toContain("ctl ok");
-    expect(rendered).not.toContain("mobile");
+    expect(rendered).toContain("mobile");
+    expect(rendered).toContain("feat/mobile-auth");
+    expect(rendered).toContain("PR #123");
+    expect(rendered).toContain(":3000");
+    expect(rendered).toContain("tasks 2/1");
+    expect(rendered).toContain("needs input");
   });
 
   it("renders bottom-line dashboard-specific screens on the dashboard window", () => {
@@ -62,16 +98,36 @@ describe("renderTmuxStatusline", () => {
       statusPath,
       JSON.stringify({
         updatedAt: freshUpdatedAt(),
-        sessions: [{ id: "a", tool: "codex", label: "coder", status: "running", active: true, worktreePath: repoRoot }],
+        sessions: [
+          {
+            id: "a",
+            tool: "codex",
+            label: "coder",
+            windowName: "coder",
+            tmuxWindowId: "@1",
+            status: "running",
+            active: true,
+            worktreePath: repoRoot,
+          },
+        ],
+        metadata: {
+          a: {
+            context: { worktreeName: "mobile", branch: "feat/mobile-auth" },
+            derived: { attention: "needs_input" },
+          },
+        },
       }),
     );
     const rendered = renderTmuxStatusline(repoRoot, "top", {
       currentWindow: "coder",
+      currentWindowId: "@1",
       currentPath: repoRoot,
       currentSession: "aimux-mobile",
       width: 220,
     });
     expect(rendered).toContain("ctl ok");
+    expect(rendered).toContain("mobile");
+    expect(rendered).toContain("needs input");
   });
 
   it("trims bottom-line segments to available width", () => {
@@ -98,16 +154,85 @@ describe("renderTmuxStatusline", () => {
       statusPath,
       JSON.stringify({
         updatedAt: freshUpdatedAt(),
-        sessions: [],
+        sessions: [
+          {
+            id: "a",
+            tool: "codex",
+            label: "coder",
+            windowName: "coder",
+            tmuxWindowId: "@1",
+            role: "coder",
+            status: "running",
+            active: true,
+            headline: "Fix auth flow",
+            worktreePath: repoRoot,
+          },
+          { id: "b", tool: "claude", status: "idle", windowName: "claude", worktreePath: repoRoot },
+        ],
+        metadata: {
+          a: { derived: { attention: "needs_input", unseenCount: 3 } },
+          b: { derived: { activity: "done" } },
+        },
       }),
     );
     const rendered = renderTmuxStatusline(repoRoot, "bottom", {
       currentWindow: "coder",
+      currentWindowId: "@1",
       currentPath: repoRoot,
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(rendered).toBe("[coder]");
+    expect(rendered).toContain("[coder(coder) on you ?]");
+    expect(rendered).toContain("claude ✓");
+    expect(rendered).toContain("Fix auth flow");
+  });
+
+  it("scopes bottom-line agents to the enclosing worktree root for nested cwd paths", () => {
+    const nestedPath = join(repoRoot, ".aimux", "worktrees", "tealchart-cleanup-11");
+    mkdirSync(nestedPath, { recursive: true });
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "a",
+            tool: "claude",
+            label: "Claude",
+            windowName: "claude",
+            tmuxWindowId: "@7",
+            role: "coder",
+            headline: "Needs review",
+            worktreePath: nestedPath,
+          },
+          {
+            id: "b",
+            tool: "codex",
+            label: "Codex",
+            windowName: "codex",
+            tmuxWindowId: "@8",
+            role: "reviewer",
+            headline: "Running tests",
+            worktreePath: nestedPath,
+          },
+        ],
+        metadata: {
+          a: { derived: { attention: "needs_input" } },
+          b: { derived: { activity: "running" } },
+        },
+      }),
+    );
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "claude",
+      currentWindowId: "@7",
+      currentPath: join(nestedPath, "src", "components"),
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    expect(rendered).toContain("[Claude(coder) on you ?]");
+    expect(rendered).toContain("Codex(reviewer) ↻");
+    expect(rendered).toContain("Needs review");
   });
 
   it("disambiguates duplicate tmux window names by current path", () => {
@@ -118,22 +243,51 @@ describe("renderTmuxStatusline", () => {
       statusPath,
       JSON.stringify({
         updatedAt: freshUpdatedAt(),
-        sessions: [],
+        sessions: [
+          {
+            id: "a",
+            tool: "codex",
+            label: "codex",
+            windowName: "codex",
+            tmuxWindowId: "@1",
+            role: "coder",
+            status: "running",
+            active: false,
+            worktreePath: repoRoot,
+          },
+          {
+            id: "b",
+            tool: "codex",
+            label: "codex",
+            windowName: "codex",
+            tmuxWindowId: "@2",
+            status: "running",
+            active: true,
+            worktreePath: otherWorktree,
+          },
+        ],
+        metadata: {
+          a: { derived: { attention: "needs_input" }, context: { worktreeName: "main", branch: "master" } },
+          b: { derived: { activity: "running" }, context: { worktreeName: "worktree-a", branch: "feat/x" } },
+        },
       }),
     );
     const top = renderTmuxStatusline(repoRoot, "top", {
       currentWindow: "codex",
+      currentWindowId: "@1",
       currentPath: repoRoot,
       currentSession: "aimux-mobile",
       width: 220,
     });
     const bottom = renderTmuxStatusline(repoRoot, "bottom", {
       currentWindow: "codex",
+      currentWindowId: "@1",
       currentPath: repoRoot,
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(top).toContain("ctl ok");
-    expect(bottom).toContain("[codex]");
+    expect(top).toContain("needs input");
+    expect(bottom).toContain("codex(coder) on you ?");
+    expect(bottom).not.toContain("[codex ↻]");
   });
 });

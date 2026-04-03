@@ -58,44 +58,52 @@ async function requestFastControl(action: string, opts: Options): Promise<FastCo
     return null;
   }
   const startedAt = Date.now();
-  if (action === "menu") {
-    const url = new URL(`http://${endpoint.host}:${endpoint.port}/control/switchable-agents`);
-    if (opts.currentClientSession) url.searchParams.set("currentClientSession", opts.currentClientSession);
-    if (opts.currentWindow) url.searchParams.set("currentWindow", opts.currentWindow);
-    if (opts.currentWindowId) url.searchParams.set("currentWindowId", opts.currentWindowId);
-    if (opts.currentPath) url.searchParams.set("currentPath", opts.currentPath);
-    const { status, json } = await requestJson(url.toString(), { timeoutMs: 400 });
+  try {
+    if (action === "menu") {
+      const url = new URL(`http://${endpoint.host}:${endpoint.port}/control/switchable-agents`);
+      if (opts.currentClientSession) url.searchParams.set("currentClientSession", opts.currentClientSession);
+      if (opts.currentWindow) url.searchParams.set("currentWindow", opts.currentWindow);
+      if (opts.currentWindowId) url.searchParams.set("currentWindowId", opts.currentWindowId);
+      if (opts.currentPath) url.searchParams.set("currentPath", opts.currentPath);
+      const { status, json } = await requestJson(url.toString(), { timeoutMs: 400 });
+      if (status < 200 || status >= 300) {
+        logFastControl(`action=${action} mode=service-miss reason=http-${status} durationMs=${Date.now() - startedAt}`);
+        return null;
+      }
+      const body = json as FastControlResponse;
+      logFastControl(
+        `action=${action} mode=service-ok durationMs=${Date.now() - startedAt} items=${body.items?.length ?? 0}`,
+      );
+      return body;
+    }
+    const endpointPath =
+      action === "dashboard"
+        ? "/control/open-dashboard"
+        : action === "attention"
+          ? "/control/switch-attention"
+          : action === "prev"
+            ? "/control/switch-prev"
+            : "/control/switch-next";
+    const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${endpointPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: opts,
+      timeoutMs: 400,
+    });
     if (status < 200 || status >= 300) {
       logFastControl(`action=${action} mode=service-miss reason=http-${status} durationMs=${Date.now() - startedAt}`);
       return null;
     }
     const body = json as FastControlResponse;
-    logFastControl(
-      `action=${action} mode=service-ok durationMs=${Date.now() - startedAt} items=${body.items?.length ?? 0}`,
-    );
+    logFastControl(`action=${action} mode=service-ok durationMs=${Date.now() - startedAt}`);
     return body;
-  }
-  const endpointPath =
-    action === "dashboard"
-      ? "/control/open-dashboard"
-      : action === "attention"
-        ? "/control/switch-attention"
-        : action === "prev"
-          ? "/control/switch-prev"
-          : "/control/switch-next";
-  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${endpointPath}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: opts,
-    timeoutMs: 400,
-  });
-  if (status < 200 || status >= 300) {
-    logFastControl(`action=${action} mode=service-miss reason=http-${status} durationMs=${Date.now() - startedAt}`);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    logFastControl(
+      `action=${action} mode=service-miss reason=${JSON.stringify(reason)} durationMs=${Date.now() - startedAt}`,
+    );
     return null;
   }
-  const body = json as FastControlResponse;
-  logFastControl(`action=${action} mode=service-ok durationMs=${Date.now() - startedAt}`);
-  return body;
 }
 
 function openTarget(
@@ -104,8 +112,9 @@ function openTarget(
   currentClientSession?: string,
   clientTty?: string,
 ): void {
-  if (clientTty) {
-    tmux.switchClientToTarget(clientTty, target);
+  const liveClientTty = resolveLiveClientTty(tmux, currentClientSession, clientTty);
+  if (liveClientTty) {
+    tmux.switchClientToTarget(liveClientTty, target);
     if (target.windowName.startsWith("dashboard")) {
       tmux.sendFocusIn(target);
     }
@@ -114,7 +123,7 @@ function openTarget(
   if (currentClientSession) {
     const linkedTarget = tmux.getTargetByWindowId(currentClientSession, target.windowId);
     if (linkedTarget) {
-      tmux.selectWindow(linkedTarget);
+      tmux.switchClient(currentClientSession, linkedTarget.windowIndex);
       if (linkedTarget.windowName.startsWith("dashboard")) {
         tmux.sendFocusIn(linkedTarget);
       }
@@ -128,14 +137,34 @@ function displayMenu(
   tmux: TmuxRuntimeManager,
   items: Array<{ target: TmuxTarget; label: string }>,
   currentWindowId?: string,
+  currentClientSession?: string,
+  clientTty?: string,
 ): void {
-  tmux.displayWindowMenu(
-    "aimux",
-    items.map((item) => ({
-      label: item.target.windowId === currentWindowId ? `${item.label}*` : item.label,
-      target: item.target,
-    })),
-  );
+  const menuItems = items.map((item) => ({
+    label: item.target.windowId === currentWindowId ? `${item.label}*` : item.label,
+    target: item.target,
+  }));
+  const liveClientTty = resolveLiveClientTty(tmux, currentClientSession, clientTty);
+  if (liveClientTty) {
+    tmux.displayWindowMenuForClient(liveClientTty, "aimux", menuItems);
+    return;
+  }
+  tmux.displayWindowMenu("aimux", menuItems);
+}
+
+function resolveLiveClientTty(
+  tmux: TmuxRuntimeManager,
+  currentClientSession?: string,
+  preferredClientTty?: string,
+): string | undefined {
+  const normalizedTty = preferredClientTty?.trim();
+  if (normalizedTty && tmux.findClientByTty(normalizedTty)) {
+    return normalizedTty;
+  }
+  const normalizedSession = currentClientSession?.trim();
+  if (!normalizedSession) return undefined;
+  const liveClient = tmux.listClients().find((client) => client.sessionName === normalizedSession);
+  return liveClient?.tty || undefined;
 }
 
 function getDashboardCommandSpec(projectRoot: string) {
@@ -233,7 +262,7 @@ async function main() {
     const result = (await requestFastControl(action, opts)) ?? resolveLocalResult(action, opts, tmux);
     if (action === "menu") {
       if (!result?.items?.length) process.exit(0);
-      displayMenu(tmux, result.items, opts.currentWindowId);
+      displayMenu(tmux, result.items, opts.currentWindowId, opts.currentClientSession, opts.clientTty);
       process.exit(0);
     }
     const target = result?.target ?? result?.item?.target;

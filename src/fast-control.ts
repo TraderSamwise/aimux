@@ -55,6 +55,34 @@ export function resolveScopedWorktreePath(projectRoot: string, currentPath?: str
   return match ?? fallback;
 }
 
+function resolveContextWorktreePath(
+  context: FastControlContext,
+  tmux: TmuxRuntimeManager,
+  managedWindows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>,
+): string {
+  const byWindowId = context.currentWindowId
+    ? managedWindows.find((entry) => entry.target.windowId === context.currentWindowId)
+    : undefined;
+  if (byWindowId?.metadata.worktreePath) {
+    return pathResolve(byWindowId.metadata.worktreePath);
+  }
+
+  const currentClientSession = context.currentClientSession?.trim();
+  if (currentClientSession) {
+    const currentClientWindow = tmux
+      .listWindows(currentClientSession)
+      .find((window) => window.active && !isDashboardWindowName(window.name));
+    if (currentClientWindow) {
+      const byActiveClientWindow = managedWindows.find((entry) => entry.target.windowId === currentClientWindow.id);
+      if (byActiveClientWindow?.metadata.worktreePath) {
+        return pathResolve(byActiveClientWindow.metadata.worktreePath);
+      }
+    }
+  }
+
+  return resolveScopedWorktreePath(context.projectRoot, context.currentPath);
+}
+
 function urgencyFor(projectRoot: string, sessionId?: string): number {
   if (!sessionId) return 0;
   const derived = loadMetadataState(projectRoot).sessions[sessionId]?.derived;
@@ -66,9 +94,9 @@ export function listSwitchableAgentItems(
   tmux = new TmuxRuntimeManager(),
 ): FastControlItem[] {
   const tmuxSession = tmux.getProjectSession(context.projectRoot);
-  const scopedWorktreePath = resolveScopedWorktreePath(context.projectRoot, context.currentPath);
-  let managed = tmux
-    .listManagedWindows(tmuxSession.sessionName)
+  const managedWindows = tmux.listManagedWindows(tmuxSession.sessionName);
+  const scopedWorktreePath = resolveContextWorktreePath(context, tmux, managedWindows);
+  let managed = managedWindows
     .filter(({ target, metadata }) => {
       if (isDashboardWindowName(target.windowName)) return false;
       const worktreePath = metadata.worktreePath || context.projectRoot;
@@ -89,7 +117,9 @@ export function listSwitchableAgentItems(
       .map((window) => managedByWindowId.get(window.id))
       .filter((entry): entry is FastControlItem => Boolean(entry));
     if (clientOrdered.length > 0) {
-      managed = clientOrdered;
+      const linkedIds = new Set(clientOrdered.map((entry) => entry.target.windowId));
+      const unlinked = managed.filter((entry) => !linkedIds.has(entry.target.windowId));
+      managed = [...clientOrdered, ...unlinked];
     }
   }
 

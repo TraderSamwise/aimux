@@ -71,6 +71,19 @@ export function normalizePath(path: string | undefined, projectRoot: string): st
   return path?.trim() || projectRoot;
 }
 
+function isWithinPath(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+function resolveScopedWorktreePath(data: StatuslineData, projectRoot: string, currentPath?: string): string {
+  const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
+  const candidates = (data.sessions ?? [])
+    .map((session) => normalizePath(session.worktreePath, projectRoot))
+    .filter((worktreePath) => isWithinPath(normalizedCurrentPath, worktreePath))
+    .sort((left, right) => right.length - left.length);
+  return candidates[0] ?? normalizedCurrentPath;
+}
+
 export function sessionIdentity(session: Pick<StatuslineSession, "id" | "tool" | "label" | "role">): string {
   const base = session.label || session.tool || session.id;
   return session.role ? `${base}(${session.role})` : base;
@@ -138,14 +151,40 @@ export function resolveCurrentSessionId(
     if (byWindow?.id) return byWindow.id;
   }
   if (currentWindow && projectRoot) {
-    const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
+    const scopedWorktreePath = resolveScopedWorktreePath(data, projectRoot, currentPath);
     const byScopedWindow = sessions.find((session) => {
-      if (normalizePath(session.worktreePath, projectRoot) !== normalizedCurrentPath) return false;
+      if (normalizePath(session.worktreePath, projectRoot) !== scopedWorktreePath) return false;
       return session.windowName === currentWindow || session.label === currentWindow || session.tool === currentWindow;
     });
     if (byScopedWindow?.id) return byScopedWindow.id;
   }
   return data.sessions?.find((session) => session.active)?.id;
+}
+
+export function resolveExactCurrentSessionId(
+  data: StatuslineData,
+  currentSession?: string,
+  currentWindow?: string,
+  currentWindowId?: string,
+  currentPath?: string,
+  projectRoot?: string,
+): string | undefined {
+  const sessions = data.sessions ?? [];
+  if (currentWindowId) {
+    const byWindow = sessions.find((session) => session.tmuxWindowId === currentWindowId);
+    if (byWindow?.id) return byWindow.id;
+  }
+  if (currentWindow && projectRoot) {
+    const scopedWorktreePath = resolveScopedWorktreePath(data, projectRoot, currentPath);
+    const matches = sessions.filter((session) => {
+      if (normalizePath(session.worktreePath, projectRoot) !== scopedWorktreePath) return false;
+      return session.windowName === currentWindow || session.label === currentWindow || session.tool === currentWindow;
+    });
+    if (matches.length === 1) {
+      return matches[0]?.id;
+    }
+  }
+  return undefined;
 }
 
 export function resolveScopedSessions(
@@ -156,9 +195,9 @@ export function resolveScopedSessions(
   currentWindowId?: string,
   currentPath?: string,
 ): ResolvedStatuslineSession[] {
-  const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
+  const scopedWorktreePath = resolveScopedWorktreePath(data, projectRoot, currentPath);
   return (data.sessions ?? [])
-    .filter((session) => normalizePath(session.worktreePath, projectRoot) === normalizedCurrentPath)
+    .filter((session) => normalizePath(session.worktreePath, projectRoot) === scopedWorktreePath)
     .slice(0, 5)
     .map((session) => {
       const resolvedMetadata = data.metadata?.[session.id];
@@ -181,6 +220,26 @@ export function resolveSessionMetadata(
   currentPath?: string,
 ): StatuslineMetadataEntry | undefined {
   const activeSessionId = resolveCurrentSessionId(
+    data,
+    currentSession,
+    currentWindow,
+    currentWindowId,
+    currentPath,
+    projectRoot,
+  );
+  if (!activeSessionId) return undefined;
+  return data.metadata?.[activeSessionId];
+}
+
+export function resolveExactSessionMetadata(
+  data: StatuslineData,
+  projectRoot: string,
+  currentSession?: string,
+  currentWindow?: string,
+  currentWindowId?: string,
+  currentPath?: string,
+): StatuslineMetadataEntry | undefined {
+  const activeSessionId = resolveExactCurrentSessionId(
     data,
     currentSession,
     currentWindow,

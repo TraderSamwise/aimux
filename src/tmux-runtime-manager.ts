@@ -201,6 +201,9 @@ export class TmuxRuntimeManager {
       this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
       return;
     }
+
+    this.configureSession(clientSessionName, projectRoot);
+    this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
   }
 
   private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget): TmuxTarget {
@@ -267,8 +270,8 @@ export class TmuxRuntimeManager {
               "printf ''",
             ];
       this.exec(argv, { cwd: projectRoot });
-      this.configureSession(session.sessionName, projectRoot);
     }
+    this.configureSession(session.sessionName, projectRoot);
     return session;
   }
 
@@ -437,6 +440,19 @@ export class TmuxRuntimeManager {
   displayWindowMenu(title: string, items: Array<{ label: string; target: TmuxTarget }>): void {
     if (items.length === 0) return;
     const args = ["display-menu", "-T", title, "-x", "P", "-y", "P"];
+    for (const item of items) {
+      args.push(item.label, "", `select-window -t ${item.target.windowId}`);
+    }
+    this.exec(args);
+  }
+
+  displayWindowMenuForClient(
+    clientTty: string,
+    title: string,
+    items: Array<{ label: string; target: TmuxTarget }>,
+  ): void {
+    if (items.length === 0) return;
+    const args = ["display-menu", "-c", clientTty, "-T", title, "-x", "P", "-y", "P"];
     for (const item of items) {
       args.push(item.label, "", `select-window -t ${item.target.windowId}`);
     }
@@ -757,7 +773,7 @@ export class TmuxRuntimeManager {
       "n",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && ${fastControlCommand} next --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${fastControlCommand} next --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -766,7 +782,7 @@ export class TmuxRuntimeManager {
       "p",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && ${fastControlCommand} prev --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${fastControlCommand} prev --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -775,7 +791,7 @@ export class TmuxRuntimeManager {
       "s",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && ${fastControlCommand} menu --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${fastControlCommand} menu --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -784,7 +800,7 @@ export class TmuxRuntimeManager {
       "u",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && ${fastControlCommand} attention --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${fastControlCommand} attention --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
