@@ -151,6 +151,18 @@ Project-service HTTP now exposes the live orchestration surface, including:
 - `POST /reviews/approve`
 - `POST /reviews/request-changes`
 
+Project-service HTTP also exposes low-latency tmux control helpers:
+
+- `GET /control/switchable-agents`
+- `POST /control/switch-next`
+- `POST /control/switch-prev`
+- `POST /control/switch-attention`
+- `POST /control/open-dashboard`
+
+Tmux hotkeys use these through a thin `tmux-fast-control` entrypoint instead of shelling into the heavyweight operator CLI.
+
+Likewise, the tmux statusline uses a thin `tmux-statusline-cli` entrypoint instead of the main CLI command graph.
+
 The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
 
 ```bash

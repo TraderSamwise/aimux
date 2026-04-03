@@ -289,8 +289,9 @@ That reports:
 
 Hotkey latency note:
 
-- the current hotkey model still shells back into aimux/project-service helpers for some dynamic tmux actions
-- this works, but it is slower than pure tmux switching
+- dynamic tmux hotkeys now use a thin `tmux-fast-control` entrypoint that talks to the live project service
+- the final window switch still happens in tmux
+- this avoids spawning the heavyweight operator CLI for normal `n/p/s/u/d` navigation
 - the broader latency architecture plan is documented in [docs/latency-architecture-rfc.md](docs/latency-architecture-rfc.md)
 
 Dashboard hotkeys use the `Ctrl+A` leader prefix:
