@@ -175,10 +175,26 @@ describe("TmuxRuntimeManager", () => {
           args: ["bind-key", "-T", "prefix", "s", "run-shell", "-b", expect.stringContaining("aimux tmux-switch menu")],
         }),
         expect.objectContaining({
-          args: ["bind-key", "-T", "prefix", "n", "run-shell", "-b", expect.stringContaining("aimux tmux-switch next")],
+          args: [
+            "bind-key",
+            "-T",
+            "prefix",
+            "n",
+            "run-shell",
+            "-b",
+            expect.stringContaining("--current-window-id '#{window_id}'"),
+          ],
         }),
         expect.objectContaining({
-          args: ["bind-key", "-T", "prefix", "p", "run-shell", "-b", expect.stringContaining("aimux tmux-switch prev")],
+          args: [
+            "bind-key",
+            "-T",
+            "prefix",
+            "p",
+            "run-shell",
+            "-b",
+            expect.stringContaining("--current-window-id '#{window_id}'"),
+          ],
         }),
         expect.objectContaining({
           args: [

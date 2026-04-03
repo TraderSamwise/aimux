@@ -735,7 +735,7 @@ export class TmuxRuntimeManager {
       "n",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && aimux tmux-switch next --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `cd '#{pane_current_path}' && aimux tmux-switch next --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -744,7 +744,7 @@ export class TmuxRuntimeManager {
       "p",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && aimux tmux-switch prev --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `cd '#{pane_current_path}' && aimux tmux-switch prev --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -753,7 +753,7 @@ export class TmuxRuntimeManager {
       "s",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && aimux tmux-switch menu --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `cd '#{pane_current_path}' && aimux tmux-switch menu --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -762,7 +762,7 @@ export class TmuxRuntimeManager {
       "u",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && aimux tmux-switch attention --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `cd '#{pane_current_path}' && aimux tmux-switch attention --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",

@@ -19,7 +19,7 @@ import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir
 import { getProjectStateDirFor } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
-import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { isDashboardWindowName, TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
 import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./tmux-doctor.js";
 import { renderTmuxStatusline, type TmuxStatusLine } from "./tmux-statusline.js";
 import {
@@ -2134,98 +2134,119 @@ program
   .description("Internal scoped tmux switcher")
   .option("--project-root <path>", "Project root", process.cwd())
   .option("--current-window <name>", "Current tmux window name")
+  .option("--current-window-id <id>", "Current tmux window id")
   .option("--current-path <path>", "Current pane path", process.cwd())
-  .action(async (action: string, opts: { projectRoot: string; currentWindow?: string; currentPath: string }) => {
-    await initPaths(opts.projectRoot);
-    const tmux = new TmuxRuntimeManager();
-    if (action === "dashboard") {
-      const currentClientSession = tmux.currentClientSession();
-      const dashboardTarget = currentClientSession
-        ? tmux.listWindows(currentClientSession).find((window) => isDashboardWindowName(window.name))
-        : undefined;
-      let resolvedTarget =
-        dashboardTarget && currentClientSession
-          ? {
-              sessionName: currentClientSession,
-              windowId: dashboardTarget.id,
-              windowIndex: dashboardTarget.index,
-              windowName: dashboardTarget.name,
-            }
-          : null;
-      if (!resolvedTarget) {
-        const ensured = ensureDashboardTarget(opts.projectRoot, tmux);
-        resolvedTarget = ensured.dashboardTarget;
+  .action(
+    async (
+      action: string,
+      opts: { projectRoot: string; currentWindow?: string; currentWindowId?: string; currentPath: string },
+    ) => {
+      await initPaths(opts.projectRoot);
+      const tmux = new TmuxRuntimeManager();
+      if (action === "dashboard") {
+        const currentClientSession = tmux.currentClientSession();
+        const dashboardTarget = currentClientSession
+          ? tmux.listWindows(currentClientSession).find((window) => isDashboardWindowName(window.name))
+          : undefined;
+        let resolvedTarget =
+          dashboardTarget && currentClientSession
+            ? {
+                sessionName: currentClientSession,
+                windowId: dashboardTarget.id,
+                windowIndex: dashboardTarget.index,
+                windowName: dashboardTarget.name,
+              }
+            : null;
+        if (!resolvedTarget) {
+          const ensured = ensureDashboardTarget(opts.projectRoot, tmux);
+          resolvedTarget = ensured.dashboardTarget;
+        }
+        tmux.selectWindow(resolvedTarget);
+        tmux.sendFocusIn(resolvedTarget);
+        return;
       }
-      tmux.selectWindow(resolvedTarget);
-      tmux.sendFocusIn(resolvedTarget);
-      return;
-    }
-    const tmuxSession = tmux.getProjectSession(opts.projectRoot);
-    const managed = tmux
-      .listManagedWindows(tmuxSession.sessionName)
-      .filter(({ target, metadata }) => {
-        if (isDashboardWindowName(target.windowName)) return false;
-        if (action === "attention") return true;
-        if (opts.currentWindow && isDashboardWindowName(opts.currentWindow)) return false;
-        const worktreePath = metadata.worktreePath || opts.projectRoot;
-        return worktreePath === opts.currentPath;
-      })
-      .sort((a, b) => a.target.windowIndex - b.target.windowIndex);
+      const openManagedTarget = (target: TmuxTarget): void => {
+        const currentClientSession = tmux.currentClientSession();
+        if (currentClientSession) {
+          const linkedTarget = tmux.getTargetByWindowId(currentClientSession, target.windowId);
+          if (linkedTarget) {
+            tmux.selectWindow(linkedTarget);
+            return;
+          }
+        }
+        tmux.openTarget(target, { insideTmux: Boolean(currentClientSession) });
+      };
+      const tmuxSession = tmux.getProjectSession(opts.projectRoot);
+      const managed = tmux
+        .listManagedWindows(tmuxSession.sessionName)
+        .filter(({ target, metadata }) => {
+          if (isDashboardWindowName(target.windowName)) return false;
+          if (action === "attention") return true;
+          if (opts.currentWindow && isDashboardWindowName(opts.currentWindow)) return false;
+          const worktreePath = metadata.worktreePath || opts.projectRoot;
+          return worktreePath === opts.currentPath;
+        })
+        .sort((a, b) => a.target.windowIndex - b.target.windowIndex);
 
-    if (managed.length === 0) return;
-    const metadataState = loadMetadataState(opts.projectRoot);
+      if (managed.length === 0) return;
+      const metadataState = loadMetadataState(opts.projectRoot);
 
-    const urgency = (sessionId: string): number => {
-      const derived = metadataState.sessions[sessionId]?.derived;
-      if (!derived) return 0;
-      if (derived.attention === "error") return 5;
-      if (derived.attention === "needs_input") return 4;
-      if (derived.attention === "blocked") return 3;
-      if ((derived.unseenCount ?? 0) > 0) return 2;
-      if (derived.activity === "done") return 1;
-      return 0;
-    };
+      const urgency = (sessionId: string): number => {
+        const derived = metadataState.sessions[sessionId]?.derived;
+        if (!derived) return 0;
+        if (derived.attention === "error") return 5;
+        if (derived.attention === "needs_input") return 4;
+        if (derived.attention === "blocked") return 3;
+        if ((derived.unseenCount ?? 0) > 0) return 2;
+        if (derived.activity === "done") return 1;
+        return 0;
+      };
 
-    if (action === "attention") {
-      const candidates = managed
-        .map((entry) => ({ ...entry, urgency: urgency(entry.metadata.sessionId) }))
-        .filter((entry) => entry.urgency > 0)
-        .sort((a, b) => b.urgency - a.urgency || a.target.windowIndex - b.target.windowIndex);
-      if (candidates.length === 0) return;
-      const nonCurrent = candidates.find(
-        ({ target, metadata }) => target.windowName !== opts.currentWindow && metadata.label !== opts.currentWindow,
-      );
-      tmux.selectWindow((nonCurrent ?? candidates[0])!.target);
-      return;
-    }
+      if (action === "attention") {
+        const candidates = managed
+          .map((entry) => ({ ...entry, urgency: urgency(entry.metadata.sessionId) }))
+          .filter((entry) => entry.urgency > 0)
+          .sort((a, b) => b.urgency - a.urgency || a.target.windowIndex - b.target.windowIndex);
+        if (candidates.length === 0) return;
+        const nonCurrent = candidates.find(
+          ({ target, metadata }) => target.windowName !== opts.currentWindow && metadata.label !== opts.currentWindow,
+        );
+        openManagedTarget((nonCurrent ?? candidates[0])!.target);
+        return;
+      }
 
-    const currentIndex = managed.findIndex(({ target, metadata }) => {
-      return target.windowName === opts.currentWindow || metadata.label === opts.currentWindow;
-    });
-    const resolvedIndex = currentIndex >= 0 ? currentIndex : 0;
+      const currentIndex = managed.findIndex(({ target, metadata }) => {
+        return (
+          target.windowId === opts.currentWindowId ||
+          target.windowName === opts.currentWindow ||
+          metadata.label === opts.currentWindow
+        );
+      });
+      const resolvedIndex = currentIndex >= 0 ? currentIndex : 0;
 
-    if (action === "next") {
-      tmux.selectWindow(managed[(resolvedIndex + 1) % managed.length]!.target);
-      return;
-    }
-    if (action === "prev") {
-      tmux.selectWindow(managed[(resolvedIndex - 1 + managed.length) % managed.length]!.target);
-      return;
-    }
-    if (action === "menu") {
-      tmux.displayWindowMenu(
-        "aimux",
-        managed.map(({ target, metadata }, index) => ({
-          label:
-            index === resolvedIndex
-              ? `${metadata.label || metadata.command}*`
-              : `${metadata.label || metadata.command}`,
-          target,
-        })),
-      );
-      return;
-    }
-  });
+      if (action === "next") {
+        openManagedTarget(managed[(resolvedIndex + 1) % managed.length]!.target);
+        return;
+      }
+      if (action === "prev") {
+        openManagedTarget(managed[(resolvedIndex - 1 + managed.length) % managed.length]!.target);
+        return;
+      }
+      if (action === "menu") {
+        tmux.displayWindowMenu(
+          "aimux",
+          managed.map(({ target, metadata }, index) => ({
+            label:
+              index === resolvedIndex
+                ? `${metadata.label || metadata.command}*`
+                : `${metadata.label || metadata.command}`,
+            target,
+          })),
+        );
+        return;
+      }
+    },
+  );
 
 const doctorCmd = program.command("doctor").description("Inspect aimux runtime compatibility");
 
