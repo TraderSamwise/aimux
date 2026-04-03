@@ -358,8 +358,7 @@ export class Multiplexer {
       return;
     }
 
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
 
     let mainRepoPath: string | undefined;
     let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
@@ -1067,7 +1066,7 @@ export class Multiplexer {
     initProject();
     await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
     this.startHeartbeat();
-    this.restoreTmuxSessionsFromState();
+    this.syncSessionsFromState();
     this.taskDispatcher = new TaskDispatcher(
       (id) => this.sessions.find((s) => s.id === id),
       (id) => this.sessionToolKeys.get(id),
@@ -1075,7 +1074,6 @@ export class Multiplexer {
       (id) => this.deriveSessionSemanticState(id).availability,
     );
     this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
-    this.loadOfflineSessions();
     this.defaultCommand = opts.command;
     this.defaultArgs = opts.args;
 
@@ -1108,8 +1106,7 @@ export class Multiplexer {
     this.startHeartbeat();
     this.startedInDashboard = true;
     this.mode = "dashboard";
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
 
     // Load config to set default tool for session creation
     const config = loadConfig();
@@ -1186,8 +1183,7 @@ export class Multiplexer {
   async runProjectService(): Promise<number> {
     initProject();
     this.mode = "project-service";
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
     this.taskDispatcher = new TaskDispatcher(
       (id) => this.sessions.find((s) => s.id === id),
       (id) => this.sessionToolKeys.get(id),
@@ -3833,8 +3829,7 @@ export class Multiplexer {
     targetWorktreePath?: string;
     open?: boolean;
   }): Promise<{ sessionId: string; threadId: string }> {
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
     const result = await this.forkSessionFromSource(
       opts.sourceSessionId,
       opts.targetToolConfigKey,
@@ -3858,8 +3853,7 @@ export class Multiplexer {
     targetWorktreePath?: string;
     open?: boolean;
   }): Promise<{ sessionId: string }> {
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
 
     const config = loadConfig();
     const toolCfg = config.tools[opts.toolConfigKey];
@@ -3893,8 +3887,7 @@ export class Multiplexer {
   }
 
   async renameAgent(sessionId: string, label?: string): Promise<{ sessionId: string; label?: string }> {
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
 
     const runningSession = this.sessions.find((session) => session.id === sessionId);
     const offlineSession = this.offlineSessions.find((session) => session.id === sessionId);
@@ -3907,8 +3900,7 @@ export class Multiplexer {
   }
 
   async stopAgent(sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
 
     const runningSession = this.sessions.find((session) => session.id === sessionId);
     if (!runningSession) {
@@ -3931,8 +3923,7 @@ export class Multiplexer {
     status: "graveyard";
     previousStatus: "running" | "offline";
   }> {
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
 
     let previousStatus: "running" | "offline";
     const runningSession = this.sessions.find((session) => session.id === sessionId);
@@ -3957,8 +3948,7 @@ export class Multiplexer {
     sessionId: string,
     targetWorktreePath: string,
   ): Promise<{ sessionId: string; worktreePath?: string }> {
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
 
     const runningSession = this.sessions.find((session) => session.id === sessionId);
     if (!runningSession) {
@@ -6094,8 +6084,7 @@ export class Multiplexer {
     statusline: ReturnType<Multiplexer["buildStatuslineSnapshot"]>;
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
   } {
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
     return {
       sessions: this.getDashboardSessions(),
       statusline: this.buildStatuslineSnapshot(),
@@ -6108,8 +6097,7 @@ export class Multiplexer {
   }
 
   async removeDesktopWorktree(path: string): Promise<{ path: string }> {
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.syncSessionsFromState();
 
     const mainRepo = findMainRepo();
     if (path === mainRepo) {
@@ -6317,8 +6305,12 @@ export class Multiplexer {
   }
 
   /** Load offline sessions from state.json, excluding any that are owned by live instances */
-  private loadOfflineSessions(): void {
-    const state = Multiplexer.loadState();
+  private syncSessionsFromState(state = Multiplexer.loadState()): void {
+    this.restoreTmuxSessionsFromState(state);
+    this.loadOfflineSessions(state);
+  }
+
+  private loadOfflineSessions(state = Multiplexer.loadState()): void {
     if (!state || state.sessions.length === 0) return;
 
     // Get all session IDs owned by live instances (including ourselves)
@@ -6344,8 +6336,7 @@ export class Multiplexer {
     }
   }
 
-  private restoreTmuxSessionsFromState(): void {
-    const state = Multiplexer.loadState();
+  private restoreTmuxSessionsFromState(state = Multiplexer.loadState()): void {
     const savedById = new Map((state?.sessions ?? []).map((session) => [session.id, session]));
 
     const cols = process.stdout.columns ?? 80;
@@ -6490,8 +6481,7 @@ export class Multiplexer {
     if (this.heartbeatInterval) return;
     this.heartbeatInterval = setInterval(() => {
       if (this.mode === "project-service") {
-        this.restoreTmuxSessionsFromState();
-        this.loadOfflineSessions();
+        this.syncSessionsFromState();
         return;
       }
       const sessions = this.getInstanceSessionRefs();
@@ -6560,8 +6550,7 @@ export class Multiplexer {
   private startProjectServiceRefresh(): void {
     if (this.projectServiceInterval) return;
     this.projectServiceInterval = setInterval(() => {
-      this.restoreTmuxSessionsFromState();
-      this.loadOfflineSessions();
+      this.syncSessionsFromState();
       this.writeStatuslineFile();
     }, 2000);
   }
