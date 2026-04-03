@@ -764,9 +764,17 @@ export class TmuxRuntimeManager {
       "-T",
       "prefix",
       "d",
-      "run-shell",
-      "-b",
-      `cd '#{pane_current_path}' && ${fastControlCommand} dashboard --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      "select-window",
+      "-t",
+      ":0",
+      "\\;",
+      "send-keys",
+      "-t",
+      ":0",
+      "-H",
+      "1b",
+      "5b",
+      "49",
     ]);
     this.exec(["set-option", "-t", sessionName, "status", "2"]);
     this.exec(["set-option", "-t", sessionName, "status-interval", "0"]);
