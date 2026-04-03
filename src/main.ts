@@ -23,6 +23,7 @@ import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./tmux-doctor.js";
 import {
   loadMetadataEndpoint,
+  resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   updateSessionMetadata,
   clearSessionLogs,
   type MetadataTone,
@@ -77,6 +78,7 @@ import {
   unreadNotificationCount,
 } from "./notifications.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
+import { requestJson } from "./http-client.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -120,10 +122,9 @@ async function fetchProjectServiceHealth(endpoint: { host: string; port: number 
   serviceInfo?: ProjectServiceManifest;
   pid?: number;
 }> {
-  const res = await fetch(`http://${endpoint.host}:${endpoint.port}/health`);
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json?.ok === false) {
-    throw new Error(json?.error || `health request failed: ${res.status}`);
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`);
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `health request failed: ${status}`);
   }
   return json as { serviceInfo?: ProjectServiceManifest; pid?: number };
 }
@@ -179,14 +180,13 @@ async function postProjectServiceJson(path: string, body: unknown): Promise<any>
   if (!endpoint) {
     throw new Error("no live project service metadata endpoint");
   }
-  const res = await fetch(`http://${endpoint.host}:${endpoint.port}${path}`, {
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body,
   });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json?.ok === false) {
-    throw new Error(json?.error || `request failed: ${res.status}`);
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
   }
   return json;
 }
@@ -200,10 +200,9 @@ async function getProjectServiceJson(path: string): Promise<any> {
   if (!endpoint) {
     throw new Error("no live project service metadata endpoint");
   }
-  const res = await fetch(`http://${endpoint.host}:${endpoint.port}${path}`);
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json?.ok === false) {
-    throw new Error(json?.error || `request failed: ${res.status}`);
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`);
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
   }
   return json;
 }
@@ -227,14 +226,13 @@ async function postLiveProjectServiceJsonOrLocal(
     if (!endpoint) {
       return fallback();
     }
-    const res = await fetch(`http://${endpoint.host}:${endpoint.port}${path}`, {
+    const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body,
     });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || json?.ok === false) {
-      throw new Error(json?.error || `request failed: ${res.status}`);
+    if (status < 200 || status >= 300 || json?.ok === false) {
+      throw new Error(json?.error || `request failed: ${status}`);
     }
     return json;
   } catch {
@@ -249,32 +247,11 @@ async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSess
   return match?.id ?? explicitSessionId;
 }
 
-function loadHostMetadataEndpoint(projectRoot: string): { host: string; port: number } | null {
-  try {
-    const hostPath = pathJoin(getProjectStateDirFor(projectRoot), "host.json");
-    if (!existsSync(hostPath)) return null;
-    const raw = readFileSync(hostPath, "utf-8").trim();
-    if (!raw || raw === "null") return null;
-    const parsed = JSON.parse(raw) as { metadataPort?: number };
-    if (!parsed.metadataPort || !Number.isFinite(parsed.metadataPort)) return null;
-    return {
-      host: "127.0.0.1",
-      port: parsed.metadataPort,
-    };
-  } catch {
-    return null;
-  }
-}
-
 async function resolveProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
   host: string;
   port: number;
 } | null> {
-  const metadataEndpoint = loadMetadataEndpoint(projectRoot);
-  if (metadataEndpoint) {
-    return { host: metadataEndpoint.host, port: metadataEndpoint.port };
-  }
-  return loadHostMetadataEndpoint(projectRoot);
+  return resolveStoredProjectServiceEndpoint(projectRoot);
 }
 
 async function getProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
@@ -329,15 +306,50 @@ function ensureTmuxAvailable(tmux: TmuxRuntimeManager): void {
   }
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
 function getDashboardCommandSpec(projectRoot: string) {
   const scriptPath = fileURLToPath(import.meta.url);
+  const wrappedDashboardCommand = [
+    shellQuote(process.execPath),
+    shellQuote(scriptPath),
+    "--tmux-dashboard-internal",
+    "2>&1",
+    "|",
+    "tee",
+    "-a",
+    shellQuote("/tmp/aimux-debug.log"),
+    ";",
+    "code=$?",
+    ";",
+    "if",
+    "[",
+    "$code",
+    "-ne",
+    "0",
+    "]",
+    ";",
+    "then",
+    "printf",
+    "%s\\n%s\\n%s\\n",
+    shellQuote(""),
+    shellQuote("aimux dashboard failed to start."),
+    shellQuote("The error above was captured from the dashboard process. Press Ctrl+C to close this pane."),
+    ";",
+    "exec",
+    "cat",
+    ";",
+    "fi",
+  ].join(" ");
   return {
     scriptPath,
     dashboardBuildStamp: String(statSync(scriptPath).mtimeMs),
     dashboardCommand: {
       cwd: projectRoot,
-      command: process.execPath,
-      args: [scriptPath, "--tmux-dashboard-internal"],
+      command: "sh",
+      args: ["-lc", wrappedDashboardCommand],
     },
   };
 }
@@ -409,14 +421,17 @@ program
           process.chdir(projectRoot);
         }
       }
-      if (!opts.tmuxDashboardInternal) {
+      await initPaths(projectRoot);
+      if (opts.tmuxDashboardInternal) {
+        await ensureDaemonProjectReady(projectRoot);
+      } else {
         initProject();
         await ensureDaemonProjectReady(projectRoot);
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
         const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
         if (!tool && !opts.resume && !opts.restore) {
-          tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
+          tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
           return;
         }
       }
@@ -498,7 +513,7 @@ program
       const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
 
       if (opts.open) {
-        tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
+        tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
         return;
       }
 
@@ -625,7 +640,7 @@ hostCmd
     ensureTmuxAvailable(tmux);
     const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
     if (opts.open) {
-      tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
+      tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
       return;
     }
     console.log(`Restarted project service for ${dashboardSession.sessionName}`);

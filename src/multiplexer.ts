@@ -4,7 +4,13 @@ import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { execSync, spawn, spawnSync } from "node:child_process";
 import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
-import { Dashboard, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
+import {
+  Dashboard,
+  type DashboardService,
+  type DashboardSession,
+  type DashboardWorktreeEntry,
+  type WorktreeGroup,
+} from "./dashboard.js";
 import { DashboardState, type DashboardScreen } from "./dashboard-state.js";
 import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
 import { readHistory } from "./context/history.js";
@@ -33,7 +39,12 @@ import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./
 import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
 import { MetadataServer } from "./metadata-server.js";
-import { loadMetadataEndpoint, loadMetadataState, removeMetadataEndpoint } from "./metadata-store.js";
+import {
+  loadMetadataEndpoint,
+  loadMetadataState,
+  removeMetadataEndpoint,
+  resolveProjectServiceEndpoint,
+} from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
 import { loadDaemonInfo } from "./daemon.js";
@@ -74,6 +85,7 @@ import { deriveSessionSemantics } from "./session-semantics.js";
 import { hasProjectServiceBuildDrift } from "./project-service-manifest.js";
 import { injectClaudeHookArgs } from "./claude-hooks.js";
 import { navigationUrgencyScore } from "./fast-control.js";
+import { requestJson } from "./http-client.js";
 import {
   clearNotifications,
   listNotifications,
@@ -176,6 +188,8 @@ export class Multiplexer {
   private forkSourceSessionId: string | null = null;
   private worktreeInputActive = false;
   private worktreeInputBuffer = "";
+  private serviceInputActive = false;
+  private serviceInputBuffer = "";
   private labelInputActive = false;
   private labelInputBuffer = "";
   private labelInputTarget: string | null = null;
@@ -258,6 +272,7 @@ export class Multiplexer {
   private lastStatuslineSnapshotKey: string | null = null;
   private desktopStateSnapshot: ReturnType<Multiplexer["buildDesktopStateSnapshot"]> | null = null;
   private dashboardSessionsCache: DashboardSession[] = [];
+  private dashboardServicesCache: DashboardService[] = [];
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
   private dashboardModelRefreshedAt = 0;
@@ -362,6 +377,7 @@ export class Multiplexer {
 
   private buildDashboardWorktreeGroups(
     dashSessions: DashboardSession[],
+    dashServices: DashboardService[],
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>,
     mainRepoPath?: string,
   ): WorktreeGroup[] {
@@ -369,22 +385,26 @@ export class Multiplexer {
       .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
       .map((wt) => {
         const wtSessions = dashSessions.filter((s) => s.worktreePath === wt.path);
+        const wtServices = dashServices.filter((s) => s.worktreePath === wt.path);
         return {
           name: wt.name,
           branch: wt.branch,
           path: wt.path,
-          status: (wtSessions.length > 0 ? "active" : "offline") as "active" | "offline",
+          status: (wtSessions.length > 0 || wtServices.length > 0 ? "active" : "offline") as "active" | "offline",
           sessions: wtSessions,
+          services: wtServices,
         };
       });
   }
 
   private applyDashboardModel(
     dashSessions: DashboardSession[],
+    dashServices: DashboardService[],
     worktreeGroups: WorktreeGroup[],
     mainCheckoutInfo: { name: string; branch: string },
   ): void {
     this.dashboardSessionsCache = dashSessions;
+    this.dashboardServicesCache = dashServices;
     this.dashboardWorktreeGroupsCache = worktreeGroups;
     this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
     this.dashboardModelRefreshedAt = Date.now();
@@ -504,8 +524,13 @@ export class Multiplexer {
     return sessions.map((session) => {
       const stats = threadStats.get(session.id);
       const workflow = workflowStats.get(session.id);
+      const target = this.sessionTmuxTargets.get(session.id);
+      const runtimeInfo = target ? this.readTmuxProcessInfo(target) : {};
       return {
         ...session,
+        foregroundCommand: runtimeInfo.command,
+        pid: runtimeInfo.pid,
+        previewLine: runtimeInfo.previewLine,
         threadUnreadCount: stats?.unread ?? 0,
         threadWaitingCount: stats?.waiting ?? 0,
         threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
@@ -536,8 +561,60 @@ export class Multiplexer {
     });
   }
 
+  private computeDashboardServices(worktrees = this.listDesktopWorktrees()): DashboardService[] {
+    const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
+    const worktreeByPath = new Map(worktrees.map((wt) => [wt.path, wt] as const));
+    return this.tmuxRuntimeManager
+      .listManagedWindows(tmuxSession.sessionName)
+      .filter(({ target, metadata }) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
+      .map(({ target, metadata }) => {
+        const worktree = metadata.worktreePath ? worktreeByPath.get(metadata.worktreePath) : undefined;
+        const info = this.readTmuxProcessInfo(target);
+        return {
+          id: metadata.sessionId,
+          command: metadata.command,
+          args: metadata.args ?? [],
+          tmuxWindowId: target.windowId,
+          worktreePath: metadata.worktreePath,
+          worktreeName: worktree?.name,
+          worktreeBranch: worktree?.branch,
+          status: this.tmuxRuntimeManager.isWindowAlive(target) ? "running" : "exited",
+          active: false,
+          label: metadata.label,
+          cwd: this.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath,
+          foregroundCommand: info.command,
+          pid: info.pid,
+          previewLine: info.previewLine,
+        };
+      });
+  }
+
+  private readTmuxProcessInfo(target: TmuxTarget): {
+    command?: string;
+    pid?: number;
+    previewLine?: string;
+  } {
+    const raw = this.tmuxRuntimeManager.displayMessage("#{pane_current_command}\t#{pane_pid}", target.windowId) ?? "";
+    const [command, pidRaw] = raw.split("\t");
+    let previewLine: string | undefined;
+    try {
+      previewLine = this.tmuxRuntimeManager
+        .captureTarget(target, { startLine: -8 })
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1);
+    } catch {}
+    return {
+      command: command?.trim() || undefined,
+      pid: pidRaw && /^\d+$/.test(pidRaw.trim()) ? Number(pidRaw.trim()) : undefined,
+      previewLine,
+    };
+  }
+
   private buildDesktopStateSnapshot(): {
     sessions: DashboardSession[];
+    services: DashboardService[];
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
@@ -556,6 +633,7 @@ export class Multiplexer {
     }
     return {
       sessions: this.computeDashboardSessions(),
+      services: this.computeDashboardServices(worktrees),
       worktrees,
       mainCheckoutInfo,
       mainCheckoutPath,
@@ -568,26 +646,34 @@ export class Multiplexer {
       return false;
     }
     if (this.dashboardServiceSnapshotRefreshing) return false;
-    const endpoint = loadMetadataEndpoint();
+    const endpoint = resolveProjectServiceEndpoint(process.cwd());
     if (!endpoint) return false;
     this.dashboardServiceSnapshotRefreshing = true;
     try {
-      const res = await fetch(`http://${endpoint.host}:${endpoint.port}/desktop-state`, {
-        signal: AbortSignal.timeout(250),
+      const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/desktop-state`, {
+        timeoutMs: 250,
       });
-      if (!res.ok) return false;
-      const body = (await res.json()) as {
+      if (status < 200 || status >= 300) return false;
+      const body = json as {
         ok?: boolean;
         sessions?: DashboardSession[];
+        services?: DashboardService[];
         worktrees?: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
         mainCheckoutInfo?: { name: string; branch: string };
         mainCheckoutPath?: string;
       };
       const dashSessions = body.sessions ?? [];
+      const dashServices = body.services ?? [];
       const worktrees = body.worktrees ?? [];
-      const worktreeGroups = this.buildDashboardWorktreeGroups(dashSessions, worktrees, body.mainCheckoutPath);
+      const worktreeGroups = this.buildDashboardWorktreeGroups(
+        dashSessions,
+        dashServices,
+        worktrees,
+        body.mainCheckoutPath,
+      );
       this.applyDashboardModel(
         dashSessions,
+        dashServices,
         worktreeGroups,
         body.mainCheckoutInfo ?? { name: "Main Checkout", branch: "" },
       );
@@ -597,6 +683,17 @@ export class Multiplexer {
     } finally {
       this.dashboardServiceSnapshotRefreshing = false;
     }
+  }
+
+  private refreshLocalDashboardModel(): void {
+    const snapshot = this.buildDesktopStateSnapshot();
+    const worktreeGroups = this.buildDashboardWorktreeGroups(
+      snapshot.sessions,
+      snapshot.services,
+      snapshot.worktrees,
+      snapshot.mainCheckoutPath,
+    );
+    this.applyDashboardModel(snapshot.sessions, snapshot.services, worktreeGroups, snapshot.mainCheckoutInfo);
   }
 
   private async startProjectServices(): Promise<void> {
@@ -1204,6 +1301,7 @@ export class Multiplexer {
   private buildTmuxWindowMetadata(sessionId: string, command: string): TmuxWindowMetadata {
     const sessionMetadata = loadMetadataState().sessions[sessionId];
     return {
+      kind: "agent",
       sessionId,
       command,
       args: this.sessionOriginalArgs.get(sessionId) ?? [],
@@ -1844,6 +1942,9 @@ export class Multiplexer {
       case "c":
         this.showToolPicker();
         return;
+      case "v":
+        this.showServiceCreatePrompt();
+        return;
       case "f": {
         const selected = this.getSelectedDashboardSessionForActions();
         if (selected && !selected.remoteInstancePid) {
@@ -1932,10 +2033,25 @@ export class Multiplexer {
           return;
         }
 
+        const selectedService = this.getSelectedDashboardServiceForActions();
+        if (selectedService) {
+          try {
+            this.stopService(selectedService.id);
+            this.footerFlash = `◆ Stopped service ${selectedService.label ?? selectedService.id}`;
+            this.footerFlashTicks = 3;
+            this.renderDashboard();
+          } catch (error) {
+            this.showDashboardError("Failed to stop service", [error instanceof Error ? error.message : String(error)]);
+          }
+          return;
+        }
+
         const allDs = this.getDashboardSessions();
         const selId =
-          this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0
-            ? this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex]?.id
+          this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0
+            ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.kind === "session"
+              ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.id
+              : undefined
             : undefined;
         const selEntry = selId
           ? allDs.find((d) => d.id === selId)
@@ -1964,8 +2080,10 @@ export class Multiplexer {
       case "r": {
         const allDs2 = this.getDashboardSessions();
         const selId2 =
-          this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0
-            ? this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex]?.id
+          this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0
+            ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.kind === "session"
+              ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.id
+              : undefined
             : undefined;
         const selEntry2 = selId2
           ? allDs2.find((d) => d.id === selId2)
@@ -2062,7 +2180,7 @@ export class Multiplexer {
         case "l":
           // Step into worktree to navigate its sessions
           this.updateWorktreeSessions();
-          if (this.dashboardState.worktreeSessions.length > 0) {
+          if (this.dashboardState.worktreeEntries.length > 0) {
             this.dashboardState.level = "sessions";
             this.dashboardState.sessionIndex = 0;
             this.renderDashboard();
@@ -2082,24 +2200,30 @@ export class Multiplexer {
         case "down":
         case "j":
         case "n":
-          if (this.dashboardState.worktreeSessions.length > 1) {
+          if (this.dashboardState.worktreeEntries.length > 1) {
             this.dashboardState.sessionIndex =
-              (this.dashboardState.sessionIndex + 1) % this.dashboardState.worktreeSessions.length;
+              (this.dashboardState.sessionIndex + 1) % this.dashboardState.worktreeEntries.length;
             this.renderDashboard();
           }
           break;
         case "up":
         case "k":
         case "p":
-          if (this.dashboardState.worktreeSessions.length > 1) {
+          if (this.dashboardState.worktreeEntries.length > 1) {
             this.dashboardState.sessionIndex =
-              (this.dashboardState.sessionIndex - 1 + this.dashboardState.worktreeSessions.length) %
-              this.dashboardState.worktreeSessions.length;
+              (this.dashboardState.sessionIndex - 1 + this.dashboardState.worktreeEntries.length) %
+              this.dashboardState.worktreeEntries.length;
             this.renderDashboard();
           }
           break;
         case "enter": {
-          const dashEntry = this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex];
+          const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
+          if (!selectedEntry) break;
+          if (selectedEntry.kind === "service") {
+            this.openLiveTmuxWindowForService(selectedEntry.id);
+            break;
+          }
+          const dashEntry = this.dashboardState.worktreeSessions.find((entry) => entry.id === selectedEntry.id);
           if (!dashEntry) break;
           if (this.openLiveTmuxWindowForEntry(dashEntry)) {
             return;
@@ -3116,8 +3240,10 @@ export class Multiplexer {
     if (ordered.length === 0) return;
 
     const currentSessionId =
-      this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0
-        ? this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex]?.id
+      this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0
+        ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.kind === "session"
+          ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.id
+          : undefined
         : this.getDashboardSessions()[this.activeIndex]?.id;
     const currentIdx = currentSessionId ? ordered.findIndex((entry) => entry.entry.id === currentSessionId) : -1;
     const next = ordered[currentIdx >= 0 ? (currentIdx + 1) % ordered.length : 0]!;
@@ -3130,13 +3256,22 @@ export class Multiplexer {
     this.dashboardState.worktreeSessions = allDash.filter((s) => {
       return (s.worktreePath ?? undefined) === this.dashboardState.focusedWorktreePath;
     });
+    const worktreeServices = this.getDashboardServices().filter((service) => {
+      return (service.worktreePath ?? undefined) === this.dashboardState.focusedWorktreePath;
+    });
+    this.dashboardState.worktreeEntries = [
+      ...this.dashboardState.worktreeSessions.map((session) => ({ kind: "session", id: session.id }) as const),
+      ...worktreeServices.map((service) => ({ kind: "service", id: service.id }) as const),
+    ];
   }
 
   private syncTuiNotificationContext(panelOpen = false): void {
     if (this.mode !== "dashboard") return;
     const selected =
-      this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0
-        ? this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex]?.id
+      this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0
+        ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.kind === "session"
+          ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.id
+          : undefined
         : this.getDashboardSessions()[this.activeIndex]?.id;
     updateNotificationContext("tui", {
       focused: true,
@@ -3182,6 +3317,10 @@ export class Multiplexer {
     }
     if (this.worktreeInputActive) {
       this.handleWorktreeInputKey(data);
+      return true;
+    }
+    if (this.serviceInputActive) {
+      this.handleServiceInputKey(data);
       return true;
     }
     if (this.worktreeListActive) {
@@ -3258,6 +3397,10 @@ export class Multiplexer {
     }
     if (this.worktreeInputActive) {
       this.renderWorktreeInput();
+      return true;
+    }
+    if (this.serviceInputActive) {
+      this.renderServiceInput();
       return true;
     }
     if (this.pickerActive) {
@@ -3340,14 +3483,38 @@ export class Multiplexer {
     return true;
   }
 
+  private openLiveTmuxWindowForService(serviceId: string): boolean {
+    const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
+    const match = this.tmuxRuntimeManager.findManagedWindow(tmuxSession.sessionName, {
+      sessionId: serviceId,
+    });
+    if (!match || match.metadata.kind !== "service") return false;
+    this.tmuxRuntimeManager.openTarget(match.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+    return true;
+  }
+
+  private getSelectedDashboardWorktreeEntry(): DashboardWorktreeEntry | undefined {
+    if (this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0) {
+      return this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
+    }
+    return undefined;
+  }
+
   private getSelectedDashboardSessionForActions(): DashboardSession | undefined {
-    if (this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0) {
-      return this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex];
+    const selectedEntry = this.getSelectedDashboardWorktreeEntry();
+    if (selectedEntry?.kind === "session") {
+      return this.dashboardState.worktreeSessions.find((session) => session.id === selectedEntry.id);
     }
     if (this.dashboardState.worktreeNavOrder.length <= 1) {
       return this.getDashboardSessions()[this.activeIndex];
     }
     return undefined;
+  }
+
+  private getSelectedDashboardServiceForActions(): DashboardService | undefined {
+    const selectedEntry = this.getSelectedDashboardWorktreeEntry();
+    if (selectedEntry?.kind !== "service") return undefined;
+    return this.getDashboardServices().find((service) => service.id === selectedEntry.id);
   }
 
   private showOrchestrationRoutePicker(mode: "message" | "handoff" | "task"): void {
@@ -3528,18 +3695,17 @@ export class Multiplexer {
   }
 
   private async postToProjectService(path: string, body: unknown): Promise<any> {
-    const endpoint = loadMetadataEndpoint();
+    const endpoint = resolveProjectServiceEndpoint(process.cwd());
     if (!endpoint) {
       throw new Error("no live project service endpoint");
     }
-    const res = await fetch(`http://${endpoint.host}:${endpoint.port}${path}`, {
+    const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body,
     });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || json?.ok === false) {
-      throw new Error(json?.error || `request failed: ${res.status}`);
+    if (status < 200 || status >= 300 || json?.ok === false) {
+      throw new Error(json?.error || `request failed: ${status}`);
     }
     return json;
   }
@@ -4149,12 +4315,70 @@ export class Multiplexer {
     return { sessionId, worktreePath: this.getSessionWorktreePath(sessionId) };
   }
 
+  private serviceLabelForCommand(commandLine: string): string {
+    const trimmed = commandLine.trim();
+    if (!trimmed) return "shell";
+    const first = trimmed.split(/\s+/)[0] ?? "service";
+    return basename(first);
+  }
+
+  private createService(commandLine: string, worktreePath?: string): { serviceId: string } {
+    const serviceId = `service-${randomUUID().slice(0, 8)}`;
+    const cwd = worktreePath ?? process.cwd();
+    const shell = process.env.SHELL || "zsh";
+    const trimmed = commandLine.trim();
+    const command = shell;
+    const args = trimmed ? ["-lc", trimmed] : ["-l"];
+    const label = this.serviceLabelForCommand(trimmed);
+    const tmuxSession = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
+    const target = this.tmuxRuntimeManager.createWindow(tmuxSession.sessionName, label, cwd, command, args, {
+      detached: true,
+    });
+    this.tmuxRuntimeManager.setWindowMetadata(target, {
+      kind: "service",
+      sessionId: serviceId,
+      command,
+      args,
+      toolConfigKey: "service",
+      worktreePath,
+      label,
+    });
+    this.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
+    this.invalidateDesktopStateSnapshot();
+    this.refreshLocalDashboardModel();
+    this.updateWorktreeSessions();
+    this.dashboardState.level = "sessions";
+    const selectedIndex = this.dashboardState.worktreeEntries.findIndex(
+      (entry) => entry.kind === "service" && entry.id === serviceId,
+    );
+    if (selectedIndex >= 0) {
+      this.dashboardState.sessionIndex = selectedIndex;
+    }
+    return { serviceId };
+  }
+
+  private stopService(serviceId: string): { serviceId: string; status: "stopped" } {
+    const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
+    const match = this.tmuxRuntimeManager.findManagedWindow(tmuxSession.sessionName, {
+      sessionId: serviceId,
+    });
+    if (!match || match.metadata.kind !== "service") {
+      throw new Error(`Service "${serviceId}" not found`);
+    }
+    this.tmuxRuntimeManager.killWindow(match.target);
+    this.invalidateDesktopStateSnapshot();
+    this.refreshLocalDashboardModel();
+    this.adjustAfterRemove(this.dashboardWorktreeGroupsCache.length > 0);
+    return { serviceId, status: "stopped" };
+  }
+
   private renderDashboard(): void {
     this.writeStatuslineFile();
 
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
     const dashSessions = this.dashboardSessionsCache;
+    const dashServices = this.dashboardServicesCache;
     const worktreeGroups = this.dashboardWorktreeGroupsCache;
     const mainCheckoutInfo = this.dashboardMainCheckoutInfoCache;
 
@@ -4168,10 +4392,13 @@ export class Multiplexer {
 
     // Determine selected session for cursor
     let selectedSession: string | undefined;
+    let selectedService: string | undefined;
 
     // Determine selected session cursor
-    if (hasWorktrees && this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0) {
-      selectedSession = this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex]?.id;
+    if (hasWorktrees && this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0) {
+      const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
+      if (selectedEntry?.kind === "session") selectedSession = selectedEntry.id;
+      if (selectedEntry?.kind === "service") selectedService = selectedEntry.id;
     } else if (!hasWorktrees && dashSessions.length > 0) {
       // Flat mode — use activeIndex across all dash sessions
       selectedSession = dashSessions[this.activeIndex]?.id;
@@ -4179,10 +4406,12 @@ export class Multiplexer {
 
     this.dashboard.update(
       dashSessions,
+      dashServices,
       worktreeGroups,
       this.dashboardState.focusedWorktreePath,
       hasWorktrees ? this.dashboardState.level : "sessions",
       selectedSession,
+      selectedService,
       "tmux",
       mainCheckoutInfo,
     );
@@ -4201,6 +4430,12 @@ export class Multiplexer {
     this.renderWorktreeInput();
   }
 
+  private showServiceCreatePrompt(): void {
+    this.serviceInputActive = true;
+    this.serviceInputBuffer = "";
+    this.renderServiceInput();
+  }
+
   private renderWorktreeInput(): void {
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
@@ -4210,6 +4445,38 @@ export class Multiplexer {
       "",
       `  Name: ${this.worktreeInputBuffer}_`,
       "",
+      "  [Enter] create  [Esc] cancel",
+    ];
+
+    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
+    const startRow = Math.floor((rows - lines.length - 2) / 2);
+    const startCol = Math.floor((cols - boxWidth) / 2);
+
+    let output = "\x1b7";
+    for (let i = 0; i < lines.length + 2; i++) {
+      const row = startRow + i;
+      output += `\x1b[${row};${startCol}H`;
+      if (i === 0 || i === lines.length + 1) {
+        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
+      } else {
+        const line = lines[i - 1];
+        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
+      }
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private renderServiceInput(): void {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+
+    const lines = [
+      "Create service:",
+      "",
+      `  Command: ${this.serviceInputBuffer}_`,
+      "",
+      "  Empty command opens an interactive shell",
       "  [Enter] create  [Esc] cancel",
     ];
 
@@ -4278,6 +4545,43 @@ export class Multiplexer {
     if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
       this.worktreeInputBuffer += event.char;
       this.renderWorktreeInput();
+    }
+  }
+
+  private handleServiceInputKey(data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+
+    const event = events[0];
+    const key = event.name || event.char;
+
+    if (key === "escape") {
+      this.serviceInputActive = false;
+      this.renderDashboard();
+      return;
+    }
+
+    if (key === "enter" || key === "return") {
+      this.serviceInputActive = false;
+      try {
+        this.createService(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
+      } catch (error) {
+        this.showDashboardError("Failed to create service", [error instanceof Error ? error.message : String(error)]);
+        return;
+      }
+      this.renderDashboard();
+      return;
+    }
+
+    if (key === "backspace" || key === "delete") {
+      this.serviceInputBuffer = this.serviceInputBuffer.slice(0, -1);
+      this.renderServiceInput();
+      return;
+    }
+
+    if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
+      this.serviceInputBuffer += event.char;
+      this.renderServiceInput();
     }
   }
 
@@ -5893,6 +6197,10 @@ export class Multiplexer {
     return this.mode === "dashboard" ? this.dashboardSessionsCache : this.computeDashboardSessions();
   }
 
+  private getDashboardServices(): DashboardService[] {
+    return this.mode === "dashboard" ? this.dashboardServicesCache : this.computeDashboardServices();
+  }
+
   private getDashboardSessionsInVisualOrder(): DashboardSession[] {
     const allDash = this.getDashboardSessions();
     if (this.mode === "dashboard") {
@@ -6142,6 +6450,7 @@ export class Multiplexer {
 
   private buildDesktopState(): {
     sessions: DashboardSession[];
+    services: DashboardService[];
     statusline: ReturnType<Multiplexer["buildStatuslineSnapshot"]>;
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
     mainCheckoutInfo: { name: string; branch: string };
@@ -6153,6 +6462,7 @@ export class Multiplexer {
     const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     return {
       sessions: desktopState.sessions,
+      services: desktopState.services,
       statusline: this.buildStatuslineSnapshot(),
       worktrees: desktopState.worktrees,
       mainCheckoutInfo: desktopState.mainCheckoutInfo,
@@ -6181,6 +6491,12 @@ export class Multiplexer {
     if (attachedSession) {
       throw new Error(
         `Cannot remove "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
+      );
+    }
+    const attachedService = this.getDashboardServices().find((service) => service.worktreePath === path);
+    if (attachedService) {
+      throw new Error(
+        `Cannot remove "${matching.name}" while service "${attachedService.label || attachedService.id}" is attached`,
       );
     }
 
@@ -6415,6 +6731,7 @@ export class Multiplexer {
 
     for (const { target, metadata } of this.tmuxRuntimeManager.listManagedWindows(tmuxSession.sessionName)) {
       if (isDashboardWindowName(target.windowName)) continue;
+      if (metadata.kind === "service") continue;
       if (this.sessions.some((session) => session.id === metadata.sessionId)) continue;
 
       const transport = new TmuxSessionTransport(
@@ -6472,11 +6789,11 @@ export class Multiplexer {
   private adjustAfterRemove(hasWorktrees: boolean): void {
     if (hasWorktrees && this.dashboardState.level === "sessions") {
       this.updateWorktreeSessions();
-      if (this.dashboardState.worktreeSessions.length === 0) {
-        // No more agents in this worktree — step back to worktree level
+      if (this.dashboardState.worktreeEntries.length === 0) {
+        // No more items in this worktree — step back to worktree level
         this.dashboardState.level = "worktrees";
-      } else if (this.dashboardState.sessionIndex >= this.dashboardState.worktreeSessions.length) {
-        this.dashboardState.sessionIndex = this.dashboardState.worktreeSessions.length - 1;
+      } else if (this.dashboardState.sessionIndex >= this.dashboardState.worktreeEntries.length) {
+        this.dashboardState.sessionIndex = this.dashboardState.worktreeEntries.length - 1;
       }
     } else if (!hasWorktrees) {
       const total = this.getDashboardSessions().length;

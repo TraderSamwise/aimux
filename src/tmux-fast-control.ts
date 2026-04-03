@@ -3,6 +3,7 @@ import { dirname, join, resolve as pathResolve } from "node:path";
 import { statSync } from "node:fs";
 import { debug } from "./debug.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
+import { requestJson } from "./http-client.js";
 import {
   listSwitchableAgentItems,
   resolveAttentionAgent,
@@ -63,14 +64,12 @@ async function requestFastControl(action: string, opts: Options): Promise<FastCo
     if (opts.currentWindow) url.searchParams.set("currentWindow", opts.currentWindow);
     if (opts.currentWindowId) url.searchParams.set("currentWindowId", opts.currentWindowId);
     if (opts.currentPath) url.searchParams.set("currentPath", opts.currentPath);
-    const res = await fetch(url, { signal: AbortSignal.timeout(400) });
-    if (!res.ok) {
-      logFastControl(
-        `action=${action} mode=service-miss reason=http-${res.status} durationMs=${Date.now() - startedAt}`,
-      );
+    const { status, json } = await requestJson(url.toString(), { timeoutMs: 400 });
+    if (status < 200 || status >= 300) {
+      logFastControl(`action=${action} mode=service-miss reason=http-${status} durationMs=${Date.now() - startedAt}`);
       return null;
     }
-    const body = (await res.json()) as FastControlResponse;
+    const body = json as FastControlResponse;
     logFastControl(
       `action=${action} mode=service-ok durationMs=${Date.now() - startedAt} items=${body.items?.length ?? 0}`,
     );
@@ -84,17 +83,17 @@ async function requestFastControl(action: string, opts: Options): Promise<FastCo
         : action === "prev"
           ? "/control/switch-prev"
           : "/control/switch-next";
-  const res = await fetch(`http://${endpoint.host}:${endpoint.port}${endpointPath}`, {
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${endpointPath}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(opts),
-    signal: AbortSignal.timeout(400),
+    body: opts,
+    timeoutMs: 400,
   });
-  if (!res.ok) {
-    logFastControl(`action=${action} mode=service-miss reason=http-${res.status} durationMs=${Date.now() - startedAt}`);
+  if (status < 200 || status >= 300) {
+    logFastControl(`action=${action} mode=service-miss reason=http-${status} durationMs=${Date.now() - startedAt}`);
     return null;
   }
-  const body = (await res.json()) as FastControlResponse;
+  const body = json as FastControlResponse;
   logFastControl(`action=${action} mode=service-ok durationMs=${Date.now() - startedAt}`);
   return body;
 }

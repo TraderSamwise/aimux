@@ -115,7 +115,11 @@ describe("TmuxRuntimeManager", () => {
     ).toBe(true);
     expect(
       exec.calls.some(
-        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("tmux-fast-control.js' dashboard"),
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[3] === "d" &&
+          call.args.join(" ").includes("select-window -t :0") &&
+          call.args.join(" ").includes("send-keys -t :0 -H 1b 5b 49"),
       ),
     ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-left")).toBe(true);

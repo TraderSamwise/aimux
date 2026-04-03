@@ -83,6 +83,10 @@ export interface MetadataApiEndpoint {
   updatedAt: string;
 }
 
+interface HostMetadataEndpoint {
+  metadataPort?: number;
+}
+
 function ensureParent(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
 }
@@ -148,6 +152,25 @@ export function clearSessionLogs(sessionId: string, projectRoot?: string): Metad
 
 export function loadMetadataEndpoint(projectRoot?: string): MetadataApiEndpoint | null {
   return loadJson<MetadataApiEndpoint | null>(endpointPathFor(projectRoot), null);
+}
+
+export function resolveProjectServiceEndpoint(projectRoot?: string): { host: string; port: number } | null {
+  const metadataEndpoint = loadMetadataEndpoint(projectRoot);
+  if (metadataEndpoint) {
+    return {
+      host: metadataEndpoint.host,
+      port: metadataEndpoint.port,
+    };
+  }
+  const hostPath = join(projectRoot ? getProjectStateDirFor(projectRoot) : getProjectStateDir(), "host.json");
+  const hostState = loadJson<HostMetadataEndpoint | null>(hostPath, null);
+  if (!hostState?.metadataPort || !Number.isFinite(hostState.metadataPort)) {
+    return null;
+  }
+  return {
+    host: "127.0.0.1",
+    port: hostState.metadataPort,
+  };
 }
 
 export function saveMetadataEndpoint(endpoint: MetadataApiEndpoint, projectRoot?: string): void {

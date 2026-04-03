@@ -144,12 +144,16 @@ const DEFAULT_CONFIG: AimuxConfig = {
   },
 };
 
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 /**
  * Load config with hierarchy: defaults → global (~/.aimux/config.json) → project (.aimux/config.json)
  * Project settings override global, global overrides defaults.
  */
 export function loadConfig(): AimuxConfig {
-  let config = structuredClone(DEFAULT_CONFIG);
+  let config = cloneJson(DEFAULT_CONFIG);
 
   // Layer 1: global config
   const globalPath = getGlobalConfigPath();

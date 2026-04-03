@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { getDaemonInfoPath, getDaemonStatePath, getProjectIdFor } from "./paths.js";
 import { listDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
+import { requestJson } from "./http-client.js";
 
 const DAEMON_PORT = 43190;
 const DAEMON_HOST = "127.0.0.1";
@@ -141,10 +142,13 @@ export async function requestDaemonJson(path: string, init?: RequestInit): Promi
   if (!info) {
     throw new Error("aimux daemon is not running");
   }
-  const res = await fetch(`http://${DAEMON_HOST}:${info.port}${path}`, init);
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json?.ok === false) {
-    throw new Error(json?.error || `daemon request failed: ${res.status}`);
+  const { status, json } = await requestJson(`http://${DAEMON_HOST}:${info.port}${path}`, {
+    method: init?.method,
+    headers: init?.headers as Record<string, string> | undefined,
+    body: init?.body,
+  });
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `daemon request failed: ${status}`);
   }
   return json;
 }

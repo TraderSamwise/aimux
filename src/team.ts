@@ -28,8 +28,12 @@ const DEFAULT_TEAM_CONFIG: TeamConfig = {
   defaultRole: "coder",
 };
 
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 export function getDefaultTeamConfig(): TeamConfig {
-  return structuredClone(DEFAULT_TEAM_CONFIG);
+  return cloneJson(DEFAULT_TEAM_CONFIG);
 }
 
 /**
@@ -54,7 +58,7 @@ export function loadTeamConfig(): TeamConfig {
     }
   }
 
-  return structuredClone(DEFAULT_TEAM_CONFIG);
+  return cloneJson(DEFAULT_TEAM_CONFIG);
 }
 
 /**

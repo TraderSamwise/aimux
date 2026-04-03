@@ -41,6 +41,7 @@ export interface TmuxClientInfo {
 
 export interface OpenTargetOptions {
   insideTmux?: boolean;
+  alreadyResolved?: boolean;
 }
 
 export interface CaptureTargetOptions {
@@ -55,6 +56,7 @@ export interface TmuxCommandSpec {
 }
 
 export interface TmuxWindowMetadata {
+  kind?: "agent" | "service";
   sessionId: string;
   command: string;
   args: string[];
@@ -643,7 +645,9 @@ export class TmuxRuntimeManager {
   }
 
   openTarget(target: TmuxTarget, options: OpenTargetOptions = {}): void {
-    const sessionName = this.resolveOpenSessionName(target.sessionName, options.insideTmux === true);
+    const sessionName = options.alreadyResolved
+      ? target.sessionName
+      : this.resolveOpenSessionName(target.sessionName, options.insideTmux === true);
     const effectiveTarget =
       sessionName !== target.sessionName && !isDashboardWindowName(target.windowName)
         ? this.ensureLinkedWindow(sessionName, target)
