@@ -120,8 +120,8 @@ function displayMenu(
 function fallbackToCli(action: string, opts: Options, reason: string): never {
   logFastControl(`action=${action} mode=cli-fallback reason=${reason}`);
   const currentFile = fileURLToPath(import.meta.url);
-  const mainScript = join(dirname(currentFile), "main.js");
-  const args = [mainScript, "tmux-switch", action, "--project-root", opts.projectRoot];
+  const switchScript = join(dirname(currentFile), "tmux-switch-cli.js");
+  const args = [switchScript, action, "--project-root", opts.projectRoot];
   if (opts.currentClientSession) args.push("--current-client-session", opts.currentClientSession);
   if (opts.currentWindow) args.push("--current-window", opts.currentWindow);
   if (opts.currentWindowId) args.push("--current-window-id", opts.currentWindowId);

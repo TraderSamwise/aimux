@@ -293,6 +293,7 @@ Hotkey latency note:
 - the final window switch still happens in tmux
 - this avoids spawning the heavyweight operator CLI for normal `n/p/s/u/d` navigation
 - the broader latency architecture plan is documented in [docs/latency-architecture-rfc.md](docs/latency-architecture-rfc.md)
+- the current entrypoint split is documented in [docs/latency-entrypoints.md](docs/latency-entrypoints.md)
 
 Dashboard hotkeys use the `Ctrl+A` leader prefix:
 

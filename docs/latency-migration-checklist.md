@@ -45,9 +45,9 @@ Based on [latency-architecture-rfc.md](./latency-architecture-rfc.md).
 
 ### CLI / entrypoints
 
-- [ ] Classify all internal commands by latency budget
-- [ ] Split any remaining hot/internal helpers away from the full operator CLI
-- [ ] Keep `aimux` as the human/admin entrypoint only
+- [x] Classify all internal commands by latency budget
+- [x] Split any remaining hot/internal helpers away from the full operator CLI
+- [x] Keep `aimux` as the human/admin entrypoint for normal runtime paths
 
 ### GUI/Desktop
 
