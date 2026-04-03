@@ -164,6 +164,9 @@ If service RPC is unavailable, they fall back to a thin `tmux-switch-cli` resolv
 
 Likewise, the tmux statusline uses a thin `tmux-statusline-cli` entrypoint instead of the main CLI command graph.
 
+Dashboard mode also opportunistically reuses the project service's `desktop-state` snapshot to keep its local
+session/worktree caches warm, instead of reconstructing all dashboard model state locally on every interaction.
+
 The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
 
 ```bash

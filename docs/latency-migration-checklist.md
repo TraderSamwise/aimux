@@ -39,7 +39,7 @@ Based on [latency-architecture-rfc.md](./latency-architecture-rfc.md).
 
 ### Dashboard/UI
 
-- [ ] Identify dashboard refresh/model work that can move behind project-service-owned cached state
+- [x] Identify dashboard refresh/model work that can move behind project-service-owned cached state
 - [ ] Reduce synchronous reconstruction in dashboard focus/refresh paths
 - [x] Ensure dashboard uses shared fast-control semantics for agent ordering and attention routing
 

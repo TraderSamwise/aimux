@@ -261,6 +261,7 @@ export class Multiplexer {
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
   private dashboardModelRefreshedAt = 0;
+  private dashboardServiceSnapshotRefreshing = false;
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -342,9 +343,13 @@ export class Multiplexer {
   }
 
   private handleDashboardFocusIn(): void {
-    this.refreshDashboardModel(true);
     this.invalidateDashboardFrame();
     this.renderCurrentDashboardView();
+    void this.refreshDashboardModelFromService(true).then((updated) => {
+      if (!updated || this.mode !== "dashboard") return;
+      this.invalidateDashboardFrame();
+      this.renderCurrentDashboardView();
+    });
   }
 
   private writeFrame(output: string, force = false): void {
@@ -378,26 +383,79 @@ export class Multiplexer {
           branch: mainWorktree.branch,
         };
       }
-      worktreeGroups = worktrees
-        .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
-        .map((wt) => {
-          const wtSessions = dashSessions.filter((s) => s.worktreePath === wt.path);
-          return {
-            name: wt.name,
-            branch: wt.branch,
-            path: wt.path,
-            status: (wtSessions.length > 0 ? "active" : "offline") as "active" | "offline",
-            sessions: wtSessions,
-          };
-        });
+      worktreeGroups = this.buildDashboardWorktreeGroups(dashSessions, worktrees, mainRepoPath);
     } catch {
       // Not in a git repo or no worktrees — skip grouping
     }
 
+    this.applyDashboardModel(dashSessions, worktreeGroups, mainCheckoutInfo);
+  }
+
+  private buildDashboardWorktreeGroups(
+    dashSessions: DashboardSession[],
+    worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>,
+    mainRepoPath?: string,
+  ): WorktreeGroup[] {
+    return worktrees
+      .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
+      .map((wt) => {
+        const wtSessions = dashSessions.filter((s) => s.worktreePath === wt.path);
+        return {
+          name: wt.name,
+          branch: wt.branch,
+          path: wt.path,
+          status: (wtSessions.length > 0 ? "active" : "offline") as "active" | "offline",
+          sessions: wtSessions,
+        };
+      });
+  }
+
+  private applyDashboardModel(
+    dashSessions: DashboardSession[],
+    worktreeGroups: WorktreeGroup[],
+    mainCheckoutInfo: { name: string; branch: string },
+  ): void {
     this.dashboardSessionsCache = dashSessions;
     this.dashboardWorktreeGroupsCache = worktreeGroups;
     this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
     this.dashboardModelRefreshedAt = Date.now();
+  }
+
+  private async refreshDashboardModelFromService(force = false): Promise<boolean> {
+    if (this.mode !== "dashboard") return false;
+    if (!force && this.dashboardModelRefreshedAt > 0 && Date.now() - this.dashboardModelRefreshedAt < 750) {
+      return false;
+    }
+    if (this.dashboardServiceSnapshotRefreshing) return false;
+    const endpoint = loadMetadataEndpoint();
+    if (!endpoint) return false;
+    this.dashboardServiceSnapshotRefreshing = true;
+    try {
+      const res = await fetch(`http://${endpoint.host}:${endpoint.port}/desktop-state`, {
+        signal: AbortSignal.timeout(250),
+      });
+      if (!res.ok) return false;
+      const body = (await res.json()) as {
+        ok?: boolean;
+        sessions?: DashboardSession[];
+        worktrees?: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+        mainCheckoutInfo?: { name: string; branch: string };
+        mainCheckoutPath?: string;
+      };
+      const dashSessions = body.sessions ?? [];
+      const worktrees = body.worktrees ?? [];
+      const worktreeGroups = this.buildDashboardWorktreeGroups(dashSessions, worktrees, body.mainCheckoutPath);
+      this.applyDashboardModel(
+        dashSessions,
+        worktreeGroups,
+        body.mainCheckoutInfo ?? { name: "Main Checkout", branch: "" },
+      );
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this.dashboardServiceSnapshotRefreshing = false;
+    }
   }
 
   private async startProjectServices(): Promise<void> {
@@ -6083,12 +6141,27 @@ export class Multiplexer {
     sessions: DashboardSession[];
     statusline: ReturnType<Multiplexer["buildStatuslineSnapshot"]>;
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+    mainCheckoutInfo: { name: string; branch: string };
+    mainCheckoutPath?: string;
   } {
     this.syncSessionsFromState();
+    const worktrees = this.listDesktopWorktrees();
+    let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
+    let mainCheckoutPath: string | undefined;
+    try {
+      mainCheckoutPath = findMainRepo();
+    } catch {}
+    const mainWorktree =
+      (mainCheckoutPath ? worktrees.find((wt) => wt.path === mainCheckoutPath) : worktrees[0]) ?? worktrees[0];
+    if (mainWorktree) {
+      mainCheckoutInfo = { name: "Main Checkout", branch: mainWorktree.branch };
+    }
     return {
       sessions: this.getDashboardSessions(),
       statusline: this.buildStatuslineSnapshot(),
-      worktrees: this.listDesktopWorktrees(),
+      worktrees,
+      mainCheckoutInfo,
+      mainCheckoutPath,
     };
   }
 
@@ -6292,6 +6365,7 @@ export class Multiplexer {
       }
 
       if (this.mode === "dashboard") {
+        void this.refreshDashboardModelFromService();
         this.renderCurrentDashboardView();
       }
     }, 1000);
