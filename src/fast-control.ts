@@ -23,6 +23,29 @@ export interface FastControlItem {
   urgency: number;
 }
 
+export function navigationUrgencyScore(input: {
+  semantic?: { attention?: string; unseenCount?: number; activity?: string } | null;
+  attention?: string;
+  unseenCount?: number;
+  activity?: string;
+}): number {
+  if (input.semantic) {
+    const semanticAttention = input.semantic.attention;
+    if (semanticAttention === "error") return 5;
+    if (semanticAttention === "needs_input") return 4;
+    if (semanticAttention === "blocked") return 3;
+    if ((input.semantic.unseenCount ?? 0) > 0) return 2;
+    if (input.semantic.activity === "done") return 1;
+    return 0;
+  }
+  if (input.attention === "error") return 5;
+  if (input.attention === "needs_input") return 4;
+  if (input.attention === "blocked") return 3;
+  if ((input.unseenCount ?? 0) > 0) return 2;
+  if (input.activity === "done") return 1;
+  return 0;
+}
+
 export function resolveScopedWorktreePath(projectRoot: string, currentPath?: string): string {
   const fallback = pathResolve(currentPath || projectRoot);
   const worktrees = listWorktrees(projectRoot)
@@ -35,13 +58,7 @@ export function resolveScopedWorktreePath(projectRoot: string, currentPath?: str
 function urgencyFor(projectRoot: string, sessionId?: string): number {
   if (!sessionId) return 0;
   const derived = loadMetadataState(projectRoot).sessions[sessionId]?.derived;
-  if (!derived) return 0;
-  if (derived.attention === "error") return 5;
-  if (derived.attention === "needs_input") return 4;
-  if (derived.attention === "blocked") return 3;
-  if ((derived.unseenCount ?? 0) > 0) return 2;
-  if (derived.activity === "done") return 1;
-  return 0;
+  return navigationUrgencyScore(derived ?? {});
 }
 
 export function listSwitchableAgentItems(

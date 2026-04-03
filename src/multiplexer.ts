@@ -71,9 +71,10 @@ import { resolveAttachmentPath } from "./attachment-store.js";
 import { appendSessionMessage, readSessionMessages } from "./session-message-history.js";
 import { classifyToolPane } from "./tool-output-watchers.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
-import { deriveSessionSemantics, sessionSemanticAttentionScore } from "./session-semantics.js";
+import { deriveSessionSemantics } from "./session-semantics.js";
 import { hasProjectServiceBuildDrift } from "./project-service-manifest.js";
 import { injectClaudeHookArgs } from "./claude-hooks.js";
+import { navigationUrgencyScore } from "./fast-control.js";
 import {
   clearNotifications,
   listNotifications,
@@ -1983,13 +1984,12 @@ export class Multiplexer {
   }
 
   private attentionScore(entry: DashboardSession): number {
-    if (entry.semantic) return sessionSemanticAttentionScore(entry.semantic);
-    if (entry.attention === "error") return 5;
-    if (entry.attention === "needs_input") return 4;
-    if (entry.attention === "blocked") return 3;
-    if ((entry.unseenCount ?? 0) > 0) return 2;
-    if (entry.activity === "done") return 1;
-    return 0;
+    return navigationUrgencyScore({
+      semantic: entry.semantic,
+      attention: entry.attention,
+      unseenCount: entry.unseenCount,
+      activity: entry.activity,
+    });
   }
 
   private getActivityEntries(): DashboardSession[] {
