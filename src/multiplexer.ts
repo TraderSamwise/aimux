@@ -646,38 +646,49 @@ export class Multiplexer {
       return false;
     }
     if (this.dashboardServiceSnapshotRefreshing) return false;
-    const endpoint = resolveProjectServiceEndpoint(process.cwd());
-    if (!endpoint) return false;
     this.dashboardServiceSnapshotRefreshing = true;
+    const deadline = force ? Date.now() + 8_000 : Date.now();
     try {
-      const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/desktop-state`, {
-        timeoutMs: 250,
-      });
-      if (status < 200 || status >= 300) return false;
-      const body = json as {
-        ok?: boolean;
-        sessions?: DashboardSession[];
-        services?: DashboardService[];
-        worktrees?: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
-        mainCheckoutInfo?: { name: string; branch: string };
-        mainCheckoutPath?: string;
-      };
-      const dashSessions = body.sessions ?? [];
-      const dashServices = body.services ?? [];
-      const worktrees = body.worktrees ?? [];
-      const worktreeGroups = this.buildDashboardWorktreeGroups(
-        dashSessions,
-        dashServices,
-        worktrees,
-        body.mainCheckoutPath,
-      );
-      this.applyDashboardModel(
-        dashSessions,
-        dashServices,
-        worktreeGroups,
-        body.mainCheckoutInfo ?? { name: "Main Checkout", branch: "" },
-      );
-      return true;
+      for (;;) {
+        const endpoint = resolveProjectServiceEndpoint(process.cwd());
+        if (endpoint) {
+          try {
+            const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/desktop-state`, {
+              timeoutMs: 250,
+            });
+            if (status >= 200 && status < 300) {
+              const body = json as {
+                ok?: boolean;
+                sessions?: DashboardSession[];
+                services?: DashboardService[];
+                worktrees?: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+                mainCheckoutInfo?: { name: string; branch: string };
+                mainCheckoutPath?: string;
+              };
+              const dashSessions = body.sessions ?? [];
+              const dashServices = body.services ?? [];
+              const worktrees = body.worktrees ?? [];
+              const worktreeGroups = this.buildDashboardWorktreeGroups(
+                dashSessions,
+                dashServices,
+                worktrees,
+                body.mainCheckoutPath,
+              );
+              this.applyDashboardModel(
+                dashSessions,
+                dashServices,
+                worktreeGroups,
+                body.mainCheckoutInfo ?? { name: "Main Checkout", branch: "" },
+              );
+              return true;
+            }
+          } catch {}
+        }
+        if (!force || Date.now() >= deadline) {
+          return false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
     } catch {
       return false;
     } finally {
