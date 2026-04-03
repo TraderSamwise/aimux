@@ -14,6 +14,7 @@ import { debug } from "./debug.js";
 import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
+import { type AlertKind, type ProjectEventBus } from "./project-events.js";
 import { createToolOutputWatcher } from "./tool-output-watchers.js";
 
 export interface AimuxMetadataAPI {
@@ -55,7 +56,17 @@ function listPluginFiles(dir: string): string[] {
 export class PluginRuntime {
   private instances: AimuxPluginInstance[] = [];
 
-  constructor(private readonly endpoint: MetadataApiEndpoint) {}
+  constructor(
+    private readonly endpoint: MetadataApiEndpoint,
+    private readonly eventBus?: ProjectEventBus,
+  ) {}
+
+  private publishEventAlert(sessionId: string, event: AgentEvent): void {
+    if (!this.eventBus) return;
+    const alert = deriveAlertFromAgentEvent(sessionId, event);
+    if (!alert) return;
+    this.eventBus.publishAlert(alert);
+  }
 
   async start(): Promise<void> {
     const tracker = new AgentTracker();
@@ -109,6 +120,7 @@ export class PluginRuntime {
         },
         emitEvent: (session, event) => {
           tracker.emit(session, event);
+          this.publishEventAlert(session, event);
         },
         markSeen: (session) => {
           tracker.markSeen(session);
@@ -159,4 +171,55 @@ export class PluginRuntime {
     }
     this.instances = [];
   }
+}
+
+export function deriveAlertFromAgentEvent(
+  sessionId: string,
+  event: AgentEvent,
+):
+  | {
+      kind: AlertKind;
+      sessionId: string;
+      title: string;
+      message: string;
+      dedupeKey: string;
+      cooldownMs: number;
+    }
+  | undefined {
+  let kind: AlertKind | null = null;
+  if (event.kind === "needs_input") kind = "needs_input";
+  else if (event.kind === "blocked") kind = "blocked";
+  else if (event.kind === "task_done") kind = "task_done";
+  else if (event.kind === "task_failed") kind = "task_failed";
+  else if (event.kind === "notify" && event.tone === "error") kind = "task_failed";
+
+  if (!kind) return undefined;
+
+  const sessionLabel = sessionId.trim() || "agent";
+  const title =
+    kind === "needs_input"
+      ? `${sessionLabel} needs input`
+      : kind === "blocked"
+        ? `${sessionLabel} is blocked`
+        : kind === "task_done"
+          ? `${sessionLabel} finished`
+          : `${sessionLabel} failed`;
+  const message =
+    event.message?.trim() ||
+    (kind === "needs_input"
+      ? "Agent is ready for your input."
+      : kind === "blocked"
+        ? "Agent is blocked."
+        : kind === "task_done"
+          ? "Agent completed its work."
+          : "Agent hit an error.");
+
+  return {
+    kind,
+    sessionId,
+    title,
+    message,
+    dedupeKey: `${kind}:${sessionId}`,
+    cooldownMs: kind === "task_done" ? 10_000 : 15_000,
+  };
 }

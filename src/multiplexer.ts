@@ -364,12 +364,15 @@ export class Multiplexer {
     await this.metadataServer.start();
     const endpoint = this.metadataServer.getAddress();
     if (endpoint) {
-      this.pluginRuntime = new PluginRuntime({
-        host: endpoint.host,
-        port: endpoint.port,
-        pid: process.pid,
-        updatedAt: new Date().toISOString(),
-      });
+      this.pluginRuntime = new PluginRuntime(
+        {
+          host: endpoint.host,
+          port: endpoint.port,
+          pid: process.pid,
+          updatedAt: new Date().toISOString(),
+        },
+        this.eventBus,
+      );
       await this.pluginRuntime.start();
     }
   }
