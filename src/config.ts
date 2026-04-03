@@ -56,6 +56,8 @@ export interface ToolConfig {
   command: string;
   args: string[];
   enabled: boolean;
+  /** Whether aimux should inject an automatic Claude hook wrapper/config for this tool. */
+  wrapperEnabled?: boolean;
   /** Flag/args to inject system prompt preamble, e.g. ["--append-system-prompt"] */
   preambleFlag?: string[];
   /** Args to resume a specific session, with {sessionId} placeholder, e.g. ["--resume", "{sessionId}"] */
@@ -105,6 +107,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
       command: "claude",
       args: ["--dangerously-skip-permissions"],
       enabled: true,
+      wrapperEnabled: true,
       preambleFlag: ["--append-system-prompt"],
       sessionIdFlag: ["--session-id", "{sessionId}"],
       resumeArgs: ["--resume", "{sessionId}"],

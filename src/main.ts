@@ -71,6 +71,14 @@ import {
   requestTaskChanges,
   sendHandoff,
 } from "./orchestration-actions.js";
+import {
+  addNotification,
+  clearNotifications,
+  listNotifications,
+  markNotificationsRead,
+  unreadNotificationCount,
+} from "./notifications.js";
+import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 
 const program = new Command();
 
@@ -156,6 +164,47 @@ async function getProjectServiceJson(path: string): Promise<any> {
     throw new Error(json?.error || `request failed: ${res.status}`);
   }
   return json;
+}
+
+async function postProjectServiceJsonOrLocal(path: string, body: unknown, fallback: () => any): Promise<any> {
+  try {
+    return await postProjectServiceJson(path, body);
+  } catch {
+    return fallback();
+  }
+}
+
+async function postLiveProjectServiceJsonOrLocal(
+  projectRoot: string,
+  path: string,
+  body: unknown,
+  fallback: () => any,
+): Promise<any> {
+  try {
+    const endpoint = await resolveProjectServiceEndpoint(projectRoot);
+    if (!endpoint) {
+      return fallback();
+    }
+    const res = await fetch(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.ok === false) {
+      throw new Error(json?.error || `request failed: ${res.status}`);
+    }
+    return json;
+  } catch {
+    return fallback();
+  }
+}
+
+async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSessionId?: string): Promise<string> {
+  if (!payloadSessionId) return explicitSessionId;
+  const state = Multiplexer.loadState();
+  const match = state?.sessions.find((session) => session.backendSessionId === payloadSessionId);
+  return match?.id ?? explicitSessionId;
 }
 
 function loadHostMetadataEndpoint(projectRoot: string): { host: string; port: number } | null {
@@ -2204,6 +2253,229 @@ metadataCmd
   .action(async (session: string, attention: AgentAttentionState) => {
     await initPaths();
     metadataTracker.setAttention(session, attention);
+  });
+
+program
+  .command("notify")
+  .description("Send a project notification")
+  .requiredOption("--title <title>", "Notification title")
+  .option("--subtitle <subtitle>", "Notification subtitle")
+  .option("--body <body>", "Notification body")
+  .option("--session <sessionId>", "Related session id")
+  .option("--kind <kind>", "Notification kind", "needs_input")
+  .option("--json", "Emit JSON output")
+  .action(
+    async (opts: {
+      title: string;
+      subtitle?: string;
+      body?: string;
+      session?: string;
+      kind?: string;
+      json?: boolean;
+    }) => {
+      await initPaths();
+      const title = opts.title.trim();
+      const body = opts.body?.trim() || title;
+      const result = await postProjectServiceJsonOrLocal(
+        "/notify",
+        {
+          title,
+          subtitle: opts.subtitle?.trim() || undefined,
+          message: body,
+          sessionId: opts.session?.trim() || undefined,
+          kind: opts.kind?.trim() || "needs_input",
+        },
+        () => ({
+          ok: true,
+          notification: addNotification({
+            title,
+            subtitle: opts.subtitle?.trim() || undefined,
+            body,
+            sessionId: opts.session?.trim() || undefined,
+            kind: opts.kind?.trim() || "needs_input",
+          }),
+        }),
+      );
+      if (opts.json) {
+        console.log(JSON.stringify(result));
+        return;
+      }
+      const count = unreadNotificationCount();
+      console.log(`Queued notification "${title}" (${count} unread).`);
+    },
+  );
+
+program
+  .command("claude-hook <action>")
+  .description("Internal Claude hook adapter modeled after cmux")
+  .requiredOption("--session <sessionId>", "Aimux session id")
+  .requiredOption("--project <path>", "Project path")
+  .option("--json", "Emit JSON output")
+  .action(async (action: string, opts: { session: string; project: string; json?: boolean }) => {
+    const projectRoot = resolveProjectRoot(pathResolve(opts.project));
+    await initPaths(projectRoot);
+    const rawInput = await readAllStdin();
+    const payload = parseClaudeHookPayload(rawInput);
+    const sessionId = await resolveClaudeHookSessionId(opts.session, payload.session_id);
+    const result: Record<string, unknown> = { ok: true, action, sessionId };
+
+    const setActivity = async (activity: AgentActivityState) =>
+      postLiveProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+        metadataTracker.setActivity(sessionId, activity, projectRoot),
+      );
+    const setAttention = async (attention: AgentAttentionState) =>
+      postLiveProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+        metadataTracker.setAttention(sessionId, attention, projectRoot),
+      );
+    const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
+      postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/event",
+        { session: sessionId, event: { kind, message, tone } },
+        () => metadataTracker.emit(sessionId, { kind, message, tone }, projectRoot),
+      );
+    const clearSessionNotifications = async () =>
+      postLiveProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
+        ok: true,
+        cleared: clearNotifications({ sessionId }),
+      }));
+
+    switch (action) {
+      case "session-start":
+      case "active":
+        break;
+      case "prompt-submit":
+      case "pre-tool-use":
+        await clearSessionNotifications();
+        await setActivity("running");
+        await setAttention("normal");
+        await postLiveProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+          metadataTracker.markSeen(sessionId, projectRoot),
+        );
+        break;
+      case "notification":
+      case "notify": {
+        const summary = summarizeClaudeNotification(payload);
+        await postLiveProjectServiceJsonOrLocal(
+          projectRoot,
+          "/notify",
+          {
+            title: "Claude Code",
+            subtitle: summary.subtitle,
+            message: summary.body,
+            sessionId,
+            kind: "needs_input",
+          },
+          () => ({
+            ok: true,
+            notification: addNotification({
+              title: "Claude Code",
+              subtitle: summary.subtitle,
+              body: summary.body,
+              sessionId,
+              kind: "needs_input",
+            }),
+          }),
+        );
+        await emitEvent("needs_input", summary.body, "warn");
+        break;
+      }
+      case "stop":
+      case "idle": {
+        const summary = summarizeClaudeStop(payload);
+        await postLiveProjectServiceJsonOrLocal(
+          projectRoot,
+          "/notify",
+          {
+            title: "Claude Code",
+            subtitle: summary.subtitle,
+            message: summary.body,
+            sessionId,
+            kind: "task_done",
+          },
+          () => ({
+            ok: true,
+            notification: addNotification({
+              title: "Claude Code",
+              subtitle: summary.subtitle,
+              body: summary.body,
+              sessionId,
+              kind: "task_done",
+            }),
+          }),
+        );
+        await emitEvent("task_done", summary.body, "success");
+        break;
+      }
+      case "session-end":
+        break;
+      default:
+        throw new Error(`Unsupported claude hook action: ${action}`);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(result));
+      return;
+    }
+    console.log("OK");
+  });
+
+program
+  .command("list-notifications")
+  .description("List project notifications")
+  .option("--unread", "Show only unread notifications")
+  .option("--session <sessionId>", "Filter by session id")
+  .option("--json", "Emit JSON output")
+  .action(async (opts: { unread?: boolean; session?: string; json?: boolean }) => {
+    await initPaths();
+    const notifications = listNotifications({
+      unreadOnly: Boolean(opts.unread),
+      sessionId: opts.session?.trim() || undefined,
+    });
+    const unreadCount = unreadNotificationCount({ sessionId: opts.session?.trim() || undefined });
+    if (opts.json) {
+      console.log(JSON.stringify({ notifications, unreadCount }));
+      return;
+    }
+    if (notifications.length === 0) {
+      console.log("No notifications.");
+      return;
+    }
+    for (const notification of notifications) {
+      const state = notification.unread ? "unread" : "read";
+      const session = notification.sessionId ? ` [${notification.sessionId}]` : "";
+      console.log(`${notification.id} ${state}${session} ${notification.title}: ${notification.body}`);
+    }
+  });
+
+program
+  .command("clear-notifications")
+  .description("Clear project notifications")
+  .option("--session <sessionId>", "Clear only notifications for a session")
+  .option("--json", "Emit JSON output")
+  .action(async (opts: { session?: string; json?: boolean }) => {
+    await initPaths();
+    const cleared = clearNotifications({ sessionId: opts.session?.trim() || undefined });
+    if (opts.json) {
+      console.log(JSON.stringify({ ok: true, cleared }));
+      return;
+    }
+    console.log(`Cleared ${cleared} notification${cleared === 1 ? "" : "s"}.`);
+  });
+
+program
+  .command("read-notifications")
+  .description("Mark project notifications as read")
+  .option("--session <sessionId>", "Mark only notifications for a session as read")
+  .option("--json", "Emit JSON output")
+  .action(async (opts: { session?: string; json?: boolean }) => {
+    await initPaths();
+    const updated = markNotificationsRead({ sessionId: opts.session?.trim() || undefined });
+    if (opts.json) {
+      console.log(JSON.stringify({ ok: true, updated }));
+      return;
+    }
+    console.log(`Marked ${updated} notification${updated === 1 ? "" : "s"} as read.`);
   });
 
 metadataCmd

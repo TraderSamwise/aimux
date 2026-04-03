@@ -72,6 +72,7 @@ import { appendSessionMessage, readSessionMessages } from "./session-message-his
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { deriveSessionSemantics, sessionSemanticAttentionScore } from "./session-semantics.js";
 import { hasProjectServiceBuildDrift } from "./project-service-manifest.js";
+import { injectClaudeHookArgs } from "./claude-hooks.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -1242,11 +1243,28 @@ export class Multiplexer {
     this.sessionBootstrap.ensurePlanFile(sessionId, command, worktreePath);
 
     let finalArgs = preambleFlag ? [...args, ...preambleFlag, preamble] : [...args];
+    let launchCommand = command;
 
     // Inject backend session ID flag (e.g. --session-id <uuid>)
     if (sessionIdFlag && backendSessionId) {
       const expandedFlag = sessionIdFlag.map((a) => a.replace("{sessionId}", backendSessionId));
       finalArgs = [...finalArgs, ...expandedFlag];
+    }
+
+    const toolCfg = toolConfigKey ? loadConfig().tools[toolConfigKey] : undefined;
+    if (toolCfg && toolConfigKey === "claude" && toolCfg.command === command && toolCfg.wrapperEnabled !== false) {
+      let projectRoot = process.cwd();
+      try {
+        projectRoot = findMainRepo(worktreePath ?? process.cwd());
+      } catch {
+        projectRoot = process.cwd();
+      }
+      finalArgs = injectClaudeHookArgs(finalArgs, {
+        sessionId,
+        projectRoot,
+        backendSessionId,
+      });
+      launchCommand = toolCfg.command;
     }
 
     if (preambleFlag) {
@@ -1269,7 +1287,7 @@ export class Multiplexer {
       tmuxSession.sessionName,
       this.getSessionLabel(sessionId) ?? command,
       worktreePath ?? process.cwd(),
-      command,
+      launchCommand,
       finalArgs,
       { detached: detachedInTmux },
     );

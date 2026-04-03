@@ -1,4 +1,5 @@
 import { getProjectId } from "./paths.js";
+import { addNotification } from "./notifications.js";
 
 export type AlertKind =
   | "needs_input"
@@ -82,7 +83,7 @@ export class ProjectEventBus {
       this.alertCooldowns.set(dedupeKey, now + cooldownMs);
     }
 
-    this.publish({
+    const event = {
       type: "alert",
       projectId: getProjectId(),
       ts: new Date().toISOString(),
@@ -94,7 +95,18 @@ export class ProjectEventBus {
       taskId: alert.taskId,
       worktreePath: alert.worktreePath,
       dedupeKey,
+    } satisfies AlertEvent;
+
+    addNotification({
+      title: event.title,
+      body: event.message,
+      sessionId: event.sessionId,
+      kind: event.kind,
+      dedupeKey: event.dedupeKey,
+      createdAt: event.ts,
     });
+
+    this.publish(event);
     return true;
   }
 }

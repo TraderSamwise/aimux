@@ -934,4 +934,52 @@ describe("MetadataServer threads API", () => {
       '"parsed":{"blocks":[{"type":"response","text":"updated output"}],"parser":{"tool":"codex","version":1,"confidence":"heuristic"}}',
     );
   });
+
+  it("lists and clears notifications over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const notifyRes = await fetch(`${base}/notify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Claude Code",
+        subtitle: "Waiting",
+        message: "Agent needs input",
+        sessionId: "claude-1",
+        kind: "needs_input",
+      }),
+    });
+    expect(notifyRes.ok).toBe(true);
+
+    const listRes = await fetch(`${base}/notifications`);
+    const listed = (await listRes.json()) as {
+      ok: boolean;
+      unreadCount: number;
+      notifications: Array<{ sessionId?: string; title: string; body: string }>;
+    };
+    expect(listRes.ok).toBe(true);
+    expect(listed.ok).toBe(true);
+    expect(listed.unreadCount).toBe(1);
+    expect(listed.notifications[0]).toMatchObject({
+      sessionId: "claude-1",
+      title: "Claude Code",
+      body: "Waiting — Agent needs input",
+    });
+
+    const clearRes = await fetch(`${base}/notifications/clear`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "claude-1" }),
+    });
+    const cleared = (await clearRes.json()) as { ok: boolean; cleared: number };
+    expect(clearRes.ok).toBe(true);
+    expect(cleared).toEqual({ ok: true, cleared: 1 });
+
+    const unreadRes = await fetch(`${base}/notifications?unread=1`);
+    const unreadJson = (await unreadRes.json()) as { unreadCount: number; notifications: unknown[] };
+    expect(unreadJson.unreadCount).toBe(0);
+    expect(unreadJson.notifications).toHaveLength(0);
+  });
 });

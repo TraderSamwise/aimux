@@ -12,6 +12,12 @@ import {
   type SessionServiceMetadata,
 } from "./metadata-store.js";
 import { notifyAlert } from "./notify.js";
+import {
+  clearNotifications,
+  listNotifications,
+  markNotificationsRead,
+  unreadNotificationCount,
+} from "./notifications.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import {
@@ -515,6 +521,18 @@ export class MetadataServer {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/notifications") {
+      const unreadOnly = url.searchParams.get("unread") === "1";
+      const sessionId = url.searchParams.get("sessionId")?.trim() || undefined;
+      const notifications = listNotifications({ unreadOnly, sessionId });
+      send(res, 200, {
+        ok: true,
+        notifications,
+        unreadCount: unreadNotificationCount({ sessionId }),
+      });
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/health") {
       send(res, 200, {
         ok: true,
@@ -812,14 +830,60 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/notify") {
-        const body = (await readJson(req)) as { title?: string; message?: string; kind?: string };
+        const body = (await readJson(req)) as {
+          title?: string;
+          subtitle?: string;
+          message?: string;
+          sessionId?: string;
+          kind?: string;
+        };
+        const requestedKind = body.kind?.trim();
+        const kind: AlertKind =
+          requestedKind === "task_done" || requestedKind === "complete"
+            ? "task_done"
+            : requestedKind === "task_failed" || requestedKind === "error"
+              ? "task_failed"
+              : requestedKind === "blocked"
+                ? "blocked"
+                : requestedKind === "message_waiting"
+                  ? "message_waiting"
+                  : requestedKind === "handoff_waiting"
+                    ? "handoff_waiting"
+                    : requestedKind === "task_assigned"
+                      ? "task_assigned"
+                      : requestedKind === "review_waiting"
+                        ? "review_waiting"
+                        : "needs_input";
         this.emitAlert({
-          kind: body.kind === "complete" ? "task_done" : "needs_input",
+          kind,
+          sessionId: body.sessionId?.trim() || undefined,
           title: body.title?.trim() || "aimux",
-          message: body.message?.trim() || body.title?.trim() || "aimux",
-          dedupeKey: body.kind === "complete" ? `notify:complete:${body.title ?? body.message ?? "aimux"}` : undefined,
+          message: [body.subtitle?.trim(), body.message?.trim() || body.title?.trim() || "aimux"]
+            .filter(Boolean)
+            .join(" — "),
+          dedupeKey: kind === "task_done" ? `notify:complete:${body.title ?? body.message ?? "aimux"}` : undefined,
         });
         send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/notifications/read") {
+        const body = (await readJson(req)) as { id?: string; sessionId?: string };
+        const updated = markNotificationsRead({
+          id: body.id?.trim() || undefined,
+          sessionId: body.sessionId?.trim() || undefined,
+        });
+        send(res, 200, { ok: true, updated });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/notifications/clear") {
+        const body = (await readJson(req)) as { id?: string; sessionId?: string };
+        const cleared = clearNotifications({
+          id: body.id?.trim() || undefined,
+          sessionId: body.sessionId?.trim() || undefined,
+        });
+        send(res, 200, { ok: true, cleared });
         return;
       }
 
