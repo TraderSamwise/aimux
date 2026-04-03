@@ -158,7 +158,7 @@ aimux worktree list --project /abs/path/to/repo --json
 aimux worktree create feature-x --project /abs/path/to/repo --json
 
 # Focus a live agent in tmux
-aimux desktop focus --project /abs/path/to/repo --session <sessionId>
+desktop terminal focus now uses the thin tmux fast-control entrypoint via the project service and terminal client tty
 ```
 
 HTTP-backed agent I/O helpers:

@@ -18,10 +18,12 @@ let nativeChatHistory = $state([]);
 let nativeChatLoading = $state(false);
 let nativeChatError = $state(null);
 let nativeChatComposerError = $state(null);
+let nativeChatInterruptState = $state(null);
 let nativeChatProjectPath = $state(null);
 let nativeChatSessionId = $state(null);
 let nativeChatRawMode = $state(false);
 let nativeChatDraftParts = $state({});
+const defaultNativeChatDraftParts = new Map();
 let currentAlert = $state(null);
 let recentAlerts = $state([]);
 let notificationSummaries = $state({});
@@ -39,6 +41,7 @@ let nativeChatResyncTimer = null;
 let nativeChatStream = null;
 let nativeChatStreamToken = 0;
 let nativeChatHistoryInFlight = false;
+let nativeChatInterruptTimer = null;
 let alertDismissTimer = null;
 let heartbeatTicker = $state(Date.now());
 let lastHeartbeatAt = $state(0);
@@ -409,6 +412,39 @@ function getMissingProjectServiceCapabilities(project) {
   return REQUIRED_PROJECT_SERVICE_CAPABILITIES.filter((key) => capabilities[key] !== true);
 }
 
+function hasUsableDesktopState(project) {
+  return Boolean(
+    project?.serviceEndpointAlive &&
+    (
+      project?.serviceInfo ||
+      (Array.isArray(project?.sessions) && project.sessions.length > 0) ||
+      (Array.isArray(project?.worktrees) && project.worktrees.length > 0) ||
+      project?.statusline
+    ),
+  );
+}
+
+function mergeProjectHeartbeat(previous, next) {
+  if (!previous) return next;
+  if (!next?.serviceAlive || !next?.serviceEndpoint) return next;
+  if (hasUsableDesktopState(next)) return next;
+  if (!hasUsableDesktopState(previous)) return next;
+
+  return {
+    ...next,
+    serviceEndpointAlive: true,
+    serviceInfo: next.serviceInfo || previous.serviceInfo || null,
+    sessions: Array.isArray(next.sessions) && next.sessions.length > 0 ? next.sessions : (previous.sessions || []),
+    worktrees: Array.isArray(next.worktrees) && next.worktrees.length > 0 ? next.worktrees : (previous.worktrees || []),
+    statusline: next.statusline || previous.statusline || null,
+  };
+}
+
+function mergeHeartbeatProjects(previousProjects, incomingProjects) {
+  const previousByPath = new Map((previousProjects || []).map((project) => [project.path, project]));
+  return (incomingProjects || []).map((project) => mergeProjectHeartbeat(previousByPath.get(project.path), project));
+}
+
 function manifestsMatch(expected, actual) {
   if (!expected || !actual) return false;
   if (Number(actual.apiVersion || 0) !== Number(expected.apiVersion || 0)) return false;
@@ -729,7 +765,42 @@ function setNativeChatSnapshot(projectPath, sessionId, snapshot) {
   nativeChatOutput = String(snapshot?.output ?? "");
   nativeChatBlocks = Array.isArray(snapshot?.parsed?.blocks) ? snapshot.parsed.blocks : [];
   nativeChatHistory = Array.isArray(snapshot?.history?.messages) ? snapshot.history.messages : [];
+  if (didNativeChatInterruptSettle(projectPath, sessionId, nativeChatBlocks)) {
+    nativeChatInterruptState = null;
+    if (nativeChatInterruptTimer) {
+      clearTimeout(nativeChatInterruptTimer);
+      nativeChatInterruptTimer = null;
+    }
+    nativeChatComposerError = null;
+  }
   nativeChatError = null;
+}
+
+function sessionLooksReadyForInput(projectPath, sessionId) {
+  const project = projects.find((entry) => entry.path === projectPath);
+  const session = project?.sessions?.find((entry) => entry.id === sessionId);
+  if (!session) return false;
+  return (
+    session.status === "waiting" ||
+    String(session.statusLabel || "").toLowerCase() === "on you" ||
+    String(session.attention || "").toLowerCase() === "needs_input" ||
+    String(session.derived?.attention || "").toLowerCase() === "needs_input"
+  );
+}
+
+function didNativeChatInterruptSettle(projectPath, sessionId, blocks = nativeChatBlocks) {
+  if (
+    !nativeChatInterruptState ||
+    nativeChatInterruptState.projectPath !== projectPath ||
+    nativeChatInterruptState.sessionId !== sessionId
+  ) {
+    return false;
+  }
+  const interruptedVisible = (blocks || []).some((block) =>
+    /\binterrupted\b.*\bwhat should\b.*\bdo instead\?/i.test(String(block?.text || ""))
+  );
+  const promptVisible = (blocks || []).some((block) => block?.type === "prompt");
+  return interruptedVisible || promptVisible || sessionLooksReadyForInput(projectPath, sessionId);
 }
 
 function beginNativeChatSelection(projectPath, sessionId, { preserveSnapshot = false } = {}) {
@@ -773,6 +844,11 @@ function stopNativeChatStreaming({ clear = false } = {}) {
     nativeChatStream.close();
     nativeChatStream = null;
   }
+  if (nativeChatInterruptTimer) {
+    clearTimeout(nativeChatInterruptTimer);
+    nativeChatInterruptTimer = null;
+  }
+  nativeChatInterruptState = null;
   nativeChatLoading = false;
   if (clear) clearNativeChatSnapshot();
 }
@@ -826,6 +902,16 @@ function scheduleNativeChatReconnect(projectPath, sessionId, endpoint, token, de
   }, delayMs);
 }
 
+function isTransientNativeChatReadError(error) {
+  const message = String(error || "");
+  return (
+    message.includes("Resource temporarily unavailable") ||
+    message.includes("os error 35") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("EAGAIN")
+  );
+}
+
 function buildNativeChatStreamUrl(endpoint, sessionId) {
   if (!endpoint?.host || !endpoint?.port) return null;
   const url = new URL(`http://${endpoint.host}:${endpoint.port}/events`);
@@ -852,8 +938,15 @@ async function fetchNativeChatSnapshot(projectPath, sessionId, token) {
     if (token !== nativeChatStreamToken) return;
     setNativeChatSnapshot(projectPath, sessionId, { ...result, history });
     nativeChatLoading = false;
+    nativeChatError = null;
   } catch (error) {
     if (token !== nativeChatStreamToken) return;
+    if (isTransientNativeChatReadError(error)) {
+      if (!nativeChatOutput) {
+        nativeChatLoading = true;
+      }
+      return;
+    }
     nativeChatError = String(error);
     nativeChatLoading = false;
   }
@@ -988,6 +1081,13 @@ export function getState() {
     get nativeChatLoading() { return nativeChatLoading; },
     get nativeChatError() { return nativeChatError; },
     get nativeChatComposerError() { return nativeChatComposerError; },
+    get nativeChatInterruptPending() {
+      return Boolean(
+        nativeChatInterruptState &&
+        nativeChatInterruptState.projectPath === selectedProjectPath &&
+        nativeChatInterruptState.sessionId === selectedSessionId
+      );
+    },
     get nativeChatProjectPath() { return nativeChatProjectPath; },
     get nativeChatSessionId() { return nativeChatSessionId; },
     get nativeChatRawMode() { return nativeChatRawMode; },
@@ -1018,7 +1118,7 @@ export function getState() {
 // ── Heartbeat listener (Rust pushes events, JS just receives) ─────
 
 function onHeartbeat(event) {
-  const incoming = event.payload?.projects || [];
+  const incoming = mergeHeartbeatProjects(projects, event.payload?.projects || []);
   expectedServiceInfo = event.payload?.expectedServiceInfo || null;
   incoming.sort((a, b) => a.name.localeCompare(b.name));
   lastHeartbeatAt = Date.now();
@@ -1180,7 +1280,7 @@ export async function runTerminal(terminal, projectPath, args, label) {
     terminalSwitching = false;
   });
 
-  terminalSessionId = await invoke("spawn_aimux", {
+  terminalSessionId = await invoke("spawn_terminal_control", {
     project: projectPath,
     args,
     cols: terminal.cols,
@@ -1189,6 +1289,13 @@ export async function runTerminal(terminal, projectPath, args, label) {
 }
 
 export async function focusTerminalAgent(terminal, projectPath, sessionId, label, windowId = null) {
+  if (!windowId) {
+    terminal.reset();
+    terminal.writeln(`\x1b[38;5;203mNo live tmux window for ${label}.\x1b[0m`);
+    terminalStatus = `${label} unavailable`;
+    terminalSwitching = false;
+    return;
+  }
   terminal.reset();
   terminal.writeln(`\x1b[38;5;81mSwitching to ${label}...\x1b[0m`);
   terminalStatus = label;
@@ -1198,7 +1305,6 @@ export async function focusTerminalAgent(terminal, projectPath, sessionId, label
       await invoke("focus_terminal_agent", {
         sessionId: terminalSessionId,
         projectPath,
-        agentId: sessionId,
         windowId,
       });
       terminalSwitching = false;
@@ -1211,7 +1317,7 @@ export async function focusTerminalAgent(terminal, projectPath, sessionId, label
   await runTerminal(
     terminal,
     projectPath,
-    ["desktop", "focus", "--project", projectPath, "--session", sessionId],
+    ["window", "--project-root", projectPath, "--window-id", windowId],
     label,
   );
 }
@@ -1249,7 +1355,7 @@ export async function openTerminalDashboard(terminal, projectPath, label) {
   await runTerminal(
     terminal,
     projectPath,
-    ["desktop", "open", "--project", projectPath],
+    ["dashboard", "--project-root", projectPath],
     label,
   );
 }
@@ -1293,7 +1399,13 @@ function createNativeChatImagePart(image) {
 
 function getNativeChatDraftPartsForSession(sessionId) {
   const existing = nativeChatDraftParts[sessionId];
-  return existing && existing.length > 0 ? existing : [createNativeChatTextPart("")];
+  if (existing && existing.length > 0) return existing;
+  let fallback = defaultNativeChatDraftParts.get(sessionId);
+  if (!fallback) {
+    fallback = [createNativeChatTextPart("")];
+    defaultNativeChatDraftParts.set(sessionId, fallback);
+  }
+  return fallback;
 }
 
 function normalizeNativeChatDraftParts(parts) {
@@ -1362,6 +1474,7 @@ function normalizeNativeChatDraftParts(parts) {
 }
 
 function setNativeChatDraftPartsForSession(sessionId, parts) {
+  defaultNativeChatDraftParts.delete(sessionId);
   nativeChatDraftParts = {
     ...nativeChatDraftParts,
     [sessionId]: normalizeNativeChatDraftParts(parts),
@@ -1476,33 +1589,102 @@ export async function sendNativeChatMessage() {
     }
   }
 
-  await trackAction(
-    {
-      kind: "agent-send",
-      message: `Sending to ${sessionId}...`,
-      projectPath,
-      sessionId,
-    },
-    () =>
-      invoke("agent_send", {
+  try {
+    await trackAction(
+      {
+        kind: "agent-send",
+        message: `Sending to ${sessionId}...`,
         projectPath,
         sessionId,
-        data: "",
-        parts,
-        submit: true,
-      }),
-  );
+      },
+      () =>
+        invoke("agent_send", {
+          projectPath,
+          sessionId,
+          data: "",
+          parts,
+          submit: true,
+        }),
+    );
+    nativeChatHistory = [
+      ...nativeChatHistory,
+      {
+        id: `local-${crypto.randomUUID()}`,
+        role: "user",
+        ts: new Date().toISOString(),
+        parts: historyParts,
+      },
+    ];
+    setNativeChatDraftPartsForSession(sessionId, [createNativeChatTextPart("")]);
+  } catch (error) {
+    throw error;
+  }
+}
 
-  nativeChatHistory = [
-    ...nativeChatHistory,
-    {
-      id: `local-${crypto.randomUUID()}`,
-      role: "user",
-      ts: new Date().toISOString(),
-      parts: historyParts,
-    },
-  ];
-  setNativeChatDraftPartsForSession(sessionId, [createNativeChatTextPart("")]);
+export async function interruptNativeChatAgent() {
+  const projectPath = selectedProjectPath;
+  const sessionId = selectedSessionId;
+  nativeChatComposerError = null;
+  if (!projectPath || !sessionId) return;
+  if (
+    nativeChatInterruptState &&
+    nativeChatInterruptState.projectPath === projectPath &&
+    nativeChatInterruptState.sessionId === sessionId
+  ) {
+    return;
+  }
+  const interruptedAlreadyVisible = () =>
+    didNativeChatInterruptSettle(projectPath, sessionId, nativeChatBlocks);
+  nativeChatInterruptState = {
+    projectPath,
+    sessionId,
+    requestedAt: Date.now(),
+  };
+  if (nativeChatInterruptTimer) {
+    clearTimeout(nativeChatInterruptTimer);
+  }
+  nativeChatInterruptTimer = setTimeout(() => {
+    const stillPending =
+      nativeChatInterruptState &&
+      nativeChatInterruptState.projectPath === projectPath &&
+      nativeChatInterruptState.sessionId === sessionId;
+    if (!stillPending) return;
+    if (didNativeChatInterruptSettle(projectPath, sessionId, nativeChatBlocks)) {
+      nativeChatInterruptState = null;
+      nativeChatInterruptTimer = null;
+      nativeChatComposerError = null;
+      return;
+    }
+    nativeChatInterruptState = null;
+    nativeChatInterruptTimer = null;
+    if (!interruptedAlreadyVisible()) {
+      nativeChatComposerError = "Interrupt may not have landed.";
+    }
+  }, 4000);
+  try {
+    await invoke("agent_interrupt", {
+      projectPath,
+      sessionId,
+    });
+  } catch (error) {
+    if (interruptedAlreadyVisible()) {
+      nativeChatInterruptState = null;
+      if (nativeChatInterruptTimer) {
+        clearTimeout(nativeChatInterruptTimer);
+        nativeChatInterruptTimer = null;
+      }
+      return;
+    }
+    if (/invalid HTTP response|failed to read response|timed out|temporarily unavailable|os error 35/i.test(String(error))) {
+      return;
+    }
+    nativeChatInterruptState = null;
+    if (nativeChatInterruptTimer) {
+      clearTimeout(nativeChatInterruptTimer);
+      nativeChatInterruptTimer = null;
+    }
+    nativeChatComposerError = String(error);
+  }
 }
 
 export async function restartControlPlane() {

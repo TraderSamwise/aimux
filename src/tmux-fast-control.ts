@@ -18,6 +18,8 @@ interface Options {
   currentWindow?: string;
   currentWindowId?: string;
   currentPath?: string;
+  clientTty?: string;
+  windowId?: string;
 }
 
 interface FastControlResponse {
@@ -48,6 +50,7 @@ function parseArgs(argv: string[]): { action: string; opts: Options } {
 }
 
 async function requestFastControl(action: string, opts: Options): Promise<FastControlResponse | null> {
+  if (action === "window") return null;
   const endpoint = loadMetadataEndpoint(opts.projectRoot);
   if (!endpoint) {
     logFastControl(`action=${action} mode=service-miss reason=no-endpoint project=${opts.projectRoot}`);
@@ -96,7 +99,19 @@ async function requestFastControl(action: string, opts: Options): Promise<FastCo
   return body;
 }
 
-function openTarget(tmux: TmuxRuntimeManager, target: TmuxTarget, currentClientSession?: string): void {
+function openTarget(
+  tmux: TmuxRuntimeManager,
+  target: TmuxTarget,
+  currentClientSession?: string,
+  clientTty?: string,
+): void {
+  if (clientTty) {
+    tmux.switchClientToTarget(clientTty, target);
+    if (target.windowName.startsWith("dashboard")) {
+      tmux.sendFocusIn(target);
+    }
+    return;
+  }
   if (currentClientSession) {
     const linkedTarget = tmux.getTargetByWindowId(currentClientSession, target.windowId);
     if (linkedTarget) {
@@ -138,8 +153,29 @@ function getDashboardCommandSpec(projectRoot: string) {
 }
 
 function resolveLocalResult(action: string, opts: Options, tmux: TmuxRuntimeManager): FastControlResponse {
+  const currentClientSession =
+    opts.currentClientSession?.trim() ||
+    (opts.clientTty ? tmux.findClientByTty(opts.clientTty)?.sessionName : null) ||
+    tmux.currentClientSession() ||
+    undefined;
+
+  if (action === "window") {
+    const windowId = opts.windowId?.trim();
+    if (!windowId) {
+      throw new Error("window action requires --window-id");
+    }
+    const sessionName = currentClientSession ?? tmux.getProjectSession(opts.projectRoot).sessionName;
+    const target = tmux.getTargetByWindowId(sessionName, windowId);
+    if (target) return { ok: true, target };
+    const projectSession = tmux.getProjectSession(opts.projectRoot);
+    const projectTarget = tmux.getTargetByWindowId(projectSession.sessionName, windowId);
+    if (!projectTarget) {
+      throw new Error(`tmux window ${windowId} not found for ${opts.projectRoot}`);
+    }
+    return { ok: true, target: projectTarget };
+  }
+
   if (action === "dashboard") {
-    const currentClientSession = opts.currentClientSession?.trim() || tmux.currentClientSession() || undefined;
     const dashboardTarget = currentClientSession
       ? tmux.listWindows(currentClientSession).find((window) => isDashboardWindowName(window.name))
       : undefined;
@@ -168,7 +204,7 @@ function resolveLocalResult(action: string, opts: Options, tmux: TmuxRuntimeMana
 
   const context: FastControlContext = {
     projectRoot: opts.projectRoot,
-    currentClientSession: opts.currentClientSession?.trim() || tmux.currentClientSession() || undefined,
+    currentClientSession,
     currentWindow: opts.currentWindow,
     currentWindowId: opts.currentWindowId,
     currentPath: opts.currentPath,
@@ -203,7 +239,11 @@ async function main() {
     }
     const target = result?.target ?? result?.item?.target;
     if (!target) process.exit(0);
-    openTarget(tmux, target, opts.currentClientSession);
+    const currentClientSession =
+      opts.currentClientSession?.trim() ||
+      (opts.clientTty ? tmux.findClientByTty(opts.clientTty)?.sessionName : null) ||
+      undefined;
+    openTarget(tmux, target, currentClientSession, opts.clientTty);
     process.exit(0);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);

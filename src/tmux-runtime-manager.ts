@@ -435,6 +435,12 @@ export class TmuxRuntimeManager {
       });
   }
 
+  findClientByTty(clientTty: string): TmuxClientInfo | null {
+    const normalized = clientTty.trim();
+    if (!normalized) return null;
+    return this.listClients().find((client) => client.tty === normalized) ?? null;
+  }
+
   getAttachedClientForTarget(target: TmuxTarget): TmuxClientInfo | null {
     const clientPrefix = `${target.sessionName}-client-`;
     const clients = this.listClients().filter(

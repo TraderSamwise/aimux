@@ -6,13 +6,12 @@ use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::process::Command;
 use std::net::{Shutdown, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State};
 
@@ -33,6 +32,10 @@ fn repo_root() -> PathBuf {
 
 fn aimux_entrypoint() -> PathBuf {
   repo_root().join("bin").join("aimux")
+}
+
+fn tmux_fast_control_entrypoint() -> PathBuf {
+  repo_root().join("dist").join("tmux-fast-control.js")
 }
 
 fn resolve_node() -> PathBuf {
@@ -63,6 +66,20 @@ fn shell_path() -> String {
     }
   }
   parts.join(":")
+}
+
+fn project_plan_path(project_path: &str, session_id: &str) -> Result<PathBuf, String> {
+  let trimmed = session_id.trim();
+  if trimmed.is_empty() {
+    return Err("session_id is required".to_string());
+  }
+  if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
+    return Err("invalid session_id".to_string());
+  }
+  Ok(Path::new(project_path)
+    .join(".aimux")
+    .join("plans")
+    .join(format!("{trimmed}.md")))
 }
 
 fn expected_project_service_manifest() -> Option<Value> {
@@ -178,30 +195,6 @@ struct PickedImage {
   name: String,
 }
 
-static TMUX_TARGET_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-
-fn tmux_target_cache() -> &'static Mutex<HashMap<String, String>> {
-  TMUX_TARGET_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn cache_key_for_agent(project_path: &str, agent_id: &str) -> String {
-  format!("agent:{project_path}:{agent_id}")
-}
-
-fn cache_key_for_dashboard(project_path: &str) -> String {
-  format!("dashboard:{project_path}")
-}
-
-fn load_cached_tmux_target(key: &str) -> Option<String> {
-  tmux_target_cache().lock().ok()?.get(key).cloned()
-}
-
-fn save_cached_tmux_target(key: String, window_id: String) {
-  if let Ok(mut cache) = tmux_target_cache().lock() {
-    cache.insert(key, window_id);
-  }
-}
-
 fn preview_bytes(bytes: &[u8], limit: usize) -> String {
   let take = bytes.len().min(limit);
   String::from_utf8_lossy(&bytes[..take]).trim().to_string()
@@ -219,18 +212,19 @@ fn load_daemon_info() -> Option<DaemonInfo> {
   serde_json::from_str(&content).ok()
 }
 
-fn http_json_request<T: DeserializeOwned>(
+fn http_json_request_with_timeout<T: DeserializeOwned>(
   host: &str,
   port: u16,
   method: &str,
   path: &str,
   body: Option<&Value>,
   context: &str,
+  timeout: Duration,
 ) -> Result<T, String> {
   let address = format!("{host}:{port}");
   let mut stream = TcpStream::connect(&address)
     .map_err(|e| format!("{context}: failed to connect to {address}: {e}"))?;
-  let timeout = Some(Duration::from_secs(5));
+  let timeout = Some(timeout);
   let _ = stream.set_read_timeout(timeout);
   let _ = stream.set_write_timeout(timeout);
 
@@ -252,9 +246,26 @@ fn http_json_request<T: DeserializeOwned>(
   let _ = stream.shutdown(Shutdown::Write);
 
   let mut response = Vec::new();
-  stream
-    .read_to_end(&mut response)
-    .map_err(|e| format!("{context}: failed to read response: {e}"))?;
+  let deadline = Instant::now() + timeout.unwrap_or(Duration::from_secs(5));
+  let mut buffer = [0u8; 8192];
+  loop {
+    match stream.read(&mut buffer) {
+      Ok(0) => break,
+      Ok(read) => response.extend_from_slice(&buffer[..read]),
+      Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+        if Instant::now() >= deadline {
+          if response.is_empty() {
+            return Err(format!("{context}: failed to read response: {error}"));
+          }
+          break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+      }
+      Err(error) => {
+        return Err(format!("{context}: failed to read response: {error}"));
+      }
+    }
+  }
 
   let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
     return Err(format!(
@@ -285,6 +296,17 @@ fn http_json_request<T: DeserializeOwned>(
       preview_bytes(body_bytes, 400)
     )
   })
+}
+
+fn http_json_request<T: DeserializeOwned>(
+  host: &str,
+  port: u16,
+  method: &str,
+  path: &str,
+  body: Option<&Value>,
+  context: &str,
+) -> Result<T, String> {
+  http_json_request_with_timeout(host, port, method, path, body, context, Duration::from_secs(5))
 }
 
 fn ensure_daemon_http() -> Result<DaemonInfo, String> {
@@ -427,28 +449,6 @@ struct TerminalSession {
   tty_path: Option<String>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TmuxWindowMetadata {
-  session_id: String,
-}
-
-fn tmux_output(args: &[&str], context: &str) -> Result<String, String> {
-  let output = Command::new("tmux")
-    .args(args)
-    .env("PATH", shell_path())
-    .output()
-    .map_err(|error| format!("{context}: failed to spawn tmux: {error}"))?;
-  if !output.status.success() {
-    return Err(format!(
-      "{context}: tmux {} failed: {}",
-      args.join(" "),
-      preview_bytes(&output.stderr, 400)
-    ));
-  }
-  Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
 fn pty_tty_path(master: &dyn MasterPty) -> Option<String> {
   #[cfg(unix)]
   {
@@ -482,80 +482,6 @@ fn tty_path_for_pid(pid: u32) -> Option<String> {
   Some(format!("/dev/{tty}"))
 }
 
-fn find_project_sessions(project_path: &str) -> Result<Vec<String>, String> {
-  let output = tmux_output(&["list-sessions", "-F", "#{session_name}"], "tmux list sessions")?;
-  let mut matches = Vec::new();
-  for session_name in output.lines().filter(|line| !line.trim().is_empty()) {
-    let root = tmux_output(
-      &["show-options", "-v", "-t", session_name, "@aimux-project-root"],
-      "tmux show project root",
-    )
-    .unwrap_or_default();
-    if root == project_path {
-      matches.push(session_name.to_string());
-    }
-  }
-  Ok(matches)
-}
-
-fn find_window_for_session(project_path: &str, aimux_session_id: &str) -> Result<String, String> {
-  for session_name in find_project_sessions(project_path)? {
-    let output = tmux_output(
-      &["list-windows", "-t", &session_name, "-F", "#{window_id}"],
-      "tmux list windows",
-    )?;
-    for window_id in output.lines().filter(|line| !line.trim().is_empty()) {
-      let raw = match tmux_output(
-        &["show-window-options", "-v", "-t", window_id, "@aimux-meta"],
-        "tmux show window metadata",
-      ) {
-        Ok(value) => value,
-        Err(_) => continue,
-      };
-      let Ok(metadata) = serde_json::from_str::<TmuxWindowMetadata>(&raw) else {
-        continue;
-      };
-      if metadata.session_id == aimux_session_id {
-        return Ok(window_id.to_string());
-      }
-    }
-  }
-  Err(format!(
-    "no tmux window found for session {} in {}",
-    aimux_session_id, project_path
-  ))
-}
-
-fn find_dashboard_window(project_path: &str) -> Result<String, String> {
-  for session_name in find_project_sessions(project_path)? {
-    let output = tmux_output(
-      &["list-windows", "-t", &session_name, "-F", "#{window_id}\t#{window_name}"],
-      "tmux list windows",
-    )?;
-    for line in output.lines().filter(|line| !line.trim().is_empty()) {
-      let mut parts = line.split('\t');
-      let Some(window_id) = parts.next() else {
-        continue;
-      };
-      let Some(window_name) = parts.next() else {
-        continue;
-      };
-      if window_name == "dashboard" || window_name.starts_with("dashboard-") {
-        return Ok(window_id.to_string());
-      }
-    }
-  }
-  Err(format!("no dashboard tmux window found in {}", project_path))
-}
-
-fn switch_tmux_client_to_window(client_tty: &str, window_id: &str) -> Result<(), String> {
-  let _ = tmux_output(
-    &["switch-client", "-c", client_tty, "-t", window_id],
-    "tmux switch client",
-  )?;
-  Ok(())
-}
-
 fn terminal_client_tty(session_id: u32, session: &TerminalSession) -> Result<String, String> {
   if let Some(tty_path) = session.tty_path.clone() {
     return Ok(tty_path);
@@ -572,6 +498,33 @@ fn terminal_client_tty(session_id: u32, session: &TerminalSession) -> Result<Str
     .ok_or_else(|| format!("terminal session {session_id} has no PTY tty path"))
 }
 
+fn run_tmux_fast_control(project_path: &str, args: &[String], context: &str) -> Result<(), String> {
+  let node = resolve_node();
+  let entrypoint = tmux_fast_control_entrypoint();
+  let output = Command::new(&node)
+    .arg(&entrypoint)
+    .args(args)
+    .current_dir(project_path)
+    .env("PATH", shell_path())
+    .output()
+    .map_err(|error| {
+      format!(
+        "{context}: failed to spawn fast control\nnode={}\nentrypoint={}\nproject={}\nerror={error}",
+        node.display(),
+        entrypoint.display(),
+        project_path
+      )
+    })?;
+  if !output.status.success() {
+    return Err(format!(
+      "{context}: fast control failed\nstdout={:?}\nstderr={:?}",
+      preview_bytes(&output.stdout, 400),
+      preview_bytes(&output.stderr, 400)
+    ));
+  }
+  Ok(())
+}
+
 // ── Heartbeat (background thread → event) ─────────────────────────
 
 fn build_heartbeat() -> Option<HeartbeatResponse> {
@@ -585,13 +538,14 @@ fn build_heartbeat() -> Option<HeartbeatResponse> {
         .service_endpoint
         .as_ref()
         .and_then(|endpoint| {
-          http_json_request::<DesktopStateResponse>(
+          http_json_request_with_timeout::<DesktopStateResponse>(
             &endpoint.host,
             endpoint.port,
             "GET",
             "/desktop-state",
             None,
             "desktop state",
+            Duration::from_millis(750),
           )
           .ok()
         })
@@ -870,6 +824,16 @@ async fn agent_stop(project_path: String, session_id: String) -> Result<Value, S
 }
 
 #[tauri::command]
+async fn agent_interrupt(project_path: String, session_id: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({ "sessionId": session_id });
+    project_service_json(&project_path, "POST", "/agents/interrupt", Some(&body), "agent interrupt")
+  })
+  .await
+  .map_err(|error| format!("agent_interrupt task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn agent_kill(project_path: String, session_id: String) -> Result<Value, String> {
   tauri::async_runtime::spawn_blocking(move || {
     let body = serde_json::json!({ "sessionId": session_id });
@@ -958,6 +922,7 @@ async fn agent_send(
   session_id: String,
   data: String,
   parts: Option<Value>,
+  client_message_id: Option<String>,
   submit: Option<bool>,
 ) -> Result<Value, String> {
   tauri::async_runtime::spawn_blocking(move || {
@@ -965,6 +930,7 @@ async fn agent_send(
       "sessionId": session_id,
       "data": data,
       "parts": parts,
+      "clientMessageId": client_message_id,
       "submit": submit.unwrap_or(true),
     });
     project_service_json(&project_path, "POST", "/agents/input", Some(&body), "agent send")
@@ -1077,6 +1043,41 @@ async fn workflow_list(project_path: String, participant: Option<String>) -> Res
   })
   .await
   .map_err(|error| format!("workflow_list task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn plan_read(project_path: String, session_id: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let path = project_plan_path(&project_path, &session_id)?;
+    let content = fs::read_to_string(&path).map_err(|e| format!("plan_read: failed to read {}: {e}", path.display()))?;
+    Ok(serde_json::json!({
+      "sessionId": session_id,
+      "path": path.to_string_lossy().to_string(),
+      "content": content,
+    }))
+  })
+  .await
+  .map_err(|error| format!("plan_read task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn plan_write(project_path: String, session_id: String, content: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let path = project_plan_path(&project_path, &session_id)?;
+    if let Some(parent) = path.parent() {
+      fs::create_dir_all(parent)
+        .map_err(|e| format!("plan_write: failed to create {}: {e}", parent.display()))?;
+    }
+    fs::write(&path, content.as_bytes())
+      .map_err(|e| format!("plan_write: failed to write {}: {e}", path.display()))?;
+    Ok(serde_json::json!({
+      "ok": true,
+      "sessionId": session_id,
+      "path": path.to_string_lossy().to_string(),
+    }))
+  })
+  .await
+  .map_err(|error| format!("plan_write task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1338,7 +1339,7 @@ async fn review_request_changes(project_path: String, task_id: String, from: Opt
 // ── Commands: terminal PTY ────────────────────────────────────────
 
 #[tauri::command]
-fn spawn_aimux(
+fn spawn_terminal_control(
   app: tauri::AppHandle,
   state: State<TerminalRegistry>,
   project: String,
@@ -1357,7 +1358,7 @@ fn spawn_aimux(
     .map_err(|error| format!("failed to create PTY: {error}"))?;
 
   let mut command = CommandBuilder::new(resolve_node());
-  command.arg(aimux_entrypoint().to_string_lossy().to_string());
+  command.arg(tmux_fast_control_entrypoint().to_string_lossy().to_string());
   for arg in args {
     command.arg(arg);
   }
@@ -1367,7 +1368,7 @@ fn spawn_aimux(
   let child = pair
     .slave
     .spawn_command(command)
-    .map_err(|error| format!("failed to spawn aimux terminal: {error}"))?;
+    .map_err(|error| format!("failed to spawn terminal control: {error}"))?;
   let tty_path = pty_tty_path(&*pair.master);
 
   let writer = pair
@@ -1436,8 +1437,7 @@ async fn focus_terminal_agent(
   state: State<'_, TerminalRegistry>,
   session_id: u32,
   project_path: String,
-  agent_id: String,
-  window_id: Option<String>,
+  window_id: String,
 ) -> Result<(), String> {
   let session = {
     let sessions = state
@@ -1460,22 +1460,22 @@ async fn focus_terminal_agent(
     }
 
     let client_tty = terminal_client_tty(session_id, &session)?;
-    let cache_key = cache_key_for_agent(&project_path, &agent_id);
-    let target_window_id = match window_id {
-      Some(window_id) if !window_id.trim().is_empty() => window_id,
-      _ => load_cached_tmux_target(&cache_key).unwrap_or_else(|| "".to_string()),
-    };
-    if !target_window_id.trim().is_empty() {
-      if switch_tmux_client_to_window(&client_tty, &target_window_id).is_ok() {
-        save_cached_tmux_target(cache_key, target_window_id);
-        return Ok(());
-      }
+    if window_id.trim().is_empty() {
+      return Err("window_id is required".to_string());
     }
-
-    let refreshed_window_id = find_window_for_session(&project_path, &agent_id)?;
-    switch_tmux_client_to_window(&client_tty, &refreshed_window_id)?;
-    save_cached_tmux_target(cache_key, refreshed_window_id);
-    Ok(())
+    run_tmux_fast_control(
+      &project_path,
+      &[
+        "window".to_string(),
+        "--project-root".to_string(),
+        project_path.clone(),
+        "--window-id".to_string(),
+        window_id,
+        "--client-tty".to_string(),
+        client_tty,
+      ],
+      "focus terminal agent",
+    )
   })
   .await
   .map_err(|error| format!("failed to join terminal focus task: {error}"))?
@@ -1508,16 +1508,17 @@ async fn focus_terminal_dashboard(
     }
 
     let client_tty = terminal_client_tty(session_id, &session)?;
-    let cache_key = cache_key_for_dashboard(&project_path);
-    if let Some(window_id) = load_cached_tmux_target(&cache_key) {
-      if switch_tmux_client_to_window(&client_tty, &window_id).is_ok() {
-        return Ok(());
-      }
-    }
-    let window_id = find_dashboard_window(&project_path)?;
-    switch_tmux_client_to_window(&client_tty, &window_id)?;
-    save_cached_tmux_target(cache_key, window_id);
-    Ok(())
+    run_tmux_fast_control(
+      &project_path,
+      &[
+        "dashboard".to_string(),
+        "--project-root".to_string(),
+        project_path.clone(),
+        "--client-tty".to_string(),
+        client_tty,
+      ],
+      "focus terminal dashboard",
+    )
   })
   .await
   .map_err(|error| format!("failed to join terminal dashboard focus task: {error}"))?
@@ -1605,6 +1606,7 @@ fn main() {
       restart_control_plane,
       agent_spawn,
       agent_stop,
+      agent_interrupt,
       agent_kill,
       agent_fork,
       agent_rename,
@@ -1620,6 +1622,8 @@ fn main() {
       graveyard_list,
       graveyard_resurrect,
       workflow_list,
+      plan_read,
+      plan_write,
       threads_list,
       thread_get,
       thread_send,
@@ -1634,7 +1638,7 @@ fn main() {
       task_reopen,
       review_approve,
       review_request_changes,
-      spawn_aimux,
+      spawn_terminal_control,
       focus_terminal_agent,
       focus_terminal_dashboard,
       write_terminal,

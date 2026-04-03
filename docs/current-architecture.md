@@ -128,7 +128,7 @@ Desktop terminal control is tmux-client-first:
 
 - the embedded terminal pane hosts a real attached tmux client
 - same-project agent/dashboard switching should retarget that live tmux client
-- desktop should only cold-spawn `aimux desktop open|focus ...` when it needs to create a new attached terminal session
+- desktop should only cold-spawn the thin `tmux-fast-control` terminal attach path when it needs to create a new attached terminal session
 
 Project-service HTTP now exposes the live orchestration surface, including:
 
@@ -180,7 +180,7 @@ aimux graveyard send <sessionId> --project /abs/path/to/repo --json
 aimux graveyard resurrect <sessionId> --project /abs/path/to/repo --json
 aimux worktree list --project /abs/path/to/repo --json
 aimux worktree create feature-x --project /abs/path/to/repo --json
-aimux desktop focus --project /abs/path/to/repo --session <sessionId>
+desktop terminal focus uses the thin `tmux-fast-control` entrypoint with the project-scoped `tmuxWindowId` from `desktop-state`
 ```
 
 ## Dashboard Model
