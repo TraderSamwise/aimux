@@ -157,6 +157,13 @@ export class TmuxRuntimeManager {
     return this.resolveOpenSessionName(sessionName, insideTmux);
   }
 
+  peekOpenSessionName(sessionName: string, insideTmux = this.isInsideTmux()): string {
+    if (!this.isManagedSessionName(sessionName) || this.isClientSessionName(sessionName)) return sessionName;
+    const clientSuffix = this.resolveClientSuffix(insideTmux);
+    if (!clientSuffix) return sessionName;
+    return this.getProjectClientSessionName(sessionName, clientSuffix);
+  }
+
   private ensureClientSession(hostSessionName: string, clientSessionName: string, projectRoot: string): void {
     const dashboardName = `dashboard-${clientSessionName.match(/-client-([a-f0-9]{8})$/)?.[1] ?? "client"}`;
     const hostDashboard = this.listWindows(hostSessionName).find((window) => isDashboardWindowName(window.name));

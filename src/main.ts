@@ -382,6 +382,33 @@ function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManage
   return { dashboardSession, dashboardTarget };
 }
 
+function getLiveDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
+  const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
+  const dashboardSession = tmux.getProjectSession(projectRoot);
+  if (!tmux.hasSession(dashboardSession.sessionName)) {
+    return null;
+  }
+  const openSessionName = tmux.peekOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
+  if (!tmux.hasSession(openSessionName)) {
+    return null;
+  }
+  const dashboardWindow = tmux.listWindows(openSessionName).find((window) => window.name.startsWith("dashboard"));
+  if (!dashboardWindow) {
+    return null;
+  }
+  const dashboardTarget = {
+    sessionName: openSessionName,
+    windowId: dashboardWindow.id,
+    windowIndex: dashboardWindow.index,
+    windowName: dashboardWindow.name,
+  };
+  const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
+  if (!tmux.isWindowAlive(dashboardTarget) || currentBuildStamp !== dashboardBuildStamp) {
+    return null;
+  }
+  return { dashboardSession, dashboardTarget };
+}
+
 function forceReloadDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
   const { dashboardBuildStamp, dashboardCommand } = getDashboardCommandSpec(projectRoot);
   const dashboardSession = tmux.ensureProjectSession(projectRoot, {
@@ -436,9 +463,19 @@ program
         await ensureDaemonProjectReady(projectRoot);
       } else {
         initProject();
-        await ensureDaemonProjectReady(projectRoot);
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
+        if (!tool && !opts.resume && !opts.restore) {
+          const liveDashboard = getLiveDashboardTarget(projectRoot, tmux);
+          if (liveDashboard) {
+            tmux.openTarget(liveDashboard.dashboardTarget, {
+              insideTmux: tmux.isInsideTmux(),
+              alreadyResolved: true,
+            });
+            return;
+          }
+        }
+        await ensureDaemonProjectReady(projectRoot);
         const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
         if (!tool && !opts.resume && !opts.restore) {
           tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
