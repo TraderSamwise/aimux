@@ -358,39 +358,6 @@ export class Multiplexer {
     this.lastRenderedFrame = output;
   }
 
-  private refreshDashboardModel(force = false): void {
-    if (!force && this.dashboardModelRefreshedAt > 0 && Date.now() - this.dashboardModelRefreshedAt < 750) {
-      return;
-    }
-
-    this.syncSessionsFromState();
-
-    let mainRepoPath: string | undefined;
-    let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
-    try {
-      mainRepoPath = findMainRepo();
-    } catch {}
-
-    const dashSessions = this.getDashboardSessions();
-    let worktreeGroups: WorktreeGroup[] = [];
-    try {
-      const worktrees = listAllWorktrees();
-      const mainWorktree =
-        (mainRepoPath ? worktrees.find((wt) => wt.path === mainRepoPath) : worktrees[0]) ?? worktrees[0];
-      if (mainWorktree) {
-        mainCheckoutInfo = {
-          name: "Main Checkout",
-          branch: mainWorktree.branch,
-        };
-      }
-      worktreeGroups = this.buildDashboardWorktreeGroups(dashSessions, worktrees, mainRepoPath);
-    } catch {
-      // Not in a git repo or no worktrees — skip grouping
-    }
-
-    this.applyDashboardModel(dashSessions, worktreeGroups, mainCheckoutInfo);
-  }
-
   private buildDashboardWorktreeGroups(
     dashSessions: DashboardSession[],
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>,
@@ -419,6 +386,170 @@ export class Multiplexer {
     this.dashboardWorktreeGroupsCache = worktreeGroups;
     this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
     this.dashboardModelRefreshedAt = Date.now();
+  }
+
+  private computeDashboardSessions(): DashboardSession[] {
+    const metadata = loadMetadataState().sessions;
+    const threadSummaries = listThreadSummaries();
+    const threadStats = new Map<
+      string,
+      {
+        unread: number;
+        waiting: number;
+        waitingOnMe: number;
+        waitingOnThem: number;
+        pending: number;
+        latestId?: string;
+        latestTitle?: string;
+      }
+    >();
+    const workflowStats = new Map<
+      string,
+      {
+        onMe: number;
+        blocked: number;
+        families: Set<string>;
+        topUrgency: number;
+        topLabel?: string;
+        nextAction?: string;
+      }
+    >();
+    for (const summary of threadSummaries) {
+      const messages = readMessages(summary.thread.id);
+      const pendingByParticipant = new Map<string, number>();
+      for (const message of messages) {
+        for (const recipient of message.to ?? []) {
+          if (!(message.deliveredTo ?? []).includes(recipient)) {
+            pendingByParticipant.set(recipient, (pendingByParticipant.get(recipient) ?? 0) + 1);
+          }
+        }
+      }
+      for (const participant of summary.thread.participants) {
+        const current = threadStats.get(participant) ?? {
+          unread: 0,
+          waiting: 0,
+          waitingOnMe: 0,
+          waitingOnThem: 0,
+          pending: 0,
+        };
+        if ((summary.thread.unreadBy ?? []).includes(participant)) current.unread += 1;
+        const waitsOnParticipant = (summary.thread.waitingOn ?? []).includes(participant);
+        const ownedByParticipant = summary.thread.owner === participant;
+        if (waitsOnParticipant || ownedByParticipant) current.waiting += 1;
+        if (waitsOnParticipant) current.waitingOnMe += 1;
+        if (ownedByParticipant && (summary.thread.waitingOn?.length ?? 0) > 0) current.waitingOnThem += 1;
+        current.pending += pendingByParticipant.get(participant) ?? 0;
+        if (!current.latestId) {
+          current.latestId = summary.thread.id;
+          current.latestTitle = summary.thread.title;
+        }
+        threadStats.set(participant, current);
+      }
+    }
+    const workflowEntries = buildWorkflowEntries("user");
+    for (const entry of workflowEntries) {
+      const familyKey = entry.familyRootTaskId ?? entry.thread.id;
+      for (const participant of entry.thread.participants) {
+        const current = workflowStats.get(participant) ?? {
+          onMe: 0,
+          blocked: 0,
+          families: new Set<string>(),
+          topUrgency: -1,
+        };
+        if ((entry.thread.waitingOn ?? []).includes(participant)) current.onMe += 1;
+        if (entry.thread.status === "blocked" || entry.task?.status === "blocked") current.blocked += 1;
+        if (entry.familyTaskIds.length > 1) current.families.add(familyKey);
+        if (entry.urgency > current.topUrgency) {
+          current.topUrgency = entry.urgency;
+          current.topLabel = `${entry.displayTitle} (${entry.stateLabel})`;
+          current.nextAction = describeWorkflowNextAction(entry, participant);
+        }
+        workflowStats.set(participant, current);
+      }
+    }
+    let mainRepoPath: string | undefined;
+    try {
+      mainRepoPath = findMainRepo();
+    } catch {}
+    const sessions = buildDashboardSessions({
+      sessions: this.sessions.map((session) => ({
+        id: session.id,
+        command: session.command,
+        backendSessionId: session.backendSessionId,
+        status: session.status,
+        worktreePath: this.sessionWorktreePaths.get(session.id),
+        tmuxWindowId: this.sessionTmuxTargets.get(session.id)?.windowId,
+      })),
+      activeIndex: this.activeIndex,
+      offlineSessions: this.offlineSessions,
+      remoteInstances: [],
+      mainRepoPath,
+      getSessionLabel: (sessionId) => this.getSessionLabel(sessionId),
+      getSessionHeadline: (sessionId) => this.deriveHeadline(sessionId),
+      getSessionTaskDescription: (sessionId) => this.taskDispatcher?.getSessionTask(sessionId),
+      getSessionRole: (sessionId) => this.sessionRoles.get(sessionId),
+      getSessionContext: (sessionId) => metadata[sessionId]?.context,
+      getSessionDerived: (sessionId) => metadata[sessionId]?.derived,
+    });
+    return sessions.map((session) => {
+      const stats = threadStats.get(session.id);
+      const workflow = workflowStats.get(session.id);
+      return {
+        ...session,
+        threadUnreadCount: stats?.unread ?? 0,
+        threadWaitingCount: stats?.waiting ?? 0,
+        threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
+        threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
+        threadPendingCount: stats?.pending ?? 0,
+        threadId: session.threadId ?? stats?.latestId,
+        threadName: session.threadName ?? stats?.latestTitle,
+        workflowOnMeCount: workflow?.onMe ?? 0,
+        workflowBlockedCount: workflow?.blocked ?? 0,
+        workflowFamilyCount: workflow?.families.size ?? 0,
+        workflowTopLabel: workflow?.topLabel,
+        workflowNextAction: workflow?.nextAction,
+        semantic: deriveSessionSemantics({
+          status: session.status,
+          activity: session.activity,
+          attention: session.attention,
+          unseenCount: session.unseenCount,
+          threadUnreadCount: stats?.unread ?? 0,
+          threadPendingCount: stats?.pending ?? 0,
+          threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
+          threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
+          workflowOnMeCount: workflow?.onMe ?? 0,
+          workflowBlockedCount: workflow?.blocked ?? 0,
+          workflowFamilyCount: workflow?.families.size ?? 0,
+          hasActiveTask: Boolean(session.taskDescription),
+        }),
+      };
+    });
+  }
+
+  private buildDesktopStateSnapshot(): {
+    sessions: DashboardSession[];
+    worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+    mainCheckoutInfo: { name: string; branch: string };
+    mainCheckoutPath?: string;
+  } {
+    this.syncSessionsFromState();
+    const worktrees = this.listDesktopWorktrees();
+    let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
+    let mainCheckoutPath: string | undefined;
+    try {
+      mainCheckoutPath = findMainRepo();
+    } catch {}
+    const mainWorktree =
+      (mainCheckoutPath ? worktrees.find((wt) => wt.path === mainCheckoutPath) : worktrees[0]) ?? worktrees[0];
+    if (mainWorktree) {
+      mainCheckoutInfo = { name: "Main Checkout", branch: mainWorktree.branch };
+    }
+    return {
+      sessions: this.computeDashboardSessions(),
+      worktrees,
+      mainCheckoutInfo,
+      mainCheckoutPath,
+    };
   }
 
   private async refreshDashboardModelFromService(force = false): Promise<boolean> {
@@ -909,29 +1040,10 @@ export class Multiplexer {
     if (session.transport instanceof TmuxSessionTransport) {
       const target = this.sessionTmuxTargets.get(sessionId) ?? session.transport.tmuxTarget;
       this.tmuxRuntimeManager.sendEscape(target);
-      await this.retryTmuxAgentInterrupt(sessionId, target);
     } else {
       session.write("\x1b");
     }
     return { sessionId };
-  }
-
-  private async retryTmuxAgentInterrupt(sessionId: string, target: TmuxTarget): Promise<void> {
-    const tool = this.sessionToolKeys.get(sessionId) || "agent";
-    for (const delayMs of [120, 320]) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      let output = "";
-      try {
-        output = this.tmuxRuntimeManager.captureTarget(target, { startLine: -80 });
-      } catch {
-        return;
-      }
-      const pane = classifyToolPane(tool, output);
-      if (pane.interruptedVisible || pane.promptVisible) {
-        return;
-      }
-      this.tmuxRuntimeManager.sendEscape(target);
-    }
   }
 
   async readAgentOutput(
@@ -1226,6 +1338,10 @@ export class Multiplexer {
 
     // Enter dashboard mode directly
     this.mode = "dashboard";
+    const primed = await this.refreshDashboardModelFromService(true);
+    if (!primed) {
+      throw new Error("dashboard requires a live project service desktop-state endpoint");
+    }
     this.terminalHost.enterAlternateScreen(true);
     this.startStatusRefresh();
     this.renderDashboard();
@@ -4024,7 +4140,6 @@ export class Multiplexer {
 
   private renderDashboard(): void {
     this.writeStatuslineFile();
-    this.refreshDashboardModel();
 
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
@@ -5764,154 +5879,31 @@ export class Multiplexer {
 
   /** Get the current dashboard sessions (local + remote merged) for lookup */
   private getDashboardSessions(): DashboardSession[] {
-    const metadata = loadMetadataState().sessions;
-    const threadSummaries = listThreadSummaries();
-    const threadStats = new Map<
-      string,
-      {
-        unread: number;
-        waiting: number;
-        waitingOnMe: number;
-        waitingOnThem: number;
-        pending: number;
-        latestId?: string;
-        latestTitle?: string;
-      }
-    >();
-    const workflowStats = new Map<
-      string,
-      {
-        onMe: number;
-        blocked: number;
-        families: Set<string>;
-        topUrgency: number;
-        topLabel?: string;
-        nextAction?: string;
-      }
-    >();
-    for (const summary of threadSummaries) {
-      const messages = readMessages(summary.thread.id);
-      const pendingByParticipant = new Map<string, number>();
-      for (const message of messages) {
-        for (const recipient of message.to ?? []) {
-          if (!(message.deliveredTo ?? []).includes(recipient)) {
-            pendingByParticipant.set(recipient, (pendingByParticipant.get(recipient) ?? 0) + 1);
-          }
-        }
-      }
-      for (const participant of summary.thread.participants) {
-        const current = threadStats.get(participant) ?? {
-          unread: 0,
-          waiting: 0,
-          waitingOnMe: 0,
-          waitingOnThem: 0,
-          pending: 0,
-        };
-        if ((summary.thread.unreadBy ?? []).includes(participant)) current.unread += 1;
-        const waitsOnParticipant = (summary.thread.waitingOn ?? []).includes(participant);
-        const ownedByParticipant = summary.thread.owner === participant;
-        if (waitsOnParticipant || ownedByParticipant) {
-          current.waiting += 1;
-        }
-        if (waitsOnParticipant) current.waitingOnMe += 1;
-        if (ownedByParticipant && (summary.thread.waitingOn?.length ?? 0) > 0) current.waitingOnThem += 1;
-        current.pending += pendingByParticipant.get(participant) ?? 0;
-        if (!current.latestId) {
-          current.latestId = summary.thread.id;
-          current.latestTitle = summary.thread.title;
-        }
-        threadStats.set(participant, current);
-      }
-    }
-    const workflowEntries = buildWorkflowEntries("user");
-    for (const entry of workflowEntries) {
-      const familyKey = entry.familyRootTaskId ?? entry.thread.id;
-      for (const participant of entry.thread.participants) {
-        const current = workflowStats.get(participant) ?? {
-          onMe: 0,
-          blocked: 0,
-          families: new Set<string>(),
-          topUrgency: -1,
-        };
-        if ((entry.thread.waitingOn ?? []).includes(participant)) current.onMe += 1;
-        if (entry.thread.status === "blocked" || entry.task?.status === "blocked") current.blocked += 1;
-        if (entry.familyTaskIds.length > 1) current.families.add(familyKey);
-        if (entry.urgency > current.topUrgency) {
-          current.topUrgency = entry.urgency;
-          current.topLabel = `${entry.displayTitle} (${entry.stateLabel})`;
-          current.nextAction = describeWorkflowNextAction(entry, participant);
-        }
-        workflowStats.set(participant, current);
-      }
-    }
-    let mainRepoPath: string | undefined;
-    try {
-      mainRepoPath = findMainRepo();
-    } catch {}
-    const sessions = buildDashboardSessions({
-      sessions: this.sessions.map((session) => ({
-        id: session.id,
-        command: session.command,
-        backendSessionId: session.backendSessionId,
-        status: session.status,
-        worktreePath: this.sessionWorktreePaths.get(session.id),
-        tmuxWindowId: this.sessionTmuxTargets.get(session.id)?.windowId,
-      })),
-      activeIndex: this.activeIndex,
-      offlineSessions: this.offlineSessions,
-      remoteInstances: [],
-      mainRepoPath,
-      getSessionLabel: (sessionId) => this.getSessionLabel(sessionId),
-      getSessionHeadline: (sessionId) => this.deriveHeadline(sessionId),
-      getSessionTaskDescription: (sessionId) => this.taskDispatcher?.getSessionTask(sessionId),
-      getSessionRole: (sessionId) => this.sessionRoles.get(sessionId),
-      getSessionContext: (sessionId) => metadata[sessionId]?.context,
-      getSessionDerived: (sessionId) => metadata[sessionId]?.derived,
-    });
-    const enriched = sessions.map((session) => {
-      const stats = threadStats.get(session.id);
-      const workflow = workflowStats.get(session.id);
-      return {
-        ...session,
-        threadUnreadCount: stats?.unread ?? 0,
-        threadWaitingCount: stats?.waiting ?? 0,
-        threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
-        threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
-        threadPendingCount: stats?.pending ?? 0,
-        threadId: session.threadId ?? stats?.latestId,
-        threadName: session.threadName ?? stats?.latestTitle,
-        workflowOnMeCount: workflow?.onMe ?? 0,
-        workflowBlockedCount: workflow?.blocked ?? 0,
-        workflowFamilyCount: workflow?.families.size ?? 0,
-        workflowTopLabel: workflow?.topLabel,
-        workflowNextAction: workflow?.nextAction,
-        semantic: deriveSessionSemantics({
-          status: session.status,
-          activity: session.activity,
-          attention: session.attention,
-          unseenCount: session.unseenCount,
-          threadUnreadCount: stats?.unread ?? 0,
-          threadPendingCount: stats?.pending ?? 0,
-          threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
-          threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
-          workflowOnMeCount: workflow?.onMe ?? 0,
-          workflowBlockedCount: workflow?.blocked ?? 0,
-          workflowFamilyCount: workflow?.families.size ?? 0,
-          hasActiveTask: Boolean(session.taskDescription),
-        }),
-      };
-    });
-    return enriched;
+    return this.mode === "dashboard" ? this.dashboardSessionsCache : this.computeDashboardSessions();
   }
 
   private getDashboardSessionsInVisualOrder(): DashboardSession[] {
     const allDash = this.getDashboardSessions();
-
+    if (this.mode === "dashboard") {
+      const mainSessions = allDash.filter((session) => !session.worktreePath);
+      const ordered = [...mainSessions];
+      const seen = new Set(mainSessions.map((session) => session.id));
+      for (const group of this.dashboardWorktreeGroupsCache) {
+        for (const session of group.sessions) {
+          if (seen.has(session.id)) continue;
+          ordered.push(session);
+          seen.add(session.id);
+        }
+      }
+      for (const session of allDash) {
+        if (!seen.has(session.id)) ordered.push(session);
+      }
+      return ordered;
+    }
     let mainRepoPath: string | undefined;
     try {
       mainRepoPath = findMainRepo();
     } catch {}
-
     let worktreePaths: Array<string | undefined> = [];
     try {
       const worktrees = listAllWorktrees();
@@ -5922,7 +5914,6 @@ export class Multiplexer {
     } catch {
       return allDash;
     }
-
     return orderDashboardSessionsByVisualWorktree(allDash, worktreePaths, mainRepoPath);
   }
 
@@ -6144,24 +6135,13 @@ export class Multiplexer {
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
   } {
-    this.syncSessionsFromState();
-    const worktrees = this.listDesktopWorktrees();
-    let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
-    let mainCheckoutPath: string | undefined;
-    try {
-      mainCheckoutPath = findMainRepo();
-    } catch {}
-    const mainWorktree =
-      (mainCheckoutPath ? worktrees.find((wt) => wt.path === mainCheckoutPath) : worktrees[0]) ?? worktrees[0];
-    if (mainWorktree) {
-      mainCheckoutInfo = { name: "Main Checkout", branch: mainWorktree.branch };
-    }
+    const desktopState = this.buildDesktopStateSnapshot();
     return {
-      sessions: this.getDashboardSessions(),
+      sessions: desktopState.sessions,
       statusline: this.buildStatuslineSnapshot(),
-      worktrees,
-      mainCheckoutInfo,
-      mainCheckoutPath,
+      worktrees: desktopState.worktrees,
+      mainCheckoutInfo: desktopState.mainCheckoutInfo,
+      mainCheckoutPath: desktopState.mainCheckoutPath,
     };
   }
 

@@ -164,8 +164,8 @@ If service RPC is unavailable, the same thin entrypoint performs direct local tm
 
 Likewise, the tmux statusline uses a thin `tmux-statusline-cli` entrypoint instead of the main CLI command graph.
 
-Dashboard mode also opportunistically reuses the project service's `desktop-state` snapshot to keep its local
-session/worktree caches warm, instead of reconstructing all dashboard model state locally on every interaction.
+Dashboard mode is a pure client of the project service's `desktop-state` snapshot.
+It no longer reconstructs dashboard session/worktree model state locally on focus or render paths.
 
 The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
 
