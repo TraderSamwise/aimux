@@ -25,9 +25,10 @@ describe("Dashboard", () => {
       ],
       [],
       undefined,
+      undefined,
       "sessions",
       "codex-1",
-      false,
+      undefined,
       "tmux",
       { name: "Main Checkout", branch: "master" },
     );
