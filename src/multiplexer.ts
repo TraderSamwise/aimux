@@ -69,7 +69,6 @@ import { parseAgentOutput, type ParsedAgentOutput } from "./agent-output-parser.
 import { serializeAgentInput, type AgentInputPart } from "./agent-message-parts.js";
 import { resolveAttachmentPath } from "./attachment-store.js";
 import { appendSessionMessage, readSessionMessages } from "./session-message-history.js";
-import { classifyToolPane } from "./tool-output-watchers.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { deriveSessionSemantics } from "./session-semantics.js";
 import { hasProjectServiceBuildDrift } from "./project-service-manifest.js";

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   MANAGED_TMUX_AGENT_WINDOW_OPTIONS,
-  MANAGED_TMUX_SESSION_OPTIONS,
   TmuxRuntimeManager,
   type TmuxExec,
   type TmuxInteractiveExec,

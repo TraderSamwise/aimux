@@ -62,25 +62,6 @@ export interface ResolvedStatuslineSession extends StatuslineSession {
   isCurrent: boolean;
 }
 
-function metadataFromTmuxWindow(metadata: {
-  activity?: string;
-  attention?: string;
-  unseenCount?: number;
-  statusText?: string;
-}): StatuslineMetadataEntry | undefined {
-  if (!metadata.activity && !metadata.attention && metadata.unseenCount === undefined && !metadata.statusText) {
-    return undefined;
-  }
-  return {
-    ...(metadata.statusText ? { status: { text: metadata.statusText } } : {}),
-    derived: {
-      ...(metadata.activity ? { activity: metadata.activity as AgentActivityState } : {}),
-      ...(metadata.attention ? { attention: metadata.attention as AgentAttentionState } : {}),
-      ...(metadata.unseenCount !== undefined ? { unseenCount: metadata.unseenCount } : {}),
-    },
-  };
-}
-
 export function trim(text: string, max: number): string {
   if (text.length <= max) return text;
   if (max <= 1) return text.slice(0, max);

@@ -23,7 +23,6 @@ import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./tmux-doctor.js";
 import {
   loadMetadataEndpoint,
-  loadMetadataState,
   updateSessionMetadata,
   clearSessionLogs,
   type MetadataTone,
@@ -33,7 +32,7 @@ import {
 } from "./metadata-store.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
-import { listDesktopProjects, scanProject } from "./project-scanner.js";
+import { listDesktopProjects } from "./project-scanner.js";
 import {
   AimuxDaemon,
   ensureDaemonRunning,
