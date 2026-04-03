@@ -18,6 +18,7 @@ import {
   markNotificationsRead,
   unreadNotificationCount,
 } from "./notifications.js";
+import { updateNotificationContext } from "./notification-context.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import {
@@ -864,6 +865,25 @@ export class MetadataServer {
           dedupeKey: kind === "task_done" ? `notify:complete:${body.title ?? body.message ?? "aimux"}` : undefined,
         });
         send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/notification-context") {
+        const body = (await readJson(req)) as {
+          source?: "desktop" | "tui";
+          focused?: boolean;
+          screen?: string;
+          sessionId?: string;
+          panelOpen?: boolean;
+        };
+        const source = body.source === "desktop" ? "desktop" : "tui";
+        const context = updateNotificationContext(source, {
+          focused: Boolean(body.focused),
+          screen: body.screen?.trim() || undefined,
+          sessionId: body.sessionId?.trim() || undefined,
+          panelOpen: Boolean(body.panelOpen),
+        });
+        send(res, 200, { ok: true, context });
         return;
       }
 

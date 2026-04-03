@@ -171,6 +171,10 @@ export function getNotificationsPath(): string {
   return join(getProjectStateDir(), "notifications.json");
 }
 
+export function getNotificationContextPath(): string {
+  return join(getProjectStateDir(), "notification-context.json");
+}
+
 export function getMetadataEndpointPath(): string {
   return join(getProjectStateDir(), "metadata-api.json");
 }

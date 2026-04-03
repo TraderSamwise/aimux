@@ -25,6 +25,8 @@ let nativeChatDraftParts = $state({});
 let currentAlert = $state(null);
 let recentAlerts = $state([]);
 let notificationSummaries = $state({});
+let desktopWindowFocused = $state(true);
+let notificationPanelOpen = $state(false);
 let expectedServiceInfo = $state(null);
 let controlPlaneError = $state(null);
 
@@ -47,6 +49,14 @@ let lastControlPlaneSnapshot = null;
 let lastOverlayInputProject = null;
 let lastOverlaySignature = null;
 let lastOverlayResult = null;
+
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  const updateFocus = () => setDesktopWindowFocus(!document.hidden && document.hasFocus());
+  window.addEventListener("focus", updateFocus);
+  window.addEventListener("blur", updateFocus);
+  document.addEventListener("visibilitychange", updateFocus);
+  queueMicrotask(updateFocus);
+}
 
 // ── In-progress actions ───────────────────────────────────────────
 
@@ -177,6 +187,26 @@ async function markSessionSeen(projectPath, sessionId) {
         body: JSON.stringify({ sessionId }),
       }),
     ]);
+  } catch {}
+}
+
+async function publishDesktopNotificationContext(projectPath = selectedProjectPath) {
+  if (!projectPath) return;
+  const project = projects.find((entry) => entry.path === projectPath) || null;
+  const endpoint = project?.serviceEndpoint || null;
+  if (!endpoint?.host || !endpoint?.port) return;
+  try {
+    await fetch(`http://${endpoint.host}:${endpoint.port}/notification-context`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        source: "desktop",
+        focused: desktopWindowFocused,
+        screen: selectedScreen,
+        sessionId: selectedSessionId || undefined,
+        panelOpen: notificationPanelOpen,
+      }),
+    });
   } catch {}
 }
 
@@ -944,6 +974,8 @@ export function getState() {
     get inFlightActions() { return inFlightActions; },
     get currentAlert() { return currentAlert; },
     get recentAlerts() { return recentAlerts; },
+    get desktopWindowFocused() { return desktopWindowFocused; },
+    get notificationPanelOpen() { return notificationPanelOpen; },
     get notificationSummary() {
       return selectedProjectPath ? (notificationSummaries[selectedProjectPath] || { unreadCount: 0, unreadBySession: {} }) : { unreadCount: 0, unreadBySession: {} };
     },
@@ -994,6 +1026,7 @@ function onHeartbeat(event) {
   projects = incoming;
   syncProjectAlertStreams(projects);
   syncNotificationSummaries(projects);
+  void publishDesktopNotificationContext();
 
   if (!selectedProjectPath && projects.length > 0) {
     selectedProjectPath = projects[0].path;
@@ -1078,21 +1111,35 @@ export async function selectProject(path) {
   selectedProjectPath = path;
   selectedSessionId = null;
   stopNativeChatStreaming({ clear: true });
+  void publishDesktopNotificationContext(path);
 }
 
 export function selectSession(id) {
   selectedSessionId = id;
   void markSessionSeen(selectedProjectPath, id);
   syncNativeChatSelection();
+  void publishDesktopNotificationContext();
 }
 
 export function selectScreen(screen) {
   selectedScreen = screen;
+  void publishDesktopNotificationContext();
 }
 
 export function selectInteractionMode(mode) {
   interactionMode = mode === "native-chat" ? "native-chat" : "terminal";
   syncNativeChatSelection();
+  void publishDesktopNotificationContext();
+}
+
+export function setDesktopWindowFocus(focused) {
+  desktopWindowFocused = Boolean(focused);
+  void publishDesktopNotificationContext();
+}
+
+export function setNotificationPanelOpen(open) {
+  notificationPanelOpen = Boolean(open);
+  void publishDesktopNotificationContext();
 }
 
 // ── Terminal ──────────────────────────────────────────────────────

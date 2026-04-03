@@ -1,10 +1,11 @@
 <script>
-  import { getState, restartDaemonControl, restartProjectService } from "../stores/state.svelte.js";
+  import { getState, restartDaemonControl, restartProjectService, setNotificationPanelOpen } from "../stores/state.svelte.js";
   const appState = getState();
 
   let actions = $derived(appState.inFlightActions || []);
   let primaryAction = $derived(actions.length > 0 ? actions[actions.length - 1] : null);
   let currentAlert = $derived(appState.currentAlert);
+  let selectedProject = $derived(appState.selectedProject || null);
   let notificationSummary = $derived(appState.notificationSummary || { unreadCount: 0, unreadBySession: {} });
   let totalUnreadNotifications = $derived(appState.totalUnreadNotifications || 0);
   let idle = $derived(!primaryAction);
@@ -64,6 +65,78 @@
     if (controlReason) return controlReason;
     return null;
   });
+
+  let panelOpen = $state(false);
+  let panelLoading = $state(false);
+  let panelError = $state(null);
+  let panelNotifications = $state([]);
+
+  async function loadNotifications() {
+    const endpoint = selectedProject?.serviceEndpoint || null;
+    if (!endpoint?.host || !endpoint?.port) {
+      panelNotifications = [];
+      return;
+    }
+    panelLoading = true;
+    panelError = null;
+    try {
+      const res = await fetch(`http://${endpoint.host}:${endpoint.port}/notifications`);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `HTTP ${res.status}`);
+      }
+      panelNotifications = json.notifications || [];
+    } catch (error) {
+      panelError = String(error);
+    } finally {
+      panelLoading = false;
+    }
+  }
+
+  async function markNotificationRead(notification) {
+    const endpoint = selectedProject?.serviceEndpoint || null;
+    if (!endpoint?.host || !endpoint?.port || !notification?.id) return;
+    await fetch(`http://${endpoint.host}:${endpoint.port}/notifications/read`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: notification.id }),
+    }).catch(() => {});
+    await loadNotifications();
+  }
+
+  async function clearNotifications(input = {}) {
+    const endpoint = selectedProject?.serviceEndpoint || null;
+    if (!endpoint?.host || !endpoint?.port) return;
+    await fetch(`http://${endpoint.host}:${endpoint.port}/notifications/clear`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }).catch(() => {});
+    await loadNotifications();
+  }
+
+  async function togglePanel() {
+    panelOpen = !panelOpen;
+    setNotificationPanelOpen(panelOpen);
+    if (panelOpen) {
+      await loadNotifications();
+    }
+  }
+
+  function notificationTimestamp(notification) {
+    const value = notification?.createdAt || notification?.updatedAt || "";
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+
+  $effect(() => {
+    if (!panelOpen) return;
+    currentAlert;
+    selectedProject?.path;
+    void loadNotifications();
+  });
 </script>
 
 <div
@@ -90,6 +163,13 @@
   </div>
   <div class="action-right">
     <button
+      class="control-btn notifications"
+      class:active={panelOpen}
+      onclick={() => { void togglePanel(); }}
+    >
+      Inbox{totalUnreadNotifications > 0 ? ` · ${totalUnreadNotifications}` : ""}
+    </button>
+    <button
       class="control-btn daemon"
       class:down={daemonStatus !== "ok"}
       onclick={() => { void restartDaemonControl().catch(() => {}); }}
@@ -106,10 +186,52 @@
       {projectButtonLabel}
     </button>
   </div>
+  {#if panelOpen}
+    <div class="notification-panel">
+      <div class="notification-panel-header">
+        <div>
+          <div class="panel-title">Notifications</div>
+          <div class="panel-subtitle">{selectedProject?.name || "No project selected"}</div>
+        </div>
+        <button class="panel-action" onclick={() => { void clearNotifications(); }}>Clear all</button>
+      </div>
+      {#if panelLoading}
+        <div class="notification-empty">Loading…</div>
+      {:else if panelError}
+        <div class="notification-empty error">{panelError}</div>
+      {:else if panelNotifications.length === 0}
+        <div class="notification-empty">No notifications.</div>
+      {:else}
+        <div class="notification-list">
+          {#each panelNotifications as notification (notification.id)}
+            <div class="notification-item" class:unread={notification.unread}>
+              <div class="notification-copy">
+                <div class="notification-head">
+                  <span class="notification-title">{notification.title}</span>
+                  <span class="notification-time">{notificationTimestamp(notification)}</span>
+                </div>
+                {#if notification.subtitle}
+                  <div class="notification-subtitle">{notification.subtitle}</div>
+                {/if}
+                <div class="notification-body">{notification.body}</div>
+              </div>
+              <div class="notification-actions">
+                {#if notification.unread}
+                  <button class="panel-action" onclick={() => { void markNotificationRead(notification); }}>Read</button>
+                {/if}
+                <button class="panel-action" onclick={() => { void clearNotifications({ id: notification.id }); }}>Clear</button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
   .action-bar {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -292,5 +414,135 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  .control-btn.notifications.active {
+    color: rgba(191, 219, 254, 0.96);
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.2);
+  }
+
+  .notification-panel {
+    position: absolute;
+    right: 16px;
+    bottom: calc(100% + 10px);
+    width: min(460px, calc(100% - 32px));
+    max-height: 420px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    background: rgba(10, 14, 22, 0.97);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.38);
+    z-index: 20;
+  }
+
+  .notification-panel-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .panel-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+
+  .panel-subtitle {
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .notification-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: auto;
+  }
+
+  .notification-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .notification-item.unread {
+    border-color: rgba(96, 165, 250, 0.22);
+    background: rgba(59, 130, 246, 0.08);
+  }
+
+  .notification-copy {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .notification-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .notification-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .notification-time {
+    font-size: 10px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  .notification-subtitle {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .notification-body {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+  }
+
+  .notification-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .panel-action {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    color: var(--text-secondary);
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+  }
+
+  .notification-empty {
+    padding: 16px 8px 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .notification-empty.error {
+    color: var(--red);
   }
 </style>

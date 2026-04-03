@@ -2,6 +2,7 @@ import notifier from "node-notifier";
 import { loadConfig, type NotificationConfig } from "./config.js";
 import { debug } from "./debug.js";
 import type { AlertEvent } from "./project-events.js";
+import { shouldSuppressNotification } from "./notification-context.js";
 
 let cachedConfig: NotificationConfig | null = null;
 
@@ -46,6 +47,7 @@ export function notifyComplete(sessionId: string): void {
 export function notifyAlert(event: AlertEvent): void {
   const config = getNotifyConfig();
   if (!config.enabled) return;
+  if (shouldSuppressNotification(event)) return;
 
   if (
     (event.kind === "needs_input" ||
