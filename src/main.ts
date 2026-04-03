@@ -328,6 +328,7 @@ function ensureTmuxAvailable(tmux: TmuxRuntimeManager): void {
 
 function getDashboardCommandSpec(projectRoot: string) {
   const scriptPath = fileURLToPath(import.meta.url);
+  const statuslineScriptPath = pathJoin(pathDirname(scriptPath), "tmux-statusline-cli.js");
   const fastControlScriptPath = pathJoin(pathDirname(scriptPath), "tmux-fast-control.js");
   return {
     scriptPath,
@@ -340,7 +341,7 @@ function getDashboardCommandSpec(projectRoot: string) {
     },
     statuslineCommand: {
       command: process.execPath,
-      args: [scriptPath, "tmux-statusline"],
+      args: [statuslineScriptPath],
     },
   };
 }
