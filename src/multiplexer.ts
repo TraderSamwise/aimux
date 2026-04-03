@@ -82,7 +82,6 @@ import { resolveAttachmentPath } from "./attachment-store.js";
 import { appendSessionMessage, readSessionMessages } from "./session-message-history.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { deriveSessionSemantics } from "./session-semantics.js";
-import { hasProjectServiceBuildDrift } from "./project-service-manifest.js";
 import { injectClaudeHookArgs } from "./claude-hooks.js";
 import { navigationUrgencyScore } from "./fast-control.js";
 import { requestJson } from "./http-client.js";
@@ -6390,13 +6389,11 @@ export class Multiplexer {
     controlPlane: {
       daemonAlive: boolean;
       projectServiceAlive: boolean;
-      projectServiceOutdated: boolean;
     };
     flash: string | null;
     metadata: ReturnType<typeof loadMetadataState>["sessions"];
     updatedAt: string;
   } {
-    const projectServiceOutdated = hasProjectServiceBuildDrift();
     return {
       project: basename(process.cwd()),
       dashboardScreen: this.dashboardState.screen,
@@ -6416,9 +6413,8 @@ export class Multiplexer {
       controlPlane: {
         daemonAlive: Boolean(loadDaemonInfo()),
         projectServiceAlive: true,
-        projectServiceOutdated,
       },
-      flash: this.footerFlash || (projectServiceOutdated ? "Project service outdated: restart this project." : null),
+      flash: this.footerFlash,
       metadata: loadMetadataState().sessions,
       updatedAt: new Date().toISOString(),
     };

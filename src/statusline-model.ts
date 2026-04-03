@@ -46,7 +46,6 @@ export interface StatuslineData {
   controlPlane?: {
     daemonAlive?: boolean;
     projectServiceAlive?: boolean;
-    projectServiceOutdated?: boolean;
   };
   tasks?: {
     pending?: number;

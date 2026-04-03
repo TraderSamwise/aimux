@@ -35,7 +35,6 @@ function isStatuslineStale(data: StatuslineData): boolean {
 
 function renderControlPlane(data: StatuslineData): string {
   if (isStatuslineStale(data)) return "ctl stale";
-  if (data.controlPlane?.projectServiceOutdated === true) return "ctl old";
   if (data.controlPlane?.projectServiceAlive === false) return "ctl svc↓";
   if (data.controlPlane?.daemonAlive === false) return "ctl daemon↓";
   return "ctl ok";
