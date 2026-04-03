@@ -82,6 +82,36 @@ import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeSto
 
 const program = new Command();
 
+class ProjectServiceVersionError extends Error {
+  constructor(
+    message: string,
+    readonly projectRoot: string,
+    readonly expected: ProjectServiceManifest,
+    readonly actual: ProjectServiceManifest | null,
+  ) {
+    super(message);
+    this.name = "ProjectServiceVersionError";
+  }
+}
+
+function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): string {
+  const quotedProject = JSON.stringify(error.projectRoot);
+  const lines = [
+    "aimux: the running project service is from a different local build.",
+    "",
+    `Project: ${error.projectRoot}`,
+    `Expected build: ${error.expected.buildStamp}`,
+    `Running build: ${error.actual?.buildStamp ?? "unknown"}`,
+    "",
+    "Restart the daemon-managed control plane, then retry:",
+    `  aimux daemon restart`,
+    `  aimux daemon project-ensure --project ${quotedProject}`,
+    "",
+    "Or just restart the daemon and rerun `aimux` if you only changed this local checkout.",
+  ];
+  return lines.join("\n");
+}
+
 async function fetchProjectServiceHealth(endpoint: { host: string; port: number }): Promise<{
   serviceInfo?: ProjectServiceManifest;
   pid?: number;
@@ -123,6 +153,14 @@ async function waitForVerifiedProjectService(
       lastError = "no live project service metadata endpoint";
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+
+  if (
+    lastError.startsWith("project service manifest mismatch") &&
+    lastServiceInfo &&
+    typeof lastServiceInfo === "object"
+  ) {
+    throw new ProjectServiceVersionError(lastError, projectRoot, expected, lastServiceInfo as ProjectServiceManifest);
   }
 
   throw new Error(`${lastError}${lastServiceInfo ? `; last serviceInfo=${JSON.stringify(lastServiceInfo)}` : ""}`);
@@ -373,7 +411,15 @@ program
       }
       if (!opts.tmuxDashboardInternal) {
         initProject();
-        await ensureDaemonProjectReady(projectRoot);
+        try {
+          await ensureDaemonProjectReady(projectRoot);
+        } catch (error) {
+          if (error instanceof ProjectServiceVersionError) {
+            console.error(renderProjectServiceVersionHelp(error));
+            process.exit(1);
+          }
+          throw error;
+        }
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
         const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
@@ -2092,6 +2138,28 @@ program
   .action(async (action: string, opts: { projectRoot: string; currentWindow?: string; currentPath: string }) => {
     await initPaths(opts.projectRoot);
     const tmux = new TmuxRuntimeManager();
+    if (action === "dashboard") {
+      const currentClientSession = tmux.currentClientSession();
+      const dashboardTarget = currentClientSession
+        ? tmux.listWindows(currentClientSession).find((window) => isDashboardWindowName(window.name))
+        : undefined;
+      let resolvedTarget =
+        dashboardTarget && currentClientSession
+          ? {
+              sessionName: currentClientSession,
+              windowId: dashboardTarget.id,
+              windowIndex: dashboardTarget.index,
+              windowName: dashboardTarget.name,
+            }
+          : null;
+      if (!resolvedTarget) {
+        const ensured = ensureDashboardTarget(opts.projectRoot, tmux);
+        resolvedTarget = ensured.dashboardTarget;
+      }
+      tmux.selectWindow(resolvedTarget);
+      tmux.sendFocusIn(resolvedTarget);
+      return;
+    }
     const tmuxSession = tmux.getProjectSession(opts.projectRoot);
     const managed = tmux
       .listManagedWindows(tmuxSession.sessionName)

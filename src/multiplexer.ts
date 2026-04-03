@@ -69,11 +69,18 @@ import { parseAgentOutput, type ParsedAgentOutput } from "./agent-output-parser.
 import { serializeAgentInput, type AgentInputPart } from "./agent-message-parts.js";
 import { resolveAttachmentPath } from "./attachment-store.js";
 import { appendSessionMessage, readSessionMessages } from "./session-message-history.js";
+import { classifyToolPane } from "./tool-output-watchers.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { deriveSessionSemantics, sessionSemanticAttentionScore } from "./session-semantics.js";
 import { hasProjectServiceBuildDrift } from "./project-service-manifest.js";
 import { injectClaudeHookArgs } from "./claude-hooks.js";
-import { markNotificationsRead } from "./notifications.js";
+import {
+  clearNotifications,
+  listNotifications,
+  markNotificationsRead,
+  type NotificationRecord,
+} from "./notifications.js";
+import { updateNotificationContext } from "./notification-context.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -137,6 +144,11 @@ interface PlanEntry {
   content: string;
 }
 
+interface NotificationPanelState {
+  entries: NotificationRecord[];
+  index: number;
+}
+
 interface DashboardOrchestrationTarget {
   label: string;
   sessionId?: string;
@@ -195,6 +207,7 @@ export class Multiplexer {
   private threadReplyBuffer = "";
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
+  private notificationPanelState: NotificationPanelState | null = null;
   /** Quick switcher overlay state */
   private switcherActive = false;
   private switcherIndex = 0;
@@ -241,6 +254,12 @@ export class Multiplexer {
   private eventBus = new ProjectEventBus();
   private pluginRuntime: PluginRuntime | null = null;
   private projectServiceInterval: ReturnType<typeof setInterval> | null = null;
+  private lastRenderedFrame: string | null = null;
+  private lastStatuslineSnapshotKey: string | null = null;
+  private dashboardSessionsCache: DashboardSession[] = [];
+  private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
+  private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
+  private dashboardModelRefreshedAt = 0;
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -313,6 +332,74 @@ export class Multiplexer {
     this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
   }
 
+  private invalidateDashboardFrame(): void {
+    this.lastRenderedFrame = null;
+  }
+
+  private isFocusInReport(data: Buffer): boolean {
+    return data.includes(Buffer.from("\x1b[I"));
+  }
+
+  private handleDashboardFocusIn(): void {
+    this.refreshDashboardModel(true);
+    this.invalidateDashboardFrame();
+    this.renderCurrentDashboardView();
+  }
+
+  private writeFrame(output: string, force = false): void {
+    if (!force && this.lastRenderedFrame === output) return;
+    process.stdout.write(output);
+    this.lastRenderedFrame = output;
+  }
+
+  private refreshDashboardModel(force = false): void {
+    if (!force && this.dashboardModelRefreshedAt > 0 && Date.now() - this.dashboardModelRefreshedAt < 750) {
+      return;
+    }
+
+    this.restoreTmuxSessionsFromState();
+    this.loadOfflineSessions();
+
+    let mainRepoPath: string | undefined;
+    let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
+    try {
+      mainRepoPath = findMainRepo();
+    } catch {}
+
+    const dashSessions = this.getDashboardSessions();
+    let worktreeGroups: WorktreeGroup[] = [];
+    try {
+      const worktrees = listAllWorktrees();
+      const mainWorktree =
+        (mainRepoPath ? worktrees.find((wt) => wt.path === mainRepoPath) : worktrees[0]) ?? worktrees[0];
+      if (mainWorktree) {
+        mainCheckoutInfo = {
+          name: "Main Checkout",
+          branch: mainWorktree.branch,
+        };
+      }
+      worktreeGroups = worktrees
+        .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
+        .map((wt) => {
+          const wtSessions = dashSessions.filter((s) => s.worktreePath === wt.path);
+          return {
+            name: wt.name,
+            branch: wt.branch,
+            path: wt.path,
+            status: (wtSessions.length > 0 ? "active" : "offline") as "active" | "offline",
+            sessions: wtSessions,
+          };
+        });
+    } catch {
+      // Not in a git repo or no worktrees — skip grouping
+    }
+
+    this.dashboardSessionsCache = dashSessions;
+    this.dashboardWorktreeGroupsCache = worktreeGroups;
+    this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
+    this.dashboardModelRefreshedAt = Date.now();
+  }
+
   private async startProjectServices(): Promise<void> {
     if (this.metadataServer) return;
     this.metadataServer = new MetadataServer({
@@ -349,10 +436,12 @@ export class Multiplexer {
             open: input.open ?? false,
           }),
         stopAgent: (input) => this.stopAgent(input.sessionId),
+        interruptAgent: (input) => this.interruptAgent(input.sessionId),
         renameAgent: (input) => this.renameAgent(input.sessionId, input.label),
         migrateAgent: (input) => this.migrateAgentSession(input.sessionId, input.worktreePath),
         killAgent: (input) => this.sendAgentToGraveyard(input.sessionId),
-        writeAgentInput: (input) => this.writeAgentInput(input.sessionId, input.data, input.parts, input.submit),
+        writeAgentInput: (input) =>
+          this.writeAgentInput(input.sessionId, input.data, input.parts, undefined, input.submit),
         readAgentOutput: (input) => this.readAgentOutput(input.sessionId, input.startLine),
         readAgentHistory: (input) => this.readAgentHistory(input.sessionId, input.lastN),
       },
@@ -715,10 +804,11 @@ export class Multiplexer {
     sessionId: string,
     data = "",
     parts?: AgentInputPart[],
+    clientMessageId?: string,
     submit = false,
   ): Promise<{ sessionId: string }> {
     const session = this.resolveRunningSession(sessionId);
-    appendSessionMessage(sessionId, { data, parts });
+    appendSessionMessage(sessionId, { data, parts, clientMessageId });
     const serializedData = serializeAgentInput(
       { data, parts },
       {
@@ -754,6 +844,36 @@ export class Multiplexer {
       messages: readSessionMessages(sessionId, { lastN: lastN ?? 20 }),
       lastN: lastN ?? 20,
     };
+  }
+
+  async interruptAgent(sessionId: string): Promise<{ sessionId: string }> {
+    const session = this.resolveRunningSession(sessionId);
+    if (session.transport instanceof TmuxSessionTransport) {
+      const target = this.sessionTmuxTargets.get(sessionId) ?? session.transport.tmuxTarget;
+      this.tmuxRuntimeManager.sendEscape(target);
+      await this.retryTmuxAgentInterrupt(sessionId, target);
+    } else {
+      session.write("\x1b");
+    }
+    return { sessionId };
+  }
+
+  private async retryTmuxAgentInterrupt(sessionId: string, target: TmuxTarget): Promise<void> {
+    const tool = this.sessionToolKeys.get(sessionId) || "agent";
+    for (const delayMs of [120, 320]) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      let output = "";
+      try {
+        output = this.tmuxRuntimeManager.captureTarget(target, { startLine: -80 });
+      } catch {
+        return;
+      }
+      const pane = classifyToolPane(tool, output);
+      if (pane.interruptedVisible || pane.promptVisible) {
+        return;
+      }
+      this.tmuxRuntimeManager.sendEscape(target);
+    }
   }
 
   async readAgentOutput(
@@ -1003,6 +1123,10 @@ export class Multiplexer {
 
     // Forward stdin
     this.onStdinData = (data: Buffer) => {
+      if (this.isFocusInReport(data)) {
+        this.handleDashboardFocusIn();
+        return;
+      }
       if (this.handleActiveDashboardOverlayKey(data)) {
         return;
       }
@@ -1422,10 +1546,22 @@ export class Multiplexer {
     this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
     this.agentTracker.markSeen(sid);
     markNotificationsRead({ sessionId: sid });
+    this.syncTuiNotificationContext(false);
     const target = this.sessionTmuxTargets.get(sid);
     if (target) {
       this.saveState();
-      this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+      const insideTmux = this.tmuxRuntimeManager.isInsideTmux();
+      if (insideTmux) {
+        const currentClientSession = this.tmuxRuntimeManager.currentClientSession();
+        if (currentClientSession) {
+          const linkedTarget = this.tmuxRuntimeManager.getTargetByWindowId(currentClientSession, target.windowId);
+          if (linkedTarget) {
+            this.tmuxRuntimeManager.selectWindow(linkedTarget);
+            return;
+          }
+        }
+      }
+      this.tmuxRuntimeManager.openTarget(target, { insideTmux });
     }
   }
 
@@ -1585,6 +1721,9 @@ export class Multiplexer {
         return;
       case "g":
         this.showGraveyard();
+        return;
+      case "i":
+        this.showNotificationPanel();
         return;
       case "y":
         this.showWorkflow();
@@ -1949,7 +2088,7 @@ export class Multiplexer {
       focusLine,
       twoPane,
     );
-    process.stdout.write(
+    this.writeFrame(
       "\x1b[2J\x1b[H" +
         [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
     );
@@ -2186,7 +2325,7 @@ export class Multiplexer {
       focusLine,
       twoPane,
     );
-    process.stdout.write(
+    this.writeFrame(
       "\x1b[2J\x1b[H" +
         [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
     );
@@ -2359,7 +2498,7 @@ export class Multiplexer {
       focusLine,
       twoPane,
     );
-    process.stdout.write(
+    this.writeFrame(
       "\x1b[2J\x1b[H" +
         [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
     );
@@ -2812,12 +2951,27 @@ export class Multiplexer {
     });
   }
 
+  private syncTuiNotificationContext(panelOpen = false): void {
+    if (this.mode !== "dashboard") return;
+    const selected =
+      this.dashboardState.level === "sessions" && this.dashboardState.worktreeSessions.length > 0
+        ? this.dashboardState.worktreeSessions[this.dashboardState.sessionIndex]?.id
+        : this.getDashboardSessions()[this.activeIndex]?.id;
+    updateNotificationContext("tui", {
+      focused: true,
+      screen: this.dashboardState.screen,
+      sessionId: selected,
+      panelOpen,
+    });
+  }
+
   private isDashboardScreen(screen: DashboardScreen): boolean {
     return this.dashboardState.isScreen(screen);
   }
 
   private setDashboardScreen(screen: DashboardScreen): void {
     this.dashboardState.setScreen(screen);
+    this.syncTuiNotificationContext(false);
   }
 
   private handleActiveDashboardOverlayKey(data: Buffer): boolean {
@@ -2835,6 +2989,10 @@ export class Multiplexer {
     }
     if (this.pickerActive) {
       this.handleToolPickerKey(data);
+      return true;
+    }
+    if (this.notificationPanelState) {
+      this.handleNotificationPanelKey(data);
       return true;
     }
     if (this.worktreeRemoveConfirm) {
@@ -2893,6 +3051,10 @@ export class Multiplexer {
       this.renderSwitcher();
       return true;
     }
+    if (this.notificationPanelState) {
+      this.renderNotificationPanel();
+      return true;
+    }
     if (this.threadReplyActive) {
       this.renderThreadReply();
       return true;
@@ -2934,6 +3096,7 @@ export class Multiplexer {
   ): boolean {
     if (key === "d") {
       this.setDashboardScreen("dashboard");
+      this.syncTuiNotificationContext(false);
       this.renderDashboard();
       return true;
     }
@@ -2975,6 +3138,10 @@ export class Multiplexer {
       } else {
         this.showGraveyard();
       }
+      return true;
+    }
+    if (key === "i") {
+      this.showNotificationPanel();
       return true;
     }
     return false;
@@ -3809,46 +3976,13 @@ export class Multiplexer {
 
   private renderDashboard(): void {
     this.writeStatuslineFile();
-    this.restoreTmuxSessionsFromState();
-    this.loadOfflineSessions();
+    this.refreshDashboardModel();
 
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    let mainRepoPath: string | undefined;
-    let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
-    try {
-      mainRepoPath = findMainRepo();
-    } catch {}
-
-    const dashSessions = this.getDashboardSessions();
-
-    // Build worktree groups from git
-    let worktreeGroups: WorktreeGroup[] = [];
-    try {
-      const worktrees = listAllWorktrees();
-      const mainWorktree =
-        (mainRepoPath ? worktrees.find((wt) => wt.path === mainRepoPath) : worktrees[0]) ?? worktrees[0];
-      if (mainWorktree) {
-        mainCheckoutInfo = {
-          name: "Main Checkout",
-          branch: mainWorktree.branch,
-        };
-      }
-      worktreeGroups = worktrees
-        .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
-        .map((wt) => {
-          const wtSessions = dashSessions.filter((s) => s.worktreePath === wt.path);
-          return {
-            name: wt.name,
-            branch: wt.branch,
-            path: wt.path,
-            status: (wtSessions.length > 0 ? "active" : "offline") as "active" | "offline",
-            sessions: wtSessions,
-          };
-        });
-    } catch {
-      // Not in a git repo or no worktrees — skip grouping
-    }
+    const dashSessions = this.dashboardSessionsCache;
+    const worktreeGroups = this.dashboardWorktreeGroupsCache;
+    const mainCheckoutInfo = this.dashboardMainCheckoutInfoCache;
 
     // Build worktree navigation order: main repo first, then registered worktrees
     const hasWorktrees = worktreeGroups.length > 0;
@@ -3878,7 +4012,8 @@ export class Multiplexer {
       "tmux",
       mainCheckoutInfo,
     );
-    process.stdout.write(this.dashboard.render(cols, rows));
+    this.syncTuiNotificationContext(Boolean(this.notificationPanelState));
+    this.writeFrame(this.dashboard.render(cols, rows));
     if (this.dashboardBusyState) {
       this.renderDashboardBusyOverlay();
     } else if (this.dashboardErrorState) {
@@ -4197,6 +4332,132 @@ export class Multiplexer {
     process.stdout.write(output);
   }
 
+  private showNotificationPanel(): void {
+    const entries = listNotifications({ includeCleared: false }).slice(0, 40);
+    this.notificationPanelState = {
+      entries,
+      index: entries.length > 0 ? 0 : -1,
+    };
+    this.syncTuiNotificationContext(true);
+    this.renderDashboard();
+  }
+
+  private closeNotificationPanel(): void {
+    this.notificationPanelState = null;
+    this.syncTuiNotificationContext(false);
+    this.renderDashboard();
+  }
+
+  private renderNotificationPanel(): void {
+    const panel = this.notificationPanelState;
+    if (!panel) return;
+
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    const title = "Notifications";
+    const header = [`${title}`, "", "  [↑↓] select  [r] read  [c] clear  [C] clear all  [Esc] close", ""];
+    const items =
+      panel.entries.length === 0
+        ? ["  No notifications."]
+        : panel.entries.map((entry, index) => {
+            const marker = index === panel.index ? "▸" : " ";
+            const state = entry.unread ? "unread" : "read";
+            const session = entry.sessionId ? ` (${entry.sessionId})` : "";
+            const time = entry.createdAt.replace("T", " ").slice(5, 16);
+            return `  ${marker} ${entry.title}${session} · ${state} · ${time}`;
+          });
+    const selected = panel.entries[panel.index];
+    const details = selected
+      ? [
+          "Details",
+          "",
+          ...this.wrapKeyValue("Title", selected.title, 56),
+          ...(selected.subtitle ? this.wrapKeyValue("Subtitle", selected.subtitle, 56) : []),
+          ...this.wrapKeyValue("Body", selected.body, 56),
+          ...(selected.sessionId ? this.wrapKeyValue("Session", selected.sessionId, 56) : []),
+          ...(selected.kind ? this.wrapKeyValue("Kind", selected.kind, 56) : []),
+        ]
+      : ["Details", "", "  No notification selected."];
+
+    const lines = [...header, ...items];
+    const height = Math.min(rows - 6, Math.max(10, Math.min(22, lines.length + 2)));
+    const width = Math.min(cols - 8, 100);
+    const leftWidth = Math.max(34, Math.floor(width * 0.5));
+    const rightWidth = Math.max(24, width - leftWidth - 3);
+    const startRow = Math.max(1, Math.floor((rows - height) / 2));
+    const startCol = Math.max(2, Math.floor((cols - width) / 2));
+    const listHeight = height - 2;
+    const listVisible = lines.slice(0, listHeight);
+    while (listVisible.length < listHeight) listVisible.push("");
+    const detailVisible = details.slice(0, listHeight);
+    while (detailVisible.length < listHeight) detailVisible.push("");
+
+    let output = "\x1b7";
+    for (let i = 0; i < height; i++) {
+      output += `\x1b[${startRow + i};${startCol}H`;
+      if (i === 0 || i === height - 1) {
+        output += `\x1b[48;5;236;38;5;255m${" ".repeat(width)}\x1b[0m`;
+        continue;
+      }
+      const left = this.truncatePlain(this.stripAnsi(listVisible[i - 1] ?? ""), leftWidth).padEnd(leftWidth);
+      const right = this.truncatePlain(this.stripAnsi(detailVisible[i - 1] ?? ""), rightWidth).padEnd(rightWidth);
+      output += `\x1b[48;5;236;38;5;255m ${left} │ ${right} \x1b[0m`;
+    }
+    output += "\x1b8";
+    process.stdout.write(output);
+  }
+
+  private handleNotificationPanelKey(data: Buffer): void {
+    const panel = this.notificationPanelState;
+    if (!panel) return;
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const key = events[0].name || events[0].char;
+
+    if (key === "escape" || key === "enter" || key === "return") {
+      this.closeNotificationPanel();
+      return;
+    }
+    if (key === "down" || key === "j") {
+      if (panel.entries.length > 1) {
+        panel.index = (panel.index + 1) % panel.entries.length;
+        this.renderDashboard();
+      }
+      return;
+    }
+    if (key === "up" || key === "k") {
+      if (panel.entries.length > 1) {
+        panel.index = (panel.index - 1 + panel.entries.length) % panel.entries.length;
+        this.renderDashboard();
+      }
+      return;
+    }
+    if (key === "r") {
+      const selected = panel.entries[panel.index];
+      if (!selected) return;
+      markNotificationsRead({ id: selected.id });
+      panel.entries = listNotifications({ includeCleared: false }).slice(0, 40);
+      if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
+      this.renderDashboard();
+      return;
+    }
+    if (key === "c") {
+      const selected = panel.entries[panel.index];
+      if (!selected) return;
+      clearNotifications({ id: selected.id });
+      panel.entries = listNotifications({ includeCleared: false }).slice(0, 40);
+      if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
+      this.renderDashboard();
+      return;
+    }
+    if (key === "C") {
+      clearNotifications();
+      panel.entries = [];
+      panel.index = -1;
+      this.renderDashboard();
+    }
+  }
+
   private startDashboardBusy(title: string, lines: string[]): void {
     this.dashboardErrorState = null;
     this.dashboardBusyState = {
@@ -4445,7 +4706,7 @@ export class Multiplexer {
       focusLine,
       twoPane,
     );
-    process.stdout.write(
+    this.writeFrame(
       "\x1b[2J\x1b[H" +
         [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 52)), cols), footer].join("\r\n"),
     );
@@ -4636,7 +4897,7 @@ export class Multiplexer {
       focusLine,
       twoPane,
     );
-    process.stdout.write(
+    this.writeFrame(
       "\x1b[2J\x1b[H" +
         [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 56)), cols), footer].join("\r\n"),
     );
@@ -4683,17 +4944,22 @@ export class Multiplexer {
     const selected = this.graveyardEntries[this.graveyardIndex];
     if (!selected) return new Array(height).fill("");
     const lines: string[] = [];
+    const worktreeName = selected.worktreePath ? basename(selected.worktreePath) : undefined;
     lines.push("\x1b[1mDetails\x1b[0m");
-    lines.push(...this.wrapKeyValue("Agent", `${selected.label ?? selected.command} (${selected.id})`, width));
-    lines.push(...this.wrapKeyValue("Tool", selected.command, width));
+    lines.push(...this.wrapKeyValue("Agent", selected.label ?? selected.id, width));
+    lines.push(...this.wrapKeyValue("Session", selected.id, width));
+    lines.push(...this.wrapKeyValue("Tool", selected.tool, width));
+    lines.push(...this.wrapKeyValue("Config", selected.toolConfigKey, width));
     lines.push(...this.wrapKeyValue("Status", "offline", width));
-    if (selected.worktreePath) lines.push(...this.wrapKeyValue("Worktree", selected.worktreePath, width));
+    if (worktreeName) lines.push(...this.wrapKeyValue("Worktree", worktreeName, width));
+    if (selected.worktreePath) lines.push(...this.wrapKeyValue("Path", selected.worktreePath, width));
     if (selected.backendSessionId) lines.push(...this.wrapKeyValue("Backend", selected.backendSessionId, width));
     if (selected.headline) lines.push(...this.wrapKeyValue("Headline", selected.headline, width));
+    if (selected.command) lines.push(...this.wrapKeyValue("Command", selected.command, width));
+    if (selected.args?.length) lines.push(...this.wrapKeyValue("Args", selected.args.join(" "), width));
     while (lines.length < height) lines.push("");
     return lines.slice(0, height);
   }
-
   private composeSplitScreen(
     leftLines: string[],
     rightLines: string[],
@@ -4964,6 +5230,7 @@ export class Multiplexer {
 
   private showHelp(): void {
     this.clearDashboardSubscreens();
+    this.invalidateDashboardFrame();
     this.setDashboardScreen("help");
     this.writeStatuslineFile();
     this.renderHelp();
@@ -5508,7 +5775,8 @@ export class Multiplexer {
         threadStats.set(participant, current);
       }
     }
-    for (const entry of buildWorkflowEntries("user")) {
+    const workflowEntries = buildWorkflowEntries("user");
+    for (const entry of workflowEntries) {
       const familyKey = entry.familyRootTaskId ?? entry.thread.id;
       for (const participant of entry.thread.participants) {
         const current = workflowStats.get(participant) ?? {
@@ -5532,13 +5800,14 @@ export class Multiplexer {
     try {
       mainRepoPath = findMainRepo();
     } catch {}
-    return buildDashboardSessions({
+    const sessions = buildDashboardSessions({
       sessions: this.sessions.map((session) => ({
         id: session.id,
         command: session.command,
         backendSessionId: session.backendSessionId,
         status: session.status,
         worktreePath: this.sessionWorktreePaths.get(session.id),
+        tmuxWindowId: this.sessionTmuxTargets.get(session.id)?.windowId,
       })),
       activeIndex: this.activeIndex,
       offlineSessions: this.offlineSessions,
@@ -5550,7 +5819,8 @@ export class Multiplexer {
       getSessionRole: (sessionId) => this.sessionRoles.get(sessionId),
       getSessionContext: (sessionId) => metadata[sessionId]?.context,
       getSessionDerived: (sessionId) => metadata[sessionId]?.derived,
-    }).map((session) => {
+    });
+    const enriched = sessions.map((session) => {
       const stats = threadStats.get(session.id);
       const workflow = workflowStats.get(session.id);
       return {
@@ -5583,6 +5853,7 @@ export class Multiplexer {
         }),
       };
     });
+    return enriched;
   }
 
   private getDashboardSessionsInVisualOrder(): DashboardSession[] {
@@ -5753,6 +6024,12 @@ export class Multiplexer {
       const filePath = join(dir, "statusline.json");
       const tmpPath = `${filePath}.tmp`;
       const data = this.buildStatuslineSnapshot();
+      const { updatedAt: _updatedAt, ...stableData } = data;
+      const snapshotKey = JSON.stringify(stableData);
+      if (snapshotKey === this.lastStatuslineSnapshotKey) {
+        return;
+      }
+      this.lastStatuslineSnapshotKey = snapshotKey;
       writeFileSync(tmpPath, JSON.stringify(data) + "\n");
       renameSync(tmpPath, filePath);
       this.tmuxRuntimeManager.refreshStatus();
@@ -5766,6 +6043,7 @@ export class Multiplexer {
       id: string;
       tool: string;
       label?: string;
+      tmuxWindowId?: string;
       windowName: string;
       headline?: string;
       status: string;
@@ -5791,6 +6069,7 @@ export class Multiplexer {
         id: s.id,
         tool: s.command,
         label: this.getSessionLabel(s.id),
+        tmuxWindowId: this.sessionTmuxTargets.get(s.id)?.windowId,
         windowName: this.getSessionLabel(s.id) || s.command,
         headline: this.deriveHeadline(s.id),
         status: s.status,
@@ -5973,9 +6252,9 @@ export class Multiplexer {
   private startStatusRefresh(): void {
     if (this.statusInterval) return;
     this.statusInterval = setInterval(() => {
-      this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
-      this.orchestrationDispatcher?.tick(this.sessions.map((s) => s.id));
       if (this.mode === "project-service") {
+        this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
+        this.orchestrationDispatcher?.tick(this.sessions.map((s) => s.id));
         this.writeStatuslineFile();
       }
 

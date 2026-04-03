@@ -199,14 +199,14 @@ describe("TmuxRuntimeManager", () => {
             "d",
             "run-shell",
             "-b",
-            "cd '#{pane_current_path}' && aimux >/dev/null 2>&1",
+            expect.stringContaining("aimux tmux-switch dashboard"),
           ],
         }),
         expect.objectContaining({
           args: ["set-option", "-t", session.sessionName, "status", "2"],
         }),
         expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "status-interval", "2"],
+          args: ["set-option", "-t", session.sessionName, "status-interval", "0"],
         }),
         expect.objectContaining({
           args: ["set-option", "-t", session.sessionName, "window-status-format", ""],

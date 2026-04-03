@@ -413,6 +413,10 @@ export class TmuxRuntimeManager {
     this.exec(["select-window", "-t", target.windowId]);
   }
 
+  sendFocusIn(target: TmuxTarget): void {
+    this.exec(["send-keys", "-t", target.windowId, "-H", "1b", "5b", "49"]);
+  }
+
   switchClientToTarget(clientTty: string, target: TmuxTarget): void {
     debug(`tmux switchClientToTarget: client=${clientTty} target=${target.windowId}`, "fork");
     this.exec(["switch-client", "-c", clientTty, "-t", target.windowId]);
@@ -480,6 +484,11 @@ export class TmuxRuntimeManager {
   sendCarriageReturn(target: TmuxTarget): void {
     debug(`tmux sendCarriageReturn: target=${target.windowId}`, "fork");
     this.exec(["send-keys", "-t", target.windowId, "-H", "0d"]);
+  }
+
+  sendEscape(target: TmuxTarget): void {
+    debug(`tmux sendEscape: target=${target.windowId}`, "fork");
+    this.exec(["send-keys", "-t", target.windowId, "-H", "1b"]);
   }
 
   sendModifiedEnter(target: TmuxTarget): void {
@@ -665,6 +674,7 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
     this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);
+    this.exec(["set-option", "-t", sessionName, "focus-events", "on"]);
     this.exec(["set-option", "-t", sessionName, "extended-keys", MANAGED_TMUX_SESSION_OPTIONS.extendedKeys]);
     this.exec([
       "set-option",
@@ -761,10 +771,10 @@ export class TmuxRuntimeManager {
       "d",
       "run-shell",
       "-b",
-      "cd '#{pane_current_path}' && aimux >/dev/null 2>&1",
+      `cd '#{pane_current_path}' && aimux tmux-switch dashboard --project-root ${shellQuote(projectRoot)} --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec(["set-option", "-t", sessionName, "status", "2"]);
-    this.exec(["set-option", "-t", sessionName, "status-interval", "2"]);
+    this.exec(["set-option", "-t", sessionName, "status-interval", "0"]);
     this.exec(["set-option", "-t", sessionName, "status-style", "bg=colour236,fg=colour252"]);
     this.exec(["set-option", "-t", sessionName, "message-style", "bg=colour24,fg=colour255,bold"]);
     this.exec(["set-option", "-t", sessionName, "message-command-style", "bg=colour24,fg=colour255"]);
