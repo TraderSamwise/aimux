@@ -1,4 +1,4 @@
-import type { DashboardSession } from "./dashboard.js";
+import type { DashboardSession, DashboardWorktreeEntry } from "./dashboard.js";
 
 export type DashboardScreen = "dashboard" | "activity" | "workflow" | "threads" | "plans" | "graveyard" | "help";
 export type DashboardLevel = "worktrees" | "sessions";
@@ -11,6 +11,7 @@ export class DashboardState {
   level: DashboardLevel = "worktrees";
   sessionIndex = 0;
   worktreeSessions: DashboardSession[] = [];
+  worktreeEntries: DashboardWorktreeEntry[] = [];
 
   isScreen(screen: DashboardScreen): boolean {
     return this.screen === screen;

@@ -41,6 +41,9 @@ export interface DashboardSession {
   unseenCount?: number;
   lastEvent?: AgentEvent;
   services?: SessionServiceMetadata[];
+  foregroundCommand?: string;
+  pid?: number;
+  previewLine?: string;
   threadId?: string;
   threadName?: string;
   threadUnreadCount?: number;
@@ -56,12 +59,32 @@ export interface DashboardSession {
   semantic?: SessionSemanticState;
 }
 
+export interface DashboardService {
+  id: string;
+  command: string;
+  args: string[];
+  tmuxWindowId?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  worktreeBranch?: string;
+  status: "running" | "exited";
+  active: boolean;
+  label?: string;
+  cwd?: string;
+  foregroundCommand?: string;
+  pid?: number;
+  previewLine?: string;
+}
+
+export type DashboardWorktreeEntry = { kind: "session"; id: string } | { kind: "service"; id: string };
+
 export interface WorktreeGroup {
   name: string;
   branch: string;
   path: string;
   status: "active" | "offline";
   sessions: DashboardSession[];
+  services: DashboardService[];
 }
 
 export interface MainCheckoutInfo {
@@ -85,6 +108,11 @@ const STATUS_LABELS: Record<DashboardSessionStatus, string> = {
   offline: "offline",
 };
 
+const SERVICE_ICONS: Record<DashboardService["status"], string> = {
+  running: "\x1b[32m◆\x1b[0m",
+  exited: "\x1b[31m◇\x1b[0m",
+};
+
 function derivedStatusLabel(session: DashboardSession): string {
   if (session.semantic) {
     return sessionSemanticStatusLabel(session.semantic, session.status);
@@ -102,11 +130,13 @@ function derivedStatusLabel(session: DashboardSession): string {
 
 export class Dashboard {
   private sessions: DashboardSession[] = [];
+  private services: DashboardService[] = [];
   private worktreeGroups: WorktreeGroup[] = [];
   private hasWorktrees = false;
   private focusedWorktreePath: string | undefined = undefined;
   private navLevel: "worktrees" | "sessions" = "sessions";
   private selectedSessionId: string | undefined = undefined;
+  private selectedServiceId: string | undefined = undefined;
   private scrollOffset = 0;
   private runtimeLabel: string | undefined = undefined;
   private mainCheckout: MainCheckoutInfo = { name: "Main Checkout", branch: "" };
@@ -115,19 +145,24 @@ export class Dashboard {
 
   update(
     sessions: DashboardSession[],
+    services: DashboardService[],
     worktreeGroups?: WorktreeGroup[],
     focusedWorktreePath?: string,
     navLevel?: "worktrees" | "sessions",
     selectedSessionId?: string,
+    selectedServiceId?: string,
     runtimeLabel?: string,
     mainCheckout?: MainCheckoutInfo,
   ): void {
     this.sessions = sessions;
+    this.services = services;
     this.worktreeGroups = worktreeGroups ?? [];
-    this.hasWorktrees = this.worktreeGroups.length > 0 || sessions.some((s) => s.worktreePath);
+    this.hasWorktrees =
+      this.worktreeGroups.length > 0 || sessions.some((s) => s.worktreePath) || services.some((s) => s.worktreePath);
     this.focusedWorktreePath = focusedWorktreePath;
     this.navLevel = navLevel ?? "sessions";
     this.selectedSessionId = selectedSessionId;
+    this.selectedServiceId = selectedServiceId;
     this.runtimeLabel = runtimeLabel;
     this.mainCheckout = mainCheckout ?? { name: "Main Checkout", branch: "" };
   }
@@ -267,13 +302,26 @@ export class Dashboard {
     return `${indent}${prefix}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}`;
   }
 
+  private renderService(service: DashboardService, indent: string): string {
+    const isSelected = this.navLevel === "sessions" && service.id === this.selectedServiceId;
+    const prefix = isSelected ? "\x1b[33m▸\x1b[0m " : "  ";
+    const icon = SERVICE_ICONS[service.status];
+    const identity = service.label ?? service.command;
+    const commandHint = service.foregroundCommand ? ` \x1b[2m· ${truncate(service.foregroundCommand, 22)}\x1b[0m` : "";
+    const pidHint = service.pid ? ` \x1b[2m(pid ${service.pid})\x1b[0m` : "";
+    const previewHint = service.previewLine ? ` \x1b[2m· ${truncate(service.previewLine, 40)}\x1b[0m` : "";
+    return `${indent}${prefix}${icon} ${identity} \x1b[2m[service]\x1b[0m — ${service.status}${commandHint}${pidHint}${previewHint}`;
+  }
+
   private renderWorktreeGrouped(lines: string[]): void {
     const isFocused = (wtPath: string | undefined) => wtPath === this.focusedWorktreePath;
     const wtCursor = "\x1b[33m▸\x1b[0m";
 
-    // Build session map by worktree path
+    // Build maps by worktree path
     const wtSessionMap = new Map<string, DashboardSession[]>();
+    const wtServiceMap = new Map<string, DashboardService[]>();
     const mainSessions: DashboardSession[] = [];
+    const mainServices: DashboardService[] = [];
     for (const session of this.sessions) {
       if (!session.worktreePath) {
         mainSessions.push(session);
@@ -283,6 +331,15 @@ export class Dashboard {
         wtSessionMap.set(session.worktreePath, group);
       }
     }
+    for (const service of this.services) {
+      if (!service.worktreePath) {
+        mainServices.push(service);
+      } else {
+        const group = wtServiceMap.get(service.worktreePath) ?? [];
+        group.push(service);
+        wtServiceMap.set(service.worktreePath, group);
+      }
+    }
 
     // Main repo
     const focused = isFocused(undefined);
@@ -290,10 +347,19 @@ export class Dashboard {
     const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
     const mainBranch = this.mainCheckout.branch ? ` \x1b[2m${this.mainCheckout.branch}\x1b[0m` : "";
     const mainLabel = `${this.mainCheckout.name}${mainBranch}`;
-    if (mainSessions.length > 0) {
+    if (mainSessions.length > 0 || mainServices.length > 0) {
       lines.push(`${prefix} ${highlight}${mainLabel}\x1b[0m`);
-      for (const session of mainSessions) {
-        lines.push(this.renderSession(session, "    "));
+      if (mainSessions.length > 0) {
+        lines.push("    \x1b[2mAgents\x1b[0m");
+        for (const session of mainSessions) {
+          lines.push(this.renderSession(session, "      "));
+        }
+      }
+      if (mainServices.length > 0) {
+        lines.push("    \x1b[2mServices\x1b[0m");
+        for (const service of mainServices) {
+          lines.push(this.renderService(service, "      "));
+        }
       }
       lines.push("");
     } else {
@@ -304,33 +370,54 @@ export class Dashboard {
     const renderedPaths = new Set<string>();
     for (const group of this.worktreeGroups) {
       const sessions = wtSessionMap.get(group.path) ?? [];
+      const services = wtServiceMap.get(group.path) ?? [];
       const gFocused = isFocused(group.path);
       const gPrefix = gFocused && this.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
       const gHighlight = gFocused ? "\x1b[1;33m" : "";
       const gReset = gFocused ? "\x1b[0m" : "";
 
-      if (sessions.length > 0) {
-        // Expanded: show worktree header + agents
+      if (sessions.length > 0 || services.length > 0) {
         lines.push(`${gPrefix} ${gHighlight}\x1b[1m${group.name}\x1b[0m${gReset} \x1b[2m${group.branch}\x1b[0m`);
-        for (const session of sessions) {
-          lines.push(this.renderSession(session, "    "));
+        if (sessions.length > 0) {
+          lines.push("    \x1b[2mAgents\x1b[0m");
+          for (const session of sessions) {
+            lines.push(this.renderSession(session, "      "));
+          }
+        }
+        if (services.length > 0) {
+          lines.push("    \x1b[2mServices\x1b[0m");
+          for (const service of services) {
+            lines.push(this.renderService(service, "      "));
+          }
         }
         lines.push("");
       } else {
-        // Compact: single dim line
         lines.push(`${gPrefix} \x1b[2m${gHighlight}${group.name}\x1b[0m \x1b[2m${group.branch}\x1b[0m`);
       }
       renderedPaths.add(group.path);
     }
 
-    // Any orphan worktree sessions not covered by groups
-    for (const [, sessions] of wtSessionMap) {
-      if (sessions[0]?.worktreePath && renderedPaths.has(sessions[0].worktreePath)) continue;
-      const name = sessions[0]?.worktreeName ?? "unknown";
-      const branch = sessions[0]?.worktreeBranch ?? "unknown";
+    // Any orphan worktree entries not covered by groups
+    const orphanPaths = new Set<string>([...Array.from(wtSessionMap.keys()), ...Array.from(wtServiceMap.keys())]);
+    for (const path of orphanPaths) {
+      if (!path || renderedPaths.has(path)) continue;
+      const sessions = wtSessionMap.get(path) ?? [];
+      const services = wtServiceMap.get(path) ?? [];
+      const exemplar = sessions[0] ?? services[0];
+      const name = exemplar?.worktreeName ?? "unknown";
+      const branch = exemplar?.worktreeBranch ?? "unknown";
       lines.push(`  \x1b[1m${name}\x1b[0m \x1b[2m${branch}\x1b[0m`);
-      for (const session of sessions) {
-        lines.push(this.renderSession(session, "    "));
+      if (sessions.length > 0) {
+        lines.push("    \x1b[2mAgents\x1b[0m");
+        for (const session of sessions) {
+          lines.push(this.renderSession(session, "      "));
+        }
+      }
+      if (services.length > 0) {
+        lines.push("    \x1b[2mServices\x1b[0m");
+        for (const service of services) {
+          lines.push(this.renderService(service, "      "));
+        }
       }
       lines.push("");
     }
@@ -349,18 +436,29 @@ export class Dashboard {
   }
 
   private buildHelpLine(): string {
-    // Context-aware [x] label based on selected session
-    const selected = this.selectedSessionId ? this.sessions.find((s) => s.id === this.selectedSessionId) : undefined;
-    const xLabel =
-      selected?.status === "offline" ? "[x] kill" : selected?.remoteInstancePid ? "" : selected ? "[x] stop" : "";
-    const rLabel = selected && !selected.remoteInstancePid ? "  [r] name" : "";
-
-    // Context-aware Enter label
-    const enterLabel = selected?.remoteInstancePid
-      ? "Enter takeover"
-      : selected?.status === "offline"
-        ? "Enter resume"
-        : "Enter focus";
+    const selectedSession = this.selectedSessionId
+      ? this.sessions.find((s) => s.id === this.selectedSessionId)
+      : undefined;
+    const selectedService = this.selectedServiceId
+      ? this.services.find((s) => s.id === this.selectedServiceId)
+      : undefined;
+    const xLabel = selectedService
+      ? "[x] stop"
+      : selectedSession?.status === "offline"
+        ? "[x] kill"
+        : selectedSession?.remoteInstancePid
+          ? ""
+          : selectedSession
+            ? "[x] stop"
+            : "";
+    const rLabel = selectedSession && !selectedSession.remoteInstancePid ? "  [r] name" : "";
+    const enterLabel = selectedService
+      ? "Enter open"
+      : selectedSession?.remoteInstancePid
+        ? "Enter takeover"
+        : selectedSession?.status === "offline"
+          ? "Enter resume"
+          : "Enter focus";
 
     const tmuxHint = this.runtimeLabel === "tmux" ? "  [d] tmux dashboard" : "";
 
@@ -369,16 +467,16 @@ export class Dashboard {
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ agents  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ items  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.hasWorktrees) {
-      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new  [f] fork(step in)  [w] worktree${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new  [v] service  [f] fork(step in)  [w] worktree${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
-    return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
+    return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
   }
 
   toggleDetailsPane(): void {
@@ -386,13 +484,52 @@ export class Dashboard {
   }
 
   private renderSelectedDetailsPanel(width: number, height: number): string[] {
-    const selected = this.selectedSessionId
+    const selectedSession = this.selectedSessionId
       ? this.sessions.find((session) => session.id === this.selectedSessionId)
       : undefined;
-    if (!selected) return new Array(height).fill("");
+    const selectedService = this.selectedServiceId
+      ? this.services.find((service) => service.id === this.selectedServiceId)
+      : undefined;
+    if (!selectedSession && !selectedService) return new Array(height).fill("");
 
     const lines: string[] = [];
     lines.push("\x1b[1mDetails\x1b[0m");
+    if (selectedService) {
+      lines.push(
+        ...wrapKeyValue(
+          "Service",
+          `${selectedService.label ?? selectedService.command} (${selectedService.id})`,
+          width,
+        ),
+      );
+      lines.push(...wrapKeyValue("Command", selectedService.command, width));
+      if (selectedService.foregroundCommand) {
+        lines.push(...wrapKeyValue("Foreground", selectedService.foregroundCommand, width));
+      }
+      if (selectedService.pid) {
+        lines.push(...wrapKeyValue("PID", String(selectedService.pid), width));
+      }
+      if (selectedService.worktreeName || selectedService.worktreeBranch) {
+        lines.push(
+          ...wrapKeyValue(
+            "Worktree",
+            `${selectedService.worktreeName ?? "main"}${selectedService.worktreeBranch ? ` · ${selectedService.worktreeBranch}` : ""}`,
+            width,
+          ),
+        );
+      }
+      if (selectedService.cwd) {
+        lines.push(...wrapKeyValue("CWD", selectedService.cwd, width));
+      }
+      lines.push(...wrapKeyValue("Status", selectedService.status, width));
+      if (selectedService.previewLine) {
+        lines.push(...wrapKeyValue("Preview", selectedService.previewLine, width));
+      }
+      while (lines.length < height) lines.push("");
+      return lines.slice(0, height);
+    }
+
+    const selected = selectedSession!;
     lines.push(...wrapKeyValue("Agent", `${selected.label ?? selected.command} (${selected.id})`, width));
     lines.push(...wrapKeyValue("Tool", selected.command, width));
     if (selected.worktreeName || selected.worktreeBranch) {
@@ -407,6 +544,12 @@ export class Dashboard {
     if (selected.cwd) {
       lines.push(...wrapKeyValue("CWD", selected.cwd, width));
     }
+    if (selected.foregroundCommand) {
+      lines.push(...wrapKeyValue("Foreground", selected.foregroundCommand, width));
+    }
+    if (selected.pid) {
+      lines.push(...wrapKeyValue("PID", String(selected.pid), width));
+    }
     if (selected.prNumber || selected.prTitle || selected.prUrl) {
       const prHeader = [`PR${selected.prNumber ? ` #${selected.prNumber}` : ""}`];
       if (selected.prTitle) prHeader.push(selected.prTitle);
@@ -418,6 +561,9 @@ export class Dashboard {
     }
     if (selected.repoRemote) {
       lines.push(...wrapKeyValue("Remote", selected.repoRemote, width));
+    }
+    if (selected.previewLine) {
+      lines.push(...wrapKeyValue("Preview", selected.previewLine, width));
     }
     if (selected.activity) {
       lines.push(...wrapKeyValue("Activity", selected.activity, width));

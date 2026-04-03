@@ -2000,12 +2000,7 @@ export class Multiplexer {
         return;
       }
       case "q":
-        this.tmuxRuntimeManager.leaveManagedSession({
-          insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
-          sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
-        });
-        this.cleanup();
-        process.exit(0);
+        this.exitDashboardClientOrProcess();
         return;
       case "w":
         this.showWorktreeCreatePrompt();
@@ -2466,12 +2461,7 @@ export class Multiplexer {
       return;
     }
     if (key === "q") {
-      this.tmuxRuntimeManager.leaveManagedSession({
-        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
-        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
-      });
-      this.cleanup();
-      process.exit(0);
+      this.exitDashboardClientOrProcess();
       return;
     }
     if (key === "escape" || key === "d") {
@@ -2659,12 +2649,7 @@ export class Multiplexer {
     }
 
     if (key === "q") {
-      this.tmuxRuntimeManager.leaveManagedSession({
-        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
-        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
-      });
-      this.cleanup();
-      process.exit(0);
+      this.exitDashboardClientOrProcess();
       return;
     }
 
@@ -2879,12 +2864,7 @@ export class Multiplexer {
       return;
     }
     if (key === "q") {
-      this.tmuxRuntimeManager.leaveManagedSession({
-        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
-        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
-      });
-      this.cleanup();
-      process.exit(0);
+      this.exitDashboardClientOrProcess();
       return;
     }
     if (key === "escape" || key === "d") {
@@ -5215,12 +5195,7 @@ export class Multiplexer {
     }
 
     if (key === "q") {
-      this.tmuxRuntimeManager.leaveManagedSession({
-        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
-        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
-      });
-      this.cleanup();
-      process.exit(0);
+      this.exitDashboardClientOrProcess();
       return;
     }
 
@@ -5562,12 +5537,7 @@ export class Multiplexer {
     }
 
     if (key === "q") {
-      this.tmuxRuntimeManager.leaveManagedSession({
-        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
-        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
-      });
-      this.cleanup();
-      process.exit(0);
+      this.exitDashboardClientOrProcess();
       return;
     }
 
@@ -5807,12 +5777,7 @@ export class Multiplexer {
     const key = event.name || event.char;
 
     if (key === "q") {
-      this.tmuxRuntimeManager.leaveManagedSession({
-        insideTmux: this.tmuxRuntimeManager.isInsideTmux(),
-        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
-      });
-      this.cleanup();
-      process.exit(0);
+      this.exitDashboardClientOrProcess();
       return;
     }
     if (key === "escape" || key === "enter" || key === "return" || key === "d") {
@@ -7080,6 +7045,20 @@ export class Multiplexer {
 
   cleanupTerminalOnly(): void {
     this.terminalHost.restoreTerminalState();
+  }
+
+  private exitDashboardClientOrProcess(): void {
+    const insideTmux = this.tmuxRuntimeManager.isInsideTmux();
+    const currentSession = insideTmux ? this.tmuxRuntimeManager.currentClientSession() : null;
+    if (insideTmux && currentSession && this.tmuxRuntimeManager.isManagedSessionName(currentSession)) {
+      this.tmuxRuntimeManager.leaveManagedSession({
+        insideTmux: true,
+        sessionName: this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+      });
+      return;
+    }
+    this.cleanup();
+    process.exit(0);
   }
 }
 

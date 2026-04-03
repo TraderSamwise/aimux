@@ -79,7 +79,12 @@ import {
 } from "./notifications.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
+import { debug } from "./debug.js";
 const program = new Command();
+
+function logStartup(step: string, startMs: number): void {
+  debug(`startup ${step} +${Date.now() - startMs}ms`, "startup");
+}
 
 class ProjectServiceVersionError extends Error {
   constructor(
@@ -116,6 +121,8 @@ async function restartStaleProjectService(projectRoot: string): Promise<void> {
   await stopProjectService(projectRoot);
   removeMetadataEndpoint(projectRoot);
   await ensureProjectService(projectRoot);
+  const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
+  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp);
 }
 
 async function restartStaleControlPlane(projectRoot: string): Promise<void> {
@@ -124,6 +131,8 @@ async function restartStaleControlPlane(projectRoot: string): Promise<void> {
   removeMetadataEndpoint(projectRoot);
   await ensureDaemonRunning();
   await ensureProjectService(projectRoot);
+  const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
+  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp);
 }
 
 async function fetchProjectServiceHealth(endpoint: { host: string; port: number }): Promise<{
@@ -148,10 +157,13 @@ async function waitForVerifiedProjectService(
   const deadline = Date.now() + (opts?.timeoutMs ?? 8000);
   let lastError = "project service did not become reachable";
   let lastServiceInfo: unknown = null;
+  let respawnAttempted = false;
+  let missingEndpointSince = 0;
 
   while (Date.now() < deadline) {
     const endpoint = await resolveProjectServiceEndpoint(projectRoot);
     if (endpoint) {
+      missingEndpointSince = 0;
       try {
         const health = await fetchProjectServiceHealth(endpoint);
         lastServiceInfo = health.serviceInfo ?? null;
@@ -161,9 +173,28 @@ async function waitForVerifiedProjectService(
         lastError = `project service manifest mismatch: expected ${JSON.stringify(expected)} actual ${JSON.stringify(health.serviceInfo ?? null)}`;
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
+        if (
+          !respawnAttempted &&
+          typeof lastError === "string" &&
+          (lastError.includes("ECONNREFUSED") ||
+            lastError.includes("ECONNRESET") ||
+            lastError.includes("socket hang up"))
+        ) {
+          respawnAttempted = true;
+          removeMetadataEndpoint(projectRoot);
+          await ensureProjectService(projectRoot);
+        }
       }
     } else {
       lastError = "no live project service metadata endpoint";
+      if (!missingEndpointSince) {
+        missingEndpointSince = Date.now();
+      } else if (!respawnAttempted && Date.now() - missingEndpointSince >= 1000) {
+        respawnAttempted = true;
+        await stopProjectService(projectRoot);
+        removeMetadataEndpoint(projectRoot);
+        await ensureProjectService(projectRoot);
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
@@ -371,6 +402,7 @@ function getDashboardCommandSpec(projectRoot: string) {
 
 function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
   const { dashboardBuildStamp, dashboardCommand } = getDashboardCommandSpec(projectRoot);
+  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
   const dashboardSession = tmux.ensureProjectSession(projectRoot, {
     cwd: dashboardCommand.cwd,
     command: dashboardCommand.command,
@@ -387,18 +419,110 @@ function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManage
   return { dashboardSession, dashboardTarget };
 }
 
+function pruneDashboardArtifacts(projectRoot: string, dashboardBuildStamp: string, tmux = new TmuxRuntimeManager()) {
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  const sessions = tmux
+    .listSessionNames()
+    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`));
+  for (const sessionName of sessions) {
+    const windows = tmux.listWindows(sessionName);
+    const dashboardWindows = windows.filter((window) => window.name.startsWith("dashboard"));
+    for (const window of dashboardWindows) {
+      const target = {
+        sessionName,
+        windowId: window.id,
+        windowIndex: window.index,
+        windowName: window.name,
+      };
+      const paneCommand = tmux.displayMessage("#{pane_current_command}", window.id);
+      const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
+      const invalid =
+        !tmux.isWindowAlive(target) ||
+        paneCommand === "cat" ||
+        paneCommand === "tail" ||
+        !currentBuildStamp ||
+        currentBuildStamp !== dashboardBuildStamp;
+      if (!invalid) continue;
+      debug(
+        `prune-dashboard removing ${sessionName}:${window.name} pane=${paneCommand ?? "none"} build=${currentBuildStamp ?? "none"} expected=${dashboardBuildStamp}`,
+        "startup",
+      );
+      try {
+        tmux.killWindow(target);
+      } catch {}
+    }
+    if (sessionName === hostSession || !tmux.hasSession(sessionName)) continue;
+    const remaining = tmux.listWindows(sessionName);
+    const hasValidDashboard = remaining.some((window) => window.name.startsWith("dashboard"));
+    if (hasValidDashboard) continue;
+    const hasNonDashboardWindows = remaining.some((window) => !window.name.startsWith("dashboard"));
+    if (hasNonDashboardWindows) continue;
+    debug(`prune-dashboard removing empty client session ${sessionName}`, "startup");
+    try {
+      tmux.killSession(sessionName);
+    } catch {}
+  }
+}
+
 function getLiveDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
   const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
+  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
   const dashboardSession = tmux.getProjectSession(projectRoot);
+  const isUsableDashboardTarget = (dashboardTarget: {
+    sessionName: string;
+    windowId: string;
+    windowIndex: number;
+    windowName: string;
+  }) => {
+    const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
+    const paneCommand = tmux.displayMessage("#{pane_current_command}", dashboardTarget.windowId);
+    debug(
+      `live-dashboard target=${dashboardTarget.sessionName}:${dashboardTarget.windowName} build=${currentBuildStamp ?? "none"} expected=${dashboardBuildStamp} pane=${paneCommand ?? "none"} alive=${tmux.isWindowAlive(dashboardTarget)}`,
+      "startup",
+    );
+    return tmux.isWindowAlive(dashboardTarget) && currentBuildStamp === dashboardBuildStamp && paneCommand !== "cat";
+  };
   if (!tmux.hasSession(dashboardSession.sessionName)) {
+    debug(`live-dashboard miss reason=no-host-session host=${dashboardSession.sessionName}`, "startup");
     return null;
   }
   const openSessionName = tmux.peekOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
   if (!tmux.hasSession(openSessionName)) {
+    debug(`live-dashboard open-session-miss open=${openSessionName} host=${dashboardSession.sessionName}`, "startup");
+    const candidateSessions = tmux
+      .listSessionNames()
+      .filter(
+        (sessionName) =>
+          sessionName === dashboardSession.sessionName ||
+          sessionName.startsWith(`${dashboardSession.sessionName}-client-`),
+      );
+    debug(`live-dashboard candidate-sessions=${candidateSessions.join(",") || "none"}`, "startup");
+    const candidates = candidateSessions
+      .flatMap((sessionName) =>
+        tmux
+          .listWindows(sessionName)
+          .filter((window) => window.name.startsWith("dashboard"))
+          .map((window) => ({
+            sessionName,
+            windowId: window.id,
+            windowIndex: window.index,
+            windowName: window.name,
+          })),
+      )
+      .filter(isUsableDashboardTarget);
+    debug(
+      `live-dashboard usable-candidates=${candidates.map((c) => `${c.sessionName}:${c.windowName}`).join(",") || "none"}`,
+      "startup",
+    );
+    if (candidates.length === 1) {
+      return { dashboardSession, dashboardTarget: candidates[0]! };
+    }
+    debug(`live-dashboard miss reason=candidate-count count=${candidates.length}`, "startup");
     return null;
   }
   const dashboardWindow = tmux.listWindows(openSessionName).find((window) => window.name.startsWith("dashboard"));
   if (!dashboardWindow) {
+    debug(`live-dashboard miss reason=no-dashboard-window open=${openSessionName}`, "startup");
     return null;
   }
   const dashboardTarget = {
@@ -407,15 +531,20 @@ function getLiveDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManag
     windowIndex: dashboardWindow.index,
     windowName: dashboardWindow.name,
   };
-  const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
-  if (!tmux.isWindowAlive(dashboardTarget) || currentBuildStamp !== dashboardBuildStamp) {
+  if (!isUsableDashboardTarget(dashboardTarget)) {
+    debug(
+      `live-dashboard miss reason=unusable-target open=${openSessionName} window=${dashboardWindow.name}`,
+      "startup",
+    );
     return null;
   }
+  debug(`live-dashboard hit open=${openSessionName} window=${dashboardWindow.name}`, "startup");
   return { dashboardSession, dashboardTarget };
 }
 
 function forceReloadDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
   const { dashboardBuildStamp, dashboardCommand } = getDashboardCommandSpec(projectRoot);
+  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
   const dashboardSession = tmux.ensureProjectSession(projectRoot, {
     cwd: dashboardCommand.cwd,
     command: dashboardCommand.command,
@@ -449,6 +578,7 @@ program
       args: string[],
       opts: { resume?: boolean; restore?: boolean; tmuxDashboardInternal?: boolean },
     ) => {
+      const startupStartedAt = Date.now();
       const originalCwd = process.cwd();
       const dashboardMode = !tool && !opts.resume && !opts.restore;
       const shouldAnchorToMainRepo = opts.tmuxDashboardInternal || dashboardMode;
@@ -463,27 +593,37 @@ program
           process.chdir(projectRoot);
         }
       }
+      logStartup("project-root", startupStartedAt);
       await initPaths(projectRoot);
+      logStartup("init-paths", startupStartedAt);
       if (opts.tmuxDashboardInternal) {
         await ensureDaemonProjectReady(projectRoot);
+        logStartup("internal-daemon-ready", startupStartedAt);
       } else {
         initProject();
+        logStartup("init-project", startupStartedAt);
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
+        logStartup("tmux-available", startupStartedAt);
         if (!tool && !opts.resume && !opts.restore) {
           const liveDashboard = getLiveDashboardTarget(projectRoot, tmux);
+          logStartup(`live-dashboard-${liveDashboard ? "hit" : "miss"}`, startupStartedAt);
           if (liveDashboard) {
             tmux.openTarget(liveDashboard.dashboardTarget, {
               insideTmux: tmux.isInsideTmux(),
               alreadyResolved: true,
             });
+            logStartup("live-dashboard-opened", startupStartedAt);
             return;
           }
         }
         await ensureDaemonProjectSpawned(projectRoot);
+        logStartup("daemon-project-spawned", startupStartedAt);
         const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
+        logStartup("dashboard-target-ensured", startupStartedAt);
         if (!tool && !opts.resume && !opts.restore) {
           tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+          logStartup("dashboard-opened", startupStartedAt);
           return;
         }
       }

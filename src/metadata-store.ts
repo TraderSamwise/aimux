@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getProjectStateDir, getProjectStateDirFor } from "./paths.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent, SessionDerivedState } from "./agent-events.js";
@@ -83,10 +83,6 @@ export interface MetadataApiEndpoint {
   updatedAt: string;
 }
 
-interface HostMetadataEndpoint {
-  metadataPort?: number;
-}
-
 function ensureParent(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
 }
@@ -156,20 +152,10 @@ export function loadMetadataEndpoint(projectRoot?: string): MetadataApiEndpoint 
 
 export function resolveProjectServiceEndpoint(projectRoot?: string): { host: string; port: number } | null {
   const metadataEndpoint = loadMetadataEndpoint(projectRoot);
-  if (metadataEndpoint) {
-    return {
-      host: metadataEndpoint.host,
-      port: metadataEndpoint.port,
-    };
-  }
-  const hostPath = join(projectRoot ? getProjectStateDirFor(projectRoot) : getProjectStateDir(), "host.json");
-  const hostState = loadJson<HostMetadataEndpoint | null>(hostPath, null);
-  if (!hostState?.metadataPort || !Number.isFinite(hostState.metadataPort)) {
-    return null;
-  }
+  if (!metadataEndpoint) return null;
   return {
-    host: "127.0.0.1",
-    port: hostState.metadataPort,
+    host: metadataEndpoint.host,
+    port: metadataEndpoint.port,
   };
 }
 
@@ -179,6 +165,9 @@ export function saveMetadataEndpoint(endpoint: MetadataApiEndpoint, projectRoot?
 
 export function removeMetadataEndpoint(projectRoot?: string): void {
   try {
-    writeFileSync(endpointPathFor(projectRoot), "");
+    rmSync(endpointPathFor(projectRoot), { force: true });
+  } catch {}
+  try {
+    rmSync(join(projectRoot ? getProjectStateDirFor(projectRoot) : getProjectStateDir(), "host.json"), { force: true });
   } catch {}
 }

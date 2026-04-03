@@ -295,6 +295,15 @@ export class TmuxRuntimeManager {
       });
   }
 
+  listSessionNames(): string[] {
+    const raw = this.exec(["list-sessions", "-F", "#{session_name}"]);
+    if (!raw) return [];
+    return raw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
   getTargetByWindowId(sessionName: string, windowId: string): TmuxTarget | null {
     const window = this.listWindows(sessionName).find((entry) => entry.id === windowId);
     if (!window) return null;
@@ -396,6 +405,10 @@ export class TmuxRuntimeManager {
 
   killWindow(target: TmuxTarget): void {
     this.exec(["kill-window", "-t", target.windowId]);
+  }
+
+  killSession(sessionName: string): void {
+    this.exec(["kill-session", "-t", sessionName]);
   }
 
   renameWindow(windowTarget: string, name: string): void {
@@ -876,7 +889,7 @@ export class TmuxRuntimeManager {
         encoding: "utf8",
         stdio: ["inherit", "pipe", "ignore"],
       }).trim();
-      return this.normalizeClientSuffix(`${tty}:${process.ppid}`);
+      return this.normalizeClientSuffix(tty);
     } catch {
       return null;
     }
