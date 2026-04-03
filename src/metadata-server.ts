@@ -76,6 +76,13 @@ interface MetadataServerOptions {
     listWorktrees?: () => unknown[];
     createWorktree?: (input: { name: string }) => Promise<{ path: string }> | { path: string };
     removeWorktree?: (input: { path: string }) => Promise<{ path: string }> | { path: string };
+    createService?: (input: {
+      command?: string;
+      worktreePath?: string;
+    }) => Promise<{ serviceId: string }> | { serviceId: string };
+    stopService?: (input: {
+      serviceId: string;
+    }) => Promise<{ serviceId: string; status: "stopped" }> | { serviceId: string; status: "stopped" };
     listGraveyard?: () => unknown[];
     resurrectGraveyard?: (input: { sessionId: string }) =>
       | Promise<{ sessionId: string; status: "offline" }>
@@ -1533,6 +1540,30 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.removeWorktree(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/services/create") {
+        const body = (await readJson(req)) as { command?: string; worktreePath?: string };
+        if (!this.options.desktop?.createService) {
+          send(res, 501, { ok: false, error: "service create not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.createService(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/services/stop") {
+        const body = (await readJson(req)) as { serviceId: string };
+        if (!this.options.desktop?.stopService) {
+          send(res, 501, { ok: false, error: "service stop not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.stopService(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;

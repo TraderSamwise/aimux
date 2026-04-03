@@ -156,6 +156,8 @@ struct DesktopStateResponse {
   #[serde(default)]
   sessions: Vec<Value>,
   #[serde(default)]
+  services: Vec<Value>,
+  #[serde(default)]
   statusline: Option<Value>,
   #[serde(default)]
   worktrees: Vec<Value>,
@@ -176,6 +178,7 @@ struct ProjectSnapshot {
   service_endpoint: Option<ServiceEndpoint>,
   service_info: Option<Value>,
   sessions: Vec<Value>,
+  services: Vec<Value>,
   statusline: Option<Value>,
   worktrees: Vec<Value>,
 }
@@ -562,6 +565,7 @@ fn build_heartbeat() -> Option<HeartbeatResponse> {
         service_endpoint: project.service_endpoint,
         service_info: desktop_state.0.service_info,
         sessions: desktop_state.0.sessions,
+        services: desktop_state.0.services,
         statusline: desktop_state.0.statusline,
         worktrees: desktop_state.0.worktrees,
       }
@@ -988,6 +992,29 @@ async fn worktree_remove(project_path: String, path: String) -> Result<Value, St
   })
   .await
   .map_err(|error| format!("worktree_remove task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn service_create(project_path: String, command: Option<String>, worktree: Option<String>) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({
+      "command": command,
+      "worktreePath": worktree,
+    });
+    project_service_json(&project_path, "POST", "/services/create", Some(&body), "service create")
+  })
+  .await
+  .map_err(|error| format!("service_create task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn service_stop(project_path: String, service_id: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({ "serviceId": service_id });
+    project_service_json(&project_path, "POST", "/services/stop", Some(&body), "service stop")
+  })
+  .await
+  .map_err(|error| format!("service_stop task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1618,6 +1645,8 @@ fn main() {
       attachment_ingest_base64,
       worktree_create,
       worktree_remove,
+      service_create,
+      service_stop,
       worktree_list,
       graveyard_list,
       graveyard_resurrect,

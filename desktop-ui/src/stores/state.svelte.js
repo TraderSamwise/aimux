@@ -397,6 +397,21 @@ function reconcileActions(incomingProjects) {
       if (!exists) {
         finished.push(action.key);
       }
+      continue;
+    }
+
+    if (action.kind === "create-service" && action.serviceId) {
+      if ((project.services || []).some((service) => service.id === action.serviceId)) {
+        finished.push(action.key);
+      }
+      continue;
+    }
+
+    if (action.kind === "stop-service" && action.serviceId) {
+      const exists = (project.services || []).some((service) => service.id === action.serviceId);
+      if (!exists) {
+        finished.push(action.key);
+      }
     }
   }
 
@@ -420,6 +435,7 @@ function hasUsableDesktopState(project) {
     (
       project?.serviceInfo ||
       (Array.isArray(project?.sessions) && project.sessions.length > 0) ||
+      (Array.isArray(project?.services) && project.services.length > 0) ||
       (Array.isArray(project?.worktrees) && project.worktrees.length > 0) ||
       project?.statusline
     ),
@@ -437,6 +453,7 @@ function mergeProjectHeartbeat(previous, next) {
     serviceEndpointAlive: true,
     serviceInfo: next.serviceInfo || previous.serviceInfo || null,
     sessions: Array.isArray(next.sessions) && next.sessions.length > 0 ? next.sessions : (previous.sessions || []),
+    services: Array.isArray(next.services) && next.services.length > 0 ? next.services : (previous.services || []),
     worktrees: Array.isArray(next.worktrees) && next.worktrees.length > 0 ? next.worktrees : (previous.worktrees || []),
     statusline: next.statusline || previous.statusline || null,
   };
@@ -563,8 +580,10 @@ function overlayActionSignature(project) {
         kind: action.kind,
         phase: action.phase,
         sessionId: action.sessionId || null,
+        serviceId: action.serviceId || null,
         worktreePath: action.worktreePath || null,
         label: action.label || null,
+        command: action.command || null,
         tool: action.tool || null,
       })),
   );
@@ -588,6 +607,7 @@ function applyActionOverlays(project) {
   const next = {
     ...project,
     sessions: [...(project.sessions || [])],
+    services: [...(project.services || [])],
     worktrees: [...(project.worktrees || [])],
     statusline: project.statusline
       ? {
@@ -644,6 +664,23 @@ function applyActionOverlays(project) {
       };
       if (!next.worktrees.some((worktree) => worktree.path === pendingPath)) {
         next.worktrees = [...next.worktrees, pendingWorktree];
+      }
+    }
+
+    if (action.kind === "create-service") {
+      const pendingId = `pending-service:${action.key}`;
+      const pendingService = {
+        id: pendingId,
+        label: action.label || "service",
+        command: action.command || "",
+        foregroundCommand: action.command || "shell",
+        previewLine: action.command?.trim() || "Interactive shell",
+        status: "running",
+        pending: true,
+        worktreePath: action.worktreePath || null,
+      };
+      if (!next.services.some((service) => service.id === pendingId)) {
+        next.services = [pendingService, ...next.services];
       }
     }
 
@@ -752,6 +789,10 @@ function applyActionOverlays(project) {
             }
           : worktree
       );
+    }
+
+    if (action.kind === "stop-service" && action.serviceId) {
+      next.services = next.services.filter((service) => service.id !== action.serviceId);
     }
   }
 
@@ -1106,6 +1147,10 @@ export function getState() {
       const project = applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
       return project?.sessions || [];
     },
+    get serviceList() {
+      const project = applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
+      return project?.services || [];
+    },
     get worktreeList() {
       const project = applyActionOverlays(projects.find((p) => p.path === selectedProjectPath) || null);
       return project?.worktrees || [];
@@ -1376,6 +1421,12 @@ export async function openSession(terminal, projectPath, sessionId, label) {
   const project = projects.find((entry) => entry.path === projectPath) || null;
   const session = (project?.sessions || []).find((entry) => entry.id === sessionId) || null;
   void focusTerminalAgent(terminal, projectPath, sessionId, label, session?.tmuxWindowId || null).catch(() => {});
+}
+
+export async function openService(terminal, projectPath, serviceId, label, windowId = null) {
+  selectedScreen = "dashboard";
+  if (!terminal) return;
+  void focusTerminalAgent(terminal, projectPath, serviceId, label, windowId).catch(() => {});
 }
 
 export async function openTerminalDashboard(terminal, projectPath, label) {

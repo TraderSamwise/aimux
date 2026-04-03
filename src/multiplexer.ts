@@ -712,6 +712,8 @@ export class Multiplexer {
         listWorktrees: () => this.listDesktopWorktrees(),
         createWorktree: ({ name }) => ({ path: createWorktree(name) }),
         removeWorktree: ({ path }) => this.removeDesktopWorktree(path),
+        createService: ({ command, worktreePath }) => this.createService(command ?? "", worktreePath),
+        stopService: ({ serviceId }) => this.stopService(serviceId),
         listGraveyard: () => this.listGraveyardEntries(),
         resurrectGraveyard: ({ sessionId }) => this.resurrectGraveyardSession(sessionId),
       },

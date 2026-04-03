@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { getState, openSession, isActionPending, trackAction } from "../stores/state.svelte.js";
+  import { getState, openService, openSession, isActionPending, trackAction } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const appState = getState();
@@ -9,6 +9,8 @@
   let showNewWorktreeInput = $state(false);
   let newWorktreeName = $state("");
   let showSpawnMenu = $state(null);
+  let showServiceInputFor = $state(null);
+  let serviceCommand = $state("");
   let removeWorktreePath = $state(null);
   let renameSessionId = $state(null);
   let renameDraft = $state("");
@@ -21,6 +23,7 @@
   // Statusline provides enrichment (label, role, headline, metadata).
   let worktrees = $derived.by(() => {
     const daemonSessions = appState.daemonSessions;
+    const services = appState.serviceList;
     const sl = appState.statusline;
     const slSessions = sl?.sessions ?? [];
     const meta = sl?.metadata ?? {};
@@ -41,7 +44,7 @@
     }
 
     for (const wt of listedWorktrees) {
-      ensureGroup(wt.path, () => ({ path: wt.path, name: wt.name, branch: wt.branch, agents: [] }));
+      ensureGroup(wt.path, () => ({ path: wt.path, name: wt.name, branch: wt.branch, agents: [], services: [] }));
     }
 
     for (const s of daemonSessions) {
@@ -53,7 +56,7 @@
       const branch = ctx?.branch || null;
       const key = wtPath || "__unassigned__";
 
-      const group = ensureGroup(key, () => ({ path: wtPath, name: wtName || "Unassigned", branch, agents: [] }));
+      const group = ensureGroup(key, () => ({ path: wtPath, name: wtName || "Unassigned", branch, agents: [], services: [] }));
       if (branch && !group.branch) group.branch = branch;
       if (wtName && (!group.name || group.name === "Unassigned")) group.name = wtName;
 
@@ -64,6 +67,20 @@
         meta: m || null,
         derived: m?.derived || null,
       });
+    }
+
+    for (const service of services) {
+      const wtPath = service.worktreePath || null;
+      const listed = listedWorktrees.find((entry) => entry.path === wtPath) || null;
+      const key = wtPath || "__unassigned__";
+      const group = ensureGroup(key, () => ({
+        path: wtPath,
+        name: listed?.name || service.worktreeName || wtPath?.split("/").pop() || "Unassigned",
+        branch: listed?.branch || service.worktreeBranch || null,
+        agents: [],
+        services: [],
+      }));
+      group.services.push(service);
     }
 
     const result = orderedKeys.map((key) => groups.get(key));
@@ -159,6 +176,16 @@
     return "neutral";
   }
 
+  function serviceLabel(service) {
+    return service.label || service.command || service.id;
+  }
+
+  function serviceStatusLabel(service) {
+    if (service.pending) return "starting";
+    if (service.status === "exited") return "exited";
+    return "running";
+  }
+
   function showError(raw) {
     // Extract clean error from verbose debug output
     const str = String(raw);
@@ -182,6 +209,18 @@
       project.path,
       agent.id,
       agentLabel(agent),
+    );
+  }
+
+  async function focusService(service) {
+    const project = appState.selectedProject;
+    if (!project) return;
+    await openService(
+      termInstance.terminal,
+      project.path,
+      service.id,
+      serviceLabel(service),
+      service.tmuxWindowId || null,
     );
   }
 
@@ -400,6 +439,36 @@
     }
   }
 
+  async function createService(worktreePath) {
+    const project = appState.selectedProject;
+    if (!project || isCreateServicePending(worktreePath)) return;
+    const command = serviceCommand.trim();
+    const label = command || "shell";
+    try {
+      await trackAction(
+        {
+          kind: "create-service",
+          message: command ? `Starting ${label}...` : "Starting shell...",
+          projectPath: project.path,
+          worktreePath: worktreePath || null,
+          command,
+          label,
+          reconcile: (result) => ({ serviceId: result?.serviceId }),
+        },
+        () =>
+          invoke("service_create", {
+            projectPath: project.path,
+            command: command || null,
+            worktree: worktreePath || null,
+          }),
+      );
+      serviceCommand = "";
+      showServiceInputFor = null;
+    } catch (err) {
+      showError(`Service create failed: ${err}`);
+    }
+  }
+
   async function removeWorktree(path, name) {
     const project = appState.selectedProject;
     if (!project || isRemoveWorktreePending(path)) return;
@@ -417,6 +486,26 @@
       removeWorktreePath = null;
     } catch (err) {
       showError(`Worktree remove failed: ${err}`);
+    }
+  }
+
+  async function stopService(e, service) {
+    e.stopPropagation();
+    const project = appState.selectedProject;
+    if (!project || isStopServicePending(service.id)) return;
+    try {
+      await trackAction(
+        {
+          kind: "stop-service",
+          message: `Stopping ${serviceLabel(service)}...`,
+          projectPath: project.path,
+          serviceId: service.id,
+          reconcile: () => ({ serviceId: service.id }),
+        },
+        () => invoke("service_stop", { projectPath: project.path, serviceId: service.id }),
+      );
+    } catch (err) {
+      showError(`Service stop failed: ${err}`);
     }
   }
 
@@ -472,9 +561,30 @@
     });
   }
 
+  function isCreateServicePending(worktreePath) {
+    return isActionPending({
+      projectPath: appState.selectedProject?.path,
+      kind: "create-service",
+      worktreePath: worktreePath || null,
+    });
+  }
+
+  function isStopServicePending(serviceId) {
+    return isActionPending({
+      projectPath: appState.selectedProject?.path,
+      kind: "stop-service",
+      serviceId,
+    });
+  }
+
   function handleWorktreeKeydown(e) {
     if (e.key === "Enter") createWorktree();
     if (e.key === "Escape") { showNewWorktreeInput = false; newWorktreeName = ""; }
+  }
+
+  function handleServiceKeydown(e, worktreePath) {
+    if (e.key === "Enter") createService(worktreePath);
+    if (e.key === "Escape") { showServiceInputFor = null; serviceCommand = ""; }
   }
 
   const tools = ["claude", "codex"];
@@ -526,7 +636,7 @@
     {#if !appState.selectedProject}
       <div class="empty">Select a project to view worktrees.</div>
     {:else if worktrees.length === 0}
-      <div class="empty">No sessions yet.</div>
+      <div class="empty">No agents or services yet.</div>
     {:else}
       {#each worktrees as wt (wt.path || wt.name)}
         <div class="worktree-group" class:unassigned={!wt.path}>
@@ -539,8 +649,8 @@
               {#if !wt.pending}
                 <button
                   class="wt-action wt-action-danger"
-                  title={wt.agents.length > 0 ? "Worktree has agents attached" : "Remove worktree"}
-                  disabled={Boolean(wt.pending) || wt.agents.length > 0 || isRemoveWorktreePending(wt.path)}
+                  title={wt.agents.length > 0 || wt.services?.length > 0 ? "Worktree has attached agents or services" : "Remove worktree"}
+                  disabled={Boolean(wt.pending) || wt.agents.length > 0 || wt.services?.length > 0 || isRemoveWorktreePending(wt.path)}
                   onclick={() => { removeWorktreePath = removeWorktreePath === wt.path ? null : wt.path; showSpawnMenu = null; }}
                 >×</button>
               {/if}
@@ -550,6 +660,12 @@
                 disabled={Boolean(wt.pending)}
                 onclick={() => { showSpawnMenu = showSpawnMenu === wt.path ? null : wt.path; }}
               >+</button>
+              <button
+                class="wt-action"
+                title="Start service in this worktree"
+                disabled={Boolean(wt.pending)}
+                onclick={() => { showServiceInputFor = showServiceInputFor === wt.path ? null : wt.path; serviceCommand = ""; }}
+              >v</button>
             {:else}
               <span class="worktree-name dim">{wt.pending ? `${wt.name}...` : "Pending assignment..."}</span>
             {/if}
@@ -562,6 +678,23 @@
                   {isSpawnPending(tool, wt.path) ? `spawning ${tool}...` : `spawn ${tool}`}
                 </button>
               {/each}
+            </div>
+          {/if}
+
+          {#if showServiceInputFor === wt.path && wt.path}
+            <!-- svelte-ignore a11y_autofocus -->
+            <div class="inline-input">
+              <input
+                type="text"
+                placeholder="command... (empty = shell)"
+                bind:value={serviceCommand}
+                onkeydown={(e) => handleServiceKeydown(e, wt.path)}
+                disabled={isCreateServicePending(wt.path)}
+                autofocus
+              />
+              <button class="input-btn" onclick={() => createService(wt.path)} disabled={isCreateServicePending(wt.path)}>
+                {isCreateServicePending(wt.path) ? "starting..." : "start"}
+              </button>
             </div>
           {/if}
 
@@ -705,6 +838,47 @@
                       </div>
                     </div>
                   {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          {#if wt.services?.length > 0}
+            <div class="service-list">
+              {#each wt.services as service (service.id)}
+                <div
+                  class="service-row"
+                  onclick={() => focusService(service)}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      focusService(service);
+                    }
+                  }}
+                  role="button"
+                  tabindex="0"
+                  title={service.command || service.id}
+                >
+                  <span class="agent-dot" style="background: rgba(125, 211, 252, 0.95);"></span>
+                  <span class="agent-identity">
+                    <span class="agent-label">{serviceLabel(service)}</span>
+                    {#if service.foregroundCommand}
+                      <span class="agent-role">({service.foregroundCommand})</span>
+                    {/if}
+                  </span>
+                  <span class="agent-meta">
+                    <span class="agent-status" data-tone={service.status === "exited" ? "blocked" : "active"}>
+                      <span class="agent-status-primary">{serviceStatusLabel(service)}</span>
+                      {#if service.previewLine}
+                        <span class="agent-status-secondary">{service.previewLine}</span>
+                      {/if}
+                    </span>
+                    <span class="agent-actions visible">
+                      <button class="agent-action" title="Stop service" onclick={(e) => stopService(e, service)} disabled={isStopServicePending(service.id)}>
+                        {isStopServicePending(service.id) ? "..." : "■"}
+                      </button>
+                    </span>
+                  </span>
                 </div>
               {/each}
             </div>
@@ -933,6 +1107,13 @@
     padding: 2px 0 0;
   }
 
+  .service-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 6px 0 0;
+  }
+
   .worktree-confirm {
     display: flex;
     align-items: center;
@@ -960,7 +1141,24 @@
     transition: background 100ms, border-color 100ms;
   }
 
+  .service-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px 5px 20px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    text-align: left;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 100ms, border-color 100ms;
+  }
+
   .agent-row:hover {
+    background: var(--bg-surface);
+  }
+
+  .service-row:hover {
     background: var(--bg-surface);
   }
 
@@ -1064,6 +1262,11 @@
   }
 
   .agent-row:hover .agent-actions {
+    max-width: 120px;
+    opacity: 1;
+  }
+
+  .service-row:hover .agent-actions {
     max-width: 120px;
     opacity: 1;
   }
