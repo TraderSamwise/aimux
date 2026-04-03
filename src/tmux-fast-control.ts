@@ -1,9 +1,16 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve as pathResolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { debug } from "./debug.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
-import { TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
+import {
+  listSwitchableAgentItems,
+  resolveAttentionAgent,
+  resolveNextAgent,
+  resolvePrevAgent,
+  type FastControlContext,
+} from "./fast-control.js";
+import { isDashboardWindowName, TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
 
 interface Options {
   projectRoot: string;
@@ -117,17 +124,69 @@ function displayMenu(
   );
 }
 
-function fallbackToCli(action: string, opts: Options, reason: string): never {
-  logFastControl(`action=${action} mode=cli-fallback reason=${reason}`);
+function getDashboardCommandSpec(projectRoot: string) {
   const currentFile = fileURLToPath(import.meta.url);
-  const switchScript = join(dirname(currentFile), "tmux-switch-cli.js");
-  const args = [switchScript, action, "--project-root", opts.projectRoot];
-  if (opts.currentClientSession) args.push("--current-client-session", opts.currentClientSession);
-  if (opts.currentWindow) args.push("--current-window", opts.currentWindow);
-  if (opts.currentWindowId) args.push("--current-window-id", opts.currentWindowId);
-  if (opts.currentPath) args.push("--current-path", opts.currentPath);
-  spawnSync(process.execPath, args, { stdio: "ignore", cwd: opts.currentPath || opts.projectRoot });
-  process.exit(0);
+  const mainScript = join(dirname(currentFile), "main.js");
+  return {
+    dashboardCommand: {
+      cwd: projectRoot,
+      command: process.execPath,
+      args: [mainScript, "--tmux-dashboard-internal"],
+    },
+    dashboardBuildStamp: String(statSync(mainScript).mtimeMs),
+  };
+}
+
+function resolveLocalResult(action: string, opts: Options, tmux: TmuxRuntimeManager): FastControlResponse {
+  if (action === "dashboard") {
+    const currentClientSession = opts.currentClientSession?.trim() || tmux.currentClientSession() || undefined;
+    const dashboardTarget = currentClientSession
+      ? tmux.listWindows(currentClientSession).find((window) => isDashboardWindowName(window.name))
+      : undefined;
+    if (dashboardTarget && currentClientSession) {
+      return {
+        ok: true,
+        target: {
+          sessionName: currentClientSession,
+          windowId: dashboardTarget.id,
+          windowIndex: dashboardTarget.index,
+          windowName: dashboardTarget.name,
+        },
+      };
+    }
+    const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(opts.projectRoot);
+    const dashboardSession = tmux.ensureProjectSession(opts.projectRoot, dashboardCommand);
+    const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
+    const target = tmux.ensureDashboardWindow(openSessionName, opts.projectRoot, dashboardCommand);
+    const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
+    if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
+      tmux.respawnWindow(target, dashboardCommand);
+      tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
+    }
+    return { ok: true, target };
+  }
+
+  const context: FastControlContext = {
+    projectRoot: opts.projectRoot,
+    currentClientSession: opts.currentClientSession?.trim() || tmux.currentClientSession() || undefined,
+    currentWindow: opts.currentWindow,
+    currentWindowId: opts.currentWindowId,
+    currentPath: opts.currentPath,
+  };
+
+  if (action === "menu") {
+    return { ok: true, items: listSwitchableAgentItems(context, tmux) };
+  }
+  if (action === "attention") {
+    const item = resolveAttentionAgent(context, tmux);
+    return { ok: true, item: item ?? undefined };
+  }
+  if (action === "prev") {
+    const item = resolvePrevAgent(context, tmux);
+    return { ok: true, item: item ?? undefined };
+  }
+  const item = resolveNextAgent(context, tmux);
+  return { ok: true, item: item ?? undefined };
 }
 
 async function main() {
@@ -136,8 +195,7 @@ async function main() {
   opts.projectRoot = pathResolve(opts.projectRoot);
   const tmux = new TmuxRuntimeManager();
   try {
-    const result = await requestFastControl(action, opts);
-    if (!result) fallbackToCli(action, opts, "service-unavailable");
+    const result = (await requestFastControl(action, opts)) ?? resolveLocalResult(action, opts, tmux);
     if (action === "menu") {
       if (!result?.items?.length) process.exit(0);
       displayMenu(tmux, result.items, opts.currentWindowId);
@@ -149,8 +207,8 @@ async function main() {
     process.exit(0);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    logFastControl(`action=${action} mode=service-error reason=${JSON.stringify(reason)}`);
-    fallbackToCli(action, opts, "service-exception");
+    logFastControl(`action=${action} mode=local-error reason=${JSON.stringify(reason)}`);
+    process.exit(1);
   }
 }
 

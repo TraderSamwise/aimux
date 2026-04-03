@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { basename } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { debug } from "./debug.js";
 
@@ -49,11 +50,6 @@ export interface CaptureTargetOptions {
 
 export interface TmuxCommandSpec {
   cwd: string;
-  command: string;
-  args: string[];
-}
-
-export interface TmuxStatuslineCommandSpec {
   command: string;
   args: string[];
 }
@@ -159,12 +155,7 @@ export class TmuxRuntimeManager {
     return this.resolveOpenSessionName(sessionName, insideTmux);
   }
 
-  private ensureClientSession(
-    hostSessionName: string,
-    clientSessionName: string,
-    projectRoot: string,
-    statuslineCommand?: TmuxStatuslineCommandSpec,
-  ): void {
+  private ensureClientSession(hostSessionName: string, clientSessionName: string, projectRoot: string): void {
     const dashboardName = `dashboard-${clientSessionName.match(/-client-([a-f0-9]{8})$/)?.[1] ?? "client"}`;
     const hostDashboard = this.listWindows(hostSessionName).find((window) => isDashboardWindowName(window.name));
     const existingDashboard = this.hasSession(clientSessionName)
@@ -197,7 +188,7 @@ export class TmuxRuntimeManager {
         { cwd: projectRoot },
       );
     }
-    this.configureSession(clientSessionName, projectRoot, statuslineCommand);
+    this.configureSession(clientSessionName, projectRoot);
     this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
   }
 
@@ -233,11 +224,7 @@ export class TmuxRuntimeManager {
     }
   }
 
-  ensureProjectSession(
-    projectRoot: string,
-    dashboardCommand?: TmuxCommandSpec,
-    statuslineCommand?: TmuxStatuslineCommandSpec,
-  ): TmuxSessionRef {
+  ensureProjectSession(projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxSessionRef {
     const session = this.getProjectSession(projectRoot);
     if (!this.hasSession(session.sessionName)) {
       const argv =
@@ -269,7 +256,7 @@ export class TmuxRuntimeManager {
             ];
       this.exec(argv, { cwd: projectRoot });
     }
-    this.configureSession(session.sessionName, projectRoot, statuslineCommand);
+    this.configureSession(session.sessionName, projectRoot);
     return session;
   }
 
@@ -669,11 +656,9 @@ export class TmuxRuntimeManager {
     this.attachSession(sessionName, effectiveTarget.windowIndex);
   }
 
-  private configureSession(
-    sessionName: string,
-    projectRoot: string,
-    statuslineCommand?: TmuxStatuslineCommandSpec,
-  ): void {
+  private configureSession(sessionName: string, projectRoot: string): void {
+    const fastControlCommand = this.getFastControlShellCommand();
+    const statuslineCommand = this.getStatuslineCommandSpec();
     this.exec(["set-option", "-t", sessionName, "@aimux-project-root", projectRoot]);
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
@@ -739,7 +724,7 @@ export class TmuxRuntimeManager {
       "n",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && #{@aimux-fast-control-command} next --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `cd '#{pane_current_path}' && ${fastControlCommand} next --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -748,7 +733,7 @@ export class TmuxRuntimeManager {
       "p",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && #{@aimux-fast-control-command} prev --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `cd '#{pane_current_path}' && ${fastControlCommand} prev --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -757,7 +742,7 @@ export class TmuxRuntimeManager {
       "s",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && #{@aimux-fast-control-command} menu --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `cd '#{pane_current_path}' && ${fastControlCommand} menu --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -766,7 +751,7 @@ export class TmuxRuntimeManager {
       "u",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && #{@aimux-fast-control-command} attention --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `cd '#{pane_current_path}' && ${fastControlCommand} attention --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -775,7 +760,7 @@ export class TmuxRuntimeManager {
       "d",
       "run-shell",
       "-b",
-      `cd '#{pane_current_path}' && #{@aimux-fast-control-command} dashboard --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `cd '#{pane_current_path}' && ${fastControlCommand} dashboard --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --current-window '#{window_name}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec(["set-option", "-t", sessionName, "status", "2"]);
     this.exec(["set-option", "-t", sessionName, "status-interval", "0"]);
@@ -785,27 +770,24 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "window-status-separator", " "]);
     this.exec(["set-option", "-t", sessionName, "window-status-format", ""]);
     this.exec(["set-option", "-t", sessionName, "window-status-current-format", ""]);
-    if (statuslineCommand) {
-      this.exec(["set-option", "-t", sessionName, "@aimux-statusline-command", JSON.stringify(statuslineCommand)]);
-      const top = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line top --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
-      const bottom = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line bottom --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
-      this.exec(["set-option", "-t", sessionName, "status-left", ""]);
-      this.exec(["set-option", "-t", sessionName, "status-right", ""]);
-      this.exec([
-        "set-option",
-        "-t",
-        sessionName,
-        "status-format[0]",
-        `#[bg=colour238,fg=colour255,bold] #(${top}) #[default]`,
-      ]);
-      this.exec([
-        "set-option",
-        "-t",
-        sessionName,
-        "status-format[1]",
-        `#[bg=colour236,fg=colour252] #(${bottom}) #[default]`,
-      ]);
-    }
+    const top = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line top --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
+    const bottom = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line bottom --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
+    this.exec(["set-option", "-t", sessionName, "status-left", ""]);
+    this.exec(["set-option", "-t", sessionName, "status-right", ""]);
+    this.exec([
+      "set-option",
+      "-t",
+      sessionName,
+      "status-format[0]",
+      `#[bg=colour238,fg=colour255,bold] #(${top}) #[default]`,
+    ]);
+    this.exec([
+      "set-option",
+      "-t",
+      sessionName,
+      "status-format[1]",
+      `#[bg=colour236,fg=colour252] #(${bottom}) #[default]`,
+    ]);
   }
 
   refreshStatus(): void {
@@ -830,9 +812,8 @@ export class TmuxRuntimeManager {
     if (!clientSuffix) return sessionName;
     const clientSessionName = this.getProjectClientSessionName(sessionName, clientSuffix);
     const projectRoot = this.getSessionOption(sessionName, "@aimux-project-root");
-    const statuslineCommand = this.getManagedStatuslineCommand(sessionName);
     if (projectRoot) {
-      this.ensureClientSession(sessionName, clientSessionName, projectRoot, statuslineCommand);
+      this.ensureClientSession(sessionName, clientSessionName, projectRoot);
     }
     return clientSessionName;
   }
@@ -873,14 +854,20 @@ export class TmuxRuntimeManager {
     }
   }
 
-  private getManagedStatuslineCommand(sessionName: string): TmuxStatuslineCommandSpec | undefined {
-    const raw = this.getSessionOption(sessionName, "@aimux-statusline-command");
-    if (!raw) return undefined;
-    try {
-      return JSON.parse(raw) as TmuxStatuslineCommandSpec;
-    } catch {
-      return undefined;
-    }
+  private getStatuslineCommandSpec(): TmuxCommandSpec {
+    const currentFile = fileURLToPath(import.meta.url);
+    const scriptPath = join(dirname(currentFile), "tmux-statusline-cli.js");
+    return {
+      cwd: process.cwd(),
+      command: process.execPath,
+      args: [scriptPath],
+    };
+  }
+
+  private getFastControlShellCommand(): string {
+    const currentFile = fileURLToPath(import.meta.url);
+    const scriptPath = join(dirname(currentFile), "tmux-fast-control.js");
+    return `${shellQuote(process.execPath)} ${shellQuote(scriptPath)}`;
   }
 }
 

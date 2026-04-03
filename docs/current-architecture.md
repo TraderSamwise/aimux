@@ -160,7 +160,7 @@ Project-service HTTP also exposes low-latency tmux control helpers:
 - `POST /control/open-dashboard`
 
 Tmux hotkeys use these through a thin `tmux-fast-control` entrypoint instead of shelling into the heavyweight operator CLI.
-If service RPC is unavailable, they fall back to a thin `tmux-switch-cli` resolver instead of the full `main.js` command graph.
+If service RPC is unavailable, the same thin entrypoint performs direct local tmux resolution instead of shelling into any secondary CLI path.
 
 Likewise, the tmux statusline uses a thin `tmux-statusline-cli` entrypoint instead of the main CLI command graph.
 

@@ -14,7 +14,6 @@ Target:
 Current entrypoints:
 
 - `dist/tmux-fast-control.js`
-- `dist/tmux-switch-cli.js` fallback only
 
 Used for:
 
@@ -28,7 +27,7 @@ Rules:
 
 - never go through the full operator CLI on the normal path
 - talk to the live project service first
-- do only minimal local resolution on fallback
+- do only minimal direct local resolution when the project service is unavailable
 
 ### Lightweight render
 
@@ -95,12 +94,4 @@ Rules:
 - full bootstrap is acceptable
 - not suitable for tmux hotkeys or render helpers
 
-## Compatibility Commands
-
-The full CLI still exposes legacy compatibility commands like:
-
-- `aimux tmux-switch`
-- `aimux tmux-statusline`
-
-These are no longer on the hot runtime path. They remain as compatibility/admin fallbacks
-while the thin entrypoints take over real tmux/runtime usage.
+There are no legacy tmux compatibility commands on the hot path anymore.

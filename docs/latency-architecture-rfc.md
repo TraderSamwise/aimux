@@ -322,25 +322,25 @@ Current managed tmux bindings:
   - status: good
 
 - `d`
-  - current path: `run-shell ... aimux tmux-switch dashboard ...`
+  - current path: `run-shell ... tmux-fast-control dashboard ...`
   - target path:
     - pure tmux if current client dashboard window is known
     - project-service fallback for dashboard recovery
 
 - `n`
-  - current path: `run-shell ... aimux tmux-switch next ...`
+  - current path: `run-shell ... tmux-fast-control next ...`
   - target path: project-service fast control + final tmux select
 
 - `p`
-  - current path: `run-shell ... aimux tmux-switch prev ...`
+  - current path: `run-shell ... tmux-fast-control prev ...`
   - target path: project-service fast control + final tmux select
 
 - `u`
-  - current path: `run-shell ... aimux tmux-switch attention ...`
+  - current path: `run-shell ... tmux-fast-control attention ...`
   - target path: project-service fast control + final tmux select
 
 - `s`
-  - current path: `run-shell ... aimux tmux-switch menu ...`
+  - current path: `run-shell ... tmux-fast-control menu ...`
   - target path:
     - project-service returns switcher entries
     - tmux renders the menu locally

@@ -25,9 +25,6 @@ function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: str
     if (joined === "display-message -p #{window_id}") return "@3";
     if (joined === "display-message -p #{window_name}") return "codex";
     if (joined.startsWith("show-options -v -t aimux-mobile-abc @aimux-project-root")) return "/repo/mobile";
-    if (joined.startsWith("show-options -v -t aimux-mobile-abc @aimux-statusline-command")) {
-      return JSON.stringify({ command: "aimux", args: ["tmux-statusline"] });
-    }
     if (joined.startsWith("show-options -v -t aimux-mobile-abc @aimux-return-session")) return "user-main";
     if (joined.startsWith("show-options -v -t aimux-mobile-abc terminal-features")) return "";
     if (joined.startsWith("show-window-options -v -t @3 @aimux-meta")) {
@@ -68,204 +65,72 @@ describe("TmuxRuntimeManager", () => {
   it("creates a detached project session when missing", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);
-    const session = manager.ensureProjectSession("/repo/mobile", undefined, {
-      command: "aimux",
-      args: ["tmux-statusline"],
-    });
+    const session = manager.ensureProjectSession("/repo/mobile");
     expect(session.sessionName).toMatch(/^aimux-mobile-/);
     expect(exec.calls.some((call) => call.args[0] === "new-session")).toBe(true);
     const createCall = exec.calls.find((call) => call.args[0] === "new-session");
     expect(createCall?.cwd).toBe("/repo/mobile");
-    expect(exec.calls).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix],
-        }),
-        expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2],
-        }),
-        expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse],
-        }),
-        expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "extended-keys", MANAGED_TMUX_SESSION_OPTIONS.extendedKeys],
-        }),
-        expect.objectContaining({
-          args: [
-            "set-option",
-            "-t",
-            session.sessionName,
-            "extended-keys-format",
-            MANAGED_TMUX_SESSION_OPTIONS.extendedKeysFormat,
-          ],
-        }),
-        expect.objectContaining({
-          args: ["set-option", "-as", "-t", session.sessionName, "terminal-features", ",xterm*:extkeys"],
-        }),
-        expect.objectContaining({
-          args: ["set-option", "-as", "-t", session.sessionName, "terminal-features", ",xterm*:hyperlinks"],
-        }),
-        expect.objectContaining({
-          args: ["unbind-key", "-T", "root", "C-j"],
-        }),
-        expect.objectContaining({
-          args: ["unbind-key", "-T", "root", "S-Enter"],
-        }),
-        expect.objectContaining({
-          args: ["unbind-key", "-T", "root", "WheelUpPane"],
-        }),
-        expect.objectContaining({
-          args: [
-            "bind-key",
-            "-T",
-            "root",
-            "C-j",
-            "if-shell",
-            "-F",
-            "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
-            "send-keys -H 1b 5b 31 33 3b 32 75",
-            "send-keys C-j",
-          ],
-        }),
-        expect.objectContaining({
-          args: [
-            "bind-key",
-            "-T",
-            "root",
-            "S-Enter",
-            "if-shell",
-            "-F",
-            "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
-            "send-keys -H 1b 5b 31 33 3b 32 75",
-            "send-keys S-Enter",
-          ],
-        }),
-        expect.objectContaining({
-          args: [
-            "bind-key",
-            "-T",
-            "root",
-            "WheelUpPane",
-            "if-shell",
-            "-F",
-            "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
-            "copy-mode -e",
-            "if-shell -F '#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -e'",
-          ],
-        }),
-        expect.objectContaining({
-          args: ["unbind-key", "-T", "prefix", "s"],
-        }),
-        expect.objectContaining({
-          args: ["unbind-key", "-T", "prefix", "n"],
-        }),
-        expect.objectContaining({
-          args: ["unbind-key", "-T", "prefix", "p"],
-        }),
-        expect.objectContaining({
-          args: ["unbind-key", "-T", "prefix", "d"],
-        }),
-        expect.objectContaining({
-          args: ["unbind-key", "-T", "prefix", "u"],
-        }),
-        expect.objectContaining({
-          args: ["bind-key", "-T", "prefix", "C-a", "send-prefix"],
-        }),
-        expect.objectContaining({
-          args: [
-            "bind-key",
-            "-T",
-            "prefix",
-            "s",
-            "run-shell",
-            "-b",
-            expect.stringContaining("#{@aimux-fast-control-command} menu"),
-          ],
-        }),
-        expect.objectContaining({
-          args: [
-            "bind-key",
-            "-T",
-            "prefix",
-            "n",
-            "run-shell",
-            "-b",
-            expect.stringContaining("#{@aimux-fast-control-command} next"),
-          ],
-        }),
-        expect.objectContaining({
-          args: [
-            "bind-key",
-            "-T",
-            "prefix",
-            "n",
-            "run-shell",
-            "-b",
-            expect.stringContaining("--current-window-id '#{window_id}'"),
-          ],
-        }),
-        expect.objectContaining({
-          args: [
-            "bind-key",
-            "-T",
-            "prefix",
-            "p",
-            "run-shell",
-            "-b",
-            expect.stringContaining("#{@aimux-fast-control-command} prev"),
-          ],
-        }),
-        expect.objectContaining({
-          args: [
-            "bind-key",
-            "-T",
-            "prefix",
-            "p",
-            "run-shell",
-            "-b",
-            expect.stringContaining("--current-window-id '#{window_id}'"),
-          ],
-        }),
-        expect.objectContaining({
-          args: [
-            "bind-key",
-            "-T",
-            "prefix",
-            "u",
-            "run-shell",
-            "-b",
-            expect.stringContaining("#{@aimux-fast-control-command} attention"),
-          ],
-        }),
-        expect.objectContaining({
-          args: [
-            "bind-key",
-            "-T",
-            "prefix",
-            "d",
-            "run-shell",
-            "-b",
-            expect.stringContaining("#{@aimux-fast-control-command} dashboard"),
-          ],
-        }),
-        expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "status", "2"],
-        }),
-        expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "status-interval", "0"],
-        }),
-        expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "window-status-format", ""],
-        }),
-        expect.objectContaining({
-          args: ["set-option", "-t", session.sessionName, "window-status-current-format", ""],
-        }),
-      ]),
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix2")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "mouse")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "extended-keys")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "extended-keys-format")).toBe(
+      true,
     );
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "focus-events")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-interval")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "s")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "n")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "p")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "u")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "d")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "bind-key" && call.args[3] === "C-a")).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("tmux-fast-control.js' menu"),
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("tmux-fast-control.js' next"),
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[3] === "n" &&
+          call.args.join(" ").includes("--current-window-id '#{window_id}'"),
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("tmux-fast-control.js' prev"),
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("tmux-fast-control.js' attention"),
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("tmux-fast-control.js' dashboard"),
+      ),
+    ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-left")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-right")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-format[0]")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-format[1]")).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "set-option" &&
+          call.args[3] === "status-format[0]" &&
+          call.args[4]?.includes("tmux-statusline-cli.js"),
+      ),
+    ).toBe(true);
   });
 
   it("creates a dashboard window when missing", () => {

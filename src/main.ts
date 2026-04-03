@@ -19,9 +19,8 @@ import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir
 import { getProjectStateDirFor } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
-import { isDashboardWindowName, TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
+import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./tmux-doctor.js";
-import { renderTmuxStatusline, type TmuxStatusLine } from "./tmux-statusline.js";
 import {
   loadMetadataEndpoint,
   loadMetadataState,
@@ -79,16 +78,6 @@ import {
   unreadNotificationCount,
 } from "./notifications.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
-import {
-  listSwitchableAgentItems,
-  resolveAttentionAgent,
-  resolveCurrentAgentIndex,
-  resolveNextAgent,
-  resolvePrevAgent,
-  resolveScopedWorktreePath,
-} from "./fast-control.js";
-import { debug } from "./debug.js";
-
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -328,41 +317,25 @@ function ensureTmuxAvailable(tmux: TmuxRuntimeManager): void {
 
 function getDashboardCommandSpec(projectRoot: string) {
   const scriptPath = fileURLToPath(import.meta.url);
-  const statuslineScriptPath = pathJoin(pathDirname(scriptPath), "tmux-statusline-cli.js");
-  const fastControlScriptPath = pathJoin(pathDirname(scriptPath), "tmux-fast-control.js");
   return {
     scriptPath,
-    fastControlCommand: `${JSON.stringify(process.execPath)} ${JSON.stringify(fastControlScriptPath)}`,
     dashboardBuildStamp: String(statSync(scriptPath).mtimeMs),
     dashboardCommand: {
       cwd: projectRoot,
       command: process.execPath,
       args: [scriptPath, "--tmux-dashboard-internal"],
     },
-    statuslineCommand: {
-      command: process.execPath,
-      args: [statuslineScriptPath],
-    },
   };
 }
 
 function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
-  const { dashboardBuildStamp, dashboardCommand, statuslineCommand, fastControlCommand } =
-    getDashboardCommandSpec(projectRoot);
-  const dashboardSession = tmux.ensureProjectSession(
-    projectRoot,
-    {
-      cwd: dashboardCommand.cwd,
-      command: dashboardCommand.command,
-      args: dashboardCommand.args,
-    },
-    statuslineCommand,
-  );
+  const { dashboardBuildStamp, dashboardCommand } = getDashboardCommandSpec(projectRoot);
+  const dashboardSession = tmux.ensureProjectSession(projectRoot, {
+    cwd: dashboardCommand.cwd,
+    command: dashboardCommand.command,
+    args: dashboardCommand.args,
+  });
   const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
-  tmux.setSessionOption(dashboardSession.sessionName, "@aimux-fast-control-command", fastControlCommand);
-  if (openSessionName !== dashboardSession.sessionName) {
-    tmux.setSessionOption(openSessionName, "@aimux-fast-control-command", fastControlCommand);
-  }
   const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
   const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
   const shouldRespawnDashboard = !tmux.isWindowAlive(dashboardTarget) || currentBuildStamp !== dashboardBuildStamp;
@@ -374,22 +347,13 @@ function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManage
 }
 
 function forceReloadDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
-  const { dashboardBuildStamp, dashboardCommand, statuslineCommand, fastControlCommand } =
-    getDashboardCommandSpec(projectRoot);
-  const dashboardSession = tmux.ensureProjectSession(
-    projectRoot,
-    {
-      cwd: dashboardCommand.cwd,
-      command: dashboardCommand.command,
-      args: dashboardCommand.args,
-    },
-    statuslineCommand,
-  );
+  const { dashboardBuildStamp, dashboardCommand } = getDashboardCommandSpec(projectRoot);
+  const dashboardSession = tmux.ensureProjectSession(projectRoot, {
+    cwd: dashboardCommand.cwd,
+    command: dashboardCommand.command,
+    args: dashboardCommand.args,
+  });
   const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
-  tmux.setSessionOption(dashboardSession.sessionName, "@aimux-fast-control-command", fastControlCommand);
-  if (openSessionName !== dashboardSession.sessionName) {
-    tmux.setSessionOption(openSessionName, "@aimux-fast-control-command", fastControlCommand);
-  }
   const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
   tmux.respawnWindow(dashboardTarget, dashboardCommand);
   tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
@@ -2117,147 +2081,6 @@ program
 // ── Statusline commands ────────────────────────────────────────────
 
 const statuslineCmd = program.command("statusline").description("Manage Claude Code statusline integration");
-
-program
-  .command("tmux-statusline")
-  .description("Internal tmux status line renderer")
-  .option("--line <line>", "Status line row", "bottom")
-  .option("--project-root <path>", "Project root to read status from", process.cwd())
-  .option("--current-window <name>", "Current tmux window name")
-  .option("--current-window-id <id>", "Current tmux window id")
-  .option("--current-path <path>", "Current pane path")
-  .option("--current-session <name>", "Current tmux session name")
-  .option("--width <n>", "Current client width")
-  .action(
-    async (opts: {
-      line: TmuxStatusLine;
-      projectRoot: string;
-      currentWindow?: string;
-      currentWindowId?: string;
-      currentPath?: string;
-      currentSession?: string;
-      width?: string;
-    }) => {
-      await initPaths(opts.projectRoot);
-      process.stdout.write(
-        renderTmuxStatusline(opts.projectRoot, opts.line, {
-          currentWindow: opts.currentWindow,
-          currentWindowId: opts.currentWindowId,
-          currentPath: opts.currentPath,
-          currentSession: opts.currentSession,
-          width: opts.width ? Number(opts.width) : undefined,
-        }),
-      );
-    },
-  );
-
-program
-  .command("tmux-switch <action>")
-  .description("Internal scoped tmux switcher")
-  .option("--project-root <path>", "Project root", process.cwd())
-  .option("--current-client-session <name>", "Current tmux client session")
-  .option("--current-window <name>", "Current tmux window name")
-  .option("--current-window-id <id>", "Current tmux window id")
-  .option("--current-path <path>", "Current pane path", process.cwd())
-  .action(
-    async (
-      action: string,
-      opts: {
-        projectRoot: string;
-        currentClientSession?: string;
-        currentWindow?: string;
-        currentWindowId?: string;
-        currentPath: string;
-      },
-    ) => {
-      await initPaths(opts.projectRoot);
-      const tmux = new TmuxRuntimeManager();
-      if (action === "dashboard") {
-        const currentClientSession = tmux.currentClientSession();
-        const dashboardTarget = currentClientSession
-          ? tmux.listWindows(currentClientSession).find((window) => isDashboardWindowName(window.name))
-          : undefined;
-        let resolvedTarget =
-          dashboardTarget && currentClientSession
-            ? {
-                sessionName: currentClientSession,
-                windowId: dashboardTarget.id,
-                windowIndex: dashboardTarget.index,
-                windowName: dashboardTarget.name,
-              }
-            : null;
-        if (!resolvedTarget) {
-          const ensured = ensureDashboardTarget(opts.projectRoot, tmux);
-          resolvedTarget = ensured.dashboardTarget;
-        }
-        tmux.selectWindow(resolvedTarget);
-        tmux.sendFocusIn(resolvedTarget);
-        return;
-      }
-      const openManagedTarget = (target: TmuxTarget): void => {
-        const currentClientSession = opts.currentClientSession?.trim() || tmux.currentClientSession();
-        if (currentClientSession) {
-          const linkedTarget = tmux.getTargetByWindowId(currentClientSession, target.windowId);
-          if (linkedTarget) {
-            tmux.selectWindow(linkedTarget);
-            return;
-          }
-        }
-        tmux.openTarget(target, { insideTmux: Boolean(currentClientSession) });
-      };
-      const currentClientSession = opts.currentClientSession?.trim() || tmux.currentClientSession() || undefined;
-      const context = {
-        projectRoot: opts.projectRoot,
-        currentClientSession,
-        currentWindow: opts.currentWindow,
-        currentWindowId: opts.currentWindowId,
-        currentPath: opts.currentPath,
-      };
-      debug(
-        `action=${action} worktree=${resolveScopedWorktreePath(opts.projectRoot, opts.currentPath)} currentClient=${currentClientSession ?? "none"}`,
-        "tmux-switch",
-      );
-
-      if (action === "attention") {
-        const item = resolveAttentionAgent(context, tmux);
-        if (!item) return;
-        openManagedTarget(item.target);
-        return;
-      }
-
-      const managed = listSwitchableAgentItems(context, tmux);
-      if (managed.length === 0) return;
-
-      const currentIndex = resolveCurrentAgentIndex(managed, context);
-      const resolvedIndex = currentIndex >= 0 ? currentIndex : 0;
-
-      if (action === "next") {
-        const item = resolveNextAgent(context, tmux);
-        if (!item) return;
-        openManagedTarget(item.target);
-        return;
-      }
-      if (action === "prev") {
-        const item = resolvePrevAgent(context, tmux);
-        if (!item) return;
-        openManagedTarget(item.target);
-        return;
-      }
-      if (action === "menu") {
-        tmux.displayWindowMenu(
-          "aimux",
-          managed.map(({ target, metadata }, index) => ({
-            label:
-              index === resolvedIndex
-                ? `${metadata.label || metadata.command}*`
-                : `${metadata.label || metadata.command}`,
-            target,
-          })),
-        );
-        return;
-      }
-    },
-  );
 
 const doctorCmd = program.command("doctor").description("Inspect aimux runtime compatibility");
 
