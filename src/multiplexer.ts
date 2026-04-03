@@ -257,6 +257,7 @@ export class Multiplexer {
   private projectServiceInterval: ReturnType<typeof setInterval> | null = null;
   private lastRenderedFrame: string | null = null;
   private lastStatuslineSnapshotKey: string | null = null;
+  private desktopStateSnapshot: ReturnType<Multiplexer["buildDesktopStateSnapshot"]> | null = null;
   private dashboardSessionsCache: DashboardSession[] = [];
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
@@ -386,6 +387,14 @@ export class Multiplexer {
     this.dashboardWorktreeGroupsCache = worktreeGroups;
     this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
     this.dashboardModelRefreshedAt = Date.now();
+  }
+
+  private invalidateDesktopStateSnapshot(): void {
+    this.desktopStateSnapshot = null;
+  }
+
+  private refreshDesktopStateSnapshot(): void {
+    this.desktopStateSnapshot = this.buildDesktopStateSnapshot();
   }
 
   private computeDashboardSessions(): DashboardSession[] {
@@ -1367,6 +1376,7 @@ export class Multiplexer {
     this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
     this.writeInstructionFiles();
     await this.startProjectServices();
+    this.refreshDesktopStateSnapshot();
     this.writeStatuslineFile();
     this.startStatusRefresh();
     this.startProjectServiceRefresh();
@@ -6059,6 +6069,7 @@ export class Multiplexer {
       for (const session of this.sessions) {
         this.syncTmuxWindowMetadata(session.id);
       }
+      this.refreshDesktopStateSnapshot();
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
       const tmpPath = `${filePath}.tmp`;
@@ -6135,7 +6146,10 @@ export class Multiplexer {
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
   } {
-    const desktopState = this.buildDesktopStateSnapshot();
+    if (!this.desktopStateSnapshot) {
+      this.refreshDesktopStateSnapshot();
+    }
+    const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     return {
       sessions: desktopState.sessions,
       statusline: this.buildStatuslineSnapshot(),
@@ -6362,6 +6376,7 @@ export class Multiplexer {
   private syncSessionsFromState(state = Multiplexer.loadState()): void {
     this.restoreTmuxSessionsFromState(state);
     this.loadOfflineSessions(state);
+    this.invalidateDesktopStateSnapshot();
   }
 
   private loadOfflineSessions(state = Multiplexer.loadState()): void {
@@ -6684,6 +6699,7 @@ export class Multiplexer {
     };
 
     writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    this.invalidateDesktopStateSnapshot();
   }
 
   /** Load saved state from global project state dir */
