@@ -507,6 +507,14 @@
     return `${rawSessionKey()}:raw`;
   }
 
+  function hasSavedConversationScroll() {
+    return conversationScrollMemory.has(conversationScrollKey());
+  }
+
+  function hasSavedRawScroll() {
+    return rawScrollMemory.has(rawScrollKey());
+  }
+
   function isNearBottom(element, threshold = 48) {
     if (!element) return false;
     return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
@@ -577,7 +585,26 @@
     await tick();
     if (!messageListEl) return;
     if (force) {
-      startConversationPinnedScroll(12);
+      startConversationPinnedScroll(6);
+    }
+  }
+
+  function handleConversationWheel(event) {
+    if (!messageListEl) return;
+    if (event.deltaY < 0) {
+      conversationPinnedToBottom = false;
+      forceConversationStick = false;
+      stopConversationPinnedScroll();
+      saveConversationScrollPosition();
+    }
+  }
+
+  function handleRawWheel(event) {
+    if (!rawOutputEl) return;
+    if (event.deltaY < 0) {
+      rawPinnedToBottom = false;
+      stopRawPinnedScroll();
+      saveRawScrollPosition();
     }
   }
 
@@ -602,6 +629,12 @@
     if (sessionChanged && lastRestoredRawKey !== scrollKey) {
       lastRestoredRawKey = scrollKey;
       void restoreRawScrollPosition();
+      return;
+    }
+
+    if (!hasSavedRawScroll()) {
+      rawPinnedToBottom = true;
+      void syncRawScroll(true);
       return;
     }
 
@@ -638,28 +671,17 @@
       return;
     }
 
+    if (contentChanged && !hasSavedConversationScroll()) {
+      conversationPinnedToBottom = true;
+      forceConversationStick = false;
+      void syncConversationScroll(true);
+      return;
+    }
+
     if (contentChanged && (shouldForceStick || conversationPinnedToBottom)) {
       forceConversationStick = false;
       void syncConversationScroll(true);
     }
-  });
-
-  $effect(() => {
-    if (appState.nativeChatRawMode || !messageListEl || !conversationPinnedToBottom) {
-      stopConversationPinnedScroll();
-      return;
-    }
-    startConversationPinnedScroll(120);
-    return () => stopConversationPinnedScroll();
-  });
-
-  $effect(() => {
-    if (!appState.nativeChatRawMode || !rawOutputEl || !rawPinnedToBottom) {
-      stopRawPinnedScroll();
-      return;
-    }
-    startRawPinnedScroll(12);
-    return () => stopRawPinnedScroll();
   });
 
   $effect(() => {
@@ -784,7 +806,7 @@
     {:else if appState.nativeChatRawMode}
       <div class="raw-shell">
         <div class="rail-title">Raw Pane</div>
-        <pre class="raw-output" bind:this={rawOutputEl} onscroll={saveRawScrollPosition}>{appState.nativeChatOutput || "No output captured yet."}</pre>
+        <pre class="raw-output" bind:this={rawOutputEl} onscroll={saveRawScrollPosition} onwheel={handleRawWheel}>{appState.nativeChatOutput || "No output captured yet."}</pre>
       </div>
     {:else if appState.nativeChatBlocks.length > 0}
       <div class="split-layout">
@@ -798,6 +820,7 @@
               aria-relevant="additions text"
               bind:this={messageListEl}
               onscroll={saveConversationScrollPosition}
+              onwheel={handleConversationWheel}
             >
               {#each conversationEntries as entry (`${entry.id}`)}
                 <article class="turn" class:prompt-turn={entry.type === "prompt"} class:response-turn={entry.type === "response"}>
@@ -1029,6 +1052,10 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+
+  .raw-shell {
+    height: 100%;
   }
 
   .chat-pane,
