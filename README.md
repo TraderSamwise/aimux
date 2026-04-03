@@ -287,6 +287,12 @@ That reports:
 
 ## Hotkeys
 
+Hotkey latency note:
+
+- the current hotkey model still shells back into aimux/project-service helpers for some dynamic tmux actions
+- this works, but it is slower than pure tmux switching
+- the broader latency architecture plan is documented in [docs/latency-architecture-rfc.md](docs/latency-architecture-rfc.md)
+
 Dashboard hotkeys use the `Ctrl+A` leader prefix:
 
 | Key | Action |
