@@ -16,7 +16,6 @@ import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
-import { getProjectStateDirFor } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
@@ -109,15 +108,6 @@ function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): str
     "Or just restart the daemon and rerun `aimux` if you only changed this local checkout.",
   ];
   return lines.join("\n");
-}
-
-async function restartStaleProjectService(projectRoot: string): Promise<void> {
-  console.error(`aimux: restarting stale project service for ${projectRoot}...`);
-  await stopProjectService(projectRoot);
-  removeMetadataEndpoint(projectRoot);
-  await ensureProjectService(projectRoot);
-  const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
-  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp);
 }
 
 async function restartStaleControlPlane(projectRoot: string): Promise<void> {

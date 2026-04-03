@@ -39,12 +39,7 @@ import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./
 import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
 import { MetadataServer } from "./metadata-server.js";
-import {
-  loadMetadataEndpoint,
-  loadMetadataState,
-  removeMetadataEndpoint,
-  resolveProjectServiceEndpoint,
-} from "./metadata-store.js";
+import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
 import { loadDaemonInfo } from "./daemon.js";
