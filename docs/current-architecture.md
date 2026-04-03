@@ -166,6 +166,7 @@ Likewise, the tmux statusline uses a thin `tmux-statusline-cli` entrypoint inste
 
 Dashboard mode is a pure client of the project service's `desktop-state` snapshot.
 It no longer reconstructs dashboard session/worktree model state locally on focus or render paths.
+Project-service endpoint discovery is advertised through `metadata-api.json`; legacy `host.json` endpoint fallback is no longer part of the live architecture.
 
 The CLI is also the GUI automation surface. For project-targeted automation, prefer explicit `--project` commands instead of cwd-dependent invocation:
 
@@ -199,8 +200,16 @@ Dashboard UI state is terminal-local:
 - the shared per-project tmux runtime session owns agent windows
 - each terminal gets its own tmux client session and dashboard window/process
 - dashboard tab, pointer, and load state are per-terminal
+- leaving the dashboard from inside managed tmux detaches or returns the client without destroying that per-terminal dashboard window, so later `aimux` runs can fast-reattach
 
 Shared control-plane state is no longer owned by the dashboard process.
+
+Dashboard startup/open paths also prune stale dashboard artifacts automatically. Invalid dashboard windows are removed when they:
+
+- point at dead panes
+- are stuck in failure keep-alive commands like `cat` or `tail`
+- are missing the current dashboard build stamp
+- advertise a mismatched dashboard build stamp
 
 ## `aimux serve`
 

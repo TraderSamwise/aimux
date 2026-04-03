@@ -292,6 +292,8 @@ Hotkey latency note:
 - dynamic tmux hotkeys now use a thin `tmux-fast-control` entrypoint that talks to the live project service
 - the final window switch still happens in tmux
 - this avoids spawning the heavyweight operator CLI for normal `n/p/s/u/d` navigation
+- dashboard client sessions are kept alive for reuse; exiting a managed dashboard leaves the client instead of destroying the reusable dashboard window
+- stale dashboard artifacts are pruned automatically before open/reload so broken `cat`/`tail` dashboard panes do not poison future attaches
 - the broader latency architecture plan is documented in [docs/latency-architecture-rfc.md](docs/latency-architecture-rfc.md)
 - the current entrypoint split is documented in [docs/latency-entrypoints.md](docs/latency-entrypoints.md)
 

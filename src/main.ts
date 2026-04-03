@@ -79,12 +79,7 @@ import {
 } from "./notifications.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
-import { debug } from "./debug.js";
 const program = new Command();
-
-function logStartup(step: string, startMs: number): void {
-  debug(`startup ${step} +${Date.now() - startMs}ms`, "startup");
-}
 
 class ProjectServiceVersionError extends Error {
   constructor(
@@ -443,10 +438,6 @@ function pruneDashboardArtifacts(projectRoot: string, dashboardBuildStamp: strin
         !currentBuildStamp ||
         currentBuildStamp !== dashboardBuildStamp;
       if (!invalid) continue;
-      debug(
-        `prune-dashboard removing ${sessionName}:${window.name} pane=${paneCommand ?? "none"} build=${currentBuildStamp ?? "none"} expected=${dashboardBuildStamp}`,
-        "startup",
-      );
       try {
         tmux.killWindow(target);
       } catch {}
@@ -457,7 +448,6 @@ function pruneDashboardArtifacts(projectRoot: string, dashboardBuildStamp: strin
     if (hasValidDashboard) continue;
     const hasNonDashboardWindows = remaining.some((window) => !window.name.startsWith("dashboard"));
     if (hasNonDashboardWindows) continue;
-    debug(`prune-dashboard removing empty client session ${sessionName}`, "startup");
     try {
       tmux.killSession(sessionName);
     } catch {}
@@ -476,19 +466,13 @@ function getLiveDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManag
   }) => {
     const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
     const paneCommand = tmux.displayMessage("#{pane_current_command}", dashboardTarget.windowId);
-    debug(
-      `live-dashboard target=${dashboardTarget.sessionName}:${dashboardTarget.windowName} build=${currentBuildStamp ?? "none"} expected=${dashboardBuildStamp} pane=${paneCommand ?? "none"} alive=${tmux.isWindowAlive(dashboardTarget)}`,
-      "startup",
-    );
     return tmux.isWindowAlive(dashboardTarget) && currentBuildStamp === dashboardBuildStamp && paneCommand !== "cat";
   };
   if (!tmux.hasSession(dashboardSession.sessionName)) {
-    debug(`live-dashboard miss reason=no-host-session host=${dashboardSession.sessionName}`, "startup");
     return null;
   }
   const openSessionName = tmux.peekOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
   if (!tmux.hasSession(openSessionName)) {
-    debug(`live-dashboard open-session-miss open=${openSessionName} host=${dashboardSession.sessionName}`, "startup");
     const candidateSessions = tmux
       .listSessionNames()
       .filter(
@@ -496,7 +480,6 @@ function getLiveDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManag
           sessionName === dashboardSession.sessionName ||
           sessionName.startsWith(`${dashboardSession.sessionName}-client-`),
       );
-    debug(`live-dashboard candidate-sessions=${candidateSessions.join(",") || "none"}`, "startup");
     const candidates = candidateSessions
       .flatMap((sessionName) =>
         tmux
@@ -510,19 +493,13 @@ function getLiveDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManag
           })),
       )
       .filter(isUsableDashboardTarget);
-    debug(
-      `live-dashboard usable-candidates=${candidates.map((c) => `${c.sessionName}:${c.windowName}`).join(",") || "none"}`,
-      "startup",
-    );
     if (candidates.length === 1) {
       return { dashboardSession, dashboardTarget: candidates[0]! };
     }
-    debug(`live-dashboard miss reason=candidate-count count=${candidates.length}`, "startup");
     return null;
   }
   const dashboardWindow = tmux.listWindows(openSessionName).find((window) => window.name.startsWith("dashboard"));
   if (!dashboardWindow) {
-    debug(`live-dashboard miss reason=no-dashboard-window open=${openSessionName}`, "startup");
     return null;
   }
   const dashboardTarget = {
@@ -532,13 +509,8 @@ function getLiveDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManag
     windowName: dashboardWindow.name,
   };
   if (!isUsableDashboardTarget(dashboardTarget)) {
-    debug(
-      `live-dashboard miss reason=unusable-target open=${openSessionName} window=${dashboardWindow.name}`,
-      "startup",
-    );
     return null;
   }
-  debug(`live-dashboard hit open=${openSessionName} window=${dashboardWindow.name}`, "startup");
   return { dashboardSession, dashboardTarget };
 }
 
@@ -578,7 +550,6 @@ program
       args: string[],
       opts: { resume?: boolean; restore?: boolean; tmuxDashboardInternal?: boolean },
     ) => {
-      const startupStartedAt = Date.now();
       const originalCwd = process.cwd();
       const dashboardMode = !tool && !opts.resume && !opts.restore;
       const shouldAnchorToMainRepo = opts.tmuxDashboardInternal || dashboardMode;
@@ -593,37 +564,27 @@ program
           process.chdir(projectRoot);
         }
       }
-      logStartup("project-root", startupStartedAt);
       await initPaths(projectRoot);
-      logStartup("init-paths", startupStartedAt);
       if (opts.tmuxDashboardInternal) {
         await ensureDaemonProjectReady(projectRoot);
-        logStartup("internal-daemon-ready", startupStartedAt);
       } else {
         initProject();
-        logStartup("init-project", startupStartedAt);
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
-        logStartup("tmux-available", startupStartedAt);
         if (!tool && !opts.resume && !opts.restore) {
           const liveDashboard = getLiveDashboardTarget(projectRoot, tmux);
-          logStartup(`live-dashboard-${liveDashboard ? "hit" : "miss"}`, startupStartedAt);
           if (liveDashboard) {
             tmux.openTarget(liveDashboard.dashboardTarget, {
               insideTmux: tmux.isInsideTmux(),
               alreadyResolved: true,
             });
-            logStartup("live-dashboard-opened", startupStartedAt);
             return;
           }
         }
         await ensureDaemonProjectSpawned(projectRoot);
-        logStartup("daemon-project-spawned", startupStartedAt);
         const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
-        logStartup("dashboard-target-ensured", startupStartedAt);
         if (!tool && !opts.resume && !opts.restore) {
           tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
-          logStartup("dashboard-opened", startupStartedAt);
           return;
         }
       }
