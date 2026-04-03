@@ -216,7 +216,7 @@ export class Dashboard {
   private renderSession(session: DashboardSession, indent: string): string {
     const num = ++this.renderSessionCounter;
     const isSelected = this.navLevel === "sessions" && session.id === this.selectedSessionId;
-    const marker = isSelected ? " \x1b[33m◀\x1b[0m" : "";
+    const prefix = isSelected ? "\x1b[33m▸\x1b[0m " : "  ";
     const taskBadge = session.taskDescription ? ` \x1b[2;35m⧫ ${truncate(session.taskDescription, 40)}\x1b[0m` : "";
     const threadBadge =
       (session.threadUnreadCount ?? 0) > 0 ||
@@ -252,7 +252,7 @@ export class Dashboard {
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      return `${indent}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge} — ${ownerTag}${marker}`;
+      return `${indent}${prefix}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge} — ${ownerTag}`;
     }
 
     const icon = STATUS_ICONS[session.status];
@@ -264,7 +264,7 @@ export class Dashboard {
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${marker}`;
+    return `${indent}${prefix}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}`;
   }
 
   private renderWorktreeGrouped(lines: string[]): void {
@@ -338,10 +338,10 @@ export class Dashboard {
 
   /** Find which content line has the cursor/focus indicator for auto-scroll */
   private findFocusLine(content: string[]): number {
-    // Look for the selected session marker (◀) or worktree cursor (▸)
+    // Look for the left-edge selection cursor
     for (let i = 0; i < content.length; i++) {
       const stripped = content[i].replace(/\x1b\[[0-9;]*m/g, "");
-      if (stripped.includes("◀") || stripped.includes("▸")) {
+      if (stripped.includes("▸")) {
         return i;
       }
     }

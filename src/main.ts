@@ -109,6 +109,13 @@ function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): str
   return lines.join("\n");
 }
 
+async function restartStaleProjectService(projectRoot: string): Promise<void> {
+  console.error(`aimux: restarting stale project service for ${projectRoot}...`);
+  await stopProjectService(projectRoot);
+  removeMetadataEndpoint(projectRoot);
+  await ensureProjectService(projectRoot);
+}
+
 async function fetchProjectServiceHealth(endpoint: { host: string; port: number }): Promise<{
   serviceInfo?: ProjectServiceManifest;
   pid?: number;
@@ -293,10 +300,18 @@ async function readAllStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function ensureDaemonProjectReady(projectRoot: string): Promise<void> {
+async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVersionDrift?: boolean }): Promise<void> {
   await ensureDaemonRunning();
   await ensureProjectService(projectRoot);
-  await waitForVerifiedProjectService(projectRoot);
+  try {
+    await waitForVerifiedProjectService(projectRoot);
+  } catch (error) {
+    if (!(error instanceof ProjectServiceVersionError) || opts?.repairVersionDrift === false) {
+      throw error;
+    }
+    await restartStaleProjectService(projectRoot);
+    await waitForVerifiedProjectService(projectRoot);
+  }
 }
 
 function resolveProjectRoot(cwd: string): string {
@@ -396,15 +411,7 @@ program
       }
       if (!opts.tmuxDashboardInternal) {
         initProject();
-        try {
-          await ensureDaemonProjectReady(projectRoot);
-        } catch (error) {
-          if (error instanceof ProjectServiceVersionError) {
-            console.error(renderProjectServiceVersionHelp(error));
-            process.exit(1);
-          }
-          throw error;
-        }
+        await ensureDaemonProjectReady(projectRoot);
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
         const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
@@ -457,6 +464,10 @@ program
         process.exit(exitCode);
       } catch (err: unknown) {
         cleanupAll();
+        if (err instanceof ProjectServiceVersionError) {
+          console.error(renderProjectServiceVersionHelp(err));
+          process.exit(1);
+        }
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`aimux: failed to spawn "${tool}": ${msg}`);
         process.exit(1);
@@ -476,20 +487,31 @@ program
   .command("dashboard-reload")
   .description("Force reload the managed tmux dashboard for this project")
   .option("--open", "Open the dashboard after reloading")
-  .action((opts: { open?: boolean }) => {
-    const originalCwd = process.cwd();
-    const projectRoot = resolveProjectRoot(originalCwd);
+  .action(async (opts: { open?: boolean }) => {
+    try {
+      const originalCwd = process.cwd();
+      const projectRoot = resolveProjectRoot(originalCwd);
+      await ensureDaemonProjectReady(projectRoot);
 
-    const tmux = new TmuxRuntimeManager();
-    ensureTmuxAvailable(tmux);
-    const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
+      const tmux = new TmuxRuntimeManager();
+      ensureTmuxAvailable(tmux);
+      const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
 
-    if (opts.open) {
-      tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
-      return;
+      if (opts.open) {
+        tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux() });
+        return;
+      }
+
+      console.log(`Reloaded dashboard for ${dashboardSession.sessionName}`);
+    } catch (err: unknown) {
+      if (err instanceof ProjectServiceVersionError) {
+        console.error(renderProjectServiceVersionHelp(err));
+        process.exit(1);
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
     }
-
-    console.log(`Reloaded dashboard for ${dashboardSession.sessionName}`);
   });
 
 const hostCmd = program.command("host").description("Compatibility wrappers for daemon-managed project services");
