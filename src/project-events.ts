@@ -2,6 +2,7 @@ import { getProjectId } from "./paths.js";
 import { addNotification } from "./notifications.js";
 
 export type AlertKind =
+  | "notification"
   | "needs_input"
   | "task_done"
   | "task_failed"

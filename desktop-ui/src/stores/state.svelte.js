@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { OscNotificationParser } from "../../../src/osc-notifications.ts";
 
 // ── Reactive state ────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ let lastControlPlaneSnapshot = null;
 let lastOverlayInputProject = null;
 let lastOverlaySignature = null;
 let lastOverlayResult = null;
+const terminalOscParsers = new Map();
 
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   const updateFocus = () => setDesktopWindowFocus(!document.hidden && document.hasFocus());
@@ -1252,9 +1254,42 @@ async function detachListeners() {
 async function stopTerminalSession() {
   if (!terminalSessionId) return;
   try { await invoke("close_terminal", { sessionId: terminalSessionId }); } catch {}
+  terminalOscParsers.delete(terminalSessionId);
   terminalSessionId = null;
   terminalProjectPath = null;
   terminalSwitching = false;
+}
+
+function getTerminalOscParser(sessionId) {
+  let parser = terminalOscParsers.get(sessionId);
+  if (!parser) {
+    parser = new OscNotificationParser();
+    terminalOscParsers.set(sessionId, parser);
+  }
+  return parser;
+}
+
+async function forwardTerminalNotification(projectPath, sessionId, notification) {
+  if (!projectPath || !notification) return;
+  const project = projects.find((entry) => entry.path === projectPath) || null;
+  const endpoint = project?.serviceEndpoint || null;
+  if (!endpoint?.host || !endpoint?.port) return;
+
+  const title = String(notification.title || "").trim() || "Terminal notification";
+  const message = String(notification.body || "").trim() || title;
+
+  try {
+    await fetch(`http://${endpoint.host}:${endpoint.port}/notify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title,
+        message,
+        sessionId: sessionId || undefined,
+        kind: "notification",
+      }),
+    });
+  } catch {}
 }
 
 export async function runTerminal(terminal, projectPath, args, label) {
@@ -1269,12 +1304,21 @@ export async function runTerminal(terminal, projectPath, args, label) {
   unlistenOutput = await listen("terminal-output", (event) => {
     if (event.payload.sessionId !== terminalSessionId) return;
     terminalSwitching = false;
-    terminal.write(event.payload.data);
+    const parser = getTerminalOscParser(event.payload.sessionId);
+    const { cleaned, notifications } = parser.parseChunk(event.payload.data || "");
+    if (cleaned) {
+      terminal.write(cleaned);
+    }
+    const focusedSessionId = selectedSessionId || null;
+    for (const notification of notifications) {
+      void forwardTerminalNotification(projectPath, focusedSessionId, notification);
+    }
   });
 
   unlistenExit = await listen("terminal-exit", (event) => {
     if (event.payload.sessionId !== terminalSessionId) return;
     terminalStatus = `Exited${event.payload.code == null ? "" : ` (${event.payload.code})`}`;
+    terminalOscParsers.delete(event.payload.sessionId);
     terminalSessionId = null;
     terminalProjectPath = null;
     terminalSwitching = false;

@@ -976,21 +976,23 @@ export class MetadataServer {
         };
         const requestedKind = body.kind?.trim();
         const kind: AlertKind =
-          requestedKind === "task_done" || requestedKind === "complete"
-            ? "task_done"
-            : requestedKind === "task_failed" || requestedKind === "error"
-              ? "task_failed"
-              : requestedKind === "blocked"
-                ? "blocked"
-                : requestedKind === "message_waiting"
-                  ? "message_waiting"
-                  : requestedKind === "handoff_waiting"
-                    ? "handoff_waiting"
-                    : requestedKind === "task_assigned"
-                      ? "task_assigned"
-                      : requestedKind === "review_waiting"
-                        ? "review_waiting"
-                        : "needs_input";
+          requestedKind === "notification" || requestedKind === "generic"
+            ? "notification"
+            : requestedKind === "task_done" || requestedKind === "complete"
+              ? "task_done"
+              : requestedKind === "task_failed" || requestedKind === "error"
+                ? "task_failed"
+                : requestedKind === "blocked"
+                  ? "blocked"
+                  : requestedKind === "message_waiting"
+                    ? "message_waiting"
+                    : requestedKind === "handoff_waiting"
+                      ? "handoff_waiting"
+                      : requestedKind === "task_assigned"
+                        ? "task_assigned"
+                        : requestedKind === "review_waiting"
+                          ? "review_waiting"
+                          : "needs_input";
         this.emitAlert({
           kind,
           sessionId: body.sessionId?.trim() || undefined,

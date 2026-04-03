@@ -269,7 +269,9 @@ export class Multiplexer {
     this.dashboard = new Dashboard();
     this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
-      if (event.kind === "needs_input") {
+      if (event.kind === "notification") {
+        this.footerFlash = `◌ ${event.title}`;
+      } else if (event.kind === "needs_input") {
         this.footerFlash = `◉ ${event.sessionId ?? "agent"} needs input`;
       } else if (event.kind === "message_waiting") {
         this.footerFlash = `✉ Message waiting → ${event.sessionId ?? "agent"}`;

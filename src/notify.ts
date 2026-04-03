@@ -50,7 +50,8 @@ export function notifyAlert(event: AlertEvent): void {
   if (shouldSuppressNotification(event)) return;
 
   if (
-    (event.kind === "needs_input" ||
+    (event.kind === "notification" ||
+      event.kind === "needs_input" ||
       event.kind === "message_waiting" ||
       event.kind === "handoff_waiting" ||
       event.kind === "task_assigned" ||

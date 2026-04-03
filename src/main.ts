@@ -2124,7 +2124,7 @@ program
   .option("--subtitle <subtitle>", "Notification subtitle")
   .option("--body <body>", "Notification body")
   .option("--session <sessionId>", "Related session id")
-  .option("--kind <kind>", "Notification kind", "needs_input")
+  .option("--kind <kind>", "Notification kind", "notification")
   .option("--json", "Emit JSON output")
   .action(
     async (opts: {
@@ -2145,7 +2145,7 @@ program
           subtitle: opts.subtitle?.trim() || undefined,
           message: body,
           sessionId: opts.session?.trim() || undefined,
-          kind: opts.kind?.trim() || "needs_input",
+          kind: opts.kind?.trim() || "notification",
         },
         () => ({
           ok: true,
@@ -2154,7 +2154,7 @@ program
             subtitle: opts.subtitle?.trim() || undefined,
             body,
             sessionId: opts.session?.trim() || undefined,
-            kind: opts.kind?.trim() || "needs_input",
+            kind: opts.kind?.trim() || "notification",
           }),
         }),
       );

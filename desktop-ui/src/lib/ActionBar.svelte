@@ -17,6 +17,7 @@
   let controlError = $derived(controlPlane.error || null);
   let alertKind = $derived(currentAlert?.kind || null);
   function alertTone(kind) {
+    if (kind === "notification") return "message";
     if (kind === "task_done") return "success";
     if (kind === "task_failed" || kind === "blocked") return "error";
     if (kind === "message_waiting") return "message";
@@ -25,6 +26,7 @@
     return "waiting";
   }
   function alertPrefix(kind) {
+    if (kind === "notification") return "Alert";
     if (kind === "message_waiting") return "Message";
     if (kind === "handoff_waiting") return "Handoff";
     if (kind === "task_assigned") return "Task";
