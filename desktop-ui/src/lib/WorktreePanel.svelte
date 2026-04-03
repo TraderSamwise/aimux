@@ -94,6 +94,14 @@
     return agent.label || agent.tool || agent.id;
   }
 
+  function isActiveNativeChatSession(agent) {
+    return (
+      appState.interactionMode === "native-chat" &&
+      appState.nativeChatSessionId != null &&
+      agent?.id === appState.nativeChatSessionId
+    );
+  }
+
   function agentStatusLabel(agent) {
     if (agent.pending && agent.status === "starting") return "starting";
     if (agent.pending && agent.status === "stopping") return "stopping";
@@ -114,8 +122,11 @@
       let hint = null;
       if (semantic.workflowState === "waiting_on_me" || semantic.availability === "needs_input") hint = "on you";
       else if (semantic.workflowState === "waiting_on_them") hint = "on them";
-      else if ((semantic.unreadCount ?? 0) > 0) hint = `${Math.min(semantic.unreadCount, 99)} unread`;
-      else if ((semantic.pendingDeliveryCount ?? 0) > 0) hint = `${Math.min(semantic.pendingDeliveryCount, 99)} pending`;
+      else if (!isActiveNativeChatSession(agent) && (semantic.unreadCount ?? 0) > 0) {
+        hint = `${Math.min(semantic.unreadCount, 99)} unread`;
+      } else if (!isActiveNativeChatSession(agent) && (semantic.pendingDeliveryCount ?? 0) > 0) {
+        hint = `${Math.min(semantic.pendingDeliveryCount, 99)} pending`;
+      }
 
       return hint && hint !== base ? `${base} · ${hint}` : base;
     }
@@ -136,7 +147,12 @@
     if (semantic?.attention === "error") return "error";
     if (semantic?.workflowState === "blocked" || semantic?.attention === "blocked") return "blocked";
     if (semantic?.workflowState === "waiting_on_me" || semantic?.availability === "needs_input") return "waiting";
-    if ((semantic?.unreadCount ?? 0) > 0 || (semantic?.pendingDeliveryCount ?? 0) > 0) return "info";
+    if (
+      !isActiveNativeChatSession(agent) &&
+      ((semantic?.unreadCount ?? 0) > 0 || (semantic?.pendingDeliveryCount ?? 0) > 0)
+    ) {
+      return "info";
+    }
     if (semantic?.activity === "done") return "success";
     if (semantic?.activity === "running" || semantic?.activity === "waiting") return "active";
     if (agent.status === "running") return "active";

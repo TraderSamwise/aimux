@@ -5,6 +5,14 @@
   const state = getState();
   const termInstance = getTerminal();
 
+  function isActiveNativeChatSession(session) {
+    return (
+      state.interactionMode === "native-chat" &&
+      state.nativeChatSessionId != null &&
+      session?.id === state.nativeChatSessionId
+    );
+  }
+
   function sessionWorktreePath(session, meta) {
     return session?.worktreePath || meta?.context?.worktreePath || null;
   }
@@ -58,7 +66,7 @@
     if (semantic?.attention === "error") return { glyph: "\u2717", color: "var(--red)" };
     if (semantic?.workflowState === "blocked" || semantic?.attention === "blocked") return { glyph: "!", color: "var(--red)" };
     if (semantic?.workflowState === "waiting_on_me" || semantic?.availability === "needs_input") return { glyph: "?", color: "var(--yellow)" };
-    const unread = semantic?.unreadCount ?? derived?.unseenCount ?? 0;
+    const unread = isActiveNativeChatSession(session) ? 0 : (semantic?.unreadCount ?? derived?.unseenCount ?? 0);
     if (unread > 0) return { glyph: String(Math.min(unread, 9)), color: "var(--accent)" };
     if (semantic?.activity === "done" || derived?.activity === "done") return { glyph: "\u2713", color: "var(--green)" };
     if (semantic?.activity === "running" || derived?.activity === "running") return { glyph: "\u21bb", color: "var(--green)" };
@@ -73,6 +81,7 @@
     if (semantic.workflowState === "blocked" || semantic.attention === "blocked") return "blocked";
     if (semantic.workflowState === "waiting_on_me" || semantic.availability === "needs_input") return "on you";
     if (semantic.workflowState === "waiting_on_them") return "on them";
+    if (isActiveNativeChatSession(session)) return null;
     if ((semantic.unreadCount ?? 0) > 0) return `${Math.min(semantic.unreadCount, 99)} unread`;
     if ((semantic.pendingDeliveryCount ?? 0) > 0) return `${Math.min(semantic.pendingDeliveryCount, 99)} pending`;
     return null;
