@@ -192,9 +192,21 @@
               <div class="entry-actions">
                 {#each actionButtons(entry) as action}
                   {#if action === "accept-handoff"}
-                    <button class="action-btn" onclick={() => runHandoffAction("accept", entry.thread.id)}>accept</button>
+                    <button
+                      class="action-btn"
+                      title="Take ownership of this handoff and continue the work"
+                      onclick={() => runHandoffAction("accept", entry.thread.id)}
+                    >
+                      take over
+                    </button>
                   {:else if action === "complete-handoff"}
-                    <button class="action-btn" onclick={() => runHandoffAction("complete", entry.thread.id)}>complete</button>
+                    <button
+                      class="action-btn"
+                      title="Finish your part and return the handoff to the sender"
+                      onclick={() => runHandoffAction("complete", entry.thread.id)}
+                    >
+                      send back
+                    </button>
                   {:else if action === "request_changes"}
                     <button class="action-btn" onclick={() => runTaskAction("request_changes", entry.task?.id)}>request changes</button>
                   {:else}
@@ -219,6 +231,7 @@
     flex-direction: column;
     flex: 1;
     min-width: 0;
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -236,6 +249,8 @@
   }
 
   .panel-body {
+    flex: 1;
+    min-height: 0;
     overflow: auto;
     padding: 12px 16px 16px;
   }

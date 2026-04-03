@@ -81,6 +81,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /^Tip:\s/i.test(trimmed) ||
       /(Plan Mode|default permission mode)/i.test(trimmed) ||
       /Conversation interrupted/i.test(trimmed) ||
+      /\bInterrupted\b.*\bwhat should\b.*\bdo instead\?/i.test(trimmed) ||
       /\bWorking \(\d+s/.test(trimmed)
     );
   };

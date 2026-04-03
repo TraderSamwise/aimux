@@ -38,16 +38,14 @@ export function classifyToolPane(
 } {
   const lower = text.toLowerCase();
   const lastLine = lastMeaningfulLine(text);
+  const interruptedVisible =
+    /conversation interrupted/i.test(text) || /\binterrupted\b.*\bwhat should\b.*\bdo instead\?/i.test(text);
   const promptVisible =
     /^\s*[›>❯]\s?.*$/.test(lastLine) ||
     /use \/skills to list available skills/i.test(text) ||
     /find and fix a bug in @filename/i.test(text);
   const errorVisible =
-    /something went wrong/i.test(lower) ||
-    /error:/i.test(lower) ||
-    /failed:/i.test(lower) ||
-    /conversation interrupted/i.test(lower);
-  const interruptedVisible = /conversation interrupted/i.test(lower);
+    /something went wrong/i.test(lower) || /error:/i.test(lower) || /failed:/i.test(lower) || interruptedVisible;
   void tool;
   return { promptVisible, errorVisible, interruptedVisible };
 }

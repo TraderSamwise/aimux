@@ -124,6 +124,29 @@ describe("MetadataServer threads API", () => {
     expect(task.thread?.kind).toBe("task");
   });
 
+  it("passes agent interrupt over HTTP", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        interruptAgent: ({ sessionId }) => ({ sessionId }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/interrupt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "claude-1" }),
+    });
+    const body = (await res.json()) as { ok: boolean; sessionId: string };
+    expect(res.ok).toBe(true);
+    expect(body).toEqual({ ok: true, sessionId: "claude-1" });
+  });
+
   it("updates task lifecycle over HTTP", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

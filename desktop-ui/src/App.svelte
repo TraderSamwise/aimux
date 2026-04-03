@@ -11,20 +11,43 @@
   import ThreadsPanel from "./lib/ThreadsPanel.svelte";
   import PlansPanel from "./lib/PlansPanel.svelte";
   import GraveyardPanel from "./lib/GraveyardPanel.svelte";
-  import { getState, restartDaemonControl, restartProjectService, startHeartbeat, stopHeartbeat } from "./stores/state.svelte.js";
+  import {
+    getState,
+    restartDaemonControl,
+    restartProjectService,
+    setDesktopWindowFocus,
+    startHeartbeat,
+    stopHeartbeat,
+  } from "./stores/state.svelte.js";
 
   const state = getState();
   let selectedScreen = $derived.by(() => state.selectedScreen || "dashboard");
   let interactionMode = $derived.by(() => state.interactionMode || "terminal");
   let controlPlane = $derived.by(() => state.controlPlane || {});
-  let showControlOverlay = $derived.by(() =>
-    Boolean(state.selectedProject) &&
-    (controlPlane.projectStatus === "outdated" || controlPlane.daemonStatus !== "ok"),
-  );
+  let showControlOverlay = $derived.by(() => {
+    if (!state.selectedProject) return false;
+    if (controlPlane.projectStatus === "outdated") return true;
+    if (controlPlane.daemonStatus !== "ok") {
+      return Number(controlPlane.heartbeatAgeMs || 0) >= 10000;
+    }
+    return false;
+  });
 
   onMount(() => {
     startHeartbeat();
-    return () => stopHeartbeat();
+    const onFocus = () => setDesktopWindowFocus(true);
+    const onBlur = () => setDesktopWindowFocus(false);
+    const onVisibility = () => setDesktopWindowFocus(!document.hidden && document.hasFocus());
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVisibility);
+    onVisibility();
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVisibility);
+      stopHeartbeat();
+    };
   });
 </script>
 
@@ -169,6 +192,8 @@
   }
 
   .secondary-body {
+    display: flex;
+    flex-direction: column;
     position: absolute;
     inset: 0;
     min-height: 0;

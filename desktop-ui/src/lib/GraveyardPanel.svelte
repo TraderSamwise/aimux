@@ -9,11 +9,15 @@
   let loading = $state(false);
   let error = $state(null);
   let entries = $state([]);
+  let selectedEntryId = $state(null);
+
+  let selectedEntry = $derived.by(() => entries.find((entry) => entry.id === selectedEntryId) || null);
 
   async function load() {
     const project = appState.selectedProject;
     if (!visible || !project) {
       entries = [];
+      selectedEntryId = null;
       return;
     }
     loading = true;
@@ -21,6 +25,9 @@
     try {
       const result = await invoke("graveyard_list", { projectPath: project.path });
       entries = Array.isArray(result) ? result : [];
+      if (!selectedEntryId || !entries.some((entry) => entry.id === selectedEntryId)) {
+        selectedEntryId = entries[0]?.id || null;
+      }
     } catch (err) {
       error = String(err);
     } finally {
@@ -76,24 +83,61 @@
     {:else if entries.length === 0}
       <div class="empty">No graveyarded agents.</div>
     {:else}
-      <div class="entry-list">
-        {#each entries as entry (entry.id)}
-          <article class="entry-card">
-            <div class="entry-top">
-              <div class="entry-title">{entry.label || entry.tool || entry.id}</div>
-              <button class="resurrect-btn" onclick={() => resurrect(entry)}>resurrect</button>
+      <div class="layout">
+        <div class="entry-list">
+          {#each entries as entry (entry.id)}
+            <button class="entry-card" class:active={selectedEntryId === entry.id} onclick={() => { selectedEntryId = entry.id; }}>
+              <div class="entry-top">
+                <div class="entry-title">{entry.label || entry.tool || entry.id}</div>
+              </div>
+              <div class="entry-meta">
+                <span>{entry.tool}</span>
+                {#if entry.role}
+                  <span>{entry.role}</span>
+                {/if}
+                {#if entry.worktreePath}
+                  <span>{entry.worktreePath.split("/").pop()}</span>
+                {/if}
+              </div>
+            </button>
+          {/each}
+        </div>
+
+        <div class="detail-pane">
+          {#if selectedEntry}
+            <div class="detail-top">
+              <div>
+                <div class="entry-title">{selectedEntry.label || selectedEntry.id}</div>
+                <div class="entry-meta">
+                  <span>{selectedEntry.id}</span>
+                  <span>offline</span>
+                </div>
+              </div>
+              <button class="resurrect-btn" onclick={() => resurrect(selectedEntry)}>resurrect</button>
             </div>
-            <div class="entry-meta">
-              <span>{entry.tool}</span>
-              {#if entry.role}
-                <span>{entry.role}</span>
+
+            <div class="detail-grid">
+              <div class="detail-row"><span class="detail-key">Tool</span><span>{selectedEntry.tool}</span></div>
+              <div class="detail-row"><span class="detail-key">Config</span><span>{selectedEntry.toolConfigKey}</span></div>
+              {#if selectedEntry.worktreePath}
+                <div class="detail-row"><span class="detail-key">Worktree</span><span>{selectedEntry.worktreePath.split("/").pop()}</span></div>
+                <div class="detail-row detail-block"><span class="detail-key">Path</span><span>{selectedEntry.worktreePath}</span></div>
               {/if}
-              {#if entry.worktreePath}
-                <span>{entry.worktreePath.split("/").pop()}</span>
+              {#if selectedEntry.backendSessionId}
+                <div class="detail-row"><span class="detail-key">Backend</span><span>{selectedEntry.backendSessionId}</span></div>
+              {/if}
+              <div class="detail-row detail-block"><span class="detail-key">Command</span><span>{selectedEntry.command}</span></div>
+              {#if selectedEntry.args?.length}
+                <div class="detail-row detail-block"><span class="detail-key">Args</span><span>{selectedEntry.args.join(" ")}</span></div>
+              {/if}
+              {#if selectedEntry.headline}
+                <div class="detail-row detail-block"><span class="detail-key">Headline</span><span>{selectedEntry.headline}</span></div>
               {/if}
             </div>
-          </article>
-        {/each}
+          {:else}
+            <div class="empty">Select a graveyarded agent.</div>
+          {/if}
+        </div>
       </div>
     {/if}
   </div>
@@ -105,6 +149,7 @@
     flex-direction: column;
     flex: 1;
     min-width: 0;
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -122,14 +167,25 @@
   }
 
   .panel-body {
+    flex: 1;
+    min-height: 0;
     overflow: auto;
     padding: 12px 16px 16px;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 12px;
+    min-height: 0;
   }
 
   .entry-list {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-height: 0;
+    overflow: auto;
   }
 
   .entry-card {
@@ -137,6 +193,12 @@
     border-radius: 10px;
     background: rgba(15, 23, 34, 0.7);
     padding: 12px;
+    text-align: left;
+  }
+
+  .entry-card.active {
+    background: var(--bg-surface-active);
+    border-color: var(--border-active);
   }
 
   .entry-top {
@@ -168,6 +230,45 @@
     border: 1px solid rgba(125, 211, 252, 0.2);
     color: var(--accent);
     font-size: 11px;
+  }
+
+  .detail-pane {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(15, 23, 34, 0.45);
+    padding: 12px;
+    overflow: auto;
+  }
+
+  .detail-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .detail-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .detail-row {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 10px;
+    align-items: start;
+  }
+
+  .detail-key {
+    color: var(--text-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
 
   .empty,

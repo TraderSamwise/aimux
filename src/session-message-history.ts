@@ -17,6 +17,7 @@ export interface SessionMessagePart {
 
 export interface SessionMessageRecord {
   id: string;
+  clientMessageId?: string;
   sessionId: string;
   role: "user";
   ts: string;
@@ -32,6 +33,7 @@ export function appendSessionMessage(
   input: {
     data?: string;
     parts?: AgentInputPart[];
+    clientMessageId?: string;
   },
 ): SessionMessageRecord | null {
   const parts = normalizeMessageParts(input);
@@ -42,6 +44,7 @@ export function appendSessionMessage(
   }
   const record: SessionMessageRecord = {
     id: `msg_${randomUUID()}`,
+    clientMessageId: input.clientMessageId?.trim() || undefined,
     sessionId,
     role: "user",
     ts: new Date().toISOString(),

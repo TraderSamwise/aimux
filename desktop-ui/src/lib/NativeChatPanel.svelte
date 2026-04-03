@@ -5,6 +5,7 @@
     addNativeChatImages,
     getState,
     focusTerminalAgent,
+    interruptNativeChatAgent,
     pickNativeChatImages,
     removeNativeChatDraftPart,
     selectInteractionMode,
@@ -53,17 +54,25 @@
         action.sessionId === appState.selectedSessionId,
     );
   });
+  let interruptPending = $derived.by(() => {
+    return Boolean(appState.nativeChatInterruptPending);
+  });
   let draftParts = $derived.by(() => appState.nativeChatDraftParts || []);
   let hasDraftContent = $derived.by(() =>
     draftParts.some((part) => (part.type === "image" ? Boolean(part.attachmentId) : String(part.text || "").trim().length > 0)),
   );
   let historyMessages = $derived.by(() => appState.nativeChatHistory || []);
+  const isInterruptStatusText = (text) =>
+    /conversation interrupted/i.test(String(text || "").trim()) ||
+    /\binterrupted\b.*\bwhat should\b.*\bdo instead\?/i.test(String(text || "").trim());
   let conversationBlocks = $derived.by(() =>
-    (appState.nativeChatBlocks || []).filter((block) => block.type === "prompt" || block.type === "response"),
+    (appState.nativeChatBlocks || []).filter(
+      (block) => block.type === "prompt" || block.type === "response" || (block.type === "status" && isInterruptStatusText(block.text)),
+    ),
   );
   let sideBlocks = $derived.by(() =>
     (appState.nativeChatBlocks || []).filter(
-      (block) => block.type === "status" || block.type === "meta" || block.type === "raw",
+      (block) => (block.type === "status" && !isInterruptStatusText(block.text)) || block.type === "meta" || block.type === "raw",
     ),
   );
   let collapsedSideBlocks = $derived.by(() => {
@@ -260,9 +269,22 @@
   }
 
   async function submitDraft() {
+    if (sendPending || interruptPending) return;
     forceConversationStick = true;
     void syncConversationScroll(true);
     await sendNativeChatMessage();
+  }
+
+  async function interruptSession() {
+    if (interruptPending) return;
+    await interruptNativeChatAgent();
+  }
+
+  function shouldHandleGlobalInterrupt(event) {
+    if (!visible || appState.interactionMode !== "native-chat" || !selectedSession) return false;
+    if (event.defaultPrevented || event.key !== "Escape" || event.repeat) return false;
+    if (event.metaKey || event.ctrlKey || event.altKey) return false;
+    return true;
   }
 
   function findLastDraftTextPartId() {
@@ -275,10 +297,12 @@
   }
 
   async function addImages(afterTextPartId = null) {
+    if (sendPending) return;
     await pickNativeChatImages(getInsertionTextPartId(afterTextPartId));
   }
 
   async function handleDraftTextKeydown(partId, event) {
+    if (sendPending) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       await submitDraft();
@@ -377,6 +401,13 @@
     }
     let promptIndex = 0;
     const entries = conversationBlocks.map((block, index) => {
+      if (block.type === "status") {
+        return {
+          id: `status:${index}`,
+          type: "status",
+          text: block.text,
+        };
+      }
       if (block.type !== "prompt") {
         return {
           id: `response:${index}`,
@@ -458,6 +489,10 @@
   }
 
   async function handleDraftTextPaste(partId, event) {
+    if (sendPending) {
+      event.preventDefault();
+      return;
+    }
     const files = dedupeImageFiles([
       ...extractImageFiles(event.clipboardData?.items),
       ...[...(event.clipboardData?.files || [])].filter((file) => file?.type?.startsWith("image/")),
@@ -469,12 +504,17 @@
   }
 
   function handleComposerDragOver(event) {
+    if (sendPending) return;
     const hasImage = [...(event.dataTransfer?.items || [])].some((item) => item.type?.startsWith("image/"));
     if (!hasImage) return;
     event.preventDefault();
   }
 
   async function handleComposerDrop(event) {
+    if (sendPending) {
+      event.preventDefault();
+      return;
+    }
     const files = dedupeImageFiles([
       ...extractImageFiles(event.dataTransfer?.items),
       ...[...(event.dataTransfer?.files || [])].filter((file) => file?.type?.startsWith("image/")),
@@ -485,6 +525,7 @@
   }
 
   function handleImageTokenKeydown(partId, event) {
+    if (sendPending) return;
     if (event.key !== "Backspace" && event.key !== "Delete" && event.key !== "Enter") return;
     event.preventDefault();
     removeNativeChatDraftPart(partId);
@@ -493,6 +534,21 @@
   $effect(() => {
     if (draftParts.some((part) => part.id === activeDraftTextPartId)) return;
     activeDraftTextPartId = findLastDraftTextPartId();
+  });
+
+  $effect(() => {
+    if (!visible || appState.interactionMode !== "native-chat" || !selectedSession) return;
+
+    const onWindowKeydown = (event) => {
+      if (!shouldHandleGlobalInterrupt(event)) return;
+      event.preventDefault();
+      void interruptSession();
+    };
+
+    window.addEventListener("keydown", onWindowKeydown, true);
+    return () => {
+      window.removeEventListener("keydown", onWindowKeydown, true);
+    };
   });
 
   function rawSessionKey() {
@@ -605,6 +661,26 @@
       rawPinnedToBottom = false;
       stopRawPinnedScroll();
       saveRawScrollPosition();
+    }
+  }
+
+  function switchRawMode(nextRawMode) {
+    if (nextRawMode === appState.nativeChatRawMode) return;
+
+    if (appState.nativeChatRawMode) {
+      saveRawScrollPosition();
+    } else {
+      saveConversationScrollPosition();
+    }
+
+    appState.nativeChatRawMode = nextRawMode;
+
+    if (nextRawMode) {
+      lastRestoredRawKey = "";
+      void restoreRawScrollPosition();
+    } else {
+      lastRestoredConversationKey = "";
+      void restoreConversationScrollPosition();
     }
   }
 
@@ -773,14 +849,14 @@
       <button
         class="header-btn"
         class:active={appState.nativeChatRawMode}
-        onclick={() => { appState.nativeChatRawMode = true; }}
+        onclick={() => { switchRawMode(true); }}
       >
         Raw Pane
       </button>
       <button
         class="header-btn"
         class:active={!appState.nativeChatRawMode}
-        onclick={() => { appState.nativeChatRawMode = false; }}
+        onclick={() => { switchRawMode(false); }}
       >
         Split View
       </button>
@@ -823,11 +899,13 @@
               onwheel={handleConversationWheel}
             >
               {#each conversationEntries as entry (`${entry.id}`)}
-                <article class="turn" class:prompt-turn={entry.type === "prompt"} class:response-turn={entry.type === "response"}>
-                  <article class="message" class:prompt={entry.type === "prompt"} class:response={entry.type === "response"}>
+                <article class="turn" class:prompt-turn={entry.type === "prompt"} class:response-turn={entry.type === "response"} class:status-turn={entry.type === "status"}>
+                  <article class="message" class:prompt={entry.type === "prompt"} class:response={entry.type === "response"} class:status={entry.type === "status"} class:interrupt-status={entry.type === "status"}>
                   <div class="message-kind">
                     {#if entry.type === "prompt"}
                       You
+                    {:else if entry.type === "status"}
+                      Interrupted
                     {:else}
                       Agent
                     {/if}
@@ -890,17 +968,23 @@
   </div>
 
   <div class="composer" role="group" aria-label="Native chat composer" ondragover={handleComposerDragOver} ondrop={handleComposerDrop}>
+    {#if sendPending}
+      <div class="composer-overlay" aria-hidden="true">
+        <div class="composer-overlay-chip">Sending…</div>
+      </div>
+    {/if}
     <div class="composer-flow">
       {#each draftParts as part, index (part.id)}
         {#if part.type === "text"}
           <textarea
             class="composer-input"
             class:composer-input-compact={index > 0}
+            class:composer-input-sending={sendPending}
             placeholder={selectedSession
               ? (index === 0 ? `Message ${sessionLabel(selectedSession)}…` : "Continue message…")
               : "Select a session first…"}
             value={part.text}
-            disabled={!selectedSession}
+            disabled={!selectedSession || sendPending}
             onfocus={() => { activeDraftTextPartId = part.id; }}
             oninput={(event) => setNativeChatDraftTextPart(part.id, event.currentTarget.value)}
             onkeydown={(event) => handleDraftTextKeydown(part.id, event)}
@@ -911,12 +995,13 @@
             <button
               type="button"
               class="inline-image-token"
+              disabled={sendPending}
               onclick={() => { activeDraftTextPartId = findLastDraftTextPartId(); }}
               onkeydown={(event) => handleImageTokenKeydown(part.id, event)}
             >
               [image #{imageOrdinal(part.id)}]
             </button>
-            <div class="draft-image-preview">
+            <div class="draft-image-preview" class:draft-image-preview-sending={sendPending}>
               <div class="draft-image-meta">
                 <div class="draft-image-name">{part.name}</div>
                 <div class="draft-image-path">{part.path || part.attachmentId}</div>
@@ -926,7 +1011,7 @@
               {:else}
                 <div class="draft-image-placeholder">Preview unavailable</div>
               {/if}
-              <button type="button" class="draft-image-remove" onclick={() => removeNativeChatDraftPart(part.id)}>
+              <button type="button" class="draft-image-remove" disabled={sendPending} onclick={() => removeNativeChatDraftPart(part.id)}>
                 Remove
               </button>
             </div>
@@ -938,7 +1023,7 @@
       <div class="composer-error">{appState.nativeChatComposerError}</div>
     {/if}
     <div class="composer-row">
-      <span class="composer-hint">Enter to send, Shift+Enter for newline. Paste or drop images inline.</span>
+      <span class="composer-hint">Enter to send, Shift+Enter for newline, Esc to interrupt. Paste or drop images inline.</span>
       <button
         class="attach-btn"
         disabled={!selectedSession || sendPending}
@@ -946,12 +1031,19 @@
       >
         Add Image
       </button>
+      <button
+        class="attach-btn"
+        disabled={!selectedSession || interruptPending}
+        onclick={interruptSession}
+      >
+        {interruptPending ? "Interrupting…" : "Interrupt"}
+      </button>
       {#if sendPending}
         <span class="composer-status">Sending…</span>
       {/if}
       <button
         class="send-btn"
-        disabled={!selectedSession || !hasDraftContent || sendPending}
+        disabled={!selectedSession || !hasDraftContent || sendPending || interruptPending}
         onclick={submitDraft}
       >
         {sendPending ? "Sending…" : "Send"}
@@ -1188,10 +1280,16 @@
     min-height: 0;
     flex: 1;
     overflow: auto;
+    scrollbar-width: none;
     border: 1px solid var(--border);
     border-radius: 14px;
     padding: 14px;
     background: rgba(148, 163, 184, 0.04);
+  }
+
+  .raw-output::-webkit-scrollbar {
+    width: 0;
+    height: 0;
   }
 
   .message-parts {
@@ -1242,12 +1340,56 @@
   }
 
   .composer {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 10px;
     padding: 14px 16px 16px;
     border-top: 1px solid var(--border);
     background: rgba(8, 12, 20, 0.9);
+  }
+
+  .composer-overlay {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    z-index: 2;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    pointer-events: none;
+  }
+
+  .composer-overlay-chip {
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(125, 211, 252, 0.2);
+    background: rgba(12, 18, 30, 0.78);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
+  }
+
+  @keyframes composer-shimmer {
+    from {
+      background-position: 0% 0%;
+    }
+    to {
+      background-position: 200% 0%;
+    }
+  }
+
+  .turn.status-turn {
+    justify-content: center;
+  }
+
+  .interrupt-status {
+    width: min(84%, 720px);
+    background: rgba(74, 18, 41, 0.36);
+    border-color: rgba(244, 114, 182, 0.26);
   }
 
   .composer-flow {
@@ -1266,6 +1408,14 @@
     padding: 12px 14px;
     font: inherit;
     line-height: 1.45;
+  }
+
+  .composer-input-sending,
+  .draft-image-preview-sending {
+    background-image:
+      linear-gradient(90deg, rgba(125, 211, 252, 0) 0%, rgba(125, 211, 252, 0.03) 42%, rgba(125, 211, 252, 0.09) 50%, rgba(125, 211, 252, 0.03) 58%, rgba(125, 211, 252, 0) 100%);
+    background-size: 180% 100%;
+    animation: composer-shimmer 1.2s linear infinite;
   }
 
   .composer-input:focus {

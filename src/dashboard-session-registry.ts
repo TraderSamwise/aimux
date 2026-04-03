@@ -6,6 +6,7 @@ import { listWorktrees as listAllWorktrees } from "./worktree.js";
 export interface DashboardLocalSession {
   id: string;
   command: string;
+  tmuxWindowId?: string;
   backendSessionId?: string;
   status: DashboardSession["status"];
   worktreePath?: string;
@@ -59,6 +60,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
     index,
     id: session.id,
     command: session.command,
+    tmuxWindowId: session.tmuxWindowId,
     backendSessionId: session.backendSessionId,
     status: session.status,
     active: index === options.activeIndex,
