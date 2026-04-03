@@ -1,15 +1,13 @@
 import { basename } from "node:path";
-import { execSync } from "node:child_process";
 import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
 import type { SessionSemanticState } from "./session-semantics.js";
 import { sessionSemanticCompactHint } from "./session-semantics.js";
-import type { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
-import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 
 export interface StatuslineSession {
   id: string;
   tool: string;
   label?: string;
+  tmuxWindowId?: string;
   windowName?: string;
   headline?: string;
   status?: string;
@@ -138,113 +136,64 @@ export function renderDashboardScreens(activeScreen: StatuslineData["dashboardSc
   return screens.map((screen) => (screen.key === active ? `[${screen.label}]` : screen.label));
 }
 
-function gitOutput(cwd: string, command: string): string | null {
-  try {
-    return execSync(command, {
-      cwd,
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return null;
-  }
-}
-
 export function currentPathContext(currentPath: string | undefined): { worktreeName?: string; branch?: string } | null {
   if (!currentPath) return null;
   const worktreeName = basename(currentPath);
-  const branch = gitOutput(currentPath, "git rev-parse --abbrev-ref HEAD") || undefined;
   return {
     worktreeName: worktreeName || undefined,
-    branch,
   };
 }
 
 export function resolveCurrentSessionId(
   data: StatuslineData,
-  tmuxRuntimeManager: TmuxRuntimeManager,
   currentSession?: string,
   currentWindow?: string,
   currentWindowId?: string,
   currentPath?: string,
   projectRoot?: string,
 ): string | undefined {
-  if (currentSession && projectRoot) {
-    try {
-      const windows = tmuxRuntimeManager.listManagedWindows(currentSession);
-      const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
-      const current =
-        (currentWindowId ? windows.find(({ target }) => target.windowId === currentWindowId) : undefined) ??
-        (currentWindow
-          ? windows.find(({ target, metadata }) => {
-              const metadataPath = normalizePath(metadata.worktreePath, projectRoot);
-              return (
-                metadataPath === normalizedCurrentPath &&
-                (target.windowName === currentWindow || metadata.label === currentWindow)
-              );
-            })
-          : undefined);
-      if (current?.metadata.sessionId) return current.metadata.sessionId;
-    } catch {}
+  const sessions = data.sessions ?? [];
+  if (currentWindowId) {
+    const byWindow = sessions.find((session) => session.tmuxWindowId === currentWindowId);
+    if (byWindow?.id) return byWindow.id;
+  }
+  if (currentWindow && projectRoot) {
+    const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
+    const byScopedWindow = sessions.find((session) => {
+      if (normalizePath(session.worktreePath, projectRoot) !== normalizedCurrentPath) return false;
+      return session.windowName === currentWindow || session.label === currentWindow || session.tool === currentWindow;
+    });
+    if (byScopedWindow?.id) return byScopedWindow.id;
   }
   return data.sessions?.find((session) => session.active)?.id;
 }
 
 export function resolveScopedSessions(
   data: StatuslineData,
-  tmuxRuntimeManager: TmuxRuntimeManager,
   projectRoot: string,
   currentSession?: string,
   currentWindow?: string,
   currentWindowId?: string,
   currentPath?: string,
 ): ResolvedStatuslineSession[] {
-  if (!currentSession) return [];
   const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
-  let windows: ReturnType<TmuxRuntimeManager["listManagedWindows"]> = [];
-  try {
-    windows = tmuxRuntimeManager.listManagedWindows(currentSession);
-  } catch {
-    return [];
-  }
-
-  const sessionMap = new Map((data.sessions ?? []).map((session) => [session.id, session]));
-  return windows
-    .filter(({ target, metadata }) => {
-      if (isDashboardWindowName(target.windowName)) return false;
-      return normalizePath(metadata.worktreePath, projectRoot) === normalizedCurrentPath;
-    })
+  return (data.sessions ?? [])
+    .filter((session) => normalizePath(session.worktreePath, projectRoot) === normalizedCurrentPath)
     .slice(0, 5)
-    .map(({ target, metadata }) => {
-      const session =
-        sessionMap.get(metadata.sessionId) ??
-        ({
-          id: metadata.sessionId,
-          tool: metadata.command,
-          label: metadata.label,
-          role: metadata.role,
-        } satisfies StatuslineSession);
-      const fallbackMetadata = metadataFromTmuxWindow(metadata);
-      const resolvedMetadata = data.metadata?.[metadata.sessionId] ?? fallbackMetadata;
-      const metadataPath = normalizePath(metadata.worktreePath, projectRoot);
-      const matchesCurrentPath = metadataPath === normalizedCurrentPath;
+    .map((session) => {
+      const resolvedMetadata = data.metadata?.[session.id];
       return {
         ...session,
         derived: resolvedMetadata?.derived,
         semantic: session.semantic,
         metadata: resolvedMetadata,
-        isCurrent: currentWindowId
-          ? target.windowId === currentWindowId
-          : currentWindow
-            ? matchesCurrentPath && (target.windowName === currentWindow || metadata.label === currentWindow)
-            : Boolean(session.active),
+        isCurrent: currentWindowId ? session.tmuxWindowId === currentWindowId : Boolean(session.active),
       };
     });
 }
 
 export function resolveSessionMetadata(
   data: StatuslineData,
-  tmuxRuntimeManager: TmuxRuntimeManager,
   projectRoot: string,
   currentSession?: string,
   currentWindow?: string,
@@ -253,7 +202,6 @@ export function resolveSessionMetadata(
 ): StatuslineMetadataEntry | undefined {
   const activeSessionId = resolveCurrentSessionId(
     data,
-    tmuxRuntimeManager,
     currentSession,
     currentWindow,
     currentWindowId,
@@ -261,22 +209,5 @@ export function resolveSessionMetadata(
     projectRoot,
   );
   if (!activeSessionId) return undefined;
-  if (data.metadata?.[activeSessionId]) return data.metadata[activeSessionId];
-  if (!currentSession) return undefined;
-  try {
-    const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
-    const windows = tmuxRuntimeManager.listManagedWindows(currentSession);
-    const current = windows.find(({ target, metadata }) => {
-      const metadataPath = normalizePath(metadata.worktreePath, projectRoot);
-      return (
-        (currentWindowId ? target.windowId === currentWindowId : false) ||
-        metadata.sessionId === activeSessionId ||
-        (metadataPath === normalizedCurrentPath &&
-          (target.windowName === currentWindow || metadata.label === currentWindow))
-      );
-    });
-    return current ? metadataFromTmuxWindow(current.metadata) : undefined;
-  } catch {
-    return undefined;
-  }
+  return data.metadata?.[activeSessionId];
 }

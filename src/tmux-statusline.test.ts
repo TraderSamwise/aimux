@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths, getProjectStateDirFor } from "./paths.js";
 import { renderTmuxStatusline } from "./tmux-statusline.js";
-import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
 describe("renderTmuxStatusline", () => {
   const originalCwd = process.cwd();
@@ -28,29 +27,6 @@ describe("renderTmuxStatusline", () => {
   });
 
   it("renders top-line task/context/metadata data", () => {
-    vi.spyOn(TmuxRuntimeManager.prototype, "listManagedWindows").mockReturnValue([
-      {
-        target: { sessionName: "aimux-mobile", windowId: "@1", windowIndex: 1, windowName: "coder" },
-        metadata: {
-          sessionId: "a",
-          command: "codex",
-          args: [],
-          toolConfigKey: "codex",
-          label: "coder",
-          worktreePath: repoRoot,
-        },
-      },
-      {
-        target: { sessionName: "aimux-mobile", windowId: "@2", windowIndex: 2, windowName: "claude" },
-        metadata: {
-          sessionId: "b",
-          command: "claude",
-          args: [],
-          toolConfigKey: "claude",
-          worktreePath: repoRoot,
-        },
-      },
-    ]);
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
       statusPath,
@@ -113,19 +89,6 @@ describe("renderTmuxStatusline", () => {
   });
 
   it("uses existing statusline data even if it is not freshly rewritten", () => {
-    vi.spyOn(TmuxRuntimeManager.prototype, "listManagedWindows").mockReturnValue([
-      {
-        target: { sessionName: "aimux-mobile", windowId: "@1", windowIndex: 1, windowName: "coder" },
-        metadata: {
-          sessionId: "a",
-          command: "codex",
-          args: [],
-          toolConfigKey: "codex",
-          label: "coder",
-          worktreePath: repoRoot,
-        },
-      },
-    ]);
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
       statusPath,
@@ -150,19 +113,6 @@ describe("renderTmuxStatusline", () => {
   });
 
   it("trims bottom-line segments to available width", () => {
-    vi.spyOn(TmuxRuntimeManager.prototype, "listManagedWindows").mockReturnValue([
-      {
-        target: { sessionName: "aimux-mobile", windowId: "@1", windowIndex: 1, windowName: "coder" },
-        metadata: {
-          sessionId: "a",
-          command: "codex",
-          args: [],
-          toolConfigKey: "codex",
-          label: "coder",
-          worktreePath: repoRoot,
-        },
-      },
-    ]);
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
       statusPath,
@@ -188,29 +138,6 @@ describe("renderTmuxStatusline", () => {
   });
 
   it("renders bottom-line scoped agents and headline data", () => {
-    vi.spyOn(TmuxRuntimeManager.prototype, "listManagedWindows").mockReturnValue([
-      {
-        target: { sessionName: "aimux-mobile", windowId: "@1", windowIndex: 1, windowName: "coder" },
-        metadata: {
-          sessionId: "a",
-          command: "codex",
-          args: [],
-          toolConfigKey: "codex",
-          label: "coder",
-          worktreePath: repoRoot,
-        },
-      },
-      {
-        target: { sessionName: "aimux-mobile", windowId: "@2", windowIndex: 2, windowName: "claude" },
-        metadata: {
-          sessionId: "b",
-          command: "claude",
-          args: [],
-          toolConfigKey: "claude",
-          worktreePath: repoRoot,
-        },
-      },
-    ]);
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
       statusPath,
@@ -241,7 +168,7 @@ describe("renderTmuxStatusline", () => {
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(rendered).toContain("[coder(coder) ?]");
+    expect(rendered).toContain("[coder(coder) on you ?]");
     expect(rendered).toContain("claude ✓");
     expect(rendered).toContain("Fix auth flow");
   });
@@ -249,31 +176,6 @@ describe("renderTmuxStatusline", () => {
   it("disambiguates duplicate tmux window names by current path", () => {
     const otherWorktree = join(repoRoot, "worktree-a");
     mkdirSync(otherWorktree, { recursive: true });
-    vi.spyOn(TmuxRuntimeManager.prototype, "listManagedWindows").mockReturnValue([
-      {
-        target: { sessionName: "aimux-mobile", windowId: "@1", windowIndex: 1, windowName: "codex" },
-        metadata: {
-          sessionId: "a",
-          command: "codex",
-          args: [],
-          toolConfigKey: "codex",
-          label: "codex",
-          role: "coder",
-          worktreePath: repoRoot,
-        },
-      },
-      {
-        target: { sessionName: "aimux-mobile", windowId: "@2", windowIndex: 2, windowName: "codex" },
-        metadata: {
-          sessionId: "b",
-          command: "codex",
-          args: [],
-          toolConfigKey: "codex",
-          label: "codex",
-          worktreePath: otherWorktree,
-        },
-      },
-    ]);
     const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
     writeFileSync(
       statusPath,
@@ -309,7 +211,7 @@ describe("renderTmuxStatusline", () => {
       width: 220,
     });
     expect(top).toContain("needs input");
-    expect(bottom).toContain("[codex(coder) ?]");
+    expect(bottom).toContain("codex(coder) on you ?");
     expect(bottom).not.toContain("[codex ↻]");
   });
 });

@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { getProjectStateDirFor } from "./paths.js";
-import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 import {
   currentPathContext,
   renderDashboardScreens,
@@ -47,7 +47,6 @@ function renderProjectIdentity(projectRoot: string): string {
 
 function renderActiveContext(
   data: StatuslineData,
-  tmuxRuntimeManager: TmuxRuntimeManager,
   projectRoot: string,
   currentSession?: string,
   currentWindow?: string,
@@ -56,7 +55,6 @@ function renderActiveContext(
 ): string | null {
   const activeSessionId = resolveCurrentSessionId(
     data,
-    tmuxRuntimeManager,
     currentSession,
     currentWindow,
     currentWindowId,
@@ -110,7 +108,6 @@ function renderActiveHeadline(data: StatuslineData): string | null {
 
 function renderActiveMetadata(
   data: StatuslineData,
-  tmuxRuntimeManager: TmuxRuntimeManager,
   projectRoot: string,
   currentSession?: string,
   currentWindow?: string,
@@ -119,7 +116,6 @@ function renderActiveMetadata(
 ): string | null {
   const activeSessionId = resolveCurrentSessionId(
     data,
-    tmuxRuntimeManager,
     currentSession,
     currentWindow,
     currentWindowId,
@@ -129,7 +125,6 @@ function renderActiveMetadata(
   if (!activeSessionId) return null;
   const metadata = resolveSessionMetadata(
     data,
-    tmuxRuntimeManager,
     projectRoot,
     currentSession,
     currentWindow,
@@ -166,33 +161,12 @@ function renderTopLine(
   width?: number,
 ): string {
   const data = loadStatusline(projectRoot);
-  const tmuxRuntimeManager = new TmuxRuntimeManager();
   const segments = [
     renderProjectIdentity(projectRoot),
     data ? renderControlPlane(data) : "ctl down",
-    data
-      ? renderActiveContext(
-          data,
-          tmuxRuntimeManager,
-          projectRoot,
-          currentSession,
-          currentWindow,
-          currentWindowId,
-          currentPath,
-        )
-      : null,
+    data ? renderActiveContext(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath) : null,
     data ? renderTasks(data) : null,
-    data
-      ? renderActiveMetadata(
-          data,
-          tmuxRuntimeManager,
-          projectRoot,
-          currentSession,
-          currentWindow,
-          currentWindowId,
-          currentPath,
-        )
-      : null,
+    data ? renderActiveMetadata(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath) : null,
     data ? renderFlash(data) : null,
   ].filter((segment): segment is string => Boolean(segment));
   const separator = "  ·  ";
@@ -218,19 +192,12 @@ function renderBottomLine(
 ): string {
   const data = loadStatusline(projectRoot);
   if (!data) return "";
-  const tmuxRuntimeManager = new TmuxRuntimeManager();
   const sessionSegments =
     currentWindow && isDashboardWindowName(currentWindow)
       ? renderDashboardScreens(data.dashboardScreen)
-      : resolveScopedSessions(
-          data,
-          tmuxRuntimeManager,
-          projectRoot,
-          currentSession,
-          currentWindow,
-          currentWindowId,
-          currentPath,
-        ).map(renderSessionChip);
+      : resolveScopedSessions(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath).map(
+          renderSessionChip,
+        );
   const segments = [...sessionSegments, renderActiveHeadline(data)].filter((segment): segment is string =>
     Boolean(segment),
   );

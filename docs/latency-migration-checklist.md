@@ -21,27 +21,27 @@ Based on [latency-architecture-rfc.md](./latency-architecture-rfc.md).
 
 - [ ] Validate real-world hotkey latency after the fast-control migration
 - [ ] Validate real-world statusline smoothness after thin entrypoint split
+- [ ] Reduce or eliminate fast-control fallback frequency
 
 ## Next
 
 ### Fast control
 
 - [ ] Move dashboard keyboard-side quick navigation to the same fast-control module where applicable
-- [ ] Add lightweight telemetry/timing for fast-control fallback rate
-- [ ] Log when fast control falls back to the heavyweight CLI path
-- [ ] Reduce or eliminate fallback frequency
+- [x] Add lightweight telemetry/timing for fast-control fallback rate
+- [x] Log when fast control falls back to the heavyweight CLI path
 
 ### Statusline / render helpers
 
-- [ ] Audit remaining statusline helper imports for avoidable weight
-- [ ] Confirm no render helpers trigger daemon/project-service verification
-- [ ] Confirm render helpers never shell out for git/tmux reconstruction on the hot path
+- [x] Audit remaining statusline helper imports for avoidable weight
+- [x] Confirm no render helpers trigger daemon/project-service verification
+- [x] Confirm render helpers never shell out for git/tmux reconstruction on the hot path
 
 ### Dashboard/UI
 
 - [ ] Identify dashboard refresh/model work that can move behind project-service-owned cached state
 - [ ] Reduce synchronous reconstruction in dashboard focus/refresh paths
-- [ ] Ensure dashboard uses shared fast-control semantics for agent ordering and attention routing
+- [x] Ensure dashboard uses shared fast-control semantics for agent ordering and attention routing
 
 ### CLI / entrypoints
 
