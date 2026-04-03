@@ -166,8 +166,9 @@ export class TmuxRuntimeManager {
 
   private ensureClientSession(hostSessionName: string, clientSessionName: string, projectRoot: string): void {
     const dashboardName = `dashboard-${clientSessionName.match(/-client-([a-f0-9]{8})$/)?.[1] ?? "client"}`;
+    const clientSessionExists = this.hasSession(clientSessionName);
     const hostDashboard = this.listWindows(hostSessionName).find((window) => isDashboardWindowName(window.name));
-    const existingDashboard = this.hasSession(clientSessionName)
+    const existingDashboard = clientSessionExists
       ? this.listWindows(clientSessionName).find((window) => isDashboardWindowName(window.name))
       : undefined;
     const needsRecreate =
@@ -179,7 +180,7 @@ export class TmuxRuntimeManager {
       this.exec(["kill-session", "-t", clientSessionName]);
     }
 
-    if (!this.hasSession(clientSessionName)) {
+    if (!clientSessionExists || needsRecreate) {
       this.exec(
         [
           "new-session",
@@ -196,9 +197,10 @@ export class TmuxRuntimeManager {
         ],
         { cwd: projectRoot },
       );
+      this.configureSession(clientSessionName, projectRoot);
+      this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
+      return;
     }
-    this.configureSession(clientSessionName, projectRoot);
-    this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
   }
 
   private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget): TmuxTarget {
@@ -235,7 +237,8 @@ export class TmuxRuntimeManager {
 
   ensureProjectSession(projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxSessionRef {
     const session = this.getProjectSession(projectRoot);
-    if (!this.hasSession(session.sessionName)) {
+    const exists = this.hasSession(session.sessionName);
+    if (!exists) {
       const argv =
         dashboardCommand && dashboardCommand.args.length >= 0
           ? [
@@ -264,8 +267,8 @@ export class TmuxRuntimeManager {
               "printf ''",
             ];
       this.exec(argv, { cwd: projectRoot });
+      this.configureSession(session.sessionName, projectRoot);
     }
-    this.configureSession(session.sessionName, projectRoot);
     return session;
   }
 

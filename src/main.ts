@@ -299,6 +299,11 @@ async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVers
   }
 }
 
+async function ensureDaemonProjectSpawned(projectRoot: string): Promise<void> {
+  await ensureDaemonRunning();
+  await ensureProjectService(projectRoot);
+}
+
 function resolveProjectRoot(cwd: string): string {
   try {
     return findMainRepo(cwd);
@@ -475,7 +480,7 @@ program
             return;
           }
         }
-        await ensureDaemonProjectReady(projectRoot);
+        await ensureDaemonProjectSpawned(projectRoot);
         const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
         if (!tool && !opts.resume && !opts.restore) {
           tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
@@ -553,7 +558,7 @@ program
     try {
       const originalCwd = process.cwd();
       const projectRoot = resolveProjectRoot(originalCwd);
-      await ensureDaemonProjectReady(projectRoot);
+      await ensureDaemonProjectSpawned(projectRoot);
 
       const tmux = new TmuxRuntimeManager();
       ensureTmuxAvailable(tmux);
