@@ -118,6 +118,14 @@ async function restartStaleProjectService(projectRoot: string): Promise<void> {
   await ensureProjectService(projectRoot);
 }
 
+async function restartStaleControlPlane(projectRoot: string): Promise<void> {
+  console.error(`aimux: restarting stale daemon-managed control plane for ${projectRoot}...`);
+  await stopDaemon();
+  removeMetadataEndpoint(projectRoot);
+  await ensureDaemonRunning();
+  await ensureProjectService(projectRoot);
+}
+
 async function fetchProjectServiceHealth(endpoint: { host: string; port: number }): Promise<{
   serviceInfo?: ProjectServiceManifest;
   pid?: number;
@@ -286,7 +294,7 @@ async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVers
     if (!(error instanceof ProjectServiceVersionError) || opts?.repairVersionDrift === false) {
       throw error;
     }
-    await restartStaleProjectService(projectRoot);
+    await restartStaleControlPlane(projectRoot);
     await waitForVerifiedProjectService(projectRoot);
   }
 }
@@ -313,6 +321,8 @@ function shellQuote(value: string): string {
 function getDashboardCommandSpec(projectRoot: string) {
   const scriptPath = fileURLToPath(import.meta.url);
   const wrappedDashboardCommand = [
+    "set -o pipefail",
+    ";",
     shellQuote(process.execPath),
     shellQuote(scriptPath),
     "--tmux-dashboard-internal",
@@ -348,7 +358,7 @@ function getDashboardCommandSpec(projectRoot: string) {
     dashboardBuildStamp: String(statSync(scriptPath).mtimeMs),
     dashboardCommand: {
       cwd: projectRoot,
-      command: "sh",
+      command: "bash",
       args: ["-lc", wrappedDashboardCommand],
     },
   };
