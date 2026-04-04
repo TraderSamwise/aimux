@@ -190,10 +190,13 @@ export function resolveAttentionAgent(
 export function serializeFastControlItem(item: FastControlItem) {
   return {
     target: item.target,
+    id: item.metadata.sessionId,
     metadata: item.metadata,
     label: item.label,
     urgency: item.urgency,
     activity: item.activity,
+    lastUsedAt: item.lastUsedAt,
+    recentRank: item.recentRank,
   };
 }
 

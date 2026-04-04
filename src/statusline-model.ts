@@ -9,6 +9,7 @@ export interface StatuslineSession {
   tool: string;
   label?: string;
   tmuxWindowId?: string;
+  tmuxWindowIndex?: number;
   windowName?: string;
   headline?: string;
   status?: string;
@@ -224,6 +225,9 @@ export function resolveScopedSessions(
       const leftKind = left.kind === "service" ? 1 : 0;
       const rightKind = right.kind === "service" ? 1 : 0;
       if (leftKind !== rightKind) return leftKind - rightKind;
+      const leftIndex = left.tmuxWindowIndex ?? Number.MAX_SAFE_INTEGER;
+      const rightIndex = right.tmuxWindowIndex ?? Number.MAX_SAFE_INTEGER;
+      if (leftIndex !== rightIndex) return leftIndex - rightIndex;
       return compactSessionTitle(left).localeCompare(compactSessionTitle(right));
     })
     .slice(0, 5)

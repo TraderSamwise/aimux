@@ -215,6 +215,20 @@ async function publishDesktopNotificationContext(projectPath = selectedProjectPa
   } catch {}
 }
 
+async function markUsage(projectPath, itemId) {
+  if (!projectPath || !itemId) return;
+  const project = projects.find((entry) => entry.path === projectPath) || null;
+  const endpoint = project?.serviceEndpoint || null;
+  if (!endpoint?.host || !endpoint?.port) return;
+  try {
+    await fetch(`http://${endpoint.host}:${endpoint.port}/usage/mark`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ itemId }),
+    });
+  } catch {}
+}
+
 function stopProjectAlertStream(projectPath) {
   const existing = projectAlertStreams.get(projectPath);
   if (existing) {
@@ -1423,6 +1437,7 @@ export async function focusTerminalAgent(terminal, projectPath, sessionId, label
 export async function openSession(terminal, projectPath, sessionId, label) {
   selectSession(sessionId);
   selectedScreen = "dashboard";
+  void markUsage(projectPath, sessionId);
   if (interactionMode === "native-chat") {
     return;
   }
@@ -1434,6 +1449,7 @@ export async function openSession(terminal, projectPath, sessionId, label) {
 
 export async function openService(terminal, projectPath, serviceId, label, windowId = null) {
   selectedScreen = "dashboard";
+  void markUsage(projectPath, serviceId);
   if (!terminal) return;
   void focusTerminalAgent(terminal, projectPath, serviceId, label, windowId).catch(() => {});
 }

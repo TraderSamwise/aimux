@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { getState, openService, openSession, isActionPending, isSessionActionBlocked, trackAction } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
+  import { formatRelativeRecency } from "../../../src/recency.ts";
 
   const appState = getState();
   const termInstance = getTerminal();
@@ -199,6 +200,11 @@
     if (service.pending) return "starting";
     if (service.status === "exited") return "exited";
     return "running";
+  }
+
+  function lastUsedLabel(entry) {
+    const formatted = formatRelativeRecency(entry?.lastUsedAt || null);
+    return formatted ? `used ${formatted}` : null;
   }
 
   function showError(raw) {
@@ -751,6 +757,9 @@
                         {#if statusParts.secondary}
                           <span class="agent-status-secondary">{statusParts.secondary}</span>
                         {/if}
+                        {#if lastUsedLabel(agent)}
+                          <span class="agent-status-secondary">{lastUsedLabel(agent)}</span>
+                        {/if}
                       </span>
                       <span class="agent-actions" class:visible={agent.pending || renameSessionId === agent.id || forkMenu?.sessionId === agent.id || migrateSessionId === agent.id}>
                         {#if agent.status === "running"}
@@ -886,6 +895,9 @@
                       <span class="agent-status-primary">{serviceStatusLabel(service)}</span>
                       {#if service.previewLine}
                         <span class="agent-status-secondary" title={service.previewLine}>{service.previewLine}</span>
+                      {/if}
+                      {#if lastUsedLabel(service)}
+                        <span class="agent-status-secondary">{lastUsedLabel(service)}</span>
                       {/if}
                     </span>
                     <span class="agent-actions visible">

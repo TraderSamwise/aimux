@@ -12,6 +12,8 @@ export interface DashboardSession {
   id: string;
   command: string;
   tmuxWindowId?: string;
+  tmuxWindowIndex?: number;
+  lastUsedAt?: string;
   backendSessionId?: string;
   status: DashboardSessionStatus;
   active: boolean;
@@ -67,6 +69,8 @@ export interface DashboardService {
   command: string;
   args: string[];
   tmuxWindowId?: string;
+  tmuxWindowIndex?: number;
+  lastUsedAt?: string;
   worktreePath?: string;
   worktreeName?: string;
   worktreeBranch?: string;

@@ -52,6 +52,7 @@ function buildTmuxStatuslineFallback(
     tool: windowMeta.command || target.windowName,
     label: windowMeta.label,
     tmuxWindowId: target.windowId,
+    tmuxWindowIndex: target.windowIndex,
     windowName: target.windowName,
     headline: windowMeta.statusText,
     status: windowMeta.activity,

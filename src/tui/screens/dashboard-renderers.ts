@@ -1,5 +1,6 @@
 import type { DashboardService, DashboardSession, MainCheckoutInfo, WorktreeGroup } from "../../dashboard.js";
 import { derivedStatusLabel } from "../../dashboard.js";
+import { formatRelativeRecency } from "../../recency.js";
 import { sessionSemanticCompactHint } from "../../session-semantics.js";
 import { center, composeTwoPane, stripAnsi, truncate, wrapKeyValue } from "../render/text.js";
 
@@ -95,6 +96,7 @@ export function renderDashboardFrame(
             ? " \x1b[35m!\x1b[0m"
             : "";
     const unseenBadge = session.unseenCount && session.unseenCount > 0 ? ` \x1b[36m${session.unseenCount}\x1b[0m` : "";
+    const lastUsedHint = session.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(session.lastUsedAt)}\x1b[0m` : "";
 
     if (session.remoteInstancePid) {
       const icon = "\x1b[2;36m◈\x1b[0m";
@@ -102,7 +104,7 @@ export function renderDashboardFrame(
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      return `${indent}${prefix}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge} — ${ownerTag}`;
+      return `${indent}${prefix}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${lastUsedHint} — ${ownerTag}`;
     }
 
     const icon = STATUS_ICONS[session.status];
@@ -113,7 +115,7 @@ export function renderDashboardFrame(
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}`;
+    return `${indent}${prefix}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${lastUsedHint}`;
   };
 
   const renderService = (service: DashboardService, indent: string): string => {
@@ -124,7 +126,8 @@ export function renderDashboardFrame(
     const commandHint = service.foregroundCommand ? ` \x1b[2m· ${truncate(service.foregroundCommand, 22)}\x1b[0m` : "";
     const pidHint = service.pid ? ` \x1b[2m(pid ${service.pid})\x1b[0m` : "";
     const previewHint = service.previewLine ? ` \x1b[2m· ${truncate(service.previewLine, 40)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} ${identity} \x1b[2m[service]\x1b[0m — ${service.status}${commandHint}${pidHint}${previewHint}`;
+    const lastUsedHint = service.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(service.lastUsedAt)}\x1b[0m` : "";
+    return `${indent}${prefix}${icon} ${identity} \x1b[2m[service]\x1b[0m — ${service.status}${commandHint}${pidHint}${previewHint}${lastUsedHint}`;
   };
 
   const renderWorktreeGrouped = (lines: string[]): void => {

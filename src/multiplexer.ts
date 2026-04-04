@@ -35,6 +35,7 @@ import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from 
 import { buildDashboardSessions, orderDashboardSessionsByVisualWorktree } from "./dashboard-session-registry.js";
 import { AgentTracker } from "./agent-tracker.js";
 import { InstanceDirectory } from "./instance-directory.js";
+import { loadLastUsedState, markLastUsed } from "./last-used.js";
 import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./tmux-runtime-manager.js";
 import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
@@ -496,6 +497,7 @@ export class Multiplexer {
   }
 
   private computeDashboardSessions(): DashboardSession[] {
+    const lastUsedState = loadLastUsedState(process.cwd());
     const metadata = loadMetadataState().sessions;
     const threadSummaries = listThreadSummaries();
     const threadStats = new Map<
@@ -606,6 +608,7 @@ export class Multiplexer {
       return {
         ...session,
         tmuxWindowIndex: target?.windowIndex,
+        lastUsedAt: lastUsedState.items[session.id]?.lastUsedAt,
         foregroundCommand: runtimeInfo.command,
         pid: runtimeInfo.pid,
         previewLine: runtimeInfo.previewLine,
@@ -640,6 +643,7 @@ export class Multiplexer {
   }
 
   private computeDashboardServices(worktrees = this.listDesktopWorktrees()): DashboardService[] {
+    const lastUsedState = loadLastUsedState(process.cwd());
     const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
     const worktreeByPath = new Map(worktrees.map((wt) => [wt.path, wt] as const));
     return this.tmuxRuntimeManager
@@ -654,6 +658,7 @@ export class Multiplexer {
           args: metadata.args ?? [],
           tmuxWindowId: target.windowId,
           tmuxWindowIndex: target.windowIndex,
+          lastUsedAt: lastUsedState.items[metadata.sessionId]?.lastUsedAt,
           worktreePath: metadata.worktreePath,
           worktreeName: worktree?.name,
           worktreeBranch: worktree?.branch,
@@ -1932,6 +1937,7 @@ export class Multiplexer {
     const sid = this.sessions[index].id;
     this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
     this.agentTracker.markSeen(sid);
+    this.noteLastUsedItem(sid);
     markNotificationsRead({ sessionId: sid });
     this.syncTuiNotificationContext(false);
     const target = this.sessionTmuxTargets.get(sid);
@@ -2385,6 +2391,7 @@ export class Multiplexer {
 
     const ptyIdx = this.sessions.findIndex((session) => session.id === entry.id);
     if (ptyIdx >= 0) {
+      this.noteLastUsedItem(entry.id);
       this.focusSession(ptyIdx);
     }
   }
@@ -3328,6 +3335,7 @@ export class Multiplexer {
     });
     if (!match) return false;
     this.agentTracker.markSeen(entry.id);
+    this.noteLastUsedItem(entry.id);
     this.tmuxRuntimeManager.openTarget(match.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
     return true;
   }
@@ -3338,8 +3346,17 @@ export class Multiplexer {
       sessionId: serviceId,
     });
     if (!match || match.metadata.kind !== "service") return false;
+    this.noteLastUsedItem(serviceId);
     this.tmuxRuntimeManager.openTarget(match.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
     return true;
+  }
+
+  private noteLastUsedItem(itemId: string): void {
+    markLastUsed(process.cwd(), {
+      itemId,
+      clientSession: this.tmuxRuntimeManager.currentClientSession() ?? undefined,
+    });
+    this.invalidateDesktopStateSnapshot();
   }
 
   private getSelectedDashboardWorktreeEntry(): DashboardWorktreeEntry | undefined {

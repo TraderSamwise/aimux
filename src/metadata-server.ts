@@ -47,6 +47,8 @@ import {
   type TaskLifecycleResult,
 } from "./orchestration-actions.js";
 import { buildWorkflowEntries } from "./workflow.js";
+import { markLastUsed } from "./last-used.js";
+import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
 import type { AgentInputPart } from "./agent-message-parts.js";
 import {
@@ -604,6 +606,24 @@ export class MetadataServer {
       send(res, 200, buildWorkflowEntries(url.searchParams.get("participant") ?? "user"));
       return;
     }
+    if (req.method === "POST" && url.pathname === "/usage/mark") {
+      const body = (await readJson(req)) as { itemId?: string; clientSession?: string };
+      const itemId = body.itemId?.trim() || "";
+      if (!itemId) {
+        send(res, 400, { ok: false, error: "itemId is required" });
+        return;
+      }
+      const state = markLastUsed(process.cwd(), {
+        itemId,
+        clientSession: body.clientSession?.trim() || undefined,
+      });
+      send(res, 200, {
+        ok: true,
+        itemId,
+        lastUsedAt: state.items[itemId]?.lastUsedAt ?? null,
+      });
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/control/switchable-agents") {
       const currentClientSession = url.searchParams.get("currentClientSession")?.trim() || undefined;
       const currentWindow = url.searchParams.get("currentWindow")?.trim() || undefined;
@@ -618,7 +638,10 @@ export class MetadataServer {
           currentPath,
         },
         new TmuxRuntimeManager(),
-      ).map(serializeFastControlItem);
+      ).map((item) => ({
+        ...serializeFastControlItem(item),
+        label: item.lastUsedAt ? `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}` : item.label,
+      }));
       send(res, 200, { ok: true, items });
       return;
     }
