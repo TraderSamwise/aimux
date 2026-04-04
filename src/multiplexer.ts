@@ -385,10 +385,12 @@ export class Multiplexer {
   }
 
   private handleDashboardFocusIn(): void {
+    this.terminalHost.enterAlternateScreen(true);
     this.invalidateDashboardFrame();
     this.renderCurrentDashboardView();
     void this.refreshDashboardModelFromService(true).then((updated) => {
       if (!updated || this.mode !== "dashboard") return;
+      this.terminalHost.enterAlternateScreen(true);
       this.invalidateDashboardFrame();
       this.renderCurrentDashboardView();
     });
@@ -601,6 +603,7 @@ export class Multiplexer {
       const runtimeInfo = target ? this.readTmuxProcessInfo(target) : {};
       return {
         ...session,
+        tmuxWindowIndex: target?.windowIndex,
         foregroundCommand: runtimeInfo.command,
         pid: runtimeInfo.pid,
         previewLine: runtimeInfo.previewLine,
@@ -648,6 +651,7 @@ export class Multiplexer {
           command: metadata.command,
           args: metadata.args ?? [],
           tmuxWindowId: target.windowId,
+          tmuxWindowIndex: target.windowIndex,
           worktreePath: metadata.worktreePath,
           worktreeName: worktree?.name,
           worktreeBranch: worktree?.branch,
@@ -5765,6 +5769,7 @@ export class Multiplexer {
       tool: string;
       label?: string;
       tmuxWindowId?: string;
+      tmuxWindowIndex?: number;
       windowName: string;
       headline?: string;
       status: string;
@@ -5792,6 +5797,7 @@ export class Multiplexer {
           tool: session.command,
           label: session.label,
           tmuxWindowId: session.tmuxWindowId,
+          tmuxWindowIndex: session.tmuxWindowIndex,
           windowName: session.label || session.command,
           headline: session.headline,
           status: session.status,
@@ -5806,6 +5812,7 @@ export class Multiplexer {
           tool: service.command,
           label: service.label,
           tmuxWindowId: service.tmuxWindowId,
+          tmuxWindowIndex: service.tmuxWindowIndex,
           windowName: service.label || service.command,
           headline: service.previewLine,
           status: service.status,
