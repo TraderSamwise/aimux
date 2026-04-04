@@ -70,6 +70,7 @@ export async function initPaths(cwd?: string): Promise<void> {
   if (!existsSync(projectDir)) {
     mkdirSync(projectDir, { recursive: true });
   }
+  writeFileSync(join(projectDir, "project-root.txt"), `${_repoRoot}\n`);
 
   ensureLocalSharedDirs();
   migrateAgentFacingStateToLocal();

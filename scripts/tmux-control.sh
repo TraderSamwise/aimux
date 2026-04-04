@@ -59,6 +59,7 @@ done
 [ -n "$project_state_dir" ] || exit 1
 
 endpoint_file="$project_state_dir/metadata-api.txt"
+project_root_file="$project_state_dir/project-root.txt"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 aimux_bin="$script_dir/../bin/aimux"
 
@@ -87,6 +88,9 @@ request_control() {
 }
 
 repair_control_plane() {
+  if [ -z "$project_root" ] && [ -f "$project_root_file" ]; then
+    project_root=$(tr -d '\n' < "$project_root_file")
+  fi
   [ -n "$project_root" ] || return 1
   [ -x "$aimux_bin" ] || return 1
   "$aimux_bin" daemon project-ensure --project "$project_root" >/dev/null 2>&1 || return 1
