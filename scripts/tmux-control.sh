@@ -428,7 +428,7 @@ for item in items:
     if linked_index is None:
         continue
     script_path = Path(script_dir) / "tmux-control.sh"
-    command = (
+    shell_command = (
         f"sh {shlex.quote(str(script_path))} window "
         f"--project-state-dir {shlex.quote(str(project_state_dir))} "
         f"--current-client-session {shlex.quote(str(effective_client_session))} "
@@ -438,6 +438,7 @@ for item in items:
         f"--current-path {shlex.quote(str(current_path))} "
         f"--pane-id {shlex.quote(str(pane_id))}"
     )
+    command = f"run-shell {shlex.quote(shell_command)}"
     menu_items.append((item["label"], command))
 
 if not menu_items:
