@@ -1,7 +1,7 @@
 import type { DashboardService, DashboardSession, MainCheckoutInfo, WorktreeGroup } from "../../dashboard.js";
 import { derivedStatusLabel } from "../../dashboard.js";
 import { sessionSemanticCompactHint } from "../../session-semantics.js";
-import { center, composeTwoPane, truncate, wrapKeyValue } from "../render/text.js";
+import { center, composeTwoPane, stripAnsi, truncate, wrapKeyValue } from "../render/text.js";
 
 type DashboardNavLevel = "worktrees" | "sessions";
 
@@ -39,6 +39,31 @@ export function renderDashboardFrame(
   cols: number,
   rows: number,
 ): { frame: string; scrollOffset: number } {
+  const contentWidth = Math.min(cols - 2, 118);
+  const contentPad = Math.max(0, Math.floor((cols - contentWidth) / 2));
+  const padBlockLine = (line: string): string => `${" ".repeat(contentPad)}${line}`;
+  const centerInBlock = (line: string): string =>
+    `${" ".repeat(contentPad)}${center(line, contentWidth).trimEnd()}`.slice(0, cols);
+  const wrapCommandGroups = (line: string): string[] => {
+    const groups = line
+      .trim()
+      .split(/\s{2,}/)
+      .filter(Boolean);
+    const lines: string[] = [];
+    let current = "";
+    for (const group of groups) {
+      const next = current ? `${current}  ${group}` : group;
+      if (stripAnsi(next).length <= contentWidth) {
+        current = next;
+      } else {
+        if (current) lines.push(current);
+        current = group;
+      }
+    }
+    if (current) lines.push(current);
+    return lines;
+  };
+
   let renderSessionCounter = 0;
 
   const renderSession = (session: DashboardSession, indent: string): string => {
@@ -394,24 +419,26 @@ export function renderDashboardFrame(
 
   const header: string[] = [
     "",
-    center(
+    centerInBlock(
       `\x1b[1maimux\x1b[0m — agent multiplexer${state.runtimeLabel ? `  \x1b[32m● ${state.runtimeLabel}\x1b[0m` : ""}`,
-      cols,
     ),
-    center("─".repeat(Math.min(50, cols - 4)), cols),
+    centerInBlock("─".repeat(Math.min(72, contentWidth))),
     "",
   ];
   const content: string[] = [];
   if (state.sessions.length === 0 && state.worktreeGroups.length === 0) {
-    content.push(center("No sessions. Press [c] to create one.", cols));
+    content.push(centerInBlock("No sessions. Press [c] to create one."));
   } else if (state.hasWorktrees) {
     renderWorktreeGrouped(content);
   } else {
     for (const session of state.sessions) content.push(renderSession(session, "  "));
   }
 
-  const helpLine = buildHelpLine();
-  const footer: string[] = [center("─".repeat(Math.min(cols - 4, helpLine.length + 4)), cols), center(helpLine, cols)];
+  const helpLines = wrapCommandGroups(buildHelpLine());
+  const footer: string[] = [
+    centerInBlock("─".repeat(Math.min(contentWidth, 96))),
+    ...helpLines.map((line) => centerInBlock(line)),
+  ];
   const viewportHeight = rows - header.length - footer.length;
   const twoPane = cols >= 72 && state.detailsPaneVisible;
   let scrollOffset = state.scrollOffset;
@@ -428,15 +455,20 @@ export function renderDashboardFrame(
   const visibleContent = content.slice(scrollOffset, scrollOffset + viewportHeight);
   const canScrollUp = scrollOffset > 0;
   const canScrollDown = scrollOffset < maxScroll;
-  if (canScrollUp) visibleContent[0] = center("\x1b[2m▲ more ▲\x1b[0m", cols);
+  if (canScrollUp) visibleContent[0] = centerInBlock("\x1b[2m▲ more ▲\x1b[0m");
   if (canScrollDown && visibleContent.length > 0)
-    visibleContent[visibleContent.length - 1] = center("\x1b[2m▼ more ▼\x1b[0m", cols);
+    visibleContent[visibleContent.length - 1] = centerInBlock("\x1b[2m▼ more ▼\x1b[0m");
   while (visibleContent.length < viewportHeight) visibleContent.push("");
 
   let bodyLines = visibleContent;
   if (twoPane) {
-    const rightPanel = renderSelectedDetailsPanel(Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight);
-    bodyLines = composeTwoPane(visibleContent, rightPanel, cols);
+    const rightPanel = renderSelectedDetailsPanel(
+      Math.max(24, contentWidth - Math.max(32, Math.floor(contentWidth * 0.58)) - 3),
+      viewportHeight,
+    );
+    bodyLines = composeTwoPane(visibleContent, rightPanel, contentWidth).map(padBlockLine);
+  } else {
+    bodyLines = visibleContent.map((line) => padBlockLine(line));
   }
   return {
     frame: "\x1b[2J\x1b[H" + [...header, ...bodyLines, ...footer].join("\r\n"),
