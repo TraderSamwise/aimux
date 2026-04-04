@@ -6,6 +6,7 @@ import {
   type TmuxTarget,
   type TmuxWindowMetadata,
 } from "./tmux-runtime-manager.js";
+import { compactSessionTitle } from "./statusline-model.js";
 import { listWorktrees } from "./worktree.js";
 
 export interface FastControlContext {
@@ -21,6 +22,7 @@ export interface FastControlItem {
   metadata: TmuxWindowMetadata;
   label: string;
   urgency: number;
+  activity: number;
 }
 
 export function navigationUrgencyScore(input: {
@@ -105,9 +107,24 @@ export function listSwitchableAgentItems(
     .sort((a, b) => a.target.windowIndex - b.target.windowIndex)
     .map((entry) => ({
       ...entry,
-      label: entry.metadata.label || entry.metadata.command || entry.metadata.sessionId || entry.target.windowName,
+      label: compactSessionTitle({
+        kind: entry.metadata.kind === "service" ? "service" : "agent",
+        tool: entry.metadata.command || entry.target.windowName,
+        label: entry.metadata.label,
+        role: entry.metadata.role,
+        id: entry.metadata.sessionId,
+      }),
       urgency: urgencyFor(context.projectRoot, entry.metadata.sessionId),
+      activity: entry.target.windowIndex,
     }));
+
+  const activityByWindowId = new Map(
+    tmux.listWindows(tmuxSession.sessionName).map((window) => [window.id, window.activity ?? 0] as const),
+  );
+  managed = managed.map((entry) => ({
+    ...entry,
+    activity: activityByWindowId.get(entry.target.windowId) ?? 0,
+  }));
 
   if (context.currentClientSession) {
     const managedByWindowId = new Map(managed.map((entry) => [entry.target.windowId, entry] as const));
@@ -176,5 +193,24 @@ export function serializeFastControlItem(item: FastControlItem) {
     metadata: item.metadata,
     label: item.label,
     urgency: item.urgency,
+    activity: item.activity,
   };
+}
+
+export function listSwitchableAgentMenuItems(
+  context: FastControlContext,
+  tmux = new TmuxRuntimeManager(),
+): FastControlItem[] {
+  const items = [...listSwitchableAgentItems(context, tmux)].sort((a, b) => {
+    if (b.activity !== a.activity) return b.activity - a.activity;
+    return a.target.windowIndex - b.target.windowIndex;
+  });
+  if (items.length < 2) return items;
+  const currentIndex = resolveCurrentAgentIndex(items, context);
+  if (currentIndex < 0) return items;
+  const [current] = items.splice(currentIndex, 1);
+  if (current) {
+    items.splice(1 <= items.length ? 1 : items.length, 0, current);
+  }
+  return items;
 }

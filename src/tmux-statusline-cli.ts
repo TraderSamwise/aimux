@@ -47,10 +47,20 @@ async function main() {
         timeoutMs: 1000,
       });
       if (status >= 200 && status < 300 && json) {
-        const state = json as { statusline?: any; sessions?: any[] };
+        const state = json as { statusline?: any; sessions?: any[]; services?: any[] };
+        const fallbackSessions = [
+          ...(state.sessions ?? []).map((session) => ({ ...session, kind: session.kind ?? "agent" })),
+          ...(state.services ?? []).map((service) => ({ ...service, kind: service.kind ?? "service" })),
+        ];
         const mergedStatusline =
           state.statusline && typeof state.statusline === "object"
-            ? { ...state.statusline, sessions: state.sessions ?? state.statusline.sessions ?? [] }
+            ? {
+                ...state.statusline,
+                sessions:
+                  Array.isArray(state.statusline.sessions) && state.statusline.sessions.length > 0
+                    ? state.statusline.sessions
+                    : fallbackSessions,
+              }
             : null;
         if (mergedStatusline) {
           process.stdout.write(renderTmuxStatuslineFromData(mergedStatusline, projectRoot, line, renderOptions));

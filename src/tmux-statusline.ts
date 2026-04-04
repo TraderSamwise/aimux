@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { getProjectStateDirFor } from "./paths.js";
 import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 import {
+  compactSessionTitle,
   currentPathContext,
   renderDashboardScreens,
   renderDerivedBadge,
@@ -176,10 +177,10 @@ function renderTopLine(
 }
 
 function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[number]): string {
-  const identity = trim(sessionIdentity(session), 16);
+  const identity = trim(compactSessionTitle(session), 18);
   const badge = renderDerivedBadge(session.derived);
   const hint = renderSessionCompactHint(session);
-  const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 24);
+  const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 28);
   return session.isCurrent ? `[${label}]` : label;
 }
 

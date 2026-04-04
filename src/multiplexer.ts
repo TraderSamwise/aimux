@@ -5710,6 +5710,7 @@ export class Multiplexer {
     dashboardScreen: DashboardScreen;
     sessions: Array<{
       id: string;
+      kind?: "agent" | "service";
       tool: string;
       label?: string;
       tmuxWindowId?: string;
@@ -5733,19 +5734,34 @@ export class Multiplexer {
     return {
       project: basename(process.cwd()),
       dashboardScreen: this.dashboardState.screen,
-      sessions: desktopState.sessions.map((session) => ({
-        id: session.id,
-        tool: session.command,
-        label: session.label,
-        tmuxWindowId: session.tmuxWindowId,
-        windowName: session.label || session.command,
-        headline: session.headline,
-        status: session.status,
-        role: session.role,
-        active: session.active,
-        worktreePath: session.worktreePath,
-        semantic: session.semantic,
-      })),
+      sessions: [
+        ...desktopState.sessions.map((session) => ({
+          id: session.id,
+          kind: "agent" as const,
+          tool: session.command,
+          label: session.label,
+          tmuxWindowId: session.tmuxWindowId,
+          windowName: session.label || session.command,
+          headline: session.headline,
+          status: session.status,
+          role: session.role,
+          active: session.active,
+          worktreePath: session.worktreePath,
+          semantic: session.semantic,
+        })),
+        ...desktopState.services.map((service) => ({
+          id: service.id,
+          kind: "service" as const,
+          tool: service.command,
+          label: service.label,
+          tmuxWindowId: service.tmuxWindowId,
+          windowName: service.label || service.command,
+          headline: service.previewLine,
+          status: service.status,
+          active: service.active,
+          worktreePath: service.worktreePath,
+        })),
+      ],
       tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
       controlPlane: {
         daemonAlive: Boolean(loadDaemonInfo()),

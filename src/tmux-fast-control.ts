@@ -5,6 +5,7 @@ import { debug } from "./debug.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import {
+  listSwitchableAgentMenuItems,
   listSwitchableAgentItems,
   resolveAttentionAgent,
   resolveNextAgent,
@@ -28,6 +29,20 @@ interface FastControlResponse {
   target?: TmuxTarget;
   item?: { target: TmuxTarget; label?: string };
   items?: Array<{ target: TmuxTarget; label: string }>;
+}
+
+function resolveCurrentClientSession(tmux: TmuxRuntimeManager, opts: Options): string | undefined {
+  const normalizedSession = opts.currentClientSession?.trim();
+  if (normalizedSession && tmux.hasSession(normalizedSession)) {
+    return normalizedSession;
+  }
+  const liveFromTty = opts.clientTty ? tmux.findClientByTty(opts.clientTty)?.sessionName : null;
+  if (liveFromTty) return liveFromTty;
+  const liveCurrent = tmux.currentClientSession();
+  if (liveCurrent && tmux.hasSession(liveCurrent)) {
+    return liveCurrent;
+  }
+  return undefined;
 }
 
 function logFastControl(message: string): void {
@@ -181,11 +196,7 @@ function getDashboardCommandSpec(projectRoot: string) {
 }
 
 function resolveLocalResult(action: string, opts: Options, tmux: TmuxRuntimeManager): FastControlResponse {
-  const currentClientSession =
-    opts.currentClientSession?.trim() ||
-    (opts.clientTty ? tmux.findClientByTty(opts.clientTty)?.sessionName : null) ||
-    tmux.currentClientSession() ||
-    undefined;
+  const currentClientSession = resolveCurrentClientSession(tmux, opts);
 
   if (action === "window") {
     const windowId = opts.windowId?.trim();
@@ -239,7 +250,7 @@ function resolveLocalResult(action: string, opts: Options, tmux: TmuxRuntimeMana
   };
 
   if (action === "menu") {
-    return { ok: true, items: listSwitchableAgentItems(context, tmux) };
+    return { ok: true, items: listSwitchableAgentMenuItems(context, tmux) };
   }
   if (action === "attention") {
     const item = resolveAttentionAgent(context, tmux);
@@ -267,10 +278,7 @@ async function main() {
     }
     const target = result?.target ?? result?.item?.target;
     if (!target) process.exit(0);
-    const currentClientSession =
-      opts.currentClientSession?.trim() ||
-      (opts.clientTty ? tmux.findClientByTty(opts.clientTty)?.sessionName : null) ||
-      undefined;
+    const currentClientSession = resolveCurrentClientSession(tmux, opts);
     openTarget(tmux, target, currentClientSession, opts.clientTty);
     process.exit(0);
   } catch (error) {

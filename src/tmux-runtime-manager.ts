@@ -17,6 +17,7 @@ export interface TmuxWindowInfo {
   index: number;
   name: string;
   active: boolean;
+  activity?: number;
 }
 
 export interface TmuxSessionRef {
@@ -281,19 +282,20 @@ export class TmuxRuntimeManager {
       "-t",
       sessionName,
       "-F",
-      "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}",
+      "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}",
     ]);
     if (!raw) return [];
     return raw
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [id, index, name, active] = line.split("\t");
+        const [id, index, name, active, activity] = line.split("\t");
         return {
           id,
           index: Number(index),
           name,
           active: active === "1",
+          activity: activity ? Number(activity) : undefined,
         };
       });
   }

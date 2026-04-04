@@ -187,6 +187,53 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("Fix auth flow");
   });
 
+  it("renders scoped services alongside agents in the bottom line", () => {
+    const nestedPath = join(repoRoot, ".aimux", "worktrees", "tealstreet-pr5180");
+    mkdirSync(nestedPath, { recursive: true });
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "a",
+            kind: "agent",
+            tool: "claude",
+            label: "claude-zjlduv",
+            windowName: "claude",
+            tmuxWindowId: "@7",
+            role: "coder",
+            headline: "Needs review",
+            worktreePath: nestedPath,
+          },
+          {
+            id: "svc-1",
+            kind: "service",
+            tool: "shell",
+            label: "shell",
+            windowName: "shell",
+            tmuxWindowId: "@9",
+            headline: "zsh",
+            worktreePath: nestedPath,
+          },
+        ],
+        metadata: {
+          a: { derived: { attention: "needs_input" } },
+        },
+      }),
+    );
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "claude",
+      currentWindowId: "@7",
+      currentPath: join(nestedPath, "src"),
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    expect(rendered).toContain("[claude(coder) on you ?]");
+    expect(rendered).toContain("shell[svc]");
+  });
+
   it("scopes bottom-line agents to the enclosing worktree root for nested cwd paths", () => {
     const nestedPath = join(repoRoot, ".aimux", "worktrees", "tealchart-cleanup-11");
     mkdirSync(nestedPath, { recursive: true });
@@ -230,8 +277,8 @@ describe("renderTmuxStatusline", () => {
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(rendered).toContain("[Claude(coder) on you ?]");
-    expect(rendered).toContain("Codex(reviewer) ↻");
+    expect(rendered).toContain("[claude(coder) on you ?]");
+    expect(rendered).toContain("codex(reviewer) ↻");
     expect(rendered).toContain("Needs review");
   });
 

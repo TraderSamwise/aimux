@@ -15,7 +15,7 @@ function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: str
     if (joined.startsWith("has-session -t ")) throw new Error("missing");
     if (joined.startsWith("list-windows -t aimux-mobile-abc-client-")) {
       const linked = calls.some((call) => call.args[0] === "link-window");
-      return linked ? "@0\t0\tdashboard-268eff9c\t1\n@3\t3\tcodex\t0" : "@0\t0\tdashboard-268eff9c\t1";
+      return linked ? "@0\t0\tdashboard-268eff9c\t1\t100\n@3\t3\tcodex\t0\t90" : "@0\t0\tdashboard-268eff9c\t1\t100";
     }
     if (joined.startsWith("list-windows -t ")) return "";
     if (joined.startsWith("display-message -p -t @0 #{pane_dead}")) return "0";

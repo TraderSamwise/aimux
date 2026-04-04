@@ -364,13 +364,37 @@ function getDashboardCommandSpec(projectRoot: string) {
     ";",
     "then",
     "printf",
-    "%s\\n%s\\n%s\\n",
+    "'\\033[?1049l\\033[H\\033[2J'",
+    ";",
+    "printf",
+    "%s\\n%s\\n%s\\n%s\\n",
     shellQuote(""),
     shellQuote("aimux dashboard failed to start."),
-    shellQuote("The error above was captured from the dashboard process. Press Ctrl+C to close this pane."),
+    shellQuote("The error above was captured from the dashboard process."),
+    shellQuote("Press q, Enter, or Ctrl+C to close this pane."),
     ";",
-    "exec",
-    "cat",
+    "while",
+    "IFS= read -rsn1 key",
+    ";",
+    "do",
+    "if",
+    "[",
+    "-z",
+    '"$key"',
+    "]",
+    "||",
+    "[",
+    '"$key"',
+    "=",
+    shellQuote("q"),
+    "]",
+    ";",
+    "then",
+    "exit 0",
+    ";",
+    "fi",
+    ";",
+    "done",
     ";",
     "fi",
   ].join(" ");
@@ -993,9 +1017,19 @@ daemonCmd
   .command("restart")
   .description("Restart the global aimux daemon")
   .action(async () => {
+    const priorProjects = Object.values(loadDaemonState().projects)
+      .map((project) => project.projectRoot)
+      .filter((projectRoot, index, items) => items.indexOf(projectRoot) === index);
     await stopDaemon("SIGTERM");
     const info = await ensureDaemonRunning();
-    console.log(`Restarted daemon pid ${info.pid} on http://127.0.0.1:${info.port}`);
+    for (const projectRoot of priorProjects) {
+      await ensureProjectService(projectRoot);
+    }
+    const restoredSuffix =
+      priorProjects.length > 0
+        ? ` and restored ${priorProjects.length} project service${priorProjects.length === 1 ? "" : "s"}`
+        : "";
+    console.log(`Restarted daemon pid ${info.pid} on http://127.0.0.1:${info.port}${restoredSuffix}`);
   });
 
 daemonCmd
