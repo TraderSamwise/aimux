@@ -205,7 +205,7 @@ export function listSwitchableAgentMenuItems(
   tmux = new TmuxRuntimeManager(),
 ): FastControlItem[] {
   const recentRankMap = getRecentRankMap(context.projectRoot, context.currentClientSession);
-  const items = [...listSwitchableAgentItems(context, tmux)].sort((a, b) => {
+  return [...listSwitchableAgentItems(context, tmux)].sort((a, b) => {
     const lastUsedDiff = compareLastUsed(a, b, recentRankMap);
     if (lastUsedDiff !== 0) return lastUsedDiff;
     if ((parseRecencyTimestamp(b.lastUsedAt) ?? 0) !== (parseRecencyTimestamp(a.lastUsedAt) ?? 0)) {
@@ -214,12 +214,4 @@ export function listSwitchableAgentMenuItems(
     if (b.activity !== a.activity) return b.activity - a.activity;
     return a.target.windowIndex - b.target.windowIndex;
   });
-  if (items.length < 2) return items;
-  const currentIndex = resolveCurrentAgentIndex(items, context);
-  if (currentIndex < 0) return items;
-  const [current] = items.splice(currentIndex, 1);
-  if (current) {
-    items.splice(1 <= items.length ? 1 : items.length, 0, current);
-  }
-  return items;
 }
