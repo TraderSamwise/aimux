@@ -60,6 +60,7 @@ done
 
 endpoint_file="$project_state_dir/metadata-api.txt"
 project_root_file="$project_state_dir/project-root.txt"
+statusline_json="$project_state_dir/statusline.json"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 aimux_bin="$script_dir/../bin/aimux"
 
@@ -165,6 +166,112 @@ switch_local_dashboard() {
   exit 0
 }
 
+ensure_linked_window() {
+  target_window_id="$1"
+  target_session="${live_client_session-}"
+  [ -n "$target_session" ] || return 1
+  linked_index=$(tmux list-windows -t "$target_session" -F '#{window_index}|#{window_id}' 2>/dev/null | awk -F '|' -v window_id="$target_window_id" '$2 == window_id { print $1; exit }')
+  if [ -z "$linked_index" ]; then
+    tmux link-window -d -s "$target_window_id" -t "$target_session" >/dev/null 2>&1 || return 1
+    linked_index=$(tmux list-windows -t "$target_session" -F '#{window_index}|#{window_id}' 2>/dev/null | awk -F '|' -v window_id="$target_window_id" '$2 == window_id { print $1; exit }')
+  fi
+  [ -n "$linked_index" ] || return 1
+  printf '%s' "$linked_index"
+}
+
+switch_local_window() {
+  target_window_id="$1"
+  resolve_live_client || return 1
+  target_index=$(ensure_linked_window "$target_window_id") || return 1
+  if [ -n "${live_client_tty-}" ]; then
+    tmux switch-client -c "$live_client_tty" -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
+  else
+    tmux switch-client -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
+  fi
+  tmux refresh-client -S >/dev/null 2>&1 || true
+  exit 0
+}
+
+resolve_local_target_from_statusline() {
+  [ -f "$statusline_json" ] || return 1
+  resolved_target=$(
+    python3 - "$statusline_json" "$current_path" "$current_window_id" "$window_id" "$action" <<'PY'
+import json, sys
+path, current_path, current_window_id, explicit_window_id, action = sys.argv[1:]
+try:
+    data = json.load(open(path))
+except Exception:
+    raise SystemExit(1)
+sessions = list(data.get("sessions") or [])
+if explicit_window_id:
+    print(explicit_window_id)
+    raise SystemExit(0)
+if not sessions:
+    raise SystemExit(1)
+matched = []
+best_len = -1
+for session in sessions:
+    worktree = session.get("worktreePath")
+    if not worktree or not current_path.startswith(worktree):
+        continue
+    length = len(worktree)
+    if length > best_len:
+        matched = [session]
+        best_len = length
+    elif length == best_len:
+        matched.append(session)
+items = matched if matched else sessions
+items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, int(s.get("tmuxWindowIndex") or 1_000_000)))
+if not items:
+    raise SystemExit(1)
+current_index = 0
+for idx, item in enumerate(items):
+    if item.get("tmuxWindowId") == current_window_id:
+        current_index = idx
+        break
+if action == "next":
+    target = items[(current_index + 1) % len(items)]
+    print(target.get("tmuxWindowId", ""))
+    raise SystemExit(0)
+if action == "prev":
+    target = items[(current_index - 1) % len(items)]
+    print(target.get("tmuxWindowId", ""))
+    raise SystemExit(0)
+if action == "attention":
+    def rank(item):
+        semantic = item.get("semantic") or {}
+        return (
+            int(semantic.get("waitingOnMeCount") or 0),
+            int(semantic.get("unreadCount") or 0),
+            int(semantic.get("blockedCount") or 0),
+            int(semantic.get("pendingDeliveryCount") or 0),
+        )
+    ranked = sorted(items, key=rank, reverse=True)
+    target = ranked[0]
+    if rank(target) == (0, 0, 0, 0):
+        raise SystemExit(1)
+    print(target.get("tmuxWindowId", ""))
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  ) || return 1
+  [ -n "$resolved_target" ] || return 1
+  printf '%s' "$resolved_target"
+}
+
+fallback_local_control() {
+  case "$action" in
+    dashboard)
+      switch_local_dashboard
+      ;;
+    next|prev|attention|window)
+      target_window_id=$(resolve_local_target_from_statusline) || return 1
+      switch_local_window "$target_window_id"
+      ;;
+  esac
+  return 1
+}
+
 repair_control_plane() {
   if [ -z "$project_root" ] && [ -f "$project_root_file" ]; then
     project_root=$(tr -d '\n' < "$project_root_file")
@@ -209,8 +316,6 @@ if [ "$endpoint_available" -eq 1 ]; then
   fi
 fi
 
-if [ "$action" = "dashboard" ]; then
-  switch_local_dashboard
-fi
+fallback_local_control || true
 
 exit 28
