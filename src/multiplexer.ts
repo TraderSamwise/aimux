@@ -179,6 +179,11 @@ interface NotificationPanelState {
   index: number;
 }
 
+interface PendingDashboardSessionAction {
+  kind: "stopping" | "graveyarding";
+  sessionId: string;
+}
+
 interface DashboardOrchestrationTarget {
   label: string;
   sessionId?: string;
@@ -240,6 +245,7 @@ export class Multiplexer {
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
   private notificationPanelState: NotificationPanelState | null = null;
+  private pendingDashboardSessionActions = new Map<string, PendingDashboardSessionAction["kind"]>();
   /** Quick switcher overlay state */
   private switcherActive = false;
   private switcherIndex = 0;
@@ -457,11 +463,24 @@ export class Multiplexer {
     worktreeGroups: WorktreeGroup[],
     mainCheckoutInfo: { name: string; branch: string },
   ): void {
-    this.dashboardSessionsCache = dashSessions;
+    this.dashboardSessionsCache = this.applyPendingDashboardSessionStates(dashSessions);
     this.dashboardServicesCache = dashServices;
     this.dashboardWorktreeGroupsCache = worktreeGroups;
     this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
     this.dashboardModelRefreshedAt = Date.now();
+  }
+
+  private applyPendingDashboardSessionStates(sessions: DashboardSession[]): DashboardSession[] {
+    if (this.pendingDashboardSessionActions.size === 0) return sessions;
+    return sessions.map((session) => {
+      const pendingAction = this.pendingDashboardSessionActions.get(session.id);
+      if (!pendingAction) return session;
+      return {
+        ...session,
+        pendingAction,
+        optimistic: true,
+      };
+    });
   }
 
   private invalidateDesktopStateSnapshot(): void {
@@ -5264,18 +5283,37 @@ export class Multiplexer {
     }
   }
 
+  private setPendingDashboardSessionAction(
+    sessionId: string,
+    kind: PendingDashboardSessionAction["kind"] | null,
+  ): void {
+    if (kind) {
+      this.pendingDashboardSessionActions.set(sessionId, kind);
+    } else {
+      this.pendingDashboardSessionActions.delete(sessionId);
+    }
+    if (this.mode === "dashboard") {
+      this.refreshLocalDashboardModel();
+      this.renderDashboard();
+    }
+  }
+
   private async stopSessionToOfflineWithFeedback(session: ManagedSession): Promise<void> {
     const label = this.getSessionLabel(session.id) ?? session.command;
-    await this.runDashboardOperation(
-      `Stopping "${label}"`,
-      [`  Session: ${session.id}`, `  Tool: ${session.command}`],
-      async () => {
-        this.stopSessionToOffline(session);
-        await this.waitForSessionExit(session);
-        this.renderDashboard();
-      },
-      `Failed to stop "${label}"`,
-    );
+    this.setPendingDashboardSessionAction(session.id, "stopping");
+    try {
+      this.stopSessionToOffline(session);
+      await this.waitForSessionExit(session);
+      this.setPendingDashboardSessionAction(session.id, null);
+      this.refreshLocalDashboardModel();
+      this.footerFlash = `Stopped ${label}`;
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
+    } catch (err) {
+      this.setPendingDashboardSessionAction(session.id, null);
+      const message = err instanceof Error ? err.message : String(err);
+      this.showDashboardError(`Failed to stop "${label}"`, [message]);
+    }
   }
 
   private clearDashboardSubscreens(): void {
@@ -5412,16 +5450,19 @@ export class Multiplexer {
     const session = this.offlineSessions.find((s) => s.id === sessionId);
     if (!session) return;
     const label = session.label ?? session.command;
-    await this.runDashboardOperation(
-      `Sending "${label}" to graveyard`,
-      [`  Session: ${session.id}`],
-      () => {
-        this.graveyardSession(sessionId);
-        this.adjustAfterRemove(hasWorktrees);
-        this.renderDashboard();
-      },
-      `Failed to graveyard "${label}"`,
-    );
+    this.setPendingDashboardSessionAction(sessionId, "graveyarding");
+    try {
+      this.graveyardSession(sessionId);
+      this.setPendingDashboardSessionAction(sessionId, null);
+      this.adjustAfterRemove(hasWorktrees);
+      this.footerFlash = `Sent ${label} to graveyard`;
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
+    } catch (err) {
+      this.setPendingDashboardSessionAction(sessionId, null);
+      const message = err instanceof Error ? err.message : String(err);
+      this.showDashboardError(`Failed to graveyard "${label}"`, [message]);
+    }
   }
 
   private async resumeOfflineSessionWithFeedback(session: SessionState): Promise<void> {
