@@ -237,6 +237,176 @@ switch_local_window() {
   exit 0
 }
 
+show_local_menu() {
+  if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
+    resolve_live_client || return 1
+  fi
+  python3 - "$project_state_dir" "$current_path" "$current_window_id" "$current_client_session" "${live_client_session-}" "${live_client_tty-}" "$client_tty" <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+from datetime import datetime
+
+project_state_dir, current_path, current_window_id, current_client_session, live_client_session, live_client_tty, client_tty = sys.argv[1:]
+
+effective_client_session = live_client_session or current_client_session
+effective_client_tty = live_client_tty or client_tty
+if not effective_client_session:
+    raise SystemExit(1)
+
+host_session = effective_client_session
+if "-client-" in host_session:
+    host_session = host_session.split("-client-", 1)[0]
+
+def run(*args: str) -> str:
+    return subprocess.check_output(["tmux", *args], text=True).strip()
+
+def try_run(*args: str) -> str:
+    try:
+        return run(*args)
+    except Exception:
+        return ""
+
+def compact_label(meta: dict, window_name: str) -> str:
+    kind = meta.get("kind") or "agent"
+    base = (meta.get("label") or meta.get("command") or window_name or "").strip() or window_name
+    if kind == "service":
+        return f"{base}[svc]"
+    role = (meta.get("role") or "").strip()
+    return f"{base}({role})" if role else base
+
+def parse_ts(value: str | None) -> float:
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+last_used_path = Path(project_state_dir) / "last-used.json"
+last_used = {}
+recent_rank = {}
+if last_used_path.exists():
+    try:
+        state = json.loads(last_used_path.read_text())
+        last_used = state.get("items") or {}
+        client_ids = ((state.get("clients") or {}).get(effective_client_session) or {}).get("recentIds") or []
+        project_ids = state.get("projectRecentIds") or []
+        ordered = list(client_ids) + [item_id for item_id in project_ids if item_id not in client_ids]
+        recent_rank = {item_id: idx for idx, item_id in enumerate(ordered)}
+    except Exception:
+        pass
+
+current_worktree = ""
+current_meta_raw = try_run("show-window-options", "-v", "-t", current_window_id, "@aimux-meta")
+if current_meta_raw:
+    try:
+        current_worktree = (json.loads(current_meta_raw).get("worktreePath") or "").strip()
+    except Exception:
+        current_worktree = ""
+
+items = []
+for line in try_run("list-windows", "-t", host_session, "-F", "#{window_id}|#{window_index}|#{window_name}").splitlines():
+    if not line:
+        continue
+    try:
+        window_id, index_text, window_name = line.split("|", 2)
+    except ValueError:
+        continue
+    meta_raw = try_run("show-window-options", "-v", "-t", window_id, "@aimux-meta")
+    if not meta_raw:
+        continue
+    try:
+        meta = json.loads(meta_raw)
+    except Exception:
+        continue
+    worktree = (meta.get("worktreePath") or "").strip()
+    if current_worktree:
+        if worktree != current_worktree:
+            continue
+    elif not worktree or not current_path.startswith(worktree):
+        continue
+    session_id = (meta.get("sessionId") or "").strip()
+    used_at = ((last_used.get(session_id) or {}).get("lastUsedAt") if session_id else None) or None
+    items.append(
+        {
+            "windowId": window_id,
+            "windowIndex": int(index_text),
+            "kind": meta.get("kind") or "agent",
+            "sessionId": session_id,
+            "label": compact_label(meta, window_name),
+            "lastUsedAt": used_at,
+            "recentRank": recent_rank.get(session_id, 10**9),
+        }
+    )
+
+if not items:
+    raise SystemExit(1)
+
+items.sort(
+    key=lambda item: (
+        item["recentRank"],
+        -parse_ts(item["lastUsedAt"]),
+        0 if item["kind"] == "agent" else 1,
+        item["windowIndex"],
+    )
+)
+
+existing = {}
+for line in try_run("list-windows", "-t", effective_client_session, "-F", "#{window_index}|#{window_id}").splitlines():
+    if not line:
+        continue
+    try:
+        index_text, window_id = line.split("|", 1)
+    except ValueError:
+        continue
+    existing[window_id] = index_text
+
+menu_items: list[tuple[str, str]] = []
+for item in items:
+    linked_index = existing.get(item["windowId"])
+    if linked_index is None:
+        subprocess.run(
+            ["tmux", "link-window", "-d", "-s", item["windowId"], "-t", effective_client_session],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        linked_index = try_run("list-windows", "-t", effective_client_session, "-F", "#{window_index}|#{window_id}")
+        resolved = None
+        for line in linked_index.splitlines():
+            if not line:
+                continue
+            try:
+                index_text, window_id = line.split("|", 1)
+            except ValueError:
+                continue
+            if window_id == item["windowId"]:
+                resolved = index_text
+                existing[window_id] = index_text
+                break
+        linked_index = resolved
+    if linked_index is None:
+        continue
+    if effective_client_tty:
+        command = f"switch-client -c {effective_client_tty} -t {effective_client_session}:{linked_index}"
+    else:
+        command = f"switch-client -t {effective_client_session}:{linked_index}"
+    menu_items.append((item["label"], command))
+
+if not menu_items:
+    raise SystemExit(1)
+
+args = ["tmux", "display-menu"]
+if effective_client_tty:
+    args.extend(["-c", effective_client_tty])
+args.extend(["-T", "aimux", "-x", "P", "-y", "P"])
+for label, command in menu_items:
+    args.extend([label, "", command])
+subprocess.run(args, check=True)
+PY
+  exit 0
+}
+
 resolve_local_target_from_statusline() {
   [ -f "$statusline_json" ] || return 1
   resolved_target=$(
@@ -426,6 +596,9 @@ fallback_local_control() {
     dashboard)
       switch_local_dashboard
       ;;
+    menu)
+      show_local_menu
+      ;;
     next|prev|attention|window)
       target_window_id=$(resolve_local_target_from_statusline || resolve_local_target_from_tmux_metadata) || return 1
       switch_local_window "$target_window_id"
@@ -463,7 +636,7 @@ case "$action" in
 esac
 
 case "$action" in
-  next|prev|attention|dashboard|window)
+  next|prev|attention|dashboard|menu|window)
     fallback_local_control && exit 0
     ;;
 esac

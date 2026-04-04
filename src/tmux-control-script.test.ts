@@ -133,6 +133,7 @@ switch (args[0]) {
   case "list-clients": listClients(); break;
   case "list-windows": listWindows(); break;
   case "display-message": displayMessage(); break;
+  case "display-menu": break;
   case "show-options": showOptions(); break;
   case "show-window-options": showWindowOptions(); break;
   case "link-window": linkWindow(); break;
@@ -423,6 +424,91 @@ describe("tmux-control.sh", () => {
     const curlLog = readCurlLog(envRoot);
     expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(curlLog).toEqual([]);
+  });
+
+  it("shows the switch menu locally when the endpoint is stale", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@shell", index: 0, name: "shell" },
+          { id: "@claude", index: 1, name: "claude" },
+          { id: "@codex", index: 6, name: "codex" },
+        ],
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      windowMetadata: {
+        "@shell": {
+          sessionId: "service-1",
+          kind: "service",
+          command: "shell",
+          worktreePath: "/repo/project/worktree",
+        },
+        "@claude": {
+          sessionId: "claude-1",
+          kind: "agent",
+          command: "claude",
+          role: "coder",
+          worktreePath: "/repo/project/worktree",
+        },
+        "@codex": {
+          sessionId: "codex-1",
+          kind: "agent",
+          command: "codex",
+          role: "coder",
+          worktreePath: "/repo/project/worktree",
+        },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(
+      join(envRoot.projectStateDir, "last-used.json"),
+      JSON.stringify({
+        version: 1,
+        items: {
+          "codex-1": { lastUsedAt: "2026-04-04T00:01:00.000Z" },
+          "claude-1": { lastUsedAt: "2026-04-04T00:00:00.000Z" },
+        },
+        clients: {
+          "aimux-proj-client-live": {
+            recentIds: ["codex-1", "claude-1"],
+            updatedAt: "2026-04-04T00:01:00.000Z",
+          },
+        },
+        projectRecentIds: ["codex-1", "claude-1"],
+      }),
+    );
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "menu",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-stale",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@claude",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
+    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux -x P -y P codex(coder)"))).toBe(true);
     expect(curlLog).toEqual([]);
   });
 });
