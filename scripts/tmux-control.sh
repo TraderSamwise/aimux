@@ -216,17 +216,57 @@ ensure_linked_window() {
   printf '%s' "$linked_index"
 }
 
+mark_last_used_local() {
+  item_id="$1"
+  [ -n "$item_id" ] || return 0
+  [ -n "${project_state_dir-}" ] || return 0
+  python3 - "$project_state_dir" "$item_id" "${live_client_session-}" <<'PY' >/dev/null 2>&1
+import json, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+project_state_dir, item_id, client_session = sys.argv[1:]
+state_path = Path(project_state_dir) / "last-used.json"
+try:
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
+except Exception:
+    state = {}
+
+state["version"] = 1
+state.setdefault("items", {})
+state.setdefault("clients", {})
+state.setdefault("projectRecentIds", [])
+
+used_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+state["items"][item_id] = {"lastUsedAt": used_at}
+state["projectRecentIds"] = [item_id] + [entry for entry in state.get("projectRecentIds", []) if entry != item_id]
+state["projectRecentIds"] = state["projectRecentIds"][:64]
+
+if client_session:
+    client = state["clients"].get(client_session) or {"recentIds": [], "updatedAt": used_at}
+    recent_ids = [item_id] + [entry for entry in client.get("recentIds", []) if entry != item_id]
+    client["recentIds"] = recent_ids[:64]
+    client["updatedAt"] = used_at
+    state["clients"][client_session] = client
+
+state["updatedAt"] = used_at
+state_path.write_text(json.dumps(state, indent=2) + "\n")
+PY
+}
+
 switch_local_window() {
   target_window_id="$1"
   if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
     resolve_live_client || return 1
   fi
+  item_id="${2-}"
   target_index=$(ensure_linked_window "$target_window_id") || return 1
   if [ -n "${live_client_tty-}" ]; then
     tmux switch-client -c "$live_client_tty" -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
   else
     tmux switch-client -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
   fi
+  mark_last_used_local "$item_id"
   if [ -n "${live_client_tty-}" ]; then
     tmux refresh-client -t "$live_client_tty" -S >/dev/null 2>&1 || true
   elif [ -n "$client_tty" ]; then
@@ -241,12 +281,12 @@ show_local_menu() {
   if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
     resolve_live_client || return 1
   fi
-  python3 - "$project_state_dir" "$current_path" "$current_window_id" "$current_client_session" "${live_client_session-}" "${live_client_tty-}" "$client_tty" <<'PY'
-import json, subprocess, sys
+  python3 - "$project_state_dir" "$script_dir" "$current_path" "$current_window_id" "$current_client_session" "${live_client_session-}" "${live_client_tty-}" "$client_tty" "$pane_id" <<'PY'
+import json, subprocess, sys, shlex
 from pathlib import Path
 from datetime import datetime
 
-project_state_dir, current_path, current_window_id, current_client_session, live_client_session, live_client_tty, client_tty = sys.argv[1:]
+project_state_dir, script_dir, current_path, current_window_id, current_client_session, live_client_session, live_client_tty, client_tty, pane_id = sys.argv[1:]
 
 effective_client_session = live_client_session or current_client_session
 effective_client_tty = live_client_tty or client_tty
@@ -387,10 +427,17 @@ for item in items:
         linked_index = resolved
     if linked_index is None:
         continue
-    if effective_client_tty:
-        command = f"switch-client -c {effective_client_tty} -t {effective_client_session}:{linked_index}"
-    else:
-        command = f"switch-client -t {effective_client_session}:{linked_index}"
+    script_path = Path(script_dir) / "tmux-control.sh"
+    command = (
+        f"sh {shlex.quote(str(script_path))} window "
+        f"--project-state-dir {shlex.quote(str(project_state_dir))} "
+        f"--current-client-session {shlex.quote(str(effective_client_session))} "
+        f"--client-tty {shlex.quote(str(effective_client_tty))} "
+        f"--window-id {shlex.quote(str(item['windowId']))} "
+        f"--current-window-id {shlex.quote(str(current_window_id))} "
+        f"--current-path {shlex.quote(str(current_path))} "
+        f"--pane-id {shlex.quote(str(pane_id))}"
+    )
     menu_items.append((item["label"], command))
 
 if not menu_items:
@@ -601,7 +648,8 @@ fallback_local_control() {
       ;;
     next|prev|attention|window)
       target_window_id=$(resolve_local_target_from_statusline || resolve_local_target_from_tmux_metadata) || return 1
-      switch_local_window "$target_window_id"
+      target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; import sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
+      switch_local_window "$target_window_id" "$target_item_id"
       ;;
   esac
   return 1
