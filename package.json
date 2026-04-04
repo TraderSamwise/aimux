@@ -6,8 +6,13 @@
   "bin": {
     "aimux": "./bin/aimux"
   },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "dev": "tsc --watch",
     "start": "node dist/main.js",
     "desktop:dev": "cd desktop-ui && yarn dev & cd src-tauri && cargo tauri dev",
@@ -19,6 +24,7 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "verify": "yarn typecheck && yarn lint && yarn test",
+    "prepack": "yarn build",
     "prepare": "husky",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
   },

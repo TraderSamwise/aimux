@@ -128,7 +128,7 @@ Desktop terminal control is tmux-client-first:
 
 - the embedded terminal pane hosts a real attached tmux client
 - same-project agent/dashboard switching should retarget that live tmux client
-- desktop should only cold-spawn the thin `tmux-fast-control` terminal attach path when it needs to create a new attached terminal session
+- desktop should only cold-spawn the shell transport attach path when it needs to create a new attached terminal session
 
 Project-service HTTP now exposes the live orchestration surface, including:
 
@@ -159,10 +159,10 @@ Project-service HTTP also exposes low-latency tmux control helpers:
 - `POST /control/switch-attention`
 - `POST /control/open-dashboard`
 
-Tmux hotkeys use these through a thin `tmux-fast-control` entrypoint instead of shelling into the heavyweight operator CLI.
-If service RPC is unavailable, the same thin entrypoint performs direct local tmux resolution instead of shelling into any secondary CLI path.
+Tmux hotkeys use these through a small shell transport instead of shelling into the heavyweight operator CLI.
+That transport prefers local tmux resolution and only falls back to project-service control helpers when local recovery is insufficient.
 
-Likewise, the tmux statusline uses a thin `tmux-statusline-cli` entrypoint instead of the main CLI command graph.
+Likewise, the tmux statusline now reads precomputed tmux-ready strings from the project state directory instead of spawning a separate render CLI.
 
 Dashboard mode is a pure client of the project service's `desktop-state` snapshot.
 It no longer reconstructs dashboard session/worktree model state locally on focus or render paths.
@@ -181,7 +181,7 @@ aimux graveyard send <sessionId> --project /abs/path/to/repo --json
 aimux graveyard resurrect <sessionId> --project /abs/path/to/repo --json
 aimux worktree list --project /abs/path/to/repo --json
 aimux worktree create feature-x --project /abs/path/to/repo --json
-desktop terminal focus uses the thin `tmux-fast-control` entrypoint with the project-scoped `tmuxWindowId` from `desktop-state`
+desktop terminal focus uses the same shell transport with the project-scoped `tmuxWindowId` from `desktop-state`
 ```
 
 ## Dashboard Model

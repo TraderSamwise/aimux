@@ -322,27 +322,27 @@ Current managed tmux bindings:
   - status: good
 
 - `d`
-  - current path: `run-shell ... tmux-fast-control dashboard ...`
+  - current path: `run-shell ... scripts/tmux-control.sh dashboard ...`
   - target path:
-    - pure tmux if current client dashboard window is known
+    - local tmux dashboard switch first
     - project-service fallback for dashboard recovery
 
 - `n`
-  - current path: `run-shell ... tmux-fast-control next ...`
-  - target path: project-service fast control + final tmux select
+  - current path: `run-shell ... scripts/tmux-control.sh next ...`
+  - target path: local tmux resolution + final tmux select, with project-service fallback
 
 - `p`
-  - current path: `run-shell ... tmux-fast-control prev ...`
-  - target path: project-service fast control + final tmux select
+  - current path: `run-shell ... scripts/tmux-control.sh prev ...`
+  - target path: local tmux resolution + final tmux select, with project-service fallback
 
 - `u`
-  - current path: `run-shell ... tmux-fast-control attention ...`
-  - target path: project-service fast control + final tmux select
+  - current path: `run-shell ... scripts/tmux-control.sh attention ...`
+  - target path: local tmux resolution + final tmux select, with project-service fallback
 
 - `s`
-  - current path: `run-shell ... tmux-fast-control menu ...`
+  - current path: `run-shell ... scripts/tmux-control.sh menu ...`
   - target path:
-    - project-service returns switcher entries
+    - local tmux + last-used data builds switcher entries
     - tmux renders the menu locally
 
 ## Additional Latency Surfaces
@@ -351,13 +351,18 @@ This RFC also covers non-hotkey paths.
 
 ### Statusline
 
+Current path:
+
+- tmux reads precomputed top/bottom strings from the project state directory via `scripts/tmux-statusline.sh`
+
 Current risk:
 
-- statusline paths can accidentally become expensive when they reconstruct project state or shell out
+- refresh timing can still lag slightly behind otherwise-fast switches
 
 Target:
 
-- thin display helper only
+- keep statusline fully precomputed
+- minimize refresh lag after switch actions
 - cached/materialized inputs only
 - no heavy project/service bootstrap work
 

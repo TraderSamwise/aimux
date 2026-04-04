@@ -1,7 +1,7 @@
 # Latency Entry Points
 
 This complements [latency-architecture-rfc.md](./latency-architecture-rfc.md) with the
-current entrypoint split.
+current execution split after the tmux hotkey and statusline cutover.
 
 ## Latency Classes
 
@@ -9,11 +9,11 @@ current entrypoint split.
 
 Target:
 
-- sub-`50ms` perceived control latency
+- sub-`50ms` perceived control latency when local tmux state is healthy
 
 Current entrypoints:
 
-- `dist/tmux-fast-control.js`
+- `scripts/tmux-control.sh`
 
 Used for:
 
@@ -22,22 +22,23 @@ Used for:
 - tmux prefix `s`
 - tmux prefix `u`
 - tmux prefix `d`
+- desktop terminal focus/open actions
 
 Rules:
 
 - never go through the full operator CLI on the normal path
-- talk to the live project service first
-- do only minimal direct local resolution when the project service is unavailable
+- prefer local tmux resolution first
+- fall back to project-service control helpers only when local recovery is insufficient
 
 ### Lightweight render
 
 Target:
 
-- sub-`100ms` render helper latency
+- sub-`100ms` footer/status redraw latency
 
 Current entrypoints:
 
-- `dist/tmux-statusline-cli.js`
+- `scripts/tmux-statusline.sh`
 
 Used for:
 
@@ -46,7 +47,7 @@ Used for:
 
 Rules:
 
-- read cached `statusline.json`
+- read precomputed tmux-ready strings from project state
 - do not verify daemon or project-service liveness
 - do not reconstruct tmux/git state on the hot path
 
@@ -92,6 +93,6 @@ Used for:
 Rules:
 
 - full bootstrap is acceptable
-- not suitable for tmux hotkeys or render helpers
+- not suitable for tmux hotkeys or tmux statusline rendering
 
 There are no legacy tmux compatibility commands on the hot path anymore.

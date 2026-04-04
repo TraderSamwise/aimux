@@ -289,7 +289,7 @@ That reports:
 
 Hotkey latency note:
 
-- dynamic tmux hotkeys now use a thin `tmux-fast-control` entrypoint that talks to the live project service
+- dynamic tmux hotkeys now use a small shell transport that prefers local tmux resolution and falls back to project-service control helpers when needed
 - the final window switch still happens in tmux
 - this avoids spawning the heavyweight operator CLI for normal `n/p/s/u/d` navigation
 - dashboard client sessions are kept alive for reuse; exiting a managed dashboard leaves the client instead of destroying the reusable dashboard window
