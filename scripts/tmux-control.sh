@@ -58,6 +58,26 @@ done
 [ -n "$action" ] || exit 1
 [ -n "$project_state_dir" ] || exit 1
 
+hydrate_from_tmux_pane() {
+  [ -n "${TMUX_PANE-}" ] || return 1
+  pane_context=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}|#{window_id}|#{window_name}|#{client_tty}|#{pane_current_path}' 2>/dev/null || true)
+  [ -n "$pane_context" ] || return 1
+  pane_session=$(printf '%s' "$pane_context" | cut -d '|' -f1)
+  pane_window_id=$(printf '%s' "$pane_context" | cut -d '|' -f2)
+  pane_window_name=$(printf '%s' "$pane_context" | cut -d '|' -f3)
+  pane_client_tty=$(printf '%s' "$pane_context" | cut -d '|' -f4)
+  pane_current_path=$(printf '%s' "$pane_context" | cut -d '|' -f5-)
+  [ -n "$pane_session" ] || return 1
+  current_client_session="$pane_session"
+  [ -n "$pane_window_id" ] && current_window_id="$pane_window_id"
+  [ -n "$pane_window_name" ] && current_window="$pane_window_name"
+  [ -n "$pane_client_tty" ] && client_tty="$pane_client_tty"
+  [ -n "$pane_current_path" ] && current_path="$pane_current_path"
+  return 0
+}
+
+hydrate_from_tmux_pane || true
+
 endpoint_file="$project_state_dir/metadata-api.txt"
 project_root_file="$project_state_dir/project-root.txt"
 statusline_json="$project_state_dir/statusline.json"
@@ -182,7 +202,9 @@ ensure_linked_window() {
 
 switch_local_window() {
   target_window_id="$1"
-  resolve_live_client || return 1
+  if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
+    resolve_live_client || return 1
+  fi
   target_index=$(ensure_linked_window "$target_window_id") || return 1
   if [ -n "${live_client_tty-}" ]; then
     tmux switch-client -c "$live_client_tty" -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
@@ -260,13 +282,106 @@ PY
   printf '%s' "$resolved_target"
 }
 
+resolve_host_session_name() {
+  session_name="${live_client_session-}"
+  if [ -z "$session_name" ]; then
+    session_name="$current_client_session"
+  fi
+  [ -n "$session_name" ] || return 1
+  case "$session_name" in
+    *-client-*) printf '%s' "${session_name%-client-*}" ;;
+    *) printf '%s' "$session_name" ;;
+  esac
+}
+
+resolve_local_target_from_tmux_metadata() {
+  resolve_live_client || true
+  host_session=$(resolve_host_session_name) || return 1
+  resolved_target=$(
+    python3 - "$host_session" "$current_path" "$current_window_id" "$window_id" "$action" <<'PY'
+import json, subprocess, sys
+host_session, current_path, current_window_id, explicit_window_id, action = sys.argv[1:]
+
+def run(*args):
+    return subprocess.check_output(["tmux", *args], text=True)
+
+if explicit_window_id:
+    print(explicit_window_id)
+    raise SystemExit(0)
+
+try:
+    windows = run("list-windows", "-t", host_session, "-F", "#{window_id}|#{window_index}|#{window_name}").splitlines()
+except Exception:
+    raise SystemExit(1)
+
+items = []
+for line in windows:
+    try:
+        window_id, index, name = line.split("|", 2)
+    except ValueError:
+        continue
+    try:
+        raw = run("show-window-options", "-v", "-t", window_id, "@aimux-meta").strip()
+        meta = json.loads(raw)
+    except Exception:
+        continue
+    worktree = meta.get("worktreePath")
+    if not worktree or not current_path.startswith(worktree):
+        continue
+    kind = meta.get("kind") or "agent"
+    items.append({
+        "windowId": window_id,
+        "windowIndex": int(index),
+        "kind": kind,
+        "sessionId": meta.get("sessionId", ""),
+        "worktreePath": worktree,
+        "attention": meta.get("attention", ""),
+        "unseenCount": int(meta.get("unseenCount") or 0),
+        "statusText": meta.get("statusText", ""),
+    })
+
+items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
+if not items:
+    raise SystemExit(1)
+
+current_index = 0
+for idx, item in enumerate(items):
+    if item.get("windowId") == current_window_id:
+        current_index = idx
+        break
+
+if action == "next":
+    print(items[(current_index + 1) % len(items)]["windowId"])
+    raise SystemExit(0)
+if action == "prev":
+    print(items[(current_index - 1) % len(items)]["windowId"])
+    raise SystemExit(0)
+if action == "attention":
+    def rank(item):
+        return (
+            1 if item.get("attention") == "needs-input" else 0,
+            item.get("unseenCount", 0),
+            1 if item.get("statusText") == "blocked" else 0,
+        )
+    ranked = sorted(items, key=rank, reverse=True)
+    if rank(ranked[0]) == (0, 0, 0):
+        raise SystemExit(1)
+    print(ranked[0]["windowId"])
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  ) || return 1
+  [ -n "$resolved_target" ] || return 1
+  printf '%s' "$resolved_target"
+}
+
 fallback_local_control() {
   case "$action" in
     dashboard)
       switch_local_dashboard
       ;;
     next|prev|attention|window)
-      target_window_id=$(resolve_local_target_from_statusline) || return 1
+      target_window_id=$(resolve_local_target_from_statusline || resolve_local_target_from_tmux_metadata) || return 1
       switch_local_window "$target_window_id"
       ;;
   esac
