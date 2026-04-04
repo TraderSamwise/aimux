@@ -10,6 +10,7 @@ current_window=""
 current_window_id=""
 current_path=""
 window_id=""
+pane_id=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -45,6 +46,10 @@ while [ "$#" -gt 0 ]; do
       current_path="${2-}"
       shift 2
       ;;
+    --pane-id)
+      pane_id="${2-}"
+      shift 2
+      ;;
     --window-id)
       window_id="${2-}"
       shift 2
@@ -59,8 +64,12 @@ done
 [ -n "$project_state_dir" ] || exit 1
 
 hydrate_from_tmux_pane() {
-  [ -n "${TMUX_PANE-}" ] || return 1
-  pane_context=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}|#{window_id}|#{window_name}|#{client_tty}|#{pane_current_path}' 2>/dev/null || true)
+  pane_target="$pane_id"
+  if [ -z "$pane_target" ]; then
+    pane_target="${TMUX_PANE-}"
+  fi
+  [ -n "$pane_target" ] || return 1
+  pane_context=$(tmux display-message -p -t "$pane_target" '#{session_name}|#{window_id}|#{window_name}|#{client_tty}|#{pane_current_path}' 2>/dev/null || true)
   [ -n "$pane_context" ] || return 1
   pane_session=$(printf '%s' "$pane_context" | cut -d '|' -f1)
   pane_window_id=$(printf '%s' "$pane_context" | cut -d '|' -f2)

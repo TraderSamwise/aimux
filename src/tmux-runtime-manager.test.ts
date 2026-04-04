@@ -100,7 +100,8 @@ describe("TmuxRuntimeManager", () => {
         (call) =>
           call.args[0] === "bind-key" &&
           call.args[3] === "n" &&
-          call.args.join(" ").includes("--current-window-id '#{window_id}'"),
+          call.args.join(" ").includes("--current-window-id '#{window_id}'") &&
+          call.args.join(" ").includes("--pane-id '#{pane_id}'"),
       ),
     ).toBe(true);
     expect(
@@ -120,7 +121,8 @@ describe("TmuxRuntimeManager", () => {
           call.args[3] === "d" &&
           call.args.join(" ").includes("scripts/tmux-control.sh' dashboard") &&
           call.args.join(" ").includes("--current-window-id '#{window_id}'") &&
-          call.args.join(" ").includes("--client-tty '#{client_tty}'"),
+          call.args.join(" ").includes("--client-tty '#{client_tty}'") &&
+          call.args.join(" ").includes("--pane-id '#{pane_id}'"),
       ),
     ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-left")).toBe(true);

@@ -777,7 +777,7 @@ export class TmuxRuntimeManager {
       "n",
       "run-shell",
       "-b",
-      `${controlScript} next --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${controlScript} next --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -786,7 +786,7 @@ export class TmuxRuntimeManager {
       "p",
       "run-shell",
       "-b",
-      `${controlScript} prev --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${controlScript} prev --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -795,7 +795,7 @@ export class TmuxRuntimeManager {
       "s",
       "run-shell",
       "-b",
-      `${controlScript} menu --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${controlScript} menu --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -804,7 +804,7 @@ export class TmuxRuntimeManager {
       "u",
       "run-shell",
       "-b",
-      `${controlScript} attention --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${controlScript} attention --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -813,7 +813,7 @@ export class TmuxRuntimeManager {
       "d",
       "run-shell",
       "-b",
-      `${controlScript} dashboard --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${controlScript} dashboard --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
     this.exec(["set-option", "-t", sessionName, "status", "2"]);
     this.exec(["set-option", "-t", sessionName, "status-interval", "0"]);
