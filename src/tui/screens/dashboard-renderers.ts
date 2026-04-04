@@ -84,10 +84,9 @@ export function renderDashboardFrame(
 
     const icon = STATUS_ICONS[session.status];
     const statusLabel = state.derivedStatusLabel(session);
+    const compactHintValue = session.semantic ? sessionSemanticCompactHint(session.semantic) : null;
     const compactHint =
-      session.semantic && sessionSemanticCompactHint(session.semantic) !== statusLabel
-        ? ` \x1b[2m· ${sessionSemanticCompactHint(session.semantic)}\x1b[0m`
-        : "";
+      compactHintValue && compactHintValue !== statusLabel ? ` \x1b[2m· ${compactHintValue}\x1b[0m` : "";
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
@@ -139,14 +138,8 @@ export function renderDashboardFrame(
     const mainLabel = `${state.mainCheckout.name}${mainBranch}`;
     if (mainSessions.length > 0 || mainServices.length > 0) {
       lines.push(`${prefix} ${highlight}${mainLabel}\x1b[0m`);
-      if (mainSessions.length > 0) {
-        lines.push("    \x1b[2mAgents\x1b[0m");
-        for (const session of mainSessions) lines.push(renderSession(session, "      "));
-      }
-      if (mainServices.length > 0) {
-        lines.push("    \x1b[2mServices\x1b[0m");
-        for (const service of mainServices) lines.push(renderService(service, "      "));
-      }
+      for (const session of mainSessions) lines.push(renderSession(session, "    "));
+      for (const service of mainServices) lines.push(renderService(service, "    "));
       lines.push("");
     } else {
       lines.push(`${prefix} ${highlight}${mainLabel}\x1b[0m`);
@@ -163,14 +156,8 @@ export function renderDashboardFrame(
 
       if (sessions.length > 0 || services.length > 0) {
         lines.push(`${gPrefix} ${gHighlight}\x1b[1m${group.name}\x1b[0m${gReset} \x1b[2m${group.branch}\x1b[0m`);
-        if (sessions.length > 0) {
-          lines.push("    \x1b[2mAgents\x1b[0m");
-          for (const session of sessions) lines.push(renderSession(session, "      "));
-        }
-        if (services.length > 0) {
-          lines.push("    \x1b[2mServices\x1b[0m");
-          for (const service of services) lines.push(renderService(service, "      "));
-        }
+        for (const session of sessions) lines.push(renderSession(session, "    "));
+        for (const service of services) lines.push(renderService(service, "    "));
         lines.push("");
       } else {
         lines.push(`${gPrefix} \x1b[2m${gHighlight}${group.name}\x1b[0m \x1b[2m${group.branch}\x1b[0m`);
@@ -187,14 +174,8 @@ export function renderDashboardFrame(
       const name = exemplar?.worktreeName ?? "unknown";
       const branch = exemplar?.worktreeBranch ?? "unknown";
       lines.push(`  \x1b[1m${name}\x1b[0m \x1b[2m${branch}\x1b[0m`);
-      if (sessions.length > 0) {
-        lines.push("    \x1b[2mAgents\x1b[0m");
-        for (const session of sessions) lines.push(renderSession(session, "      "));
-      }
-      if (services.length > 0) {
-        lines.push("    \x1b[2mServices\x1b[0m");
-        for (const service of services) lines.push(renderService(service, "      "));
-      }
+      for (const session of sessions) lines.push(renderSession(session, "    "));
+      for (const service of services) lines.push(renderService(service, "    "));
       lines.push("");
     }
   };
@@ -379,7 +360,7 @@ export function renderDashboardFrame(
   const helpLine = buildHelpLine();
   const footer: string[] = [center("─".repeat(Math.min(cols - 4, helpLine.length + 4)), cols), center(helpLine, cols)];
   const viewportHeight = rows - header.length - footer.length;
-  const twoPane = cols >= 110 && state.detailsPaneVisible;
+  const twoPane = cols >= 92 && state.detailsPaneVisible;
   let scrollOffset = state.scrollOffset;
   const focusLine = findFocusLine(content);
   const maxScroll = Math.max(0, content.length - viewportHeight);
