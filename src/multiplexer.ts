@@ -6201,6 +6201,7 @@ export class Multiplexer {
     this.offlineSessions = state.sessions.filter((s) => {
       if (ownedIds.has(s.id)) return false;
       if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
+      if (s.worktreePath && !existsSync(s.worktreePath)) return false;
       return true;
     });
 
