@@ -5782,7 +5782,6 @@ export class Multiplexer {
   /** Write statusline state for Claude Code's statusline script to read */
   private writeStatuslineFile(): void {
     try {
-      if (this.mode !== "project-service") return;
       for (const session of this.sessions) {
         this.syncTmuxWindowMetadata(session.id);
       }
