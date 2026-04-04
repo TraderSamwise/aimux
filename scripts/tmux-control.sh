@@ -240,11 +240,21 @@ if explicit_window_id:
     raise SystemExit(0)
 if not sessions:
     raise SystemExit(1)
+current_worktree = None
+for session in sessions:
+    if session.get("tmuxWindowId") == current_window_id:
+        current_worktree = session.get("worktreePath")
+        break
 matched = []
 best_len = -1
 for session in sessions:
     worktree = session.get("worktreePath")
-    if not worktree or not current_path.startswith(worktree):
+    if not worktree:
+        continue
+    if current_worktree:
+        if worktree != current_worktree:
+            continue
+    elif not current_path.startswith(worktree):
         continue
     length = len(worktree)
     if length > best_len:
@@ -348,6 +358,20 @@ for line in windows:
         "unseenCount": int(meta.get("unseenCount") or 0),
         "statusText": meta.get("statusText", ""),
     })
+
+if not items:
+    raise SystemExit(1)
+
+current_worktree = None
+for item in items:
+    if item.get("windowId") == current_window_id:
+        current_worktree = item.get("worktreePath")
+        break
+
+if current_worktree:
+    items = [item for item in items if item.get("worktreePath") == current_worktree]
+else:
+    items = [item for item in items if current_path.startswith(item.get("worktreePath") or "")]
 
 items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
 if not items:
