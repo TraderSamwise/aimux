@@ -388,12 +388,12 @@ export class Multiplexer {
   }
 
   private handleDashboardFocusIn(): void {
-    this.terminalHost.enterAlternateScreen(true);
+    this.terminalHost.enterAlternateScreen();
     this.invalidateDashboardFrame();
     this.renderCurrentDashboardView();
     void this.refreshDashboardModelFromService(true).then((updated) => {
       if (!updated || this.mode !== "dashboard") return;
-      this.terminalHost.enterAlternateScreen(true);
+      this.terminalHost.enterAlternateScreen();
       this.invalidateDashboardFrame();
       this.renderCurrentDashboardView();
     });
