@@ -192,6 +192,13 @@ switch_local_dashboard() {
   else
     tmux switch-client -t "$target" >/dev/null 2>&1 || return 1
   fi
+  if [ -n "${live_client_tty-}" ]; then
+    tmux refresh-client -t "$live_client_tty" -S >/dev/null 2>&1 || true
+  elif [ -n "$client_tty" ]; then
+    tmux refresh-client -t "$client_tty" -S >/dev/null 2>&1 || true
+  else
+    tmux refresh-client -S >/dev/null 2>&1 || true
+  fi
   tmux send-keys -t "$target" -H 1b 5b 49 >/dev/null 2>&1 || true
   exit 0
 }
@@ -220,7 +227,13 @@ switch_local_window() {
   else
     tmux switch-client -t "${live_client_session}:${target_index}" >/dev/null 2>&1 || return 1
   fi
-  tmux refresh-client -S >/dev/null 2>&1 || true
+  if [ -n "${live_client_tty-}" ]; then
+    tmux refresh-client -t "$live_client_tty" -S >/dev/null 2>&1 || true
+  elif [ -n "$client_tty" ]; then
+    tmux refresh-client -t "$client_tty" -S >/dev/null 2>&1 || true
+  else
+    tmux refresh-client -S >/dev/null 2>&1 || true
+  fi
   exit 0
 }
 
