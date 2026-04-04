@@ -318,6 +318,15 @@ export function isActionPending(match = {}) {
   );
 }
 
+export function isSessionActionBlocked(projectPath, sessionId, requestedKind = null) {
+  const actions = inFlightActions.filter((action) => action.projectPath === projectPath && action.sessionId === sessionId);
+  if (actions.length === 0) return false;
+  if (requestedKind === "kill") {
+    return actions.some((action) => action.kind !== "stop");
+  }
+  return true;
+}
+
 function reconcileActions(incomingProjects) {
   const byPath = new Map(incomingProjects.map((project) => [project.path, project]));
   const finished = [];

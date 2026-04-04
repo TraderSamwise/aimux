@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { getState, openService, openSession, isActionPending, trackAction } from "../stores/state.svelte.js";
+  import { getState, openService, openSession, isActionPending, isSessionActionBlocked, trackAction } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
 
   const appState = getState();
@@ -81,6 +81,21 @@
         services: [],
       }));
       group.services.push(service);
+    }
+
+    for (const group of groups.values()) {
+      group.agents.sort((a, b) => {
+        const aIndex = Number.isFinite(a.tmuxWindowIndex) ? a.tmuxWindowIndex : Number.MAX_SAFE_INTEGER;
+        const bIndex = Number.isFinite(b.tmuxWindowIndex) ? b.tmuxWindowIndex : Number.MAX_SAFE_INTEGER;
+        if (aIndex !== bIndex) return aIndex - bIndex;
+        return agentLabel(a).localeCompare(agentLabel(b));
+      });
+      group.services.sort((a, b) => {
+        const aIndex = Number.isFinite(a.tmuxWindowIndex) ? a.tmuxWindowIndex : Number.MAX_SAFE_INTEGER;
+        const bIndex = Number.isFinite(b.tmuxWindowIndex) ? b.tmuxWindowIndex : Number.MAX_SAFE_INTEGER;
+        if (aIndex !== bIndex) return aIndex - bIndex;
+        return serviceLabel(a).localeCompare(serviceLabel(b));
+      });
     }
 
     const result = orderedKeys.map((key) => groups.get(key));
@@ -227,7 +242,7 @@
   async function killAgent(e, agent) {
     e.stopPropagation();
     const project = appState.selectedProject;
-    if (!project || isAgentActionPending(agent.id)) return;
+    if (!project || isAgentActionPending(agent.id, "kill")) return;
     try {
       await trackAction(
         {
@@ -247,7 +262,7 @@
   async function stopAgent(e, agent) {
     e.stopPropagation();
     const project = appState.selectedProject;
-    if (!project || isAgentActionPending(agent.id)) return;
+    if (!project || isAgentActionPending(agent.id, "stop")) return;
     try {
       await trackAction(
         {
@@ -509,8 +524,8 @@
     }
   }
 
-  function isAgentActionPending(sessionId) {
-    return isActionPending({ projectPath: appState.selectedProject?.path, sessionId });
+  function isAgentActionPending(sessionId, requestedKind = null) {
+    return isSessionActionBlocked(appState.selectedProject?.path, sessionId, requestedKind);
   }
 
   function isForkPending(sessionId) {
@@ -739,22 +754,22 @@
                       </span>
                       <span class="agent-actions" class:visible={agent.pending || renameSessionId === agent.id || forkMenu?.sessionId === agent.id || migrateSessionId === agent.id}>
                         {#if agent.status === "running"}
-                          <button class="agent-action" title="Fork" onclick={(e) => openFork(e, agent, wt.path)} disabled={isAgentActionPending(agent.id)}>
+                          <button class="agent-action" title="Fork" onclick={(e) => openFork(e, agent, wt.path)} disabled={isAgentActionPending(agent.id, "fork")}>
                             ↗
                           </button>
-                          <button class="agent-action" title="Rename" onclick={(e) => openRename(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                          <button class="agent-action" title="Rename" onclick={(e) => openRename(e, agent)} disabled={isAgentActionPending(agent.id, "rename")}>
                             ✎
                           </button>
-                          <button class="agent-action" title="Migrate" onclick={(e) => openMigrate(e, agent)} disabled={isAgentActionPending(agent.id)}>
+                          <button class="agent-action" title="Migrate" onclick={(e) => openMigrate(e, agent)} disabled={isAgentActionPending(agent.id, "migrate")}>
                             ⇄
                           </button>
-                          <button class="agent-action" title="Stop" onclick={(e) => stopAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
-                            {isAgentActionPending(agent.id) ? "..." : "■"}
+                          <button class="agent-action" title="Stop" onclick={(e) => stopAgent(e, agent)} disabled={isAgentActionPending(agent.id, "stop")}>
+                            {isAgentActionPending(agent.id, "stop") ? "..." : "■"}
                           </button>
                         {/if}
-                        {#if !agent.pending}
-                          <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id)}>
-                            {isAgentActionPending(agent.id) ? "..." : "×"}
+                        {#if !agent.pending || agent.pendingAction === "stop"}
+                          <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id, "kill")}>
+                            {isAgentActionPending(agent.id, "kill") ? "..." : "×"}
                           </button>
                         {/if}
                       </span>
@@ -870,7 +885,7 @@
                     <span class="agent-status" data-tone={service.status === "exited" ? "blocked" : "active"}>
                       <span class="agent-status-primary">{serviceStatusLabel(service)}</span>
                       {#if service.previewLine}
-                        <span class="agent-status-secondary">{service.previewLine}</span>
+                        <span class="agent-status-secondary" title={service.previewLine}>{service.previewLine}</span>
                       {/if}
                     </span>
                     <span class="agent-actions visible">
@@ -1225,6 +1240,11 @@
 
   .agent-status-secondary {
     color: rgba(148, 163, 184, 0.92);
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .agent-status[data-tone="active"] .agent-status-primary {

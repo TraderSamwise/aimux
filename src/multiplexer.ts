@@ -246,6 +246,8 @@ export class Multiplexer {
   private planIndex = 0;
   private notificationPanelState: NotificationPanelState | null = null;
   private pendingDashboardSessionActions = new Map<string, PendingDashboardSessionAction["kind"]>();
+  private stoppingSessionIds = new Set<string>();
+  private graveyardAfterStopSessionIds = new Set<string>();
   /** Quick switcher overlay state */
   private switcherActive = false;
   private switcherIndex = 0;
@@ -1367,6 +1369,7 @@ export class Multiplexer {
     if (idx === -1) return;
 
     this.sessions.splice(idx, 1);
+    this.stoppingSessionIds.delete(runtime.id);
     this.writeSessionsFile();
     this.updateContextWatcherSessions();
     const mappedTarget = this.sessionTmuxTargets.get(runtime.id);
@@ -2160,7 +2163,7 @@ export class Multiplexer {
             : undefined;
         if (!selEntry) return;
 
-        if (selEntry.status === "offline") {
+        if (selEntry.status === "offline" || selEntry.pendingAction === "stopping") {
           // Second [x] on offline → move to graveyard
           void this.graveyardSessionWithFeedback(selEntry.id, hasWorktrees);
           return;
@@ -4136,7 +4139,9 @@ export class Multiplexer {
       throw new Error(`Session "${sessionId}" not found`);
     }
 
-    this.stopSessionToOffline(runningSession);
+    if (!this.stoppingSessionIds.has(sessionId)) {
+      this.stopSessionToOffline(runningSession);
+    }
     await this.waitForSessionExit(runningSession);
     this.saveState();
 
@@ -4154,7 +4159,10 @@ export class Multiplexer {
     const runningSession = this.sessions.find((session) => session.id === sessionId);
     if (runningSession) {
       previousStatus = "running";
-      this.stopSessionToOffline(runningSession);
+      this.graveyardAfterStopSessionIds.add(sessionId);
+      if (!this.stoppingSessionIds.has(sessionId)) {
+        this.stopSessionToOffline(runningSession);
+      }
       await this.waitForSessionExit(runningSession);
       this.saveState();
     } else {
@@ -4165,6 +4173,7 @@ export class Multiplexer {
       previousStatus = "offline";
     }
 
+    this.graveyardAfterStopSessionIds.delete(sessionId);
     this.graveyardSession(sessionId);
     return { sessionId, status: "graveyard", previousStatus };
   }
@@ -5318,7 +5327,9 @@ export class Multiplexer {
     try {
       this.stopSessionToOffline(session);
       await this.waitForSessionExit(session);
-      this.setPendingDashboardSessionAction(session.id, null);
+      if (!this.graveyardAfterStopSessionIds.has(session.id)) {
+        this.setPendingDashboardSessionAction(session.id, null);
+      }
       this.refreshLocalDashboardModel();
       this.footerFlash = `Stopped ${label}`;
       this.footerFlashTicks = 3;
@@ -5461,12 +5472,13 @@ export class Multiplexer {
   }
 
   private async graveyardSessionWithFeedback(sessionId: string, hasWorktrees: boolean): Promise<void> {
-    const session = this.offlineSessions.find((s) => s.id === sessionId);
+    const session =
+      this.offlineSessions.find((s) => s.id === sessionId) ?? this.sessions.find((s) => s.id === sessionId);
     if (!session) return;
-    const label = session.label ?? session.command;
+    const label = ("label" in session ? session.label : this.getSessionLabel(sessionId)) ?? session.command;
     this.setPendingDashboardSessionAction(sessionId, "graveyarding");
     try {
-      this.graveyardSession(sessionId);
+      await this.sendAgentToGraveyard(sessionId);
       this.setPendingDashboardSessionAction(sessionId, null);
       this.adjustAfterRemove(hasWorktrees);
       this.footerFlash = `Sent ${label} to graveyard`;
@@ -6142,6 +6154,7 @@ export class Multiplexer {
   /** Remove an offline session and move it to state-trash.json */
   /** Stop a running session and move it to offline (first [x]) */
   private stopSessionToOffline(session: ManagedSession): void {
+    if (this.stoppingSessionIds.has(session.id)) return;
     // Save state before killing
     const offlineEntry: SessionState = {
       id: session.id,
@@ -6156,7 +6169,10 @@ export class Multiplexer {
     };
 
     // Add to offline list so it appears immediately
-    this.offlineSessions.push(offlineEntry);
+    if (!this.offlineSessions.some((entry) => entry.id === session.id)) {
+      this.offlineSessions.push(offlineEntry);
+    }
+    this.stoppingSessionIds.add(session.id);
 
     // Prevent the onExit handler from exiting aimux if this was the last session
     this.startedInDashboard = true;

@@ -1,5 +1,7 @@
 import { resolve as pathResolve } from "node:path";
 import { loadMetadataState } from "./metadata-store.js";
+import { compareLastUsed, getLastUsedAt, getRecentRankMap } from "./last-used.js";
+import { parseRecencyTimestamp } from "./recency.js";
 import {
   isDashboardWindowName,
   TmuxRuntimeManager,
@@ -18,11 +20,14 @@ export interface FastControlContext {
 }
 
 export interface FastControlItem {
+  id: string;
   target: TmuxTarget;
   metadata: TmuxWindowMetadata;
   label: string;
   urgency: number;
   activity: number;
+  lastUsedAt?: string;
+  recentRank: number;
 }
 
 export function navigationUrgencyScore(input: {
@@ -96,6 +101,7 @@ export function listSwitchableAgentItems(
   tmux = new TmuxRuntimeManager(),
 ): FastControlItem[] {
   const tmuxSession = tmux.getProjectSession(context.projectRoot);
+  const recentRankMap = getRecentRankMap(context.projectRoot, context.currentClientSession);
   const managedWindows = tmux.listManagedWindows(tmuxSession.sessionName);
   const scopedWorktreePath = resolveContextWorktreePath(context, tmux, managedWindows);
   let managed = managedWindows
@@ -112,6 +118,7 @@ export function listSwitchableAgentItems(
     })
     .map((entry) => ({
       ...entry,
+      id: entry.metadata.sessionId,
       label: compactSessionTitle({
         kind: entry.metadata.kind === "service" ? "service" : "agent",
         tool: entry.metadata.command || entry.target.windowName,
@@ -121,6 +128,8 @@ export function listSwitchableAgentItems(
       }),
       urgency: urgencyFor(context.projectRoot, entry.metadata.sessionId),
       activity: entry.target.windowIndex,
+      lastUsedAt: getLastUsedAt(context.projectRoot, entry.metadata.sessionId),
+      recentRank: recentRankMap.get(entry.metadata.sessionId) ?? Number.MAX_SAFE_INTEGER,
     }));
 
   const activityByWindowId = new Map(
@@ -192,7 +201,13 @@ export function listSwitchableAgentMenuItems(
   context: FastControlContext,
   tmux = new TmuxRuntimeManager(),
 ): FastControlItem[] {
+  const recentRankMap = getRecentRankMap(context.projectRoot, context.currentClientSession);
   const items = [...listSwitchableAgentItems(context, tmux)].sort((a, b) => {
+    const lastUsedDiff = compareLastUsed(a, b, recentRankMap);
+    if (lastUsedDiff !== 0) return lastUsedDiff;
+    if ((parseRecencyTimestamp(b.lastUsedAt) ?? 0) !== (parseRecencyTimestamp(a.lastUsedAt) ?? 0)) {
+      return (parseRecencyTimestamp(b.lastUsedAt) ?? 0) - (parseRecencyTimestamp(a.lastUsedAt) ?? 0);
+    }
     if (b.activity !== a.activity) return b.activity - a.activity;
     return a.target.windowIndex - b.target.windowIndex;
   });
