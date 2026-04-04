@@ -39,11 +39,9 @@ export function renderDashboardFrame(
   cols: number,
   rows: number,
 ): { frame: string; scrollOffset: number } {
-  const contentWidth = Math.max(72, cols - 2);
-  const contentPad = Math.max(0, Math.floor((cols - contentWidth) / 2));
-  const padBlockLine = (line: string): string => `${" ".repeat(contentPad)}${line}`;
-  const centerInBlock = (line: string): string =>
-    `${" ".repeat(contentPad)}${center(line, contentWidth).trimEnd()}`.slice(0, cols);
+  const contentWidth = Math.max(72, cols);
+  const padBlockLine = (line: string): string => line;
+  const centerInBlock = (line: string): string => center(line, contentWidth).slice(0, cols);
   const wrapCommandGroups = (line: string): string[] => {
     const groups = line
       .trim()
@@ -422,7 +420,7 @@ export function renderDashboardFrame(
     centerInBlock(
       `\x1b[1maimux\x1b[0m — agent multiplexer${state.runtimeLabel ? `  \x1b[32m● ${state.runtimeLabel}\x1b[0m` : ""}`,
     ),
-    centerInBlock("─".repeat(Math.min(72, contentWidth))),
+    "─".repeat(Math.max(0, cols)),
     "",
   ];
   const content: string[] = [];
@@ -435,10 +433,7 @@ export function renderDashboardFrame(
   }
 
   const helpLines = wrapCommandGroups(buildHelpLine());
-  const footer: string[] = [
-    centerInBlock("─".repeat(Math.min(contentWidth, 96))),
-    ...helpLines.map((line) => centerInBlock(line)),
-  ];
+  const footer: string[] = ["─".repeat(Math.max(0, cols)), ...helpLines.map((line) => centerInBlock(line))];
   const viewportHeight = rows - header.length - footer.length;
   const twoPane = cols >= 72 && state.detailsPaneVisible;
   let scrollOffset = state.scrollOffset;

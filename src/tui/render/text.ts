@@ -80,7 +80,8 @@ export function composeTwoPane(left: string[], right: string[], cols: number): s
     const leftLine = truncateAnsi(left[i] ?? "", leftWidth);
     const rightLine = truncateAnsi(right[i] ?? "", rightWidth);
     const leftPad = Math.max(0, leftWidth - stripAnsi(leftLine).length);
-    out.push(`${" ".repeat(outerPad)}${leftLine}${" ".repeat(leftPad)} │ ${rightLine}`);
+    const rightPad = Math.max(0, rightWidth - stripAnsi(rightLine).length);
+    out.push(`${" ".repeat(outerPad)}${leftLine}${" ".repeat(leftPad)} │ ${rightLine}${" ".repeat(rightPad)}`);
   }
   return out;
 }
