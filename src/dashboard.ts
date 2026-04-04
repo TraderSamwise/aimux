@@ -3,6 +3,15 @@ import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agen
 import type { SessionServiceMetadata } from "./metadata-store.js";
 import type { SessionSemanticState } from "./session-semantics.js";
 import { sessionSemanticCompactHint, sessionSemanticStatusLabel } from "./session-semantics.js";
+import {
+  center,
+  composeTwoPane,
+  stripAnsi,
+  truncate,
+  truncateAnsi,
+  wrapKeyValue,
+  wrapText,
+} from "./tui/render/text.js";
 
 export type DashboardSessionStatus = SessionStatus;
 
@@ -460,21 +469,19 @@ export class Dashboard {
           ? "Enter resume"
           : "Enter focus";
 
-    const tmuxHint = this.runtimeLabel === "tmux" ? "  [d] tmux dashboard" : "";
-
     if (this.sessions.length === 0 && !this.hasWorktrees) {
       return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [p] plans  [g] graveyard  [?] help  [q] quit ";
     }
     if (this.hasWorktrees && this.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ items  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [m] migrate${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ items  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [m] migrate${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.hasWorktrees) {
-      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork(step in)  [w] worktree${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork(step in)  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (this.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree${xPart}${rLabel}${tmuxHint}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ select  ${enterLabel}  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
   }
@@ -617,85 +624,4 @@ export class Dashboard {
     while (lines.length < height) lines.push("");
     return lines.slice(0, height);
   }
-}
-
-function center(text: string, width: number): string {
-  // Strip ANSI codes for length calculation
-  const stripped = text.replace(/\x1b\[[0-9;]*m/g, "");
-  const pad = Math.max(0, Math.floor((width - stripped.length) / 2));
-  return " ".repeat(pad) + text;
-}
-
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return text.slice(0, max) + "…";
-}
-
-function truncateAnsi(text: string, max: number): string {
-  if (max <= 0) return "";
-  const plainLength = stripAnsi(text).length;
-  const needsEllipsis = plainLength > max;
-  const limit = needsEllipsis && max > 1 ? max - 1 : max;
-  let visible = 0;
-  let out = "";
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === "\x1b") {
-      const match = text.slice(i).match(/^\x1b\[[0-9;]*m/);
-      if (match) {
-        out += match[0];
-        i += match[0].length - 1;
-        continue;
-      }
-    }
-    if (visible >= limit) break;
-    out += text[i];
-    visible += 1;
-  }
-  if (needsEllipsis) out += "…";
-  if (out.includes("\x1b[")) out += "\x1b[0m";
-  return out;
-}
-
-function stripAnsi(text: string): string {
-  return text.replace(/\x1b\[[0-9;]*m/g, "");
-}
-
-function wrapText(text: string, width: number): string[] {
-  const plain = text.trim();
-  if (!plain) return [""];
-  if (width <= 8) return [truncate(plain, width)];
-  const words = plain.split(/\s+/);
-  const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length <= width) {
-      current = next;
-      continue;
-    }
-    if (current) lines.push(current);
-    current = word.length > width ? truncate(word, width) : word;
-  }
-  if (current) lines.push(current);
-  return lines;
-}
-
-function wrapKeyValue(key: string, value: string, width: number): string[] {
-  const prefix = `${key}: `;
-  const wrapped = wrapText(value, Math.max(8, width - prefix.length));
-  return wrapped.map((line, idx) => (idx === 0 ? `${prefix}${line}` : `${" ".repeat(prefix.length)}${line}`));
-}
-
-function composeTwoPane(left: string[], right: string[], cols: number): string[] {
-  const leftWidth = Math.max(40, Math.floor(cols * 0.56));
-  const rightWidth = Math.max(24, cols - leftWidth - 4);
-  const height = Math.max(left.length, right.length);
-  const out: string[] = [];
-  for (let i = 0; i < height; i++) {
-    const leftLine = truncateAnsi(left[i] ?? "", leftWidth);
-    const rightLine = truncateAnsi(right[i] ?? "", rightWidth);
-    const leftPad = Math.max(0, leftWidth - stripAnsi(leftLine).length);
-    out.push(`${leftLine}${" ".repeat(leftPad)} │ ${rightLine}`);
-  }
-  return out;
 }

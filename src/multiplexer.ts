@@ -96,6 +96,30 @@ import {
   type WorkflowEntry,
   type WorkflowFilter,
 } from "./workflow.js";
+import {
+  renderActivityScreen,
+  renderGraveyardDetails,
+  renderGraveyardScreen,
+  renderPlanDetails,
+  renderPlansScreen,
+  renderThreadDetails,
+  renderThreadsScreen,
+  renderWorkflowDetails,
+  renderWorkflowScreen,
+} from "./tui/screens/subscreen-renderers.js";
+import {
+  renderDashboardBusyOverlay,
+  renderDashboardErrorOverlay,
+  renderHelpOverlay,
+  renderLabelInputOverlay,
+  renderMigratePickerOverlay,
+  renderNotificationPanel,
+  renderServiceInputOverlay,
+  renderSwitcherOverlay,
+  renderWorktreeListOverlay,
+  renderWorktreeRemoveConfirmOverlay,
+} from "./tui/screens/overlay-renderers.js";
+import { composeTwoPane, stripAnsi, truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "./tui/render/text.js";
 
 export type MuxMode = "dashboard" | "project-service";
 
@@ -367,6 +391,15 @@ export class Multiplexer {
     if (!force && this.lastRenderedFrame === output) return;
     process.stdout.write(output);
     this.lastRenderedFrame = output;
+  }
+
+  private restoreDashboardAfterOverlayDismiss(): void {
+    this.invalidateDashboardFrame();
+    if (this.mode === "dashboard") {
+      this.renderDashboard();
+    } else {
+      this.focusSession(this.activeIndex);
+    }
   }
 
   private buildDashboardWorktreeGroups(
@@ -2144,7 +2177,6 @@ export class Multiplexer {
           }
           break;
         }
-        case "d":
         case "escape":
           if (this.sessions.length > 0) {
             this.focusSession(this.activeIndex);
@@ -2189,7 +2221,6 @@ export class Multiplexer {
           }
           break;
         case "escape":
-        case "d":
           // If a session exists, go back to focused agent view
           if (this.sessions.length > 0) {
             this.focusSession(this.activeIndex);
@@ -2347,103 +2378,11 @@ export class Multiplexer {
   }
 
   private renderWorkflow(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const header: string[] = [];
-    header.push("");
-    header.push(
-      this.centerInWidth(`\x1b[1maimux\x1b[0m — workflow \x1b[2m[${this.describeWorkflowFilter()}]\x1b[0m`, cols),
-    );
-    header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-    header.push("");
-    const footer = this.centerInWidth(
-      "[↑↓] select  [f] filter  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a] accept  [b] block  [c/x] complete  [P] approve  [J] changes  [E] reopen  [Enter] thread  [Esc] dashboard  [q] quit",
-      cols,
-    );
-    const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110 && this.dashboardState.detailsSidebarVisible;
-    const listLines: string[] = [];
-
-    if (this.workflowEntries.length === 0) {
-      listLines.push("  Workflow");
-      listLines.push("    No open task/review/handoff workflow items.");
-    } else {
-      listLines.push("  Workflow");
-      for (let i = 0; i < this.workflowEntries.length; i++) {
-        const entry = this.workflowEntries[i]!;
-        const selected = i === this.workflowIndex;
-        const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
-        const pending = entry.pendingDeliveries > 0 ? ` \x1b[31m⇢ ${entry.pendingDeliveries}\x1b[0m` : "";
-        const unread =
-          (entry.thread.unreadBy?.length ?? 0) > 0 ? ` \x1b[36m${entry.thread.unreadBy!.length}\x1b[0m` : "";
-        const family = entry.familyTaskIds.length > 1 ? ` \x1b[35m⤳${entry.familyTaskIds.length}\x1b[0m` : "";
-        const latest = entry.latestMessage?.body
-          ? ` \x1b[2m· ${this.truncatePlain(entry.latestMessage.body, 28)}\x1b[0m`
-          : "";
-        listLines.push(
-          `${marker}[${i + 1}] ${entry.displayTitle} \x1b[2m(${entry.thread.kind})\x1b[0m — ${entry.stateLabel}${family}${unread}${pending}${latest}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
-        );
-      }
-    }
-
-    const focusLine = this.workflowEntries.length === 0 ? 1 : this.workflowIndex + 1;
-    const body = this.composeSplitScreen(
-      listLines,
-      this.renderWorkflowDetails(Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-      cols,
-      viewportHeight,
-      focusLine,
-      twoPane,
-    );
-    this.writeFrame(
-      "\x1b[2J\x1b[H" +
-        [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
-    );
+    renderWorkflowScreen(this);
   }
 
   private renderWorkflowDetails(width: number, height: number): string[] {
-    const entry = this.workflowEntries[this.workflowIndex];
-    if (!entry) return new Array(height).fill("");
-    const lines: string[] = [];
-    lines.push("\x1b[1mWorkflow\x1b[0m");
-    lines.push(...this.wrapKeyValue("Title", entry.displayTitle, width));
-    lines.push(...this.wrapKeyValue("Kind", entry.thread.kind, width));
-    lines.push(...this.wrapKeyValue("State", entry.stateLabel, width));
-    if (entry.task) {
-      lines.push(...this.wrapKeyValue("Task Status", entry.task.status, width));
-      if (entry.task.type === "review" && entry.task.reviewStatus) {
-        lines.push(...this.wrapKeyValue("Review", entry.task.reviewStatus, width));
-      }
-      if (entry.familyTaskIds.length > 1) {
-        lines.push(...this.wrapKeyValue("Workflow Root", entry.familyRootTaskId ?? entry.task.id, width));
-        lines.push(...this.wrapKeyValue("Chain Size", String(entry.familyTaskIds.length), width));
-        lines.push(...this.wrapKeyValue("Chain", entry.familyTaskIds.join(" → "), width));
-      }
-      lines.push(...this.wrapKeyValue("Prompt", entry.task.prompt, width));
-      if (entry.task.result) lines.push(...this.wrapKeyValue("Result", entry.task.result, width));
-      if (entry.task.error) lines.push(...this.wrapKeyValue("Error", entry.task.error, width));
-    }
-    if (entry.thread.owner) lines.push(...this.wrapKeyValue("Owner", entry.thread.owner, width));
-    if ((entry.thread.waitingOn?.length ?? 0) > 0) {
-      lines.push(...this.wrapKeyValue("Waiting On", entry.thread.waitingOn!.join(", "), width));
-    }
-    if (entry.pendingDeliveries > 0) {
-      lines.push(...this.wrapKeyValue("Pending Delivery", entry.latestPendingRecipients.join(", "), width));
-    }
-    if (entry.thread.taskId) lines.push(...this.wrapKeyValue("Task", entry.thread.taskId, width));
-    lines.push("");
-    lines.push("\x1b[1mLatest\x1b[0m");
-    if (entry.latestMessage) {
-      lines.push(
-        ...this.wrapKeyValue(
-          `${entry.latestMessage.from} [${entry.latestMessage.kind}]`,
-          entry.latestMessage.body,
-          width,
-        ),
-      );
-    }
-    while (lines.length < height) lines.push("");
-    return lines.slice(0, height);
+    return renderWorkflowDetails(this, width, height);
   }
 
   private handleWorkflowKey(data: Buffer): void {
@@ -2573,64 +2512,7 @@ export class Multiplexer {
   }
 
   private renderActivityDashboard(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const header: string[] = [];
-    header.push("");
-    header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — activity", cols));
-    header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-    header.push("");
-    const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
-      cols,
-    );
-    const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110 && this.dashboardState.detailsSidebarVisible;
-    const listLines: string[] = [];
-
-    if (this.activityEntries.length === 0) {
-      listLines.push("  Activity");
-      listLines.push("    No sessions currently need attention.");
-    } else {
-      listLines.push("  Activity");
-      for (let i = 0; i < this.activityEntries.length; i++) {
-        const entry = this.activityEntries[i]!;
-        const selected = i === this.activityIndex;
-        const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
-        const identity = entry.label ?? entry.command;
-        const roleTag = entry.role ? ` \x1b[36m(${entry.role})\x1b[0m` : "";
-        const wt = entry.worktreeName
-          ? ` \x1b[2m· ${this.truncatePlain(entry.worktreeName, 18)}${entry.worktreeBranch ? `@${this.truncatePlain(entry.worktreeBranch, 18)}` : ""}\x1b[0m`
-          : "";
-        const state =
-          entry.attention && entry.attention !== "normal" ? entry.attention : (entry.activity ?? entry.status);
-        const unseen = (entry.unseenCount ?? 0) > 0 ? ` \x1b[36m${entry.unseenCount}\x1b[0m` : "";
-        const service = entry.services?.[0]
-          ? ` \x1b[2m· ${entry.services[0].port ? `:${entry.services[0].port}` : this.truncatePlain(entry.services[0].url ?? "", 16)}\x1b[0m`
-          : "";
-        listLines.push(
-          `${marker}[${i + 1}] ${identity}${roleTag} — ${state}${unseen}${wt}${service}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
-        );
-      }
-    }
-
-    const focusLine = this.activityEntries.length === 0 ? 1 : this.activityIndex + 1;
-    const body = this.composeSplitScreen(
-      listLines,
-      this.renderSessionDetails(
-        this.activityEntries[this.activityIndex],
-        Math.max(28, cols - Math.floor(cols * 0.56) - 3),
-        viewportHeight,
-      ),
-      cols,
-      viewportHeight,
-      focusLine,
-      twoPane,
-    );
-    this.writeFrame(
-      "\x1b[2J\x1b[H" +
-        [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
-    );
+    renderActivityScreen(this);
   }
 
   private handleActivityKey(data: Buffer): void {
@@ -2748,105 +2630,11 @@ export class Multiplexer {
   }
 
   private renderThreads(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const header: string[] = [];
-    header.push("");
-    header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — threads", cols));
-    header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-    header.push("");
-    const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a] accept  [c] complete  [b/o/x] state  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
-      cols,
-    );
-    const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110 && this.dashboardState.detailsSidebarVisible;
-    const listLines: string[] = [];
-
-    if (this.threadEntries.length === 0) {
-      listLines.push("  Threads");
-      listLines.push("    No orchestration threads yet.");
-    } else {
-      listLines.push("  Threads");
-      for (let i = 0; i < this.threadEntries.length; i++) {
-        const entry = this.threadEntries[i]!;
-        const selected = i === this.threadIndex;
-        const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
-        const unread =
-          (entry.thread.unreadBy?.length ?? 0) > 0 ? ` \x1b[36m${entry.thread.unreadBy!.length}\x1b[0m` : "";
-        const waiting =
-          (entry.thread.waitingOn?.length ?? 0) > 0 ? ` \x1b[35m→ ${entry.thread.waitingOn!.join(",")}\x1b[0m` : "";
-        const pending = entry.pendingDeliveries > 0 ? ` \x1b[31m⇢ ${entry.pendingDeliveries}\x1b[0m` : "";
-        const latest = entry.latestMessage?.body
-          ? ` \x1b[2m· ${this.truncatePlain(entry.latestMessage.body, 34)}\x1b[0m`
-          : "";
-        listLines.push(
-          `${marker}[${i + 1}] ${entry.displayTitle} \x1b[2m(${entry.thread.kind})\x1b[0m — ${entry.thread.status}${unread}${waiting}${pending}${latest}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
-        );
-      }
-    }
-
-    const focusLine = this.threadEntries.length === 0 ? 1 : this.threadIndex + 1;
-    const body = this.composeSplitScreen(
-      listLines,
-      this.renderThreadDetails(Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-      cols,
-      viewportHeight,
-      focusLine,
-      twoPane,
-    );
-    this.writeFrame(
-      "\x1b[2J\x1b[H" +
-        [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
-    );
+    renderThreadsScreen(this);
   }
 
   private renderThreadDetails(width: number, height: number): string[] {
-    const entry = this.threadEntries[this.threadIndex];
-    if (!entry) return new Array(height).fill("");
-    const lines: string[] = [];
-    lines.push("\x1b[1mDetails\x1b[0m");
-    lines.push(...this.wrapKeyValue("Title", entry.displayTitle, width));
-    lines.push(...this.wrapKeyValue("Kind", entry.thread.kind, width));
-    lines.push(...this.wrapKeyValue("Status", entry.thread.status, width));
-    lines.push(...this.wrapKeyValue("Created By", entry.thread.createdBy, width));
-    lines.push(...this.wrapKeyValue("Participants", entry.thread.participants.join(", "), width));
-    if (entry.thread.owner) lines.push(...this.wrapKeyValue("Owner", entry.thread.owner, width));
-    if (entry.thread.kind === "handoff") {
-      lines.push(...this.wrapKeyValue("Handoff", this.describeHandoffState(entry.thread), width));
-    }
-    if ((entry.thread.waitingOn?.length ?? 0) > 0) {
-      lines.push(...this.wrapKeyValue("Waiting On", entry.thread.waitingOn!.join(", "), width));
-    }
-    if ((entry.thread.unreadBy?.length ?? 0) > 0) {
-      lines.push(...this.wrapKeyValue("Unread By", entry.thread.unreadBy!.join(", "), width));
-    }
-    if (entry.pendingDeliveries > 0) {
-      lines.push(...this.wrapKeyValue("Pending Delivery", entry.latestPendingRecipients.join(", "), width));
-    }
-    if (entry.thread.taskId) lines.push(...this.wrapKeyValue("Task", entry.thread.taskId, width));
-    if (entry.thread.worktreePath) lines.push(...this.wrapKeyValue("Worktree", entry.thread.worktreePath, width));
-    lines.push("");
-    lines.push("\x1b[1mMessages\x1b[0m");
-    const messages = readMessages(entry.thread.id).slice(-Math.max(3, height - lines.length));
-    for (const message of messages) {
-      const prefix = `${message.from}${message.to?.length ? ` → ${message.to.join(", ")}` : ""} [${message.kind}]`;
-      const delivered = message.deliveredTo ?? [];
-      const pending = (message.to ?? []).filter((recipient) => !(message.deliveredTo ?? []).includes(recipient));
-      const statusParts: string[] = [];
-      if (delivered.length > 0) {
-        statusParts.push(
-          pending.length > 0 ? `delivered ${delivered.join(", ")}` : `delivered to ${delivered.join(", ")}`,
-        );
-      }
-      if (pending.length > 0) {
-        statusParts.push(`pending ${pending.join(", ")}`);
-      }
-      const suffix = statusParts.length > 0 ? ` (${statusParts.join("; ")})` : "";
-      lines.push(...this.wrapKeyValue(prefix, `${message.body}${suffix}`, width));
-    }
-    while (lines.length < height) lines.push("");
-    return lines.slice(0, height);
+    return renderThreadDetails(this, width, height);
   }
 
   private handleThreadsKey(data: Buffer): void {
@@ -3999,11 +3787,7 @@ export class Multiplexer {
     if (key === "escape") {
       this.pickerMode = "create";
       this.forkSourceSessionId = null;
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
+      this.restoreDashboardAfterOverlayDismiss();
       return;
     }
 
@@ -4020,8 +3804,7 @@ export class Multiplexer {
           );
           setTimeout(() => {
             this.pickerActive = false;
-            if (this.mode === "dashboard") this.renderDashboard();
-            else this.focusSession(this.activeIndex);
+            this.restoreDashboardAfterOverlayDismiss();
           }, 2000);
           return;
         }
@@ -4455,35 +4238,7 @@ export class Multiplexer {
   }
 
   private renderServiceInput(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-
-    const lines = [
-      "Create service:",
-      "",
-      `  Command: ${this.serviceInputBuffer}_`,
-      "",
-      "  Empty command opens an interactive shell",
-      "  [Enter] create  [Esc] cancel",
-    ];
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1];
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderServiceInputOverlay(this);
   }
 
   private handleWorktreeInputKey(data: Buffer): void {
@@ -4573,28 +4328,7 @@ export class Multiplexer {
   }
 
   private renderLabelInput(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-
-    const lines = ["Name agent:", "", `  Name: ${this.labelInputBuffer}_`, "", "  [Enter] save  [Esc] cancel"];
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1];
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderLabelInputOverlay(this);
   }
 
   private handleLabelInputKey(data: Buffer): void {
@@ -4671,130 +4405,19 @@ export class Multiplexer {
   }
 
   private renderWorktreeList(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-
-    let worktrees: Array<{ name: string; branch: string; path: string }> = [];
-    try {
-      worktrees = listAllWorktrees().filter((wt) => !wt.isBare);
-    } catch {}
-
-    const lines = ["Worktree Management:", ""];
-    if (worktrees.length === 0) {
-      lines.push("  No worktrees found.");
-    } else {
-      for (let i = 0; i < worktrees.length; i++) {
-        const wt = worktrees[i];
-        const isMain = i === 0 ? " \x1b[2m(main)\x1b[0m" : "";
-        lines.push(`  [${i + 1}] ${wt.name} (${wt.branch})${isMain}`);
-      }
-    }
-    lines.push("");
-    lines.push("  [1-9] remove  [Esc] back");
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1];
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderWorktreeListOverlay(this);
   }
 
   private renderWorktreeRemoveConfirm(): void {
-    const confirm = this.worktreeRemoveConfirm;
-    if (!confirm) return;
-
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const lines = [
-      `Remove worktree "${confirm.name}"?`,
-      "",
-      `  Path: ${confirm.path}`,
-      `  This runs: git worktree remove --force`,
-      "",
-      "  [y] yes  [n/Esc] cancel",
-    ];
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[41;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        output += `\x1b[41;97m  ${lines[i - 1].padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderWorktreeRemoveConfirmOverlay(this);
   }
 
   private renderDashboardBusyOverlay(): void {
-    const busy = this.dashboardBusyState;
-    if (!busy) return;
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][busy.spinnerFrame % 10];
-    const elapsed = ((Date.now() - busy.startedAt) / 1000).toFixed(1);
-    const lines = [`${spinner} ${busy.title}`, "", ...busy.lines, "", `  Elapsed: ${elapsed}s`, "", "  Please wait"];
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        output += `\x1b[44;97m  ${lines[i - 1].padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderDashboardBusyOverlay(this);
   }
 
   private renderDashboardErrorOverlay(): void {
-    const error = this.dashboardErrorState;
-    if (!error) return;
-
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const lines = [error.title, "", ...error.lines.slice(0, 6).map((line) => `  ${line}`), "", "  [Esc/Enter] dismiss"];
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[41;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        output += `\x1b[41;97m  ${lines[i - 1].padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderDashboardErrorOverlay(this);
   }
 
   private showNotificationPanel(): void {
@@ -4814,62 +4437,7 @@ export class Multiplexer {
   }
 
   private renderNotificationPanel(): void {
-    const panel = this.notificationPanelState;
-    if (!panel) return;
-
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const title = "Notifications";
-    const header = [`${title}`, "", "  [↑↓] select  [r] read  [c] clear  [C] clear all  [Esc] close", ""];
-    const items =
-      panel.entries.length === 0
-        ? ["  No notifications."]
-        : panel.entries.map((entry, index) => {
-            const marker = index === panel.index ? "▸" : " ";
-            const state = entry.unread ? "unread" : "read";
-            const session = entry.sessionId ? ` (${entry.sessionId})` : "";
-            const time = entry.createdAt.replace("T", " ").slice(5, 16);
-            return `  ${marker} ${entry.title}${session} · ${state} · ${time}`;
-          });
-    const selected = panel.entries[panel.index];
-    const details = selected
-      ? [
-          "Details",
-          "",
-          ...this.wrapKeyValue("Title", selected.title, 56),
-          ...(selected.subtitle ? this.wrapKeyValue("Subtitle", selected.subtitle, 56) : []),
-          ...this.wrapKeyValue("Body", selected.body, 56),
-          ...(selected.sessionId ? this.wrapKeyValue("Session", selected.sessionId, 56) : []),
-          ...(selected.kind ? this.wrapKeyValue("Kind", selected.kind, 56) : []),
-        ]
-      : ["Details", "", "  No notification selected."];
-
-    const lines = [...header, ...items];
-    const height = Math.min(rows - 6, Math.max(10, Math.min(22, lines.length + 2)));
-    const width = Math.min(cols - 8, 100);
-    const leftWidth = Math.max(34, Math.floor(width * 0.5));
-    const rightWidth = Math.max(24, width - leftWidth - 3);
-    const startRow = Math.max(1, Math.floor((rows - height) / 2));
-    const startCol = Math.max(2, Math.floor((cols - width) / 2));
-    const listHeight = height - 2;
-    const listVisible = lines.slice(0, listHeight);
-    while (listVisible.length < listHeight) listVisible.push("");
-    const detailVisible = details.slice(0, listHeight);
-    while (detailVisible.length < listHeight) detailVisible.push("");
-
-    let output = "\x1b7";
-    for (let i = 0; i < height; i++) {
-      output += `\x1b[${startRow + i};${startCol}H`;
-      if (i === 0 || i === height - 1) {
-        output += `\x1b[48;5;236;38;5;255m${" ".repeat(width)}\x1b[0m`;
-        continue;
-      }
-      const left = this.truncatePlain(this.stripAnsi(listVisible[i - 1] ?? ""), leftWidth).padEnd(leftWidth);
-      const right = this.truncatePlain(this.stripAnsi(detailVisible[i - 1] ?? ""), rightWidth).padEnd(rightWidth);
-      output += `\x1b[48;5;236;38;5;255m ${left} │ ${right} \x1b[0m`;
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderNotificationPanel(this);
   }
 
   private handleNotificationPanelKey(data: Buffer): void {
@@ -5075,7 +4643,7 @@ export class Multiplexer {
 
     // Any other key cancels
     this.worktreeRemoveConfirm = null;
-    this.renderDashboard();
+    this.restoreDashboardAfterOverlayDismiss();
   }
 
   private handleWorktreeListKey(data: Buffer): void {
@@ -5087,11 +4655,7 @@ export class Multiplexer {
 
     if (key === "escape") {
       this.worktreeListActive = false;
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
+      this.restoreDashboardAfterOverlayDismiss();
       return;
     }
 
@@ -5134,47 +4698,7 @@ export class Multiplexer {
   }
 
   private renderGraveyard(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const header: string[] = [];
-    header.push("");
-    header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — graveyard", cols));
-    header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-    header.push("");
-    const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
-      cols,
-    );
-    const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110 && this.dashboardState.detailsSidebarVisible;
-    const listLines: string[] = [];
-    if (this.graveyardEntries.length === 0) {
-      listLines.push("  Graveyard");
-      listLines.push("    (empty)");
-    } else {
-      listLines.push("  Graveyard");
-      for (let i = 0; i < this.graveyardEntries.length; i++) {
-        const s = this.graveyardEntries[i];
-        const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
-        const identity = s.label ? ` — ${s.label}` : "";
-        const headline = s.headline ? ` · ${s.headline}` : "";
-        const marker = i === this.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
-        listLines.push(`    ${marker}[${i + 1}] ${s.command}:${s.id}${bsid}${identity}${headline}`);
-      }
-    }
-    const focusLine = this.graveyardEntries.length === 0 ? 1 : this.graveyardIndex + 1;
-    const body = this.composeSplitScreen(
-      listLines,
-      this.renderGraveyardDetails(Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-      cols,
-      viewportHeight,
-      focusLine,
-      twoPane,
-    );
-    this.writeFrame(
-      "\x1b[2J\x1b[H" +
-        [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 52)), cols), footer].join("\r\n"),
-    );
+    renderGraveyardScreen(this);
   }
 
   private handleGraveyardKey(data: Buffer): void {
@@ -5319,48 +4843,7 @@ export class Multiplexer {
   }
 
   private renderPlans(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const header: string[] = [];
-    header.push("");
-    header.push(this.centerInWidth("\x1b[1maimux\x1b[0m — plans", cols));
-    header.push(this.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
-    header.push("");
-    const footer = this.centerInWidth(
-      "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
-      cols,
-    );
-    const viewportHeight = rows - header.length - 2;
-    const twoPane = cols >= 110 && this.dashboardState.detailsSidebarVisible;
-    const listLines: string[] = [];
-
-    if (this.planEntries.length === 0) {
-      listLines.push("  No plan files found in .aimux/plans/");
-    } else {
-      listLines.push("  Plans");
-      for (let i = 0; i < this.planEntries.length; i++) {
-        const plan = this.planEntries[i];
-        const selected = i === this.planIndex;
-        const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
-        const identity = plan.label ?? plan.tool ?? "unknown";
-        const worktree = plan.worktree ?? "main";
-        const updated = plan.updatedAt ? ` · ${plan.updatedAt.replace("T", " ").slice(0, 16)}` : "";
-        listLines.push(`${marker}[${i + 1}] ${identity} \x1b[2m(${plan.sessionId})\x1b[0m · ${worktree}${updated}`);
-      }
-    }
-    const focusLine = this.planEntries.length === 0 ? 0 : this.planIndex + 1;
-    const body = this.composeSplitScreen(
-      listLines,
-      this.renderPlanDetails(Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
-      cols,
-      viewportHeight,
-      focusLine,
-      twoPane,
-    );
-    this.writeFrame(
-      "\x1b[2J\x1b[H" +
-        [...header, ...body, this.centerInWidth("─".repeat(Math.min(cols - 4, 56)), cols), footer].join("\r\n"),
-    );
+    renderPlansScreen(this);
   }
 
   private buildPlanPreview(content: string, width: number, maxLines: number): string[] {
@@ -5376,149 +4859,11 @@ export class Multiplexer {
   }
 
   private renderPlanDetails(width: number, height: number): string[] {
-    const selectedPlan = this.planEntries[this.planIndex];
-    if (!selectedPlan) return new Array(height).fill("");
-    const lines: string[] = [];
-    lines.push("\x1b[1mDetails\x1b[0m");
-    lines.push(
-      ...this.wrapKeyValue(
-        "Agent",
-        `${selectedPlan.label ?? selectedPlan.tool ?? "unknown"} (${selectedPlan.sessionId})`,
-        width,
-      ),
-    );
-    lines.push(...this.wrapKeyValue("Tool", selectedPlan.tool ?? "unknown", width));
-    lines.push(...this.wrapKeyValue("Worktree", selectedPlan.worktree ?? "main", width));
-    if (selectedPlan.updatedAt) lines.push(...this.wrapKeyValue("Updated", selectedPlan.updatedAt, width));
-    lines.push(...this.wrapKeyValue("File", `.aimux/plans/${selectedPlan.sessionId}.md`, width));
-    lines.push("");
-    lines.push("\x1b[1mPreview\x1b[0m");
-    for (const previewLine of this.buildPlanPreview(selectedPlan.content, width, Math.max(4, height - lines.length))) {
-      lines.push(previewLine);
-    }
-    while (lines.length < height) lines.push("");
-    return lines.slice(0, height);
+    return renderPlanDetails(this, width, height);
   }
 
   private renderGraveyardDetails(width: number, height: number): string[] {
-    const selected = this.graveyardEntries[this.graveyardIndex];
-    if (!selected) return new Array(height).fill("");
-    const lines: string[] = [];
-    const worktreeName = selected.worktreePath ? basename(selected.worktreePath) : undefined;
-    lines.push("\x1b[1mDetails\x1b[0m");
-    lines.push(...this.wrapKeyValue("Agent", selected.label ?? selected.id, width));
-    lines.push(...this.wrapKeyValue("Session", selected.id, width));
-    lines.push(...this.wrapKeyValue("Tool", selected.tool, width));
-    lines.push(...this.wrapKeyValue("Config", selected.toolConfigKey, width));
-    lines.push(...this.wrapKeyValue("Status", "offline", width));
-    if (worktreeName) lines.push(...this.wrapKeyValue("Worktree", worktreeName, width));
-    if (selected.worktreePath) lines.push(...this.wrapKeyValue("Path", selected.worktreePath, width));
-    if (selected.backendSessionId) lines.push(...this.wrapKeyValue("Backend", selected.backendSessionId, width));
-    if (selected.headline) lines.push(...this.wrapKeyValue("Headline", selected.headline, width));
-    if (selected.command) lines.push(...this.wrapKeyValue("Command", selected.command, width));
-    if (selected.args?.length) lines.push(...this.wrapKeyValue("Args", selected.args.join(" "), width));
-    while (lines.length < height) lines.push("");
-    return lines.slice(0, height);
-  }
-  private composeSplitScreen(
-    leftLines: string[],
-    rightLines: string[],
-    cols: number,
-    viewportHeight: number,
-    focusLine: number,
-    twoPane: boolean,
-  ): string[] {
-    const content = [...leftLines];
-    let scrollOffset = 0;
-    const maxScroll = Math.max(0, content.length - viewportHeight);
-    if (focusLine >= 0) {
-      if (focusLine < scrollOffset + 1) {
-        scrollOffset = Math.max(0, focusLine - 1);
-      } else if (focusLine >= scrollOffset + viewportHeight - 1) {
-        scrollOffset = Math.min(maxScroll, focusLine - viewportHeight + 2);
-      }
-    }
-    const visibleLeft = content.slice(scrollOffset, scrollOffset + viewportHeight);
-    const canScrollUp = scrollOffset > 0;
-    const canScrollDown = scrollOffset < maxScroll;
-    if (canScrollUp && visibleLeft.length > 0) visibleLeft[0] = this.centerInWidth("\x1b[2m▲ more ▲\x1b[0m", cols);
-    if (canScrollDown && visibleLeft.length > 0) {
-      visibleLeft[visibleLeft.length - 1] = this.centerInWidth("\x1b[2m▼ more ▼\x1b[0m", cols);
-    }
-    while (visibleLeft.length < viewportHeight) visibleLeft.push("");
-    if (!twoPane) return visibleLeft;
-    return this.composeTwoPaneLines(visibleLeft, rightLines, cols);
-  }
-
-  private composeTwoPaneLines(left: string[], right: string[], cols: number): string[] {
-    const leftWidth = Math.max(40, Math.floor(cols * 0.56));
-    const rightWidth = Math.max(24, cols - leftWidth - 4);
-    const height = Math.max(left.length, right.length);
-    const out: string[] = [];
-    for (let i = 0; i < height; i++) {
-      const leftLine = this.truncateAnsi(left[i] ?? "", leftWidth);
-      const rightLine = this.truncateAnsi(right[i] ?? "", rightWidth);
-      const leftPad = Math.max(0, leftWidth - this.stripAnsi(leftLine).length);
-      out.push(`${leftLine}${" ".repeat(leftPad)} │ ${rightLine}`);
-    }
-    return out;
-  }
-
-  private wrapKeyValue(key: string, value: string, width: number): string[] {
-    const prefix = `${key}: `;
-    const wrapped = this.wrapText(value, Math.max(8, width - prefix.length));
-    return wrapped.map((line, idx) => (idx === 0 ? `${prefix}${line}` : `${" ".repeat(prefix.length)}${line}`));
-  }
-
-  private wrapText(text: string, width: number): string[] {
-    const plain = text.trim();
-    if (!plain) return [""];
-    if (width <= 8) return [this.truncatePlain(plain, width)];
-    const words = plain.split(/\s+/);
-    const lines: string[] = [];
-    let current = "";
-    for (const word of words) {
-      const next = current ? `${current} ${word}` : word;
-      if (next.length <= width) {
-        current = next;
-        continue;
-      }
-      if (current) lines.push(current);
-      current = word.length > width ? this.truncatePlain(word, width) : word;
-    }
-    if (current) lines.push(current);
-    return lines;
-  }
-
-  private truncatePlain(text: string, max: number): string {
-    if (text.length <= max) return text;
-    if (max <= 1) return text.slice(0, max);
-    return `${text.slice(0, max - 1)}…`;
-  }
-
-  private truncateAnsi(text: string, max: number): string {
-    if (max <= 0) return "";
-    const plainLength = this.stripAnsi(text).length;
-    const needsEllipsis = plainLength > max;
-    const limit = needsEllipsis && max > 1 ? max - 1 : max;
-    let visible = 0;
-    let out = "";
-    for (let i = 0; i < text.length; i++) {
-      if (text[i] === "\x1b") {
-        const match = text.slice(i).match(/^\x1b\[[0-9;]*m/);
-        if (match) {
-          out += match[0];
-          i += match[0].length - 1;
-          continue;
-        }
-      }
-      if (visible >= limit) break;
-      out += text[i];
-      visible += 1;
-    }
-    if (needsEllipsis) out += "…";
-    if (out.includes("\x1b[")) out += "\x1b[0m";
-    return out;
+    return renderGraveyardDetails(this, width, height);
   }
 
   private handlePlansKey(data: Buffer): void {
@@ -5697,73 +5042,7 @@ export class Multiplexer {
   }
 
   private renderHelp(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const allLines = [
-      "Help",
-      "",
-      "Tmux mode",
-      "  Dashboard lives in a managed tmux dashboard window",
-      "  Each agent runs in its own tmux window",
-      "  Use normal tmux window navigation inside agents",
-      "  Run aimux with no args to return to the dashboard window",
-      "",
-      "Dashboard mode",
-      "  Ctrl+A ?  show help",
-      "  Ctrl+A c  new agent",
-      "  Ctrl+A x  stop agent",
-      "  Ctrl+A w  create worktree",
-      "  Ctrl+A W  worktree list",
-      "  Ctrl+A v  request review",
-      "  Ctrl+A 1-9  focus numbered agent",
-      "  Ctrl+A d  return to dashboard window",
-      "  arrows / j k n p  navigate",
-      "  Enter  open, resume, or takeover",
-      "  a  activity",
-      "  y  workflow",
-      "  p  plans",
-      "  r  name agent",
-      "  m  migrate agent",
-      "  g  graveyard",
-      "  q  quit",
-      "",
-      "Esc, Enter, or ? to close",
-    ];
-
-    const visibleRows = rows;
-    const maxContentRows = Math.max(6, visibleRows - 2);
-    let lines = [...allLines];
-    if (lines.length > maxContentRows) {
-      const closeLine = lines[lines.length - 1];
-      const available = Math.max(4, maxContentRows - 2);
-      lines = [...lines.slice(0, available), "...", closeLine];
-    }
-
-    const ellipsizeEnd = (s: string, max: number) => {
-      if (max <= 0) return "";
-      if (s.length <= max) return s;
-      if (max <= 1) return "…";
-      return `${s.slice(0, max - 1)}…`;
-    };
-
-    const contentWidth = Math.max(36, Math.min(cols - 6, Math.max(...lines.map((line) => line.length))));
-    const boxWidth = contentWidth + 4;
-    const boxHeight = lines.length + 2;
-    const startRow = Math.max(1, Math.floor((visibleRows - boxHeight) / 2));
-    const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
-    let output = "\x1b7";
-    for (let i = 0; i < boxHeight; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === boxHeight - 1) {
-        output += `\x1b[44;97m${" ".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = ellipsizeEnd(lines[i - 1] ?? "", contentWidth);
-        output += `\x1b[44;97m  ${line.padEnd(contentWidth)}  \x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderHelpOverlay(this);
   }
 
   private handleHelpKey(data: Buffer): void {
@@ -5806,47 +5085,7 @@ export class Multiplexer {
   }
 
   private renderSwitcher(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const list = this.getSwitcherList();
-
-    const ellipsizeEnd = (s: string, max: number) => {
-      if (max <= 0) return "";
-      if (s.length <= max) return s;
-      if (max <= 1) return "…";
-      return `${s.slice(0, max - 1)}…`;
-    };
-
-    const lines: string[] = ["Switch Agent:"];
-    for (let i = 0; i < list.length; i++) {
-      const s = list[i];
-      const wtPath = this.sessionWorktreePaths.get(s.id);
-      const wtLabel = wtPath ? ` (${wtPath.split("/").pop()})` : "";
-      const current = s.id === this.sessions[this.activeIndex]?.id ? " (current)" : "";
-      const pointer = i === this.switcherIndex ? "▸ " : "  ";
-      lines.push(`${pointer}${s.command}:${s.id}${wtLabel}${current}`);
-    }
-    lines.push("");
-    lines.push("  [s] cycle  Enter confirm  [x] stop  Esc cancel");
-
-    const contentWidth = Math.max(20, Math.min(cols - 6, Math.max(...lines.map((l) => l.length))));
-    const boxWidth = contentWidth + 4;
-    const startRow = Math.max(1, Math.floor((rows - lines.length - 2) / 2));
-    const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
-
-    let output = "\x1b7"; // save cursor
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = ellipsizeEnd(lines[i - 1], contentWidth);
-        output += `\x1b[44;97m  ${line.padEnd(contentWidth)}  \x1b[0m`;
-      }
-    }
-    output += "\x1b8"; // restore cursor
-    process.stdout.write(output);
+    renderSwitcherOverlay(this);
   }
 
   private handleSwitcherKey(data: Buffer): void {
@@ -5914,39 +5153,7 @@ export class Multiplexer {
   }
 
   private renderMigratePicker(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const session = this.sessions[this.activeIndex];
-    if (!session) return;
-
-    const currentWt = this.sessionWorktreePaths.get(session.id);
-    const lines = [`Migrate "${session.id}" to:`, ""];
-    for (let i = 0; i < this.migratePickerWorktrees.length; i++) {
-      const wt = this.migratePickerWorktrees[i];
-      const isCurrent = wt.path === currentWt || (!currentWt && wt.name === "(main)");
-      const marker = isCurrent ? " (current)" : "";
-      lines.push(`  [${i + 1}] ${wt.name}${marker}`);
-    }
-    lines.push("");
-    lines.push("  [Esc] cancel");
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1];
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderMigratePickerOverlay(this);
   }
 
   private waitForSessionExit(session: ManagedSession, timeoutMs = 15_000): Promise<void> {
@@ -6068,6 +5275,64 @@ export class Multiplexer {
     }
     while (lines.length < height) lines.push("");
     return lines.slice(0, height);
+  }
+
+  private composeSplitScreen(
+    leftLines: string[],
+    rightLines: string[],
+    cols: number,
+    viewportHeight: number,
+    focusLine: number,
+    twoPane: boolean,
+  ): string[] {
+    const content = [...leftLines];
+    let scrollOffset = 0;
+    const maxScroll = Math.max(0, content.length - viewportHeight);
+    if (focusLine >= 0) {
+      if (focusLine < scrollOffset + 1) {
+        scrollOffset = Math.max(0, focusLine - 1);
+      } else if (focusLine >= scrollOffset + viewportHeight - 1) {
+        scrollOffset = Math.min(maxScroll, focusLine - viewportHeight + 2);
+      }
+    }
+    const visibleLeft = content.slice(scrollOffset, scrollOffset + viewportHeight);
+    const canScrollUp = scrollOffset > 0;
+    const canScrollDown = scrollOffset < maxScroll;
+    if (canScrollUp && visibleLeft.length > 0) visibleLeft[0] = this.centerInWidth("\x1b[2m▲ more ▲\x1b[0m", cols);
+    if (canScrollDown && visibleLeft.length > 0) {
+      visibleLeft[visibleLeft.length - 1] = this.centerInWidth("\x1b[2m▼ more ▼\x1b[0m", cols);
+    }
+    while (visibleLeft.length < viewportHeight) visibleLeft.push("");
+    if (!twoPane) return visibleLeft;
+    return this.composeTwoPaneLines(visibleLeft, rightLines, cols);
+  }
+
+  private composeTwoPaneLines(left: string[], right: string[], cols: number): string[] {
+    return composeTwoPane(left, right, cols);
+  }
+
+  private wrapKeyValue(key: string, value: string, width: number): string[] {
+    return wrapKeyValue(key, value, width);
+  }
+
+  private wrapText(text: string, width: number): string[] {
+    return wrapText(text, width);
+  }
+
+  private truncatePlain(text: string, max: number): string {
+    return truncatePlain(text, max);
+  }
+
+  private truncateAnsi(text: string, max: number): string {
+    return truncateAnsi(text, max);
+  }
+
+  private basename(value: string): string {
+    return basename(value);
+  }
+
+  private listAllWorktrees(): Array<{ name: string; branch: string; path: string; isBare: boolean }> {
+    return listAllWorktrees();
   }
 
   private async graveyardSessionWithFeedback(sessionId: string, hasWorktrees: boolean): Promise<void> {
@@ -6391,20 +5656,22 @@ export class Multiplexer {
     metadata: ReturnType<typeof loadMetadataState>["sessions"];
     updatedAt: string;
   } {
+    const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     return {
       project: basename(process.cwd()),
       dashboardScreen: this.dashboardState.screen,
-      sessions: this.sessions.map((s, i) => ({
-        id: s.id,
-        tool: s.command,
-        label: this.getSessionLabel(s.id),
-        tmuxWindowId: this.sessionTmuxTargets.get(s.id)?.windowId,
-        windowName: this.getSessionLabel(s.id) || s.command,
-        headline: this.deriveHeadline(s.id),
-        status: s.status,
-        role: this.sessionRoles.get(s.id),
-        active: i === this.activeIndex,
-        worktreePath: this.sessionWorktreePaths.get(s.id),
+      sessions: desktopState.sessions.map((session) => ({
+        id: session.id,
+        tool: session.command,
+        label: session.label,
+        tmuxWindowId: session.tmuxWindowId,
+        windowName: session.label || session.command,
+        headline: session.headline,
+        status: session.status,
+        role: session.role,
+        active: session.active,
+        worktreePath: session.worktreePath,
+        semantic: session.semantic,
       })),
       tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
       controlPlane: {
@@ -6547,7 +5814,7 @@ export class Multiplexer {
   }
 
   private stripAnsi(text: string): string {
-    return text.replace(/\x1b\[[0-9;]*m/g, "");
+    return stripAnsi(text);
   }
 
   private centerInWidth(text: string, width: number): string {
