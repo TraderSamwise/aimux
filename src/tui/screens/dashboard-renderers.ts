@@ -39,7 +39,7 @@ export function renderDashboardFrame(
   cols: number,
   rows: number,
 ): { frame: string; scrollOffset: number } {
-  const contentWidth = Math.min(cols - 2, 118);
+  const contentWidth = Math.max(72, cols - 6);
   const contentPad = Math.max(0, Math.floor((cols - contentWidth) / 2));
   const padBlockLine = (line: string): string => `${" ".repeat(contentPad)}${line}`;
   const centerInBlock = (line: string): string =>
