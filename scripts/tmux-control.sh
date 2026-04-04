@@ -63,6 +63,7 @@ project_root_file="$project_state_dir/project-root.txt"
 statusline_json="$project_state_dir/statusline.json"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 aimux_bin="$script_dir/../bin/aimux"
+debug_log="${TMPDIR:-/tmp}/aimux-debug.log"
 
 load_endpoint() {
   [ -f "$endpoint_file" ] || return 1
@@ -116,7 +117,7 @@ request_control() {
     --data-urlencode "currentWindowId=$current_window_id" \
     --data-urlencode "currentPath=$current_path" \
     --data-urlencode "windowId=$window_id" \
-    "${endpoint}${path}" >/dev/null
+    "${endpoint}${path}" >/dev/null 2>>"$debug_log"
 }
 
 switch_local_dashboard() {
