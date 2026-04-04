@@ -1,6 +1,5 @@
 export function renderWorkflowScreen(ctx: any): void {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+  const { cols, rows } = ctx.getViewportSize();
   const header: string[] = [];
   header.push("");
   header.push(
@@ -94,8 +93,7 @@ export function renderWorkflowDetails(ctx: any, width: number, height: number): 
 }
 
 export function renderActivityScreen(ctx: any): void {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+  const { cols, rows } = ctx.getViewportSize();
   const header: string[] = [];
   header.push("");
   header.push(ctx.centerInWidth("\x1b[1maimux\x1b[0m — activity", cols));
@@ -155,8 +153,7 @@ export function renderActivityScreen(ctx: any): void {
 }
 
 export function renderThreadsScreen(ctx: any): void {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+  const { cols, rows } = ctx.getViewportSize();
   const header: string[] = [];
   header.push("");
   header.push(ctx.centerInWidth("\x1b[1maimux\x1b[0m — threads", cols));
@@ -256,8 +253,7 @@ export function renderThreadDetails(ctx: any, width: number, height: number): st
 }
 
 export function renderGraveyardScreen(ctx: any): void {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+  const { cols, rows } = ctx.getViewportSize();
   const header: string[] = [];
   header.push("");
   header.push(ctx.centerInWidth("\x1b[1maimux\x1b[0m — graveyard", cols));
@@ -333,8 +329,7 @@ function buildPlanPreview(ctx: any, content: string, width: number, maxLines: nu
 }
 
 export function renderPlansScreen(ctx: any): void {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+  const { cols, rows } = ctx.getViewportSize();
   const header: string[] = [];
   header.push("");
   header.push(ctx.centerInWidth("\x1b[1maimux\x1b[0m — plans", cols));
