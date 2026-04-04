@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { debug } from "./debug.js";
+import { getProjectStateDirFor } from "./paths.js";
 
 export interface TmuxExecOptions {
   cwd?: string;
@@ -708,8 +709,9 @@ export class TmuxRuntimeManager {
   }
 
   private configureSession(sessionName: string, projectRoot: string): void {
-    const fastControlCommand = this.getFastControlShellCommand();
+    const controlScript = this.getControlScriptShellCommand();
     const statuslineCommand = this.getStatuslineCommandSpec();
+    const projectStateDir = getProjectStateDirFor(projectRoot);
     this.exec(["set-option", "-t", sessionName, "@aimux-project-root", projectRoot]);
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
@@ -775,7 +777,7 @@ export class TmuxRuntimeManager {
       "n",
       "run-shell",
       "-b",
-      `${fastControlCommand} next --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${controlScript} next --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -784,7 +786,7 @@ export class TmuxRuntimeManager {
       "p",
       "run-shell",
       "-b",
-      `${fastControlCommand} prev --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${controlScript} prev --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -793,7 +795,7 @@ export class TmuxRuntimeManager {
       "s",
       "run-shell",
       "-b",
-      `${fastControlCommand} menu --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${controlScript} menu --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -802,7 +804,7 @@ export class TmuxRuntimeManager {
       "u",
       "run-shell",
       "-b",
-      `${fastControlCommand} attention --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${controlScript} attention --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
@@ -811,7 +813,7 @@ export class TmuxRuntimeManager {
       "d",
       "run-shell",
       "-b",
-      `${fastControlCommand} dashboard --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
+      `${controlScript} dashboard --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec(["set-option", "-t", sessionName, "status", "2"]);
     this.exec(["set-option", "-t", sessionName, "status-interval", "0"]);
@@ -821,8 +823,8 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "window-status-separator", " "]);
     this.exec(["set-option", "-t", sessionName, "window-status-format", ""]);
     this.exec(["set-option", "-t", sessionName, "window-status-current-format", ""]);
-    const top = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line top --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
-    const bottom = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line bottom --project-root ${shellQuote(projectRoot)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --width '#{client_width}'`;
+    const top = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line top --project-state-dir ${shellQuote(projectStateDir)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}'`;
+    const bottom = `${statuslineCommand.command} ${statuslineCommand.args.map(shellQuote).join(" ")} --line bottom --project-state-dir ${shellQuote(projectStateDir)} --current-session '#{session_name}' --current-window '#{window_name}' --current-window-id '#{window_id}'`;
     this.exec(["set-option", "-t", sessionName, "status-left", ""]);
     this.exec(["set-option", "-t", sessionName, "status-right", ""]);
     this.exec([
@@ -907,18 +909,18 @@ export class TmuxRuntimeManager {
 
   private getStatuslineCommandSpec(): TmuxCommandSpec {
     const currentFile = fileURLToPath(import.meta.url);
-    const scriptPath = join(dirname(currentFile), "tmux-statusline-cli.js");
+    const scriptPath = join(dirname(currentFile), "..", "scripts", "tmux-statusline.sh");
     return {
       cwd: process.cwd(),
-      command: process.execPath,
+      command: "sh",
       args: [scriptPath],
     };
   }
 
-  private getFastControlShellCommand(): string {
+  private getControlScriptShellCommand(): string {
     const currentFile = fileURLToPath(import.meta.url);
-    const scriptPath = join(dirname(currentFile), "tmux-fast-control.js");
-    return `${shellQuote(process.execPath)} ${shellQuote(scriptPath)}`;
+    const scriptPath = join(dirname(currentFile), "..", "scripts", "tmux-control.sh");
+    return `sh ${shellQuote(scriptPath)}`;
   }
 }
 

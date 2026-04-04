@@ -3,6 +3,7 @@ use rfd::FileDialog;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
+use sha2::Sha256;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::fs;
@@ -34,8 +35,8 @@ fn aimux_entrypoint() -> PathBuf {
   repo_root().join("bin").join("aimux")
 }
 
-fn tmux_fast_control_entrypoint() -> PathBuf {
-  repo_root().join("dist").join("tmux-fast-control.js")
+fn tmux_control_entrypoint() -> PathBuf {
+  repo_root().join("scripts").join("tmux-control.sh")
 }
 
 fn resolve_node() -> PathBuf {
@@ -205,6 +206,21 @@ fn preview_bytes(bytes: &[u8], limit: usize) -> String {
 
 fn daemon_info_path() -> PathBuf {
   aimux_global_dir().join("daemon").join("daemon.json")
+}
+
+fn project_state_dir_for(project_path: &str) -> Result<PathBuf, String> {
+  let canonical = fs::canonicalize(project_path)
+    .unwrap_or_else(|_| PathBuf::from(project_path));
+  let name = canonical
+    .file_name()
+    .and_then(|value| value.to_str())
+    .ok_or_else(|| format!("invalid project path: {project_path}"))?;
+  let mut hasher = Sha256::new();
+  hasher.update(canonical.to_string_lossy().as_bytes());
+  let hash_hex = format!("{:x}", hasher.finalize());
+  Ok(aimux_global_dir()
+    .join("projects")
+    .join(format!("{name}-{}", &hash_hex[..12])))
 }
 
 fn load_daemon_info() -> Option<DaemonInfo> {
@@ -501,10 +517,9 @@ fn terminal_client_tty(session_id: u32, session: &TerminalSession) -> Result<Str
     .ok_or_else(|| format!("terminal session {session_id} has no PTY tty path"))
 }
 
-fn run_tmux_fast_control(project_path: &str, args: &[String], context: &str) -> Result<(), String> {
-  let node = resolve_node();
-  let entrypoint = tmux_fast_control_entrypoint();
-  let output = Command::new(&node)
+fn run_tmux_control(project_path: &str, args: &[String], context: &str) -> Result<(), String> {
+  let entrypoint = tmux_control_entrypoint();
+  let output = Command::new("sh")
     .arg(&entrypoint)
     .args(args)
     .current_dir(project_path)
@@ -512,20 +527,53 @@ fn run_tmux_fast_control(project_path: &str, args: &[String], context: &str) -> 
     .output()
     .map_err(|error| {
       format!(
-        "{context}: failed to spawn fast control\nnode={}\nentrypoint={}\nproject={}\nerror={error}",
-        node.display(),
+        "{context}: failed to spawn tmux control\nentrypoint={}\nproject={}\nerror={error}",
         entrypoint.display(),
         project_path
       )
     })?;
   if !output.status.success() {
     return Err(format!(
-      "{context}: fast control failed\nstdout={:?}\nstderr={:?}",
+      "{context}: tmux control failed\nstdout={:?}\nstderr={:?}",
       preview_bytes(&output.stdout, 400),
       preview_bytes(&output.stderr, 400)
     ));
   }
   Ok(())
+}
+
+fn normalize_tmux_control_args(project_path: &str, args: Vec<String>) -> Result<Vec<String>, String> {
+  let mut normalized: Vec<String> = Vec::with_capacity(args.len() + 2);
+  let mut saw_project_state_dir = false;
+
+  let mut i = 0;
+  while i < args.len() {
+    match args[i].as_str() {
+      "--project-root" => {
+        i += 2;
+      }
+      "--project-state-dir" => {
+        saw_project_state_dir = true;
+        normalized.push(args[i].clone());
+        if let Some(value) = args.get(i + 1) {
+          normalized.push(value.clone());
+        }
+        i += 2;
+      }
+      _ => {
+        normalized.push(args[i].clone());
+        i += 1;
+      }
+    }
+  }
+
+  if !saw_project_state_dir {
+    let project_state_dir = project_state_dir_for(project_path)?;
+    normalized.push("--project-state-dir".to_string());
+    normalized.push(project_state_dir.to_string_lossy().to_string());
+  }
+
+  Ok(normalized)
 }
 
 // ── Heartbeat (background thread → event) ─────────────────────────
@@ -1374,6 +1422,7 @@ fn spawn_terminal_control(
   cols: u16,
   rows: u16,
 ) -> Result<u32, String> {
+  let normalized_args = normalize_tmux_control_args(&project, args)?;
   let pty_system = native_pty_system();
   let pair = pty_system
     .openpty(PtySize {
@@ -1384,9 +1433,9 @@ fn spawn_terminal_control(
     })
     .map_err(|error| format!("failed to create PTY: {error}"))?;
 
-  let mut command = CommandBuilder::new(resolve_node());
-  command.arg(tmux_fast_control_entrypoint().to_string_lossy().to_string());
-  for arg in args {
+  let mut command = CommandBuilder::new("sh");
+  command.arg(tmux_control_entrypoint().to_string_lossy().to_string());
+  for arg in normalized_args {
     command.arg(arg);
   }
   command.cwd(&project);
@@ -1490,12 +1539,13 @@ async fn focus_terminal_agent(
     if window_id.trim().is_empty() {
       return Err("window_id is required".to_string());
     }
-    run_tmux_fast_control(
+    let project_state_dir = project_state_dir_for(&project_path)?;
+    run_tmux_control(
       &project_path,
       &[
         "window".to_string(),
-        "--project-root".to_string(),
-        project_path.clone(),
+        "--project-state-dir".to_string(),
+        project_state_dir.to_string_lossy().to_string(),
         "--window-id".to_string(),
         window_id,
         "--client-tty".to_string(),
@@ -1535,12 +1585,13 @@ async fn focus_terminal_dashboard(
     }
 
     let client_tty = terminal_client_tty(session_id, &session)?;
-    run_tmux_fast_control(
+    let project_state_dir = project_state_dir_for(&project_path)?;
+    run_tmux_control(
       &project_path,
       &[
         "dashboard".to_string(),
-        "--project-root".to_string(),
-        project_path.clone(),
+        "--project-state-dir".to_string(),
+        project_state_dir.to_string_lossy().to_string(),
         "--client-tty".to_string(),
         client_tty,
       ],

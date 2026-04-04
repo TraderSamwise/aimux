@@ -181,7 +181,11 @@ function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[num
   const badge = renderDerivedBadge(session.derived);
   const hint = renderSessionCompactHint(session);
   const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 28);
-  return session.isCurrent ? `[${label}]` : label;
+  return session.isCurrent ? `#[fg=black,bg=yellow] ${label} #[default]` : label;
+}
+
+function visibleSegmentLength(segment: string): number {
+  return segment.replace(/#\[[^\]]*]/g, "").length;
 }
 
 function renderBottomLine(
@@ -208,7 +212,7 @@ function renderBottomLine(
   const chosen: string[] = [];
   let used = 0;
   for (const segment of segments) {
-    const next = segment.length + (chosen.length > 0 ? separator.length : 0);
+    const next = visibleSegmentLength(segment) + (chosen.length > 0 ? separator.length : 0);
     if (used + next > maxWidth) break;
     chosen.push(segment);
     used += next;

@@ -88,7 +88,7 @@ describe("renderTmuxStatusline", () => {
     writeFileSync(statusPath, JSON.stringify({ updatedAt: freshUpdatedAt(), sessions: [], dashboardScreen: "plans" }));
     const rendered = renderTmuxStatusline(repoRoot, "bottom", { currentWindow: "dashboard", currentPath: repoRoot });
     expect(rendered).toContain("dashboard");
-    expect(rendered).toContain("[plans]");
+    expect(rendered).toContain("#[fg=black,bg=yellow] plans #[default]");
     expect(rendered).toContain("graveyard");
   });
 
@@ -182,7 +182,7 @@ describe("renderTmuxStatusline", () => {
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(rendered).toContain("[coder(coder) on you ?]");
+    expect(rendered).toContain("#[fg=black,bg=yellow] coder(coder) on you ? #[default]");
     expect(rendered).toContain("claude ✓");
     expect(rendered).toContain("Fix auth flow");
   });
@@ -230,7 +230,7 @@ describe("renderTmuxStatusline", () => {
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(rendered).toContain("[claude(coder) on you ?]");
+    expect(rendered).toContain("#[fg=black,bg=yellow] claude(coder) on you ? #[default]");
     expect(rendered).toContain("shell[svc]");
   });
 
@@ -277,7 +277,7 @@ describe("renderTmuxStatusline", () => {
       currentSession: "aimux-mobile",
       width: 220,
     });
-    expect(rendered).toContain("[claude(coder) on you ?]");
+    expect(rendered).toContain("#[fg=black,bg=yellow] claude(coder) on you ? #[default]");
     expect(rendered).toContain("codex(reviewer) ↻");
     expect(rendered).toContain("Needs review");
   });

@@ -121,6 +121,7 @@ import {
   renderWorktreeRemoveConfirmOverlay,
 } from "./tui/screens/overlay-renderers.js";
 import { composeTwoPane, stripAnsi, truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "./tui/render/text.js";
+import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux-statusline.js";
 
 export type MuxMode = "dashboard" | "project-service";
 
@@ -3153,6 +3154,8 @@ export class Multiplexer {
   private setDashboardScreen(screen: DashboardScreen): void {
     this.dashboardState.setScreen(screen);
     this.syncTuiNotificationContext(false);
+    this.writeDashboardClientStatuslineFile();
+    this.tmuxRuntimeManager.refreshStatus();
   }
 
   private handleActiveDashboardOverlayKey(data: Buffer): boolean {
@@ -5794,8 +5797,71 @@ export class Multiplexer {
       this.lastStatuslineSnapshotKey = snapshotKey;
       writeFileSync(tmpPath, JSON.stringify(data) + "\n");
       renameSync(tmpPath, filePath);
+      this.writePrecomputedTmuxStatuslineFiles(data);
       this.tmuxRuntimeManager.refreshStatus();
     } catch {}
+  }
+
+  private getTmuxStatuslineDir(): string {
+    const dir = join(getProjectStateDir(), "tmux-statusline");
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  private writeStatuslineTextFile(name: string, content: string): void {
+    const dir = this.getTmuxStatuslineDir();
+    const filePath = join(dir, name);
+    const tmpPath = `${filePath}.tmp`;
+    writeFileSync(tmpPath, `${content}\n`);
+    renameSync(tmpPath, filePath);
+  }
+
+  private writePrecomputedTmuxStatuslineFiles(data: ReturnType<Multiplexer["buildStatuslineSnapshot"]>): void {
+    const dashboardTop = renderTmuxStatuslineFromData(data, process.cwd(), "top", {
+      currentWindow: "dashboard",
+      currentPath: process.cwd(),
+    });
+    const dashboardBottom = renderTmuxStatuslineFromData(data, process.cwd(), "bottom", {
+      currentWindow: "dashboard",
+      currentPath: process.cwd(),
+    });
+    this.writeStatuslineTextFile("top-dashboard.txt", dashboardTop);
+    this.writeStatuslineTextFile("bottom-dashboard.txt", dashboardBottom);
+
+    for (const entry of data.sessions) {
+      if (!entry.tmuxWindowId) continue;
+      const renderOptions = {
+        currentWindow: entry.windowName,
+        currentWindowId: entry.tmuxWindowId,
+        currentPath: entry.worktreePath ?? process.cwd(),
+      };
+      const top = renderTmuxStatuslineFromData(data, process.cwd(), "top", renderOptions);
+      const bottom = renderTmuxStatuslineFromData(data, process.cwd(), "bottom", renderOptions);
+      this.writeStatuslineTextFile(`top-${entry.tmuxWindowId}.txt`, top);
+      this.writeStatuslineTextFile(`bottom-${entry.tmuxWindowId}.txt`, bottom);
+    }
+  }
+
+  private writeDashboardClientStatuslineFile(): void {
+    if (this.mode !== "dashboard") return;
+    const clientSession = this.tmuxRuntimeManager.currentClientSession();
+    if (!clientSession) return;
+    const localData = loadStatusline(process.cwd()) ?? {
+      project: basename(process.cwd()),
+      sessions: [],
+      metadata: {},
+      tasks: { pending: 0, assigned: 0 },
+      controlPlane: { daemonAlive: true, projectServiceAlive: false },
+      flash: null,
+      updatedAt: new Date().toISOString(),
+    };
+    const data = { ...localData, dashboardScreen: this.dashboardState.screen };
+    const bottom = renderTmuxStatuslineFromData(data, process.cwd(), "bottom", {
+      currentSession: clientSession,
+      currentWindow: this.tmuxRuntimeManager.displayMessage("#{window_name}") ?? "dashboard",
+      currentPath: process.cwd(),
+    });
+    this.writeStatuslineTextFile(`bottom-dashboard-${clientSession}.txt`, bottom);
   }
 
   private buildStatuslineSnapshot(): {

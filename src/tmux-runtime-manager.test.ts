@@ -87,12 +87,12 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "bind-key" && call.args[3] === "C-a")).toBe(true);
     expect(
       exec.calls.some(
-        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("tmux-fast-control.js' menu"),
+        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("scripts/tmux-control.sh' menu"),
       ),
     ).toBe(true);
     expect(
       exec.calls.some(
-        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("tmux-fast-control.js' next"),
+        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("scripts/tmux-control.sh' next"),
       ),
     ).toBe(true);
     expect(
@@ -105,12 +105,12 @@ describe("TmuxRuntimeManager", () => {
     ).toBe(true);
     expect(
       exec.calls.some(
-        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("tmux-fast-control.js' prev"),
+        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("scripts/tmux-control.sh' prev"),
       ),
     ).toBe(true);
     expect(
       exec.calls.some(
-        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("tmux-fast-control.js' attention"),
+        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("scripts/tmux-control.sh' attention"),
       ),
     ).toBe(true);
     expect(
@@ -118,7 +118,7 @@ describe("TmuxRuntimeManager", () => {
         (call) =>
           call.args[0] === "bind-key" &&
           call.args[3] === "d" &&
-          call.args.join(" ").includes("tmux-fast-control.js' dashboard") &&
+          call.args.join(" ").includes("scripts/tmux-control.sh' dashboard") &&
           call.args.join(" ").includes("--current-window-id '#{window_id}'") &&
           call.args.join(" ").includes("--client-tty '#{client_tty}'"),
       ),
@@ -132,7 +132,7 @@ describe("TmuxRuntimeManager", () => {
         (call) =>
           call.args[0] === "set-option" &&
           call.args[3] === "status-format[0]" &&
-          call.args[4]?.includes("tmux-statusline-cli.js"),
+          call.args[4]?.includes("scripts/tmux-statusline.sh"),
       ),
     ).toBe(true);
   });

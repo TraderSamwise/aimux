@@ -95,6 +95,10 @@ function endpointPathFor(projectRoot?: string): string {
   return join(projectRoot ? getProjectStateDirFor(projectRoot) : getProjectStateDir(), "metadata-api.json");
 }
 
+function endpointTextPathFor(projectRoot?: string): string {
+  return join(projectRoot ? getProjectStateDirFor(projectRoot) : getProjectStateDir(), "metadata-api.txt");
+}
+
 function loadJson<T>(path: string, fallback: T): T {
   if (!existsSync(path)) return fallback;
   try {
@@ -161,11 +165,17 @@ export function resolveProjectServiceEndpoint(projectRoot?: string): { host: str
 
 export function saveMetadataEndpoint(endpoint: MetadataApiEndpoint, projectRoot?: string): void {
   saveJson(endpointPathFor(projectRoot), endpoint);
+  const textPath = endpointTextPathFor(projectRoot);
+  ensureParent(textPath);
+  writeFileSync(textPath, `http://${endpoint.host}:${endpoint.port}\n`);
 }
 
 export function removeMetadataEndpoint(projectRoot?: string): void {
   try {
     rmSync(endpointPathFor(projectRoot), { force: true });
+  } catch {}
+  try {
+    rmSync(endpointTextPathFor(projectRoot), { force: true });
   } catch {}
   try {
     rmSync(join(projectRoot ? getProjectStateDirFor(projectRoot) : getProjectStateDir(), "host.json"), { force: true });

@@ -64,7 +64,7 @@ export interface StatuslineMetadataEntry {
 
 export interface StatuslineData {
   project?: string;
-  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "threads" | "help";
+  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "threads" | "workflow" | "help";
   sessions?: StatuslineSession[];
   metadata?: Record<string, StatuslineMetadataEntry>;
   controlPlane?: {
@@ -146,10 +146,13 @@ export function renderDashboardScreens(activeScreen: StatuslineData["dashboardSc
     { key: "dashboard", label: "dashboard" },
     { key: "activity", label: "activity" },
     { key: "threads", label: "threads" },
+    { key: "workflow", label: "workflow" },
     { key: "plans", label: "plans" },
     { key: "graveyard", label: "graveyard" },
   ];
-  return screens.map((screen) => (screen.key === active ? `[${screen.label}]` : screen.label));
+  return screens.map((screen) =>
+    screen.key === active ? `#[fg=black,bg=yellow] ${screen.label} #[default]` : screen.label,
+  );
 }
 
 export function currentPathContext(currentPath: string | undefined): { worktreeName?: string; branch?: string } | null {
