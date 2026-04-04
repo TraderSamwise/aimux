@@ -148,7 +148,7 @@ export function renderNotificationPanel(ctx: any): void {
   process.stdout.write(output);
 }
 
-export function renderHelpOverlay(ctx: any): void {
+export function renderHelpOverlay(_ctx: any): void {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const allLines = [

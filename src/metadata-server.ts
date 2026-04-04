@@ -69,7 +69,7 @@ import {
   resolvePrevAgent,
   serializeFastControlItem,
 } from "./fast-control.js";
-import { TmuxRuntimeManager, isDashboardWindowName } from "./tmux-runtime-manager.js";
+import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import type { TmuxTarget } from "./tmux-runtime-manager.js";
 
 interface MetadataServerOptions {

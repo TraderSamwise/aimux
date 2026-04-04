@@ -11,7 +11,6 @@ import {
   resolveExactCurrentSessionId,
   resolveExactSessionMetadata,
   resolveScopedSessions,
-  sessionIdentity,
   trim,
   type StatuslineData,
 } from "./statusline-model.js";
