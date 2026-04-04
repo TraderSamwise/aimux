@@ -410,13 +410,22 @@ export class Multiplexer {
     let rows = process.stdout.rows ?? 24;
 
     try {
-      const raw = this.tmuxRuntimeManager.displayMessage("#{client_width}\t#{client_height}");
-      if (raw) {
-        const [tmuxColsRaw, tmuxRowsRaw] = raw.split("\t");
+      const paneRaw = this.tmuxRuntimeManager.displayMessage("#{pane_width}\t#{pane_height}");
+      if (paneRaw) {
+        const [tmuxColsRaw, tmuxRowsRaw] = paneRaw.split("\t");
         const tmuxCols = Number(tmuxColsRaw);
         const tmuxRows = Number(tmuxRowsRaw);
         if (Number.isFinite(tmuxCols) && tmuxCols > 0) cols = tmuxCols;
         if (Number.isFinite(tmuxRows) && tmuxRows > 0) rows = tmuxRows;
+      } else {
+        const clientRaw = this.tmuxRuntimeManager.displayMessage("#{client_width}\t#{client_height}");
+        if (clientRaw) {
+          const [tmuxColsRaw, tmuxRowsRaw] = clientRaw.split("\t");
+          const tmuxCols = Number(tmuxColsRaw);
+          const tmuxRows = Number(tmuxRowsRaw);
+          if (Number.isFinite(tmuxCols) && tmuxCols > 0) cols = tmuxCols;
+          if (Number.isFinite(tmuxRows) && tmuxRows > 0) rows = tmuxRows;
+        }
       }
     } catch {}
 
