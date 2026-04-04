@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type { DashboardSession } from "./dashboard.js";
 import type { SessionState } from "./multiplexer.js";
 import type { InstanceInfo } from "./instance-registry.js";
@@ -126,6 +127,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
         (offline.backendSessionId && session.backendSessionId === offline.backendSessionId),
     );
     if (alreadyShown) continue;
+    if (offline.worktreePath && !existsSync(offline.worktreePath)) continue;
 
     const worktreePath = normalizeWtPath(offline.worktreePath);
     const worktreeInfo = resolveWorktreeInfo(worktreePath);
