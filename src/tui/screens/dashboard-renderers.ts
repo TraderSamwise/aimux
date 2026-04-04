@@ -413,7 +413,7 @@ export function renderDashboardFrame(
   const helpLine = buildHelpLine();
   const footer: string[] = [center("─".repeat(Math.min(cols - 4, helpLine.length + 4)), cols), center(helpLine, cols)];
   const viewportHeight = rows - header.length - footer.length;
-  const twoPane = cols >= 92 && state.detailsPaneVisible;
+  const twoPane = cols >= 72 && state.detailsPaneVisible;
   let scrollOffset = state.scrollOffset;
   const focusLine = findFocusLine(content);
   const maxScroll = Math.max(0, content.length - viewportHeight);

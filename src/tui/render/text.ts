@@ -70,8 +70,8 @@ export function wrapKeyValue(key: string, value: string, width: number): string[
 }
 
 export function composeTwoPane(left: string[], right: string[], cols: number): string[] {
-  const leftWidth = Math.max(40, Math.floor(cols * 0.56));
-  const rightWidth = Math.max(24, cols - leftWidth - 4);
+  const leftWidth = Math.max(32, Math.floor(cols * 0.58));
+  const rightWidth = Math.max(20, cols - leftWidth - 4);
   const height = Math.max(left.length, right.length);
   const out: string[] = [];
   for (let i = 0; i < height; i++) {
