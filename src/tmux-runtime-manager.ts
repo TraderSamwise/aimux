@@ -809,17 +809,9 @@ export class TmuxRuntimeManager {
       "-T",
       "prefix",
       "d",
-      "select-window",
-      "-t",
-      ":0",
-      "\\;",
-      "send-keys",
-      "-t",
-      ":0",
-      "-H",
-      "1b",
-      "5b",
-      "49",
+      "run-shell",
+      "-b",
+      `${fastControlCommand} dashboard --project-root ${shellQuote(projectRoot)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' >/dev/null 2>&1`,
     ]);
     this.exec(["set-option", "-t", sessionName, "status", "2"]);
     this.exec(["set-option", "-t", sessionName, "status-interval", "0"]);

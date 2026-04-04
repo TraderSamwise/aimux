@@ -231,7 +231,10 @@ function resolveLocalResult(action: string, opts: Options, tmux: TmuxRuntimeMana
     }
     const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(opts.projectRoot);
     const dashboardSession = tmux.ensureProjectSession(opts.projectRoot, dashboardCommand);
-    const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
+    const openSessionName =
+      currentClientSession && tmux.hasSession(currentClientSession)
+        ? currentClientSession
+        : tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
     const target = tmux.ensureDashboardWindow(openSessionName, opts.projectRoot, dashboardCommand);
     const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
     if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
