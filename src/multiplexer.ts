@@ -1958,6 +1958,7 @@ export class Multiplexer {
 
     const event = events[0];
     const key = event.name || event.char;
+    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
     const hasWorktrees = this.dashboardState.hasWorktrees();
 
     // Digits 1-9: always focus session directly (shortcut)
@@ -1967,7 +1968,7 @@ export class Multiplexer {
       return;
     }
 
-    if (key === "tab") {
+    if (isTabToggle) {
       this.dashboardState.toggleDetailsSidebar();
       this.dashboard.toggleDetailsPane();
       this.renderCurrentDashboardView();
@@ -2388,9 +2389,11 @@ export class Multiplexer {
   private handleWorkflowKey(data: Buffer): void {
     const events = parseKeys(data);
     if (events.length === 0) return;
-    const key = events[0].name || events[0].char;
+    const event = events[0];
+    const key = event.name || event.char;
+    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
 
-    if (key === "tab") {
+    if (isTabToggle) {
       this.dashboardState.toggleDetailsSidebar();
       this.renderWorkflow();
       return;
@@ -2518,9 +2521,11 @@ export class Multiplexer {
   private handleActivityKey(data: Buffer): void {
     const events = parseKeys(data);
     if (events.length === 0) return;
-    const key = events[0].name || events[0].char;
+    const event = events[0];
+    const key = event.name || event.char;
+    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
 
-    if (key === "tab") {
+    if (isTabToggle) {
       this.dashboardState.toggleDetailsSidebar();
       this.renderActivityDashboard();
       return;
@@ -2640,9 +2645,11 @@ export class Multiplexer {
   private handleThreadsKey(data: Buffer): void {
     const events = parseKeys(data);
     if (events.length === 0) return;
-    const key = events[0].name || events[0].char;
+    const event = events[0];
+    const key = event.name || event.char;
+    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
 
-    if (key === "tab") {
+    if (isTabToggle) {
       this.dashboardState.toggleDetailsSidebar();
       this.renderThreads();
       return;
@@ -4707,8 +4714,9 @@ export class Multiplexer {
 
     const event = events[0];
     const key = event.name || event.char;
+    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
 
-    if (key === "tab") {
+    if (isTabToggle) {
       this.dashboardState.toggleDetailsSidebar();
       this.renderGraveyard();
       return;
@@ -4869,9 +4877,11 @@ export class Multiplexer {
   private handlePlansKey(data: Buffer): void {
     const events = parseKeys(data);
     if (events.length === 0) return;
-    const key = events[0].name || events[0].char;
+    const event = events[0];
+    const key = event.name || event.char;
+    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
 
-    if (key === "tab") {
+    if (isTabToggle) {
       this.dashboardState.toggleDetailsSidebar();
       this.renderPlans();
       return;
