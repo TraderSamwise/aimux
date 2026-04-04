@@ -3151,13 +3151,8 @@ export class Multiplexer {
   }
 
   private setDashboardScreen(screen: DashboardScreen): void {
-    if (this.dashboardState.screen === screen) {
-      this.syncTuiNotificationContext(false);
-      return;
-    }
     this.dashboardState.setScreen(screen);
     this.syncTuiNotificationContext(false);
-    this.writeStatuslineFile();
   }
 
   private handleActiveDashboardOverlayKey(data: Buffer): boolean {
@@ -5782,6 +5777,7 @@ export class Multiplexer {
   /** Write statusline state for Claude Code's statusline script to read */
   private writeStatuslineFile(): void {
     try {
+      if (this.mode !== "project-service") return;
       for (const session of this.sessions) {
         this.syncTmuxWindowMetadata(session.id);
       }
