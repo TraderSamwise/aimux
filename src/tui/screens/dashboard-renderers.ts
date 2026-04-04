@@ -237,7 +237,60 @@ export function renderDashboardFrame(
     const selectedService = state.selectedServiceId
       ? state.services.find((service) => service.id === state.selectedServiceId)
       : undefined;
-    if (!selectedSession && !selectedService) return new Array(height).fill("");
+    if (!selectedSession && !selectedService) {
+      const focusedWorktreePath = state.focusedWorktreePath;
+      const focusedSessions = state.sessions.filter(
+        (session) => (session.worktreePath ?? undefined) === focusedWorktreePath,
+      );
+      const focusedServices = state.services.filter(
+        (service) => (service.worktreePath ?? undefined) === focusedWorktreePath,
+      );
+      const worktree: { name: string; branch: string; path: string } | { name: string; branch: string; path: string } =
+        focusedWorktreePath === undefined
+          ? {
+              name: state.mainCheckout.name,
+              branch: state.mainCheckout.branch,
+              path: "(main checkout)",
+            }
+          : (state.worktreeGroups.find((group) => group.path === focusedWorktreePath) ?? {
+              name: focusedSessions[0]?.worktreeName ?? focusedServices[0]?.worktreeName ?? "Worktree",
+              branch: focusedSessions[0]?.worktreeBranch ?? focusedServices[0]?.worktreeBranch ?? "",
+              path: focusedWorktreePath,
+            });
+
+      const lines: string[] = ["\x1b[1mWorktree\x1b[0m"];
+      lines.push(...wrapKeyValue("Name", worktree.name, width));
+      if (worktree.branch) lines.push(...wrapKeyValue("Branch", worktree.branch, width));
+      lines.push(...wrapKeyValue("Path", worktree.path, width));
+      lines.push(...wrapKeyValue("Agents", String(focusedSessions.length), width));
+      lines.push(...wrapKeyValue("Services", String(focusedServices.length), width));
+      if (focusedSessions.length > 0) {
+        lines.push(
+          ...wrapKeyValue(
+            "Active",
+            focusedSessions
+              .map((session) => session.label ?? session.command)
+              .slice(0, 3)
+              .join(", "),
+            width,
+          ),
+        );
+      }
+      if (focusedServices.length > 0) {
+        lines.push(
+          ...wrapKeyValue(
+            "Running",
+            focusedServices
+              .map((service) => service.label ?? service.command)
+              .slice(0, 3)
+              .join(", "),
+            width,
+          ),
+        );
+      }
+      while (lines.length < height) lines.push("");
+      return lines.slice(0, height);
+    }
 
     const lines: string[] = ["\x1b[1mDetails\x1b[0m"];
     if (selectedService) {
