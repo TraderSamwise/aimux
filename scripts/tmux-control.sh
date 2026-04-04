@@ -425,6 +425,12 @@ case "$action" in
   *) exit 1 ;;
 esac
 
+case "$action" in
+  next|prev|attention|dashboard|window)
+    fallback_local_control && exit 0
+    ;;
+esac
+
 if [ "$endpoint_available" -eq 1 ]; then
   if request_control 0.35; then
     exit 0
@@ -441,6 +447,6 @@ if [ "$endpoint_available" -eq 1 ]; then
   fi
 fi
 
-fallback_local_control || true
+fallback_local_control && exit 0
 
 exit 28

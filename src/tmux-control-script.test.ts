@@ -17,8 +17,10 @@ function createFakeEnvironment(state: Record<string, unknown>) {
   mkdirSync(projectStateDir);
   const statePath = join(root, "tmux-state.json");
   const logPath = join(root, "tmux-log.jsonl");
+  const curlLogPath = join(root, "curl-log.jsonl");
   writeFileSync(statePath, JSON.stringify(state, null, 2));
   writeFileSync(logPath, "");
+  writeFileSync(curlLogPath, "");
 
   writeExecutable(
     join(binDir, "tmux"),
@@ -145,6 +147,7 @@ switch (args[0]) {
   writeExecutable(
     join(binDir, "curl"),
     `#!/bin/sh
+printf '%s\\n' "$*" >> "$TMUX_FAKE_CURL_LOG"
 exit 28
 `,
   );
@@ -161,6 +164,7 @@ exit 0
     binDir,
     statePath,
     logPath,
+    curlLogPath,
     projectStateDir,
   };
 }
@@ -177,6 +181,7 @@ function runControl(
       PATH: `${envRoot.binDir}:${process.env.PATH}`,
       TMUX_FAKE_STATE: envRoot.statePath,
       TMUX_FAKE_LOG: envRoot.logPath,
+      TMUX_FAKE_CURL_LOG: envRoot.curlLogPath,
       TMPDIR: envRoot.root,
       ...extraEnv,
     },
@@ -191,6 +196,10 @@ function readLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
     .filter(Boolean)
     .map((line) => JSON.parse(line) as string[])
     .map((args) => args.join(" "));
+}
+
+function readCurlLog(envRoot: ReturnType<typeof createFakeEnvironment>): string[] {
+  return readFileSync(envRoot.curlLogPath, "utf8").trim().split("\n").filter(Boolean);
 }
 
 const tempRoots: string[] = [];
@@ -237,7 +246,9 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+    expect(curlLog).toEqual([]);
   });
 
   it("falls back to host tmux metadata for next when statusline is empty", () => {
@@ -286,8 +297,10 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
     expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(curlLog).toEqual([]);
   });
 
   it("hydrates current context from explicit pane id", () => {
