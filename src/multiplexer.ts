@@ -3151,8 +3151,13 @@ export class Multiplexer {
   }
 
   private setDashboardScreen(screen: DashboardScreen): void {
+    if (this.dashboardState.screen === screen) {
+      this.syncTuiNotificationContext(false);
+      return;
+    }
     this.dashboardState.setScreen(screen);
     this.syncTuiNotificationContext(false);
+    this.writeStatuslineFile();
   }
 
   private handleActiveDashboardOverlayKey(data: Buffer): boolean {
