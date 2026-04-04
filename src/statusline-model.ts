@@ -220,6 +220,12 @@ export function resolveScopedSessions(
   const scopedWorktreePath = resolveScopedWorktreePath(data, projectRoot, currentPath);
   return (data.sessions ?? [])
     .filter((session) => normalizePath(session.worktreePath, projectRoot) === scopedWorktreePath)
+    .sort((left, right) => {
+      const leftKind = left.kind === "service" ? 1 : 0;
+      const rightKind = right.kind === "service" ? 1 : 0;
+      if (leftKind !== rightKind) return leftKind - rightKind;
+      return compactSessionTitle(left).localeCompare(compactSessionTitle(right));
+    })
     .slice(0, 5)
     .map((session) => {
       const resolvedMetadata = data.metadata?.[session.id];

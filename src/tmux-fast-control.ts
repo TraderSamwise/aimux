@@ -130,6 +130,7 @@ function openTarget(
   const liveClientTty = resolveLiveClientTty(tmux, currentClientSession, clientTty);
   if (liveClientTty) {
     tmux.switchClientToTarget(liveClientTty, target);
+    tmux.refreshStatus();
     if (target.windowName.startsWith("dashboard")) {
       tmux.sendFocusIn(target);
     }
@@ -139,6 +140,7 @@ function openTarget(
     const linkedTarget = tmux.getTargetByWindowId(currentClientSession, target.windowId);
     if (linkedTarget) {
       tmux.switchClient(currentClientSession, linkedTarget.windowIndex);
+      tmux.refreshStatus();
       if (linkedTarget.windowName.startsWith("dashboard")) {
         tmux.sendFocusIn(linkedTarget);
       }
@@ -146,6 +148,7 @@ function openTarget(
     }
   }
   tmux.openTarget(target, { insideTmux: Boolean(currentClientSession) });
+  tmux.refreshStatus();
 }
 
 function displayMenu(

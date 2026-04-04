@@ -104,7 +104,12 @@ export function listSwitchableAgentItems(
       const worktreePath = metadata.worktreePath || context.projectRoot;
       return pathResolve(worktreePath) === scopedWorktreePath;
     })
-    .sort((a, b) => a.target.windowIndex - b.target.windowIndex)
+    .sort((a, b) => {
+      const kindRank = a.metadata.kind === "service" ? 1 : 0;
+      const otherKindRank = b.metadata.kind === "service" ? 1 : 0;
+      if (kindRank !== otherKindRank) return kindRank - otherKindRank;
+      return a.target.windowIndex - b.target.windowIndex;
+    })
     .map((entry) => ({
       ...entry,
       label: compactSessionTitle({
@@ -125,20 +130,6 @@ export function listSwitchableAgentItems(
     ...entry,
     activity: activityByWindowId.get(entry.target.windowId) ?? 0,
   }));
-
-  if (context.currentClientSession) {
-    const managedByWindowId = new Map(managed.map((entry) => [entry.target.windowId, entry] as const));
-    const clientOrdered = tmux
-      .listWindows(context.currentClientSession)
-      .filter((window) => !isDashboardWindowName(window.name))
-      .map((window) => managedByWindowId.get(window.id))
-      .filter((entry): entry is FastControlItem => Boolean(entry));
-    if (clientOrdered.length > 0) {
-      const linkedIds = new Set(clientOrdered.map((entry) => entry.target.windowId));
-      const unlinked = managed.filter((entry) => !linkedIds.has(entry.target.windowId));
-      managed = [...clientOrdered, ...unlinked];
-    }
-  }
 
   return managed;
 }
