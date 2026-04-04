@@ -1807,6 +1807,16 @@ export class Multiplexer {
     // Focus the new session
     this.activeIndex = this.sessions.length - 1;
     if (this.startedInDashboard && this.mode === "dashboard") {
+      this.invalidateDesktopStateSnapshot();
+      this.refreshLocalDashboardModel();
+      this.updateWorktreeSessions();
+      this.dashboardState.level = "sessions";
+      const selectedIndex = this.dashboardState.worktreeEntries.findIndex(
+        (entry) => entry.kind === "session" && entry.id === sessionId,
+      );
+      if (selectedIndex >= 0) {
+        this.dashboardState.sessionIndex = selectedIndex;
+      }
       this.renderDashboard();
     }
 
