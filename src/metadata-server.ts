@@ -257,7 +257,8 @@ function openTarget(
   currentClientSession?: string,
   clientTty?: string,
 ): void {
-  const liveClientTty = resolveLiveClientTty(tmux, currentClientSession, clientTty);
+  const liveClientTty =
+    resolveLiveClientTty(tmux, currentClientSession, clientTty) ?? tmux.getAttachedClientForTarget(target)?.tty;
   if (liveClientTty) {
     tmux.switchClientToTarget(liveClientTty, target);
     tmux.refreshStatus();
