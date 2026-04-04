@@ -77,13 +77,15 @@ export function renderDashboardErrorOverlay(ctx: any): void {
   if (!error) return;
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
-  const lines = [
-    error.title,
-    "",
-    ...error.lines.slice(0, 6).map((line: string) => `  ${line}`),
-    "",
-    "  [Esc/Enter] dismiss",
-  ];
+  const bodyWidth = Math.max(24, Math.min(cols - 12, 84));
+  const wrap = (label: string, value: string): string[] => {
+    const wrapped = ctx.wrapText(ctx.stripAnsi(String(value ?? "")), Math.max(12, bodyWidth - label.length - 2));
+    return wrapped.map((line: string, index: number) =>
+      index === 0 ? `${label} ${line}` : `${" ".repeat(label.length + 1)}${line}`,
+    );
+  };
+  const messageLines = error.lines.flatMap((line: string) => wrap(" ", line)).slice(0, Math.max(4, rows - 10));
+  const lines = [ctx.stripAnsi(error.title), "", ...messageLines, "", "[Esc/Enter] dismiss"];
   process.stdout.write(renderOverlayBox(lines, cols, rows, "red"));
 }
 
