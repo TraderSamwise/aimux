@@ -42,7 +42,7 @@ import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
-import { loadDaemonInfo } from "./daemon.js";
+import { ensureDaemonRunning, ensureProjectService, loadDaemonInfo } from "./daemon.js";
 import {
   appendMessage,
   createThread,
@@ -295,6 +295,7 @@ export class Multiplexer {
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
   private dashboardModelRefreshedAt = 0;
   private dashboardServiceSnapshotRefreshing = false;
+  private dashboardServiceRecovery: Promise<void> | null = null;
 
   constructor() {
     this.terminalHost = new TerminalHost();
@@ -391,6 +392,32 @@ export class Multiplexer {
     if (!force && this.lastRenderedFrame === output) return;
     process.stdout.write(output);
     this.lastRenderedFrame = output;
+  }
+
+  private getViewportSize(): { cols: number; rows: number } {
+    let cols = process.stdout.columns ?? 80;
+    let rows = process.stdout.rows ?? 24;
+
+    try {
+      const raw = this.tmuxRuntimeManager.displayMessage("#{client_width}\t#{client_height}");
+      if (raw) {
+        const [tmuxColsRaw, tmuxRowsRaw] = raw.split("\t");
+        const tmuxCols = Number(tmuxColsRaw);
+        const tmuxRows = Number(tmuxRowsRaw);
+        if (Number.isFinite(tmuxCols) && tmuxCols > 0) cols = tmuxCols;
+        if (Number.isFinite(tmuxRows) && tmuxRows > 0) rows = tmuxRows;
+      }
+    } catch {}
+
+    if (typeof process.stdout.getWindowSize === "function") {
+      try {
+        const [ttyCols, ttyRows] = process.stdout.getWindowSize();
+        if (Number.isFinite(ttyCols) && ttyCols > cols) cols = ttyCols;
+        if (Number.isFinite(ttyRows) && ttyRows > rows) rows = ttyRows;
+      } catch {}
+    }
+
+    return { cols, rows };
   }
 
   private restoreDashboardAfterOverlayDismiss(): void {
@@ -709,7 +736,11 @@ export class Multiplexer {
               );
               return true;
             }
-          } catch {}
+          } catch {
+            await this.ensureDashboardControlPlane();
+          }
+        } else if (force) {
+          await this.ensureDashboardControlPlane();
         }
         if (!force || Date.now() >= deadline) {
           return false;
@@ -3477,19 +3508,52 @@ export class Multiplexer {
   }
 
   private async postToProjectService(path: string, body: unknown): Promise<any> {
-    const endpoint = resolveProjectServiceEndpoint(process.cwd());
-    if (!endpoint) {
-      throw new Error("no live project service endpoint");
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const endpoint = resolveProjectServiceEndpoint(process.cwd());
+      if (!endpoint) {
+        await this.ensureDashboardControlPlane();
+        continue;
+      }
+      try {
+        const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+          timeoutMs: 1_000,
+        });
+        if (status >= 200 && status < 300 && json?.ok !== false) {
+          return json;
+        }
+        if (attempt === 0) {
+          await this.ensureDashboardControlPlane();
+          continue;
+        }
+        throw new Error(json?.error || `request failed: ${status}`);
+      } catch (error) {
+        if (attempt === 0) {
+          await this.ensureDashboardControlPlane();
+          continue;
+        }
+        throw error;
+      }
     }
-    const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body,
-    });
-    if (status < 200 || status >= 300 || json?.ok === false) {
-      throw new Error(json?.error || `request failed: ${status}`);
+    throw new Error("no live project service endpoint");
+  }
+
+  private async ensureDashboardControlPlane(): Promise<void> {
+    if (this.dashboardServiceRecovery) {
+      await this.dashboardServiceRecovery;
+      return;
     }
-    return json;
+    this.dashboardServiceRecovery = (async () => {
+      await ensureDaemonRunning();
+      await ensureProjectService(process.cwd());
+    })();
+    try {
+      await this.dashboardServiceRecovery;
+    } finally {
+      this.dashboardServiceRecovery = null;
+    }
   }
 
   private handleOrchestrationInputKey(data: Buffer): void {
@@ -4152,8 +4216,7 @@ export class Multiplexer {
   private renderDashboard(): void {
     this.writeStatuslineFile();
 
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
+    const { cols, rows } = this.getViewportSize();
     const dashSessions = this.dashboardSessionsCache;
     const dashServices = this.dashboardServicesCache;
     const worktreeGroups = this.dashboardWorktreeGroupsCache;
