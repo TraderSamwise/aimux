@@ -129,6 +129,7 @@ import {
 import { composeTwoPane, stripAnsi, truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "./tui/render/text.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux-statusline.js";
 import { DashboardUiStateStore } from "./dashboard-ui-state-store.js";
+import { DashboardPendingActions, type PendingDashboardActionKind } from "./dashboard-pending-actions.js";
 import { openManagedServiceWindow, openManagedSessionWindow, selectLinkedOrOpenTarget } from "./tmux-window-open.js";
 
 export type MuxMode = "dashboard" | "project-service";
@@ -187,11 +188,6 @@ interface PlanEntry {
 interface NotificationPanelState {
   entries: NotificationRecord[];
   index: number;
-}
-
-interface PendingDashboardSessionAction {
-  kind: "creating" | "starting" | "stopping" | "graveyarding" | "renaming";
-  sessionId: string;
 }
 
 interface DashboardOrchestrationTarget {
@@ -256,7 +252,11 @@ export class Multiplexer {
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
   private notificationPanelState: NotificationPanelState | null = null;
-  private pendingDashboardSessionActions = new Map<string, PendingDashboardSessionAction["kind"]>();
+  private dashboardPendingActions = new DashboardPendingActions(() => {
+    if (this.mode === "dashboard") {
+      this.renderCurrentDashboardView();
+    }
+  });
   private stoppingSessionIds = new Set<string>();
   private graveyardAfterStopSessionIds = new Set<string>();
   /** Quick switcher overlay state */
@@ -512,38 +512,12 @@ export class Multiplexer {
     worktreeGroups: WorktreeGroup[],
     mainCheckoutInfo: { name: string; branch: string },
   ): void {
-    this.dashboardSessionsCache = this.applyPendingDashboardSessionStates(dashSessions);
-    this.dashboardServicesCache = this.applyPendingDashboardServiceStates(dashServices);
+    this.dashboardSessionsCache = this.dashboardPendingActions.applyToSessions(dashSessions);
+    this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(dashServices);
     this.dashboardWorktreeGroupsCache = worktreeGroups;
     this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
     this.dashboardModelRefreshedAt = Date.now();
     this.dashboardUiStateStore.markSelectionDirty();
-  }
-
-  private applyPendingDashboardSessionStates(sessions: DashboardSession[]): DashboardSession[] {
-    if (this.pendingDashboardSessionActions.size === 0) return sessions;
-    return sessions.map((session) => {
-      const pendingAction = this.pendingDashboardSessionActions.get(session.id);
-      if (!pendingAction) return session;
-      return {
-        ...session,
-        pendingAction,
-        optimistic: true,
-      };
-    });
-  }
-
-  private applyPendingDashboardServiceStates(services: DashboardService[]): DashboardService[] {
-    if (this.pendingDashboardSessionActions.size === 0) return services;
-    return services.map((service) => {
-      const pendingAction = this.pendingDashboardSessionActions.get(service.id);
-      if (pendingAction !== "creating") return service;
-      return {
-        ...service,
-        pendingAction,
-        optimistic: true,
-      };
-    });
   }
 
   private invalidateDesktopStateSnapshot(): void {
@@ -4341,17 +4315,10 @@ export class Multiplexer {
 
   private settleDashboardCreatePending(itemId: string): void {
     if (!(this.startedInDashboard && this.mode === "dashboard")) return;
-    const minVisibleMs = 250;
-    const startedAt = Date.now();
-    void (async () => {
-      const remaining = minVisibleMs - (Date.now() - startedAt);
-      if (remaining > 0) {
-        await new Promise((resolve) => setTimeout(resolve, remaining));
-      }
-      this.setPendingDashboardSessionAction(itemId, null);
+    this.dashboardPendingActions.settleCreatePending(itemId, () => {
       this.refreshLocalDashboardModel();
       this.renderDashboard();
-    })();
+    });
   }
 
   private preferDashboardEntrySelection(kind: "session" | "service", id: string, worktreePath?: string): void {
@@ -5469,18 +5436,8 @@ export class Multiplexer {
     }
   }
 
-  private setPendingDashboardSessionAction(
-    sessionId: string,
-    kind: PendingDashboardSessionAction["kind"] | null,
-  ): void {
-    if (kind) {
-      this.pendingDashboardSessionActions.set(sessionId, kind);
-    } else {
-      this.pendingDashboardSessionActions.delete(sessionId);
-    }
-    if (this.mode === "dashboard") {
-      this.renderCurrentDashboardView();
-    }
+  private setPendingDashboardSessionAction(sessionId: string, kind: PendingDashboardActionKind | null): void {
+    this.dashboardPendingActions.set(sessionId, kind);
   }
 
   private async stopSessionToOfflineWithFeedback(session: ManagedSession): Promise<void> {
@@ -5656,7 +5613,7 @@ export class Multiplexer {
 
   private async resumeOfflineSessionWithFeedback(session: SessionState): Promise<void> {
     const label = session.label ?? session.command;
-    if (this.pendingDashboardSessionActions.get(session.id) === "starting") {
+    if (this.dashboardPendingActions.get(session.id) === "starting") {
       return;
     }
     this.setPendingDashboardSessionAction(session.id, "starting");
