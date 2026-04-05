@@ -223,6 +223,7 @@ export function resolveScopedSessions(
 ): ResolvedStatuslineSession[] {
   const scopedWorktreePath = resolveScopedWorktreePath(data, projectRoot, currentPath);
   return (data.sessions ?? [])
+    .filter((session) => session.status !== "offline" && session.status !== "exited")
     .filter((session) => normalizePath(session.worktreePath, projectRoot) === scopedWorktreePath)
     .sort((left, right) => {
       const leftKind = left.kind === "service" ? 1 : 0;

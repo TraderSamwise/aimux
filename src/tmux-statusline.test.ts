@@ -234,6 +234,64 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("shell[svc]");
   });
 
+  it("omits offline and exited sessions from scoped footer chips", () => {
+    const nestedPath = join(repoRoot, ".aimux", "worktrees", "tealstreet-pr5180");
+    mkdirSync(nestedPath, { recursive: true });
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "live-agent",
+            kind: "agent",
+            tool: "claude",
+            label: "claude-live",
+            windowName: "claude",
+            tmuxWindowId: "@7",
+            role: "coder",
+            status: "running",
+            worktreePath: nestedPath,
+          },
+          {
+            id: "offline-agent",
+            kind: "agent",
+            tool: "codex",
+            label: "codex-offline",
+            windowName: "codex",
+            tmuxWindowId: "@8",
+            status: "offline",
+            worktreePath: nestedPath,
+          },
+          {
+            id: "exited-service",
+            kind: "service",
+            tool: "shell",
+            label: "shell",
+            windowName: "shell",
+            tmuxWindowId: "@9",
+            status: "exited",
+            worktreePath: nestedPath,
+          },
+        ],
+        metadata: {
+          "live-agent": { derived: { attention: "needs_input" } },
+        },
+      }),
+    );
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "claude",
+      currentWindowId: "@7",
+      currentPath: join(nestedPath, "src"),
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    expect(rendered).toContain("#[fg=black,bg=yellow] claude(coder) on you ? #[default]");
+    expect(rendered).not.toContain("codex-offline");
+    expect(rendered).not.toContain("shell[svc]");
+  });
+
   it("scopes bottom-line agents to the enclosing worktree root for nested cwd paths", () => {
     const nestedPath = join(repoRoot, ".aimux", "worktrees", "tealchart-cleanup-11");
     mkdirSync(nestedPath, { recursive: true });
