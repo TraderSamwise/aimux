@@ -130,6 +130,11 @@ import { composeTwoPane, stripAnsi, truncateAnsi, truncatePlain, wrapKeyValue, w
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux-statusline.js";
 import { DashboardUiStateStore } from "./dashboard-ui-state-store.js";
 import { DashboardPendingActions, type PendingDashboardActionKind } from "./dashboard-pending-actions.js";
+import {
+  DashboardFeedbackController,
+  type DashboardBusyState,
+  type DashboardErrorState,
+} from "./dashboard-feedback.js";
 import { openManagedServiceWindow, openManagedSessionWindow, selectLinkedOrOpenTarget } from "./tmux-window-open.js";
 import {
   graveyardSessionWithFeedback as runGraveyardSessionWithFeedback,
@@ -168,18 +173,6 @@ interface WorktreeRemovalJob {
   startedAt: number;
   oldIdx: number;
   stderr: string;
-}
-
-interface DashboardBusyState {
-  title: string;
-  lines: string[];
-  startedAt: number;
-  spinnerFrame: number;
-}
-
-interface DashboardErrorState {
-  title: string;
-  lines: string[];
 }
 
 interface PlanEntry {
@@ -240,9 +233,10 @@ export class Multiplexer {
   private worktreeListActive = false;
   private worktreeRemoveConfirm: { path: string; name: string } | null = null;
   private worktreeRemovalJob: WorktreeRemovalJob | null = null;
-  private dashboardBusyState: DashboardBusyState | null = null;
-  private dashboardBusySpinner: ReturnType<typeof setInterval> | null = null;
-  private dashboardErrorState: DashboardErrorState | null = null;
+  private readonly dashboardFeedback = new DashboardFeedbackController({
+    renderDashboard: () => this.renderDashboard(),
+    isDashboardMode: () => this.mode === "dashboard",
+  });
   private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
   private graveyardEntries: SessionState[] = [];
@@ -4739,49 +4733,23 @@ export class Multiplexer {
   }
 
   private startDashboardBusy(title: string, lines: string[]): void {
-    this.dashboardErrorState = null;
-    this.dashboardBusyState = {
-      title,
-      lines,
-      startedAt: Date.now(),
-      spinnerFrame: 0,
-    };
-    if (this.dashboardBusySpinner) {
-      clearInterval(this.dashboardBusySpinner);
-    }
-    this.dashboardBusySpinner = setInterval(() => {
-      if (!this.dashboardBusyState) return;
-      this.dashboardBusyState.spinnerFrame = (this.dashboardBusyState.spinnerFrame + 1) % 10;
-      if (this.mode === "dashboard") this.renderDashboard();
-    }, 120);
-    this.footerFlash = null;
-    this.footerFlashTicks = 0;
-    this.renderDashboard();
+    this.dashboardFeedback.startBusy(title, lines);
   }
 
   private updateDashboardBusy(lines: string[]): void {
-    if (!this.dashboardBusyState) return;
-    this.dashboardBusyState.lines = lines;
-    if (this.mode === "dashboard") this.renderDashboard();
+    this.dashboardFeedback.updateBusy(lines);
   }
 
   private clearDashboardBusy(): void {
-    if (this.dashboardBusySpinner) {
-      clearInterval(this.dashboardBusySpinner);
-      this.dashboardBusySpinner = null;
-    }
-    this.dashboardBusyState = null;
+    this.dashboardFeedback.clearBusy();
   }
 
   private showDashboardError(title: string, lines: string[]): void {
-    this.clearDashboardBusy();
-    this.dashboardErrorState = { title, lines };
-    this.renderDashboard();
+    this.dashboardFeedback.showError(title, lines);
   }
 
   private dismissDashboardError(): void {
-    this.dashboardErrorState = null;
-    this.renderDashboard();
+    this.dashboardFeedback.dismissError();
   }
 
   private beginWorktreeRemoval(path: string, name: string, oldIdx: number): void {
@@ -5412,22 +5380,7 @@ export class Multiplexer {
     work: () => Promise<T> | T,
     errorTitle = title,
   ): Promise<T | undefined> {
-    this.startDashboardBusy(title, lines);
-    const minVisibleMs = 250;
-    const startedAt = Date.now();
-    try {
-      const result = await work();
-      const remaining = minVisibleMs - (Date.now() - startedAt);
-      if (remaining > 0) {
-        await new Promise((resolve) => setTimeout(resolve, remaining));
-      }
-      this.clearDashboardBusy();
-      return result;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.showDashboardError(errorTitle, [message]);
-      return undefined;
-    }
+    return this.dashboardFeedback.runOperation(title, lines, work, errorTitle);
   }
 
   private setPendingDashboardSessionAction(sessionId: string, kind: PendingDashboardActionKind | null): void {
@@ -6177,8 +6130,37 @@ export class Multiplexer {
   /** Track previous statuses for notification on transition */
   private prevStatuses = new Map<string, string>();
   /** Flash message shown temporarily in footer, cleared after a few renders */
-  private footerFlash: string | null = null;
-  private footerFlashTicks = 0;
+  private get dashboardBusyState(): DashboardBusyState | null {
+    return this.dashboardFeedback.busyState;
+  }
+
+  private set dashboardBusyState(value: DashboardBusyState | null) {
+    this.dashboardFeedback.busyState = value;
+  }
+
+  private get dashboardErrorState(): DashboardErrorState | null {
+    return this.dashboardFeedback.errorState;
+  }
+
+  private set dashboardErrorState(value: DashboardErrorState | null) {
+    this.dashboardFeedback.errorState = value;
+  }
+
+  private get footerFlash(): string | null {
+    return this.dashboardFeedback.flash;
+  }
+
+  private set footerFlash(value: string | null) {
+    this.dashboardFeedback.flash = value;
+  }
+
+  private get footerFlashTicks(): number {
+    return this.dashboardFeedback.flashTicks;
+  }
+
+  private set footerFlashTicks(value: number) {
+    this.dashboardFeedback.flashTicks = value;
+  }
 
   private startStatusRefresh(): void {
     if (this.statusInterval) return;
@@ -6218,11 +6200,7 @@ export class Multiplexer {
         }
       }
 
-      const hadFooterFlash = this.footerFlashTicks > 0 || this.footerFlash !== null;
-      if (this.footerFlashTicks > 0) this.footerFlashTicks--;
-      if (this.footerFlashTicks === 0) this.footerFlash = null;
-      const hasFooterFlash = this.footerFlashTicks > 0 || this.footerFlash !== null;
-      if (hadFooterFlash !== hasFooterFlash) {
+      if (this.dashboardFeedback.tickFlashVisibilityChanged()) {
         dashboardNeedsRender = true;
       }
 
