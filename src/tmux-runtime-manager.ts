@@ -167,7 +167,7 @@ export class TmuxRuntimeManager {
   }
 
   private ensureClientSession(hostSessionName: string, clientSessionName: string, projectRoot: string): void {
-    const dashboardName = `dashboard-${clientSessionName.match(/-client-([a-f0-9]{8})$/)?.[1] ?? "client"}`;
+    const dashboardName = this.getDashboardWindowName();
     const clientSessionExists = this.hasSession(clientSessionName);
     const hostDashboard = this.listWindows(hostSessionName).find((window) => isDashboardWindowName(window.name));
     const existingDashboard = clientSessionExists
@@ -346,7 +346,7 @@ export class TmuxRuntimeManager {
 
   ensureDashboardWindow(sessionName: string, projectRoot: string, dashboardCommand?: TmuxCommandSpec): TmuxTarget {
     const dashboardName = this.getDashboardWindowName();
-    const existing = this.listWindows(sessionName).find((window) => window.name === dashboardName);
+    const existing = this.listWindows(sessionName).find((window) => isDashboardWindowName(window.name));
     if (existing) {
       this.renameWindow(existing.id, dashboardName);
       return {
@@ -797,15 +797,7 @@ export class TmuxRuntimeManager {
       "-b",
       `${controlScript} attention --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
-    this.exec([
-      "bind-key",
-      "-T",
-      "prefix",
-      "d",
-      "run-shell",
-      "-b",
-      `${controlScript} dashboard --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
-    ]);
+    this.exec(["bind-key", "-T", "prefix", "d", "select-window", "-t", ":0"]);
     this.exec([
       "bind-key",
       "-T",
@@ -875,9 +867,7 @@ export class TmuxRuntimeManager {
   }
 
   private getDashboardWindowName(): string {
-    const clientSuffix = this.resolveClientSuffix(this.isInsideTmux());
-    if (!clientSuffix) return "dashboard";
-    return `dashboard-${clientSuffix}`;
+    return "dashboard";
   }
 
   private normalizeClientSuffix(value: string): string {

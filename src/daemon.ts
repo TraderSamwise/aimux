@@ -39,8 +39,14 @@ function ensureParent(path: string): void {
 function saveJson(path: string, value: unknown): void {
   ensureParent(path);
   const tmpPath = `${path}.tmp`;
+  ensureParent(tmpPath);
   writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`);
-  renameSync(tmpPath, path);
+  try {
+    renameSync(tmpPath, path);
+  } catch {
+    ensureParent(path);
+    writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  }
 }
 
 function clearFile(path: string): void {
@@ -300,13 +306,26 @@ export class AimuxDaemon {
     return state;
   }
 
-  private ensureProject(projectRoot: string): ProjectServiceState {
+  private async ensureProject(projectRoot: string): Promise<ProjectServiceState> {
     const resolvedRoot = pathResolve(projectRoot);
     const projectId = getProjectIdFor(resolvedRoot);
     const existing = this.state.projects[projectId];
     if (existing && isPidAlive(existing.pid)) {
       const endpoint = loadMetadataEndpoint(resolvedRoot);
       if (!endpoint) {
+        try {
+          process.kill(existing.pid, "SIGTERM");
+        } catch {}
+        delete this.state.projects[projectId];
+        this.refreshState();
+        return this.spawnProjectService(resolvedRoot, projectId);
+      }
+      try {
+        const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`);
+        if (status < 200 || status >= 300 || json?.ok === false) {
+          throw new Error(json?.error || `health request failed: ${status}`);
+        }
+      } catch {
         try {
           process.kill(existing.pid, "SIGTERM");
         } catch {}
@@ -372,7 +391,7 @@ export class AimuxDaemon {
         send(res, 400, { ok: false, error: "projectRoot is required" });
         return;
       }
-      const project = this.ensureProject(body.projectRoot);
+      const project = await this.ensureProject(body.projectRoot);
       send(res, 200, { ok: true, project });
       return;
     }

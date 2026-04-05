@@ -280,6 +280,7 @@ export class Multiplexer {
   private dashboardState = new DashboardState();
   private dashboardPreferredSelection: { kind: "session" | "service"; id: string } | null = null;
   private dashboardFlatSelectionId: string | null = null;
+  private dashboardSelectionNeedsRestore = true;
   private statusInterval: ReturnType<typeof setInterval> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private agentTracker = new AgentTracker();
@@ -326,6 +327,7 @@ export class Multiplexer {
   private dashboardModelRefreshedAt = 0;
   private dashboardServiceSnapshotRefreshing = false;
   private dashboardServiceRecovery: Promise<void> | null = null;
+  private dashboardNextBackgroundRefreshAt = 0;
 
   constructor() {
     this.projectRoot = (() => {
@@ -416,8 +418,10 @@ export class Multiplexer {
 
   private handleDashboardFocusIn(): void {
     this.terminalHost.enterAlternateScreen();
-    this.invalidateDashboardFrame();
-    this.renderCurrentDashboardView();
+    if (this.lastRenderedFrame) {
+      process.stdout.write(this.lastRenderedFrame);
+    }
+    this.tmuxRuntimeManager.refreshStatus();
   }
 
   private loadDashboardUiState(): void {
@@ -592,6 +596,7 @@ export class Multiplexer {
     this.dashboardWorktreeGroupsCache = worktreeGroups;
     this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
     this.dashboardModelRefreshedAt = Date.now();
+    this.dashboardSelectionNeedsRestore = true;
   }
 
   private applyPendingDashboardSessionStates(sessions: DashboardSession[]): DashboardSession[] {
@@ -4450,8 +4455,12 @@ export class Multiplexer {
     // Ensure focusedWorktreePath is valid
     if (!this.dashboardState.worktreeNavOrder.includes(this.dashboardState.focusedWorktreePath)) {
       this.dashboardState.focusedWorktreePath = undefined;
+      this.dashboardSelectionNeedsRestore = true;
     }
-    this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
+    if (this.dashboardSelectionNeedsRestore) {
+      this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
+      this.dashboardSelectionNeedsRestore = false;
+    }
 
     // Determine selected session for cursor
     let selectedSession: string | undefined;
@@ -6265,6 +6274,7 @@ export class Multiplexer {
   private startStatusRefresh(): void {
     if (this.statusInterval) return;
     this.statusInterval = setInterval(() => {
+      let dashboardNeedsRender = false;
       if (this.mode === "project-service") {
         this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
         this.orchestrationDispatcher?.tick(this.sessions.map((s) => s.id));
@@ -6287,6 +6297,7 @@ export class Multiplexer {
           this.footerFlash = `↻ Changes requested: ${ev.description}`;
         }
         this.footerFlashTicks = 3;
+        dashboardNeedsRender = true;
       }
 
       const orchestrationEvents = this.orchestrationDispatcher?.drainEvents() ?? [];
@@ -6294,11 +6305,17 @@ export class Multiplexer {
         if (event.type === "message_delivered") {
           this.footerFlash = `✉ Message delivered → ${event.sessionId}`;
           this.footerFlashTicks = 3;
+          dashboardNeedsRender = true;
         }
       }
 
+      const hadFooterFlash = this.footerFlashTicks > 0 || this.footerFlash !== null;
       if (this.footerFlashTicks > 0) this.footerFlashTicks--;
       if (this.footerFlashTicks === 0) this.footerFlash = null;
+      const hasFooterFlash = this.footerFlashTicks > 0 || this.footerFlash !== null;
+      if (hadFooterFlash !== hasFooterFlash) {
+        dashboardNeedsRender = true;
+      }
 
       for (const session of this.sessions) {
         const prev = this.prevStatuses.get(session.id);
@@ -6317,8 +6334,17 @@ export class Multiplexer {
       }
 
       if (this.mode === "dashboard") {
-        void this.refreshDashboardModelFromService();
-        this.renderCurrentDashboardView();
+        const now = Date.now();
+        if (now >= this.dashboardNextBackgroundRefreshAt) {
+          this.dashboardNextBackgroundRefreshAt = now + 5000;
+          void this.refreshDashboardModelFromService().then((refreshed) => {
+            if (refreshed || dashboardNeedsRender) {
+              this.renderCurrentDashboardView();
+            }
+          });
+        } else if (dashboardNeedsRender) {
+          this.renderCurrentDashboardView();
+        }
       }
     }, 1000);
   }
@@ -6337,10 +6363,11 @@ export class Multiplexer {
     this.invalidateDesktopStateSnapshot();
   }
 
-  private loadOfflineSessions(state = Multiplexer.loadState()): void {
+  private loadOfflineSessions(state = Multiplexer.loadState()): boolean {
     if (!state || state.sessions.length === 0) {
+      const changed = this.offlineSessions.length > 0;
       this.offlineSessions = [];
-      return;
+      return changed;
     }
 
     // Get all session IDs owned by live instances (including ourselves)
@@ -6355,16 +6382,24 @@ export class Multiplexer {
       this.sessions.map((session) => session.backendSessionId).filter((value): value is string => Boolean(value)),
     );
 
-    this.offlineSessions = state.sessions.filter((s) => {
+    const nextOfflineSessions = state.sessions.filter((s) => {
       if (ownedIds.has(s.id)) return false;
       if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
       if (s.worktreePath && !existsSync(s.worktreePath)) return false;
       return true;
     });
+    const previousKey = this.offlineSessions
+      .map((session) => `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}`)
+      .join("|");
+    const nextKey = nextOfflineSessions
+      .map((session) => `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}`)
+      .join("|");
+    this.offlineSessions = nextOfflineSessions;
 
     if (this.offlineSessions.length > 0) {
       debug(`loaded ${this.offlineSessions.length} offline session(s) from state.json`, "session");
     }
+    return previousKey !== nextKey;
   }
 
   private restoreTmuxSessionsFromState(state = Multiplexer.loadState()): void {
@@ -6588,6 +6623,7 @@ export class Multiplexer {
         this.syncSessionsFromState();
         return;
       }
+      let dashboardNeedsRender = false;
       const sessions = this.getInstanceSessionRefs();
       this.instanceDirectory
         .reconcileHeartbeat(this.instanceId, sessions, process.cwd(), this.confirmedRegistered)
@@ -6595,6 +6631,7 @@ export class Multiplexer {
           for (const id of result.claimedIds) {
             debug(`session ${id} claimed: was in confirmedRegistered but not in previousIds`, "instance");
             this.handleSessionClaimed(id);
+            dashboardNeedsRender = true;
           }
           if (result.skippedClaimDetection && this.confirmedRegistered.size > 0) {
             debug(
@@ -6603,12 +6640,15 @@ export class Multiplexer {
             );
           }
           this.confirmedRegistered = result.confirmedIds;
+          if (dashboardNeedsRender && this.mode === "dashboard") {
+            this.renderCurrentDashboardView();
+          }
         })
         .catch(() => {});
       // Refresh offline sessions from state.json (picks up cross-instance graveyard/kill)
-      this.loadOfflineSessions();
-      // Refresh dashboard to pick up remote instance changes (skip if overlay is active)
-      if (this.mode === "dashboard") {
+      const offlineChanged = this.loadOfflineSessions();
+      // Refresh dashboard only when heartbeat changed visible state.
+      if (offlineChanged && this.mode === "dashboard") {
         this.renderCurrentDashboardView();
       }
     }, 5000);

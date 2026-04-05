@@ -152,11 +152,10 @@ describe("TmuxRuntimeManager", () => {
       exec.calls.some(
         (call) =>
           call.args[0] === "bind-key" &&
-          call.args[3] === "d" &&
-          call.args.join(" ").includes("scripts/tmux-control.sh' dashboard") &&
-          call.args.join(" ").includes("--current-window-id '#{window_id}'") &&
-          call.args.join(" ").includes("--client-tty '#{client_tty}'") &&
-          call.args.join(" ").includes("--pane-id '#{pane_id}'"),
+          call.args.join(" ").includes(" prefix d ") &&
+          call.args[4] === "select-window" &&
+          call.args[5] === "-t" &&
+          call.args[6] === ":0",
       ),
     ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-left")).toBe(true);
@@ -253,7 +252,7 @@ describe("TmuxRuntimeManager", () => {
       exec.calls.some(
         (call) =>
           call.args.join(" ") ===
-          `new-session -d -s ${clientSessionName} -c /repo/mobile -n dashboard-268eff9c sh -lc tail -f /dev/null`,
+          `new-session -d -s ${clientSessionName} -c /repo/mobile -n dashboard sh -lc tail -f /dev/null`,
       ),
     ).toBe(true);
     expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-t", `${clientSessionName}:3`]);

@@ -34,6 +34,13 @@ vi.mock("./project-scanner.js", () => ({
   ],
 }));
 
+vi.mock("./http-client.js", () => ({
+  requestJson: vi.fn(async () => ({
+    status: 200,
+    json: { ok: true },
+  })),
+}));
+
 describe("daemon supervision", () => {
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "aimux-daemon-"));
@@ -71,7 +78,7 @@ describe("daemon supervision", () => {
     const { AimuxDaemon } = await import("./daemon.js");
 
     const daemon = new AimuxDaemon();
-    const first = (daemon as any).ensureProject(projectRoot);
+    const first = await (daemon as any).ensureProject(projectRoot);
     mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
     writeFileSync(
       join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`, "metadata-api.json"),
@@ -82,7 +89,7 @@ describe("daemon supervision", () => {
         updatedAt: new Date().toISOString(),
       }),
     );
-    const second = (daemon as any).ensureProject(projectRoot);
+    const second = await (daemon as any).ensureProject(projectRoot);
 
     expect(first.pid).toBe(second.pid);
     expect(spawnMock).toHaveBeenCalledTimes(1);
@@ -92,10 +99,10 @@ describe("daemon supervision", () => {
     const { AimuxDaemon } = await import("./daemon.js");
 
     const daemon = new AimuxDaemon();
-    const first = (daemon as any).ensureProject(projectRoot);
+    const first = await (daemon as any).ensureProject(projectRoot);
     livePids.delete(first.pid);
 
-    const second = (daemon as any).ensureProject(projectRoot);
+    const second = await (daemon as any).ensureProject(projectRoot);
 
     expect(second.pid).not.toBe(first.pid);
     expect(spawnMock).toHaveBeenCalledTimes(2);
@@ -105,9 +112,9 @@ describe("daemon supervision", () => {
     const { AimuxDaemon } = await import("./daemon.js");
 
     const daemon = new AimuxDaemon();
-    const first = (daemon as any).ensureProject(projectRoot);
+    const first = await (daemon as any).ensureProject(projectRoot);
 
-    const second = (daemon as any).ensureProject(projectRoot);
+    const second = await (daemon as any).ensureProject(projectRoot);
 
     expect(second.pid).not.toBe(first.pid);
     expect(spawnMock).toHaveBeenCalledTimes(2);
@@ -153,7 +160,7 @@ describe("daemon supervision", () => {
     const { AimuxDaemon } = await import("./daemon.js");
 
     const daemon = new AimuxDaemon();
-    const project = (daemon as any).ensureProject(projectRoot);
+    const project = await (daemon as any).ensureProject(projectRoot);
     const daemonInfoPath = join(tmpRoot, ".aimux", "daemon", "daemon.json");
     writeFileSync(
       daemonInfoPath,
