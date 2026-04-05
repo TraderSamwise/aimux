@@ -1078,11 +1078,20 @@ export class Multiplexer {
   }
 
   private async updateSessionLabel(sessionId: string, label?: string): Promise<void> {
+    if (this.mode === "dashboard") {
+      await this.postToProjectService("/agents/rename", { sessionId, label });
+      this.invalidateDesktopStateSnapshot();
+      await this.refreshDashboardModelFromService(true);
+      this.renderCurrentDashboardView();
+      return;
+    }
+
     this.applySessionLabel(sessionId, label);
+    this.invalidateDesktopStateSnapshot();
 
     const localSession = this.sessions.find((session) => session.id === sessionId)?.transport;
     if (localSession instanceof TmuxSessionTransport) {
-      localSession.renameWindow(label?.trim() || localSession.command);
+      localSession.renameWindow(localSession.command);
       const target = localSession.tmuxTarget;
       this.sessionTmuxTargets.set(sessionId, target);
       this.syncTmuxWindowMetadata(sessionId);
@@ -5902,7 +5911,7 @@ export class Multiplexer {
           label: session.label,
           tmuxWindowId: session.tmuxWindowId,
           tmuxWindowIndex: session.tmuxWindowIndex,
-          windowName: session.label || session.command,
+          windowName: session.command,
           headline: session.headline,
           status: session.status,
           role: session.role,
@@ -5917,7 +5926,7 @@ export class Multiplexer {
           label: service.label,
           tmuxWindowId: service.tmuxWindowId,
           tmuxWindowIndex: service.tmuxWindowIndex,
-          windowName: service.label || service.command,
+          windowName: service.command,
           headline: service.previewLine,
           status: service.status,
           active: service.active,
@@ -6238,7 +6247,9 @@ export class Multiplexer {
       const label = metadata.label ?? saved?.label;
       if (label) {
         this.sessionLabels.set(metadata.sessionId, label);
-        transport.renameWindow(label);
+      }
+      if (target.windowName !== metadata.command) {
+        transport.renameWindow(metadata.command);
       }
       this.syncTmuxWindowMetadata(metadata.sessionId);
     }

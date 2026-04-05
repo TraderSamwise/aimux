@@ -78,6 +78,7 @@ import {
 } from "./notifications.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
+import { runTmuxSwitcher } from "./tmux-switcher.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -2115,8 +2116,16 @@ program
   .action(async (sessionId: string, opts: { label: string; project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      const mux = new Multiplexer();
-      const result = await mux.renameAgent(sessionId, opts.label);
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/agents/rename",
+        { sessionId, label: opts.label },
+        () => {
+          const mux = new Multiplexer();
+          return mux.renameAgent(sessionId, opts.label);
+        },
+      );
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -2139,6 +2148,42 @@ program
       process.exit(1);
     }
   });
+
+program
+  .command("switcher")
+  .description("Internal tmux popup switcher")
+  .requiredOption("--project-root <path>", "Project root")
+  .requiredOption("--project-state-dir <path>", "Project state dir")
+  .option("--current-client-session <name>", "Current client session")
+  .option("--client-tty <tty>", "Client tty")
+  .option("--current-window <name>", "Current window name")
+  .option("--current-window-id <id>", "Current window id")
+  .option("--current-path <path>", "Current path")
+  .option("--pane-id <id>", "Current pane id")
+  .action(
+    async (opts: {
+      projectRoot: string;
+      projectStateDir: string;
+      currentClientSession?: string;
+      clientTty?: string;
+      currentWindow?: string;
+      currentWindowId?: string;
+      currentPath?: string;
+      paneId?: string;
+    }) => {
+      const code = await runTmuxSwitcher({
+        projectRoot: pathResolve(opts.projectRoot),
+        projectStateDir: pathResolve(opts.projectStateDir),
+        currentClientSession: opts.currentClientSession,
+        clientTty: opts.clientTty,
+        currentWindow: opts.currentWindow,
+        currentWindowId: opts.currentWindowId,
+        currentPath: opts.currentPath,
+        paneId: opts.paneId,
+      });
+      process.exit(code);
+    },
+  );
 
 program
   .command("kill <sessionId>")

@@ -134,6 +134,7 @@ switch (args[0]) {
   case "list-windows": listWindows(); break;
   case "display-message": displayMessage(); break;
   case "display-menu": break;
+  case "display-popup": break;
   case "show-options": showOptions(); break;
   case "show-window-options": showWindowOptions(); break;
   case "link-window": linkWindow(); break;
@@ -507,8 +508,10 @@ describe("tmux-control.sh", () => {
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);
-    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
-    expect(log.some((entry) => entry.includes("display-menu -c /dev/live -T aimux -x P -y P codex(coder)"))).toBe(true);
+    expect(log).not.toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    expect(
+      log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux -x P -y P -w 56 -h 10 -E exec")),
+    ).toBe(true);
     expect(curlLog).toEqual([]);
   });
 });

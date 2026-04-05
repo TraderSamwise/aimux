@@ -101,6 +101,10 @@ load_endpoint() {
   return 0
 }
 
+shell_quote() {
+  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
+
 resolve_live_client() {
   if [ -n "$client_tty" ]; then
     live_client=$(tmux list-clients -F '#{client_tty}|#{session_name}|#{window_id}' 2>/dev/null | awk -F '|' -v tty="$client_tty" '$1 == tty { print; exit }')
@@ -277,181 +281,20 @@ switch_local_window() {
   exit 0
 }
 
-show_local_menu() {
+show_local_switcher() {
   if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
     resolve_live_client || return 1
   fi
-  python3 - "$project_state_dir" "$script_dir" "$current_path" "$current_window_id" "$current_client_session" "${live_client_session-}" "${live_client_tty-}" "$client_tty" "$pane_id" <<'PY'
-import json, subprocess, sys, shlex
-from pathlib import Path
-from datetime import datetime
-
-project_state_dir, script_dir, current_path, current_window_id, current_client_session, live_client_session, live_client_tty, client_tty, pane_id = sys.argv[1:]
-
-effective_client_session = live_client_session or current_client_session
-effective_client_tty = live_client_tty or client_tty
-if not effective_client_session:
-    raise SystemExit(1)
-
-host_session = effective_client_session
-if "-client-" in host_session:
-    host_session = host_session.split("-client-", 1)[0]
-
-def run(*args: str) -> str:
-    return subprocess.check_output(["tmux", *args], text=True).strip()
-
-def try_run(*args: str) -> str:
-    try:
-        return run(*args)
-    except Exception:
-        return ""
-
-def compact_label(meta: dict, window_name: str) -> str:
-    kind = meta.get("kind") or "agent"
-    base = (meta.get("label") or meta.get("command") or window_name or "").strip() or window_name
-    if kind == "service":
-        return f"{base}[svc]"
-    role = (meta.get("role") or "").strip()
-    return f"{base}({role})" if role else base
-
-def parse_ts(value: str | None) -> float:
-    if not value:
-        return 0.0
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except Exception:
-        return 0.0
-
-last_used_path = Path(project_state_dir) / "last-used.json"
-last_used = {}
-recent_rank = {}
-if last_used_path.exists():
-    try:
-        state = json.loads(last_used_path.read_text())
-        last_used = state.get("items") or {}
-        client_ids = ((state.get("clients") or {}).get(effective_client_session) or {}).get("recentIds") or []
-        project_ids = state.get("projectRecentIds") or []
-        ordered = list(client_ids) + [item_id for item_id in project_ids if item_id not in client_ids]
-        recent_rank = {item_id: idx for idx, item_id in enumerate(ordered)}
-    except Exception:
-        pass
-
-current_worktree = ""
-current_meta_raw = try_run("show-window-options", "-v", "-t", current_window_id, "@aimux-meta")
-if current_meta_raw:
-    try:
-        current_worktree = (json.loads(current_meta_raw).get("worktreePath") or "").strip()
-    except Exception:
-        current_worktree = ""
-
-items = []
-for line in try_run("list-windows", "-t", host_session, "-F", "#{window_id}|#{window_index}|#{window_name}").splitlines():
-    if not line:
-        continue
-    try:
-        window_id, index_text, window_name = line.split("|", 2)
-    except ValueError:
-        continue
-    meta_raw = try_run("show-window-options", "-v", "-t", window_id, "@aimux-meta")
-    if not meta_raw:
-        continue
-    try:
-        meta = json.loads(meta_raw)
-    except Exception:
-        continue
-    worktree = (meta.get("worktreePath") or "").strip()
-    if current_worktree:
-        if worktree != current_worktree:
-            continue
-    elif not worktree or not current_path.startswith(worktree):
-        continue
-    session_id = (meta.get("sessionId") or "").strip()
-    used_at = ((last_used.get(session_id) or {}).get("lastUsedAt") if session_id else None) or None
-    items.append(
-        {
-            "windowId": window_id,
-            "windowIndex": int(index_text),
-            "kind": meta.get("kind") or "agent",
-            "sessionId": session_id,
-            "label": compact_label(meta, window_name),
-            "lastUsedAt": used_at,
-            "recentRank": recent_rank.get(session_id, 10**9),
-        }
-    )
-
-if not items:
-    raise SystemExit(1)
-
-items.sort(
-    key=lambda item: (
-        item["recentRank"],
-        -parse_ts(item["lastUsedAt"]),
-        0 if item["kind"] == "agent" else 1,
-        item["windowIndex"],
-    )
-)
-
-existing = {}
-for line in try_run("list-windows", "-t", effective_client_session, "-F", "#{window_index}|#{window_id}").splitlines():
-    if not line:
-        continue
-    try:
-        index_text, window_id = line.split("|", 1)
-    except ValueError:
-        continue
-    existing[window_id] = index_text
-
-menu_items: list[tuple[str, str]] = []
-for item in items:
-    linked_index = existing.get(item["windowId"])
-    if linked_index is None:
-        subprocess.run(
-            ["tmux", "link-window", "-d", "-s", item["windowId"], "-t", effective_client_session],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        linked_index = try_run("list-windows", "-t", effective_client_session, "-F", "#{window_index}|#{window_id}")
-        resolved = None
-        for line in linked_index.splitlines():
-            if not line:
-                continue
-            try:
-                index_text, window_id = line.split("|", 1)
-            except ValueError:
-                continue
-            if window_id == item["windowId"]:
-                resolved = index_text
-                existing[window_id] = index_text
-                break
-        linked_index = resolved
-    if linked_index is None:
-        continue
-    script_path = Path(script_dir) / "tmux-control.sh"
-    shell_command = (
-        f"sh {shlex.quote(str(script_path))} window "
-        f"--project-state-dir {shlex.quote(str(project_state_dir))} "
-        f"--current-client-session {shlex.quote(str(effective_client_session))} "
-        f"--client-tty {shlex.quote(str(effective_client_tty))} "
-        f"--window-id {shlex.quote(str(item['windowId']))} "
-        f"--current-window-id {shlex.quote(str(current_window_id))} "
-        f"--current-path {shlex.quote(str(current_path))} "
-        f"--pane-id {shlex.quote(str(pane_id))}"
-    )
-    command = f"run-shell {shlex.quote(shell_command)}"
-    menu_items.append((item["label"], command))
-
-if not menu_items:
-    raise SystemExit(1)
-
-args = ["tmux", "display-menu"]
-if effective_client_tty:
-    args.extend(["-c", effective_client_tty])
-args.extend(["-T", "aimux", "-x", "P", "-y", "P"])
-for label, command in menu_items:
-    args.extend([label, "", command])
-subprocess.run(args, check=True)
-PY
+  popup_client_tty="${live_client_tty-}"
+  [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
+  popup_session="${live_client_session-}"
+  [ -n "$popup_session" ] || popup_session="$current_client_session"
+  switcher_cmd="exec $(shell_quote "$aimux_bin") switcher --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id")"
+  if [ -n "$popup_client_tty" ]; then
+    tmux display-popup -c "$popup_client_tty" -T "aimux" -x P -y P -w 56 -h 10 -E "$switcher_cmd" >/dev/null 2>&1 || return 1
+  else
+    tmux display-popup -T "aimux" -x P -y P -w 56 -h 10 -E "$switcher_cmd" >/dev/null 2>&1 || return 1
+  fi
   exit 0
 }
 
@@ -645,7 +488,7 @@ fallback_local_control() {
       switch_local_dashboard
       ;;
     menu)
-      show_local_menu
+      show_local_switcher
       ;;
     next|prev|attention|window)
       target_window_id=$(resolve_local_target_from_statusline || resolve_local_target_from_tmux_metadata) || return 1
@@ -679,8 +522,8 @@ case "$action" in
   prev) path="/control/switch-prev" ;;
   attention) path="/control/switch-attention" ;;
   dashboard) path="/control/open-dashboard" ;;
-  menu) path="/control/show-menu" ;;
   window) path="/control/focus-window" ;;
+  menu) path="" ;;
   *) exit 1 ;;
 esac
 

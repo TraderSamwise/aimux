@@ -282,25 +282,6 @@ function openTarget(
   tmux.refreshStatus();
 }
 
-function displayMenu(
-  tmux: TmuxRuntimeManager,
-  items: Array<{ target: TmuxTarget; label: string; id?: string }>,
-  currentWindowId?: string,
-  currentClientSession?: string,
-  clientTty?: string,
-): void {
-  const menuItems = items.map((item) => ({
-    label: item.target.windowId === currentWindowId ? `${item.label}*` : item.label,
-    target: item.target,
-  }));
-  const liveClientTty = resolveLiveClientTty(tmux, currentClientSession, clientTty);
-  if (liveClientTty) {
-    tmux.displayWindowMenuForClient(liveClientTty, "aimux", menuItems);
-    return;
-  }
-  tmux.displayWindowMenu("aimux", menuItems);
-}
-
 function markTargetUsed(
   tmux: TmuxRuntimeManager,
   projectRoot: string,
@@ -744,34 +725,6 @@ export class MetadataServer {
         label: item.lastUsedAt ? `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}` : item.label,
       }));
       send(res, 200, { ok: true, items });
-      return;
-    }
-    if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/show-menu") {
-      const currentClientSession = url.searchParams.get("currentClientSession")?.trim() || undefined;
-      const clientTty = url.searchParams.get("clientTty")?.trim() || undefined;
-      const currentWindow = url.searchParams.get("currentWindow")?.trim() || undefined;
-      const currentWindowId = url.searchParams.get("currentWindowId")?.trim() || undefined;
-      const currentPath = url.searchParams.get("currentPath")?.trim() || undefined;
-      const tmux = new TmuxRuntimeManager();
-      const items = listSwitchableAgentItems(
-        {
-          projectRoot: process.cwd(),
-          currentClientSession,
-          currentWindow,
-          currentWindowId,
-          currentPath,
-        },
-        tmux,
-      ).map((item) => ({
-        ...serializeFastControlItem(item),
-        label: item.lastUsedAt ? `${item.label} · ${formatRelativeRecency(item.lastUsedAt)}` : item.label,
-      }));
-      if (items.length === 0) {
-        send(res, 404, { ok: false, error: "no switchable agent found" });
-        return;
-      }
-      displayMenu(tmux, items, currentWindowId, currentClientSession, clientTty);
-      send(res, 200, { ok: true });
       return;
     }
     if (req.method === "GET" && url.pathname === "/agents/output/stream") {

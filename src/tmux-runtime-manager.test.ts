@@ -295,36 +295,6 @@ describe("TmuxRuntimeManager", () => {
     ]);
   });
 
-  it("shows a scoped tmux window menu", () => {
-    const exec = createExecMock();
-    const manager = new TmuxRuntimeManager(exec);
-    manager.displayWindowMenu("aimux", [
-      {
-        label: "codex",
-        target: { sessionName: "aimux-mobile-abc", windowId: "@3", windowIndex: 3, windowName: "codex" },
-      },
-      {
-        label: "claude",
-        target: { sessionName: "aimux-mobile-abc", windowId: "@4", windowIndex: 4, windowName: "claude" },
-      },
-    ]);
-    expect(exec.calls.at(-1)?.args).toEqual([
-      "display-menu",
-      "-T",
-      "aimux",
-      "-x",
-      "P",
-      "-y",
-      "P",
-      "codex",
-      "",
-      "select-window -t @3",
-      "claude",
-      "",
-      "select-window -t @4",
-    ]);
-  });
-
   it("stores and reads aimux metadata on tmux windows", () => {
     const exec = createExecMock();
     const manager = new TmuxRuntimeManager(exec);

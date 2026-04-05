@@ -440,28 +440,6 @@ export class TmuxRuntimeManager {
     this.exec(["switch-client", "-c", clientTty, "-t", target.windowId]);
   }
 
-  displayWindowMenu(title: string, items: Array<{ label: string; target: TmuxTarget }>): void {
-    if (items.length === 0) return;
-    const args = ["display-menu", "-T", title, "-x", "P", "-y", "P"];
-    for (const item of items) {
-      args.push(item.label, "", `select-window -t ${item.target.windowId}`);
-    }
-    this.exec(args);
-  }
-
-  displayWindowMenuForClient(
-    clientTty: string,
-    title: string,
-    items: Array<{ label: string; target: TmuxTarget }>,
-  ): void {
-    if (items.length === 0) return;
-    const args = ["display-menu", "-c", clientTty, "-T", title, "-x", "P", "-y", "P"];
-    for (const item of items) {
-      args.push(item.label, "", `select-window -t ${item.target.windowId}`);
-    }
-    this.exec(args);
-  }
-
   captureTarget(target: TmuxTarget, options: CaptureTargetOptions = {}): string {
     const startLine = options.startLine ?? "-";
     return this.exec(["capture-pane", "-p", "-J", "-t", target.windowId, "-S", String(startLine)]);
