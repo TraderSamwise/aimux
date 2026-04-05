@@ -1,14 +1,5 @@
 import { Command } from "commander";
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  readdirSync,
-  copyFileSync,
-  mkdirSync,
-  chmodSync,
-  statSync,
-} from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, copyFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join as pathJoin, resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -79,6 +70,12 @@ import {
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
 import { runTmuxSwitcher } from "./tmux-switcher.js";
+import {
+  findLiveDashboardTarget,
+  getDashboardCommandSpec,
+  pruneDashboardArtifacts,
+  resolveDashboardTarget,
+} from "./dashboard-targets.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -118,7 +115,7 @@ async function restartStaleControlPlane(projectRoot: string): Promise<void> {
   await ensureDaemonRunning();
   await ensureProjectService(projectRoot);
   const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
-  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp);
+  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, new TmuxRuntimeManager());
 }
 
 async function fetchProjectServiceHealth(endpoint: { host: string; port: number }): Promise<{
@@ -339,260 +336,6 @@ function ensureTmuxAvailable(tmux: TmuxRuntimeManager): void {
   }
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
-
-function getDashboardCommandSpec(projectRoot: string) {
-  const scriptPath = fileURLToPath(import.meta.url);
-  const wrappedDashboardCommand = [
-    "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX)",
-    ";",
-    "set -o pipefail",
-    ";",
-    shellQuote(process.execPath),
-    shellQuote(scriptPath),
-    "--tmux-dashboard-internal",
-    "2>&1",
-    "|",
-    "tee",
-    '"$output_file"',
-    "|",
-    "tee",
-    "-a",
-    shellQuote("/tmp/aimux-debug.log"),
-    ";",
-    "code=$?",
-    ";",
-    "if",
-    "[",
-    "$code",
-    "-ne",
-    "0",
-    "]",
-    ";",
-    "then",
-    "printf",
-    "'\\033[?1049l\\033[H\\033[2J'",
-    ";",
-    "if",
-    "[",
-    "-s",
-    '"$output_file"',
-    "]",
-    ";",
-    "then",
-    "cat",
-    '"$output_file"',
-    ";",
-    "else",
-    "printf",
-    "%s\\n%s\\n",
-    shellQuote("No dashboard stderr/stdout was captured."),
-    shellQuote("Last debug log lines:"),
-    ";",
-    "tail",
-    "-n",
-    "40",
-    shellQuote("/tmp/aimux-debug.log"),
-    ";",
-    "fi",
-    ";",
-    "printf",
-    "%s\\n",
-    shellQuote(""),
-    ";",
-    "printf",
-    "%s\\n%s\\n%s\\n%s\\n%s\\n",
-    shellQuote("aimux dashboard failed to start."),
-    shellQuote("The error above was captured from the dashboard process."),
-    shellQuote("If that output is empty, the last debug-log lines were shown instead."),
-    shellQuote("Press q, Enter, or Ctrl+C to close this pane."),
-    shellQuote(""),
-    ";",
-    "printf",
-    "%s\\n",
-    '"exit code: $code"',
-    ";",
-    "while",
-    "IFS= read -rsn1 key",
-    ";",
-    "do",
-    "if",
-    "[",
-    "-z",
-    '"$key"',
-    "]",
-    "||",
-    "[",
-    '"$key"',
-    "=",
-    shellQuote("q"),
-    "]",
-    ";",
-    "then",
-    "rm",
-    "-f",
-    '"$output_file"',
-    ";",
-    "exit 0",
-    ";",
-    "fi",
-    ";",
-    "done",
-    ";",
-    "else",
-    "rm",
-    "-f",
-    '"$output_file"',
-    ";",
-    "fi",
-  ].join(" ");
-  return {
-    scriptPath,
-    dashboardBuildStamp: String(statSync(scriptPath).mtimeMs),
-    dashboardCommand: {
-      cwd: projectRoot,
-      command: "bash",
-      args: ["-lc", wrappedDashboardCommand],
-    },
-  };
-}
-
-function ensureDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
-  const { dashboardBuildStamp, dashboardCommand } = getDashboardCommandSpec(projectRoot);
-  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
-  const dashboardSession = tmux.ensureProjectSession(projectRoot, {
-    cwd: dashboardCommand.cwd,
-    command: dashboardCommand.command,
-    args: dashboardCommand.args,
-  });
-  const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
-  const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
-  const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
-  const shouldRespawnDashboard = !tmux.isWindowAlive(dashboardTarget) || currentBuildStamp !== dashboardBuildStamp;
-  if (shouldRespawnDashboard) {
-    tmux.respawnWindow(dashboardTarget, dashboardCommand);
-    tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
-  }
-  return { dashboardSession, dashboardTarget };
-}
-
-function pruneDashboardArtifacts(projectRoot: string, dashboardBuildStamp: string, tmux = new TmuxRuntimeManager()) {
-  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
-  const sessions = tmux
-    .listSessionNames()
-    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`));
-  for (const sessionName of sessions) {
-    const windows = tmux.listWindows(sessionName);
-    const dashboardWindows = windows.filter((window) => window.name.startsWith("dashboard"));
-    for (const window of dashboardWindows) {
-      const target = {
-        sessionName,
-        windowId: window.id,
-        windowIndex: window.index,
-        windowName: window.name,
-      };
-      const paneCommand = tmux.displayMessage("#{pane_current_command}", window.id);
-      const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
-      const invalid =
-        !tmux.isWindowAlive(target) ||
-        paneCommand === "cat" ||
-        paneCommand === "tail" ||
-        !currentBuildStamp ||
-        currentBuildStamp !== dashboardBuildStamp;
-      if (!invalid) continue;
-      try {
-        tmux.killWindow(target);
-      } catch {}
-    }
-    if (sessionName === hostSession || !tmux.hasSession(sessionName)) continue;
-    const remaining = tmux.listWindows(sessionName);
-    const hasValidDashboard = remaining.some((window) => window.name.startsWith("dashboard"));
-    if (hasValidDashboard) continue;
-    const hasNonDashboardWindows = remaining.some((window) => !window.name.startsWith("dashboard"));
-    if (hasNonDashboardWindows) continue;
-    try {
-      tmux.killSession(sessionName);
-    } catch {}
-  }
-}
-
-function getLiveDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
-  const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
-  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
-  const dashboardSession = tmux.getProjectSession(projectRoot);
-  const isUsableDashboardTarget = (dashboardTarget: {
-    sessionName: string;
-    windowId: string;
-    windowIndex: number;
-    windowName: string;
-  }) => {
-    const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
-    const paneCommand = tmux.displayMessage("#{pane_current_command}", dashboardTarget.windowId);
-    return tmux.isWindowAlive(dashboardTarget) && currentBuildStamp === dashboardBuildStamp && paneCommand !== "cat";
-  };
-  if (!tmux.hasSession(dashboardSession.sessionName)) {
-    return null;
-  }
-  const openSessionName = tmux.peekOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
-  if (!tmux.hasSession(openSessionName)) {
-    const candidateSessions = tmux
-      .listSessionNames()
-      .filter(
-        (sessionName) =>
-          sessionName === dashboardSession.sessionName ||
-          sessionName.startsWith(`${dashboardSession.sessionName}-client-`),
-      );
-    const candidates = candidateSessions
-      .flatMap((sessionName) =>
-        tmux
-          .listWindows(sessionName)
-          .filter((window) => window.name.startsWith("dashboard"))
-          .map((window) => ({
-            sessionName,
-            windowId: window.id,
-            windowIndex: window.index,
-            windowName: window.name,
-          })),
-      )
-      .filter(isUsableDashboardTarget);
-    if (candidates.length === 1) {
-      return { dashboardSession, dashboardTarget: candidates[0]! };
-    }
-    return null;
-  }
-  const dashboardWindow = tmux.listWindows(openSessionName).find((window) => window.name.startsWith("dashboard"));
-  if (!dashboardWindow) {
-    return null;
-  }
-  const dashboardTarget = {
-    sessionName: openSessionName,
-    windowId: dashboardWindow.id,
-    windowIndex: dashboardWindow.index,
-    windowName: dashboardWindow.name,
-  };
-  if (!isUsableDashboardTarget(dashboardTarget)) {
-    return null;
-  }
-  return { dashboardSession, dashboardTarget };
-}
-
-function forceReloadDashboardTarget(projectRoot: string, tmux = new TmuxRuntimeManager()) {
-  const { dashboardBuildStamp, dashboardCommand } = getDashboardCommandSpec(projectRoot);
-  pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
-  const dashboardSession = tmux.ensureProjectSession(projectRoot, {
-    cwd: dashboardCommand.cwd,
-    command: dashboardCommand.command,
-    args: dashboardCommand.args,
-  });
-  const openSessionName = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
-  const dashboardTarget = tmux.ensureDashboardWindow(openSessionName, projectRoot, dashboardCommand);
-  tmux.respawnWindow(dashboardTarget, dashboardCommand);
-  tmux.setWindowOption(dashboardTarget, "@aimux-dashboard-build", dashboardBuildStamp);
-  return { dashboardSession, dashboardTarget };
-}
-
 program
   .name("aimux")
   .description("Native CLI agent multiplexer")
@@ -636,7 +379,7 @@ program
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
         if (!tool && !opts.resume && !opts.restore) {
-          const liveDashboard = getLiveDashboardTarget(projectRoot, tmux);
+          const liveDashboard = findLiveDashboardTarget(projectRoot, tmux);
           if (liveDashboard) {
             tmux.openTarget(liveDashboard.dashboardTarget, {
               insideTmux: tmux.isInsideTmux(),
@@ -646,7 +389,7 @@ program
           }
         }
         await ensureDaemonProjectSpawned(projectRoot);
-        const { dashboardTarget } = ensureDashboardTarget(projectRoot, tmux);
+        const { dashboardTarget } = resolveDashboardTarget(projectRoot, tmux);
         if (!tool && !opts.resume && !opts.restore) {
           tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
           return;
@@ -727,7 +470,7 @@ program
 
       const tmux = new TmuxRuntimeManager();
       ensureTmuxAvailable(tmux);
-      const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
+      const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
 
       if (opts.open) {
         tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
@@ -855,7 +598,7 @@ hostCmd
     }
     const tmux = new TmuxRuntimeManager();
     ensureTmuxAvailable(tmux);
-    const { dashboardSession, dashboardTarget } = forceReloadDashboardTarget(projectRoot, tmux);
+    const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
     if (opts.open) {
       tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
       return;

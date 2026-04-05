@@ -18,6 +18,7 @@ import { parseKeys } from "./key-parser.js";
 import { loadConfig, initProject, type ToolConfig } from "./config.js";
 import {
   getProjectStateDir,
+  getDashboardUiStatePath,
   getGraveyardPath,
   getStatePath,
   getStatusDir,
@@ -86,6 +87,7 @@ import { deriveSessionSemantics } from "./session-semantics.js";
 import { injectClaudeHookArgs } from "./claude-hooks.js";
 import { navigationUrgencyScore } from "./fast-control.js";
 import { requestJson } from "./http-client.js";
+import { resolveDashboardTarget } from "./dashboard-targets.js";
 import {
   clearNotifications,
   listNotifications,
@@ -171,6 +173,16 @@ interface DashboardErrorState {
   lines: string[];
 }
 
+interface DashboardUiStateSnapshot {
+  screen?: DashboardScreen;
+  detailsSidebarVisible?: boolean;
+  focusedWorktreePath?: string;
+  level?: "worktrees" | "sessions";
+  selectedEntryKind?: "session" | "service";
+  selectedEntryId?: string;
+  flatSessionId?: string;
+}
+
 interface PlanEntry {
   sessionId: string;
   tool?: string;
@@ -201,6 +213,7 @@ interface DashboardOrchestrationTarget {
 }
 
 export class Multiplexer {
+  private readonly projectRoot: string;
   private sessions: ManagedSession[] = [];
   private activeIndex = 0;
   private mode: MuxMode = "dashboard";
@@ -265,6 +278,8 @@ export class Multiplexer {
   private confirmedRegistered = new Set<string>();
   /** The focused worktree path on the dashboard (undefined = main repo) */
   private dashboardState = new DashboardState();
+  private dashboardPreferredSelection: { kind: "session" | "service"; id: string } | null = null;
+  private dashboardFlatSelectionId: string | null = null;
   private statusInterval: ReturnType<typeof setInterval> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private agentTracker = new AgentTracker();
@@ -313,6 +328,13 @@ export class Multiplexer {
   private dashboardServiceRecovery: Promise<void> | null = null;
 
   constructor() {
+    this.projectRoot = (() => {
+      try {
+        return findMainRepo(process.cwd());
+      } catch {
+        return process.cwd();
+      }
+    })();
     this.terminalHost = new TerminalHost();
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
@@ -379,10 +401,9 @@ export class Multiplexer {
   }
 
   private openTmuxDashboardTarget(): void {
-    const session = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
-    const openSession = this.tmuxRuntimeManager.getOpenSessionName(session.sessionName);
-    const target = this.tmuxRuntimeManager.ensureDashboardWindow(openSession, process.cwd());
-    this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+    const insideTmux = this.tmuxRuntimeManager.isInsideTmux();
+    const { dashboardTarget } = resolveDashboardTarget(this.projectRoot, this.tmuxRuntimeManager);
+    this.tmuxRuntimeManager.openTarget(dashboardTarget, { insideTmux, alreadyResolved: true });
   }
 
   private invalidateDashboardFrame(): void {
@@ -397,12 +418,95 @@ export class Multiplexer {
     this.terminalHost.enterAlternateScreen();
     this.invalidateDashboardFrame();
     this.renderCurrentDashboardView();
-    void this.refreshDashboardModelFromService(true).then((updated) => {
-      if (!updated || this.mode !== "dashboard") return;
-      this.terminalHost.enterAlternateScreen();
-      this.invalidateDashboardFrame();
-      this.renderCurrentDashboardView();
-    });
+  }
+
+  private loadDashboardUiState(): void {
+    try {
+      const raw = readFileSync(getDashboardUiStatePath(), "utf-8");
+      const snapshot = JSON.parse(raw) as DashboardUiStateSnapshot;
+      if (snapshot.screen) {
+        this.dashboardState.screen = snapshot.screen;
+      }
+      if (typeof snapshot.detailsSidebarVisible === "boolean") {
+        this.dashboardState.detailsSidebarVisible = snapshot.detailsSidebarVisible;
+      }
+      if ("focusedWorktreePath" in snapshot) {
+        this.dashboardState.focusedWorktreePath = snapshot.focusedWorktreePath;
+      }
+      if (snapshot.level) {
+        this.dashboardState.level = snapshot.level;
+      }
+      if (snapshot.selectedEntryKind && snapshot.selectedEntryId) {
+        this.dashboardPreferredSelection = {
+          kind: snapshot.selectedEntryKind,
+          id: snapshot.selectedEntryId,
+        };
+      }
+      if (snapshot.flatSessionId) {
+        this.dashboardFlatSelectionId = snapshot.flatSessionId;
+      }
+    } catch {}
+  }
+
+  private persistDashboardUiState(): void {
+    if (this.mode !== "dashboard") return;
+    const snapshot: DashboardUiStateSnapshot = {
+      screen: this.dashboardState.screen,
+      detailsSidebarVisible: this.dashboardState.detailsSidebarVisible,
+      focusedWorktreePath: this.dashboardState.focusedWorktreePath,
+      level: this.dashboardState.level,
+    };
+
+    if (this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0) {
+      const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
+      if (selectedEntry) {
+        snapshot.selectedEntryKind = selectedEntry.kind;
+        snapshot.selectedEntryId = selectedEntry.id;
+        this.dashboardPreferredSelection = {
+          kind: selectedEntry.kind,
+          id: selectedEntry.id,
+        };
+      }
+    }
+
+    const flatSession = this.getDashboardSessions()[this.activeIndex];
+    if (flatSession) {
+      snapshot.flatSessionId = flatSession.id;
+      this.dashboardFlatSelectionId = flatSession.id;
+    }
+
+    try {
+      writeFileSync(getDashboardUiStatePath(), JSON.stringify(snapshot, null, 2) + "\n");
+    } catch {}
+  }
+
+  private restoreDashboardSelectionFromPreference(dashSessions: DashboardSession[], hasWorktrees: boolean): void {
+    if (hasWorktrees) {
+      this.updateWorktreeSessions();
+      if (this.dashboardState.level === "sessions" && this.dashboardPreferredSelection) {
+        const preferredIndex = this.dashboardState.worktreeEntries.findIndex(
+          (entry) =>
+            entry.kind === this.dashboardPreferredSelection?.kind && entry.id === this.dashboardPreferredSelection?.id,
+        );
+        if (preferredIndex >= 0) {
+          this.dashboardState.sessionIndex = preferredIndex;
+        } else if (this.dashboardState.sessionIndex >= this.dashboardState.worktreeEntries.length) {
+          this.dashboardState.sessionIndex = Math.max(0, this.dashboardState.worktreeEntries.length - 1);
+        }
+      }
+      return;
+    }
+
+    if (this.dashboardFlatSelectionId) {
+      const preferredIndex = dashSessions.findIndex((session) => session.id === this.dashboardFlatSelectionId);
+      if (preferredIndex >= 0) {
+        this.activeIndex = preferredIndex;
+      } else if (this.activeIndex >= dashSessions.length) {
+        this.activeIndex = Math.max(0, dashSessions.length - 1);
+      }
+    } else if (this.activeIndex >= dashSessions.length) {
+      this.activeIndex = Math.max(0, dashSessions.length - 1);
+    }
   }
 
   private writeFrame(output: string, force = false): void {
@@ -1603,6 +1707,7 @@ export class Multiplexer {
 
     // Enter dashboard mode directly
     this.mode = "dashboard";
+    this.loadDashboardUiState();
     const primed = await this.refreshDashboardModelFromService(true);
     if (!primed) {
       throw new Error("dashboard requires a live project service desktop-state endpoint");
@@ -3200,6 +3305,7 @@ export class Multiplexer {
     this.dashboardState.setScreen(screen);
     this.syncTuiNotificationContext(false);
     this.writeDashboardClientStatuslineFile();
+    this.persistDashboardUiState();
     this.tmuxRuntimeManager.refreshStatus();
   }
 
@@ -4345,6 +4451,7 @@ export class Multiplexer {
     if (!this.dashboardState.worktreeNavOrder.includes(this.dashboardState.focusedWorktreePath)) {
       this.dashboardState.focusedWorktreePath = undefined;
     }
+    this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
 
     // Determine selected session for cursor
     let selectedSession: string | undefined;
@@ -4373,6 +4480,7 @@ export class Multiplexer {
     );
     this.syncTuiNotificationContext(Boolean(this.notificationPanelState));
     this.writeFrame(this.dashboard.render(cols, rows));
+    this.persistDashboardUiState();
     if (this.dashboardBusyState) {
       this.renderDashboardBusyOverlay();
     } else if (this.dashboardErrorState) {
@@ -6230,7 +6338,10 @@ export class Multiplexer {
   }
 
   private loadOfflineSessions(state = Multiplexer.loadState()): void {
-    if (!state || state.sessions.length === 0) return;
+    if (!state || state.sessions.length === 0) {
+      this.offlineSessions = [];
+      return;
+    }
 
     // Get all session IDs owned by live instances (including ourselves)
     const ownedIds = new Set<string>();

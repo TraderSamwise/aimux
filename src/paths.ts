@@ -180,6 +180,10 @@ export function getMetadataEndpointPath(): string {
   return join(getProjectStateDir(), "metadata-api.json");
 }
 
+export function getDashboardUiStatePath(): string {
+  return join(getProjectStateDir(), "dashboard-ui.json");
+}
+
 // ── In-repo paths ({repoRoot}/.aimux/...) ──────────────────────────
 
 export function getLocalAimuxDir(): string {
