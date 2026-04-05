@@ -3549,7 +3549,18 @@ export class Multiplexer {
     });
     if (!match || match.metadata.kind !== "service") return false;
     this.noteLastUsedItem(serviceId);
-    this.tmuxRuntimeManager.openTarget(match.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+    const insideTmux = this.tmuxRuntimeManager.isInsideTmux();
+    if (insideTmux) {
+      const currentClientSession = this.tmuxRuntimeManager.currentClientSession();
+      if (currentClientSession) {
+        const linkedTarget = this.tmuxRuntimeManager.getTargetByWindowId(currentClientSession, match.target.windowId);
+        if (linkedTarget) {
+          this.tmuxRuntimeManager.selectWindow(linkedTarget);
+          return true;
+        }
+      }
+    }
+    this.tmuxRuntimeManager.openTarget(match.target, { insideTmux });
     return true;
   }
 
@@ -4311,7 +4322,9 @@ export class Multiplexer {
       throw new Error(`Unable to fork session ${opts.sourceSessionId}`);
     }
     if (opts.open !== false && result.target) {
-      this.tmuxRuntimeManager.openTarget(result.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+      if (!this.openLiveTmuxWindowForEntry({ id: result.sessionId })) {
+        this.tmuxRuntimeManager.openTarget(result.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+      }
     }
     return {
       sessionId: result.sessionId,
@@ -4351,7 +4364,9 @@ export class Multiplexer {
 
     const target = this.sessionTmuxTargets.get(transport.id);
     if (opts.open !== false && target) {
-      this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+      if (!this.openLiveTmuxWindowForEntry({ id: transport.id })) {
+        this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+      }
     }
 
     return { sessionId: transport.id };
