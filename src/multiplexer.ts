@@ -199,7 +199,7 @@ interface NotificationPanelState {
 }
 
 interface PendingDashboardSessionAction {
-  kind: "stopping" | "graveyarding" | "renaming";
+  kind: "starting" | "stopping" | "graveyarding" | "renaming";
   sessionId: string;
 }
 
@@ -2406,7 +2406,7 @@ export class Multiplexer {
           }
           if (entry?.status === "offline") {
             const offline = this.offlineSessions.find((s) => s.id === entry.id);
-            if (offline) {
+            if (offline && entry.pendingAction !== "starting") {
               void this.resumeOfflineSessionWithFeedback(offline);
             }
             return;
@@ -2506,7 +2506,7 @@ export class Multiplexer {
           }
           if (dashEntry.status === "offline") {
             const offline = this.offlineSessions.find((s) => s.id === dashEntry.id);
-            if (offline) {
+            if (offline && dashEntry.pendingAction !== "starting") {
               void this.resumeOfflineSessionWithFeedback(offline);
             }
             return;
@@ -2548,7 +2548,7 @@ export class Multiplexer {
 
     if (entry.status === "offline") {
       const offline = this.offlineSessions.find((session) => session.id === entry.id);
-      if (offline) {
+      if (offline && entry.pendingAction !== "starting") {
         await this.resumeOfflineSessionWithFeedback(offline);
       }
       return;
@@ -5683,17 +5683,42 @@ export class Multiplexer {
 
   private async resumeOfflineSessionWithFeedback(session: SessionState): Promise<void> {
     const label = session.label ?? session.command;
-    await this.runDashboardOperation(
-      `Restoring "${label}"`,
-      [`  Session: ${session.id}`],
-      () => {
-        this.resumeOfflineSession(session);
+    if (this.pendingDashboardSessionActions.get(session.id) === "starting") {
+      return;
+    }
+    this.setPendingDashboardSessionAction(session.id, "starting");
+    this.footerFlash = `Restoring ${label}`;
+    this.footerFlashTicks = 3;
+    try {
+      this.resumeOfflineSession(session);
+      const started = await this.waitForSessionStart(session.id);
+      this.setPendingDashboardSessionAction(session.id, null);
+      this.refreshLocalDashboardModel();
+      if (started) {
         this.footerFlash = `Restored ${label}`;
-        this.footerFlashTicks = 3;
-        this.renderDashboard();
-      },
-      `Failed to restore "${label}"`,
-    );
+      } else {
+        this.footerFlash = `Failed to restore ${label}`;
+      }
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
+    } catch (err) {
+      this.setPendingDashboardSessionAction(session.id, null);
+      this.footerFlash = `Failed to restore ${label}`;
+      this.footerFlashTicks = 4;
+      this.renderDashboard();
+    }
+  }
+
+  private async waitForSessionStart(sessionId: string, timeoutMs = 8000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const runtime = this.sessions.find((session) => session.id === sessionId);
+      if (runtime && this.isSessionRuntimeLive(runtime)) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return false;
   }
 
   private async takeoverFromDashEntryWithFeedback(entry: DashboardSession): Promise<void> {
