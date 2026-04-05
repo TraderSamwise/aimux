@@ -251,3 +251,16 @@ export function resolveDashboardTarget(
   }
   return { dashboardSession, dashboardTarget };
 }
+
+export function openDashboardTarget(
+  projectRoot: string,
+  tmux: TmuxRuntimeManager,
+  options: { forceReload?: boolean } = {},
+): DashboardTargetRef {
+  const resolved = resolveDashboardTarget(projectRoot, tmux, options);
+  tmux.openTarget(resolved.dashboardTarget, {
+    insideTmux: tmux.isInsideTmux(),
+    alreadyResolved: true,
+  });
+  return resolved;
+}

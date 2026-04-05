@@ -73,6 +73,7 @@ import { runTmuxSwitcher } from "./tmux-switcher.js";
 import {
   findLiveDashboardTarget,
   getDashboardCommandSpec,
+  openDashboardTarget,
   pruneDashboardArtifacts,
   resolveDashboardTarget,
 } from "./dashboard-targets.js";
@@ -389,9 +390,8 @@ program
           }
         }
         await ensureDaemonProjectSpawned(projectRoot);
-        const { dashboardTarget } = resolveDashboardTarget(projectRoot, tmux);
         if (!tool && !opts.resume && !opts.restore) {
-          tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+          openDashboardTarget(projectRoot, tmux);
           return;
         }
       }

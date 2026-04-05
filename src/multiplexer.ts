@@ -86,7 +86,7 @@ import { deriveSessionSemantics } from "./session-semantics.js";
 import { injectClaudeHookArgs } from "./claude-hooks.js";
 import { navigationUrgencyScore } from "./fast-control.js";
 import { requestJson } from "./http-client.js";
-import { resolveDashboardTarget } from "./dashboard-targets.js";
+import { openDashboardTarget } from "./dashboard-targets.js";
 import {
   clearNotifications,
   listNotifications,
@@ -392,9 +392,7 @@ export class Multiplexer {
   }
 
   private openTmuxDashboardTarget(): void {
-    const insideTmux = this.tmuxRuntimeManager.isInsideTmux();
-    const { dashboardTarget } = resolveDashboardTarget(this.projectRoot, this.tmuxRuntimeManager);
-    this.tmuxRuntimeManager.openTarget(dashboardTarget, { insideTmux, alreadyResolved: true });
+    openDashboardTarget(this.projectRoot, this.tmuxRuntimeManager);
   }
 
   private invalidateDashboardFrame(): void {
