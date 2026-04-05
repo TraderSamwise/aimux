@@ -1994,19 +1994,12 @@ export class Multiplexer {
       this.syncTmuxWindowMetadata(sessionId);
     }
 
-    // Focus the new session
     this.activeIndex = this.sessions.length - 1;
     if (this.startedInDashboard && this.mode === "dashboard") {
       this.invalidateDesktopStateSnapshot();
       this.refreshLocalDashboardModel();
       this.updateWorktreeSessions();
-      this.dashboardState.level = "sessions";
-      const selectedIndex = this.dashboardState.worktreeEntries.findIndex(
-        (entry) => entry.kind === "session" && entry.id === sessionId,
-      );
-      if (selectedIndex >= 0) {
-        this.dashboardState.sessionIndex = selectedIndex;
-      }
+      this.preferDashboardEntrySelection("session", sessionId, worktreePath);
       this.renderDashboard();
     }
 
@@ -4482,6 +4475,14 @@ export class Multiplexer {
     })();
   }
 
+  private preferDashboardEntrySelection(kind: "session" | "service", id: string, worktreePath?: string): void {
+    if (!(this.startedInDashboard && this.mode === "dashboard")) return;
+    this.dashboardState.level = "sessions";
+    this.dashboardState.focusedWorktreePath = worktreePath;
+    this.dashboardPreferredSelection = { kind, id };
+    this.dashboardSelectionNeedsRestore = true;
+  }
+
   private createService(commandLine: string, worktreePath?: string): { serviceId: string } {
     const serviceId = `service-${randomUUID().slice(0, 8)}`;
     const cwd = worktreePath ?? process.cwd();
@@ -4512,13 +4513,7 @@ export class Multiplexer {
       this.invalidateDesktopStateSnapshot();
       this.refreshLocalDashboardModel();
       this.updateWorktreeSessions();
-      this.dashboardState.level = "sessions";
-      const selectedIndex = this.dashboardState.worktreeEntries.findIndex(
-        (entry) => entry.kind === "service" && entry.id === serviceId,
-      );
-      if (selectedIndex >= 0) {
-        this.dashboardState.sessionIndex = selectedIndex;
-      }
+      this.preferDashboardEntrySelection("service", serviceId, worktreePath);
       this.settleDashboardCreatePending(serviceId);
       return { serviceId };
     } catch (error) {
