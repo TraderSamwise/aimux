@@ -31,24 +31,22 @@ function renderSwitcher(
     return recency ? `${item.label}  ·  ${recency}${current}` : `${item.label}${current}`;
   });
   const help = "s/j/down next  k/up prev  Enter switch  q/Esc cancel";
-  const title = "aimux";
-  const contentWidth = Math.max(title.length, help.length, ...lines.map((line) => line.length));
+  const contentWidth = Math.max(help.length, ...lines.map((line) => line.length));
   const contentAreaWidth = Math.min(Math.max(contentWidth, 28), cols - 8);
   const startCol = Math.max(3, Math.floor((cols - contentAreaWidth) / 2));
-  const bodyHeight = lines.length + 3;
+  const bodyHeight = lines.length + 2;
   const startRow = Math.max(2, Math.floor((rows - bodyHeight) / 2));
 
   let output = "\x1b[2J\x1b[H";
-  output += `\x1b[${startRow};${startCol}H${title}`;
   for (let i = 0; i < lines.length; i += 1) {
     const selected = i === index;
     const line = lines[i]!.slice(0, contentAreaWidth);
-    output += `\x1b[${startRow + 1 + i};${startCol}H`;
+    output += `\x1b[${startRow + i};${startCol}H`;
     if (selected) output += "\x1b[30;43m";
     output += line.padEnd(contentAreaWidth);
     if (selected) output += "\x1b[0m";
   }
-  output += `\x1b[${startRow + 2 + lines.length};${startCol}H${help.slice(0, contentAreaWidth).padEnd(contentAreaWidth)}`;
+  output += `\x1b[${startRow + 1 + lines.length};${startCol}H${help.slice(0, contentAreaWidth).padEnd(contentAreaWidth)}`;
   process.stdout.write(output);
 }
 
@@ -99,7 +97,7 @@ export async function runTmuxSwitcher(options: TmuxSwitcherOptions): Promise<num
   terminal.enterAlternateScreen(true);
   process.stdout.write("\x1b[?25l");
 
-  let index = 0;
+  let index = items.length > 1 ? 1 : 0;
   renderSwitcher(items, index, options.currentWindowId);
 
   const exit = (code: number) => {
