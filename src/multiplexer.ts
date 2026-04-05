@@ -1077,11 +1077,29 @@ export class Multiplexer {
     }
   }
 
+  private applyDashboardSessionLabel(sessionId: string, label?: string): void {
+    const trimmed = label?.trim();
+    this.dashboardSessionsCache = this.dashboardSessionsCache.map((session) =>
+      session.id === sessionId ? { ...session, label: trimmed || undefined } : session,
+    );
+    this.dashboardWorktreeGroupsCache = this.dashboardWorktreeGroupsCache.map((group) => ({
+      ...group,
+      sessions: group.sessions.map((session) =>
+        session.id === sessionId ? { ...session, label: trimmed || undefined } : session,
+      ),
+    }));
+    this.dashboardState.worktreeSessions = this.dashboardState.worktreeSessions.map((session) =>
+      session.id === sessionId ? { ...session, label: trimmed || undefined } : session,
+    );
+  }
+
   private async updateSessionLabel(sessionId: string, label?: string): Promise<void> {
     if (this.mode === "dashboard") {
       await this.postToProjectService("/agents/rename", { sessionId, label });
       this.invalidateDesktopStateSnapshot();
-      await this.refreshDashboardModelFromService(true);
+      this.applySessionLabel(sessionId, label);
+      this.applyDashboardSessionLabel(sessionId, label);
+      this.writeStatuslineFile();
       this.renderCurrentDashboardView();
       return;
     }

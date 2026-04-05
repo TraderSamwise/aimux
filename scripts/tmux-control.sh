@@ -189,6 +189,16 @@ switch_local_dashboard() {
   [ -n "$dashboard_index" ] || return 1
   target="${dashboard_session}:${dashboard_index}"
 
+  dashboard_window_id=$(tmux list-windows -t "$dashboard_session" -F '#{window_index}|#{window_id}|#{window_name}' 2>/dev/null | awk -F '|' -v idx="$dashboard_index" '$1 == idx { print $2; exit }')
+  if [ -n "$dashboard_window_id" ]; then
+    dashboard_command=$(tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
+    case "$dashboard_command" in
+      sh|bash|cat|tail)
+        return 1
+        ;;
+    esac
+  fi
+
   if [ -n "${live_client_tty-}" ]; then
     tmux switch-client -c "$live_client_tty" -t "$target" >/dev/null 2>&1 || return 1
   elif [ -n "$client_tty" ]; then
@@ -204,6 +214,21 @@ switch_local_dashboard() {
     tmux refresh-client -S >/dev/null 2>&1 || true
   fi
   tmux send-keys -t "$target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  exit 0
+}
+
+open_dashboard_via_aimux() {
+  if [ -z "$project_root" ] && [ -f "$project_root_file" ]; then
+    project_root=$(tr -d '\n' < "$project_root_file")
+  fi
+  if [ -z "$project_root" ] && [ -n "$current_client_session" ]; then
+    project_root=$(tmux show-options -v -t "$current_client_session" @aimux-project-root 2>/dev/null || true)
+  fi
+  [ -n "$project_root" ] || return 1
+  [ -x "$aimux_bin" ] || return 1
+  (cd "$project_root" && "$aimux_bin" dashboard-reload --open >/dev/null 2>&1) ||
+    (cd "$project_root" && "$aimux_bin" >/dev/null 2>&1) ||
+    return 1
   exit 0
 }
 
@@ -485,7 +510,7 @@ PY
 fallback_local_control() {
   case "$action" in
     dashboard)
-      switch_local_dashboard
+      switch_local_dashboard || open_dashboard_via_aimux
       ;;
     menu)
       show_local_switcher
