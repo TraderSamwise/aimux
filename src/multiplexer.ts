@@ -18,7 +18,6 @@ import { parseKeys } from "./key-parser.js";
 import { loadConfig, initProject, type ToolConfig } from "./config.js";
 import {
   getProjectStateDir,
-  getDashboardUiStatePath,
   getGraveyardPath,
   getStatePath,
   getStatusDir,
@@ -129,6 +128,7 @@ import {
 } from "./tui/screens/overlay-renderers.js";
 import { composeTwoPane, stripAnsi, truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "./tui/render/text.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux-statusline.js";
+import { DashboardUiStateStore } from "./dashboard-ui-state-store.js";
 
 export type MuxMode = "dashboard" | "project-service";
 
@@ -171,16 +171,6 @@ interface DashboardBusyState {
 interface DashboardErrorState {
   title: string;
   lines: string[];
-}
-
-interface DashboardUiStateSnapshot {
-  screen?: DashboardScreen;
-  detailsSidebarVisible?: boolean;
-  focusedWorktreePath?: string;
-  level?: "worktrees" | "sessions";
-  selectedEntryKind?: "session" | "service";
-  selectedEntryId?: string;
-  flatSessionId?: string;
 }
 
 interface PlanEntry {
@@ -278,9 +268,7 @@ export class Multiplexer {
   private confirmedRegistered = new Set<string>();
   /** The focused worktree path on the dashboard (undefined = main repo) */
   private dashboardState = new DashboardState();
-  private dashboardPreferredSelection: { kind: "session" | "service"; id: string } | null = null;
-  private dashboardFlatSelectionId: string | null = null;
-  private dashboardSelectionNeedsRestore = true;
+  private dashboardUiStateStore = new DashboardUiStateStore();
   private statusInterval: ReturnType<typeof setInterval> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private agentTracker = new AgentTracker();
@@ -425,92 +413,24 @@ export class Multiplexer {
   }
 
   private loadDashboardUiState(): void {
-    try {
-      const raw = readFileSync(getDashboardUiStatePath(), "utf-8");
-      const snapshot = JSON.parse(raw) as DashboardUiStateSnapshot;
-      if (snapshot.screen) {
-        this.dashboardState.screen = snapshot.screen;
-      }
-      if (typeof snapshot.detailsSidebarVisible === "boolean") {
-        this.dashboardState.detailsSidebarVisible = snapshot.detailsSidebarVisible;
-      }
-      if ("focusedWorktreePath" in snapshot) {
-        this.dashboardState.focusedWorktreePath = snapshot.focusedWorktreePath;
-      }
-      if (snapshot.level) {
-        this.dashboardState.level = snapshot.level;
-      }
-      if (snapshot.selectedEntryKind && snapshot.selectedEntryId) {
-        this.dashboardPreferredSelection = {
-          kind: snapshot.selectedEntryKind,
-          id: snapshot.selectedEntryId,
-        };
-      }
-      if (snapshot.flatSessionId) {
-        this.dashboardFlatSelectionId = snapshot.flatSessionId;
-      }
-    } catch {}
+    this.dashboardUiStateStore.loadInto(this.dashboardState);
   }
 
   private persistDashboardUiState(): void {
-    if (this.mode !== "dashboard") return;
-    const snapshot: DashboardUiStateSnapshot = {
-      screen: this.dashboardState.screen,
-      detailsSidebarVisible: this.dashboardState.detailsSidebarVisible,
-      focusedWorktreePath: this.dashboardState.focusedWorktreePath,
-      level: this.dashboardState.level,
-    };
-
-    if (this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0) {
-      const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
-      if (selectedEntry) {
-        snapshot.selectedEntryKind = selectedEntry.kind;
-        snapshot.selectedEntryId = selectedEntry.id;
-        this.dashboardPreferredSelection = {
-          kind: selectedEntry.kind,
-          id: selectedEntry.id,
-        };
-      }
-    }
-
-    const flatSession = this.getDashboardSessions()[this.activeIndex];
-    if (flatSession) {
-      snapshot.flatSessionId = flatSession.id;
-      this.dashboardFlatSelectionId = flatSession.id;
-    }
-
-    try {
-      writeFileSync(getDashboardUiStatePath(), JSON.stringify(snapshot, null, 2) + "\n");
-    } catch {}
+    this.dashboardUiStateStore.persist(this.mode, this.dashboardState, this.activeIndex, this.getDashboardSessions());
   }
 
   private restoreDashboardSelectionFromPreference(dashSessions: DashboardSession[], hasWorktrees: boolean): void {
-    if (hasWorktrees) {
-      this.updateWorktreeSessions();
-      if (this.dashboardState.level === "sessions" && this.dashboardPreferredSelection) {
-        const preferredIndex = this.dashboardState.worktreeEntries.findIndex(
-          (entry) =>
-            entry.kind === this.dashboardPreferredSelection?.kind && entry.id === this.dashboardPreferredSelection?.id,
-        );
-        if (preferredIndex >= 0) {
-          this.dashboardState.sessionIndex = preferredIndex;
-        } else if (this.dashboardState.sessionIndex >= this.dashboardState.worktreeEntries.length) {
-          this.dashboardState.sessionIndex = Math.max(0, this.dashboardState.worktreeEntries.length - 1);
-        }
-      }
-      return;
-    }
-
-    if (this.dashboardFlatSelectionId) {
-      const preferredIndex = dashSessions.findIndex((session) => session.id === this.dashboardFlatSelectionId);
-      if (preferredIndex >= 0) {
-        this.activeIndex = preferredIndex;
-      } else if (this.activeIndex >= dashSessions.length) {
-        this.activeIndex = Math.max(0, dashSessions.length - 1);
-      }
-    } else if (this.activeIndex >= dashSessions.length) {
-      this.activeIndex = Math.max(0, dashSessions.length - 1);
-    }
+    this.dashboardUiStateStore.consumeSelectionRestore(
+      this.dashboardState,
+      dashSessions,
+      hasWorktrees,
+      () => this.updateWorktreeSessions(),
+      this.activeIndex,
+      (value) => {
+        this.activeIndex = value;
+      },
+    );
   }
 
   private writeFrame(output: string, force = false): void {
@@ -596,7 +516,7 @@ export class Multiplexer {
     this.dashboardWorktreeGroupsCache = worktreeGroups;
     this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
     this.dashboardModelRefreshedAt = Date.now();
-    this.dashboardSelectionNeedsRestore = true;
+    this.dashboardUiStateStore.markSelectionDirty();
   }
 
   private applyPendingDashboardSessionStates(sessions: DashboardSession[]): DashboardSession[] {
@@ -4477,10 +4397,7 @@ export class Multiplexer {
 
   private preferDashboardEntrySelection(kind: "session" | "service", id: string, worktreePath?: string): void {
     if (!(this.startedInDashboard && this.mode === "dashboard")) return;
-    this.dashboardState.level = "sessions";
-    this.dashboardState.focusedWorktreePath = worktreePath;
-    this.dashboardPreferredSelection = { kind, id };
-    this.dashboardSelectionNeedsRestore = true;
+    this.dashboardUiStateStore.preferEntrySelection(this.dashboardState, kind, id, worktreePath);
   }
 
   private createService(commandLine: string, worktreePath?: string): { serviceId: string } {
@@ -4554,12 +4471,9 @@ export class Multiplexer {
     // Ensure focusedWorktreePath is valid
     if (!this.dashboardState.worktreeNavOrder.includes(this.dashboardState.focusedWorktreePath)) {
       this.dashboardState.focusedWorktreePath = undefined;
-      this.dashboardSelectionNeedsRestore = true;
+      this.dashboardUiStateStore.markSelectionDirty();
     }
-    if (this.dashboardSelectionNeedsRestore) {
-      this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
-      this.dashboardSelectionNeedsRestore = false;
-    }
+    this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
 
     // Determine selected session for cursor
     let selectedSession: string | undefined;
