@@ -131,6 +131,13 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux-statusline.
 import { DashboardUiStateStore } from "./dashboard-ui-state-store.js";
 import { DashboardPendingActions, type PendingDashboardActionKind } from "./dashboard-pending-actions.js";
 import { openManagedServiceWindow, openManagedSessionWindow, selectLinkedOrOpenTarget } from "./tmux-window-open.js";
+import {
+  graveyardSessionWithFeedback as runGraveyardSessionWithFeedback,
+  resumeOfflineSessionWithFeedback as runResumeOfflineSessionWithFeedback,
+  stopSessionToOfflineWithFeedback as runStopSessionToOfflineWithFeedback,
+  waitForSessionExit,
+  waitForSessionStart,
+} from "./dashboard-session-actions.js";
 
 export type MuxMode = "dashboard" | "project-service";
 
@@ -4244,7 +4251,7 @@ export class Multiplexer {
     if (!this.stoppingSessionIds.has(sessionId)) {
       this.stopSessionToOffline(runningSession);
     }
-    await this.waitForSessionExit(runningSession);
+    await waitForSessionExit(runningSession);
     this.saveState();
 
     return { sessionId, status: "offline" };
@@ -4265,7 +4272,7 @@ export class Multiplexer {
       if (!this.stoppingSessionIds.has(sessionId)) {
         this.stopSessionToOffline(runningSession);
       }
-      await this.waitForSessionExit(runningSession);
+      await waitForSessionExit(runningSession);
       this.saveState();
     } else {
       const offlineSession = this.offlineSessions.find((session) => session.id === sessionId);
@@ -4296,7 +4303,7 @@ export class Multiplexer {
     }
 
     await this.migrateAgent(sessionId, targetWorktreePath);
-    await this.waitForSessionExit(runningSession);
+    await waitForSessionExit(runningSession);
     return { sessionId, worktreePath: this.getSessionWorktreePath(sessionId) };
   }
 
@@ -5399,17 +5406,6 @@ export class Multiplexer {
     renderMigratePickerOverlay(this);
   }
 
-  private waitForSessionExit(session: ManagedSession, timeoutMs = 15_000): Promise<void> {
-    if (session.exited) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${session.id} to exit`)), timeoutMs);
-      session.onExit(() => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-  }
-
   private async runDashboardOperation<T>(
     title: string,
     lines: string[],
@@ -5439,23 +5435,7 @@ export class Multiplexer {
   }
 
   private async stopSessionToOfflineWithFeedback(session: ManagedSession): Promise<void> {
-    const label = this.getSessionLabel(session.id) ?? session.command;
-    this.setPendingDashboardSessionAction(session.id, "stopping");
-    try {
-      this.stopSessionToOffline(session);
-      await this.waitForSessionExit(session);
-      if (!this.graveyardAfterStopSessionIds.has(session.id)) {
-        this.setPendingDashboardSessionAction(session.id, null);
-      }
-      this.refreshLocalDashboardModel();
-      this.footerFlash = `Stopped ${label}`;
-      this.footerFlashTicks = 3;
-      this.renderDashboard();
-    } catch (err) {
-      this.setPendingDashboardSessionAction(session.id, null);
-      const message = err instanceof Error ? err.message : String(err);
-      this.showDashboardError(`Failed to stop "${label}"`, [message]);
-    }
+    await runStopSessionToOfflineWithFeedback(this.dashboardSessionActionDeps(), session);
   }
 
   private clearDashboardSubscreens(): void {
@@ -5591,62 +5571,38 @@ export class Multiplexer {
   private async graveyardSessionWithFeedback(sessionId: string, hasWorktrees: boolean): Promise<void> {
     const session =
       this.offlineSessions.find((s) => s.id === sessionId) ?? this.sessions.find((s) => s.id === sessionId);
-    if (!session) return;
-    const label = ("label" in session ? session.label : this.getSessionLabel(sessionId)) ?? session.command;
-    this.setPendingDashboardSessionAction(sessionId, "graveyarding");
-    try {
-      await this.sendAgentToGraveyard(sessionId);
-      this.setPendingDashboardSessionAction(sessionId, null);
-      this.refreshLocalDashboardModel();
-      this.adjustAfterRemove(hasWorktrees);
-      this.footerFlash = `Sent ${label} to graveyard`;
-      this.footerFlashTicks = 3;
-      this.renderDashboard();
-    } catch (err) {
-      this.setPendingDashboardSessionAction(sessionId, null);
-      const message = err instanceof Error ? err.message : String(err);
-      this.showDashboardError(`Failed to graveyard "${label}"`, [message]);
-    }
+    await runGraveyardSessionWithFeedback(this.dashboardSessionActionDeps(), session, sessionId, hasWorktrees);
   }
 
   private async resumeOfflineSessionWithFeedback(session: SessionState): Promise<void> {
-    const label = session.label ?? session.command;
-    if (this.dashboardPendingActions.get(session.id) === "starting") {
-      return;
-    }
-    this.setPendingDashboardSessionAction(session.id, "starting");
-    this.footerFlash = `Restoring ${label}`;
-    this.footerFlashTicks = 3;
-    try {
-      this.resumeOfflineSession(session);
-      const started = await this.waitForSessionStart(session.id);
-      this.setPendingDashboardSessionAction(session.id, null);
-      this.refreshLocalDashboardModel();
-      if (started) {
-        this.footerFlash = `Restored ${label}`;
-      } else {
-        this.footerFlash = `Failed to restore ${label}`;
-      }
-      this.footerFlashTicks = 3;
-      this.renderDashboard();
-    } catch (err) {
-      this.setPendingDashboardSessionAction(session.id, null);
-      this.footerFlash = `Failed to restore ${label}`;
-      this.footerFlashTicks = 4;
-      this.renderDashboard();
-    }
+    await runResumeOfflineSessionWithFeedback(this.dashboardSessionActionDeps(), session);
   }
 
   private async waitForSessionStart(sessionId: string, timeoutMs = 8000): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const runtime = this.sessions.find((session) => session.id === sessionId);
-      if (runtime && this.isSessionRuntimeLive(runtime)) {
-        return true;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    return false;
+    return waitForSessionStart(sessionId, this.dashboardSessionActionDeps(), timeoutMs);
+  }
+
+  private dashboardSessionActionDeps() {
+    return {
+      getSessionLabel: (sessionId: string) => this.getSessionLabel(sessionId),
+      getPendingAction: (sessionId: string) => this.dashboardPendingActions.get(sessionId),
+      setPendingAction: (sessionId: string, kind: PendingDashboardActionKind | null) =>
+        this.setPendingDashboardSessionAction(sessionId, kind),
+      stopSessionToOffline: (session: ManagedSession) => this.stopSessionToOffline(session),
+      isGraveyardAfterStop: (sessionId: string) => this.graveyardAfterStopSessionIds.has(sessionId),
+      sendAgentToGraveyard: (sessionId: string) => this.sendAgentToGraveyard(sessionId).then(() => undefined),
+      resumeOfflineSession: (session: SessionState) => this.resumeOfflineSession(session),
+      refreshLocalDashboardModel: () => this.refreshLocalDashboardModel(),
+      adjustAfterRemove: (hasWorktrees: boolean) => this.adjustAfterRemove(hasWorktrees),
+      renderDashboard: () => this.renderDashboard(),
+      showDashboardError: (title: string, lines: string[]) => this.showDashboardError(title, lines),
+      setFooterFlash: (message: string, ticks: number) => {
+        this.footerFlash = message;
+        this.footerFlashTicks = ticks;
+      },
+      getRuntimeById: (sessionId: string) => this.sessions.find((session) => session.id === sessionId),
+      isSessionRuntimeLive: (session: ManagedSession) => this.isSessionRuntimeLive(session),
+    };
   }
 
   private async takeoverFromDashEntryWithFeedback(entry: DashboardSession): Promise<void> {
@@ -5670,7 +5626,7 @@ export class Multiplexer {
       [`  From: ${this.sessionWorktreePaths.get(session.id) ?? "(main)"}`, `  To: ${targetName}`],
       async () => {
         await this.migrateAgent(session.id, targetPath);
-        await this.waitForSessionExit(session);
+        await waitForSessionExit(session);
         this.renderDashboard();
       },
       `Failed to migrate "${label}"`,
