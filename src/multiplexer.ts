@@ -199,7 +199,7 @@ interface NotificationPanelState {
 }
 
 interface PendingDashboardSessionAction {
-  kind: "starting" | "stopping" | "graveyarding" | "renaming";
+  kind: "creating" | "starting" | "stopping" | "graveyarding" | "renaming";
   sessionId: string;
 }
 
@@ -592,7 +592,7 @@ export class Multiplexer {
     mainCheckoutInfo: { name: string; branch: string },
   ): void {
     this.dashboardSessionsCache = this.applyPendingDashboardSessionStates(dashSessions);
-    this.dashboardServicesCache = dashServices;
+    this.dashboardServicesCache = this.applyPendingDashboardServiceStates(dashServices);
     this.dashboardWorktreeGroupsCache = worktreeGroups;
     this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
     this.dashboardModelRefreshedAt = Date.now();
@@ -606,6 +606,19 @@ export class Multiplexer {
       if (!pendingAction) return session;
       return {
         ...session,
+        pendingAction,
+        optimistic: true,
+      };
+    });
+  }
+
+  private applyPendingDashboardServiceStates(services: DashboardService[]): DashboardService[] {
+    if (this.pendingDashboardSessionActions.size === 0) return services;
+    return services.map((service) => {
+      const pendingAction = this.pendingDashboardSessionActions.get(service.id);
+      if (pendingAction !== "creating") return service;
+      return {
+        ...service,
         pendingAction,
         optimistic: true,
       };
@@ -2536,6 +2549,9 @@ export class Multiplexer {
 
   private async activateDashboardEntry(entry: DashboardSession): Promise<void> {
     if (!entry) return;
+    if (entry.pendingAction === "creating") {
+      return;
+    }
 
     if (this.openLiveTmuxWindowForEntry(entry)) {
       return;
@@ -4043,7 +4059,31 @@ export class Multiplexer {
 
     this.pickerMode = "create";
     this.forkSourceSessionId = null;
-    this.createSession(tool.command, tool.args, tool.preambleFlag, toolKey, undefined, tool.sessionIdFlag, wtPath);
+    const sessionId = this.generateDashboardSessionId(tool.command);
+    const shouldRenderPending = this.startedInDashboard && this.mode === "dashboard";
+    if (shouldRenderPending) {
+      this.setPendingDashboardSessionAction(sessionId, "creating");
+    }
+    try {
+      this.createSession(
+        tool.command,
+        tool.args,
+        tool.preambleFlag,
+        toolKey,
+        undefined,
+        tool.sessionIdFlag,
+        wtPath,
+        undefined,
+        sessionId,
+        shouldRenderPending,
+      );
+      this.settleDashboardCreatePending(sessionId);
+    } catch (error) {
+      if (shouldRenderPending) {
+        this.setPendingDashboardSessionAction(sessionId, null);
+      }
+      throw error;
+    }
   }
 
   private showToolPicker(sourceSessionId?: string): void {
@@ -4390,6 +4430,25 @@ export class Multiplexer {
     return basename(first);
   }
 
+  private generateDashboardSessionId(command: string): string {
+    return `${command}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  private settleDashboardCreatePending(itemId: string): void {
+    if (!(this.startedInDashboard && this.mode === "dashboard")) return;
+    const minVisibleMs = 250;
+    const startedAt = Date.now();
+    void (async () => {
+      const remaining = minVisibleMs - (Date.now() - startedAt);
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
+      this.setPendingDashboardSessionAction(itemId, null);
+      this.refreshLocalDashboardModel();
+      this.renderDashboard();
+    })();
+  }
+
   private createService(commandLine: string, worktreePath?: string): { serviceId: string } {
     const serviceId = `service-${randomUUID().slice(0, 8)}`;
     const cwd = worktreePath ?? process.cwd();
@@ -4399,30 +4458,42 @@ export class Multiplexer {
     const args = trimmed ? ["-lc", trimmed] : ["-l"];
     const label = this.serviceLabelForCommand(trimmed);
     const tmuxSession = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
-    const target = this.tmuxRuntimeManager.createWindow(tmuxSession.sessionName, label, cwd, command, args, {
-      detached: true,
-    });
-    this.tmuxRuntimeManager.setWindowMetadata(target, {
-      kind: "service",
-      sessionId: serviceId,
-      command,
-      args,
-      toolConfigKey: "service",
-      worktreePath,
-      label,
-    });
-    this.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
-    this.invalidateDesktopStateSnapshot();
-    this.refreshLocalDashboardModel();
-    this.updateWorktreeSessions();
-    this.dashboardState.level = "sessions";
-    const selectedIndex = this.dashboardState.worktreeEntries.findIndex(
-      (entry) => entry.kind === "service" && entry.id === serviceId,
-    );
-    if (selectedIndex >= 0) {
-      this.dashboardState.sessionIndex = selectedIndex;
+    const shouldRenderPending = this.startedInDashboard && this.mode === "dashboard";
+    if (shouldRenderPending) {
+      this.setPendingDashboardSessionAction(serviceId, "creating");
     }
-    return { serviceId };
+    try {
+      const target = this.tmuxRuntimeManager.createWindow(tmuxSession.sessionName, label, cwd, command, args, {
+        detached: true,
+      });
+      this.tmuxRuntimeManager.setWindowMetadata(target, {
+        kind: "service",
+        sessionId: serviceId,
+        command,
+        args,
+        toolConfigKey: "service",
+        worktreePath,
+        label,
+      });
+      this.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
+      this.invalidateDesktopStateSnapshot();
+      this.refreshLocalDashboardModel();
+      this.updateWorktreeSessions();
+      this.dashboardState.level = "sessions";
+      const selectedIndex = this.dashboardState.worktreeEntries.findIndex(
+        (entry) => entry.kind === "service" && entry.id === serviceId,
+      );
+      if (selectedIndex >= 0) {
+        this.dashboardState.sessionIndex = selectedIndex;
+      }
+      this.settleDashboardCreatePending(serviceId);
+      return { serviceId };
+    } catch (error) {
+      if (shouldRenderPending) {
+        this.setPendingDashboardSessionAction(serviceId, null);
+      }
+      throw error;
+    }
   }
 
   private stopService(serviceId: string): { serviceId: string; status: "stopped" } {

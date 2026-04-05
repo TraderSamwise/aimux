@@ -123,11 +123,12 @@ export function renderDashboardFrame(
     const prefix = isSelected ? "\x1b[33m▸\x1b[0m " : "  ";
     const icon = SERVICE_ICONS[service.status];
     const identity = service.label ?? service.command;
+    const statusLabel = service.pendingAction === "creating" ? "creating" : service.status;
     const commandHint = service.foregroundCommand ? ` \x1b[2m· ${truncate(service.foregroundCommand, 22)}\x1b[0m` : "";
     const pidHint = service.pid ? ` \x1b[2m(pid ${service.pid})\x1b[0m` : "";
     const previewHint = service.previewLine ? ` \x1b[2m· ${truncate(service.previewLine, 40)}\x1b[0m` : "";
     const lastUsedHint = service.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(service.lastUsedAt)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} ${identity} \x1b[2m[service]\x1b[0m — ${service.status}${commandHint}${pidHint}${previewHint}${lastUsedHint}`;
+    return `${indent}${prefix}${icon} ${identity} \x1b[2m[service]\x1b[0m — ${statusLabel}${commandHint}${pidHint}${previewHint}${lastUsedHint}`;
   };
 
   const renderWorktreeGrouped = (lines: string[]): void => {
