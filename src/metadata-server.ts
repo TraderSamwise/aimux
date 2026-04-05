@@ -71,6 +71,7 @@ import {
 } from "./fast-control.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import type { TmuxTarget } from "./tmux-runtime-manager.js";
+import { openTargetForClient } from "./tmux-window-open.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -234,52 +235,6 @@ interface MetadataServerOptions {
       | Promise<{ sessionId: string; messages: unknown[]; lastN?: number }>
       | { sessionId: string; messages: unknown[]; lastN?: number };
   };
-}
-
-function resolveLiveClientTty(
-  tmux: TmuxRuntimeManager,
-  currentClientSession?: string,
-  preferredClientTty?: string,
-): string | undefined {
-  const normalizedTty = preferredClientTty?.trim();
-  if (normalizedTty && tmux.findClientByTty(normalizedTty)) {
-    return normalizedTty;
-  }
-  const normalizedSession = currentClientSession?.trim();
-  if (!normalizedSession) return undefined;
-  const liveClient = tmux.listClients().find((client) => client.sessionName === normalizedSession);
-  return liveClient?.tty || undefined;
-}
-
-function openTarget(
-  tmux: TmuxRuntimeManager,
-  target: TmuxTarget,
-  currentClientSession?: string,
-  clientTty?: string,
-): void {
-  const liveClientTty =
-    resolveLiveClientTty(tmux, currentClientSession, clientTty) ?? tmux.getAttachedClientForTarget(target)?.tty;
-  if (liveClientTty) {
-    tmux.switchClientToTarget(liveClientTty, target);
-    tmux.refreshStatus();
-    if (target.windowName.startsWith("dashboard")) {
-      tmux.sendFocusIn(target);
-    }
-    return;
-  }
-  if (currentClientSession) {
-    const linkedTarget = tmux.getTargetByWindowId(currentClientSession, target.windowId);
-    if (linkedTarget) {
-      tmux.switchClient(currentClientSession, linkedTarget.windowIndex);
-      tmux.refreshStatus();
-      if (linkedTarget.windowName.startsWith("dashboard")) {
-        tmux.sendFocusIn(linkedTarget);
-      }
-      return;
-    }
-  }
-  tmux.openTarget(target, { insideTmux: Boolean(currentClientSession) });
-  tmux.refreshStatus();
 }
 
 function markTargetUsed(
@@ -861,7 +816,7 @@ export class MetadataServer {
           tmux.respawnWindow(target, dashboardCommand);
           tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
         }
-        openTarget(tmux, target, currentClientSession, clientTty);
+        openTargetForClient(tmux, target, currentClientSession, clientTty);
         send(res, 200, { ok: true });
         return;
       }
@@ -892,7 +847,7 @@ export class MetadataServer {
           send(res, 404, { ok: false, error: "window not found" });
           return;
         }
-        openTarget(tmux, target, currentClientSession, clientTty);
+        openTargetForClient(tmux, target, currentClientSession, clientTty);
         markTargetUsed(tmux, process.cwd(), target, currentClientSession);
         send(res, 200, { ok: true });
         return;
@@ -928,7 +883,7 @@ export class MetadataServer {
           return;
         }
         const tmux = new TmuxRuntimeManager();
-        openTarget(tmux, item.target, currentClientSession, clientTty);
+        openTargetForClient(tmux, item.target, currentClientSession, clientTty);
         markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
         send(res, 200, { ok: true });
         return;
@@ -964,7 +919,7 @@ export class MetadataServer {
           return;
         }
         const tmux = new TmuxRuntimeManager();
-        openTarget(tmux, item.target, currentClientSession, clientTty);
+        openTargetForClient(tmux, item.target, currentClientSession, clientTty);
         markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
         send(res, 200, { ok: true });
         return;
@@ -1000,7 +955,7 @@ export class MetadataServer {
           return;
         }
         const tmux = new TmuxRuntimeManager();
-        openTarget(tmux, item.target, currentClientSession, clientTty);
+        openTargetForClient(tmux, item.target, currentClientSession, clientTty);
         markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
         send(res, 200, { ok: true });
         return;

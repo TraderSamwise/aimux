@@ -72,6 +72,8 @@ Opening a live row from the dashboard should prefer the current dashboard client
 
 Only if that direct path fails should it fall back to broader open helpers.
 
+Interactive open/switch behavior should reuse shared tmux window-open helpers instead of carrying per-caller client-resolution logic.
+
 ### Restore
 
 Restoring an offline session must treat the old offline row as historical metadata, not as runtime truth.
@@ -123,6 +125,10 @@ There should be one primary dashboard target resolver for open/reload semantics.
 
 Common-path return to an already-live dashboard should not go through heavy bootstrap or project-service verification.
 
+### Service control endpoints
+
+Project-service control endpoints may expose tmux actions, but they should reuse the same shared tmux window-open helpers as dashboard and other interactive paths.
+
 ### tmux control shell
 
 `scripts/tmux-control.sh` is transport plus degraded-mode recovery.
@@ -142,7 +148,6 @@ The footer must not reconstruct broad runtime state on every refresh.
 The remaining broad risk surfaces are:
 
 - session lifecycle actions and pending state all living in `src/multiplexer.ts`
-- overlap between dashboard open helpers and metadata-server open helpers
 - degraded-mode logic in `scripts/tmux-control.sh`
 - any remaining path that uses display labels or tmux window names as identity
 
