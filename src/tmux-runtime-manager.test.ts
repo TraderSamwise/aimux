@@ -50,6 +50,24 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls[0]?.args).toEqual(["-V"]);
   });
 
+  it("treats missing tmux server state as empty session and window lists", () => {
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === "list-sessions -F #{session_name}") {
+        throw new Error("error connecting to /private/tmp/tmux-501/default (No such file or directory)");
+      }
+      if (joined.startsWith("list-windows -t aimux-mobile-abc ")) {
+        throw new Error("error connecting to /private/tmp/tmux-501/default (No such file or directory)");
+      }
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+
+    expect(manager.listSessionNames()).toEqual([]);
+    expect(manager.listWindows("aimux-mobile-abc")).toEqual([]);
+  });
+
   it("derives deterministic per-project session names", () => {
     const manager = new TmuxRuntimeManager(createExecMock());
     const a = manager.getProjectSession("/repo/mobile");
@@ -77,8 +95,24 @@ describe("TmuxRuntimeManager", () => {
       true,
     );
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "focus-events")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "bell-action")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-window-option" && call.args[3] === "monitor-bell")).toBe(
+      true,
+    );
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-interval")).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "bind-key" && call.args[1] === "-T" && call.args[2] === "prefix" && call.args[3] === "q",
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "bind-key" && call.args[1] === "-T" && call.args[2] === "prefix" && call.args[3] === "Any",
+      ),
+    ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "s")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "n")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "p")).toBe(true);

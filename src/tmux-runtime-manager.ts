@@ -278,13 +278,18 @@ export class TmuxRuntimeManager {
   }
 
   listWindows(sessionName: string): TmuxWindowInfo[] {
-    const raw = this.exec([
-      "list-windows",
-      "-t",
-      sessionName,
-      "-F",
-      "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}",
-    ]);
+    let raw = "";
+    try {
+      raw = this.exec([
+        "list-windows",
+        "-t",
+        sessionName,
+        "-F",
+        "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}",
+      ]);
+    } catch {
+      return [];
+    }
     if (!raw) return [];
     return raw
       .split("\n")
@@ -302,7 +307,12 @@ export class TmuxRuntimeManager {
   }
 
   listSessionNames(): string[] {
-    const raw = this.exec(["list-sessions", "-F", "#{session_name}"]);
+    let raw = "";
+    try {
+      raw = this.exec(["list-sessions", "-F", "#{session_name}"]);
+    } catch {
+      return [];
+    }
     if (!raw) return [];
     return raw
       .split("\n")
@@ -695,6 +705,8 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
     this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);
     this.exec(["set-option", "-t", sessionName, "focus-events", "on"]);
+    this.exec(["set-option", "-t", sessionName, "bell-action", "none"]);
+    this.exec(["set-window-option", "-t", sessionName, "monitor-bell", "off"]);
     this.exec(["set-option", "-t", sessionName, "extended-keys", MANAGED_TMUX_SESSION_OPTIONS.extendedKeys]);
     this.exec([
       "set-option",
@@ -747,6 +759,7 @@ export class TmuxRuntimeManager {
     this.exec(["unbind-key", "-T", "prefix", "p"]);
     this.exec(["unbind-key", "-T", "prefix", "d"]);
     this.exec(["unbind-key", "-T", "prefix", "u"]);
+    this.exec(["unbind-key", "-T", "prefix", "Any"]);
     this.exec(["bind-key", "-T", "prefix", "C-a", "send-prefix"]);
     this.exec([
       "bind-key",
@@ -793,6 +806,18 @@ export class TmuxRuntimeManager {
       "-b",
       `${controlScript} dashboard --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "prefix",
+      "q",
+      "if-shell",
+      "-F",
+      "#{@aimux-project-root}",
+      "switch-client -T root",
+      "display-panes",
+    ]);
+    this.exec(["bind-key", "-T", "prefix", "Any", "switch-client", "-T", "root"]);
     this.exec(["set-option", "-t", sessionName, "status", "2"]);
     this.exec(["set-option", "-t", sessionName, "status-interval", "0"]);
     this.exec(["set-option", "-t", sessionName, "status-style", "bg=colour236,fg=colour252"]);

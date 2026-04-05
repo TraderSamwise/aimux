@@ -91,7 +91,7 @@ endpoint_file="$project_state_dir/metadata-api.txt"
 project_root_file="$project_state_dir/project-root.txt"
 statusline_json="$project_state_dir/statusline.json"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-aimux_bin="$script_dir/../bin/aimux"
+aimux_bin="${AIMUX_BIN:-$script_dir/../bin/aimux}"
 debug_log="${TMPDIR:-/tmp}/aimux-debug.log"
 
 load_endpoint() {
@@ -194,6 +194,12 @@ switch_local_dashboard() {
     dashboard_command=$(tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)
     case "$dashboard_command" in
       sh|bash|cat|tail)
+        return 1
+        ;;
+    esac
+    dashboard_preview=$(tmux capture-pane -p -t "$dashboard_window_id" -S -80 2>/dev/null || true)
+    case "$dashboard_preview" in
+      *"aimux dashboard failed to start."*)
         return 1
         ;;
     esac

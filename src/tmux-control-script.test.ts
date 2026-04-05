@@ -76,6 +76,16 @@ function displayMessage() {
       .replace("#{pane_current_path}", pane.currentPath || ""),
   );
 }
+function capturePane() {
+  const targetIndex = args.indexOf("-t");
+  const target = targetIndex >= 0 ? args[targetIndex + 1] : "";
+  const content = (state.capturedPanes || {})[target];
+  if (content == null) {
+    out("");
+    return;
+  }
+  out(content);
+}
 function showOptions() {
   const targetIndex = args.indexOf("-t");
   const session = targetIndex >= 0 ? args[targetIndex + 1] : "";
@@ -133,6 +143,7 @@ switch (args[0]) {
   case "list-clients": listClients(); break;
   case "list-windows": listWindows(); break;
   case "display-message": displayMessage(); break;
+  case "capture-pane": capturePane(); break;
   case "display-menu": break;
   case "display-popup": break;
   case "show-options": showOptions(); break;
@@ -184,6 +195,7 @@ function runControl(
       TMUX_FAKE_STATE: envRoot.statePath,
       TMUX_FAKE_LOG: envRoot.logPath,
       TMUX_FAKE_CURL_LOG: envRoot.curlLogPath,
+      AIMUX_BIN: join(envRoot.binDir, "aimux"),
       TMPDIR: envRoot.root,
       ...extraEnv,
     },
@@ -213,6 +225,59 @@ afterEach(() => {
 });
 
 describe("tmux-control.sh", () => {
+  it("rejects a dashboard pane that already contains the failed-start screen", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
+      windows: {
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@shell", index: 3, name: "shell" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {
+        "@dash": {
+          sessionName: "aimux-proj-client-live",
+          windowId: "@dash",
+          windowName: "dashboard-live",
+          clientTty: "/dev/live",
+          currentPath: "/repo/project",
+        },
+      },
+      capturedPanes: {
+        "@dash": "aimux dashboard failed to start.\nPress q, Enter, or Ctrl+C to close this pane.\n",
+      },
+    });
+    tempRoots.push(envRoot.root);
+    const projectRoot = join(envRoot.root, "repo-project");
+    mkdirSync(projectRoot);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), `${projectRoot}\n`);
+
+    runControl(envRoot, [
+      "dashboard",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--project-root",
+      projectRoot,
+      "--current-client-session",
+      "aimux-proj-client-stale",
+      "--client-tty",
+      "/dev/stale",
+      "--current-window",
+      "shell",
+      "--current-window-id",
+      "@shell",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).not.toContain("switch-client -c /dev/live -t aimux-proj-client-live:0");
+  });
+
   it("recovers dashboard switching locally when the endpoint is stale", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@shell" }],
