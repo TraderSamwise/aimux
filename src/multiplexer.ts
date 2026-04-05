@@ -129,6 +129,7 @@ import {
 import { composeTwoPane, stripAnsi, truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "./tui/render/text.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux-statusline.js";
 import { DashboardUiStateStore } from "./dashboard-ui-state-store.js";
+import { openManagedServiceWindow, openManagedSessionWindow, selectLinkedOrOpenTarget } from "./tmux-window-open.js";
 
 export type MuxMode = "dashboard" | "project-service";
 
@@ -2034,18 +2035,7 @@ export class Multiplexer {
     const target = this.sessionTmuxTargets.get(sid);
     if (target) {
       this.saveState();
-      const insideTmux = this.tmuxRuntimeManager.isInsideTmux();
-      if (insideTmux) {
-        const currentClientSession = this.tmuxRuntimeManager.currentClientSession();
-        if (currentClientSession) {
-          const linkedTarget = this.tmuxRuntimeManager.getTargetByWindowId(currentClientSession, target.windowId);
-          if (linkedTarget) {
-            this.tmuxRuntimeManager.selectWindow(linkedTarget);
-            return;
-          }
-        }
-      }
-      this.tmuxRuntimeManager.openTarget(target, { insideTmux });
+      selectLinkedOrOpenTarget(this.tmuxRuntimeManager, target);
     }
   }
 
@@ -3432,48 +3422,17 @@ export class Multiplexer {
   }
 
   private openLiveTmuxWindowForEntry(entry: { id: string; backendSessionId?: string }): boolean {
-    const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
-    const match = this.tmuxRuntimeManager.findManagedWindow(tmuxSession.sessionName, {
-      sessionId: entry.id,
-      backendSessionId: entry.backendSessionId,
-    });
-    if (!match) return false;
+    const target = openManagedSessionWindow(this.tmuxRuntimeManager, process.cwd(), entry);
+    if (!target) return false;
     this.agentTracker.markSeen(entry.id);
     this.noteLastUsedItem(entry.id);
-    const insideTmux = this.tmuxRuntimeManager.isInsideTmux();
-    if (insideTmux) {
-      const currentClientSession = this.tmuxRuntimeManager.currentClientSession();
-      if (currentClientSession) {
-        const linkedTarget = this.tmuxRuntimeManager.getTargetByWindowId(currentClientSession, match.target.windowId);
-        if (linkedTarget) {
-          this.tmuxRuntimeManager.selectWindow(linkedTarget);
-          return true;
-        }
-      }
-    }
-    this.tmuxRuntimeManager.openTarget(match.target, { insideTmux });
     return true;
   }
 
   private openLiveTmuxWindowForService(serviceId: string): boolean {
-    const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
-    const match = this.tmuxRuntimeManager.findManagedWindow(tmuxSession.sessionName, {
-      sessionId: serviceId,
-    });
-    if (!match || match.metadata.kind !== "service") return false;
+    const target = openManagedServiceWindow(this.tmuxRuntimeManager, process.cwd(), serviceId);
+    if (!target) return false;
     this.noteLastUsedItem(serviceId);
-    const insideTmux = this.tmuxRuntimeManager.isInsideTmux();
-    if (insideTmux) {
-      const currentClientSession = this.tmuxRuntimeManager.currentClientSession();
-      if (currentClientSession) {
-        const linkedTarget = this.tmuxRuntimeManager.getTargetByWindowId(currentClientSession, match.target.windowId);
-        if (linkedTarget) {
-          this.tmuxRuntimeManager.selectWindow(linkedTarget);
-          return true;
-        }
-      }
-    }
-    this.tmuxRuntimeManager.openTarget(match.target, { insideTmux });
     return true;
   }
 
