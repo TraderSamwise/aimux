@@ -182,7 +182,7 @@ interface NotificationPanelState {
 }
 
 interface PendingDashboardSessionAction {
-  kind: "stopping" | "graveyarding";
+  kind: "stopping" | "graveyarding" | "renaming";
   sessionId: string;
 }
 
@@ -1095,12 +1095,25 @@ export class Multiplexer {
 
   private async updateSessionLabel(sessionId: string, label?: string): Promise<void> {
     if (this.mode === "dashboard") {
-      await this.postToProjectService("/agents/rename", { sessionId, label });
-      this.invalidateDesktopStateSnapshot();
       this.applySessionLabel(sessionId, label);
       this.applyDashboardSessionLabel(sessionId, label);
+      this.setPendingDashboardSessionAction(sessionId, "renaming");
       this.writeStatuslineFile();
       this.renderCurrentDashboardView();
+      void this.postToProjectService("/agents/rename", { sessionId, label })
+        .then(() => {
+          this.invalidateDesktopStateSnapshot();
+          this.setPendingDashboardSessionAction(sessionId, null);
+          this.writeStatuslineFile();
+          this.renderCurrentDashboardView();
+        })
+        .catch((err) => {
+          this.setPendingDashboardSessionAction(sessionId, null);
+          this.footerFlash = `Rename failed: ${err instanceof Error ? err.message : String(err)}`;
+          this.footerFlashTicks = 4;
+          this.writeStatuslineFile();
+          this.renderCurrentDashboardView();
+        });
       return;
     }
 
@@ -5372,8 +5385,7 @@ export class Multiplexer {
       this.pendingDashboardSessionActions.delete(sessionId);
     }
     if (this.mode === "dashboard") {
-      this.refreshLocalDashboardModel();
-      this.renderDashboard();
+      this.renderCurrentDashboardView();
     }
   }
 

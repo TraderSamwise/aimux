@@ -60,7 +60,7 @@ export interface DashboardSession {
   workflowTopLabel?: string;
   workflowNextAction?: string;
   semantic?: SessionSemanticState;
-  pendingAction?: "starting" | "stopping" | "graveyarding";
+  pendingAction?: "starting" | "stopping" | "graveyarding" | "renaming";
   optimistic?: boolean;
 }
 
@@ -111,6 +111,7 @@ export function derivedStatusLabel(session: DashboardSession): string {
   if (session.pendingAction === "starting") return "starting";
   if (session.pendingAction === "stopping") return "stopping";
   if (session.pendingAction === "graveyarding") return "graveyarding";
+  if (session.pendingAction === "renaming") return "renaming";
   if (session.semantic) {
     return sessionSemanticStatusLabel(session.semantic, session.status);
   }
