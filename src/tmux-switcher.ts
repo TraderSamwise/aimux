@@ -33,26 +33,22 @@ function renderSwitcher(
   const help = "s/j/down next  k/up prev  Enter switch  q/Esc cancel";
   const title = "aimux";
   const contentWidth = Math.max(title.length, help.length, ...lines.map((line) => line.length));
-  const boxWidth = Math.min(Math.max(contentWidth + 4, 32), cols - 4);
-  const startCol = Math.max(2, Math.floor((cols - boxWidth) / 2));
-  const boxInner = boxWidth - 4;
-  const boxHeight = lines.length + 4;
-  const startRow = Math.max(1, Math.floor((rows - boxHeight) / 2));
+  const contentAreaWidth = Math.min(Math.max(contentWidth, 28), cols - 8);
+  const startCol = Math.max(3, Math.floor((cols - contentAreaWidth) / 2));
+  const bodyHeight = lines.length + 3;
+  const startRow = Math.max(2, Math.floor((rows - bodyHeight) / 2));
 
   let output = "\x1b[2J\x1b[H";
-  output += `\x1b[${startRow};${startCol}H┌${"─".repeat(boxWidth - 2)}┐`;
-  output += `\x1b[${startRow + 1};${startCol}H│ ${title.padEnd(boxInner)} │`;
+  output += `\x1b[${startRow};${startCol}H${title}`;
   for (let i = 0; i < lines.length; i += 1) {
     const selected = i === index;
-    const line = lines[i]!.slice(0, boxInner);
-    output += `\x1b[${startRow + 2 + i};${startCol}H│ `;
+    const line = lines[i]!.slice(0, contentAreaWidth);
+    output += `\x1b[${startRow + 1 + i};${startCol}H`;
     if (selected) output += "\x1b[30;43m";
-    output += line.padEnd(boxInner);
+    output += line.padEnd(contentAreaWidth);
     if (selected) output += "\x1b[0m";
-    output += " │";
   }
-  output += `\x1b[${startRow + 2 + lines.length};${startCol}H│ ${help.slice(0, boxInner).padEnd(boxInner)} │`;
-  output += `\x1b[${startRow + 3 + lines.length};${startCol}H└${"─".repeat(boxWidth - 2)}┘`;
+  output += `\x1b[${startRow + 2 + lines.length};${startCol}H${help.slice(0, contentAreaWidth).padEnd(contentAreaWidth)}`;
   process.stdout.write(output);
 }
 
