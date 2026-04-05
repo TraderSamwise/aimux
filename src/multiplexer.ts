@@ -2347,13 +2347,20 @@ export class Multiplexer {
             : undefined;
         if (!selEntry) return;
 
-        if (selEntry.status === "offline" || selEntry.pendingAction === "stopping") {
+        const runtime = this.sessions.find((s) => s.id === selEntry.id);
+        const effectivelyOffline =
+          selEntry.status === "offline" ||
+          selEntry.pendingAction === "stopping" ||
+          !runtime ||
+          !this.isSessionRuntimeLive(runtime);
+
+        if (effectivelyOffline) {
           // Second [x] on offline → move to graveyard
           void this.graveyardSessionWithFeedback(selEntry.id, hasWorktrees);
           return;
         }
         // First [x] on running → stop PTY, keep as offline for resume
-        const pty = this.sessions.find((s) => s.id === selEntry.id);
+        const pty = runtime;
         if (pty) {
           void this.stopSessionToOfflineWithFeedback(pty);
         }
@@ -5741,6 +5748,7 @@ export class Multiplexer {
     try {
       await this.sendAgentToGraveyard(sessionId);
       this.setPendingDashboardSessionAction(sessionId, null);
+      this.refreshLocalDashboardModel();
       this.adjustAfterRemove(hasWorktrees);
       this.footerFlash = `Sent ${label} to graveyard`;
       this.footerFlashTicks = 3;
