@@ -3527,7 +3527,18 @@ export class Multiplexer {
     if (!match) return false;
     this.agentTracker.markSeen(entry.id);
     this.noteLastUsedItem(entry.id);
-    this.tmuxRuntimeManager.openTarget(match.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
+    const insideTmux = this.tmuxRuntimeManager.isInsideTmux();
+    if (insideTmux) {
+      const currentClientSession = this.tmuxRuntimeManager.currentClientSession();
+      if (currentClientSession) {
+        const linkedTarget = this.tmuxRuntimeManager.getTargetByWindowId(currentClientSession, match.target.windowId);
+        if (linkedTarget) {
+          this.tmuxRuntimeManager.selectWindow(linkedTarget);
+          return true;
+        }
+      }
+    }
+    this.tmuxRuntimeManager.openTarget(match.target, { insideTmux });
     return true;
   }
 
