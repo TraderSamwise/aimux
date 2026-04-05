@@ -516,7 +516,7 @@ fallback_local_control() {
       show_local_switcher
       ;;
     next|prev|attention|window)
-      target_window_id=$(resolve_local_target_from_statusline || resolve_local_target_from_tmux_metadata) || return 1
+      target_window_id=$(resolve_local_target_from_tmux_metadata || resolve_local_target_from_statusline) || return 1
       target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; import sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
       switch_local_window "$target_window_id" "$target_item_id"
       ;;
