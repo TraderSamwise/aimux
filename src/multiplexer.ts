@@ -40,7 +40,12 @@ import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./
 import { isDashboardWindowName } from "./tmux-runtime-manager.js";
 import { TmuxSessionTransport } from "./tmux-session-transport.js";
 import { MetadataServer } from "./metadata-server.js";
-import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "./metadata-store.js";
+import {
+  loadMetadataState,
+  removeMetadataEndpoint,
+  resolveProjectServiceEndpoint,
+  updateSessionMetadata,
+} from "./metadata-store.js";
 import { PluginRuntime } from "./plugin-runtime.js";
 import { SessionBootstrapService } from "./session-bootstrap.js";
 import { ensureDaemonRunning, ensureProjectService, loadDaemonInfo } from "./daemon.js";
@@ -5566,7 +5571,9 @@ export class Multiplexer {
       [`  Session: ${session.id}`],
       () => {
         this.resumeOfflineSession(session);
-        this.focusSession(this.sessions.length - 1);
+        this.footerFlash = `Restored ${label}`;
+        this.footerFlashTicks = 3;
+        this.renderDashboard();
       },
       `Failed to restore "${label}"`,
     );
@@ -6367,24 +6374,88 @@ export class Multiplexer {
     debug(`graveyarded session ${sessionId}`, "session");
   }
 
+  private isSessionRuntimeLive(runtime: ManagedSession): boolean {
+    if (runtime.exited) return false;
+    const mappedTarget = this.sessionTmuxTargets.get(runtime.id);
+    const runtimeTarget = runtime.transport instanceof TmuxSessionTransport ? runtime.transport.tmuxTarget : undefined;
+    const target = mappedTarget ?? runtimeTarget;
+    if (!target) return false;
+    try {
+      return Boolean(this.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId));
+    } catch {
+      return false;
+    }
+  }
+
+  private evictZombieSession(runtime: ManagedSession): void {
+    const idx = this.sessions.indexOf(runtime);
+    if (idx >= 0) {
+      this.sessions.splice(idx, 1);
+    }
+    this.stoppingSessionIds.delete(runtime.id);
+    this.sessionTmuxTargets.delete(runtime.id);
+    this.writeSessionsFile();
+    this.updateContextWatcherSessions();
+    this.saveState();
+  }
+
   /** Resume a specific offline session */
   private resumeOfflineSession(session: SessionState): void {
+    const existing = this.sessions.find((runtime) => runtime.id === session.id);
+    if (existing) {
+      if (this.isSessionRuntimeLive(existing)) {
+        this.offlineSessions = this.offlineSessions.filter((s) => s.id !== session.id);
+        this.invalidateDesktopStateSnapshot();
+        this.writeStatuslineFile();
+        return;
+      }
+      this.evictZombieSession(existing);
+    }
+
     const config = loadConfig();
     const toolCfg = config.tools[session.toolConfigKey];
     if (!toolCfg) return;
 
+    const derived = loadMetadataState().sessions[session.id]?.derived;
+    const relaunchFresh = derived?.activity === "error" || derived?.attention === "error";
+    const useBackendResume =
+      !relaunchFresh && this.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, session.backendSessionId);
+
     let actionArgs: string[];
-    if (this.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, session.backendSessionId)) {
+    if (useBackendResume) {
       actionArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", session.backendSessionId!));
+    } else if (relaunchFresh) {
+      actionArgs = [];
     } else {
       actionArgs = [...(toolCfg.resumeFallback ?? [])];
     }
-    const args = this.sessionBootstrap.composeToolArgs(toolCfg, actionArgs, session.args);
+    const args = [...(toolCfg.args ?? []), ...actionArgs];
 
-    // Remove from offline list
+    if (relaunchFresh) {
+      updateSessionMetadata(session.id, (current) => {
+        const next = { ...current };
+        delete next.derived;
+        delete next.status;
+        delete next.progress;
+        return next;
+      });
+    }
+
+    const preservedLabel = session.label ?? this.getSessionLabel(session.id);
+
     this.offlineSessions = this.offlineSessions.filter((s) => s.id !== session.id);
+    this.invalidateDesktopStateSnapshot();
+    this.saveState();
+    this.writeStatuslineFile();
 
-    debug(`resuming offline session ${session.id} (backend=${session.backendSessionId ?? "none"})`, "session");
+    if (preservedLabel) {
+      this.sessionLabels.set(session.id, preservedLabel);
+    }
+
+    debug(
+      `resuming offline session ${session.id} (${relaunchFresh ? "fresh" : useBackendResume ? `backend=${session.backendSessionId ?? "none"}` : "fallback"})`,
+      "session",
+    );
     this.createSession(
       session.command,
       args,
@@ -6393,7 +6464,9 @@ export class Multiplexer {
       undefined,
       undefined, // don't pass sessionIdFlag — we're resuming with existing backend ID
       session.worktreePath,
-      session.backendSessionId,
+      useBackendResume ? session.backendSessionId : undefined,
+      session.id,
+      true,
     );
   }
 

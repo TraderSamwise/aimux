@@ -17,6 +17,8 @@ vi.mock("node:child_process", () => ({
 vi.mock("./paths.js", () => ({
   getDaemonInfoPath: () => join(tmpRoot, ".aimux", "daemon", "daemon.json"),
   getDaemonStatePath: () => join(tmpRoot, ".aimux", "daemon", "state.json"),
+  getProjectStateDir: () => join(tmpRoot, ".aimux", "projects", "global"),
+  getProjectStateDirFor: (cwd: string) => join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
 }));
 
@@ -70,6 +72,16 @@ describe("daemon supervision", () => {
 
     const daemon = new AimuxDaemon();
     const first = (daemon as any).ensureProject(projectRoot);
+    mkdirSync(join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`), { recursive: true });
+    writeFileSync(
+      join(tmpRoot, ".aimux", "projects", `proj-${basename(projectRoot)}`, "metadata-api.json"),
+      JSON.stringify({
+        host: "127.0.0.1",
+        port: 43191,
+        pid: first.pid,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
     const second = (daemon as any).ensureProject(projectRoot);
 
     expect(first.pid).toBe(second.pid);
@@ -87,6 +99,19 @@ describe("daemon supervision", () => {
 
     expect(second.pid).not.toBe(first.pid);
     expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("respawns a live project service when its metadata endpoint is missing", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const first = (daemon as any).ensureProject(projectRoot);
+
+    const second = (daemon as any).ensureProject(projectRoot);
+
+    expect(second.pid).not.toBe(first.pid);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(livePids.has(first.pid)).toBe(false);
   });
 
   it("prunes dead services from persisted daemon state", async () => {

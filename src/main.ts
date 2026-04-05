@@ -308,7 +308,10 @@ async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVers
   try {
     await waitForVerifiedProjectService(projectRoot);
   } catch (error) {
-    if (!(error instanceof ProjectServiceVersionError) || opts?.repairVersionDrift === false) {
+    if (opts?.repairVersionDrift === false) {
+      throw error;
+    }
+    if (!(error instanceof ProjectServiceVersionError) && !(error instanceof Error)) {
       throw error;
     }
     await restartStaleControlPlane(projectRoot);
@@ -343,12 +346,17 @@ function shellQuote(value: string): string {
 function getDashboardCommandSpec(projectRoot: string) {
   const scriptPath = fileURLToPath(import.meta.url);
   const wrappedDashboardCommand = [
+    "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX)",
+    ";",
     "set -o pipefail",
     ";",
     shellQuote(process.execPath),
     shellQuote(scriptPath),
     "--tmux-dashboard-internal",
     "2>&1",
+    "|",
+    "tee",
+    '"$output_file"',
     "|",
     "tee",
     "-a",
@@ -367,12 +375,44 @@ function getDashboardCommandSpec(projectRoot: string) {
     "printf",
     "'\\033[?1049l\\033[H\\033[2J'",
     ";",
+    "if",
+    "[",
+    "-s",
+    '"$output_file"',
+    "]",
+    ";",
+    "then",
+    "cat",
+    '"$output_file"',
+    ";",
+    "else",
     "printf",
-    "%s\\n%s\\n%s\\n%s\\n",
+    "%s\\n%s\\n",
+    shellQuote("No dashboard stderr/stdout was captured."),
+    shellQuote("Last debug log lines:"),
+    ";",
+    "tail",
+    "-n",
+    "40",
+    shellQuote("/tmp/aimux-debug.log"),
+    ";",
+    "fi",
+    ";",
+    "printf",
+    "%s\\n",
     shellQuote(""),
+    ";",
+    "printf",
+    "%s\\n%s\\n%s\\n%s\\n%s\\n",
     shellQuote("aimux dashboard failed to start."),
     shellQuote("The error above was captured from the dashboard process."),
+    shellQuote("If that output is empty, the last debug-log lines were shown instead."),
     shellQuote("Press q, Enter, or Ctrl+C to close this pane."),
+    shellQuote(""),
+    ";",
+    "printf",
+    "%s\\n",
+    '"exit code: $code"',
     ";",
     "while",
     "IFS= read -rsn1 key",
@@ -391,11 +431,20 @@ function getDashboardCommandSpec(projectRoot: string) {
     "]",
     ";",
     "then",
+    "rm",
+    "-f",
+    '"$output_file"',
+    ";",
     "exit 0",
     ";",
     "fi",
     ";",
     "done",
+    ";",
+    "else",
+    "rm",
+    "-f",
+    '"$output_file"',
     ";",
     "fi",
   ].join(" ");

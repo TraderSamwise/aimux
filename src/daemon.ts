@@ -305,6 +305,15 @@ export class AimuxDaemon {
     const projectId = getProjectIdFor(resolvedRoot);
     const existing = this.state.projects[projectId];
     if (existing && isPidAlive(existing.pid)) {
+      const endpoint = loadMetadataEndpoint(resolvedRoot);
+      if (!endpoint) {
+        try {
+          process.kill(existing.pid, "SIGTERM");
+        } catch {}
+        delete this.state.projects[projectId];
+        this.refreshState();
+        return this.spawnProjectService(resolvedRoot, projectId);
+      }
       const next = {
         ...existing,
         updatedAt: new Date().toISOString(),
