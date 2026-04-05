@@ -432,6 +432,78 @@ describe("tmux-control.sh", () => {
     expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
   });
 
+  it("prefers the pane-owned live client when multiple clients share the same window", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [
+        { tty: "/dev/right", sessionName: "aimux-proj-client-right", windowId: "@claude" },
+        { tty: "/dev/wrong", sessionName: "aimux-proj-client-wrong", windowId: "@claude" },
+      ],
+      windows: {
+        "aimux-proj": [
+          { id: "@claude", index: 1, name: "claude" },
+          { id: "@codex", index: 6, name: "codex" },
+        ],
+        "aimux-proj-client-right": [
+          { id: "@dash-right", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+        "aimux-proj-client-wrong": [
+          { id: "@dash-wrong", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      windowMetadata: {
+        "@claude": { sessionId: "claude-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-right": { "@aimux-project-root": "/repo/project" },
+        "aimux-proj-client-wrong": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {
+        "%42": {
+          sessionName: "aimux-proj-client-right",
+          windowId: "@claude",
+          windowName: "claude",
+          clientTty: "/dev/right",
+          currentPath: "/repo/project/worktree",
+        },
+      },
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+
+    runControl(
+      envRoot,
+      [
+        "next",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-stale",
+        "--client-tty",
+        "/dev/wrong",
+        "--current-window",
+        "wrong",
+        "--current-window-id",
+        "@claude",
+        "--current-path",
+        "/wrong/path",
+        "--pane-id",
+        "%42",
+      ],
+      { TMUX_PANE: "" },
+    );
+
+    const log = readLog(envRoot);
+    expect(log).toContain(
+      "display-message -p -t %42 #{session_name}|#{window_id}|#{window_name}|#{client_tty}|#{pane_current_path}",
+    );
+    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-right");
+    expect(log).toContain("switch-client -c /dev/right -t aimux-proj-client-right:2");
+    expect(log).not.toContain("switch-client -c /dev/wrong -t aimux-proj-client-wrong:2");
+  });
+
   it("uses current window worktree when cwd is outside the worktree", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
