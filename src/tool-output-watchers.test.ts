@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyToolPane, extractLocalServices } from "./tool-output-watchers.js";
+import { classifyToolPane, deriveObservation, extractLocalServices } from "./tool-output-watchers.js";
 
 describe("classifyToolPane", () => {
   it("detects prompt-visible panes", () => {
@@ -39,5 +39,44 @@ describe("classifyToolPane", () => {
       { url: "http://localhost:3000", port: 3000 },
       { url: "http://127.0.0.1:8787/health", port: 8787 },
     ]);
+  });
+});
+
+describe("deriveObservation", () => {
+  it("emits task_done for generic tools when they return to a prompt", () => {
+    const { observation } = deriveObservation("codex-1", "codex", ["output", "", "> "].join("\n"), {
+      fingerprint: "prev",
+      promptVisible: false,
+      errorVisible: false,
+      lastObservedAt: Date.now() - 1000,
+      lastAppliedActivity: "running",
+      lastAppliedAttention: "normal",
+    });
+
+    expect(observation?.event).toMatchObject({
+      kind: "task_done",
+      message: "Agent completed its turn",
+      source: "codex",
+      tone: "success",
+    });
+    expect(observation?.attention).toBe("needs_input");
+  });
+
+  it("keeps Claude on the explicit needs_input path", () => {
+    const { observation } = deriveObservation("claude-1", "claude", ["output", "", "❯ "].join("\n"), {
+      fingerprint: "prev",
+      promptVisible: false,
+      errorVisible: false,
+      lastObservedAt: Date.now() - 1000,
+      lastAppliedActivity: "running",
+      lastAppliedAttention: "normal",
+    });
+
+    expect(observation?.event).toMatchObject({
+      kind: "needs_input",
+      message: "Ready for input",
+      source: "claude",
+      tone: "warn",
+    });
   });
 });

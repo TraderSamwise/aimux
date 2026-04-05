@@ -28,6 +28,10 @@ function lastMeaningfulLine(text: string): string {
   return lines.at(-1) ?? "";
 }
 
+function usesExplicitCompletionHooks(tool: string): boolean {
+  return tool.trim().toLowerCase() === "claude";
+}
+
 export function classifyToolPane(
   tool: string,
   text: string,
@@ -50,7 +54,7 @@ export function classifyToolPane(
   return { promptVisible, errorVisible, interruptedVisible };
 }
 
-function deriveObservation(
+export function deriveObservation(
   sessionId: string,
   tool: string,
   text: string,
@@ -92,6 +96,7 @@ function deriveObservation(
       next.lastAppliedActivity = "waiting";
       next.lastAppliedAttention = "needs_input";
       if (!previous?.promptVisible) {
+        const shouldEmitGenericDone = !usesExplicitCompletionHooks(tool) && previous?.lastAppliedActivity === "running";
         return {
           snapshot: next,
           observation: {
@@ -99,12 +104,19 @@ function deriveObservation(
             tool,
             activity: "waiting",
             attention: "needs_input",
-            event: {
-              kind: "needs_input",
-              message: "Ready for input",
-              source: tool,
-              tone: "warn",
-            },
+            event: shouldEmitGenericDone
+              ? {
+                  kind: "task_done",
+                  message: "Agent completed its turn",
+                  source: tool,
+                  tone: "success",
+                }
+              : {
+                  kind: "needs_input",
+                  message: "Ready for input",
+                  source: tool,
+                  tone: "warn",
+                },
           },
         };
       }
