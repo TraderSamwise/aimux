@@ -1,6 +1,6 @@
 {
-  "name": "aimux",
-  "version": "0.1.0",
+  "name": "aimux-cli",
+  "version": "0.1.1",
   "description": "Native CLI agent multiplexer — run AI coding tools with their native TUIs intact",
   "main": "dist/main.js",
   "bin": {
@@ -36,6 +36,14 @@
   },
   "author": "Sam <sam@tealstreet.io>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TraderSamwise/aimux.git"
+  },
+  "homepage": "https://github.com/TraderSamwise/aimux#readme",
+  "bugs": {
+    "url": "https://github.com/TraderSamwise/aimux/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=18"
