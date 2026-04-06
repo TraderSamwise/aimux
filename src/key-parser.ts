@@ -257,6 +257,14 @@ function parseCSI(str: string, start: number): { event: KeyEvent; consumed: numb
     return null;
   }
 
+  // Mouse reporting: SGR mouse (ESC [ < ... M/m) and legacy mouse (ESC [ ... M/m)
+  if (finalByte === "M" || finalByte === "m") {
+    return {
+      event: { char: "", name: "mouse", shift: false, ctrl: false, alt: false, raw: "" },
+      consumed,
+    };
+  }
+
   // Standard CSI arrow/nav: ESC [ (modifier ;)? final
   // e.g., ESC [ 1 ; 2 A = Shift+Up
   if (finalByte === "I") {

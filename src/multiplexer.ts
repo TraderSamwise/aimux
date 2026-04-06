@@ -323,6 +323,7 @@ export class Multiplexer {
   private dashboardServicesCache: DashboardService[] = [];
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
+  private dashboardModelSnapshotKey: string | null = null;
   private dashboardModelRefreshedAt = 0;
   private dashboardServiceSnapshotRefreshing = false;
   private dashboardServiceRecovery: Promise<void> | null = null;
@@ -537,13 +538,25 @@ export class Multiplexer {
     dashServices: DashboardService[],
     worktreeGroups: WorktreeGroup[],
     mainCheckoutInfo: { name: string; branch: string },
-  ): void {
+  ): boolean {
+    const snapshotKey = JSON.stringify({
+      sessions: dashSessions,
+      services: dashServices,
+      worktreeGroups,
+      mainCheckoutInfo,
+    });
+    if (snapshotKey === this.dashboardModelSnapshotKey) {
+      this.dashboardModelRefreshedAt = Date.now();
+      return false;
+    }
+    this.dashboardModelSnapshotKey = snapshotKey;
     this.dashboardSessionsCache = this.dashboardPendingActions.applyToSessions(dashSessions);
     this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(dashServices);
     this.dashboardWorktreeGroupsCache = worktreeGroups;
     this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
     this.dashboardModelRefreshedAt = Date.now();
     this.dashboardUiStateStore.markSelectionDirty();
+    return true;
   }
 
   private invalidateDesktopStateSnapshot(): void {
@@ -839,13 +852,12 @@ export class Multiplexer {
                 worktrees,
                 body.mainCheckoutPath,
               );
-              this.applyDashboardModel(
+              return this.applyDashboardModel(
                 dashSessions,
                 dashServices,
                 worktreeGroups,
                 body.mainCheckoutInfo ?? { name: "Main Checkout", branch: "" },
               );
-              return true;
             }
           } catch {
             await this.ensureDashboardControlPlane();
