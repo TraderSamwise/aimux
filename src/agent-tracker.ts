@@ -1,5 +1,6 @@
 import type { AgentActivityState, AgentAttentionState, AgentEvent, SessionDerivedState } from "./agent-events.js";
 import { updateSessionMetadata, type SessionMetadata } from "./metadata-store.js";
+import { isSessionNotificationFocused } from "./notification-context.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -10,11 +11,13 @@ function incrementUnseen(current: SessionDerivedState | undefined): number {
 }
 
 function deriveFromEvent(
+  sessionId: string,
   current: SessionDerivedState | undefined,
   event: AgentEvent,
 ): Pick<SessionDerivedState, "activity" | "attention" | "unseenCount"> {
   const message = event.message?.toLowerCase() ?? "";
   const tone = event.tone;
+  const suppressUnseen = isSessionNotificationFocused(sessionId);
   let activity: AgentActivityState | undefined = current?.activity;
   let attention: AgentAttentionState | undefined = current?.attention ?? "normal";
   let unseenCount = current?.unseenCount ?? 0;
@@ -27,59 +30,59 @@ function deriveFromEvent(
       break;
     case "response":
       activity = "idle";
-      unseenCount = incrementUnseen(current);
+      unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
       break;
     case "task_done":
       activity = "done";
       attention = "normal";
-      unseenCount = incrementUnseen(current);
+      unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
       break;
     case "task_failed":
       activity = "error";
       attention = "error";
-      unseenCount = incrementUnseen(current);
+      unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
       break;
     case "needs_input":
       activity = "waiting";
       attention = "needs_input";
-      unseenCount = incrementUnseen(current);
+      unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
       break;
     case "blocked":
       activity = "waiting";
       attention = "blocked";
-      unseenCount = incrementUnseen(current);
+      unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
       break;
     case "interrupted":
       activity = "interrupted";
-      unseenCount = incrementUnseen(current);
+      unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
       break;
     case "notify":
-      unseenCount = incrementUnseen(current);
+      unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
       if (tone === "error") attention = "error";
       break;
     case "status":
       if (tone === "error") {
         activity = "error";
         attention = "error";
-        unseenCount = incrementUnseen(current);
+        unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
         break;
       }
       if (/need(s)? (your )?input|waiting for you|press enter|confirm|approval/.test(message)) {
         activity = "waiting";
         attention = "needs_input";
-        unseenCount = incrementUnseen(current);
+        unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
         break;
       }
       if (/blocked|waiting on|stuck/.test(message)) {
         activity = "waiting";
         attention = "blocked";
-        unseenCount = incrementUnseen(current);
+        unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
         break;
       }
       if (tone === "success" || /done|complete|completed|finished|resolved/.test(message)) {
         activity = "done";
         attention = "normal";
-        unseenCount = incrementUnseen(current);
+        unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
         break;
       }
       if (/working|running|thinking|building|deploying|indexing|searching|editing/.test(message)) {
@@ -105,7 +108,7 @@ export class AgentTracker {
       sessionId,
       (current) => {
         const derivedCurrent = current.derived;
-        const nextState = deriveFromEvent(derivedCurrent, normalized);
+        const nextState = deriveFromEvent(sessionId, derivedCurrent, normalized);
         const events = [...(derivedCurrent?.events ?? []).slice(-19), normalized];
         return {
           ...current,

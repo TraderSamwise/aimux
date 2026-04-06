@@ -693,10 +693,9 @@ export class Multiplexer {
 
   private computeDashboardServices(worktrees = this.listDesktopWorktrees()): DashboardService[] {
     const lastUsedState = loadLastUsedState(process.cwd());
-    const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
     const worktreeByPath = new Map(worktrees.map((wt) => [wt.path, wt] as const));
     return this.tmuxRuntimeManager
-      .listManagedWindows(tmuxSession.sessionName)
+      .listProjectManagedWindows(process.cwd())
       .filter(({ target, metadata }) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
       .map(({ target, metadata }) => {
         const worktree = metadata.worktreePath ? worktreeByPath.get(metadata.worktreePath) : undefined;
@@ -2031,6 +2030,11 @@ export class Multiplexer {
     const sid = this.sessions[index].id;
     this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
     this.agentTracker.markSeen(sid);
+    updateNotificationContext("tui", {
+      focused: true,
+      sessionId: sid,
+      panelOpen: false,
+    });
     this.noteLastUsedItem(sid);
     markNotificationsRead({ sessionId: sid });
     this.syncTuiNotificationContext(false);
@@ -3427,6 +3431,11 @@ export class Multiplexer {
     const target = openManagedSessionWindow(this.tmuxRuntimeManager, process.cwd(), entry);
     if (!target) return false;
     this.agentTracker.markSeen(entry.id);
+    updateNotificationContext("tui", {
+      focused: true,
+      sessionId: entry.id,
+      panelOpen: false,
+    });
     this.noteLastUsedItem(entry.id);
     return true;
   }
@@ -6344,9 +6353,8 @@ export class Multiplexer {
 
     const cols = process.stdout.columns ?? 80;
     const rows = process.stdout.rows ?? 24;
-    const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
 
-    for (const { target, metadata } of this.tmuxRuntimeManager.listManagedWindows(tmuxSession.sessionName)) {
+    for (const { target, metadata } of this.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
       if (isDashboardWindowName(target.windowName)) continue;
       if (metadata.kind === "service") continue;
       if (this.sessions.some((session) => session.id === metadata.sessionId)) continue;

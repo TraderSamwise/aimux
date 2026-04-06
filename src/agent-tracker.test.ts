@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { initPaths } from "./paths.js";
 import { AgentTracker } from "./agent-tracker.js";
 import { loadMetadataState } from "./metadata-store.js";
+import { updateNotificationContext } from "./notification-context.js";
 
 describe("AgentTracker", () => {
   let repoRoot = "";
@@ -56,5 +57,22 @@ describe("AgentTracker", () => {
     expect(derived?.activity).toBe("error");
     expect(derived?.attention).toBe("error");
     expect(derived?.unseenCount).toBe(1);
+  });
+
+  it("does not accumulate unseen while the session is actively focused", () => {
+    const tracker = new AgentTracker();
+    updateNotificationContext("tui", {
+      focused: true,
+      sessionId: "s1",
+      panelOpen: false,
+    });
+
+    tracker.emit("s1", { kind: "needs_input", message: "Need your reply" }, repoRoot);
+    tracker.emit("s1", { kind: "response", message: "Done." }, repoRoot);
+
+    const derived = loadMetadataState(repoRoot).sessions.s1?.derived;
+    expect(derived?.attention).toBe("needs_input");
+    expect(derived?.activity).toBe("idle");
+    expect(derived?.unseenCount).toBe(0);
   });
 });

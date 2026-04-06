@@ -1686,6 +1686,8 @@ export async function sendNativeChatMessage() {
     part.type === "image" ? Boolean(part.attachmentId) : String(part.text || "").trim().length > 0
   );
   if (!projectPath || !sessionId || outboundParts.length === 0) return;
+  void markSessionSeen(projectPath, sessionId);
+  void publishDesktopNotificationContext(projectPath);
 
   const parts = [];
   const historyParts = [];

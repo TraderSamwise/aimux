@@ -76,6 +76,16 @@ export function loadNotificationContexts(): NotificationContextState {
   return loadState();
 }
 
+export function isSessionNotificationFocused(sessionId: string): boolean {
+  if (!sessionId) return false;
+  const { contexts } = loadState();
+  for (const entry of Object.values(contexts)) {
+    if (!entry || !isFresh(entry) || !entry.focused) continue;
+    if (entry.sessionId === sessionId) return true;
+  }
+  return false;
+}
+
 export function shouldSuppressNotification(event: AlertEvent): boolean {
   const { contexts } = loadState();
   for (const entry of Object.values(contexts)) {
