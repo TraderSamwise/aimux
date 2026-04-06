@@ -44,10 +44,12 @@ export function classifyToolPane(
   const lastLine = lastMeaningfulLine(text);
   const interruptedVisible =
     /conversation interrupted/i.test(text) || /\binterrupted\b.*\bwhat should\b.*\bdo instead\?/i.test(text);
+  const explicitPromptTool = usesExplicitCompletionHooks(tool);
   const promptVisible =
-    /^\s*[›>❯]\s?.*$/.test(lastLine) ||
-    /use \/skills to list available skills/i.test(text) ||
-    /find and fix a bug in @filename/i.test(text);
+    explicitPromptTool &&
+    (/^\s*[›>❯]\s?.*$/.test(lastLine) ||
+      /use \/skills to list available skills/i.test(text) ||
+      /find and fix a bug in @filename/i.test(text));
   const errorVisible =
     /something went wrong/i.test(lower) || /error:/i.test(lower) || /failed:/i.test(lower) || interruptedVisible;
   void tool;
@@ -96,7 +98,6 @@ export function deriveObservation(
       next.lastAppliedActivity = "waiting";
       next.lastAppliedAttention = "needs_input";
       if (!previous?.promptVisible) {
-        const shouldEmitGenericDone = !usesExplicitCompletionHooks(tool) && previous?.lastAppliedActivity === "running";
         return {
           snapshot: next,
           observation: {
@@ -104,19 +105,12 @@ export function deriveObservation(
             tool,
             activity: "waiting",
             attention: "needs_input",
-            event: shouldEmitGenericDone
-              ? {
-                  kind: "task_done",
-                  message: "Agent completed its turn",
-                  source: tool,
-                  tone: "success",
-                }
-              : {
-                  kind: "needs_input",
-                  message: "Ready for input",
-                  source: tool,
-                  tone: "warn",
-                },
+            event: {
+              kind: "needs_input",
+              message: "Ready for input",
+              source: tool,
+              tone: "warn",
+            },
           },
         };
       }
@@ -130,17 +124,22 @@ export function deriveObservation(
         },
       };
     }
-    next.lastAppliedActivity = "running";
-    next.lastAppliedAttention = "normal";
-    return {
-      snapshot: next,
-      observation: {
-        sessionId,
-        tool,
-        activity: "running",
-        attention: "normal",
-      },
-    };
+    if (usesExplicitCompletionHooks(tool)) {
+      next.lastAppliedActivity = "running";
+      next.lastAppliedAttention = "normal";
+      return {
+        snapshot: next,
+        observation: {
+          sessionId,
+          tool,
+          activity: "running",
+          attention: "normal",
+        },
+      };
+    }
+    next.lastAppliedActivity = previous?.lastAppliedActivity;
+    next.lastAppliedAttention = previous?.lastAppliedAttention;
+    return { snapshot: next };
   }
 
   if (promptVisible && previous?.lastAppliedActivity !== "waiting") {

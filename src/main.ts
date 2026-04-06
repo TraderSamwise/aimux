@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
-import { initProject } from "./config.js";
+import { initProject, loadConfig } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
@@ -13,6 +13,7 @@ import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./tmux-doctor.js";
 import {
   loadMetadataEndpoint,
+  loadMetadataState,
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   updateSessionMetadata,
   clearSessionLogs,
@@ -2302,6 +2303,85 @@ program
         break;
       default:
         throw new Error(`Unsupported claude hook action: ${action}`);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(result));
+      return;
+    }
+    console.log("OK");
+  });
+
+program
+  .command("shell-hook <state>")
+  .description("Internal generic shell-state adapter modeled after cmux")
+  .requiredOption("--session <sessionId>", "Aimux session id")
+  .requiredOption("--project <path>", "Project path")
+  .option("--tool <tool>", "Tool label", "shell")
+  .option("--json", "Emit JSON output")
+  .action(async (state: string, opts: { session: string; project: string; tool?: string; json?: boolean }) => {
+    const projectRoot = resolveProjectRoot(pathResolve(opts.project));
+    await initPaths(projectRoot);
+    const sessionId = opts.session.trim();
+    const tool = opts.tool?.trim() || "shell";
+    const previous = loadMetadataState(projectRoot).sessions[sessionId]?.derived;
+    const previousActivity = previous?.activity;
+    const result: Record<string, unknown> = { ok: true, state, sessionId, tool };
+
+    const setActivity = async (activity: AgentActivityState) =>
+      postLiveProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+        metadataTracker.setActivity(sessionId, activity, projectRoot),
+      );
+    const setAttention = async (attention: AgentAttentionState) =>
+      postLiveProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+        metadataTracker.setAttention(sessionId, attention, projectRoot),
+      );
+    const clearSessionNotifications = async () =>
+      postLiveProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
+        ok: true,
+        cleared: clearNotifications({ sessionId }),
+      }));
+
+    if (state === "running" || state === "command" || state === "busy") {
+      if (previousActivity !== "running") {
+        await clearSessionNotifications();
+        await setActivity("running");
+        await setAttention("normal");
+        await postLiveProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+          metadataTracker.markSeen(sessionId, projectRoot),
+        );
+      }
+    } else if (state === "prompt" || state === "idle") {
+      if (previousActivity !== "idle") {
+        await setActivity("idle");
+        await setAttention("normal");
+      }
+      const config = loadConfig().notifications;
+      if (config.enabled && config.onComplete && previousActivity === "running") {
+        await postLiveProjectServiceJsonOrLocal(
+          projectRoot,
+          "/notify",
+          {
+            title: tool,
+            subtitle: "Command complete",
+            message: "Shell returned to a prompt.",
+            sessionId,
+            kind: "task_done",
+          },
+          () => ({
+            ok: true,
+            notification: addNotification({
+              title: tool,
+              subtitle: "Command complete",
+              body: "Shell returned to a prompt.",
+              sessionId,
+              kind: "task_done",
+            }),
+          }),
+        );
+      }
+    } else {
+      throw new Error(`Unsupported shell hook state: ${state}`);
     }
 
     if (opts.json) {

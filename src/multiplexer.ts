@@ -84,6 +84,7 @@ import { appendSessionMessage, readSessionMessages } from "./session-message-his
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { deriveSessionSemantics } from "./session-semantics.js";
 import { injectClaudeHookArgs } from "./claude-hooks.js";
+import { wrapCommandWithShellIntegration, wrapInteractiveShellWithIntegration } from "./shell-hooks.js";
 import { navigationUrgencyScore } from "./fast-control.js";
 import { requestJson } from "./http-client.js";
 import { openDashboardTarget } from "./dashboard-targets.js";
@@ -1848,19 +1849,30 @@ export class Multiplexer {
     }
 
     const toolCfg = toolConfigKey ? loadConfig().tools[toolConfigKey] : undefined;
+    let projectRoot = process.cwd();
+    try {
+      projectRoot = findMainRepo(worktreePath ?? process.cwd());
+    } catch {
+      projectRoot = process.cwd();
+    }
+
     if (toolCfg && toolConfigKey === "claude" && toolCfg.command === command && toolCfg.wrapperEnabled !== false) {
-      let projectRoot = process.cwd();
-      try {
-        projectRoot = findMainRepo(worktreePath ?? process.cwd());
-      } catch {
-        projectRoot = process.cwd();
-      }
       finalArgs = injectClaudeHookArgs(finalArgs, {
         sessionId,
         projectRoot,
         backendSessionId,
       });
       launchCommand = toolCfg.command;
+    } else if (toolCfg && toolCfg.command === command) {
+      const wrapped = wrapCommandWithShellIntegration({
+        projectRoot,
+        sessionId,
+        tool: toolConfigKey ?? command,
+        command: launchCommand,
+        args: finalArgs,
+      });
+      launchCommand = wrapped.command;
+      finalArgs = wrapped.args;
     }
 
     if (preambleFlag) {
@@ -4347,8 +4359,29 @@ export class Multiplexer {
     const cwd = worktreePath ?? process.cwd();
     const shell = process.env.SHELL || "zsh";
     const trimmed = commandLine.trim();
-    const command = shell;
-    const args = trimmed ? ["-lc", trimmed] : ["-l"];
+    let projectRoot = process.cwd();
+    try {
+      projectRoot = findMainRepo(cwd);
+    } catch {
+      projectRoot = process.cwd();
+    }
+    const wrapped = trimmed
+      ? wrapCommandWithShellIntegration({
+          projectRoot,
+          sessionId: serviceId,
+          tool: "service",
+          command: shell,
+          args: ["-lc", trimmed],
+          shellPath: shell,
+        })
+      : wrapInteractiveShellWithIntegration({
+          projectRoot,
+          sessionId: serviceId,
+          tool: "service",
+          shellPath: shell,
+        });
+    const command = wrapped.command;
+    const args = wrapped.args;
     const label = this.serviceLabelForCommand(trimmed);
     const tmuxSession = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
     const shouldRenderPending = this.startedInDashboard && this.mode === "dashboard";
@@ -4362,8 +4395,8 @@ export class Multiplexer {
       this.tmuxRuntimeManager.setWindowMetadata(target, {
         kind: "service",
         sessionId: serviceId,
-        command,
-        args,
+        command: trimmed ? shell : "shell",
+        args: trimmed ? ["-lc", trimmed] : ["-l"],
         toolConfigKey: "service",
         worktreePath,
         label,

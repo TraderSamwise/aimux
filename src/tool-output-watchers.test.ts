@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { classifyToolPane, deriveObservation, extractLocalServices } from "./tool-output-watchers.js";
 
 describe("classifyToolPane", () => {
-  it("detects prompt-visible panes", () => {
+  it("does not treat generic tool prompts as needs-input signals", () => {
     const classified = classifyToolPane("codex", ["Some output", "", "› Find and fix a bug in @filename"].join("\n"));
-    expect(classified.promptVisible).toBe(true);
+    expect(classified.promptVisible).toBe(false);
     expect(classified.errorVisible).toBe(false);
   });
 
@@ -43,7 +43,7 @@ describe("classifyToolPane", () => {
 });
 
 describe("deriveObservation", () => {
-  it("emits task_done for generic tools when they return to a prompt", () => {
+  it("does not emit generic prompt-based completion or needs-input events", () => {
     const { observation } = deriveObservation("codex-1", "codex", ["output", "", "> "].join("\n"), {
       fingerprint: "prev",
       promptVisible: false,
@@ -53,13 +53,7 @@ describe("deriveObservation", () => {
       lastAppliedAttention: "normal",
     });
 
-    expect(observation?.event).toMatchObject({
-      kind: "task_done",
-      message: "Agent completed its turn",
-      source: "codex",
-      tone: "success",
-    });
-    expect(observation?.attention).toBe("needs_input");
+    expect(observation).toBeUndefined();
   });
 
   it("keeps Claude on the explicit needs_input path", () => {
