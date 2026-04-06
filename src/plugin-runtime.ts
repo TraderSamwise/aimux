@@ -192,6 +192,7 @@ export function deriveAlertFromAgentEvent(
   else if (event.kind === "task_done") kind = "task_done";
   else if (event.kind === "task_failed") kind = "task_failed";
   else if (event.kind === "notify" && event.tone === "error") kind = "task_failed";
+  else if (event.kind === "notify") kind = "notification";
 
   if (!kind) return undefined;
 
@@ -203,7 +204,9 @@ export function deriveAlertFromAgentEvent(
         ? `${sessionLabel} is blocked`
         : kind === "task_done"
           ? `${sessionLabel} finished`
-          : `${sessionLabel} failed`;
+          : kind === "notification"
+            ? sessionLabel
+            : `${sessionLabel} failed`;
   const message =
     event.message?.trim() ||
     (kind === "needs_input"
@@ -212,7 +215,9 @@ export function deriveAlertFromAgentEvent(
         ? "Agent is blocked."
         : kind === "task_done"
           ? "Agent completed its work."
-          : "Agent hit an error.");
+          : kind === "notification"
+            ? "Agent sent a notification."
+            : "Agent hit an error.");
 
   return {
     kind,

@@ -49,6 +49,8 @@ export interface OpenTargetOptions {
 export interface CaptureTargetOptions {
   /** Number of lines from the bottom of scrollback to include. */
   startLine?: number;
+  /** Preserve escape sequences in the captured output. */
+  includeEscapes?: boolean;
 }
 
 export interface TmuxCommandSpec {
@@ -452,7 +454,9 @@ export class TmuxRuntimeManager {
 
   captureTarget(target: TmuxTarget, options: CaptureTargetOptions = {}): string {
     const startLine = options.startLine ?? "-";
-    return this.exec(["capture-pane", "-p", "-J", "-t", target.windowId, "-S", String(startLine)]);
+    const args = ["capture-pane", "-p", "-J", "-t", target.windowId, "-S", String(startLine)];
+    if (options.includeEscapes) args.splice(3, 0, "-e");
+    return this.exec(args);
   }
 
   listClients(): TmuxClientInfo[] {

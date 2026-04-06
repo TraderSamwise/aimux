@@ -41,4 +41,18 @@ describe("deriveAlertFromAgentEvent", () => {
       message: "Tool error",
     });
   });
+
+  it("maps generic notifications to notification alerts", () => {
+    const alert = deriveAlertFromAgentEvent("codex-1", {
+      kind: "notify",
+      message: "Build complete",
+      tone: "info",
+    });
+
+    expect(alert).toMatchObject({
+      kind: "notification",
+      title: "codex-1",
+      message: "Build complete",
+    });
+  });
 });

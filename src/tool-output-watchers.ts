@@ -3,6 +3,7 @@ import type { AgentObservation, AgentWatcherContext } from "./agent-watcher.js";
 import type { AimuxPluginInstance } from "./plugin-runtime.js";
 import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 import type { SessionServiceMetadata } from "./metadata-store.js";
+import { OscNotificationParser } from "./osc-notifications.js";
 
 interface PaneSnapshot {
   fingerprint: string;
@@ -200,6 +201,8 @@ export function extractLocalServices(text: string): SessionServiceMetadata[] {
 
 export function createToolOutputWatcher(context: AgentWatcherContext): AimuxPluginInstance {
   const snapshots = new Map<string, PaneSnapshot>();
+  const oscParsers = new Map<string, OscNotificationParser>();
+  const rawPaneTexts = new Map<string, string>();
   let timer: ReturnType<typeof setInterval> | null = null;
 
   const poll = () => {
@@ -214,12 +217,27 @@ export function createToolOutputWatcher(context: AgentWatcherContext): AimuxPlug
 
     for (const { target, metadata } of windows) {
       if (!metadata.sessionId || isDashboardWindowName(target.windowName)) continue;
-      let text = "";
+      let rawText = "";
       try {
-        text = tmux.captureTarget(target, { startLine: -80 });
+        rawText = tmux.captureTarget(target, { startLine: -80, includeEscapes: true });
       } catch {
         continue;
       }
+      const parser = oscParsers.get(metadata.sessionId) ?? new OscNotificationParser();
+      oscParsers.set(metadata.sessionId, parser);
+      const previousRaw = rawPaneTexts.get(metadata.sessionId) ?? "";
+      const delta = rawText.startsWith(previousRaw) ? rawText.slice(previousRaw.length) : rawText;
+      rawPaneTexts.set(metadata.sessionId, rawText);
+      const deltaParsed = parser.parseChunk(delta);
+      for (const notification of deltaParsed.notifications) {
+        context.api.metadata.emitEvent(metadata.sessionId, {
+          kind: "notify",
+          message: notification.body || notification.title || "Notification",
+          source: metadata.command,
+          tone: "info",
+        });
+      }
+      const text = new OscNotificationParser().parseChunk(rawText).cleaned;
       context.api.metadata.setServices(metadata.sessionId, extractLocalServices(text));
       const previous = snapshots.get(metadata.sessionId);
       const { snapshot, observation } = deriveObservation(metadata.sessionId, metadata.command, text, previous);
@@ -240,6 +258,8 @@ export function createToolOutputWatcher(context: AgentWatcherContext): AimuxPlug
     async stop() {
       if (timer) clearInterval(timer);
       timer = null;
+      oscParsers.clear();
+      rawPaneTexts.clear();
     },
   };
 }
