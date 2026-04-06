@@ -177,8 +177,8 @@ function renderTopLine(
 
 function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[number]): string {
   const identity = trim(compactSessionTitle(session), 18);
-  const badge = renderDerivedBadge(session.derived);
   const hint = renderSessionCompactHint(session);
+  const badge = hint?.includes(" unread") ? null : renderDerivedBadge(session.derived);
   const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 28);
   return session.isCurrent ? `#[fg=black,bg=yellow] ${label} #[default]` : label;
 }
