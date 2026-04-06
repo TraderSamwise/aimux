@@ -90,6 +90,7 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix2")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "mouse")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "repeat-time")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "extended-keys")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "extended-keys-format")).toBe(
       true,
@@ -126,21 +127,27 @@ describe("TmuxRuntimeManager", () => {
     ).toBe(true);
     expect(
       exec.calls.some(
-        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("scripts/tmux-control.sh' next"),
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[1] === "-r" &&
+          call.args.join(" ").includes("scripts/tmux-control.sh' next"),
       ),
     ).toBe(true);
     expect(
       exec.calls.some(
         (call) =>
           call.args[0] === "bind-key" &&
-          call.args[3] === "n" &&
+          call.args.includes("n") &&
           call.args.join(" ").includes("--current-window-id '#{window_id}'") &&
           call.args.join(" ").includes("--pane-id '#{pane_id}'"),
       ),
     ).toBe(true);
     expect(
       exec.calls.some(
-        (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("scripts/tmux-control.sh' prev"),
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[1] === "-r" &&
+          call.args.join(" ").includes("scripts/tmux-control.sh' prev"),
       ),
     ).toBe(true);
     expect(
@@ -194,6 +201,69 @@ describe("TmuxRuntimeManager", () => {
         windowName: "dashboard",
       }),
     ).toBe(true);
+  });
+
+  it("lists managed windows across the host and client project session family without duplicates", () => {
+    const hostSessionName = new TmuxRuntimeManager(createExecMock()).getProjectSession("/repo/mobile").sessionName;
+    const clientSessionName = `${hostSessionName}-client-deadbeef`;
+    const exec = vi.fn<TmuxExec>((args: string[]) => {
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === "list-sessions -F #{session_name}") {
+        return `${hostSessionName}\n${clientSessionName}\nother`;
+      }
+      if (
+        joined ===
+        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+      ) {
+        return "@3\t3\tcodex\t1\t100\n@9\t9\tshell\t0\t90";
+      }
+      if (
+        joined ===
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+      ) {
+        return "@3\t3\tcodex\t0\t100\n@10\t10\tdashboard\t1\t110";
+      }
+      if (joined === "show-window-options -v -t @3 @aimux-meta") {
+        return JSON.stringify({
+          sessionId: "codex-abc123",
+          command: "codex",
+          args: ["--full-auto"],
+          toolConfigKey: "codex",
+          worktreePath: "/repo/mobile",
+        });
+      }
+      if (joined === "show-window-options -v -t @9 @aimux-meta") {
+        return JSON.stringify({
+          sessionId: "service-123",
+          command: "shell",
+          args: ["-lc", "npm run dev"],
+          toolConfigKey: "service",
+          worktreePath: "/repo/mobile",
+          kind: "service",
+        });
+      }
+      if (joined === "show-window-options -v -t @10 @aimux-meta") {
+        return JSON.stringify({
+          sessionId: "dashboard-123",
+          command: "dashboard",
+          args: [],
+          toolConfigKey: "dashboard",
+          worktreePath: "/repo/mobile",
+        });
+      }
+      if (joined.startsWith("show-window-options -v -t ")) throw new Error("missing");
+      return "";
+    });
+    const manager = new TmuxRuntimeManager(exec);
+
+    const entries = manager.listProjectManagedWindows("/repo/mobile");
+    expect(entries.map((entry) => entry.target.windowId)).toEqual(["@3", "@9", "@10"]);
+    expect(entries.map((entry) => entry.target.sessionName)).toEqual([
+      hostSessionName,
+      hostSessionName,
+      clientSessionName,
+    ]);
   });
 
   it("creates agent windows with target metadata", () => {

@@ -586,6 +586,23 @@ export class TmuxRuntimeManager {
     return managed;
   }
 
+  listProjectManagedWindows(projectRoot: string): Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> {
+    const hostSession = this.getProjectSession(projectRoot).sessionName;
+    const sessionNames = this.listSessionNames().filter(
+      (name) => name === hostSession || name.startsWith(`${hostSession}-client-`),
+    );
+    const seenWindowIds = new Set<string>();
+    const managed: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> = [];
+    for (const sessionName of sessionNames) {
+      for (const entry of this.listManagedWindows(sessionName)) {
+        if (seenWindowIds.has(entry.target.windowId)) continue;
+        seenWindowIds.add(entry.target.windowId);
+        managed.push(entry);
+      }
+    }
+    return managed;
+  }
+
   findManagedWindow(
     sessionName: string,
     matcher: { sessionId?: string; backendSessionId?: string },
@@ -708,6 +725,7 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
     this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);
+    this.exec(["set-option", "-t", sessionName, "repeat-time", "300"]);
     this.exec(["set-option", "-t", sessionName, "focus-events", "on"]);
     this.exec(["set-option", "-t", sessionName, "bell-action", "none"]);
     this.exec(["set-window-option", "-t", sessionName, "monitor-bell", "off"]);
@@ -725,6 +743,7 @@ export class TmuxRuntimeManager {
     this.exec(["unbind-key", "-T", "root", "C-j"]);
     this.exec(["unbind-key", "-T", "root", "S-Enter"]);
     this.exec(["unbind-key", "-T", "root", "WheelUpPane"]);
+    this.exec(["unbind-key", "-T", "root", "WheelDownPane"]);
     this.exec([
       "bind-key",
       "-T",
@@ -752,11 +771,14 @@ export class TmuxRuntimeManager {
       "-T",
       "root",
       "WheelUpPane",
-      "if-shell",
-      "-F",
-      "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
-      "copy-mode -e",
-      "if-shell -F '#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -e'",
+      "if-shell -F '#{||:#{alternate_on},#{mouse_any_flag}}' 'send-keys -M' \"if-shell -F '#{pane_in_mode}' 'send-keys -X -N 1 scroll-up' 'copy-mode -e \\; send-keys -X -N 1 scroll-up'\"",
+    ]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "root",
+      "WheelDownPane",
+      "if-shell -F '#{||:#{alternate_on},#{mouse_any_flag}}' 'send-keys -M' \"if-shell -F '#{pane_in_mode}' 'send-keys -X -N 1 scroll-down' ''\"",
     ]);
     this.exec(["unbind-key", "-T", "prefix", "s"]);
     this.exec(["unbind-key", "-T", "prefix", "n"]);
@@ -767,6 +789,7 @@ export class TmuxRuntimeManager {
     this.exec(["bind-key", "-T", "prefix", "C-a", "send-prefix"]);
     this.exec([
       "bind-key",
+      "-r",
       "-T",
       "prefix",
       "n",
@@ -776,6 +799,7 @@ export class TmuxRuntimeManager {
     ]);
     this.exec([
       "bind-key",
+      "-r",
       "-T",
       "prefix",
       "p",
