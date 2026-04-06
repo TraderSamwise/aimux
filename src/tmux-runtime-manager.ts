@@ -872,6 +872,8 @@ export class TmuxRuntimeManager {
           "bind-key -T root MouseDown1Pane select-pane -t = \\; send-keys -M",
           'bind-key -T root MouseDrag1Pane if-shell -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -M }',
           'bind-key -T root WheelUpPane if-shell -F "#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -e }',
+          "bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel",
+          "bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel",
           "",
         ].join("\n"),
         "utf8",
