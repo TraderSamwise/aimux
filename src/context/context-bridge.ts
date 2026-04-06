@@ -15,6 +15,14 @@ const git = simpleGit();
 const MAX_LIVE_MD_BYTES = 50 * 1024;
 const MAX_LIVE_MD_LINES = 200;
 
+function hasContextPrompt(tool: string, text: string): boolean {
+  const normalizedTool = tool.trim().toLowerCase();
+  if (normalizedTool === "codex") {
+    return /(?:^|\n)\s*[›>❯]\s+.+$/m.test(text);
+  }
+  return classifyToolPane(tool, text).promptVisible;
+}
+
 /**
  * Capture git diff and write a context entry on session exit.
  */
@@ -239,7 +247,7 @@ export class ContextWatcher {
       .trim();
     if (!normalized) return;
     const hash = simpleHash(normalized);
-    const { promptVisible } = classifyToolPane(session.command, text);
+    const promptVisible = hasContextPrompt(session.command, text);
     this.panePromptVisible.set(session.id, promptVisible);
     if (this.paneSnapshotHashes.get(session.id) === hash) return;
     this.paneSnapshotHashes.set(session.id, hash);
