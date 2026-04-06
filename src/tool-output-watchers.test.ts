@@ -66,6 +66,22 @@ describe("deriveObservation", () => {
     expect(observation).toBeUndefined();
   });
 
+  it("clears stale generic error attention when pane recovers", () => {
+    const { observation } = deriveObservation("codex-1", "codex", "continuing work normally", {
+      fingerprint: "prev",
+      promptVisible: false,
+      errorVisible: true,
+      lastObservedAt: Date.now() - 1000,
+      lastAppliedActivity: "error",
+      lastAppliedAttention: "error",
+    });
+
+    expect(observation).toMatchObject({
+      attention: "normal",
+    });
+    expect(observation?.activity).toBeUndefined();
+  });
+
   it("keeps Claude on the explicit needs_input path", () => {
     const { observation } = deriveObservation("claude-1", "claude", ["output", "", "❯ "].join("\n"), {
       fingerprint: "prev",

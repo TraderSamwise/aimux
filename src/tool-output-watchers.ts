@@ -95,6 +95,45 @@ export function deriveObservation(
         },
       };
     }
+    if (!errorVisible && previous?.lastAppliedAttention === "error") {
+      if (usesExplicitCompletionHooks(tool)) {
+        if (promptVisible) {
+          next.lastAppliedActivity = "waiting";
+          next.lastAppliedAttention = "needs_input";
+          return {
+            snapshot: next,
+            observation: {
+              sessionId,
+              tool,
+              activity: "waiting",
+              attention: "needs_input",
+            },
+          };
+        }
+        next.lastAppliedActivity = "running";
+        next.lastAppliedAttention = "normal";
+        return {
+          snapshot: next,
+          observation: {
+            sessionId,
+            tool,
+            activity: "running",
+            attention: "normal",
+          },
+        };
+      }
+
+      next.lastAppliedActivity = previous.lastAppliedActivity === "error" ? undefined : previous.lastAppliedActivity;
+      next.lastAppliedAttention = "normal";
+      return {
+        snapshot: next,
+        observation: {
+          sessionId,
+          tool,
+          attention: "normal",
+        },
+      };
+    }
     if (promptVisible) {
       next.lastAppliedActivity = "waiting";
       next.lastAppliedAttention = "needs_input";
