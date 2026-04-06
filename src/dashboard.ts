@@ -74,14 +74,14 @@ export interface DashboardService {
   worktreePath?: string;
   worktreeName?: string;
   worktreeBranch?: string;
-  status: "running" | "exited";
+  status: "running" | "exited" | "offline";
   active: boolean;
   label?: string;
   cwd?: string;
   foregroundCommand?: string;
   pid?: number;
   previewLine?: string;
-  pendingAction?: "creating";
+  pendingAction?: "creating" | "starting" | "stopping" | "graveyarding" | "renaming";
   optimistic?: boolean;
 }
 

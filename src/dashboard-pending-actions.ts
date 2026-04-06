@@ -33,7 +33,7 @@ export class DashboardPendingActions {
     if (this.actions.size === 0) return services;
     return services.map((service) => {
       const pendingAction = this.actions.get(service.id);
-      if (pendingAction !== "creating") return service;
+      if (!pendingAction) return service;
       return { ...service, pendingAction, optimistic: true };
     });
   }

@@ -127,4 +127,39 @@ describe("dashboard-session-actions", () => {
     expect(setFooterFlash).toHaveBeenCalledWith("Sent main to graveyard", 3);
     expect(renderDashboard).toHaveBeenCalledOnce();
   });
+
+  it("treats offline services like resumable offline entries", async () => {
+    const resumeOfflineSession = vi.fn();
+    const setPendingAction = vi.fn();
+    const refreshLocalDashboardModel = vi.fn();
+    const setFooterFlash = vi.fn();
+    const renderDashboard = vi.fn();
+
+    await resumeOfflineSessionWithFeedback(
+      {
+        getSessionLabel: () => "shell",
+        getPendingAction: vi.fn(),
+        setPendingAction,
+        stopSessionToOffline: vi.fn(),
+        isGraveyardAfterStop: vi.fn(),
+        sendAgentToGraveyard: vi.fn(),
+        resumeOfflineSession,
+        refreshLocalDashboardModel,
+        adjustAfterRemove: vi.fn(),
+        renderDashboard,
+        showDashboardError: vi.fn(),
+        setFooterFlash,
+        getRuntimeById: vi.fn().mockReturnValue({ id: "svc-1" }),
+        isSessionRuntimeLive: vi.fn().mockReturnValue(true),
+      },
+      { id: "svc-1", command: "shell", label: "shell" },
+    );
+
+    expect(setPendingAction).toHaveBeenNthCalledWith(1, "svc-1", "starting");
+    expect(resumeOfflineSession).toHaveBeenCalledWith({ id: "svc-1", command: "shell", label: "shell" });
+    expect(setPendingAction).toHaveBeenNthCalledWith(2, "svc-1", null);
+    expect(refreshLocalDashboardModel).toHaveBeenCalledOnce();
+    expect(setFooterFlash).toHaveBeenLastCalledWith("Restored shell", 3);
+    expect(renderDashboard).toHaveBeenCalledOnce();
+  });
 });

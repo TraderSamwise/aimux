@@ -856,6 +856,8 @@ export class Multiplexer {
         removeWorktree: ({ path }) => this.removeDesktopWorktree(path),
         createService: ({ command, worktreePath }) => this.createService(command ?? "", worktreePath),
         stopService: ({ serviceId }) => this.stopService(serviceId),
+        resumeService: ({ serviceId }) => this.resumeOfflineServiceById(serviceId),
+        removeService: ({ serviceId }) => this.removeOfflineService(serviceId),
         listGraveyard: () => this.listGraveyardEntries(),
         resurrectGraveyard: ({ sessionId }) => this.resurrectGraveyardSession(sessionId),
       },
@@ -4438,6 +4440,94 @@ export class Multiplexer {
     this.refreshLocalDashboardModel();
     this.adjustAfterRemove(this.dashboardWorktreeGroupsCache.length > 0);
     return { serviceId, status: "stopped" };
+  }
+
+  private removeOfflineService(serviceId: string): { serviceId: string; status: "removed" } {
+    this.offlineServices = this.offlineServices.filter((service) => service.id !== serviceId);
+    const statePath = getStatePath();
+    if (existsSync(statePath)) {
+      try {
+        const state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
+        state.services = (state.services ?? []).filter((service) => service.id !== serviceId);
+        writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+      } catch {}
+    }
+    this.saveState();
+    this.invalidateDesktopStateSnapshot();
+    this.refreshLocalDashboardModel();
+    return { serviceId, status: "removed" };
+  }
+
+  private resumeOfflineService(service: ServiceState): { serviceId: string; status: "running" } {
+    const existing = this.tmuxRuntimeManager.findManagedWindow(
+      this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+      {
+        sessionId: service.id,
+      },
+    );
+    if (existing && existing.metadata.kind === "service") {
+      this.offlineServices = this.offlineServices.filter((entry) => entry.id !== service.id);
+      this.saveState();
+      this.invalidateDesktopStateSnapshot();
+      this.refreshLocalDashboardModel();
+      return { serviceId: service.id, status: "running" };
+    }
+    const cwd = service.worktreePath ?? process.cwd();
+    const shell = process.env.SHELL || "zsh";
+    const launchCommandLine = service.launchCommandLine?.trim() ?? "";
+    let projectRoot = process.cwd();
+    try {
+      projectRoot = findMainRepo(cwd);
+    } catch {
+      projectRoot = process.cwd();
+    }
+    const wrapped = launchCommandLine
+      ? wrapCommandWithShellIntegration({
+          projectRoot,
+          sessionId: service.id,
+          tool: "service",
+          command: shell,
+          args: ["-lc", launchCommandLine],
+          shellPath: shell,
+        })
+      : wrapInteractiveShellWithIntegration({
+          projectRoot,
+          sessionId: service.id,
+          tool: "service",
+          shellPath: shell,
+        });
+    const command = wrapped.command;
+    const args = wrapped.args;
+    const label = service.label ?? this.serviceLabelForCommand(launchCommandLine);
+    const tmuxSession = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
+    const target = this.tmuxRuntimeManager.createWindow(tmuxSession.sessionName, label, cwd, command, args, {
+      detached: true,
+    });
+    this.tmuxRuntimeManager.setWindowMetadata(target, {
+      kind: "service",
+      sessionId: service.id,
+      command: launchCommandLine ? shell : "shell",
+      args: launchCommandLine ? ["-lc", launchCommandLine] : ["-l"],
+      toolConfigKey: "service",
+      worktreePath: service.worktreePath,
+      label,
+    });
+    this.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
+    this.offlineServices = this.offlineServices.filter((entry) => entry.id !== service.id);
+    this.saveState();
+    this.invalidateDesktopStateSnapshot();
+    this.refreshLocalDashboardModel();
+    this.updateWorktreeSessions();
+    this.preferDashboardEntrySelection("service", service.id, service.worktreePath);
+    return { serviceId: service.id, status: "running" };
+  }
+
+  private resumeOfflineServiceById(serviceId: string): { serviceId: string; status: "running" } {
+    const service = this.offlineServices.find((entry) => entry.id === serviceId);
+    if (!service) {
+      throw new Error(`Service "${serviceId}" not found`);
+    }
+    return this.resumeOfflineService(service);
   }
 
   private renderDashboard(): void {

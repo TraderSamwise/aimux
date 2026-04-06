@@ -1,7 +1,7 @@
 import type { PendingDashboardActionKind } from "./dashboard-pending-actions.js";
 import type { SessionRuntime } from "./session-runtime.js";
 
-export interface DashboardOfflineSessionLike {
+export interface DashboardOfflineEntryLike {
   id: string;
   command: string;
   label?: string;
@@ -14,7 +14,7 @@ interface DashboardActionDeps {
   stopSessionToOffline(session: SessionRuntime): void;
   isGraveyardAfterStop(sessionId: string): boolean;
   sendAgentToGraveyard(sessionId: string): Promise<void>;
-  resumeOfflineSession(session: DashboardOfflineSessionLike): void;
+  resumeOfflineSession(session: DashboardOfflineEntryLike): void;
   refreshLocalDashboardModel(): void;
   adjustAfterRemove(hasWorktrees: boolean): void;
   renderDashboard(): void;
@@ -75,7 +75,7 @@ export async function stopSessionToOfflineWithFeedback(
 
 export async function graveyardSessionWithFeedback(
   deps: DashboardActionDeps,
-  session: DashboardOfflineSessionLike | SessionRuntime | undefined,
+  session: DashboardOfflineEntryLike | SessionRuntime | undefined,
   sessionId: string,
   hasWorktrees: boolean,
 ): Promise<void> {
@@ -98,7 +98,7 @@ export async function graveyardSessionWithFeedback(
 
 export async function resumeOfflineSessionWithFeedback(
   deps: DashboardActionDeps,
-  session: DashboardOfflineSessionLike,
+  session: DashboardOfflineEntryLike,
 ): Promise<void> {
   const label = session.label ?? session.command;
   if (deps.getPendingAction(session.id) === "starting") {

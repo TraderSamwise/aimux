@@ -197,7 +197,10 @@
   }
 
   function serviceStatusLabel(service) {
-    if (service.pending) return "starting";
+    if (service.pendingAction === "starting" || service.pending) return "starting";
+    if (service.pendingAction === "stopping") return "stopping";
+    if (service.pendingAction === "graveyarding") return "removing";
+    if (service.status === "offline") return "offline";
     if (service.status === "exited") return "exited";
     return "running";
   }
@@ -236,6 +239,27 @@
   async function focusService(service) {
     const project = appState.selectedProject;
     if (!project) return;
+    if (service.status === "offline") {
+      if (isResumeServicePending(service.id)) return;
+      try {
+        await trackAction(
+          {
+            kind: "resume-service",
+            message: `Restoring ${serviceLabel(service)}...`,
+            projectPath: project.path,
+            serviceId: service.id,
+            label: serviceLabel(service),
+            command: service.command || null,
+            worktreePath: service.worktreePath || null,
+            reconcile: () => ({ serviceId: service.id }),
+          },
+          () => invoke("service_resume", { projectPath: project.path, serviceId: service.id }),
+        );
+      } catch (err) {
+        showError(`Service resume failed: ${err}`);
+      }
+      return;
+    }
     await openService(
       termInstance.terminal,
       project.path,
@@ -513,20 +537,35 @@
   async function stopService(e, service) {
     e.stopPropagation();
     const project = appState.selectedProject;
-    if (!project || isStopServicePending(service.id)) return;
+    if (!project) return;
     try {
-      await trackAction(
-        {
-          kind: "stop-service",
-          message: `Stopping ${serviceLabel(service)}...`,
-          projectPath: project.path,
-          serviceId: service.id,
-          reconcile: () => ({ serviceId: service.id }),
-        },
-        () => invoke("service_stop", { projectPath: project.path, serviceId: service.id }),
-      );
+      if (service.status === "offline" || service.status === "exited") {
+        if (isRemoveServicePending(service.id)) return;
+        await trackAction(
+          {
+            kind: "remove-service",
+            message: `Removing ${serviceLabel(service)}...`,
+            projectPath: project.path,
+            serviceId: service.id,
+            reconcile: () => ({ serviceId: service.id }),
+          },
+          () => invoke("service_remove", { projectPath: project.path, serviceId: service.id }),
+        );
+      } else {
+        if (isStopServicePending(service.id)) return;
+        await trackAction(
+          {
+            kind: "stop-service",
+            message: `Stopping ${serviceLabel(service)}...`,
+            projectPath: project.path,
+            serviceId: service.id,
+            reconcile: () => ({ serviceId: service.id }),
+          },
+          () => invoke("service_stop", { projectPath: project.path, serviceId: service.id }),
+        );
+      }
     } catch (err) {
-      showError(`Service stop failed: ${err}`);
+      showError(`Service action failed: ${err}`);
     }
   }
 
@@ -594,6 +633,22 @@
     return isActionPending({
       projectPath: appState.selectedProject?.path,
       kind: "stop-service",
+      serviceId,
+    });
+  }
+
+  function isResumeServicePending(serviceId) {
+    return isActionPending({
+      projectPath: appState.selectedProject?.path,
+      kind: "resume-service",
+      serviceId,
+    });
+  }
+
+  function isRemoveServicePending(serviceId) {
+    return isActionPending({
+      projectPath: appState.selectedProject?.path,
+      kind: "remove-service",
       serviceId,
     });
   }
@@ -891,7 +946,7 @@
                     {/if}
                   </span>
                   <span class="agent-meta">
-                    <span class="agent-status" data-tone={service.status === "exited" ? "blocked" : "active"}>
+                    <span class="agent-status" data-tone={service.status === "offline" || service.status === "exited" ? "blocked" : "active"}>
                       <span class="agent-status-primary">{serviceStatusLabel(service)}</span>
                       {#if service.previewLine}
                         <span class="agent-status-secondary" title={service.previewLine}>{service.previewLine}</span>
@@ -901,8 +956,17 @@
                       {/if}
                     </span>
                     <span class="agent-actions visible">
-                      <button class="agent-action" title="Stop service" onclick={(e) => stopService(e, service)} disabled={isStopServicePending(service.id)}>
-                        {isStopServicePending(service.id) ? "..." : "■"}
+                      <button
+                        class="agent-action"
+                        title={service.status === "offline" || service.status === "exited" ? "Remove service" : "Stop service"}
+                        onclick={(e) => stopService(e, service)}
+                        disabled={isStopServicePending(service.id) || isResumeServicePending(service.id) || isRemoveServicePending(service.id)}
+                      >
+                        {isStopServicePending(service.id) || isResumeServicePending(service.id) || isRemoveServicePending(service.id)
+                          ? "..."
+                          : service.status === "offline" || service.status === "exited"
+                            ? "×"
+                            : "■"}
                       </button>
                     </span>
                   </span>

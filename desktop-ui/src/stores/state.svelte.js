@@ -431,10 +431,27 @@ function reconcileActions(incomingProjects) {
     }
 
     if (action.kind === "stop-service" && action.serviceId) {
+      const service = (project.services || []).find((entry) => entry.id === action.serviceId);
+      if (service?.status === "offline") {
+        finished.push(action.key);
+      }
+      continue;
+    }
+
+    if (action.kind === "resume-service" && action.serviceId) {
+      const service = (project.services || []).find((entry) => entry.id === action.serviceId);
+      if (service && service.status !== "offline") {
+        finished.push(action.key);
+      }
+      continue;
+    }
+
+    if (action.kind === "remove-service" && action.serviceId) {
       const exists = (project.services || []).some((service) => service.id === action.serviceId);
       if (!exists) {
         finished.push(action.key);
       }
+      continue;
     }
   }
 
@@ -815,7 +832,57 @@ function applyActionOverlays(project) {
     }
 
     if (action.kind === "stop-service" && action.serviceId) {
-      next.services = next.services.filter((service) => service.id !== action.serviceId);
+      next.services = next.services.map((service) =>
+        service.id === action.serviceId
+          ? {
+              ...service,
+              pending: true,
+              pendingAction: "stopping",
+              status: "offline",
+            }
+          : service
+      );
+    }
+
+    if (action.kind === "resume-service" && action.serviceId) {
+      let found = false;
+      next.services = next.services.map((service) => {
+        if (service.id !== action.serviceId) return service;
+        found = true;
+        return {
+          ...service,
+          pending: true,
+          pendingAction: "starting",
+        };
+      });
+      if (!found) {
+        next.services = [
+          {
+            id: action.serviceId,
+            label: action.label || action.command || action.serviceId,
+            command: action.command || "",
+            foregroundCommand: action.command || "shell",
+            previewLine: action.command?.trim() || "Interactive shell",
+            status: "offline",
+            pending: true,
+            pendingAction: "starting",
+            worktreePath: action.worktreePath || null,
+          },
+          ...next.services,
+        ];
+      }
+    }
+
+    if (action.kind === "remove-service" && action.serviceId) {
+      next.services = next.services.map((service) =>
+        service.id === action.serviceId
+          ? {
+              ...service,
+              pending: true,
+              pendingAction: "graveyarding",
+            }
+          : service
+      );
     }
   }
 

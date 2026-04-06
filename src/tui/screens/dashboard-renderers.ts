@@ -33,6 +33,7 @@ const STATUS_ICONS: Record<DashboardSession["status"], string> = {
 const SERVICE_ICONS: Record<DashboardService["status"], string> = {
   running: "\x1b[32m◆\x1b[0m",
   exited: "\x1b[31m◇\x1b[0m",
+  offline: "\x1b[2m◇\x1b[0m",
 };
 
 export function renderDashboardFrame(
@@ -123,7 +124,7 @@ export function renderDashboardFrame(
     const prefix = isSelected ? "\x1b[33m▸\x1b[0m " : "  ";
     const icon = SERVICE_ICONS[service.status];
     const identity = service.label ?? service.command;
-    const statusLabel = service.pendingAction === "creating" ? "creating" : service.status;
+    const statusLabel = service.pendingAction ?? service.status;
     const commandHint = service.foregroundCommand ? ` \x1b[2m· ${truncate(service.foregroundCommand, 22)}\x1b[0m` : "";
     const pidHint = service.pid ? ` \x1b[2m(pid ${service.pid})\x1b[0m` : "";
     const previewHint = service.previewLine ? ` \x1b[2m· ${truncate(service.previewLine, 40)}\x1b[0m` : "";

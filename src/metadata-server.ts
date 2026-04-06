@@ -90,6 +90,12 @@ interface MetadataServerOptions {
     stopService?: (input: {
       serviceId: string;
     }) => Promise<{ serviceId: string; status: "stopped" }> | { serviceId: string; status: "stopped" };
+    resumeService?: (input: {
+      serviceId: string;
+    }) => Promise<{ serviceId: string; status: "running" }> | { serviceId: string; status: "running" };
+    removeService?: (input: {
+      serviceId: string;
+    }) => Promise<{ serviceId: string; status: "removed" }> | { serviceId: string; status: "removed" };
     listGraveyard?: () => unknown[];
     resurrectGraveyard?: (input: { sessionId: string }) =>
       | Promise<{ sessionId: string; status: "offline" }>
@@ -1692,6 +1698,30 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.stopService(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/services/resume") {
+        const body = (await readJson(req)) as { serviceId: string };
+        if (!this.options.desktop?.resumeService) {
+          send(res, 501, { ok: false, error: "service resume not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.resumeService(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/services/remove") {
+        const body = (await readJson(req)) as { serviceId: string };
+        if (!this.options.desktop?.removeService) {
+          send(res, 501, { ok: false, error: "service remove not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.removeService(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;

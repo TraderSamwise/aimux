@@ -1066,6 +1066,26 @@ async fn service_stop(project_path: String, service_id: String) -> Result<Value,
 }
 
 #[tauri::command]
+async fn service_resume(project_path: String, service_id: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({ "serviceId": service_id });
+    project_service_json(&project_path, "POST", "/services/resume", Some(&body), "service resume")
+  })
+  .await
+  .map_err(|error| format!("service_resume task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn service_remove(project_path: String, service_id: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let body = serde_json::json!({ "serviceId": service_id });
+    project_service_json(&project_path, "POST", "/services/remove", Some(&body), "service remove")
+  })
+  .await
+  .map_err(|error| format!("service_remove task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn worktree_list(project_path: String) -> Result<Value, String> {
   tauri::async_runtime::spawn_blocking(move || {
     let response: Value = project_service_json(&project_path, "GET", "/worktrees", None, "worktree list")?;
@@ -1698,6 +1718,8 @@ fn main() {
       worktree_remove,
       service_create,
       service_stop,
+      service_resume,
+      service_remove,
       worktree_list,
       graveyard_list,
       graveyard_resurrect,
