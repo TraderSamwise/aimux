@@ -43,6 +43,16 @@ describe("classifyToolPane", () => {
 });
 
 describe("deriveObservation", () => {
+  it("initializes generic tools as running without prompt-based needs-input", () => {
+    const { observation } = deriveObservation("codex-1", "codex", "OpenAI Codex\nstill working", undefined);
+
+    expect(observation).toMatchObject({
+      activity: "running",
+      attention: "normal",
+    });
+    expect(observation?.event).toBeUndefined();
+  });
+
   it("does not emit generic prompt-based completion or needs-input events", () => {
     const { observation } = deriveObservation("codex-1", "codex", ["output", "", "> "].join("\n"), {
       fingerprint: "prev",

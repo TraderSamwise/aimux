@@ -137,6 +137,19 @@ export function deriveObservation(
         },
       };
     }
+    if (!previous) {
+      next.lastAppliedActivity = "running";
+      next.lastAppliedAttention = "normal";
+      return {
+        snapshot: next,
+        observation: {
+          sessionId,
+          tool,
+          activity: "running",
+          attention: "normal",
+        },
+      };
+    }
     next.lastAppliedActivity = previous?.lastAppliedActivity;
     next.lastAppliedAttention = previous?.lastAppliedAttention;
     return { snapshot: next };
