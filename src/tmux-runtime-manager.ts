@@ -94,7 +94,6 @@ export const MANAGED_TMUX_AGENT_WINDOW_OPTIONS = Object.freeze({
 });
 
 const MODIFIED_ENTER_HEX = "1b 5b 31 33 3b 32 75";
-
 const DEFAULT_EXEC: TmuxExec = (args, options) =>
   execFileSync("tmux", args, {
     cwd: options?.cwd,
@@ -742,8 +741,22 @@ export class TmuxRuntimeManager {
     }
     this.exec(["unbind-key", "-T", "root", "C-j"]);
     this.exec(["unbind-key", "-T", "root", "S-Enter"]);
+    this.exec(["unbind-key", "-T", "root", "MouseDown1Pane"]);
+    this.exec(["unbind-key", "-T", "root", "MouseDrag1Pane"]);
     this.exec(["unbind-key", "-T", "root", "WheelUpPane"]);
     this.exec(["unbind-key", "-T", "root", "WheelDownPane"]);
+    this.exec(["bind-key", "-T", "root", "MouseDown1Pane", "select-pane", "-t", "=", "\\;", "send-keys", "-M"]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "root",
+      "MouseDrag1Pane",
+      "if-shell",
+      "-F",
+      "#{||:#{pane_in_mode},#{mouse_any_flag}}",
+      "{ send-keys -M }",
+      "{ copy-mode -M }",
+    ]);
     this.exec([
       "bind-key",
       "-T",
