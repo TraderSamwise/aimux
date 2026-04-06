@@ -67,8 +67,8 @@ The per-project tmux session is the long-lived runtime substrate. Aimux no longe
 Aimux now distinguishes between:
 
 - `tmux` runtime
-- global aimux control-plane daemon
-- daemon-managed project services
+- project runtime
+- advanced global daemon internals
 - terminal/desktop/service clients
 
 `tmux` still owns the actual agent runtime:
@@ -107,16 +107,14 @@ Terminal clients are isolated from each other:
 - dashboard tab, pointer, and load state are terminal-local
 - orchestration, metadata, and plugin sidecars are project-scoped through the daemon-managed project service
 
-Useful commands:
+Runtime lifecycle:
 
 ```bash
-aimux daemon ensure
-aimux daemon status --json
-aimux daemon projects --json
-aimux daemon project-ensure --project /abs/path/to/repo
-
-# Compatibility wrapper: ensure the current project's control service
-aimux serve
+aimux                         # open or attach to the current project runtime
+aimux dashboard-reload --open # recreate/reopen the dashboard window only
+aimux repair                  # repair the current project runtime in place
+aimux restart-runtime --open  # hard restart the current project runtime
+aimux stop                    # stop the current project runtime
 ```
 
 Orchestration commands:
@@ -211,30 +209,32 @@ Example:
 }
 ```
 
-Control-plane health:
+Runtime health:
 
-- The desktop UI now surfaces daemon / project-service health and exposes a `Restart control` action.
+- The desktop UI now surfaces project-runtime health and exposes a repair/restart control path.
 - The tmux statusline shows `ctl ok`, `ctl daemon↓`, or `ctl stale`.
 - `ctl stale` means the project-service `statusline.json` snapshot has stopped updating, which usually means the project service died.
-- Manual recovery is still:
+- Manual recovery is now:
 
 ```bash
-aimux daemon restart
-cd /abs/path/to/repo
-aimux host restart --serve
+aimux repair
+# or, for a full project-scoped rebuild
+aimux restart-runtime --open
 ```
 
 Daemon rebuild quirk:
 
 - The global daemon and each project service run from the built `dist/` output, not directly from `src/`.
 - If you change project-service HTTP behavior, rebuild first with `yarn build`.
-- If a daemon is already running, restart the daemon too, not just the project service, or the old daemon will keep spawning old project-service code.
+- If a daemon is already running, restart the project runtime first.
+- If a build mismatch persists after `aimux restart-runtime --open`, use the advanced daemon path.
 
 ```bash
 yarn build
+aimux restart-runtime --open
+
+# Advanced fallback if the daemon itself is stale
 aimux daemon restart
-cd /abs/path/to/repo
-aimux host restart --serve
 ```
 
 The desktop app now exposes these flows directly over daemon/project-service HTTP:
@@ -247,6 +247,7 @@ The desktop app now exposes these flows directly over daemon/project-service HTT
 - direct message compose, handoff send/accept/complete, and task/review workflow actions
 - thread state updates and per-message delivery visibility
 
+For the lifecycle model, see [docs/runtime-lifecycle.md](docs/runtime-lifecycle.md).
 For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
 For desktop UI integration details, see [docs/desktop-ui-contract.md](docs/desktop-ui-contract.md).
 For the migration rationale, see [docs/global-control-plane-rfc.md](docs/global-control-plane-rfc.md).

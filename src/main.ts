@@ -98,7 +98,6 @@ class ProjectServiceVersionError extends Error {
 }
 
 function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): string {
-  const quotedProject = JSON.stringify(error.projectRoot);
   const lines = [
     "aimux: the running project service is from a different local build.",
     "",
@@ -106,11 +105,11 @@ function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): str
     `Expected build: ${error.expected.buildStamp}`,
     `Running build: ${error.actual?.buildStamp ?? "unknown"}`,
     "",
-    "Restart the daemon-managed control plane, then retry:",
-    `  aimux daemon restart`,
-    `  aimux daemon project-ensure --project ${quotedProject}`,
+    "Restart the project runtime, then retry:",
+    "  aimux restart-runtime --open",
     "",
-    "Or just restart the daemon and rerun `aimux` if you only changed this local checkout.",
+    "If the mismatch persists, use the advanced daemon restart path:",
+    "  aimux daemon restart",
   ];
   return lines.join("\n");
 }
@@ -328,6 +327,62 @@ async function ensureDaemonProjectSpawned(projectRoot: string): Promise<void> {
   await ensureProjectService(projectRoot);
 }
 
+function listManagedProjectSessionNames(tmux: TmuxRuntimeManager, projectRoot: string): string[] {
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  return tmux
+    .listSessionNames()
+    .filter((sessionName) => sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`))
+    .sort((a, b) => {
+      const aIsHost = a === hostSession ? 1 : 0;
+      const bIsHost = b === hostSession ? 1 : 0;
+      return aIsHost - bIsHost;
+    });
+}
+
+function stopProjectTmuxRuntime(tmux: TmuxRuntimeManager, projectRoot: string): string[] {
+  const killed: string[] = [];
+  for (const sessionName of listManagedProjectSessionNames(tmux, projectRoot)) {
+    if (!tmux.hasSession(sessionName)) continue;
+    tmux.killSession(sessionName);
+    killed.push(sessionName);
+  }
+  return killed;
+}
+
+async function stopProjectRuntime(
+  projectRoot: string,
+): Promise<{ projectServiceStopped: boolean; tmuxSessionsKilled: string[] }> {
+  const projectService = await stopProjectService(projectRoot);
+  removeMetadataEndpoint(projectRoot);
+  const tmux = new TmuxRuntimeManager();
+  const tmuxSessionsKilled = tmux.isAvailable() ? stopProjectTmuxRuntime(tmux, projectRoot) : [];
+  return {
+    projectServiceStopped: Boolean(projectService),
+    tmuxSessionsKilled,
+  };
+}
+
+async function restartProjectRuntime(
+  projectRoot: string,
+  opts: { open?: boolean } = {},
+): Promise<{
+  dashboardSessionName: string;
+  dashboardTarget: ReturnType<typeof resolveDashboardTarget>["dashboardTarget"];
+}> {
+  await stopProjectRuntime(projectRoot);
+  await ensureDaemonProjectSpawned(projectRoot);
+  const tmux = new TmuxRuntimeManager();
+  ensureTmuxAvailable(tmux);
+  const resolved = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+  if (opts.open) {
+    tmux.openTarget(resolved.dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+  }
+  return {
+    dashboardSessionName: resolved.dashboardSession.sessionName,
+    dashboardTarget: resolved.dashboardTarget,
+  };
+}
+
 function resolveProjectRoot(cwd: string): string {
   try {
     return findMainRepo(cwd);
@@ -466,7 +521,7 @@ program
 
 program
   .command("dashboard-reload")
-  .description("Force reload the managed tmux dashboard for this project")
+  .description("Recreate and optionally reopen the dashboard window only")
   .option("--open", "Open the dashboard after reloading")
   .action(async (opts: { open?: boolean }) => {
     try {
@@ -495,11 +550,112 @@ program
     }
   });
 
-const hostCmd = program.command("host").description("Compatibility wrappers for daemon-managed project services");
+program
+  .command("stop [sessionId]")
+  .description("Stop the current project runtime, or stop a specific running agent by session ID")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (sessionId: string | undefined, opts: { project?: string; json?: boolean }) => {
+    try {
+      if (sessionId) {
+        const projectRoot = await prepareProjectContext(opts.project);
+        const mux = new Multiplexer();
+        const result = await mux.stopAgent(sessionId);
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                projectRoot,
+                sessionId: result.sessionId,
+                status: result.status,
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+        console.log(`stopped ${result.sessionId}`);
+        return;
+      }
+
+      const projectRoot = resolveProjectRoot(opts.project ?? process.cwd());
+      await initPaths(projectRoot);
+      const result = await stopProjectRuntime(projectRoot);
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              projectRoot,
+              projectServiceStopped: result.projectServiceStopped,
+              tmuxSessionsKilled: result.tmuxSessionsKilled,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`Stopped project runtime for ${projectRoot}`);
+      if (result.tmuxSessionsKilled.length > 0) {
+        console.log(`Removed tmux sessions: ${result.tmuxSessionsKilled.join(", ")}`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("restart-runtime")
+  .description("Hard restart the current project runtime and rebuild its managed tmux topology")
+  .option("--project-root <path>", "Project root", process.cwd())
+  .option("--open", "Open the dashboard after restarting the runtime")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { projectRoot: string; open?: boolean; json?: boolean }) => {
+    try {
+      const projectRoot = resolveProjectRoot(opts.projectRoot);
+      await initPaths(projectRoot);
+      const result = await restartProjectRuntime(projectRoot, { open: opts.open });
+      if (opts.open) return;
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              projectRoot,
+              dashboardSession: result.dashboardSessionName,
+              dashboardTarget: result.dashboardTarget,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`Restarted project runtime for ${projectRoot}`);
+      console.log(`Dashboard: ${result.dashboardSessionName}:${result.dashboardTarget.windowIndex}`);
+    } catch (err: unknown) {
+      if (err instanceof ProjectServiceVersionError) {
+        console.error(renderProjectServiceVersionHelp(err));
+        process.exit(1);
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+const hostCmd = program
+  .command("host")
+  .description("Advanced compatibility wrappers for legacy daemon-managed project services");
 
 program
   .command("serve")
-  .description("Ensure the daemon-backed project control service is running")
+  .description("Advanced: ensure the legacy daemon-backed project control service is running")
   .action(async () => {
     const projectRoot = resolveProjectRoot(process.cwd());
     if (projectRoot !== process.cwd()) {
@@ -758,7 +914,7 @@ hostCmd.action(() => {
   console.log("`aimux host` is a compatibility alias for daemon-managed project services.");
 });
 
-const daemonCmd = program.command("daemon").description("Manage the global aimux control-plane daemon");
+const daemonCmd = program.command("daemon").description("Advanced: manage the global aimux control-plane daemon");
 
 daemonCmd
   .command("run")
@@ -1873,39 +2029,6 @@ graveyardCmd
   });
 
 program
-  .command("stop <sessionId>")
-  .description("Stop a running agent and move it to offline state")
-  .option("--project <path>", "Project path")
-  .option("--json", "Emit JSON")
-  .action(async (sessionId: string, opts: { project?: string; json?: boolean }) => {
-    try {
-      const projectRoot = await prepareProjectContext(opts.project);
-      const mux = new Multiplexer();
-      const result = await mux.stopAgent(sessionId);
-      if (opts.json) {
-        console.log(
-          JSON.stringify(
-            {
-              ok: true,
-              projectRoot,
-              sessionId: result.sessionId,
-              status: result.status,
-            },
-            null,
-            2,
-          ),
-        );
-        return;
-      }
-      console.log(`stopped ${result.sessionId}`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-program
   .command("rename <sessionId>")
   .description("Rename an agent label in running or offline state")
   .requiredOption("--label <label>", "New agent label")
@@ -2056,12 +2179,12 @@ program
 
 const statuslineCmd = program.command("statusline").description("Manage Claude Code statusline integration");
 
-const doctorCmd = program.command("doctor").description("Inspect aimux runtime compatibility");
-const repairCmd = program.command("repair").description("Repair aimux runtime state for this project");
+const doctorCmd = program.command("doctor").description("Inspect aimux runtime state");
+const repairCmd = program.command("repair").description("Repair the current project runtime in place");
 
 doctorCmd
   .command("tmux")
-  .description("Inspect managed tmux session compatibility state")
+  .description("Inspect managed tmux runtime state")
   .option("--project-root <path>", "Project root", process.cwd())
   .option("--session <name>", "Managed tmux session name override")
   .option("--window-id <id>", "Specific tmux window id to inspect")
