@@ -2279,12 +2279,20 @@ export class Multiplexer {
         const selectedService = this.getSelectedDashboardServiceForActions();
         if (selectedService) {
           try {
-            this.stopService(selectedService.id);
-            this.footerFlash = `◆ Stopped service ${selectedService.label ?? selectedService.id}`;
+            if (selectedService.status === "offline") {
+              this.removeOfflineService(selectedService.id);
+              this.footerFlash = `◆ Deleted service ${selectedService.label ?? selectedService.id}`;
+            } else {
+              this.stopService(selectedService.id);
+              this.footerFlash = `◆ Stopped service ${selectedService.label ?? selectedService.id}`;
+            }
             this.footerFlashTicks = 3;
             this.renderDashboard();
           } catch (error) {
-            this.showDashboardError("Failed to stop service", [error instanceof Error ? error.message : String(error)]);
+            this.showDashboardError(
+              selectedService.status === "offline" ? "Failed to delete service" : "Failed to stop service",
+              [error instanceof Error ? error.message : String(error)],
+            );
           }
           return;
         }
@@ -2373,7 +2381,10 @@ export class Multiplexer {
         case "enter": {
           const ds = this.getDashboardSessions();
           const entry = ds[this.activeIndex];
-          if (entry && this.openLiveTmuxWindowForEntry(entry)) {
+          if (entry?.pendingAction === "creating" || entry?.pendingAction === "starting") {
+            return;
+          }
+          if (entry && this.openLiveTmuxWindowForEntry(entry) !== "missing") {
             return;
           }
           if (entry?.remoteInstanceId) {
@@ -2382,7 +2393,7 @@ export class Multiplexer {
           }
           if (entry?.status === "offline") {
             const offline = this.offlineSessions.find((s) => s.id === entry.id);
-            if (offline && entry.pendingAction !== "starting") {
+            if (offline) {
               void this.resumeOfflineSessionWithFeedback(offline);
             }
             return;
@@ -2468,12 +2479,35 @@ export class Multiplexer {
           const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
           if (!selectedEntry) break;
           if (selectedEntry.kind === "service") {
-            this.openLiveTmuxWindowForService(selectedEntry.id);
+            const service = this.getDashboardServices().find((entry) => entry.id === selectedEntry.id);
+            if (!service) break;
+            if (service.pendingAction === "creating" || service.pendingAction === "starting") {
+              return;
+            }
+            if (service.status === "offline") {
+              try {
+                this.resumeOfflineServiceById(service.id);
+                this.footerFlash = `◆ Started service ${service.label ?? service.id}`;
+                this.footerFlashTicks = 3;
+                this.renderDashboard();
+              } catch (error) {
+                this.showDashboardError("Failed to start service", [
+                  error instanceof Error ? error.message : String(error),
+                ]);
+              }
+              return;
+            }
+            if (this.openLiveTmuxWindowForService(selectedEntry.id) !== "missing") {
+              return;
+            }
             break;
           }
           const dashEntry = this.dashboardState.worktreeSessions.find((entry) => entry.id === selectedEntry.id);
           if (!dashEntry) break;
-          if (this.openLiveTmuxWindowForEntry(dashEntry)) {
+          if (dashEntry.pendingAction === "creating" || dashEntry.pendingAction === "starting") {
+            return;
+          }
+          if (this.openLiveTmuxWindowForEntry(dashEntry) !== "missing") {
             return;
           }
           if (dashEntry.remoteInstanceId) {
@@ -2482,7 +2516,7 @@ export class Multiplexer {
           }
           if (dashEntry.status === "offline") {
             const offline = this.offlineSessions.find((s) => s.id === dashEntry.id);
-            if (offline && dashEntry.pendingAction !== "starting") {
+            if (offline) {
               void this.resumeOfflineSessionWithFeedback(offline);
             }
             return;
@@ -2512,11 +2546,11 @@ export class Multiplexer {
 
   private async activateDashboardEntry(entry: DashboardSession): Promise<void> {
     if (!entry) return;
-    if (entry.pendingAction === "creating") {
+    if (entry.pendingAction === "creating" || entry.pendingAction === "starting") {
       return;
     }
 
-    if (this.openLiveTmuxWindowForEntry(entry)) {
+    if (this.openLiveTmuxWindowForEntry(entry) !== "missing") {
       return;
     }
 
@@ -2527,7 +2561,7 @@ export class Multiplexer {
 
     if (entry.status === "offline") {
       const offline = this.offlineSessions.find((session) => session.id === entry.id);
-      if (offline && entry.pendingAction !== "starting") {
+      if (offline) {
         await this.resumeOfflineSessionWithFeedback(offline);
       }
       return;
@@ -3474,24 +3508,40 @@ export class Multiplexer {
     return false;
   }
 
-  private openLiveTmuxWindowForEntry(entry: { id: string; backendSessionId?: string }): boolean {
-    const target = openManagedSessionWindow(this.tmuxRuntimeManager, process.cwd(), entry);
-    if (!target) return false;
-    this.agentTracker.markSeen(entry.id);
-    updateNotificationContext("tui", {
-      focused: true,
-      sessionId: entry.id,
-      panelOpen: false,
-    });
-    this.noteLastUsedItem(entry.id);
-    return true;
+  private openLiveTmuxWindowForEntry(entry: { id: string; backendSessionId?: string }): "opened" | "missing" | "error" {
+    try {
+      const target = openManagedSessionWindow(this.tmuxRuntimeManager, process.cwd(), entry);
+      if (!target) return "missing";
+      this.agentTracker.markSeen(entry.id);
+      updateNotificationContext("tui", {
+        focused: true,
+        sessionId: entry.id,
+        panelOpen: false,
+      });
+      this.noteLastUsedItem(entry.id);
+      return "opened";
+    } catch (error) {
+      this.showDashboardError("Failed to open agent", [
+        error instanceof Error ? error.message : String(error),
+        "The tmux window may still be starting. Try again in a moment.",
+      ]);
+      return "error";
+    }
   }
 
-  private openLiveTmuxWindowForService(serviceId: string): boolean {
-    const target = openManagedServiceWindow(this.tmuxRuntimeManager, process.cwd(), serviceId);
-    if (!target) return false;
-    this.noteLastUsedItem(serviceId);
-    return true;
+  private openLiveTmuxWindowForService(serviceId: string): "opened" | "missing" | "error" {
+    try {
+      const target = openManagedServiceWindow(this.tmuxRuntimeManager, process.cwd(), serviceId);
+      if (!target) return "missing";
+      this.noteLastUsedItem(serviceId);
+      return "opened";
+    } catch (error) {
+      this.showDashboardError("Failed to open service", [
+        error instanceof Error ? error.message : String(error),
+        "The tmux window may still be starting. Try again in a moment.",
+      ]);
+      return "error";
+    }
   }
 
   private noteLastUsedItem(itemId: string): void {
@@ -4516,6 +4566,7 @@ export class Multiplexer {
     this.saveState();
     this.invalidateDesktopStateSnapshot();
     this.refreshLocalDashboardModel();
+    this.adjustAfterRemove(this.dashboardWorktreeGroupsCache.length > 0);
     return { serviceId, status: "removed" };
   }
 
