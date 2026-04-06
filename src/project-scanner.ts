@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { getAimuxDirFor, getProjectStateDirById, listProjects } from "./paths.js";
@@ -261,13 +261,23 @@ export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopPro
   const scannedByPath = new Map(scanAllProjects().map((project) => [project.path, project]));
   const projects = new Map<string, DesktopProjectInfo>();
   const osTmpDir = tmpdir();
+  const realOsTmpDir = (() => {
+    try {
+      return realpathSync(osTmpDir);
+    } catch {
+      return osTmpDir;
+    }
+  })();
 
   function shouldHideDesktopProject(projectPath: string): boolean {
+    if (!projectPath || !existsSync(projectPath)) {
+      return true;
+    }
     const name = basename(projectPath);
-    if (!projectPath.startsWith(osTmpDir)) {
+    if (!projectPath.startsWith(osTmpDir) && !projectPath.startsWith(realOsTmpDir)) {
       return false;
     }
-    return name.startsWith("aimux-metadata-server-") || name.startsWith("aimux-test-");
+    return name.startsWith("aimux-");
   }
 
   for (const entry of listProjects()) {

@@ -18,6 +18,7 @@
   let mountedFitAddon = null;
   let showSwitchOverlay = $state(false);
   let switchOverlayTimer = null;
+  let lastSyncedTargetKey = null;
 
   async function syncTerminalTarget() {
     if (!visible || !mountedTerminal) return;
@@ -79,6 +80,35 @@
     requestAnimationFrame(() => {
       mountedFitAddon.fit();
       resizeTerminal(mountedTerminal);
+    });
+  });
+
+  $effect(() => {
+    const project = appState.selectedProject;
+    const projectPath = project?.path || null;
+    const sessionId = appState.selectedSessionId || null;
+    const sessionWindowId = sessionId
+      ? ((project?.sessions || []).find((entry) => entry.id === sessionId)?.tmuxWindowId || null)
+      : null;
+
+    if (!visible || !mountedTerminal || !projectPath) {
+      if (!projectPath) {
+        lastSyncedTargetKey = null;
+      }
+      return;
+    }
+
+    const nextTargetKey = JSON.stringify({
+      projectPath,
+      sessionId,
+      sessionWindowId,
+    });
+    if (nextTargetKey === lastSyncedTargetKey) return;
+    lastSyncedTargetKey = nextTargetKey;
+    void syncTerminalTarget().catch(() => {
+      if (lastSyncedTargetKey === nextTargetKey) {
+        lastSyncedTargetKey = null;
+      }
     });
   });
 

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 let tmpHome: string;
 let projectA: string;
 let projectB: string;
+let registryProjects: Array<{ id: string; name: string; repoRoot: string; lastSeen: string }>;
 
 vi.mock("node:os", async () => {
   const actual = await vi.importActual<typeof import("node:os")>("node:os");
@@ -18,10 +19,7 @@ vi.mock("node:os", async () => {
 vi.mock("./paths.js", () => ({
   getAimuxDirFor: (cwd: string) => join(cwd, ".aimux"),
   getProjectStateDirById: (id: string) => join(tmpHome, ".aimux", "projects", id),
-  listProjects: () => [
-    { id: "proj-a", name: "project-a", repoRoot: projectA, lastSeen: "2026-03-28T00:00:00.000Z" },
-    { id: "proj-b", name: "project-b", repoRoot: projectB, lastSeen: "2026-03-28T00:00:00.000Z" },
-  ],
+  listProjects: () => registryProjects,
 }));
 
 function makeTmpDir(prefix: string): string {
@@ -33,6 +31,10 @@ describe("project-scanner", () => {
     tmpHome = makeTmpDir("aimux-home-");
     projectA = join(tmpHome, "work", "project-a");
     projectB = join(tmpHome, "work", "project-b");
+    registryProjects = [
+      { id: "proj-a", name: "project-a", repoRoot: projectA, lastSeen: "2026-03-28T00:00:00.000Z" },
+      { id: "proj-b", name: "project-b", repoRoot: projectB, lastSeen: "2026-03-28T00:00:00.000Z" },
+    ];
 
     mkdirSync(join(projectA, ".aimux"), { recursive: true });
     mkdirSync(join(projectB, ".aimux"), { recursive: true });
@@ -147,5 +149,40 @@ describe("project-scanner", () => {
         }),
       ]),
     );
+  });
+
+  it("hides missing and tmp aimux registry entries from the desktop list", async () => {
+    const tempTestProject = makeTmpDir("aimux-agent-tracker-");
+    mkdirSync(join(tempTestProject, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(tempTestProject, ".aimux", "instances.json"),
+      JSON.stringify([
+        {
+          instanceId: "server-temp",
+          pid: process.pid,
+          sessions: [{ id: "session-temp", tool: "claude" }],
+        },
+      ]),
+    );
+
+    registryProjects = [
+      ...registryProjects,
+      { id: "temp-proj", name: "temp-proj", repoRoot: tempTestProject, lastSeen: "2026-03-28T00:00:00.000Z" },
+      {
+        id: "missing-proj",
+        name: "missing-proj",
+        repoRoot: join(tmpHome, "missing-project"),
+        lastSeen: "2026-03-28T00:00:00.000Z",
+      },
+    ];
+
+    const { listDesktopProjects } = await import("./project-scanner.js");
+    const projects = listDesktopProjects();
+
+    expect(projects.map((project) => project.path)).toEqual(expect.arrayContaining([projectA, projectB]));
+    expect(projects.map((project) => project.path)).not.toContain(tempTestProject);
+    expect(projects.map((project) => project.id)).not.toContain("missing-proj");
+
+    rmSync(tempTestProject, { recursive: true, force: true });
   });
 });
