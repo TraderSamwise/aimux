@@ -1,5 +1,10 @@
 <script>
-  import { getState, restartDaemonControl, restartProjectService, setNotificationPanelOpen } from "../stores/state.svelte.js";
+  import {
+    getState,
+    repairProjectRuntime,
+    restartProjectRuntime,
+    setNotificationPanelOpen,
+  } from "../stores/state.svelte.js";
   const appState = getState();
 
   let actions = $derived(appState.inFlightActions || []);
@@ -49,15 +54,16 @@
       ? `${prefix} · ${sessionPart} · ${detail}`
       : `${prefix} · ${detail}`;
   });
-  let daemonButtonLabel = $derived.by(() => {
-    if (daemonStatus === "ok") return "Daemon OK · Restart";
-    return "Daemon Down · Restart";
-  });
-  let projectButtonLabel = $derived.by(() => {
+  let projectStatusLabel = $derived.by(() => {
     if (!projectSelected) return "Project Unselected";
-    if (projectStatus === "ok") return "Project OK · Restart";
-    if (projectStatus === "outdated") return "Project Outdated · Restart";
-    return "Project Degraded · Restart";
+    if (projectStatus === "ok") return "Project Runtime · Healthy";
+    if (projectStatus === "outdated") return "Project Runtime · Needs Repair";
+    return "Project Runtime · Degraded";
+  });
+  let repairButtonLabel = $derived.by(() => {
+    if (!projectSelected) return "Repair Runtime";
+    if (projectStatus === "ok") return "Repair Runtime";
+    return "Repair Runtime";
   });
   let controlHint = $derived.by(() => {
     const selectedUnread = Number(notificationSummary?.unreadCount || 0);
@@ -172,20 +178,27 @@
       Inbox{totalUnreadNotifications > 0 ? ` · ${totalUnreadNotifications}` : ""}
     </button>
     <button
-      class="control-btn daemon"
-      class:down={daemonStatus !== "ok"}
-      onclick={() => { void restartDaemonControl().catch(() => {}); }}
+      class="control-btn runtime-status"
+      class:degraded={projectStatus === "degraded"}
+      class:outdated={projectStatus === "outdated"}
+      disabled={true}
     >
-      {daemonButtonLabel}
+      {projectStatusLabel}
     </button>
     <button
       class="control-btn project"
-      class:degraded={projectStatus === "degraded"}
-      class:outdated={projectStatus === "outdated"}
+      class:degraded={projectStatus !== "ok"}
       disabled={!projectSelected}
-      onclick={() => { void restartProjectService().catch(() => {}); }}
+      onclick={() => { void repairProjectRuntime({ auto: false }).catch(() => {}); }}
     >
-      {projectButtonLabel}
+      {repairButtonLabel}
+    </button>
+    <button
+      class="control-btn project restart-runtime"
+      disabled={!projectSelected}
+      onclick={() => { void restartProjectRuntime().catch(() => {}); }}
+    >
+      Restart Runtime
     </button>
   </div>
   {#if panelOpen}
@@ -370,12 +383,6 @@
     opacity: 0.5;
   }
 
-  .control-btn.daemon.down {
-    color: var(--red);
-    background: rgba(248, 113, 113, 0.08);
-    border-color: rgba(248, 113, 113, 0.18);
-  }
-
   .control-btn.degraded {
     color: var(--yellow);
     background: rgba(251, 191, 36, 0.08);
@@ -386,12 +393,6 @@
     color: rgb(249, 168, 212);
     background: rgba(244, 114, 182, 0.08);
     border-color: rgba(244, 114, 182, 0.18);
-  }
-
-  .control-btn.down {
-    color: var(--red);
-    background: rgba(248, 113, 113, 0.08);
-    border-color: rgba(248, 113, 113, 0.18);
   }
 
   .control-btn:not(:disabled):hover {

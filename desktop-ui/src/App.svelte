@@ -13,8 +13,8 @@
   import GraveyardPanel from "./lib/GraveyardPanel.svelte";
   import {
     getState,
-    restartDaemonControl,
-    restartProjectService,
+    repairProjectRuntime,
+    restartProjectRuntime,
     setDesktopWindowFocus,
     startHeartbeat,
     stopHeartbeat,
@@ -82,11 +82,11 @@
         <div class="control-overlay">
           <div class="control-card">
             <div class="control-kicker">Control Update Required</div>
-            <h3>{controlPlane.daemonStatus !== "ok" ? "Daemon is down" : "Project service is out of date"}</h3>
-            <p>{controlPlane.error || controlPlane.reason || "The selected project service does not match this desktop build."}</p>
+            <h3>{controlPlane.daemonStatus !== "ok" ? "Project runtime needs repair" : "Project runtime needs attention"}</h3>
+            <p>{controlPlane.error || controlPlane.reason || "Repair will recover the current project runtime in place. Restart Runtime will rebuild it from scratch."}</p>
             <div class="control-actions">
-              <button class="overlay-btn" onclick={() => { void restartDaemonControl().catch(() => {}); }}>Restart daemon</button>
-              <button class="overlay-btn primary" onclick={() => { void restartProjectService().catch(() => {}); }}>Restart project</button>
+              <button class="overlay-btn" onclick={() => { void repairProjectRuntime({ auto: false }).catch(() => {}); }}>Repair Runtime</button>
+              <button class="overlay-btn primary" onclick={() => { void restartProjectRuntime().catch(() => {}); }}>Restart Runtime</button>
             </div>
           </div>
         </div>
