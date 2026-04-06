@@ -543,6 +543,10 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, key, value]);
   }
 
+  configureManagedSession(sessionName: string, projectRoot: string): void {
+    this.configureSession(sessionName, projectRoot);
+  }
+
   applyManagedAgentWindowPolicy(target: TmuxTarget | string, toolConfigKey: string): void {
     this.setWindowOption(target, "@aimux-tool", toolConfigKey);
     this.setWindowOption(target, "allow-passthrough", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allowPassthrough);

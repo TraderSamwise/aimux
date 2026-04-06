@@ -10,7 +10,12 @@ import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
-import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./tmux-doctor.js";
+import {
+  buildTmuxDoctorReport,
+  renderTmuxDoctorReport,
+  renderTmuxRepairResult,
+  repairTmuxRuntime,
+} from "./tmux-doctor.js";
 import {
   loadMetadataEndpoint,
   loadMetadataState,
@@ -2052,6 +2057,7 @@ program
 const statuslineCmd = program.command("statusline").description("Manage Claude Code statusline integration");
 
 const doctorCmd = program.command("doctor").description("Inspect aimux runtime compatibility");
+const repairCmd = program.command("repair").description("Repair aimux runtime state for this project");
 
 doctorCmd
   .command("tmux")
@@ -2073,6 +2079,29 @@ doctorCmd
       return;
     }
     console.log(renderTmuxDoctorReport(report));
+  });
+
+repairCmd
+  .option("--project-root <path>", "Project root", process.cwd())
+  .option("--open", "Open the repaired dashboard after fixing runtime state")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { projectRoot: string; open?: boolean; json?: boolean }) => {
+    const projectRoot = resolveProjectRoot(opts.projectRoot);
+    await initPaths(projectRoot);
+    await ensureDaemonProjectSpawned(projectRoot);
+    const tmux = new TmuxRuntimeManager();
+    ensureTmuxAvailable(tmux);
+    const result = repairTmuxRuntime(tmux, { projectRoot });
+    if (opts.open) {
+      const { dashboardTarget } = resolveDashboardTarget(projectRoot, tmux);
+      tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
+      return;
+    }
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(renderTmuxRepairResult(result));
   });
 
 const metadataCmd = program.command("metadata").description("Push metadata into aimux tmux status integration");

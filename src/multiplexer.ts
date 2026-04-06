@@ -161,10 +161,18 @@ export interface SessionState {
   tmuxTarget?: TmuxTarget;
 }
 
+export interface ServiceState {
+  id: string;
+  worktreePath?: string;
+  label?: string;
+  launchCommandLine?: string;
+}
+
 export interface SavedState {
   savedAt: string;
   cwd: string;
   sessions: SessionState[];
+  services?: ServiceState[];
 }
 
 type ManagedSession = SessionRuntime;
@@ -204,6 +212,7 @@ interface DashboardOrchestrationTarget {
 export class Multiplexer {
   private readonly projectRoot: string;
   private sessions: ManagedSession[] = [];
+  private offlineServices: ServiceState[] = [];
   private activeIndex = 0;
   private mode: MuxMode = "dashboard";
   private hotkeys: HotkeyHandler;
@@ -694,7 +703,7 @@ export class Multiplexer {
   private computeDashboardServices(worktrees = this.listDesktopWorktrees()): DashboardService[] {
     const lastUsedState = loadLastUsedState(process.cwd());
     const worktreeByPath = new Map(worktrees.map((wt) => [wt.path, wt] as const));
-    return this.tmuxRuntimeManager
+    const liveServices = this.tmuxRuntimeManager
       .listProjectManagedWindows(process.cwd())
       .filter(({ target, metadata }) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
       .map(({ target, metadata }) => {
@@ -710,7 +719,7 @@ export class Multiplexer {
           worktreePath: metadata.worktreePath,
           worktreeName: worktree?.name,
           worktreeBranch: worktree?.branch,
-          status: this.tmuxRuntimeManager.isWindowAlive(target) ? "running" : "exited",
+          status: this.tmuxRuntimeManager.isWindowAlive(target) ? ("running" as const) : ("exited" as const),
           active: false,
           label: metadata.label,
           cwd: this.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath,
@@ -719,6 +728,30 @@ export class Multiplexer {
           previewLine: info.previewLine,
         };
       });
+    const liveIds = new Set(liveServices.map((service) => service.id));
+    const offlineServices = this.offlineServices
+      .filter((service) => !liveIds.has(service.id))
+      .map((service) => {
+        const worktree = service.worktreePath ? worktreeByPath.get(service.worktreePath) : undefined;
+        const label = service.label ?? this.serviceLabelForCommand(service.launchCommandLine ?? "");
+        const previewLine = service.launchCommandLine?.trim() || "Interactive shell";
+        return {
+          id: service.id,
+          command: service.launchCommandLine?.trim() ?? "",
+          args: [],
+          lastUsedAt: lastUsedState.items[service.id]?.lastUsedAt,
+          worktreePath: service.worktreePath,
+          worktreeName: worktree?.name,
+          worktreeBranch: worktree?.branch,
+          status: "offline" as const,
+          active: false,
+          label,
+          cwd: service.worktreePath,
+          foregroundCommand: label,
+          previewLine,
+        };
+      });
+    return [...liveServices, ...offlineServices];
   }
 
   private readTmuxProcessInfo(target: TmuxTarget): {
@@ -4435,7 +4468,23 @@ export class Multiplexer {
     if (!match || match.metadata.kind !== "service") {
       throw new Error(`Service "${serviceId}" not found`);
     }
+    const launchCommandLine =
+      match.metadata.command === "shell"
+        ? ""
+        : match.metadata.args?.[0] === "-lc"
+          ? (match.metadata.args[1] ?? "")
+          : "";
+    this.offlineServices = [
+      ...this.offlineServices.filter((service) => service.id !== serviceId),
+      {
+        id: serviceId,
+        worktreePath: match.metadata.worktreePath,
+        label: match.metadata.label,
+        launchCommandLine,
+      },
+    ];
     this.tmuxRuntimeManager.killWindow(match.target);
+    this.saveState();
     this.invalidateDesktopStateSnapshot();
     this.refreshLocalDashboardModel();
     this.adjustAfterRemove(this.dashboardWorktreeGroupsCache.length > 0);
@@ -6396,6 +6445,7 @@ export class Multiplexer {
   private syncSessionsFromState(state = Multiplexer.loadState()): void {
     this.restoreTmuxSessionsFromState(state);
     this.loadOfflineSessions(state);
+    this.loadOfflineServices(state);
     this.invalidateDesktopStateSnapshot();
   }
 
@@ -6435,6 +6485,42 @@ export class Multiplexer {
     if (this.offlineSessions.length > 0) {
       debug(`loaded ${this.offlineSessions.length} offline session(s) from state.json`, "session");
     }
+    return previousKey !== nextKey;
+  }
+
+  private loadOfflineServices(state = Multiplexer.loadState()): boolean {
+    const savedServices = state?.services ?? [];
+    if (savedServices.length === 0) {
+      const changed = this.offlineServices.length > 0;
+      this.offlineServices = [];
+      return changed;
+    }
+
+    const liveServiceIds = new Set(
+      this.tmuxRuntimeManager
+        .listProjectManagedWindows(process.cwd())
+        .filter(({ target, metadata }) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
+        .map(({ metadata }) => metadata.sessionId),
+    );
+
+    const nextOfflineServices = savedServices.filter((service) => {
+      if (liveServiceIds.has(service.id)) return false;
+      if (service.worktreePath && !existsSync(service.worktreePath)) return false;
+      return true;
+    });
+    const previousKey = this.offlineServices
+      .map(
+        (service) =>
+          `${service.id}:${service.label ?? ""}:${service.worktreePath ?? ""}:${service.launchCommandLine ?? ""}`,
+      )
+      .join("|");
+    const nextKey = nextOfflineServices
+      .map(
+        (service) =>
+          `${service.id}:${service.label ?? ""}:${service.worktreePath ?? ""}:${service.launchCommandLine ?? ""}`,
+      )
+      .join("|");
+    this.offlineServices = nextOfflineServices;
     return previousKey !== nextKey;
   }
 
@@ -6735,11 +6821,13 @@ export class Multiplexer {
       tmuxTarget: this.sessionTmuxTargets.get(s.id),
     }));
     const mySessions = [...this.offlineSessions, ...liveSessions];
-    if (mySessions.length === 0) return;
+    const myServices = [...this.offlineServices];
+    if (mySessions.length === 0 && myServices.length === 0) return;
 
     // Merge with existing state (other instances may have written their sessions)
     const statePath = Multiplexer.getSharedStatePath();
     let mergedSessions: SessionState[] = mySessions;
+    let mergedServices: ServiceState[] = myServices;
 
     if (existsSync(statePath)) {
       try {
@@ -6753,6 +6841,10 @@ export class Multiplexer {
           return true;
         });
         mergedSessions = [...otherSessions, ...mySessions];
+
+        const myServiceIds = new Set(myServices.map((service) => service.id));
+        const otherServices = (existing.services ?? []).filter((service) => !myServiceIds.has(service.id));
+        mergedServices = [...otherServices, ...myServices];
       } catch {
         // Corrupt file — just overwrite with ours
       }
@@ -6762,6 +6854,7 @@ export class Multiplexer {
       savedAt: new Date().toISOString(),
       cwd: process.cwd(),
       sessions: mergedSessions,
+      services: mergedServices,
     };
 
     writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");

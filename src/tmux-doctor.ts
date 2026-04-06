@@ -4,6 +4,7 @@ import {
   MANAGED_TMUX_TERMINAL_FEATURES,
   TmuxRuntimeManager,
 } from "./tmux-runtime-manager.js";
+import { getDashboardCommandSpec, resolveDashboardTarget } from "./dashboard-targets.js";
 
 export interface TmuxDoctorOptions {
   projectRoot: string;
@@ -50,6 +51,15 @@ export interface TmuxDoctorReport {
     tool: string;
     allowPassthrough: string | null;
   }>;
+}
+
+export interface TmuxRepairResult {
+  projectRoot: string;
+  sessionName: string;
+  repairedSessions: string[];
+  repairedWindows: string[];
+  dashboardWindowId: string;
+  dashboardSessionName: string;
 }
 
 function buildCheck(expected: string, observed: string | null): TmuxDoctorCheck {
@@ -204,4 +214,75 @@ export function renderTmuxDoctorReport(report: TmuxDoctorReport): string {
   }
 
   return lines.join("\n");
+}
+
+export function repairTmuxRuntime(
+  tmux: TmuxRuntimeManager,
+  { projectRoot, env = process.env }: TmuxDoctorOptions,
+): TmuxRepairResult {
+  if (!tmux.isAvailable()) {
+    throw new Error("tmux is not installed or not available in PATH");
+  }
+
+  const hostSession = tmux.getProjectSession(projectRoot).sessionName;
+  const { dashboardCommand } = getDashboardCommandSpec(projectRoot);
+  const currentClientSession = tmux.isInsideTmux(env) ? tmux.currentClientSession() : null;
+  const managedSessions = new Set<string>([hostSession]);
+
+  for (const sessionName of tmux.listSessionNames()) {
+    if (sessionName === hostSession || sessionName.startsWith(`${hostSession}-client-`)) {
+      managedSessions.add(sessionName);
+    }
+  }
+  if (
+    currentClientSession &&
+    (currentClientSession === hostSession || currentClientSession.startsWith(`${hostSession}-client-`))
+  ) {
+    managedSessions.add(currentClientSession);
+  }
+
+  tmux.ensureProjectSession(projectRoot, dashboardCommand);
+  for (const sessionName of managedSessions) {
+    if (!tmux.hasSession(sessionName)) continue;
+    tmux.configureManagedSession(sessionName, projectRoot);
+  }
+
+  const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+  managedSessions.add(dashboardSession.sessionName);
+  managedSessions.add(dashboardTarget.sessionName);
+  for (const sessionName of managedSessions) {
+    if (!tmux.hasSession(sessionName)) continue;
+    tmux.configureManagedSession(sessionName, projectRoot);
+  }
+
+  const repairedWindows = new Set<string>();
+  for (const sessionName of managedSessions) {
+    if (!tmux.hasSession(sessionName)) continue;
+    for (const { target, metadata } of tmux.listManagedWindows(sessionName)) {
+      tmux.applyManagedAgentWindowPolicy(target, metadata.toolConfigKey);
+      repairedWindows.add(target.windowId);
+    }
+  }
+
+  return {
+    projectRoot,
+    sessionName: hostSession,
+    repairedSessions: [...managedSessions].filter((sessionName) => tmux.hasSession(sessionName)),
+    repairedWindows: [...repairedWindows],
+    dashboardWindowId: dashboardTarget.windowId,
+    dashboardSessionName: dashboardTarget.sessionName,
+  };
+}
+
+export function renderTmuxRepairResult(result: TmuxRepairResult): string {
+  return [
+    "Tmux Repair",
+    `  project root: ${result.projectRoot}`,
+    `  host session: ${result.sessionName}`,
+    `  repaired sessions: ${result.repairedSessions.length}`,
+    ...result.repairedSessions.map((sessionName) => `    ${sessionName}`),
+    `  repaired windows: ${result.repairedWindows.length}`,
+    ...result.repairedWindows.map((windowId) => `    ${windowId}`),
+    `  dashboard target: ${result.dashboardSessionName}:${result.dashboardWindowId}`,
+  ].join("\n");
 }
