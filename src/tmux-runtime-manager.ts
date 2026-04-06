@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { debug } from "./debug.js";
@@ -728,6 +730,8 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
     this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);
+    this.exec(["set-option", "-t", sessionName, "set-clipboard", "external"]);
+    this.exec(["set-option", "-t", sessionName, "copy-command", "pbcopy"]);
     this.exec(["set-option", "-t", sessionName, "repeat-time", "300"]);
     this.exec(["set-option", "-t", sessionName, "focus-events", "on"]);
     this.exec(["set-option", "-t", sessionName, "bell-action", "none"]);
@@ -749,14 +753,7 @@ export class TmuxRuntimeManager {
     this.exec(["unbind-key", "-T", "root", "MouseDrag1Pane"]);
     this.exec(["unbind-key", "-T", "root", "WheelUpPane"]);
     this.exec(["unbind-key", "-T", "root", "WheelDownPane"]);
-    this.exec(["bind-key", "-T", "root", "MouseDown1Pane", "select-pane", "-t", "=", "\\;", "send-keys", "-M"]);
-    this.exec([
-      "bind-key",
-      "-T",
-      "root",
-      "MouseDrag1Pane",
-      "if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -M'",
-    ]);
+    this.applyDefaultRootMouseBindings();
     this.exec([
       "bind-key",
       "-T",
@@ -778,20 +775,6 @@ export class TmuxRuntimeManager {
       "#{m/r:^(claude|codex)$,#{@aimux-tool}}",
       `send-keys -H ${MODIFIED_ENTER_HEX}`,
       "send-keys S-Enter",
-    ]);
-    this.exec([
-      "bind-key",
-      "-T",
-      "root",
-      "WheelUpPane",
-      "if-shell -F '#{||:#{alternate_on},#{mouse_any_flag}}' 'send-keys -M' \"if-shell -F '#{pane_in_mode}' 'send-keys -X -N 1 scroll-up' 'copy-mode -e \\; send-keys -X -N 1 scroll-up'\"",
-    ]);
-    this.exec([
-      "bind-key",
-      "-T",
-      "root",
-      "WheelDownPane",
-      "if-shell -F '#{||:#{alternate_on},#{mouse_any_flag}}' 'send-keys -M' \"if-shell -F '#{pane_in_mode}' 'send-keys -X -N 1 scroll-down' ''\"",
     ]);
     this.exec(["unbind-key", "-T", "prefix", "s"]);
     this.exec(["unbind-key", "-T", "prefix", "n"]);
@@ -877,6 +860,26 @@ export class TmuxRuntimeManager {
       "status-format[1]",
       `#[bg=colour236,fg=colour252] #(${bottom}) #[default]`,
     ]);
+  }
+
+  private applyDefaultRootMouseBindings(): void {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-tmux-"));
+    const file = join(dir, "mouse-bindings.conf");
+    try {
+      writeFileSync(
+        file,
+        [
+          "bind-key -T root MouseDown1Pane select-pane -t = \\; send-keys -M",
+          'bind-key -T root MouseDrag1Pane if-shell -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -M }',
+          'bind-key -T root WheelUpPane if-shell -F "#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -e }',
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      this.exec(["source-file", file]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 
   refreshStatus(): void {
