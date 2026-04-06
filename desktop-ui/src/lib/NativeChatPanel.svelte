@@ -45,6 +45,7 @@
     if (!appState.selectedProject || !appState.selectedSessionId) return null;
     return (appState.selectedProject.sessions || []).find((session) => session.id === appState.selectedSessionId) || null;
   });
+  let selectedSessionIsLive = $derived.by(() => selectedSession?.status !== "offline");
   let sendPending = $derived.by(() => {
     if (!appState.selectedProjectPath || !appState.selectedSessionId) return false;
     return (appState.inFlightActions || []).some(
@@ -263,20 +264,20 @@
   async function openInTerminal() {
     const project = appState.selectedProject;
     const session = selectedSession;
-    if (!project || !session || !termInstance.terminal) return;
+    if (!project || !session || !selectedSessionIsLive || !termInstance.terminal) return;
     selectInteractionMode("terminal");
     await focusTerminalAgent(termInstance.terminal, project.path, session.id, sessionLabel(session));
   }
 
   async function submitDraft() {
-    if (sendPending || interruptPending) return;
+    if (sendPending || interruptPending || !selectedSessionIsLive) return;
     forceConversationStick = true;
     void syncConversationScroll(true);
     await sendNativeChatMessage();
   }
 
   async function interruptSession() {
-    if (interruptPending) return;
+    if (interruptPending || !selectedSessionIsLive) return;
     await interruptNativeChatAgent();
   }
 
@@ -862,7 +863,7 @@
       </button>
       <button
         class="header-btn primary"
-        disabled={!selectedSession}
+        disabled={!selectedSession || !selectedSessionIsLive}
         onclick={openInTerminal}
       >
         Open in Terminal
@@ -875,6 +876,8 @@
       <div class="empty">Select a project to use native chat.</div>
     {:else if !selectedSession}
       <div class="empty">Select a session from the worktree list or status chips.</div>
+    {:else if !selectedSessionIsLive}
+      <div class="empty">The selected session is offline. Reopen it in the terminal or select a live session.</div>
     {:else if appState.nativeChatLoading && !appState.nativeChatOutput}
       <div class="empty">Loading transcript…</div>
     {:else if appState.nativeChatError}
@@ -981,10 +984,12 @@
             class:composer-input-compact={index > 0}
             class:composer-input-sending={sendPending}
             placeholder={selectedSession
-              ? (index === 0 ? `Message ${sessionLabel(selectedSession)}…` : "Continue message…")
+              ? (selectedSessionIsLive
+                  ? (index === 0 ? `Message ${sessionLabel(selectedSession)}…` : "Continue message…")
+                  : "Selected session is offline…")
               : "Select a session first…"}
             value={part.text}
-            disabled={!selectedSession || sendPending}
+            disabled={!selectedSession || !selectedSessionIsLive || sendPending}
             onfocus={() => { activeDraftTextPartId = part.id; }}
             oninput={(event) => setNativeChatDraftTextPart(part.id, event.currentTarget.value)}
             onkeydown={(event) => handleDraftTextKeydown(part.id, event)}
@@ -1026,14 +1031,14 @@
       <span class="composer-hint">Enter to send, Shift+Enter for newline, Esc to interrupt. Paste or drop images inline.</span>
       <button
         class="attach-btn"
-        disabled={!selectedSession || sendPending}
+        disabled={!selectedSession || !selectedSessionIsLive || sendPending}
         onclick={() => addImages()}
       >
         Add Image
       </button>
       <button
         class="attach-btn"
-        disabled={!selectedSession || interruptPending}
+        disabled={!selectedSession || !selectedSessionIsLive || interruptPending}
         onclick={interruptSession}
       >
         {interruptPending ? "Interrupting…" : "Interrupt"}
@@ -1043,7 +1048,7 @@
       {/if}
       <button
         class="send-btn"
-        disabled={!selectedSession || !hasDraftContent || sendPending || interruptPending}
+        disabled={!selectedSession || !selectedSessionIsLive || !hasDraftContent || sendPending || interruptPending}
         onclick={submitDraft}
       >
         {sendPending ? "Sending…" : "Send"}

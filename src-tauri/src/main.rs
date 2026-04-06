@@ -347,7 +347,24 @@ fn daemon_json<T: DeserializeOwned>(
   context: &str,
 ) -> Result<T, String> {
   let info = ensure_daemon_http()?;
-  http_json_request("127.0.0.1", info.port, method, path, body, context)
+  let mut last_error = None;
+  for attempt in 0..3 {
+    match http_json_request("127.0.0.1", info.port, method, path, body, context) {
+      Ok(value) => return Ok(value),
+      Err(error) => {
+        let retryable =
+          error.contains("invalid HTTP response") ||
+          error.contains("failed to read response") ||
+          error.contains("timed out");
+        if !retryable || attempt == 2 {
+          return Err(error);
+        }
+        last_error = Some(error);
+        std::thread::sleep(Duration::from_millis(100 * (attempt + 1) as u64));
+      }
+    }
+  }
+  Err(last_error.unwrap_or_else(|| format!("{context}: daemon request failed")))
 }
 
 fn project_service_endpoint(project_path: &str) -> Result<ServiceEndpoint, String> {
@@ -801,6 +818,62 @@ async fn restart_project_service(project_path: String) -> Result<Value, String> 
   })
   .await
   .map_err(|error| format!("restart_project_service task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn repair_project_runtime(project_path: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let node = resolve_node();
+    let entrypoint = aimux_entrypoint();
+    let output = Command::new(&node)
+      .arg(&entrypoint)
+      .args(["repair", "--json"])
+      .current_dir(&project_path)
+      .env("PATH", shell_path())
+      .output()
+      .map_err(|e| format!("repair_project_runtime: failed to spawn command: {e}"))?;
+
+    if !output.status.success() {
+      return Err(format!(
+        "repair_project_runtime: command failed\nstdout={:?}\nstderr={:?}",
+        preview_bytes(&output.stdout, 400),
+        preview_bytes(&output.stderr, 400)
+      ));
+    }
+
+    serde_json::from_slice::<Value>(&output.stdout)
+      .map_err(|e| format!("repair_project_runtime: invalid JSON response: {e}"))
+  })
+  .await
+  .map_err(|error| format!("repair_project_runtime task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn restart_project_runtime(project_path: String) -> Result<Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let node = resolve_node();
+    let entrypoint = aimux_entrypoint();
+    let output = Command::new(&node)
+      .arg(&entrypoint)
+      .args(["restart-runtime", "--json"])
+      .current_dir(&project_path)
+      .env("PATH", shell_path())
+      .output()
+      .map_err(|e| format!("restart_project_runtime: failed to spawn command: {e}"))?;
+
+    if !output.status.success() {
+      return Err(format!(
+        "restart_project_runtime: command failed\nstdout={:?}\nstderr={:?}",
+        preview_bytes(&output.stdout, 400),
+        preview_bytes(&output.stderr, 400)
+      ));
+    }
+
+    serde_json::from_slice::<Value>(&output.stdout)
+      .map_err(|e| format!("restart_project_runtime: invalid JSON response: {e}"))
+  })
+  .await
+  .map_err(|error| format!("restart_project_runtime task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1701,6 +1774,8 @@ fn main() {
       pick_images,
       restart_daemon,
       restart_project_service,
+      repair_project_runtime,
+      restart_project_runtime,
       restart_control_plane,
       agent_spawn,
       agent_stop,

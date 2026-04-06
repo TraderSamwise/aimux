@@ -113,6 +113,7 @@
   });
 
   function statusDot(agent) {
+    if (agent.status === "offline" && !agent.pending) return "var(--text-dim)";
     if (agent.derived?.attention === "error") return "var(--red)";
     if (agent.derived?.attention === "needs_input") return "var(--yellow)";
     if (agent.derived?.attention === "blocked") return "var(--red)";
@@ -136,6 +137,7 @@
   }
 
   function agentStatusLabel(agent) {
+    if (agent.status === "offline" && !agent.pending) return "offline";
     if (agent.pending && agent.status === "starting") return "starting";
     if (agent.pending && agent.status === "stopping") return "stopping";
     if (agent.pending && agent.status === "killing") return "killing";
@@ -176,6 +178,7 @@
   }
 
   function agentStatusTone(agent) {
+    if (agent.status === "offline" && !agent.pending) return "neutral";
     const semantic = agent.semantic || null;
     if (semantic?.attention === "error") return "error";
     if (semantic?.workflowState === "blocked" || semantic?.attention === "blocked") return "blocked";

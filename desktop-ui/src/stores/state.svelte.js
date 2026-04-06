@@ -1038,6 +1038,12 @@ function scheduleNativeChatReconnect(projectPath, sessionId, endpoint, token, de
 function isTransientNativeChatReadError(error) {
   const message = String(error || "");
   return (
+    message.includes("invalid HTTP response") ||
+    message.includes("failed to read response") ||
+    message.includes("timed out") ||
+    message.includes("ECONNRESET") ||
+    message.includes("ECONNREFUSED") ||
+    message.includes("socket hang up") ||
     message.includes("Resource temporarily unavailable") ||
     message.includes("os error 35") ||
     message.includes("temporarily unavailable") ||
@@ -1078,6 +1084,7 @@ async function fetchNativeChatSnapshot(projectPath, sessionId, token) {
       if (!nativeChatOutput) {
         nativeChatLoading = true;
       }
+      nativeChatError = null;
       return;
     }
     nativeChatError = String(error);
@@ -1753,6 +1760,12 @@ export async function sendNativeChatMessage() {
     part.type === "image" ? Boolean(part.attachmentId) : String(part.text || "").trim().length > 0
   );
   if (!projectPath || !sessionId || outboundParts.length === 0) return;
+  const project = projects.find((entry) => entry.path === projectPath) || null;
+  const session = (project?.sessions || []).find((entry) => entry.id === sessionId) || null;
+  if (!session || session.status === "offline") {
+    nativeChatComposerError = "The selected session is offline. Reopen it in the terminal or select a live session.";
+    return;
+  }
   void markSessionSeen(projectPath, sessionId);
   void publishDesktopNotificationContext(projectPath);
 
@@ -1901,6 +1914,44 @@ export async function restartProjectService(opts = {}) {
         projectPath,
       },
       () => invoke("restart_project_service", { projectPath }),
+    );
+  } catch (error) {
+    controlPlaneError = String(error);
+    throw error;
+  }
+}
+
+export async function repairProjectRuntime(opts = {}) {
+  const projectPath = selectedProjectPath;
+  if (!projectPath) return;
+  controlPlaneError = null;
+  try {
+    await trackAction(
+      {
+        kind: "repair-project-runtime",
+        message: opts.auto ? "Repairing project runtime..." : "Repairing runtime...",
+        projectPath,
+      },
+      () => invoke("repair_project_runtime", { projectPath }),
+    );
+  } catch (error) {
+    controlPlaneError = String(error);
+    throw error;
+  }
+}
+
+export async function restartProjectRuntime() {
+  const projectPath = selectedProjectPath;
+  if (!projectPath) return;
+  controlPlaneError = null;
+  try {
+    await trackAction(
+      {
+        kind: "restart-project-runtime",
+        message: "Restarting project runtime...",
+        projectPath,
+      },
+      () => invoke("restart_project_runtime", { projectPath }),
     );
   } catch (error) {
     controlPlaneError = String(error);

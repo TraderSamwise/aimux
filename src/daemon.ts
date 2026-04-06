@@ -82,6 +82,7 @@ async function readJson(req: IncomingMessage): Promise<any> {
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
+  if (res.headersSent || res.writableEnded) return;
   const payload = JSON.stringify(body);
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
@@ -225,7 +226,12 @@ export class AimuxDaemon {
       updatedAt: new Date().toISOString(),
     } satisfies AimuxDaemonInfo);
     this.server = createServer((req, res) => {
-      void this.handle(req, res);
+      void this.handle(req, res).catch((error) => {
+        send(res, 500, {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     });
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
