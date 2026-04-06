@@ -751,11 +751,7 @@ export class TmuxRuntimeManager {
       "-T",
       "root",
       "MouseDrag1Pane",
-      "if-shell",
-      "-F",
-      "#{||:#{pane_in_mode},#{mouse_any_flag}}",
-      "{ send-keys -M }",
-      "{ copy-mode -M }",
+      "if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -M'",
     ]);
     this.exec([
       "bind-key",
