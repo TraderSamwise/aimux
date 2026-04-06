@@ -135,6 +135,7 @@ import {
   type DashboardBusyState,
   type DashboardErrorState,
 } from "./dashboard-feedback.js";
+import { MultiplexerRuntimeSync } from "./multiplexer-runtime-sync.js";
 import { openManagedServiceWindow, openManagedSessionWindow, selectLinkedOrOpenTarget } from "./tmux-window-open.js";
 import {
   graveyardSessionWithFeedback as runGraveyardSessionWithFeedback,
@@ -272,7 +273,6 @@ export class Multiplexer {
   private dashboardState = new DashboardState();
   private dashboardUiStateStore = new DashboardUiStateStore();
   private statusInterval: ReturnType<typeof setInterval> | null = null;
-  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private agentTracker = new AgentTracker();
   private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher((target) =>
@@ -306,7 +306,6 @@ export class Multiplexer {
   private metadataServer: MetadataServer | null = null;
   private eventBus = new ProjectEventBus();
   private pluginRuntime: PluginRuntime | null = null;
-  private projectServiceInterval: ReturnType<typeof setInterval> | null = null;
   private lastRenderedFrame: string | null = null;
   private lastStatuslineSnapshotKey: string | null = null;
   private desktopStateSnapshot: ReturnType<Multiplexer["buildDesktopStateSnapshot"]> | null = null;
@@ -318,6 +317,7 @@ export class Multiplexer {
   private dashboardServiceSnapshotRefreshing = false;
   private dashboardServiceRecovery: Promise<void> | null = null;
   private dashboardNextBackgroundRefreshAt = 0;
+  private runtimeSync!: MultiplexerRuntimeSync;
 
   constructor() {
     this.projectRoot = (() => {
@@ -330,6 +330,23 @@ export class Multiplexer {
     this.terminalHost = new TerminalHost();
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
+    this.runtimeSync = new MultiplexerRuntimeSync({
+      instanceDirectory: this.instanceDirectory,
+      instanceId: this.instanceId,
+      cwd: process.cwd(),
+      getMode: () => this.mode,
+      getConfirmedRegistered: () => this.confirmedRegistered,
+      setConfirmedRegistered: (value) => {
+        this.confirmedRegistered = value;
+      },
+      getInstanceSessionRefs: () => this.getInstanceSessionRefs(),
+      syncSessionsFromState: () => this.syncSessionsFromState(),
+      loadOfflineSessions: () => this.loadOfflineSessions(),
+      renderCurrentDashboardView: () => this.renderCurrentDashboardView(),
+      renderDashboard: () => this.renderDashboard(),
+      handleSessionClaimed: (sessionId) => this.handleSessionClaimed(sessionId),
+      writeStatuslineFile: () => this.writeStatuslineFile(),
+    });
     this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
       if (event.kind === "notification") {
@@ -6504,41 +6521,7 @@ export class Multiplexer {
   }
 
   private startHeartbeat(): void {
-    if (this.heartbeatInterval) return;
-    this.heartbeatInterval = setInterval(() => {
-      if (this.mode === "project-service") {
-        this.syncSessionsFromState();
-        return;
-      }
-      let dashboardNeedsRender = false;
-      const sessions = this.getInstanceSessionRefs();
-      this.instanceDirectory
-        .reconcileHeartbeat(this.instanceId, sessions, process.cwd(), this.confirmedRegistered)
-        .then((result) => {
-          for (const id of result.claimedIds) {
-            debug(`session ${id} claimed: was in confirmedRegistered but not in previousIds`, "instance");
-            this.handleSessionClaimed(id);
-            dashboardNeedsRender = true;
-          }
-          if (result.skippedClaimDetection && this.confirmedRegistered.size > 0) {
-            debug(
-              `skipping claim detection: previousIds empty but ${this.confirmedRegistered.size} confirmed sessions (registry entry may have been pruned)`,
-              "instance",
-            );
-          }
-          this.confirmedRegistered = result.confirmedIds;
-          if (dashboardNeedsRender && this.mode === "dashboard") {
-            this.renderCurrentDashboardView();
-          }
-        })
-        .catch(() => {});
-      // Refresh offline sessions from state.json (picks up cross-instance graveyard/kill)
-      const offlineChanged = this.loadOfflineSessions();
-      // Refresh dashboard only when heartbeat changed visible state.
-      if (offlineChanged && this.mode === "dashboard") {
-        this.renderCurrentDashboardView();
-      }
-    }, 5000);
+    this.runtimeSync.startHeartbeat();
   }
 
   /**
@@ -6572,25 +6555,15 @@ export class Multiplexer {
   }
 
   private stopHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
+    this.runtimeSync.stopHeartbeat();
   }
 
   private startProjectServiceRefresh(): void {
-    if (this.projectServiceInterval) return;
-    this.projectServiceInterval = setInterval(() => {
-      this.syncSessionsFromState();
-      this.writeStatuslineFile();
-    }, 2000);
+    this.runtimeSync.startProjectServiceRefresh();
   }
 
   private stopProjectServiceRefresh(): void {
-    if (this.projectServiceInterval) {
-      clearInterval(this.projectServiceInterval);
-      this.projectServiceInterval = null;
-    }
+    this.runtimeSync.stopProjectServiceRefresh();
   }
 
   private getRemoteInstancesSafe() {
