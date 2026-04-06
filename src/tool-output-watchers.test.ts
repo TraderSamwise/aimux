@@ -26,6 +26,21 @@ describe("classifyToolPane", () => {
     expect(classified.interruptedVisible).toBe(true);
   });
 
+  it("does not keep stale error state once later output exists", () => {
+    const classified = classifyToolPane(
+      "codex",
+      [
+        "Conversation interrupted - tell the model what to do differently.",
+        "Something went wrong.",
+        "> continue",
+        "Working (12s - esc to interrupt)",
+      ].join("\n"),
+    );
+
+    expect(classified.errorVisible).toBe(false);
+    expect(classified.interruptedVisible).toBe(false);
+  });
+
   it("extracts localhost services from pane output", () => {
     expect(
       extractLocalServices(

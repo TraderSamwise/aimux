@@ -29,6 +29,40 @@ function lastMeaningfulLine(text: string): string {
   return lines.at(-1) ?? "";
 }
 
+function classifyActiveTailError(text: string): { errorVisible: boolean; interruptedVisible: boolean } {
+  const recentLines = tailLines(text, 20)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (recentLines.length === 0) {
+    return { errorVisible: false, interruptedVisible: false };
+  }
+
+  const isInterruptedLine = (line: string) =>
+    /conversation interrupted/i.test(line) || /\binterrupted\b.*\bwhat should\b.*\bdo instead\?/i.test(line);
+  const isErrorLine = (line: string) =>
+    isInterruptedLine(line) || /something went wrong/i.test(line) || /error:/i.test(line) || /failed:/i.test(line);
+
+  let lastErrorIndex = -1;
+  for (let index = recentLines.length - 1; index >= 0; index -= 1) {
+    const line = recentLines[index];
+    if (!isErrorLine(line)) continue;
+    lastErrorIndex = index;
+    break;
+  }
+
+  if (lastErrorIndex === -1) {
+    return { errorVisible: false, interruptedVisible: false };
+  }
+
+  const laterMeaningfulLines = recentLines.slice(lastErrorIndex + 1);
+  if (laterMeaningfulLines.length > 0) {
+    return { errorVisible: false, interruptedVisible: false };
+  }
+
+  const interruptedVisible = recentLines.slice(0, lastErrorIndex + 1).some((line) => isInterruptedLine(line));
+  return { errorVisible: true, interruptedVisible };
+}
+
 function usesExplicitCompletionHooks(tool: string): boolean {
   return tool.trim().toLowerCase() === "claude";
 }
@@ -41,18 +75,14 @@ export function classifyToolPane(
   errorVisible: boolean;
   interruptedVisible: boolean;
 } {
-  const lower = text.toLowerCase();
   const lastLine = lastMeaningfulLine(text);
-  const interruptedVisible =
-    /conversation interrupted/i.test(text) || /\binterrupted\b.*\bwhat should\b.*\bdo instead\?/i.test(text);
+  const { errorVisible, interruptedVisible } = classifyActiveTailError(text);
   const explicitPromptTool = usesExplicitCompletionHooks(tool);
   const promptVisible =
     explicitPromptTool &&
     (/^\s*[›>❯]\s?.*$/.test(lastLine) ||
       /use \/skills to list available skills/i.test(text) ||
       /find and fix a bug in @filename/i.test(text));
-  const errorVisible =
-    /something went wrong/i.test(lower) || /error:/i.test(lower) || /failed:/i.test(lower) || interruptedVisible;
   void tool;
   return { promptVisible, errorVisible, interruptedVisible };
 }
