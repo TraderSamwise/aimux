@@ -1,4 +1,5 @@
 import notifier from "node-notifier";
+import { execFile } from "node:child_process";
 import { loadConfig, type NotificationConfig } from "./config.js";
 import { debug } from "./debug.js";
 import type { AlertEvent } from "./project-events.js";
@@ -18,11 +19,28 @@ export function resetNotifyConfig(): void {
   cachedConfig = null;
 }
 
+function escapeAppleScriptString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function sendMacNotification(title: string, message: string): void {
+  const script = `display notification "${escapeAppleScriptString(message)}" with title "${escapeAppleScriptString(title)}"`;
+  execFile("/usr/bin/osascript", ["-e", script], (error) => {
+    if (!error) return;
+    debug(`mac notification fallback: ${error.message}`, "notify");
+    notifier.notify({ title, message, sound: true });
+  });
+}
+
 function send(title: string, message: string): void {
   const config = getNotifyConfig();
   if (!config.enabled) return;
 
-  notifier.notify({ title, message, sound: true });
+  if (process.platform === "darwin") {
+    sendMacNotification(title, message);
+  } else {
+    notifier.notify({ title, message, sound: true });
+  }
   debug(`notification: ${message}`, "notify");
 }
 

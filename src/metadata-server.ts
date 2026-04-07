@@ -385,6 +385,7 @@ export class MetadataServer {
     worktreePath?: string;
     dedupeKey?: string;
     cooldownMs?: number;
+    forceNotify?: boolean;
   }): void {
     this.eventBus.publishAlert(input);
   }
@@ -1114,6 +1115,7 @@ export class MetadataServer {
           message?: string;
           sessionId?: string;
           kind?: string;
+          force?: boolean;
         };
         const requestedKind = body.kind?.trim();
         const kind: AlertKind =
@@ -1142,6 +1144,7 @@ export class MetadataServer {
             .filter(Boolean)
             .join(" — "),
           dedupeKey: kind === "task_done" ? `notify:complete:${body.title ?? body.message ?? "aimux"}` : undefined,
+          forceNotify: Boolean(body.force),
         });
         send(res, 200, { ok: true });
         return;

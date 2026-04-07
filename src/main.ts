@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Multiplexer } from "./multiplexer.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject, loadConfig } from "./config.js";
-import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir } from "./paths.js";
+import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir, getProjectId } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
@@ -73,6 +73,7 @@ import {
   markNotificationsRead,
   unreadNotificationCount,
 } from "./notifications.js";
+import { notifyAlert } from "./notify.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
 import { runTmuxSwitcher } from "./tmux-switcher.js";
@@ -2328,17 +2329,38 @@ program
           message: body,
           sessionId: opts.session?.trim() || undefined,
           kind: opts.kind?.trim() || "notification",
+          force: true,
         },
-        () => ({
-          ok: true,
-          notification: addNotification({
+        () => {
+          const kind = (opts.kind?.trim() || "notification") as
+            | "notification"
+            | "needs_input"
+            | "task_done"
+            | "task_failed"
+            | "blocked"
+            | "message_waiting"
+            | "handoff_waiting"
+            | "task_assigned"
+            | "review_waiting";
+          const notification = addNotification({
             title,
             subtitle: opts.subtitle?.trim() || undefined,
             body,
             sessionId: opts.session?.trim() || undefined,
-            kind: opts.kind?.trim() || "notification",
-          }),
-        }),
+            kind,
+          });
+          notifyAlert({
+            type: "alert",
+            kind,
+            projectId: getProjectId(),
+            sessionId: opts.session?.trim() || undefined,
+            title,
+            message: [opts.subtitle?.trim(), body].filter(Boolean).join(" — "),
+            ts: notification.createdAt,
+            forceNotify: true,
+          });
+          return { ok: true, notification };
+        },
       );
       if (opts.json) {
         console.log(JSON.stringify(result));

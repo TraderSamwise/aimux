@@ -19,7 +19,10 @@ interface NotificationContextState {
   contexts: Partial<Record<NotificationContextSource, NotificationContextEntry>>;
 }
 
-const CONTEXT_FRESH_MS = 30_000;
+// Active direct-chat panes can stay in focus for minutes without any explicit
+// context refresh, so a 30s expiry causes long Codex/Claude back-and-forth
+// sessions to start accumulating "unread" as if they were backgrounded.
+const CONTEXT_FRESH_MS = 15 * 60_000;
 
 function ensureParent(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -87,6 +90,7 @@ export function isSessionNotificationFocused(sessionId: string): boolean {
 }
 
 export function shouldSuppressNotification(event: AlertEvent): boolean {
+  if (event.forceNotify) return false;
   const { contexts } = loadState();
   for (const entry of Object.values(contexts)) {
     if (!entry || !isFresh(entry) || !entry.focused) continue;

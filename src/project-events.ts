@@ -24,6 +24,7 @@ export interface AlertEvent {
   taskId?: string;
   worktreePath?: string;
   dedupeKey?: string;
+  forceNotify?: boolean;
 }
 
 export interface HistoryUpdateEvent {
@@ -71,6 +72,7 @@ export class ProjectEventBus {
     alert: Omit<AlertEvent, "type" | "projectId" | "ts"> & {
       dedupeKey?: string;
       cooldownMs?: number;
+      forceNotify?: boolean;
     },
   ): boolean {
     const cooldownMs = alert.cooldownMs ?? 15_000;
@@ -96,6 +98,7 @@ export class ProjectEventBus {
       taskId: alert.taskId,
       worktreePath: alert.worktreePath,
       dedupeKey,
+      forceNotify: alert.forceNotify,
     } satisfies AlertEvent;
 
     addNotification({
