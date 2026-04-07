@@ -436,7 +436,7 @@ program
       }
       await initPaths(projectRoot);
       if (opts.tmuxDashboardInternal) {
-        await ensureDaemonProjectReady(projectRoot);
+        await ensureDaemonProjectSpawned(projectRoot);
       } else {
         initProject();
         const tmux = new TmuxRuntimeManager();
