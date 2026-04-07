@@ -741,9 +741,14 @@ export class TmuxRuntimeManager {
   }
 
   openTarget(target: TmuxTarget, options: OpenTargetOptions = {}): void {
-    const sessionName = options.alreadyResolved
-      ? target.sessionName
-      : this.resolveOpenSessionName(target.sessionName, options.insideTmux === true);
+    const insideTmux = options.insideTmux === true;
+    const shouldResolveManagedClient =
+      insideTmux && this.isManagedSessionName(target.sessionName) && !this.isClientSessionName(target.sessionName);
+    const sessionName = shouldResolveManagedClient
+      ? this.resolveOpenSessionName(target.sessionName, true)
+      : options.alreadyResolved
+        ? target.sessionName
+        : this.resolveOpenSessionName(target.sessionName, insideTmux);
     const effectiveTarget =
       sessionName !== target.sessionName && !isDashboardWindowName(target.windowName)
         ? this.ensureLinkedWindow(sessionName, target)
@@ -751,7 +756,7 @@ export class TmuxRuntimeManager {
             ...target,
             sessionName,
           };
-    if (options.insideTmux) {
+    if (insideTmux) {
       const current = this.currentClientSession();
       if (current && current !== sessionName) {
         this.setReturnSession(sessionName, current);

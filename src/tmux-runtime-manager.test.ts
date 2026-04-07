@@ -349,6 +349,44 @@ describe("TmuxRuntimeManager", () => {
     expect(interactiveCalls.at(-1)?.args).toEqual(["attach-session", "-t", `${clientSessionName}:3`]);
   });
 
+  it("still resolves the client session for already-resolved managed targets inside tmux", () => {
+    const exec = createExecMock();
+    const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const interactiveExec: TmuxInteractiveExec = (args, options) => {
+      interactiveCalls.push({ args, cwd: options?.cwd });
+    };
+    const manager = new TmuxRuntimeManager(exec, interactiveExec);
+    const prev = process.env.AIMUX_CLIENT_KEY;
+    process.env.AIMUX_CLIENT_KEY = "test-client";
+
+    try {
+      manager.openTarget(
+        {
+          sessionName: "aimux-mobile-abc",
+          windowId: "@0",
+          windowIndex: 0,
+          windowName: "dashboard-268eff9c",
+        },
+        { insideTmux: true, alreadyResolved: true },
+      );
+    } finally {
+      if (prev === undefined) delete process.env.AIMUX_CLIENT_KEY;
+      else process.env.AIMUX_CLIENT_KEY = prev;
+    }
+
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "new-session" &&
+          call.args.some((arg) => arg.startsWith("aimux-mobile-abc-client-")) &&
+          call.args.includes("/repo/mobile"),
+      ),
+    ).toBe(true);
+    expect(interactiveCalls.at(-1)?.args?.[0]).toBe("switch-client");
+    expect(interactiveCalls.at(-1)?.args?.[1]).toBe("-t");
+    expect(interactiveCalls.at(-1)?.args?.[2]).toMatch(/^aimux-mobile-abc-client-[a-f0-9]{8}:0$/);
+  });
+
   it("recreates a stale reused client session when its runtime contract drifts", () => {
     const hostSessionName = new TmuxRuntimeManager(createExecMock()).getProjectSession("/repo/mobile").sessionName;
     const clientSessionName = `${hostSessionName}-client-deadbeef`;
