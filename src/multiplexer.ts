@@ -4508,6 +4508,7 @@ export class Multiplexer {
         label,
       });
       this.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
+      this.saveState();
       this.invalidateDesktopStateSnapshot();
       this.refreshLocalDashboardModel();
       this.updateWorktreeSessions();
@@ -6587,6 +6588,25 @@ export class Multiplexer {
     return previousKey !== nextKey;
   }
 
+  private buildLiveServiceStates(): ServiceState[] {
+    const seen = new Set<string>();
+    const liveServices: ServiceState[] = [];
+    for (const { metadata } of this.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+      if (metadata.kind !== "service") continue;
+      if (seen.has(metadata.sessionId)) continue;
+      seen.add(metadata.sessionId);
+      const launchCommandLine =
+        metadata.command === "shell" ? "" : metadata.args?.[0] === "-lc" ? (metadata.args[1] ?? "") : "";
+      liveServices.push({
+        id: metadata.sessionId,
+        worktreePath: metadata.worktreePath,
+        label: metadata.label,
+        launchCommandLine,
+      });
+    }
+    return liveServices;
+  }
+
   private restoreTmuxSessionsFromState(state = Multiplexer.loadState()): void {
     const savedById = new Map((state?.sessions ?? []).map((session) => [session.id, session]));
 
@@ -6884,7 +6904,10 @@ export class Multiplexer {
       tmuxTarget: this.sessionTmuxTargets.get(s.id),
     }));
     const mySessions = [...this.offlineSessions, ...liveSessions];
-    const myServices = [...this.offlineServices];
+    const liveServices = this.buildLiveServiceStates();
+    const myServices = [...this.offlineServices, ...liveServices].filter(
+      (service, index, services) => services.findIndex((entry) => entry.id === service.id) === index,
+    );
     if (mySessions.length === 0 && myServices.length === 0) return;
 
     // Merge with existing state (other instances may have written their sessions)
