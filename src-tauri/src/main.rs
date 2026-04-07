@@ -369,23 +369,39 @@ fn daemon_json<T: DeserializeOwned>(
 
 fn project_service_endpoint(project_path: &str) -> Result<ServiceEndpoint, String> {
   let ensure_body = serde_json::json!({ "projectRoot": project_path });
-  let _: Value = daemon_json("POST", "/projects/ensure", Some(&ensure_body), "daemon project ensure")?;
-
   let deadline = Instant::now() + Duration::from_secs(5);
+  let mut last_error = None;
   while Instant::now() < deadline {
-    let response: DaemonProjectsResponse = daemon_json("GET", "/projects", None, "daemon projects")?;
-    if let Some(project) = response.projects.into_iter().find(|project| project.path == project_path) {
-      if let Some(endpoint) = project.service_endpoint {
-        return Ok(endpoint);
+    match daemon_json::<Value>("POST", "/projects/ensure", Some(&ensure_body), "daemon project ensure") {
+      Ok(_) => {}
+      Err(error) => {
+        last_error = Some(error);
+        std::thread::sleep(Duration::from_millis(100));
+        continue;
+      }
+    }
+
+    match daemon_json::<DaemonProjectsResponse>("GET", "/projects", None, "daemon projects") {
+      Ok(response) => {
+        if let Some(project) = response.projects.into_iter().find(|project| project.path == project_path) {
+          if let Some(endpoint) = project.service_endpoint {
+            return Ok(endpoint);
+          }
+        }
+      }
+      Err(error) => {
+        last_error = Some(error);
       }
     }
     std::thread::sleep(Duration::from_millis(100));
   }
 
-  Err(format!(
-    "project service endpoint for {} did not become available in time",
-    project_path
-  ))
+  Err(last_error.unwrap_or_else(|| {
+    format!(
+      "project service endpoint for {} did not become available in time",
+      project_path
+    )
+  }))
 }
 
 fn project_service_json<T: DeserializeOwned>(
@@ -395,8 +411,32 @@ fn project_service_json<T: DeserializeOwned>(
   body: Option<&Value>,
   context: &str,
 ) -> Result<T, String> {
-  let endpoint = project_service_endpoint(project_path)?;
-  http_json_request(&endpoint.host, endpoint.port, method, path, body, context)
+  let mut last_error = None;
+  for attempt in 0..3 {
+    match (|| {
+      let endpoint = project_service_endpoint(project_path)?;
+      http_json_request(&endpoint.host, endpoint.port, method, path, body, context)
+    })() {
+      Ok(value) => return Ok(value),
+      Err(error) => {
+        let retryable =
+          error.contains("daemon project ensure") ||
+          error.contains("daemon projects") ||
+          error.contains("invalid HTTP response") ||
+          error.contains("failed to read response") ||
+          error.contains("timed out") ||
+          error.contains("ECONNRESET") ||
+          error.contains("ECONNREFUSED") ||
+          error.contains("socket hang up");
+        if !retryable || attempt == 2 {
+          return Err(error);
+        }
+        last_error = Some(error);
+        std::thread::sleep(Duration::from_millis(150 * (attempt + 1) as u64));
+      }
+    }
+  }
+  Err(last_error.unwrap_or_else(|| format!("{context}: project service request failed")))
 }
 
 fn run_aimux_json<T: DeserializeOwned>(

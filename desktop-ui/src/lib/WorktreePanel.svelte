@@ -1,6 +1,14 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { getState, openService, openSession, isActionPending, isSessionActionBlocked, trackAction } from "../stores/state.svelte.js";
+  import {
+    getState,
+    openService,
+    openSession,
+    isActionPending,
+    isSessionActionBlocked,
+    repairProjectRuntime,
+    trackAction,
+  } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
   import { formatRelativeRecency } from "../../../src/recency.ts";
 
@@ -492,6 +500,12 @@
     if (!project || isCreateServicePending(worktreePath)) return;
     const command = serviceCommand.trim();
     const label = command || "shell";
+    const create = () =>
+      invoke("service_create", {
+        projectPath: project.path,
+        command: command || null,
+        worktree: worktreePath || null,
+      });
     try {
       await trackAction(
         {
@@ -503,12 +517,27 @@
           label,
           reconcile: (result) => ({ serviceId: result?.serviceId }),
         },
-        () =>
-          invoke("service_create", {
-            projectPath: project.path,
-            command: command || null,
-            worktree: worktreePath || null,
-          }),
+        async () => {
+          try {
+            return await create();
+          } catch (error) {
+            const message = String(error || "");
+            const transientRuntimeFailure =
+              message.includes("daemon project ensure") ||
+              message.includes("daemon projects") ||
+              message.includes("invalid HTTP response") ||
+              message.includes("failed to read response") ||
+              message.includes("timed out") ||
+              message.includes("ECONNRESET") ||
+              message.includes("ECONNREFUSED") ||
+              message.includes("socket hang up");
+            if (!transientRuntimeFailure) {
+              throw error;
+            }
+            await repairProjectRuntime({ auto: true });
+            return await create();
+          }
+        },
       );
       serviceCommand = "";
       showServiceInputFor = null;
