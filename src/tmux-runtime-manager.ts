@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
@@ -162,6 +162,29 @@ export class TmuxRuntimeManager {
     return this.resolveOpenSessionName(sessionName, insideTmux);
   }
 
+  private getExistingRuntimeArtifact(paths: string[]): string {
+    for (const path of paths) {
+      try {
+        statSync(path);
+        return path;
+      } catch {}
+    }
+    return paths[0]!;
+  }
+
+  private getManagedRuntimeBuildStamp(): string {
+    const runtimeScript = fileURLToPath(import.meta.url);
+    const controlScript = fileURLToPath(new URL("../scripts/tmux-control.sh", import.meta.url));
+    const statuslineScript = fileURLToPath(new URL("../scripts/tmux-statusline.sh", import.meta.url));
+    const dashboardScript = this.getExistingRuntimeArtifact([
+      fileURLToPath(new URL("./main.js", import.meta.url)),
+      fileURLToPath(new URL("./main.ts", import.meta.url)),
+    ]);
+    return [runtimeScript, controlScript, statuslineScript, dashboardScript]
+      .map((path) => `${basename(path)}:${Math.trunc(statSync(path).mtimeMs)}`)
+      .join("|");
+  }
+
   peekOpenSessionName(sessionName: string, insideTmux = this.isInsideTmux()): string {
     if (!this.isManagedSessionName(sessionName) || this.isClientSessionName(sessionName)) return sessionName;
     const clientSuffix = this.resolveClientSuffix(insideTmux);
@@ -172,14 +195,29 @@ export class TmuxRuntimeManager {
   private ensureClientSession(hostSessionName: string, clientSessionName: string, projectRoot: string): void {
     const dashboardName = this.getDashboardWindowName();
     const clientSessionExists = this.hasSession(clientSessionName);
+    const runtimeBuildStamp = this.getManagedRuntimeBuildStamp();
     const hostDashboard = this.listWindows(hostSessionName).find((window) => isDashboardWindowName(window.name));
-    const existingDashboard = clientSessionExists
-      ? this.listWindows(clientSessionName).find((window) => isDashboardWindowName(window.name))
-      : undefined;
+    const clientWindows = clientSessionExists ? this.listWindows(clientSessionName) : [];
+    const existingDashboard = clientWindows.find((window) => isDashboardWindowName(window.name));
+    const currentHostSession = clientSessionExists
+      ? this.getSessionOption(clientSessionName, "@aimux-host-session")
+      : null;
+    const currentProjectRoot = clientSessionExists
+      ? this.getSessionOption(clientSessionName, "@aimux-project-root")
+      : null;
+    const currentRuntimeBuild = clientSessionExists
+      ? this.getSessionOption(clientSessionName, "@aimux-runtime-build")
+      : null;
+    const dashboardAtZero = clientWindows.find((window) => window.index === 0);
     const needsRecreate =
-      !!hostDashboard &&
-      !!existingDashboard &&
-      (existingDashboard.id === hostDashboard.id || existingDashboard.name === "dashboard");
+      clientSessionExists &&
+      (!existingDashboard ||
+        existingDashboard.index !== 0 ||
+        dashboardAtZero?.id !== existingDashboard.id ||
+        currentHostSession !== hostSessionName ||
+        currentProjectRoot !== projectRoot ||
+        currentRuntimeBuild !== runtimeBuildStamp ||
+        (!!hostDashboard && existingDashboard.id === hostDashboard.id));
 
     if (needsRecreate) {
       this.exec(["kill-session", "-t", clientSessionName]);
@@ -204,11 +242,13 @@ export class TmuxRuntimeManager {
       );
       this.configureSession(clientSessionName, projectRoot);
       this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
+      this.exec(["set-option", "-t", clientSessionName, "@aimux-runtime-build", runtimeBuildStamp]);
       return;
     }
 
     this.configureSession(clientSessionName, projectRoot);
     this.exec(["set-option", "-t", clientSessionName, "@aimux-host-session", hostSessionName]);
+    this.exec(["set-option", "-t", clientSessionName, "@aimux-runtime-build", runtimeBuildStamp]);
   }
 
   private ensureLinkedWindow(clientSessionName: string, target: TmuxTarget): TmuxTarget {
@@ -781,6 +821,7 @@ export class TmuxRuntimeManager {
     this.exec(["unbind-key", "-T", "prefix", "p"]);
     this.exec(["unbind-key", "-T", "prefix", "d"]);
     this.exec(["unbind-key", "-T", "prefix", "u"]);
+    this.exec(["unbind-key", "-T", "prefix", "K"]);
     this.exec(["unbind-key", "-T", "prefix", "Any"]);
     this.exec(["bind-key", "-T", "prefix", "C-a", "send-prefix"]);
     this.exec([
@@ -822,6 +863,7 @@ export class TmuxRuntimeManager {
       `${controlScript} attention --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
     this.exec(["bind-key", "-T", "prefix", "d", "select-window", "-t", ":0"]);
+    this.exec(["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"]);
     this.exec([
       "bind-key",
       "-T",

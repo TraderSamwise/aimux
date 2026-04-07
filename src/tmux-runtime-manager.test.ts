@@ -124,6 +124,7 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "p")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "u")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "d")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "K")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "bind-key" && call.args[3] === "C-a")).toBe(true);
     expect(
       exec.calls.some(
@@ -168,6 +169,17 @@ describe("TmuxRuntimeManager", () => {
           call.args[4] === "select-window" &&
           call.args[5] === "-t" &&
           call.args[6] === ":0",
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[1] === "-T" &&
+          call.args[2] === "prefix" &&
+          call.args[3] === "K" &&
+          call.args[4] === "clear-history" &&
+          call.args.includes("C-l"),
       ),
     ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-left")).toBe(true);
@@ -330,8 +342,61 @@ describe("TmuxRuntimeManager", () => {
           `new-session -d -s ${clientSessionName} -c /repo/mobile -n dashboard sh -lc tail -f /dev/null`,
       ),
     ).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "@aimux-runtime-build")).toBe(
+      true,
+    );
     expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-t", `${clientSessionName}:3`]);
     expect(interactiveCalls.at(-1)?.args).toEqual(["attach-session", "-t", `${clientSessionName}:3`]);
+  });
+
+  it("recreates a stale reused client session when its runtime contract drifts", () => {
+    const hostSessionName = new TmuxRuntimeManager(createExecMock()).getProjectSession("/repo/mobile").sessionName;
+    const clientSessionName = `${hostSessionName}-client-deadbeef`;
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const exec: TmuxExec = (args, options) => {
+      calls.push({ args, cwd: options?.cwd });
+      const joined = args.join(" ");
+      if (joined === "-V") return "tmux 3.5a";
+      if (joined === `has-session -t ${hostSessionName}`) return "";
+      if (joined === `has-session -t ${clientSessionName}`) return "";
+      if (
+        joined ===
+        `list-windows -t ${hostSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+      ) {
+        return "@0\t0\tdashboard-268eff9c\t1\t100";
+      }
+      if (
+        joined ===
+        `list-windows -t ${clientSessionName} -F #{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}`
+      ) {
+        return "@1\t1\tdashboard-268eff9c\t1\t100\n@3\t3\tcodex\t0\t90";
+      }
+      if (joined === `show-options -v -t ${clientSessionName} @aimux-host-session`) return hostSessionName;
+      if (joined === `show-options -v -t ${clientSessionName} @aimux-project-root`) return "/repo/mobile";
+      if (joined === `show-options -v -t ${clientSessionName} @aimux-runtime-build`) return "stale-build";
+      if (joined.startsWith("show-options -v -t ") && joined.endsWith(" terminal-features")) return "";
+      if (args[0] === "set-option" && args[1] === "-as" && args[4] === "terminal-features") return "";
+      if (joined.startsWith("list-windows -t ")) return "";
+      return "";
+    };
+    const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const interactiveExec: TmuxInteractiveExec = (args, options) => {
+      interactiveCalls.push({ args, cwd: options?.cwd });
+    };
+    const manager = new TmuxRuntimeManager(exec, interactiveExec);
+
+    (
+      manager as unknown as { ensureClientSession: (host: string, client: string, root: string) => void }
+    ).ensureClientSession(hostSessionName, clientSessionName, "/repo/mobile");
+
+    expect(calls.some((call) => call.args.join(" ") === `kill-session -t ${clientSessionName}`)).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.args.join(" ") ===
+          `new-session -d -s ${clientSessionName} -c /repo/mobile -n dashboard sh -lc tail -f /dev/null`,
+      ),
+    ).toBe(true);
   });
 
   it("leaves managed tmux sessions by switching back when nested", () => {
