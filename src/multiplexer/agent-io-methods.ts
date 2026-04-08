@@ -1,9 +1,9 @@
-import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
-import { sendHandoff } from "./orchestration-actions.js";
-import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
-import type { DashboardSession } from "./dashboard.js";
-import { markMessageDelivered, type MessageKind } from "./threads.js";
-import { stopProjectServices as stopProjectServicesImpl } from "./multiplexer-dashboard-model.js";
+import { sendDirectMessage, sendThreadMessage } from "../orchestration.js";
+import { sendHandoff } from "../orchestration-actions.js";
+import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
+import type { DashboardSession } from "../dashboard.js";
+import { markMessageDelivered, type MessageKind } from "../threads.js";
+import { stopProjectServices as stopProjectServicesImpl } from "./dashboard-model.js";
 import {
   applyDashboardSessionLabel as applyDashboardSessionLabelImpl,
   applySessionLabel as applySessionLabelImpl,
@@ -20,7 +20,7 @@ import {
   updateSessionLabel as updateSessionLabelImpl,
   writeAgentInput as writeAgentInputImpl,
   writeTmuxAgentInput as writeTmuxAgentInputImpl,
-} from "./multiplexer-session-runtime-core.js";
+} from "./session-runtime-core.js";
 
 export const agentIoMethods = {
   composeOrchestrationPrompt(

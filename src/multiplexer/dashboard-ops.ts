@@ -1,13 +1,13 @@
 import { basename } from "node:path";
 
-import { composeTwoPane, truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "./tui/render/text.js";
+import { composeTwoPane, truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "../tui/render/text.js";
 import {
   graveyardSessionWithFeedback as runGraveyardSessionWithFeedback,
   resumeOfflineSessionWithFeedback as runResumeOfflineSessionWithFeedback,
   stopSessionToOfflineWithFeedback as runStopSessionToOfflineWithFeedback,
   waitForSessionExit,
   waitForSessionStart,
-} from "./dashboard-session-actions.js";
+} from "../dashboard-session-actions.js";
 
 type DashboardOpsHost = any;
 

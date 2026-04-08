@@ -1,55 +1,51 @@
 import { randomUUID } from "node:crypto";
-import { HotkeyHandler, type HotkeyAction } from "./hotkeys.js";
-import { Dashboard, type DashboardService, type DashboardSession, type WorktreeGroup } from "./dashboard.js";
-import { DashboardState } from "./dashboard-state.js";
-import { ContextWatcher } from "./context/context-bridge.js";
-import { loadConfig } from "./config.js";
-import { debug } from "./debug.js";
-import { findMainRepo } from "./worktree.js";
-import { TaskDispatcher } from "./task-dispatcher.js";
-import { TerminalHost } from "./terminal-host.js";
-import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "./session-runtime.js";
-import { AgentTracker } from "./agent-tracker.js";
-import { InstanceDirectory } from "./instance-directory.js";
-import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "./tmux-runtime-manager.js";
-import { MetadataServer } from "./metadata-server.js";
-import { loadMetadataState } from "./metadata-store.js";
-import { PluginRuntime } from "./plugin-runtime.js";
-import { SessionBootstrapService } from "./session-bootstrap.js";
-import { createThread, appendMessage, updateThread } from "./threads.js";
-import { OrchestrationDispatcher } from "./orchestration-dispatcher.js";
-import { ProjectEventBus, type AlertKind } from "./project-events.js";
-import { deriveSessionSemantics } from "./session-semantics.js";
-import { type NotificationRecord } from "./notifications.js";
-import { type ThreadEntry, type WorkflowEntry, type WorkflowFilter } from "./workflow.js";
-import { DashboardUiStateStore } from "./dashboard-ui-state-store.js";
-import { DashboardPendingActions } from "./dashboard-pending-actions.js";
+import { HotkeyHandler, type HotkeyAction } from "../hotkeys.js";
+import { Dashboard, type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard.js";
+import { DashboardState } from "../dashboard-state.js";
+import { ContextWatcher } from "../context/context-bridge.js";
+import { loadConfig } from "../config.js";
+import { debug } from "../debug.js";
+import { findMainRepo } from "../worktree.js";
+import { TaskDispatcher } from "../task-dispatcher.js";
+import { TerminalHost } from "../terminal-host.js";
+import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "../session-runtime.js";
+import { AgentTracker } from "../agent-tracker.js";
+import { InstanceDirectory } from "../instance-directory.js";
+import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "../tmux-runtime-manager.js";
+import { MetadataServer } from "../metadata-server.js";
+import { loadMetadataState } from "../metadata-store.js";
+import { PluginRuntime } from "../plugin-runtime.js";
+import { SessionBootstrapService } from "../session-bootstrap.js";
+import { createThread, appendMessage, updateThread } from "../threads.js";
+import { OrchestrationDispatcher } from "../orchestration-dispatcher.js";
+import { ProjectEventBus, type AlertKind } from "../project-events.js";
+import { deriveSessionSemantics } from "../session-semantics.js";
+import { type NotificationRecord } from "../notifications.js";
+import { type ThreadEntry, type WorkflowEntry, type WorkflowFilter } from "../workflow.js";
+import { DashboardUiStateStore } from "../dashboard-ui-state-store.js";
+import { DashboardPendingActions } from "../dashboard-pending-actions.js";
 import {
   DashboardFeedbackController,
   type DashboardBusyState,
   type DashboardErrorState,
-} from "./dashboard-feedback.js";
-import { MultiplexerRuntimeSync } from "./multiplexer-runtime-sync.js";
-import { selectLinkedOrOpenTarget } from "./tmux-window-open.js";
-import { dashboardActionMethods, type DashboardActionMethods } from "./multiplexer-dashboard-actions-methods.js";
-import { agentIoMethods, type AgentIoMethods } from "./multiplexer-agent-io-methods.js";
-import { dashboardInteractionMethods, type DashboardInteractionMethods } from "./multiplexer-dashboard-interaction.js";
-import { dashboardStateMethods, type DashboardStateMethods } from "./multiplexer-dashboard-state-methods.js";
-import { persistenceMethods, type PersistenceMethods } from "./multiplexer-persistence-methods.js";
-import { dashboardTailMethods, type DashboardTailMethods } from "./multiplexer-dashboard-tail-methods.js";
-import {
-  loadStateStatic,
-  runtimeLifecycleMethods,
-  type RuntimeLifecycleMethods,
-} from "./multiplexer-runtime-lifecycle-methods.js";
-import { dashboardViewMethods, type DashboardViewMethods } from "./multiplexer-dashboard-view-methods.js";
+} from "../dashboard-feedback.js";
+import { MultiplexerRuntimeSync } from "./runtime-sync.js";
+import { selectLinkedOrOpenTarget } from "../tmux-window-open.js";
+import { dashboardActionMethods, type DashboardActionMethods } from "./dashboard-actions-methods.js";
+import { agentIoMethods, type AgentIoMethods } from "./agent-io-methods.js";
+import { dashboardInteractionMethods, type DashboardInteractionMethods } from "./dashboard-interaction.js";
+import { dashboardStateMethods, type DashboardStateMethods } from "./dashboard-state-methods.js";
+import { persistenceMethods, type PersistenceMethods } from "./persistence-methods.js";
+import { dashboardTailMethods, type DashboardTailMethods } from "./dashboard-tail-methods.js";
+import { loadStateStatic, runtimeLifecycleMethods, type RuntimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
+import { dashboardViewMethods, type DashboardViewMethods } from "./dashboard-view-methods.js";
 import {
   buildTmuxWindowMetadata as buildTmuxWindowMetadataImpl,
   handleSessionRuntimeEvent as handleSessionRuntimeEventImpl,
   registerManagedSession as registerManagedSessionImpl,
   syncTmuxWindowMetadata as syncTmuxWindowMetadataImpl,
   updateContextWatcherSessions as updateContextWatcherSessionsImpl,
-} from "./multiplexer-session-runtime-core.js";
+} from "./session-runtime-core.js";
 import {
   createSession as createSessionImpl,
   focusSession as focusSessionImpl,
@@ -63,7 +59,7 @@ import {
   run as runImpl,
   runDashboard as runDashboardImpl,
   runProjectService as runProjectServiceImpl,
-} from "./multiplexer-session-launch.js";
+} from "./session-launch.js";
 
 export type MuxMode = "dashboard" | "project-service";
 
@@ -164,6 +160,7 @@ export class Multiplexer {
   private worktreeListActive = false;
   private worktreeRemoveConfirm: { path: string; name: string } | null = null;
   private worktreeRemovalJob: WorktreeRemovalJob | null = null;
+  private pendingWorktreeRemovals = new Map<string, Promise<{ path: string; status: "removing" | "removed" }>>();
   private readonly dashboardFeedback = new DashboardFeedbackController({
     renderDashboard: () => this.renderDashboard(),
     isDashboardMode: () => this.mode === "dashboard",

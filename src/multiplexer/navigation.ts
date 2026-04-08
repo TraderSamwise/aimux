@@ -1,10 +1,10 @@
-import { findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
-import { parseKeys } from "./key-parser.js";
+import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
+import { parseKeys } from "../key-parser.js";
 import {
   renderHelpOverlay,
   renderMigratePickerOverlay,
   renderSwitcherOverlay,
-} from "./tui/screens/overlay-renderers.js";
+} from "../tui/screens/overlay-renderers.js";
 
 type NavigationHost = any;
 

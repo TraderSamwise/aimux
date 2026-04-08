@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import type { DashboardSession } from "./dashboard.js";
-import type { SessionState } from "./multiplexer.js";
+import type { SessionState } from "./multiplexer/index.js";
 import type { InstanceInfo } from "./instance-registry.js";
 import { listWorktrees as listAllWorktrees } from "./worktree.js";
 

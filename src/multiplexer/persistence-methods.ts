@@ -1,16 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
-import { debug } from "./debug.js";
-import { DashboardPendingActions } from "./dashboard-pending-actions.js";
-import { type DashboardScreen } from "./dashboard-state.js";
-import { loadDaemonInfo } from "./daemon.js";
-import { type DashboardService, type DashboardSession } from "./dashboard.js";
-import { getGraveyardPath, getLocalAimuxDir, getProjectStateDir, getStatePath } from "./paths.js";
-import { loadMetadataState } from "./metadata-store.js";
-import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./multiplexer-runtime-state.js";
-import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux-statusline.js";
-import { findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
+import { debug } from "../debug.js";
+import { DashboardPendingActions } from "../dashboard-pending-actions.js";
+import { type DashboardScreen } from "../dashboard-state.js";
+import { loadDaemonInfo } from "../daemon.js";
+import { type DashboardService, type DashboardSession } from "../dashboard.js";
+import { getGraveyardPath, getLocalAimuxDir, getProjectStateDir, getStatePath } from "../paths.js";
+import { loadMetadataState } from "../metadata-store.js";
+import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
+import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux-statusline.js";
+import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 
 export const persistenceMethods = {
   writeSessionsFile(this: any): void {

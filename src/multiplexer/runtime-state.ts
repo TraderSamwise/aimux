@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 
-import { loadConfig } from "./config.js";
-import { loadMetadataState, updateSessionMetadata } from "./metadata-store.js";
-import { getGraveyardPath, getLocalAimuxDir, getStatePath } from "./paths.js";
-import { findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
-import { isDashboardWindowName } from "./tmux-runtime-manager.js";
-import { TmuxSessionTransport } from "./tmux-session-transport.js";
+import { loadConfig } from "../config.js";
+import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
+import { getGraveyardPath, getLocalAimuxDir, getStatePath } from "../paths.js";
+import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
+import { isDashboardWindowName } from "../tmux-runtime-manager.js";
+import { TmuxSessionTransport } from "../tmux-session-transport.js";
 
 type RuntimeStateHost = any;
 
@@ -511,13 +511,15 @@ export async function removeDesktopWorktree(host: RuntimeStateHost, path: string
     throw new Error(`Worktree "${path}" not found`);
   }
 
-  const attachedSession = host.getDashboardSessions().find((session: any) => session.worktreePath === path);
+  const attachedSession = host.sessions.find(
+    (session: any) => session.worktreePath === path && isSessionRuntimeLive(host, session),
+  );
   if (attachedSession) {
     throw new Error(
       `Cannot remove "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
     );
   }
-  const attachedService = host.getDashboardServices().find((service: any) => service.worktreePath === path);
+  const attachedService = buildLiveServiceStates(host).find((service: any) => service.worktreePath === path);
   if (attachedService) {
     throw new Error(
       `Cannot remove "${matching.name}" while service "${attachedService.label || attachedService.id}" is attached`,

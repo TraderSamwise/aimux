@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, readdirSync, copyFileSync, mkd
 import { join as pathJoin, resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { Multiplexer } from "./multiplexer.js";
+import { Multiplexer } from "./multiplexer/index.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject, loadConfig } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir, getProjectId } from "./paths.js";

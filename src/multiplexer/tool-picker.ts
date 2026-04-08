@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 
-import { loadConfig, type ToolConfig } from "./config.js";
-import { parseKeys } from "./key-parser.js";
+import { loadConfig, type ToolConfig } from "../config.js";
+import { parseKeys } from "../key-parser.js";
 
 type ToolPickerHost = any;
 

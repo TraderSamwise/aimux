@@ -1,5 +1,5 @@
-import { parseKeys } from "./key-parser.js";
-import { markThreadSeen, setThreadStatus, type OrchestrationThread, type ThreadStatus } from "./threads.js";
+import { parseKeys } from "../key-parser.js";
+import { markThreadSeen, setThreadStatus, type OrchestrationThread, type ThreadStatus } from "../threads.js";
 import {
   acceptHandoff,
   acceptTask,
@@ -9,7 +9,7 @@ import {
   completeTask,
   reopenTask,
   requestTaskChanges,
-} from "./orchestration-actions.js";
+} from "../orchestration-actions.js";
 import {
   buildThreadEntries,
   buildWorkflowEntries,
@@ -18,19 +18,20 @@ import {
   type ThreadEntry,
   type WorkflowEntry,
   type WorkflowFilter,
-} from "./workflow.js";
+} from "../workflow.js";
 import {
   renderActivityScreen,
   renderThreadDetails,
   renderThreadsScreen,
   renderWorkflowDetails,
   renderWorkflowScreen,
-} from "./tui/screens/subscreen-renderers.js";
+} from "../tui/screens/subscreen-renderers.js";
+import { navigationUrgencyScore } from "../fast-control.js";
 
 type SubscreenHost = any;
 
 export function attentionScore(host: SubscreenHost, entry: any): number {
-  return host.navigationUrgencyScore(entry);
+  return navigationUrgencyScore(entry);
 }
 
 export function getActivityEntries(host: SubscreenHost): any[] {

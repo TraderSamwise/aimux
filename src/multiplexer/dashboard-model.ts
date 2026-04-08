@@ -1,18 +1,18 @@
 import { existsSync } from "node:fs";
 
-import type { DashboardService, DashboardSession, WorktreeGroup } from "./dashboard.js";
-import { buildDashboardSessions } from "./dashboard-session-registry.js";
-import { loadLastUsedState } from "./last-used.js";
-import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "./metadata-store.js";
-import { MetadataServer } from "./metadata-server.js";
-import { PluginRuntime } from "./plugin-runtime.js";
-import { findMainRepo } from "./worktree.js";
-import { listThreadSummaries, readMessages } from "./threads.js";
-import { deriveSessionSemantics } from "./session-semantics.js";
-import { requestJson } from "./http-client.js";
-import { buildWorkflowEntries, describeWorkflowNextAction } from "./workflow.js";
-import { ensureDaemonRunning, ensureProjectService } from "./daemon.js";
-import { isDashboardWindowName } from "./tmux-runtime-manager.js";
+import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard.js";
+import { buildDashboardSessions } from "../dashboard-session-registry.js";
+import { loadLastUsedState } from "../last-used.js";
+import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
+import { MetadataServer } from "../metadata-server.js";
+import { PluginRuntime } from "../plugin-runtime.js";
+import { findMainRepo } from "../worktree.js";
+import { listThreadSummaries, readMessages } from "../threads.js";
+import { deriveSessionSemantics } from "../session-semantics.js";
+import { requestJson } from "../http-client.js";
+import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
+import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
+import { isDashboardWindowName } from "../tmux-runtime-manager.js";
 
 type DashboardModelHost = any;
 
@@ -20,7 +20,14 @@ export function buildDashboardWorktreeGroups(
   _host: DashboardModelHost,
   dashSessions: DashboardSession[],
   dashServices: DashboardService[],
-  worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>,
+  worktrees: Array<{
+    name: string;
+    path: string;
+    branch: string;
+    isBare: boolean;
+    pending?: boolean;
+    removing?: boolean;
+  }>,
   mainRepoPath?: string,
 ): WorktreeGroup[] {
   return worktrees
@@ -32,6 +39,8 @@ export function buildDashboardWorktreeGroups(
         name: wt.name,
         branch: wt.branch,
         path: wt.path,
+        pending: wt.pending,
+        removing: wt.removing,
         status: (wtSessions.length > 0 || wtServices.length > 0 ? "active" : "offline") as "active" | "offline",
         sessions: wtSessions,
         services: wtServices,
@@ -59,7 +68,7 @@ export function applyDashboardModel(
   host.dashboardModelSnapshotKey = snapshotKey;
   host.dashboardSessionsCache = host.dashboardPendingActions.applyToSessions(dashSessions);
   host.dashboardServicesCache = host.dashboardPendingActions.applyToServices(dashServices);
-  host.dashboardWorktreeGroupsCache = worktreeGroups;
+  host.dashboardWorktreeGroupsCache = host.dashboardPendingActions.applyToWorktrees(worktreeGroups);
   host.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
   host.dashboardModelRefreshedAt = Date.now();
   host.dashboardUiStateStore.markSelectionDirty();

@@ -1,6 +1,6 @@
-import { loadConfig } from "./config.js";
-import { waitForSessionExit } from "./dashboard-session-actions.js";
-import { isToolAvailable } from "./multiplexer-tool-picker.js";
+import { loadConfig } from "../config.js";
+import { waitForSessionExit } from "../dashboard-session-actions.js";
+import { isToolAvailable } from "./tool-picker.js";
 
 type SessionActionsHost = any;
 

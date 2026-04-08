@@ -1,9 +1,9 @@
 import { execSync } from "node:child_process";
 
-import { createWorktree, findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
-import { debug } from "./debug.js";
-import { parseKeys } from "./key-parser.js";
-import { renderWorktreeListOverlay, renderWorktreeRemoveConfirmOverlay } from "./tui/screens/overlay-renderers.js";
+import { createWorktree, findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
+import { debug } from "../debug.js";
+import { parseKeys } from "../key-parser.js";
+import { renderWorktreeListOverlay, renderWorktreeRemoveConfirmOverlay } from "../tui/screens/overlay-renderers.js";
 
 type WorktreeHost = any;
 
@@ -100,7 +100,8 @@ export function renderWorktreeRemoveConfirm(host: WorktreeHost): void {
 }
 
 export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: string, oldIdx: number): void {
-  if (host.worktreeRemovalJob) return;
+  if (host.worktreeRemovalJob?.path === path) return;
+  if (host.pendingWorktreeRemovals?.has?.(path)) return;
 
   debug(`begin worktree removal: name=${name} path=${path}`, "worktree");
   host.worktreeRemovalJob = {
@@ -110,7 +111,8 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     oldIdx,
     stderr: "",
   };
-  host.startDashboardBusy(`Removing worktree "${name}"`, [`  Path: ${path}`, "  Cleaning up checkout and metadata..."]);
+  host.refreshLocalDashboardModel();
+  host.renderDashboard();
   void (async () => {
     try {
       await host.removeDesktopWorktree(path);
@@ -140,7 +142,6 @@ export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
     .filter(Boolean);
 
   if (code === 0) {
-    host.clearDashboardBusy();
     host.footerFlash = `Removed: ${job.name}`;
     host.footerFlashTicks = 3;
     debug(`removed worktree: ${job.name}`, "worktree");

@@ -1,12 +1,12 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { closeDebug, debug } from "./debug.js";
-import { loadConfig } from "./config.js";
-import { getStatePath } from "./paths.js";
-import type { InstanceSessionRef } from "./instance-registry.js";
-import type { SessionRuntime } from "./session-runtime.js";
-import type { Multiplexer, SavedState, ServiceState, SessionState } from "./multiplexer.js";
+import { closeDebug, debug } from "../debug.js";
+import { loadConfig } from "../config.js";
+import { getStatePath } from "../paths.js";
+import type { InstanceSessionRef } from "../instance-registry.js";
+import type { SessionRuntime } from "../session-runtime.js";
+import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
 import {
   adjustAfterRemove as adjustAfterRemoveImpl,
   buildLiveServiceStates as buildLiveServiceStatesImpl,
@@ -29,7 +29,7 @@ import {
   stopSessionToOffline as stopSessionToOfflineImpl,
   stopStatusRefresh as stopStatusRefreshImpl,
   syncSessionsFromState as syncSessionsFromStateImpl,
-} from "./multiplexer-runtime-state.js";
+} from "./runtime-state.js";
 
 type RuntimeLifecycleHost = {
   writtenInstructionFiles: Set<string>;

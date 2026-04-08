@@ -1,5 +1,5 @@
-import { clearNotifications, listNotifications, markNotificationsRead } from "./notifications.js";
-import { parseKeys } from "./key-parser.js";
+import { clearNotifications, listNotifications, markNotificationsRead } from "../notifications.js";
+import { parseKeys } from "../key-parser.js";
 
 type NotificationHost = any;
 

@@ -2,15 +2,15 @@ import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { getGraveyardPath, getPlansDir } from "./paths.js";
-import { debug } from "./debug.js";
-import { parseKeys } from "./key-parser.js";
+import { getGraveyardPath, getPlansDir } from "../paths.js";
+import { debug } from "../debug.js";
+import { parseKeys } from "../key-parser.js";
 import {
   renderGraveyardDetails,
   renderGraveyardScreen,
   renderPlanDetails,
   renderPlansScreen,
-} from "./tui/screens/subscreen-renderers.js";
+} from "../tui/screens/subscreen-renderers.js";
 
 type ArchivesHost = any;
 

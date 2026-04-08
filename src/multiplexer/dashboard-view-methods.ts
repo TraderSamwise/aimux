@@ -2,7 +2,7 @@ import {
   closeNotificationPanel as closeNotificationPanelImpl,
   handleNotificationPanelKey as handleNotificationPanelKeyImpl,
   showNotificationPanel as showNotificationPanelImpl,
-} from "./multiplexer-notifications.js";
+} from "./notifications.js";
 import {
   beginWorktreeRemoval as beginWorktreeRemovalImpl,
   finishWorktreeRemoval as finishWorktreeRemovalImpl,
@@ -14,7 +14,7 @@ import {
   renderWorktreeRemoveConfirm as renderWorktreeRemoveConfirmImpl,
   showWorktreeCreatePrompt as showWorktreeCreatePromptImpl,
   showWorktreeList as showWorktreeListImpl,
-} from "./multiplexer-worktrees.js";
+} from "./worktrees.js";
 import {
   createService as createServiceImpl,
   removeOfflineService as removeOfflineServiceImpl,
@@ -22,15 +22,15 @@ import {
   resumeOfflineServiceById as resumeOfflineServiceByIdImpl,
   serviceLabelForCommand as serviceLabelForCommandImpl,
   stopService as stopServiceImpl,
-} from "./multiplexer-services.js";
+} from "./services.js";
 import {
   renderDashboardBusyOverlay,
   renderDashboardErrorOverlay,
   renderLabelInputOverlay,
   renderNotificationPanel,
   renderServiceInputOverlay,
-} from "./tui/screens/overlay-renderers.js";
-import type { Multiplexer } from "./multiplexer.js";
+} from "../tui/screens/overlay-renderers.js";
+import type { Multiplexer } from "./index.js";
 
 export const dashboardViewMethods = {
   serviceLabelForCommand(this: any, commandLine: string): string {

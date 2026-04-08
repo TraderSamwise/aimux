@@ -1,6 +1,6 @@
-import { debug } from "./debug.js";
-import type { DashboardService, DashboardSession } from "./dashboard.js";
-import type { Multiplexer, SessionState } from "./multiplexer.js";
+import { debug } from "../debug.js";
+import type { DashboardService, DashboardSession } from "../dashboard.js";
+import type { Multiplexer, SessionState } from "./index.js";
 import {
   forkAgent as forkAgentImpl,
   migrateAgentSession as migrateAgentSessionImpl,
@@ -8,7 +8,7 @@ import {
   sendAgentToGraveyard as sendAgentToGraveyardImpl,
   spawnAgent as spawnAgentImpl,
   stopAgent as stopAgentImpl,
-} from "./multiplexer-session-actions.js";
+} from "./session-actions.js";
 import {
   buildPlanPreview as buildPlanPreviewImpl,
   handleGraveyardKey as handleGraveyardKeyImpl,
@@ -23,7 +23,7 @@ import {
   resurrectGraveyardEntry as resurrectGraveyardEntryImpl,
   showGraveyard as showGraveyardImpl,
   showPlans as showPlansImpl,
-} from "./multiplexer-archives.js";
+} from "./archives.js";
 import {
   confirmSwitcher as confirmSwitcherImpl,
   dismissHelp as dismissHelpImpl,
@@ -40,7 +40,7 @@ import {
   showHelp as showHelpImpl,
   showMigratePicker as showMigratePickerImpl,
   showSwitcher as showSwitcherImpl,
-} from "./multiplexer-navigation.js";
+} from "./navigation.js";
 import {
   basenameForHost,
   clearDashboardSubscreens as clearDashboardSubscreensImpl,
@@ -60,12 +60,12 @@ import {
   waitForSessionStartForHost,
   wrapKeyValueForHost,
   wrapTextForHost,
-} from "./multiplexer-dashboard-ops.js";
-import type { PendingDashboardActionKind } from "./dashboard-pending-actions.js";
-import { findMainRepo, listWorktrees as listAllWorktrees } from "./worktree.js";
-import { orderDashboardSessionsByVisualWorktree } from "./dashboard-session-registry.js";
-import { loadConfig } from "./config.js";
-import type { SessionRuntime } from "./session-runtime.js";
+} from "./dashboard-ops.js";
+import type { PendingDashboardActionKind } from "../dashboard-pending-actions.js";
+import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
+import { orderDashboardSessionsByVisualWorktree } from "../dashboard-session-registry.js";
+import { loadConfig } from "../config.js";
+import type { SessionRuntime } from "../session-runtime.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";

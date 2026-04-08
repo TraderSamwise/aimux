@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
-import type { DashboardSession } from "./dashboard.js";
-import { parseKeys } from "./key-parser.js";
-import { requestReview } from "./task-dispatcher.js";
+import type { DashboardSession } from "../dashboard.js";
+import { parseKeys } from "../key-parser.js";
+import { requestReview } from "../task-dispatcher.js";
 
 export const dashboardInteractionMethods = {
   handleDashboardKey(this: any, data: Buffer): void {

@@ -1,16 +1,16 @@
-import { loadConfig } from "./config.js";
-import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "./dashboard.js";
-import type { DashboardScreen } from "./dashboard-state.js";
-import { updateNotificationContext } from "./notification-context.js";
-import { requestJson } from "./http-client.js";
-import { markLastUsed } from "./last-used.js";
-import { loadMetadataState, resolveProjectServiceEndpoint } from "./metadata-store.js";
-import { parseKeys } from "./key-parser.js";
-import { assignTask } from "./orchestration-actions.js";
-import { ensureDaemonRunning, ensureProjectService } from "./daemon.js";
-import { loadTeamConfig } from "./team.js";
-import { openManagedServiceWindow, openManagedSessionWindow } from "./tmux-window-open.js";
-import { resolveOrchestrationRecipients } from "./orchestration-routing.js";
+import { loadConfig } from "../config.js";
+import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard.js";
+import type { DashboardScreen } from "../dashboard-state.js";
+import { updateNotificationContext } from "../notification-context.js";
+import { requestJson } from "../http-client.js";
+import { markLastUsed } from "../last-used.js";
+import { loadMetadataState, resolveProjectServiceEndpoint } from "../metadata-store.js";
+import { parseKeys } from "../key-parser.js";
+import { assignTask } from "../orchestration-actions.js";
+import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
+import { loadTeamConfig } from "../team.js";
+import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux-window-open.js";
+import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
 
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = {

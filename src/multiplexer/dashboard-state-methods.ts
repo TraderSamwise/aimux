@@ -1,5 +1,5 @@
-import type { DashboardService, DashboardSession, WorktreeGroup } from "./dashboard.js";
-import { openDashboardTarget } from "./dashboard-targets.js";
+import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard.js";
+import { openDashboardTarget } from "../dashboard-targets.js";
 import {
   applyDashboardModel as applyDashboardModelImpl,
   buildDashboardWorktreeGroups as buildDashboardWorktreeGroupsImpl,
@@ -12,8 +12,8 @@ import {
   refreshDesktopStateSnapshot as refreshDesktopStateSnapshotImpl,
   refreshLocalDashboardModel as refreshLocalDashboardModelImpl,
   startProjectServices as startProjectServicesImpl,
-} from "./multiplexer-dashboard-model.js";
-import type { TmuxTarget } from "./tmux-runtime-manager.js";
+} from "./dashboard-model.js";
+import type { TmuxTarget } from "../tmux-runtime-manager.js";
 
 export const dashboardStateMethods = {
   isTmuxBackend(this: any): boolean {

@@ -20,7 +20,7 @@ import {
   showOrchestrationRoutePicker as showOrchestrationRoutePickerImpl,
   syncTuiNotificationContext as syncTuiNotificationContextImpl,
   updateWorktreeSessions as updateWorktreeSessionsImpl,
-} from "./multiplexer-dashboard-control.js";
+} from "./dashboard-control.js";
 import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
@@ -48,13 +48,13 @@ import {
   showActivityDashboard as showActivityDashboardImpl,
   showThreads as showThreadsImpl,
   showWorkflow as showWorkflowImpl,
-} from "./multiplexer-subscreens.js";
+} from "./subscreens.js";
 import {
   handleToolPickerKey as handleToolPickerKeyImpl,
   renderToolPicker as renderToolPickerImpl,
   runSelectedTool as runSelectedToolImpl,
   showToolPicker as showToolPickerImpl,
-} from "./multiplexer-tool-picker.js";
+} from "./tool-picker.js";
 
 export const dashboardActionMethods = {
   attentionScore(this: any, entry: any): number {

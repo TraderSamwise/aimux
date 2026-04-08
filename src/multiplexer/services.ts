@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-import { findMainRepo } from "./worktree.js";
-import { getStatePath } from "./paths.js";
-import type { ServiceState } from "./multiplexer.js";
-import { wrapCommandWithShellIntegration, wrapInteractiveShellWithIntegration } from "./shell-hooks.js";
+import { findMainRepo } from "../worktree.js";
+import { getStatePath } from "../paths.js";
+import type { ServiceState } from "./index.js";
+import { wrapCommandWithShellIntegration, wrapInteractiveShellWithIntegration } from "../shell-hooks.js";
 
 type ServiceHost = any;
 

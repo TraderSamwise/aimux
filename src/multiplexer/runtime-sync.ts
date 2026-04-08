@@ -1,5 +1,5 @@
-import type { InstanceDirectory } from "./instance-directory.js";
-import type { InstanceSessionRef } from "./instance-registry.js";
+import type { InstanceDirectory } from "../instance-directory.js";
+import type { InstanceSessionRef } from "../instance-registry.js";
 
 export class MultiplexerRuntimeSync {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
