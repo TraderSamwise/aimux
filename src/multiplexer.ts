@@ -192,6 +192,23 @@ import {
   showPlans as showPlansImpl,
 } from "./multiplexer-archives.js";
 import {
+  confirmSwitcher as confirmSwitcherImpl,
+  dismissHelp as dismissHelpImpl,
+  dismissSwitcher as dismissSwitcherImpl,
+  getSwitcherList as getSwitcherListImpl,
+  handleHelpKey as handleHelpKeyImpl,
+  handleMigratePickerKey as handleMigratePickerKeyImpl,
+  handleSwitcherKey as handleSwitcherKeyImpl,
+  redrawCurrentView as redrawCurrentViewImpl,
+  renderHelp as renderHelpImpl,
+  renderMigratePicker as renderMigratePickerImpl,
+  renderSwitcher as renderSwitcherImpl,
+  resetSwitcherTimeout as resetSwitcherTimeoutImpl,
+  showHelp as showHelpImpl,
+  showMigratePicker as showMigratePickerImpl,
+  showSwitcher as showSwitcherImpl,
+} from "./multiplexer-navigation.js";
+import {
   graveyardSessionWithFeedback as runGraveyardSessionWithFeedback,
   resumeOfflineSessionWithFeedback as runResumeOfflineSessionWithFeedback,
   stopSessionToOfflineWithFeedback as runStopSessionToOfflineWithFeedback,
@@ -4588,193 +4605,59 @@ export class Multiplexer {
 
   /** Get sessions in MRU order (most recently used first), only running/alive sessions */
   private getSwitcherList(): ManagedSession[] {
-    const alive = this.getScopedSessionEntries()
-      .map(({ session }) => session)
-      .filter((s) => !s.exited);
-    // Build MRU-ordered list: known MRU order first, then any remaining
-    const ordered: ManagedSession[] = [];
-    for (const id of this.sessionMRU) {
-      const s = alive.find((a) => a.id === id);
-      if (s) ordered.push(s);
-    }
-    // Append any sessions not yet in MRU
-    for (const s of alive) {
-      if (!ordered.includes(s)) ordered.push(s);
-    }
-    return ordered;
+    return getSwitcherListImpl(this);
   }
 
   private showSwitcher(): void {
-    const list = this.getSwitcherList();
-    if (list.length < 2) return;
-
-    this.switcherActive = true;
-    this.switcherIndex = 1; // Start on second item (most recent non-current)
-    this.renderSwitcher();
-    this.resetSwitcherTimeout();
+    showSwitcherImpl(this);
   }
 
   private resetSwitcherTimeout(): void {
-    if (this.switcherTimeout) clearTimeout(this.switcherTimeout);
-    this.switcherTimeout = setTimeout(() => {
-      this.confirmSwitcher();
-    }, 1000);
+    resetSwitcherTimeoutImpl(this);
   }
 
   private confirmSwitcher(): void {
-    if (this.switcherTimeout) {
-      clearTimeout(this.switcherTimeout);
-      this.switcherTimeout = null;
-    }
-    this.switcherActive = false;
-
-    const list = this.getSwitcherList();
-    const target = list[this.switcherIndex];
-    if (target) {
-      const idx = this.sessions.indexOf(target);
-      if (idx >= 0) this.focusSession(idx);
-    }
+    confirmSwitcherImpl(this);
   }
 
   private dismissSwitcher(): void {
-    if (this.switcherTimeout) {
-      clearTimeout(this.switcherTimeout);
-      this.switcherTimeout = null;
-    }
-    this.switcherActive = false;
-    this.renderDashboard();
+    dismissSwitcherImpl(this);
   }
 
   private redrawCurrentView(): void {
-    this.renderDashboard();
+    redrawCurrentViewImpl(this);
   }
 
   private showHelp(): void {
-    this.clearDashboardSubscreens();
-    this.invalidateDashboardFrame();
-    this.setDashboardScreen("help");
-    this.writeStatuslineFile();
-    this.renderHelp();
+    showHelpImpl(this);
   }
 
   private dismissHelp(): void {
-    this.setDashboardScreen("dashboard");
-    this.redrawCurrentView();
+    dismissHelpImpl(this);
   }
 
   private renderHelp(): void {
-    renderHelpOverlay(this);
+    renderHelpImpl(this);
   }
 
   private handleHelpKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-    const event = events[0];
-    const key = event.name || event.char;
-
-    if (key === "q") {
-      this.exitDashboardClientOrProcess();
-      return;
-    }
-    if (key === "escape" || key === "enter" || key === "return" || key === "d") {
-      this.dismissHelp();
-      return;
-    }
-    if (key === "p") {
-      this.dismissHelp();
-      this.showPlans();
-      return;
-    }
-    if (key === "a") {
-      this.dismissHelp();
-      this.showActivityDashboard();
-      return;
-    }
-    if (key === "y") {
-      this.dismissHelp();
-      this.showWorkflow();
-      return;
-    }
-    if (key === "g") {
-      this.dismissHelp();
-      this.showGraveyard();
-      return;
-    }
-    if (key === "?") {
-      this.dismissHelp();
-    }
+    handleHelpKeyImpl(this, data);
   }
 
   private renderSwitcher(): void {
-    renderSwitcherOverlay(this);
+    renderSwitcherImpl(this);
   }
 
   private handleSwitcherKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-
-    const event = events[0];
-    const key = event.name || event.char;
-
-    if (key === "s") {
-      // Cycle to next item
-      const list = this.getSwitcherList();
-      this.switcherIndex = (this.switcherIndex + 1) % list.length;
-      this.renderSwitcher();
-      this.resetSwitcherTimeout();
-      return;
-    }
-
-    if (key === "return" || key === "enter") {
-      this.confirmSwitcher();
-      return;
-    }
-
-    if (key === "escape") {
-      this.dismissSwitcher();
-      return;
-    }
-
-    if (key === "x") {
-      const list = this.getSwitcherList();
-      const target = list[this.switcherIndex];
-      if (!target) return;
-
-      // Stop the highlighted session (moves to offline)
-      this.dismissSwitcher();
-      void this.stopSessionToOfflineWithFeedback(target);
-
-      return;
-    }
-
-    // Any other key dismisses
-    this.dismissSwitcher();
+    handleSwitcherKeyImpl(this, data);
   }
 
   private showMigratePicker(): void {
-    // Collect available worktrees to migrate to
-    try {
-      const worktrees = listAllWorktrees();
-      const mainRepo = findMainRepo();
-      this.migratePickerWorktrees = [
-        { name: "(main)", path: mainRepo },
-        ...worktrees.filter((wt) => wt.path !== mainRepo).map((wt) => ({ name: wt.name, path: wt.path })),
-      ];
-    } catch {
-      this.migratePickerWorktrees = [];
-    }
-
-    if (this.migratePickerWorktrees.length <= 1) {
-      // No worktrees to migrate to
-      return;
-    }
-
-    this.migratePickerActive = true;
-    this.renderMigratePicker();
+    showMigratePickerImpl(this);
   }
 
   private renderMigratePicker(): void {
-    renderMigratePickerOverlay(this);
+    renderMigratePickerImpl(this);
   }
 
   private async runDashboardOperation<T>(
@@ -4990,40 +4873,7 @@ export class Multiplexer {
   }
 
   private handleMigratePickerKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-
-    const event = events[0];
-    const key = event.name || event.char;
-
-    this.migratePickerActive = false;
-
-    if (key === "escape") {
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
-      return;
-    }
-
-    if (key >= "1" && key <= "9") {
-      const idx = parseInt(key) - 1;
-      if (idx < this.migratePickerWorktrees.length) {
-        const target = this.migratePickerWorktrees[idx];
-        const session = this.sessions[this.activeIndex];
-        if (session) {
-          void this.migrateSessionWithFeedback(session, target.path, target.name);
-          return;
-        }
-      }
-    }
-
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    } else if (this.sessions.length > 0) {
-      this.focusSession(this.activeIndex);
-    }
+    handleMigratePickerKeyImpl(this, data);
   }
 
   /** Get the current dashboard sessions (local + remote merged) for lookup */
