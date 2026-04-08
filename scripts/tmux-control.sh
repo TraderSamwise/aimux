@@ -189,6 +189,10 @@ switch_local_dashboard() {
   [ -n "$dashboard_index" ] || return 1
   target="${dashboard_session}:${dashboard_index}"
 
+  if [ "$(tmux display-message -p -t "$target" '#{pane_in_mode}' 2>/dev/null || printf '0')" = "1" ]; then
+    tmux send-keys -t "$target" -X cancel >/dev/null 2>&1 || true
+  fi
+
   dashboard_window_id=$(tmux list-windows -t "$dashboard_session" -F '#{window_index}|#{window_id}|#{window_name}' 2>/dev/null | awk -F '|' -v idx="$dashboard_index" '$1 == idx { print $2; exit }')
   if [ -n "$dashboard_window_id" ]; then
     dashboard_command=$(tmux display-message -p -t "$dashboard_window_id" '#{pane_current_command}' 2>/dev/null || true)

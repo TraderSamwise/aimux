@@ -488,6 +488,13 @@ export class TmuxRuntimeManager {
     this.exec(["send-keys", "-t", target.windowId, "-H", "1b", "5b", "49"]);
   }
 
+  cancelCopyMode(target: TmuxTarget | string): void {
+    const tmuxTarget = typeof target === "string" ? target : target.windowId;
+    const inMode = this.displayMessage("#{pane_in_mode}", tmuxTarget);
+    if (inMode !== "1") return;
+    this.exec(["send-keys", "-t", tmuxTarget, "-X", "cancel"]);
+  }
+
   switchClientToTarget(clientTty: string, target: TmuxTarget): void {
     debug(`tmux switchClientToTarget: client=${clientTty} target=${target.windowId}`, "fork");
     this.exec(["switch-client", "-c", clientTty, "-t", target.windowId]);
@@ -756,6 +763,9 @@ export class TmuxRuntimeManager {
             ...target,
             sessionName,
           };
+    if (isDashboardWindowName(effectiveTarget.windowName)) {
+      this.cancelCopyMode(effectiveTarget);
+    }
     if (insideTmux) {
       const current = this.currentClientSession();
       if (current && current !== sessionName) {
@@ -867,7 +877,23 @@ export class TmuxRuntimeManager {
       "-b",
       `${controlScript} attention --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
-    this.exec(["bind-key", "-T", "prefix", "d", "select-window", "-t", ":0"]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "prefix",
+      "d",
+      "if-shell",
+      "-F",
+      "-t",
+      ":0",
+      "#{pane_in_mode}",
+      "send-keys -X -t :0 cancel",
+      "",
+      "\\;",
+      "select-window",
+      "-t",
+      ":0",
+    ]);
     this.exec(["bind-key", "-T", "prefix", "K", "clear-history", "\\;", "send-keys", "C-l"]);
     this.exec([
       "bind-key",
