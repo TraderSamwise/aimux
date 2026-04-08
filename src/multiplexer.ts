@@ -273,6 +273,34 @@ import {
   updateWorktreeSessions as updateWorktreeSessionsImpl,
 } from "./multiplexer-dashboard-control.js";
 import {
+  adjustAfterRemove as adjustAfterRemoveImpl,
+  buildLiveServiceStates as buildLiveServiceStatesImpl,
+  evictZombieSession as evictZombieSessionImpl,
+  getInstanceSessionRefs as getInstanceSessionRefsImpl,
+  getRemoteInstancesSafe as getRemoteInstancesSafeImpl,
+  getRemoteOwnedSessionKeys as getRemoteOwnedSessionKeysImpl,
+  graveyardSession as graveyardSessionImpl,
+  handleSessionClaimed as handleSessionClaimedImpl,
+  isSessionRuntimeLive as isSessionRuntimeLiveImpl,
+  listDesktopWorktrees as listDesktopWorktreesImpl,
+  loadOfflineServices as loadOfflineServicesImpl,
+  loadOfflineSessions as loadOfflineSessionsImpl,
+  removeDesktopWorktree as removeDesktopWorktreeImpl,
+  removeSessionsFile as removeSessionsFileImpl,
+  renderCurrentDashboardView as renderCurrentDashboardViewImpl,
+  restoreTmuxSessionsFromState as restoreTmuxSessionsFromStateImpl,
+  resumeOfflineSession as resumeOfflineSessionImpl,
+  startHeartbeat as startHeartbeatImpl,
+  startProjectServiceRefresh as startProjectServiceRefreshImpl,
+  startStatusRefresh as startStatusRefreshImpl,
+  stopHeartbeat as stopHeartbeatImpl,
+  stopProjectServiceRefresh as stopProjectServiceRefreshImpl,
+  stopSessionToOffline as stopSessionToOfflineImpl,
+  stopStatusRefresh as stopStatusRefreshImpl,
+  syncSessionsFromState as syncSessionsFromStateImpl,
+  writeSessionsFile as writeSessionsFileImpl,
+} from "./multiplexer-runtime-state.js";
+import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
   buildWorkflowEntriesForHost as buildWorkflowEntriesForHostImpl,
@@ -3842,32 +3870,7 @@ export class Multiplexer {
   }
 
   private renderCurrentDashboardView(): void {
-    if (this.isDashboardScreen("activity")) {
-      this.renderActivityDashboard();
-      return;
-    }
-    if (this.isDashboardScreen("workflow")) {
-      this.renderWorkflow();
-      return;
-    }
-    if (this.isDashboardScreen("threads")) {
-      this.renderThreads();
-      return;
-    }
-    if (this.isDashboardScreen("plans")) {
-      this.renderPlans();
-      return;
-    }
-    if (this.isDashboardScreen("help")) {
-      this.renderHelp();
-      return;
-    }
-    if (this.isDashboardScreen("graveyard")) {
-      this.renderGraveyard();
-      return;
-    }
-    this.renderDashboard();
-    this.renderActiveDashboardOverlay();
+    renderCurrentDashboardViewImpl(this);
   }
 
   /** Track previous statuses for notification on transition */
@@ -3906,403 +3909,65 @@ export class Multiplexer {
   }
 
   private startStatusRefresh(): void {
-    if (this.statusInterval) return;
-    this.statusInterval = setInterval(() => {
-      let dashboardNeedsRender = false;
-      if (this.mode === "project-service") {
-        this.taskDispatcher?.tick(this.sessions.map((s) => s.id));
-        this.orchestrationDispatcher?.tick(this.sessions.map((s) => s.id));
-        this.writeStatuslineFile();
-      }
-
-      const events = this.taskDispatcher?.drainEvents() ?? [];
-      for (const ev of events) {
-        if (ev.type === "assigned") {
-          this.footerFlash = `⧫ Task assigned → ${ev.sessionId}`;
-        } else if (ev.type === "completed") {
-          this.footerFlash = `✓ Task done by ${ev.sessionId}`;
-        } else if (ev.type === "failed") {
-          this.footerFlash = `✗ Task failed: ${ev.sessionId}`;
-        } else if (ev.type === "review_created") {
-          this.footerFlash = `⧫ Review created: ${ev.description}`;
-        } else if (ev.type === "review_approved") {
-          this.footerFlash = `✓ Review approved: ${ev.description}`;
-        } else if (ev.type === "changes_requested") {
-          this.footerFlash = `↻ Changes requested: ${ev.description}`;
-        }
-        this.footerFlashTicks = 3;
-        dashboardNeedsRender = true;
-      }
-
-      const orchestrationEvents = this.orchestrationDispatcher?.drainEvents() ?? [];
-      for (const event of orchestrationEvents) {
-        if (event.type === "message_delivered") {
-          this.footerFlash = `✉ Message delivered → ${event.sessionId}`;
-          this.footerFlashTicks = 3;
-          dashboardNeedsRender = true;
-        }
-      }
-
-      if (this.dashboardFeedback.tickFlashVisibilityChanged()) {
-        dashboardNeedsRender = true;
-      }
-
-      for (const session of this.sessions) {
-        const prev = this.prevStatuses.get(session.id);
-        const curr = session.status;
-        if (prev && prev !== curr && curr === "idle" && prev === "running") {
-          this.publishAlert({
-            kind: "needs_input",
-            sessionId: session.id,
-            title: `${session.id} needs input`,
-            message: "Agent is waiting for input.",
-            dedupeKey: `idle-needs-input:${session.id}`,
-            cooldownMs: 15_000,
-          });
-        }
-        this.prevStatuses.set(session.id, curr);
-      }
-
-      if (this.mode === "dashboard") {
-        const now = Date.now();
-        if (now >= this.dashboardNextBackgroundRefreshAt) {
-          this.dashboardNextBackgroundRefreshAt = now + 5000;
-          void this.refreshDashboardModelFromService().then((refreshed) => {
-            if (refreshed || dashboardNeedsRender) {
-              this.renderCurrentDashboardView();
-            }
-          });
-        } else if (dashboardNeedsRender) {
-          this.renderCurrentDashboardView();
-        }
-      }
-    }, 1000);
+    startStatusRefreshImpl(this);
   }
 
   private stopStatusRefresh(): void {
-    if (this.statusInterval) {
-      clearInterval(this.statusInterval);
-      this.statusInterval = null;
-    }
+    stopStatusRefreshImpl(this);
   }
 
   /** Load offline sessions from state.json, excluding any that are owned by live instances */
   private syncSessionsFromState(state = Multiplexer.loadState()): void {
-    this.restoreTmuxSessionsFromState(state);
-    this.loadOfflineSessions(state);
-    this.loadOfflineServices(state);
-    this.invalidateDesktopStateSnapshot();
+    syncSessionsFromStateImpl(this, state);
   }
 
   private loadOfflineSessions(state = Multiplexer.loadState()): boolean {
-    if (!state || state.sessions.length === 0) {
-      const changed = this.offlineSessions.length > 0;
-      this.offlineSessions = [];
-      return changed;
-    }
-
-    // Get all session IDs owned by live instances (including ourselves)
-    const ownedIds = new Set<string>();
-    for (const s of this.sessions) ownedIds.add(s.id);
-    for (const inst of this.getRemoteInstancesSafe()) {
-      for (const rs of inst.sessions) ownedIds.add(rs.id);
-    }
-
-    // Also exclude by backendSessionId to catch resumed sessions with new IDs
-    const ownedBackendIds = new Set(
-      this.sessions.map((session) => session.backendSessionId).filter((value): value is string => Boolean(value)),
-    );
-
-    const nextOfflineSessions = state.sessions.filter((s) => {
-      if (ownedIds.has(s.id)) return false;
-      if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
-      if (s.worktreePath && !existsSync(s.worktreePath)) return false;
-      return true;
-    });
-    const previousKey = this.offlineSessions
-      .map((session) => `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}`)
-      .join("|");
-    const nextKey = nextOfflineSessions
-      .map((session) => `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}`)
-      .join("|");
-    this.offlineSessions = nextOfflineSessions;
-
-    if (this.offlineSessions.length > 0) {
-      debug(`loaded ${this.offlineSessions.length} offline session(s) from state.json`, "session");
-    }
-    return previousKey !== nextKey;
+    return loadOfflineSessionsImpl(this, state);
   }
 
   private loadOfflineServices(state = Multiplexer.loadState()): boolean {
-    const savedServices = state?.services ?? [];
-    if (savedServices.length === 0) {
-      const changed = this.offlineServices.length > 0;
-      this.offlineServices = [];
-      return changed;
-    }
-
-    const liveServiceIds = new Set(
-      this.tmuxRuntimeManager
-        .listProjectManagedWindows(process.cwd())
-        .filter(({ target, metadata }) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
-        .map(({ metadata }) => metadata.sessionId),
-    );
-
-    const nextOfflineServices = savedServices.filter((service) => {
-      if (liveServiceIds.has(service.id)) return false;
-      if (service.worktreePath && !existsSync(service.worktreePath)) return false;
-      return true;
-    });
-    const previousKey = this.offlineServices
-      .map(
-        (service) =>
-          `${service.id}:${service.label ?? ""}:${service.worktreePath ?? ""}:${service.launchCommandLine ?? ""}`,
-      )
-      .join("|");
-    const nextKey = nextOfflineServices
-      .map(
-        (service) =>
-          `${service.id}:${service.label ?? ""}:${service.worktreePath ?? ""}:${service.launchCommandLine ?? ""}`,
-      )
-      .join("|");
-    this.offlineServices = nextOfflineServices;
-    return previousKey !== nextKey;
+    return loadOfflineServicesImpl(this, state);
   }
 
   private buildLiveServiceStates(): ServiceState[] {
-    const seen = new Set<string>();
-    const liveServices: ServiceState[] = [];
-    for (const { metadata } of this.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
-      if (metadata.kind !== "service") continue;
-      if (seen.has(metadata.sessionId)) continue;
-      seen.add(metadata.sessionId);
-      const launchCommandLine =
-        metadata.command === "shell" ? "" : metadata.args?.[0] === "-lc" ? (metadata.args[1] ?? "") : "";
-      liveServices.push({
-        id: metadata.sessionId,
-        worktreePath: metadata.worktreePath,
-        label: metadata.label,
-        launchCommandLine,
-      });
-    }
-    return liveServices;
+    return buildLiveServiceStatesImpl(this);
   }
 
   private restoreTmuxSessionsFromState(state = Multiplexer.loadState()): void {
-    const savedById = new Map((state?.sessions ?? []).map((session) => [session.id, session]));
-
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-
-    for (const { target, metadata } of this.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
-      if (isDashboardWindowName(target.windowName)) continue;
-      if (metadata.kind === "service") continue;
-      if (this.sessions.some((session) => session.id === metadata.sessionId)) continue;
-
-      const transport = new TmuxSessionTransport(
-        metadata.sessionId,
-        metadata.command,
-        target,
-        this.tmuxRuntimeManager,
-        cols,
-        rows,
-      );
-      transport.backendSessionId = metadata.backendSessionId;
-      this.sessionTmuxTargets.set(metadata.sessionId, target);
-      this.registerManagedSession(transport, metadata.args, metadata.toolConfigKey, metadata.worktreePath, undefined);
-
-      const saved = savedById.get(metadata.sessionId);
-      const label = metadata.label ?? saved?.label;
-      if (label) {
-        this.sessionLabels.set(metadata.sessionId, label);
-      }
-      if (target.windowName !== metadata.command) {
-        transport.renameWindow(metadata.command);
-      }
-      this.syncTmuxWindowMetadata(metadata.sessionId);
-    }
+    restoreTmuxSessionsFromStateImpl(this, state);
   }
 
   /** Remove an offline session and move it to state-trash.json */
   /** Stop a running session and move it to offline (first [x]) */
   private stopSessionToOffline(session: ManagedSession): void {
-    if (this.stoppingSessionIds.has(session.id)) return;
-    // Save state before killing
-    const offlineEntry: SessionState = {
-      id: session.id,
-      tool: session.command,
-      toolConfigKey: this.sessionToolKeys.get(session.id) ?? session.command,
-      command: session.command,
-      args: this.sessionOriginalArgs.get(session.id) ?? [],
-      backendSessionId: session.backendSessionId as string | undefined,
-      worktreePath: this.sessionWorktreePaths.get(session.id),
-      label: this.getSessionLabel(session.id),
-      headline: this.deriveHeadline(session.id),
-    };
-
-    // Add to offline list so it appears immediately
-    if (!this.offlineSessions.some((entry) => entry.id === session.id)) {
-      this.offlineSessions.push(offlineEntry);
-    }
-    this.stoppingSessionIds.add(session.id);
-
-    // Prevent the onExit handler from exiting aimux if this was the last session
-    this.startedInDashboard = true;
-
-    // Kill the PTY (onExit handler will remove from this.sessions)
-    session.kill();
-
-    debug(`stopped session ${session.id} → offline`, "session");
+    stopSessionToOfflineImpl(this, session);
   }
 
   /** Move an offline session to the graveyard (second [x]) */
   /** After removing a session, adjust cursor to nearest sibling or step back to worktree level */
   private adjustAfterRemove(hasWorktrees: boolean): void {
-    if (hasWorktrees && this.dashboardState.level === "sessions") {
-      this.updateWorktreeSessions();
-      if (this.dashboardState.worktreeEntries.length === 0) {
-        // No more items in this worktree — step back to worktree level
-        this.dashboardState.level = "worktrees";
-      } else if (this.dashboardState.sessionIndex >= this.dashboardState.worktreeEntries.length) {
-        this.dashboardState.sessionIndex = this.dashboardState.worktreeEntries.length - 1;
-      }
-    } else if (!hasWorktrees) {
-      const total = this.getDashboardSessions().length;
-      if (this.activeIndex >= total) {
-        this.activeIndex = Math.max(0, total - 1);
-      }
-    }
+    adjustAfterRemoveImpl(this, hasWorktrees);
   }
 
   private graveyardSession(sessionId: string): void {
-    const session = this.offlineSessions.find((s) => s.id === sessionId);
-    if (!session) return;
-
-    // Remove from offline list
-    this.offlineSessions = this.offlineSessions.filter((s) => s.id !== sessionId);
-
-    // Append to graveyard file
-    const graveyardPath = getGraveyardPath();
-    let graveyard: SessionState[] = [];
-    if (existsSync(graveyardPath)) {
-      try {
-        graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8"));
-      } catch {}
-    }
-    graveyard.push({ ...session, id: session.id });
-    writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
-
-    // Also remove from state.json
-    const statePath = getStatePath();
-    if (existsSync(statePath)) {
-      try {
-        const state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
-        state.sessions = state.sessions.filter((s) => s.id !== sessionId);
-        writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-      } catch {}
-    }
-
-    debug(`graveyarded session ${sessionId}`, "session");
+    graveyardSessionImpl(this, sessionId);
   }
 
   private isSessionRuntimeLive(runtime: ManagedSession): boolean {
-    if (runtime.exited) return false;
-    const mappedTarget = this.sessionTmuxTargets.get(runtime.id);
-    const runtimeTarget = runtime.transport instanceof TmuxSessionTransport ? runtime.transport.tmuxTarget : undefined;
-    const target = mappedTarget ?? runtimeTarget;
-    if (!target) return false;
-    try {
-      return Boolean(this.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId));
-    } catch {
-      return false;
-    }
+    return isSessionRuntimeLiveImpl(this, runtime);
   }
 
   private evictZombieSession(runtime: ManagedSession): void {
-    const idx = this.sessions.indexOf(runtime);
-    if (idx >= 0) {
-      this.sessions.splice(idx, 1);
-    }
-    this.stoppingSessionIds.delete(runtime.id);
-    this.sessionTmuxTargets.delete(runtime.id);
-    this.writeSessionsFile();
-    this.updateContextWatcherSessions();
-    this.saveState();
+    evictZombieSessionImpl(this, runtime);
   }
 
   /** Resume a specific offline session */
   private resumeOfflineSession(session: SessionState): void {
-    const existing = this.sessions.find((runtime) => runtime.id === session.id);
-    if (existing) {
-      if (this.isSessionRuntimeLive(existing)) {
-        this.offlineSessions = this.offlineSessions.filter((s) => s.id !== session.id);
-        this.invalidateDesktopStateSnapshot();
-        this.writeStatuslineFile();
-        return;
-      }
-      this.evictZombieSession(existing);
-    }
-
-    const config = loadConfig();
-    const toolCfg = config.tools[session.toolConfigKey];
-    if (!toolCfg) return;
-
-    const derived = loadMetadataState().sessions[session.id]?.derived;
-    const relaunchFresh = derived?.activity === "error" || derived?.attention === "error";
-    const useBackendResume =
-      !relaunchFresh && this.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, session.backendSessionId);
-
-    let actionArgs: string[];
-    if (useBackendResume) {
-      actionArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", session.backendSessionId!));
-    } else if (relaunchFresh) {
-      actionArgs = [];
-    } else {
-      actionArgs = [...(toolCfg.resumeFallback ?? [])];
-    }
-    const args = [...(toolCfg.args ?? []), ...actionArgs];
-
-    if (relaunchFresh) {
-      updateSessionMetadata(session.id, (current) => {
-        const next = { ...current };
-        delete next.derived;
-        delete next.status;
-        delete next.progress;
-        return next;
-      });
-    }
-
-    const preservedLabel = session.label ?? this.getSessionLabel(session.id);
-
-    this.offlineSessions = this.offlineSessions.filter((s) => s.id !== session.id);
-    this.invalidateDesktopStateSnapshot();
-    this.saveState();
-    this.writeStatuslineFile();
-
-    if (preservedLabel) {
-      this.sessionLabels.set(session.id, preservedLabel);
-    }
-
-    debug(
-      `resuming offline session ${session.id} (${relaunchFresh ? "fresh" : useBackendResume ? `backend=${session.backendSessionId ?? "none"}` : "fallback"})`,
-      "session",
-    );
-    this.createSession(
-      session.command,
-      args,
-      toolCfg.preambleFlag,
-      session.toolConfigKey,
-      undefined,
-      undefined, // don't pass sessionIdFlag — we're resuming with existing backend ID
-      session.worktreePath,
-      useBackendResume ? session.backendSessionId : undefined,
-      session.id,
-      true,
-    );
+    resumeOfflineSessionImpl(this, session);
   }
 
   private startHeartbeat(): void {
-    this.runtimeSync.startHeartbeat();
+    startHeartbeatImpl(this);
   }
 
   /**
@@ -4310,59 +3975,32 @@ export class Multiplexer {
    * Kill the local tmux transport and refresh the dashboard.
    */
   private handleSessionClaimed(sessionId: string): void {
-    const session = this.sessions.find((s) => s.id === sessionId);
-    if (!session) return;
-    debug(`session ${sessionId} was claimed by another instance, killing local PTY`, "instance");
-
-    // Kill the local PTY without going through normal exit flow (no offline/state save)
-    session.kill();
-
-    // Remove from sessions array
-    const idx = this.sessions.indexOf(session);
-    if (idx >= 0) {
-      this.sessions.splice(idx, 1);
-      this.sessionToolKeys.delete(sessionId);
-      this.sessionOriginalArgs.delete(sessionId);
-      this.sessionWorktreePaths.delete(sessionId);
-      this.sessionTmuxTargets.delete(sessionId);
-    }
-
-    // Adjust active index
-    if (this.activeIndex >= this.sessions.length) {
-      this.activeIndex = Math.max(0, this.sessions.length - 1);
-    }
-
-    this.renderDashboard();
+    handleSessionClaimedImpl(this, sessionId);
   }
 
   private stopHeartbeat(): void {
-    this.runtimeSync.stopHeartbeat();
+    stopHeartbeatImpl(this);
   }
 
   private startProjectServiceRefresh(): void {
-    this.runtimeSync.startProjectServiceRefresh();
+    startProjectServiceRefreshImpl(this);
   }
 
   private stopProjectServiceRefresh(): void {
-    this.runtimeSync.stopProjectServiceRefresh();
+    stopProjectServiceRefreshImpl(this);
   }
 
   private getRemoteInstancesSafe() {
-    return this.instanceDirectory.getRemoteInstancesSafe(this.instanceId, process.cwd());
+    return getRemoteInstancesSafeImpl(this);
   }
 
   private getRemoteOwnedSessionKeys(): Set<string> {
-    return this.instanceDirectory.getRemoteOwnedSessionKeys(this.instanceId, process.cwd());
+    return getRemoteOwnedSessionKeysImpl(this);
   }
 
   /** Build InstanceSessionRef[] from current sessions for heartbeat/registry updates. */
   private getInstanceSessionRefs(): InstanceSessionRef[] {
-    return this.sessions.map((s) => ({
-      id: s.id,
-      tool: s.command,
-      backendSessionId: s.backendSessionId,
-      worktreePath: this.sessionWorktreePaths.get(s.id),
-    }));
+    return getInstanceSessionRefsImpl(this);
   }
 
   /** Get the shared state.json path (in main repo for cross-worktree visibility). */
