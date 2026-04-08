@@ -624,6 +624,77 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-live");
   });
 
+  it("keeps next scoped to main checkout items when current window has no explicit worktree path", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@main-agent" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@dash", index: 0, name: "dashboard" },
+          { id: "@main-agent", index: 1, name: "codex" },
+          { id: "@main-shell", index: 2, name: "shell" },
+          { id: "@other-agent", index: 3, name: "claude" },
+        ],
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@main-agent", index: 1, name: "codex" },
+        ],
+      },
+      windowMetadata: {
+        "@main-agent": { sessionId: "codex-main", kind: "agent" },
+        "@main-shell": { sessionId: "service-main", kind: "service" },
+        "@other-agent": {
+          sessionId: "claude-other",
+          kind: "agent",
+          worktreePath: "/repo/project/.claude/worktrees/other",
+        },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(
+      join(envRoot.projectStateDir, "statusline.json"),
+      JSON.stringify({
+        sessions: [
+          { tmuxWindowId: "@main-agent", tmuxWindowIndex: 1, kind: "agent" },
+          { tmuxWindowId: "@main-shell", tmuxWindowIndex: 2, kind: "service" },
+          {
+            tmuxWindowId: "@other-agent",
+            tmuxWindowIndex: 3,
+            kind: "agent",
+            worktreePath: "/repo/project/.claude/worktrees/other",
+          },
+        ],
+      }),
+    );
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "next",
+      "--project-root",
+      "/repo/project",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-live",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "codex",
+      "--current-window-id",
+      "@main-agent",
+      "--current-path",
+      "/repo/project",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("link-window -d -s @main-shell -t aimux-proj-client-live");
+    expect(log).not.toContain("link-window -d -s @other-agent -t aimux-proj-client-live");
+  });
+
   it("shows the switch menu locally when the endpoint is stale", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],

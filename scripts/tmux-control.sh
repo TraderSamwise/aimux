@@ -336,9 +336,9 @@ show_local_switcher() {
 resolve_local_target_from_statusline() {
   [ -f "$statusline_json" ] || return 1
   resolved_target=$(
-    python3 - "$statusline_json" "$current_path" "$current_window_id" "$window_id" "$action" <<'PY'
+    python3 - "$statusline_json" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" <<'PY'
 import json, sys
-path, current_path, current_window_id, explicit_window_id, action = sys.argv[1:]
+path, project_root, current_path, current_window_id, explicit_window_id, action = sys.argv[1:]
 try:
     data = json.load(open(path))
 except Exception:
@@ -352,12 +352,12 @@ if not sessions:
 current_worktree = None
 for session in sessions:
     if session.get("tmuxWindowId") == current_window_id:
-        current_worktree = session.get("worktreePath")
+        current_worktree = session.get("worktreePath") or project_root
         break
 matched = []
 best_len = -1
 for session in sessions:
-    worktree = session.get("worktreePath")
+    worktree = session.get("worktreePath") or project_root
     if not worktree:
         continue
     if current_worktree:
@@ -426,9 +426,9 @@ resolve_local_target_from_tmux_metadata() {
   resolve_live_client || true
   host_session=$(resolve_host_session_name) || return 1
   resolved_target=$(
-    python3 - "$host_session" "$current_path" "$current_window_id" "$window_id" "$action" <<'PY'
+    python3 - "$host_session" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" <<'PY'
 import json, subprocess, sys
-host_session, current_path, current_window_id, explicit_window_id, action = sys.argv[1:]
+host_session, project_root, current_path, current_window_id, explicit_window_id, action = sys.argv[1:]
 
 def run(*args):
     return subprocess.check_output(["tmux", *args], text=True)
@@ -453,7 +453,7 @@ for line in windows:
         meta = json.loads(raw)
     except Exception:
         continue
-    worktree = meta.get("worktreePath")
+    worktree = meta.get("worktreePath") or project_root
     if not worktree or not current_path.startswith(worktree):
         continue
     kind = meta.get("kind") or "agent"
