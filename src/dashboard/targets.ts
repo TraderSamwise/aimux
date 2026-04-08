@@ -1,4 +1,4 @@
-import type { TmuxCommandSpec, TmuxRuntimeManager, TmuxTarget, TmuxSessionRef } from "../tmux/runtime-manager.js";
+import type { TmuxRuntimeManager, TmuxTarget, TmuxSessionRef } from "../tmux/runtime-manager.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { getDashboardCommandSpec } from "./command-spec.js";
 
@@ -6,8 +6,6 @@ export interface DashboardTargetRef {
   dashboardSession: TmuxSessionRef;
   dashboardTarget: TmuxTarget;
 }
-
-export { getDashboardCommandSpec } from "./command-spec.js";
 
 function isUsableDashboardTarget(
   tmux: TmuxRuntimeManager,

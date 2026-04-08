@@ -77,9 +77,9 @@ import { notifyAlert } from "./notify.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
+import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import {
   findLiveDashboardTarget,
-  getDashboardCommandSpec,
   openDashboardTarget,
   pruneDashboardArtifacts,
   resolveDashboardTarget,
