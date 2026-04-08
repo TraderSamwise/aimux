@@ -108,6 +108,19 @@ export const dashboardInteractionMethods = {
         return;
       case "x": {
         if (hasWorktrees && this.dashboardState.level === "worktrees" && this.dashboardState.focusedWorktreePath) {
+          const focusedGroup = this.dashboardWorktreeGroupsCache.find(
+            (group: any) => group.path === this.dashboardState.focusedWorktreePath,
+          );
+          if (
+            focusedGroup?.removing ||
+            focusedGroup?.pending ||
+            this.pendingWorktreeRemovals?.has?.(focusedGroup.path)
+          ) {
+            this.footerFlash = `Already removing ${focusedGroup.name ?? focusedGroup.path.split("/").pop() ?? "worktree"}`;
+            this.footerFlashTicks = 2;
+            this.renderDashboard();
+            return;
+          }
           const wtName =
             this.dashboardState.focusedWorktreePath.split("/").pop() ?? this.dashboardState.focusedWorktreePath;
           this.worktreeRemoveConfirm = { path: this.dashboardState.focusedWorktreePath, name: wtName };

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "./debug.js";
+import { DashboardPendingActions } from "./dashboard-pending-actions.js";
 import { type DashboardScreen } from "./dashboard-state.js";
 import { loadDaemonInfo } from "./daemon.js";
 import { type DashboardService, type DashboardSession } from "./dashboard.js";
@@ -220,71 +221,162 @@ export const persistenceMethods = {
         ({ pendingAction: _pendingAction, optimistic: _optimistic, ...service }: any) => service,
       ),
     );
+    this.dashboardWorktreeGroupsCache = this.dashboardPendingActions.applyToWorktrees(
+      this.dashboardWorktreeGroupsCache.map(
+        ({
+          pendingAction: _pendingAction,
+          optimistic: _optimistic,
+          pending: _pending,
+          removing: _removing,
+          ...wt
+        }: any) => wt,
+      ),
+    );
   },
 
   listDesktopWorktrees(this: any): Array<{ name: string; path: string; branch: string; isBare: boolean }> {
-    return listAllWorktrees().filter((wt) => !wt.isBare);
+    const pendingRemovals = this.pendingWorktreeRemovals as
+      | Map<string, Promise<{ path: string; status: "removing" | "removed" }>>
+      | undefined;
+    return listAllWorktrees()
+      .filter((wt) => !wt.isBare)
+      .map((wt) => ({
+        ...wt,
+        pending: pendingRemovals?.has(wt.path) ?? false,
+        removing: pendingRemovals?.has(wt.path) ?? false,
+      }));
   },
 
-  async removeDesktopWorktree(this: any, path: string): Promise<{ path: string }> {
-    this.syncSessionsFromState();
-
-    const mainRepo = findMainRepo();
-    if (path === mainRepo) {
-      throw new Error("Cannot remove the main checkout");
+  async removeDesktopWorktree(this: any, path: string): Promise<{ path: string; status: "removing" | "removed" }> {
+    const pendingRemovals = this.pendingWorktreeRemovals as Map<
+      string,
+      Promise<{ path: string; status: "removing" | "removed" }>
+    >;
+    const existingRemoval = pendingRemovals.get(path);
+    if (existingRemoval) {
+      return existingRemoval;
     }
 
-    const matching = this.listDesktopWorktrees().find((worktree: any) => worktree.path === path);
-    if (!matching) {
-      throw new Error(`Worktree "${path}" not found`);
-    }
-
-    const attachedSession = this.getDashboardSessions().find((session: any) => session.worktreePath === path);
-    if (attachedSession) {
-      throw new Error(
-        `Cannot remove "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
-      );
-    }
-    const attachedService = this.getDashboardServices().find((service: any) => service.worktreePath === path);
-    if (attachedService) {
-      throw new Error(
-        `Cannot remove "${matching.name}" while service "${attachedService.label || attachedService.id}" is attached`,
-      );
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      let stderr = "";
-      let child;
-      try {
-        child = spawn("git", ["worktree", "remove", path, "--force"], {
-          cwd: mainRepo,
-          stdio: ["ignore", "ignore", "pipe"],
-        });
-      } catch (error) {
-        reject(error);
-        return;
-      }
-
-      child.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-
-      child.on("error", reject);
-      child.on("close", (code: number | null) => {
-        if (code === 0) {
-          resolve();
-          return;
+    let resolveRemoval!: (value: { path: string; status: "removing" | "removed" }) => void;
+    let rejectRemoval!: (reason?: unknown) => void;
+    const removalPromise = new Promise<{ path: string; status: "removing" | "removed" }>((resolve, reject) => {
+      resolveRemoval = resolve;
+      rejectRemoval = reject;
+    });
+    pendingRemovals.set(path, removalPromise);
+    this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(path), "removing", {
+      timeoutMs: 180_000,
+      onTimeout: () => {
+        this.footerFlash = `Timed out removing ${path.split("/").pop() ?? path}`;
+        this.footerFlashTicks = 5;
+        this.invalidateDesktopStateSnapshot();
+        this.refreshLocalDashboardModel();
+        if (this.mode === "dashboard") {
+          this.renderDashboard();
         }
-        const detail = stderr
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .at(-1);
-        reject(new Error(detail || `git worktree remove exited with code ${code ?? 1}`));
-      });
+      },
+    });
+    this.invalidateDesktopStateSnapshot();
+    this.refreshLocalDashboardModel();
+    if (this.mode === "dashboard") {
+      this.renderDashboard();
+    }
+
+    void (async () => {
+      try {
+        this.syncSessionsFromState();
+
+        const mainRepo = findMainRepo();
+        if (path === mainRepo) {
+          throw new Error("Cannot remove the main checkout");
+        }
+
+        const matching = this.listDesktopWorktrees().find((worktree: any) => worktree.path === path);
+        if (!matching) {
+          if (!existsSync(path)) {
+            this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
+            this.offlineServices = this.offlineServices.filter((service: any) => service.worktreePath !== path);
+            this.saveState();
+            resolveRemoval({ path, status: "removed" });
+            return;
+          }
+          throw new Error(`Worktree "${path}" not found`);
+        }
+
+        const attachedSession = this.sessions.find(
+          (session: any) => session.worktreePath === path && this.isSessionRuntimeLive(session),
+        );
+        if (attachedSession) {
+          throw new Error(
+            `Cannot remove "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
+          );
+        }
+        const attachedService = this.buildLiveServiceStates().find((service: any) => service.worktreePath === path);
+        if (attachedService) {
+          throw new Error(
+            `Cannot remove "${matching.name}" while service "${attachedService.label || attachedService.id}" is attached`,
+          );
+        }
+
+        await new Promise<void>((resolve, reject) => {
+          let stderr = "";
+          let child;
+          try {
+            child = spawn("git", ["worktree", "remove", path, "--force"], {
+              cwd: mainRepo,
+              stdio: ["ignore", "ignore", "pipe"],
+            });
+          } catch (error) {
+            reject(error);
+            return;
+          }
+
+          child.stderr.on("data", (chunk: Buffer) => {
+            const text = chunk.toString();
+            stderr += text;
+            if (this.worktreeRemovalJob?.path === path) {
+              this.worktreeRemovalJob.stderr = stderr;
+              if (this.mode === "dashboard") {
+                this.renderDashboard();
+              }
+            }
+          });
+
+          child.on("error", reject);
+          child.on("close", (code: number | null) => {
+            if (code === 0) {
+              resolve();
+              return;
+            }
+            const detail = stderr
+              .split("\n")
+              .map((line) => line.trim())
+              .filter(Boolean)
+              .at(-1);
+            reject(new Error(detail || `git worktree remove exited with code ${code ?? 1}`));
+          });
+        });
+
+        this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
+        this.offlineServices = this.offlineServices.filter((service: any) => service.worktreePath !== path);
+        this.saveState();
+        resolveRemoval({ path, status: "removed" });
+      } catch (error) {
+        rejectRemoval(error);
+      }
+    })();
+
+    removalPromise.finally(() => {
+      this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(path), null);
+      pendingRemovals.delete(path);
+      this.invalidateDesktopStateSnapshot();
+      this.refreshLocalDashboardModel();
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      }
     });
 
-    return { path };
+    return removalPromise;
   },
 
   listGraveyardEntries(this: any): any[] {

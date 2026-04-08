@@ -112,6 +112,14 @@ export const dashboardViewMethods = {
       selectedService,
       "tmux",
       mainCheckoutInfo,
+      this.worktreeRemovalJob
+        ? {
+            path: this.worktreeRemovalJob.path,
+            name: this.worktreeRemovalJob.name,
+            startedAt: this.worktreeRemovalJob.startedAt,
+            stderr: this.worktreeRemovalJob.stderr,
+          }
+        : undefined,
     );
     this.syncTuiNotificationContext(Boolean(this.notificationPanelState));
     this.writeFrame(this.dashboard.render(cols, rows));

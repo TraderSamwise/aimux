@@ -92,8 +92,19 @@ export interface WorktreeGroup {
   branch: string;
   path: string;
   status: "active" | "offline";
+  pending?: boolean;
+  removing?: boolean;
+  pendingAction?: "removing";
+  optimistic?: boolean;
   sessions: DashboardSession[];
   services: DashboardService[];
+}
+
+export interface DashboardWorktreeRemovalInfo {
+  path: string;
+  name: string;
+  startedAt: number;
+  stderr?: string;
 }
 
 export interface MainCheckoutInfo {
@@ -142,6 +153,7 @@ export class Dashboard {
   private runtimeLabel: string | undefined = undefined;
   private mainCheckout: MainCheckoutInfo = { name: "Main Checkout", branch: "" };
   private detailsPaneVisible = true;
+  private worktreeRemoval: DashboardWorktreeRemovalInfo | undefined = undefined;
 
   update(
     sessions: DashboardSession[],
@@ -153,6 +165,7 @@ export class Dashboard {
     selectedServiceId?: string,
     runtimeLabel?: string,
     mainCheckout?: MainCheckoutInfo,
+    worktreeRemoval?: DashboardWorktreeRemovalInfo,
   ): void {
     this.sessions = sessions;
     this.services = services;
@@ -165,6 +178,7 @@ export class Dashboard {
     this.selectedServiceId = selectedServiceId;
     this.runtimeLabel = runtimeLabel;
     this.mainCheckout = mainCheckout ?? { name: "Main Checkout", branch: "" };
+    this.worktreeRemoval = worktreeRemoval;
   }
 
   /** Scroll the viewport (called from multiplexer key handler) */
@@ -185,6 +199,7 @@ export class Dashboard {
         selectedServiceId: this.selectedServiceId,
         runtimeLabel: this.runtimeLabel,
         mainCheckout: this.mainCheckout,
+        worktreeRemoval: this.worktreeRemoval,
         detailsPaneVisible: this.detailsPaneVisible,
         scrollOffset: this.scrollOffset,
         derivedStatusLabel,

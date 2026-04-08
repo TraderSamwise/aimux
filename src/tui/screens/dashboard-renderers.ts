@@ -1,4 +1,10 @@
-import type { DashboardService, DashboardSession, MainCheckoutInfo, WorktreeGroup } from "../../dashboard.js";
+import type {
+  DashboardService,
+  DashboardSession,
+  DashboardWorktreeRemovalInfo,
+  MainCheckoutInfo,
+  WorktreeGroup,
+} from "../../dashboard.js";
 import { derivedStatusLabel } from "../../dashboard.js";
 import { formatRelativeRecency } from "../../recency.js";
 import { sessionSemanticCompactHint } from "../../session-semantics.js";
@@ -17,6 +23,7 @@ export interface DashboardRenderState {
   selectedServiceId?: string;
   runtimeLabel?: string;
   mainCheckout: MainCheckoutInfo;
+  worktreeRemoval?: DashboardWorktreeRemovalInfo;
   detailsPaneVisible: boolean;
   scrollOffset: number;
   derivedStatusLabel: typeof derivedStatusLabel;
@@ -181,14 +188,17 @@ export function renderDashboardFrame(
       const gPrefix = gFocused && state.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
       const gHighlight = gFocused ? "\x1b[1;33m" : "";
       const gReset = gFocused ? "\x1b[0m" : "";
+      const gPending = group.removing || group.pending ? " \x1b[2;33m(removing...)\x1b[0m" : "";
 
       if (sessions.length > 0 || services.length > 0) {
-        lines.push(`${gPrefix} ${gHighlight}\x1b[1m${group.name}\x1b[0m${gReset} \x1b[2m${group.branch}\x1b[0m`);
+        lines.push(
+          `${gPrefix} ${gHighlight}\x1b[1m${group.name}\x1b[0m${gReset} \x1b[2m${group.branch}\x1b[0m${gPending}`,
+        );
         for (const session of sessions) lines.push(renderSession(session, "    "));
         for (const service of services) lines.push(renderService(service, "    "));
         lines.push("");
       } else {
-        lines.push(`${gPrefix} \x1b[2m${gHighlight}${group.name}\x1b[0m \x1b[2m${group.branch}\x1b[0m`);
+        lines.push(`${gPrefix} \x1b[2m${gHighlight}${group.name}\x1b[0m \x1b[2m${group.branch}\x1b[0m${gPending}`);
       }
       renderedPaths.add(group.path);
     }
@@ -292,6 +302,21 @@ export function renderDashboardFrame(
       lines.push(...wrapKeyValue("Path", worktree.path, width));
       lines.push(...wrapKeyValue("Agents", String(focusedSessions.length), width));
       lines.push(...wrapKeyValue("Services", String(focusedServices.length), width));
+      const activeWorktreeRemoval =
+        state.worktreeRemoval?.path === focusedWorktreePath ? state.worktreeRemoval : undefined;
+      if (activeWorktreeRemoval) {
+        const elapsedSeconds = Math.max(0, Math.floor((Date.now() - activeWorktreeRemoval.startedAt) / 1000));
+        lines.push(...wrapKeyValue("Status", "removing", width));
+        lines.push(...wrapKeyValue("Elapsed", `${elapsedSeconds}s`, width));
+        const detailLines = (activeWorktreeRemoval.stderr ?? "")
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .slice(-3);
+        if (detailLines.length > 0) {
+          lines.push(...wrapKeyValue("Progress", detailLines.join(" | "), width));
+        }
+      }
       if (focusedSessions.length > 0) {
         lines.push(
           ...wrapKeyValue(
