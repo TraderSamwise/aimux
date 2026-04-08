@@ -235,6 +235,48 @@ import {
   waitForSessionExit,
   waitForSessionStart,
 } from "./dashboard-session-actions.js";
+import {
+  applyDashboardModel as applyDashboardModelImpl,
+  buildDashboardWorktreeGroups as buildDashboardWorktreeGroupsImpl,
+  buildDesktopStateSnapshot as buildDesktopStateSnapshotImpl,
+  computeDashboardServices as computeDashboardServicesImpl,
+  computeDashboardSessions as computeDashboardSessionsImpl,
+  invalidateDesktopStateSnapshot as invalidateDesktopStateSnapshotImpl,
+  readTmuxProcessInfo as readTmuxProcessInfoImpl,
+  refreshDashboardModelFromService as refreshDashboardModelFromServiceImpl,
+  refreshDesktopStateSnapshot as refreshDesktopStateSnapshotImpl,
+  refreshLocalDashboardModel as refreshLocalDashboardModelImpl,
+  startProjectServices as startProjectServicesImpl,
+  stopProjectServices as stopProjectServicesImpl,
+} from "./multiplexer-dashboard-model.js";
+import {
+  activateNextAttentionEntry as activateNextAttentionEntryImpl,
+  attentionScore as attentionScoreImpl,
+  buildWorkflowEntriesForHost as buildWorkflowEntriesForHostImpl,
+  cycleWorkflowFilter as cycleWorkflowFilterImpl,
+  describeHandoffState as describeHandoffStateImpl,
+  describeWorkflowFilter as describeWorkflowFilterImpl,
+  getActivityEntries as getActivityEntriesImpl,
+  getPreferredThreadIndexForParticipant as getPreferredThreadIndexForParticipantImpl,
+  handleActivityKey as handleActivityKeyImpl,
+  handleThreadReplyKey as handleThreadReplyKeyImpl,
+  handleThreadsKey as handleThreadsKeyImpl,
+  handleWorkflowKey as handleWorkflowKeyImpl,
+  openRelevantThreadForSession as openRelevantThreadForSessionImpl,
+  renderActivityDashboard as renderActivityDashboardImpl,
+  renderThreadDetailsForHost as renderThreadDetailsForHostImpl,
+  renderThreadReply as renderThreadReplyImpl,
+  renderThreads as renderThreadsImpl,
+  renderWorkflow as renderWorkflowImpl,
+  renderWorkflowDetailsForHost as renderWorkflowDetailsForHostImpl,
+  runReviewLifecycleAction as runReviewLifecycleActionImpl,
+  runTaskLifecycleAction as runTaskLifecycleActionImpl,
+  runThreadHandoffAction as runThreadHandoffActionImpl,
+  runThreadStatusAction as runThreadStatusActionImpl,
+  showActivityDashboard as showActivityDashboardImpl,
+  showThreads as showThreadsImpl,
+  showWorkflow as showWorkflowImpl,
+} from "./multiplexer-subscreens.js";
 
 export type MuxMode = "dashboard" | "project-service";
 
@@ -607,20 +649,7 @@ export class Multiplexer {
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>,
     mainRepoPath?: string,
   ): WorktreeGroup[] {
-    return worktrees
-      .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
-      .map((wt) => {
-        const wtSessions = dashSessions.filter((s) => s.worktreePath === wt.path);
-        const wtServices = dashServices.filter((s) => s.worktreePath === wt.path);
-        return {
-          name: wt.name,
-          branch: wt.branch,
-          path: wt.path,
-          status: (wtSessions.length > 0 || wtServices.length > 0 ? "active" : "offline") as "active" | "offline",
-          sessions: wtSessions,
-          services: wtServices,
-        };
-      });
+    return buildDashboardWorktreeGroupsImpl(this, dashSessions, dashServices, worktrees, mainRepoPath);
   }
 
   private applyDashboardModel(
@@ -629,232 +658,23 @@ export class Multiplexer {
     worktreeGroups: WorktreeGroup[],
     mainCheckoutInfo: { name: string; branch: string },
   ): boolean {
-    const snapshotKey = JSON.stringify({
-      sessions: dashSessions,
-      services: dashServices,
-      worktreeGroups,
-      mainCheckoutInfo,
-    });
-    if (snapshotKey === this.dashboardModelSnapshotKey) {
-      this.dashboardModelRefreshedAt = Date.now();
-      return false;
-    }
-    this.dashboardModelSnapshotKey = snapshotKey;
-    this.dashboardSessionsCache = this.dashboardPendingActions.applyToSessions(dashSessions);
-    this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(dashServices);
-    this.dashboardWorktreeGroupsCache = worktreeGroups;
-    this.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
-    this.dashboardModelRefreshedAt = Date.now();
-    this.dashboardUiStateStore.markSelectionDirty();
-    return true;
+    return applyDashboardModelImpl(this, dashSessions, dashServices, worktreeGroups, mainCheckoutInfo);
   }
 
   private invalidateDesktopStateSnapshot(): void {
-    this.desktopStateSnapshot = null;
+    invalidateDesktopStateSnapshotImpl(this);
   }
 
   private refreshDesktopStateSnapshot(): void {
-    this.desktopStateSnapshot = this.buildDesktopStateSnapshot();
+    refreshDesktopStateSnapshotImpl(this);
   }
 
   private computeDashboardSessions(): DashboardSession[] {
-    const lastUsedState = loadLastUsedState(process.cwd());
-    const metadata = loadMetadataState().sessions;
-    const threadSummaries = listThreadSummaries();
-    const threadStats = new Map<
-      string,
-      {
-        unread: number;
-        waiting: number;
-        waitingOnMe: number;
-        waitingOnThem: number;
-        pending: number;
-        latestId?: string;
-        latestTitle?: string;
-      }
-    >();
-    const workflowStats = new Map<
-      string,
-      {
-        onMe: number;
-        blocked: number;
-        families: Set<string>;
-        topUrgency: number;
-        topLabel?: string;
-        nextAction?: string;
-      }
-    >();
-    for (const summary of threadSummaries) {
-      const messages = readMessages(summary.thread.id);
-      const pendingByParticipant = new Map<string, number>();
-      for (const message of messages) {
-        for (const recipient of message.to ?? []) {
-          if (!(message.deliveredTo ?? []).includes(recipient)) {
-            pendingByParticipant.set(recipient, (pendingByParticipant.get(recipient) ?? 0) + 1);
-          }
-        }
-      }
-      for (const participant of summary.thread.participants) {
-        const current = threadStats.get(participant) ?? {
-          unread: 0,
-          waiting: 0,
-          waitingOnMe: 0,
-          waitingOnThem: 0,
-          pending: 0,
-        };
-        if ((summary.thread.unreadBy ?? []).includes(participant)) current.unread += 1;
-        const waitsOnParticipant = (summary.thread.waitingOn ?? []).includes(participant);
-        const ownedByParticipant = summary.thread.owner === participant;
-        if (waitsOnParticipant || ownedByParticipant) current.waiting += 1;
-        if (waitsOnParticipant) current.waitingOnMe += 1;
-        if (ownedByParticipant && (summary.thread.waitingOn?.length ?? 0) > 0) current.waitingOnThem += 1;
-        current.pending += pendingByParticipant.get(participant) ?? 0;
-        if (!current.latestId) {
-          current.latestId = summary.thread.id;
-          current.latestTitle = summary.thread.title;
-        }
-        threadStats.set(participant, current);
-      }
-    }
-    const workflowEntries = buildWorkflowEntries("user");
-    for (const entry of workflowEntries) {
-      const familyKey = entry.familyRootTaskId ?? entry.thread.id;
-      for (const participant of entry.thread.participants) {
-        const current = workflowStats.get(participant) ?? {
-          onMe: 0,
-          blocked: 0,
-          families: new Set<string>(),
-          topUrgency: -1,
-        };
-        if ((entry.thread.waitingOn ?? []).includes(participant)) current.onMe += 1;
-        if (entry.thread.status === "blocked" || entry.task?.status === "blocked") current.blocked += 1;
-        if (entry.familyTaskIds.length > 1) current.families.add(familyKey);
-        if (entry.urgency > current.topUrgency) {
-          current.topUrgency = entry.urgency;
-          current.topLabel = `${entry.displayTitle} (${entry.stateLabel})`;
-          current.nextAction = describeWorkflowNextAction(entry, participant);
-        }
-        workflowStats.set(participant, current);
-      }
-    }
-    let mainRepoPath: string | undefined;
-    try {
-      mainRepoPath = findMainRepo();
-    } catch {}
-    const sessions = buildDashboardSessions({
-      sessions: this.sessions.map((session) => ({
-        id: session.id,
-        command: session.command,
-        backendSessionId: session.backendSessionId,
-        status: session.status,
-        worktreePath: this.sessionWorktreePaths.get(session.id),
-        tmuxWindowId: this.sessionTmuxTargets.get(session.id)?.windowId,
-      })),
-      activeIndex: this.activeIndex,
-      offlineSessions: this.offlineSessions,
-      remoteInstances: [],
-      mainRepoPath,
-      getSessionLabel: (sessionId) => this.getSessionLabel(sessionId),
-      getSessionHeadline: (sessionId) => this.deriveHeadline(sessionId),
-      getSessionTaskDescription: (sessionId) => this.taskDispatcher?.getSessionTask(sessionId),
-      getSessionRole: (sessionId) => this.sessionRoles.get(sessionId),
-      getSessionContext: (sessionId) => metadata[sessionId]?.context,
-      getSessionDerived: (sessionId) => metadata[sessionId]?.derived,
-    });
-    return sessions.map((session) => {
-      const stats = threadStats.get(session.id);
-      const workflow = workflowStats.get(session.id);
-      const target = this.sessionTmuxTargets.get(session.id);
-      const runtimeInfo = target ? this.readTmuxProcessInfo(target) : {};
-      return {
-        ...session,
-        tmuxWindowIndex: target?.windowIndex,
-        lastUsedAt: lastUsedState.items[session.id]?.lastUsedAt,
-        foregroundCommand: runtimeInfo.command,
-        pid: runtimeInfo.pid,
-        previewLine: runtimeInfo.previewLine,
-        threadUnreadCount: stats?.unread ?? 0,
-        threadWaitingCount: stats?.waiting ?? 0,
-        threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
-        threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
-        threadPendingCount: stats?.pending ?? 0,
-        threadId: session.threadId ?? stats?.latestId,
-        threadName: session.threadName ?? stats?.latestTitle,
-        workflowOnMeCount: workflow?.onMe ?? 0,
-        workflowBlockedCount: workflow?.blocked ?? 0,
-        workflowFamilyCount: workflow?.families.size ?? 0,
-        workflowTopLabel: workflow?.topLabel,
-        workflowNextAction: workflow?.nextAction,
-        semantic: deriveSessionSemantics({
-          status: session.status,
-          activity: session.activity,
-          attention: session.attention,
-          unseenCount: session.unseenCount,
-          threadUnreadCount: stats?.unread ?? 0,
-          threadPendingCount: stats?.pending ?? 0,
-          threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,
-          threadWaitingOnThemCount: stats?.waitingOnThem ?? 0,
-          workflowOnMeCount: workflow?.onMe ?? 0,
-          workflowBlockedCount: workflow?.blocked ?? 0,
-          workflowFamilyCount: workflow?.families.size ?? 0,
-          hasActiveTask: Boolean(session.taskDescription),
-        }),
-      };
-    });
+    return computeDashboardSessionsImpl(this);
   }
 
   private computeDashboardServices(worktrees = this.listDesktopWorktrees()): DashboardService[] {
-    const lastUsedState = loadLastUsedState(process.cwd());
-    const worktreeByPath = new Map(worktrees.map((wt) => [wt.path, wt] as const));
-    const liveServices = this.tmuxRuntimeManager
-      .listProjectManagedWindows(process.cwd())
-      .filter(({ target, metadata }) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
-      .map(({ target, metadata }) => {
-        const worktree = metadata.worktreePath ? worktreeByPath.get(metadata.worktreePath) : undefined;
-        const info = this.readTmuxProcessInfo(target);
-        return {
-          id: metadata.sessionId,
-          command: metadata.command,
-          args: metadata.args ?? [],
-          tmuxWindowId: target.windowId,
-          tmuxWindowIndex: target.windowIndex,
-          lastUsedAt: lastUsedState.items[metadata.sessionId]?.lastUsedAt,
-          worktreePath: metadata.worktreePath,
-          worktreeName: worktree?.name,
-          worktreeBranch: worktree?.branch,
-          status: this.tmuxRuntimeManager.isWindowAlive(target) ? ("running" as const) : ("exited" as const),
-          active: false,
-          label: metadata.label,
-          cwd: this.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath,
-          foregroundCommand: info.command,
-          pid: info.pid,
-          previewLine: info.previewLine,
-        };
-      });
-    const liveIds = new Set(liveServices.map((service) => service.id));
-    const offlineServices = this.offlineServices
-      .filter((service) => !liveIds.has(service.id))
-      .map((service) => {
-        const worktree = service.worktreePath ? worktreeByPath.get(service.worktreePath) : undefined;
-        const label = service.label ?? this.serviceLabelForCommand(service.launchCommandLine ?? "");
-        const previewLine = service.launchCommandLine?.trim() || "Interactive shell";
-        return {
-          id: service.id,
-          command: service.launchCommandLine?.trim() ?? "",
-          args: [],
-          lastUsedAt: lastUsedState.items[service.id]?.lastUsedAt,
-          worktreePath: service.worktreePath,
-          worktreeName: worktree?.name,
-          worktreeBranch: worktree?.branch,
-          status: "offline" as const,
-          active: false,
-          label,
-          cwd: service.worktreePath,
-          foregroundCommand: label,
-          previewLine,
-        };
-      });
-    return [...liveServices, ...offlineServices];
+    return computeDashboardServicesImpl(this, worktrees);
   }
 
   private readTmuxProcessInfo(target: TmuxTarget): {
@@ -862,22 +682,7 @@ export class Multiplexer {
     pid?: number;
     previewLine?: string;
   } {
-    const raw = this.tmuxRuntimeManager.displayMessage("#{pane_current_command}\t#{pane_pid}", target.windowId) ?? "";
-    const [command, pidRaw] = raw.split("\t");
-    let previewLine: string | undefined;
-    try {
-      previewLine = this.tmuxRuntimeManager
-        .captureTarget(target, { startLine: -8 })
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .at(-1);
-    } catch {}
-    return {
-      command: command?.trim() || undefined,
-      pid: pidRaw && /^\d+$/.test(pidRaw.trim()) ? Number(pidRaw.trim()) : undefined,
-      previewLine,
-    };
+    return readTmuxProcessInfoImpl(this, target);
   }
 
   private buildDesktopStateSnapshot(): {
@@ -887,167 +692,19 @@ export class Multiplexer {
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
   } {
-    this.syncSessionsFromState();
-    const worktrees = this.listDesktopWorktrees();
-    let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
-    let mainCheckoutPath: string | undefined;
-    try {
-      mainCheckoutPath = findMainRepo();
-    } catch {}
-    const mainWorktree =
-      (mainCheckoutPath ? worktrees.find((wt) => wt.path === mainCheckoutPath) : worktrees[0]) ?? worktrees[0];
-    if (mainWorktree) {
-      mainCheckoutInfo = { name: "Main Checkout", branch: mainWorktree.branch };
-    }
-    return {
-      sessions: this.computeDashboardSessions(),
-      services: this.computeDashboardServices(worktrees),
-      worktrees,
-      mainCheckoutInfo,
-      mainCheckoutPath,
-    };
+    return buildDesktopStateSnapshotImpl(this);
   }
 
   private async refreshDashboardModelFromService(force = false): Promise<boolean> {
-    if (this.mode !== "dashboard") return false;
-    if (!force && this.dashboardModelRefreshedAt > 0 && Date.now() - this.dashboardModelRefreshedAt < 750) {
-      return false;
-    }
-    if (this.dashboardServiceSnapshotRefreshing) return false;
-    this.dashboardServiceSnapshotRefreshing = true;
-    const deadline = force ? Date.now() + 8_000 : Date.now();
-    try {
-      for (;;) {
-        const endpoint = resolveProjectServiceEndpoint(process.cwd());
-        if (endpoint) {
-          try {
-            const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/desktop-state`, {
-              timeoutMs: 250,
-            });
-            if (status >= 200 && status < 300) {
-              const body = json as {
-                ok?: boolean;
-                sessions?: DashboardSession[];
-                services?: DashboardService[];
-                worktrees?: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
-                mainCheckoutInfo?: { name: string; branch: string };
-                mainCheckoutPath?: string;
-              };
-              const dashSessions = body.sessions ?? [];
-              const dashServices = body.services ?? [];
-              const worktrees = body.worktrees ?? [];
-              const worktreeGroups = this.buildDashboardWorktreeGroups(
-                dashSessions,
-                dashServices,
-                worktrees,
-                body.mainCheckoutPath,
-              );
-              return this.applyDashboardModel(
-                dashSessions,
-                dashServices,
-                worktreeGroups,
-                body.mainCheckoutInfo ?? { name: "Main Checkout", branch: "" },
-              );
-            }
-          } catch {
-            await this.ensureDashboardControlPlane();
-          }
-        } else if (force) {
-          await this.ensureDashboardControlPlane();
-        }
-        if (!force || Date.now() >= deadline) {
-          return false;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 150));
-      }
-    } catch {
-      return false;
-    } finally {
-      this.dashboardServiceSnapshotRefreshing = false;
-    }
+    return refreshDashboardModelFromServiceImpl(this, force);
   }
 
   private refreshLocalDashboardModel(): void {
-    const snapshot = this.buildDesktopStateSnapshot();
-    const worktreeGroups = this.buildDashboardWorktreeGroups(
-      snapshot.sessions,
-      snapshot.services,
-      snapshot.worktrees,
-      snapshot.mainCheckoutPath,
-    );
-    this.applyDashboardModel(snapshot.sessions, snapshot.services, worktreeGroups, snapshot.mainCheckoutInfo);
+    refreshLocalDashboardModelImpl(this);
   }
 
   private async startProjectServices(): Promise<void> {
-    if (this.metadataServer) return;
-    this.metadataServer = new MetadataServer({
-      events: {
-        bus: this.eventBus,
-      },
-      desktop: {
-        getState: () => this.buildDesktopState(),
-        listWorktrees: () => this.listDesktopWorktrees(),
-        createWorktree: ({ name }) => ({ path: createWorktree(name) }),
-        removeWorktree: ({ path }) => this.removeDesktopWorktree(path),
-        createService: ({ command, worktreePath }) => this.createService(command ?? "", worktreePath),
-        stopService: ({ serviceId }) => this.stopService(serviceId),
-        resumeService: ({ serviceId }) => this.resumeOfflineServiceById(serviceId),
-        removeService: ({ serviceId }) => this.removeOfflineService(serviceId),
-        listGraveyard: () => this.listGraveyardEntries(),
-        resurrectGraveyard: ({ sessionId }) => this.resurrectGraveyardSession(sessionId),
-      },
-      threads: {
-        sendMessage: (input) => this.sendOrchestrationMessage(input),
-      },
-      actions: {
-        sendHandoff: (input) => this.sendHandoffMessage(input),
-      },
-      lifecycle: {
-        spawnAgent: (input) =>
-          this.spawnAgent({
-            toolConfigKey: input.tool,
-            targetWorktreePath: input.worktreePath,
-            open: input.open ?? false,
-          }),
-        forkAgent: (input) =>
-          this.forkAgent({
-            sourceSessionId: input.sourceSessionId,
-            targetToolConfigKey: input.tool,
-            instruction: input.instruction,
-            targetWorktreePath: input.worktreePath,
-            open: input.open ?? false,
-          }),
-        stopAgent: (input) => this.stopAgent(input.sessionId),
-        interruptAgent: (input) => this.interruptAgent(input.sessionId),
-        renameAgent: (input) => this.renameAgent(input.sessionId, input.label),
-        migrateAgent: (input) => this.migrateAgentSession(input.sessionId, input.worktreePath),
-        killAgent: (input) => this.sendAgentToGraveyard(input.sessionId),
-        writeAgentInput: (input) =>
-          this.writeAgentInput(input.sessionId, input.data, input.parts, undefined, input.submit),
-        readAgentOutput: (input) => this.readAgentOutput(input.sessionId, input.startLine),
-        readAgentHistory: (input) => this.readAgentHistory(input.sessionId, input.lastN),
-      },
-      onChange: () => {
-        this.writeStatuslineFile();
-        if (this.mode === "dashboard") {
-          this.renderCurrentDashboardView();
-        }
-      },
-    });
-    await this.metadataServer.start();
-    const endpoint = this.metadataServer.getAddress();
-    if (endpoint) {
-      this.pluginRuntime = new PluginRuntime(
-        {
-          host: endpoint.host,
-          port: endpoint.port,
-          pid: process.pid,
-          updatedAt: new Date().toISOString(),
-        },
-        this.eventBus,
-      );
-      await this.pluginRuntime.start();
-    }
+    await startProjectServicesImpl(this);
   }
 
   private composeOrchestrationPrompt(
@@ -1226,11 +883,7 @@ export class Multiplexer {
   }
 
   private async stopProjectServices(): Promise<void> {
-    this.metadataServer?.stop();
-    this.metadataServer = null;
-    removeMetadataEndpoint();
-    await this.pluginRuntime?.stop?.();
-    this.pluginRuntime = null;
+    await stopProjectServicesImpl(this);
   }
 
   private getSessionLabel(sessionId: string): string | undefined {
@@ -2665,713 +2318,110 @@ export class Multiplexer {
   }
 
   private attentionScore(entry: DashboardSession): number {
-    return navigationUrgencyScore({
-      semantic: entry.semantic,
-      attention: entry.attention,
-      unseenCount: entry.unseenCount,
-      activity: entry.activity,
-    });
+    return attentionScoreImpl(this, entry);
   }
 
   private getActivityEntries(): DashboardSession[] {
-    return this.getDashboardSessionsInVisualOrder()
-      .filter(
-        (entry) =>
-          this.attentionScore(entry) > 0 ||
-          !!entry.activity ||
-          entry.status === "running" ||
-          entry.status === "waiting" ||
-          (entry.unseenCount ?? 0) > 0,
-      )
-      .sort((a, b) => {
-        const scoreDiff = this.attentionScore(b) - this.attentionScore(a);
-        if (scoreDiff !== 0) return scoreDiff;
-        const activeDiff = Number(b.active) - Number(a.active);
-        if (activeDiff !== 0) return activeDiff;
-        const aName = a.label ?? a.command;
-        const bName = b.label ?? b.command;
-        return aName.localeCompare(bName);
-      });
+    return getActivityEntriesImpl(this);
   }
 
   private showActivityDashboard(): void {
-    this.clearDashboardSubscreens();
-    this.activityEntries = this.getActivityEntries();
-    if (this.activityIndex >= this.activityEntries.length) {
-      this.activityIndex = Math.max(0, this.activityEntries.length - 1);
-    }
-    this.setDashboardScreen("activity");
-    this.writeStatuslineFile();
-    this.renderActivityDashboard();
+    showActivityDashboardImpl(this);
   }
 
   private buildWorkflowEntries(): WorkflowEntry[] {
-    return filterWorkflowEntries(buildWorkflowEntries("user"), this.workflowFilter, "user");
+    return buildWorkflowEntriesForHostImpl(this);
   }
 
   private showWorkflow(): void {
-    this.clearDashboardSubscreens();
-    this.workflowEntries = this.buildWorkflowEntries();
-    if (this.workflowIndex >= this.workflowEntries.length) {
-      this.workflowIndex = Math.max(0, this.workflowEntries.length - 1);
-    }
-    this.setDashboardScreen("workflow");
-    this.writeStatuslineFile();
-    this.renderWorkflow();
+    showWorkflowImpl(this);
   }
 
   private renderWorkflow(): void {
-    renderWorkflowScreen(this);
+    renderWorkflowImpl(this);
   }
 
   private renderWorkflowDetails(width: number, height: number): string[] {
-    return renderWorkflowDetails(this, width, height);
+    return renderWorkflowDetailsForHostImpl(this, width, height);
   }
 
   private handleWorkflowKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-    const event = events[0];
-    const key = event.name || event.char;
-    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
-
-    if (isTabToggle) {
-      this.dashboardState.toggleDetailsSidebar();
-      this.renderWorkflow();
-      return;
-    }
-    if (key === "q") {
-      this.exitDashboardClientOrProcess();
-      return;
-    }
-    if (key === "escape" || key === "d") {
-      this.setDashboardScreen("dashboard");
-      this.renderDashboard();
-      return;
-    }
-    if (this.handleDashboardSubscreenNavigationKey(key, "workflow")) return;
-    if (key === "?") {
-      this.showHelp();
-      return;
-    }
-    if (key === "f") {
-      this.cycleWorkflowFilter();
-      return;
-    }
-    if (key === "s") {
-      const entry = this.workflowEntries[this.workflowIndex];
-      if (entry) {
-        this.threadEntries = buildThreadEntries();
-        this.threadIndex = Math.max(
-          0,
-          this.threadEntries.findIndex((thread) => thread.thread.id === entry.thread.id),
-        );
-        this.threadReplyActive = true;
-        this.threadReplyBuffer = "";
-        this.setDashboardScreen("threads");
-        this.renderThreadReply();
-      }
-      return;
-    }
-    if (key === "a" || key === "c" || key === "b" || key === "o" || key === "x") {
-      const entry = this.workflowEntries[this.workflowIndex];
-      if (!entry) return;
-      if (entry.task) {
-        if (key === "a") {
-          void this.runTaskLifecycleAction("accept", entry.task.id);
-          return;
-        }
-        if (key === "b") {
-          void this.runTaskLifecycleAction("block", entry.task.id);
-          return;
-        }
-        if (key === "c" || key === "x") {
-          void this.runTaskLifecycleAction("complete", entry.task.id);
-          return;
-        }
-      }
-      if (key === "a" && entry.thread.kind === "handoff") {
-        void this.runThreadHandoffAction("accept", entry.thread.id);
-        return;
-      }
-      if (key === "c" && entry.thread.kind === "handoff") {
-        void this.runThreadHandoffAction("complete", entry.thread.id);
-        return;
-      }
-      const statusMap: Record<string, ThreadStatus> = { b: "blocked", o: "open", x: "done" };
-      const status = statusMap[key];
-      if (status) {
-        void this.runThreadStatusAction(entry.thread.id, status);
-      }
-      return;
-    }
-    if (key === "P" || key === "J" || key === "E") {
-      const entry = this.workflowEntries[this.workflowIndex];
-      if (!entry?.task) return;
-      if (key === "P") {
-        void this.runReviewLifecycleAction("approve", entry.task.id);
-        return;
-      }
-      if (key === "J") {
-        void this.runReviewLifecycleAction("request_changes", entry.task.id);
-        return;
-      }
-      if (key === "E") {
-        void this.runTaskLifecycleAction("reopen", entry.task.id);
-      }
-      return;
-    }
-    if (key === "down" || key === "j" || key === "n") {
-      if (this.workflowEntries.length > 1) {
-        this.workflowIndex = (this.workflowIndex + 1) % this.workflowEntries.length;
-        this.renderWorkflow();
-      }
-      return;
-    }
-    if (key === "up" || key === "k") {
-      if (this.workflowEntries.length > 1) {
-        this.workflowIndex = (this.workflowIndex - 1 + this.workflowEntries.length) % this.workflowEntries.length;
-        this.renderWorkflow();
-      }
-      return;
-    }
-    if (key >= "1" && key <= "9") {
-      const idx = parseInt(key, 10) - 1;
-      if (idx < this.workflowEntries.length) {
-        this.workflowIndex = idx;
-        this.renderWorkflow();
-      }
-      return;
-    }
-    if (key === "enter" || key === "return") {
-      const entry = this.workflowEntries[this.workflowIndex];
-      if (!entry) return;
-      this.threadEntries = buildThreadEntries();
-      this.threadIndex = Math.max(
-        0,
-        this.threadEntries.findIndex((thread) => thread.thread.id === entry.thread.id),
-      );
-      this.setDashboardScreen("threads");
-      this.renderThreads();
-    }
+    handleWorkflowKeyImpl(this, data);
   }
 
   private renderActivityDashboard(): void {
-    renderActivityScreen(this);
+    renderActivityDashboardImpl(this);
   }
 
   private handleActivityKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-    const event = events[0];
-    const key = event.name || event.char;
-    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
-
-    if (isTabToggle) {
-      this.dashboardState.toggleDetailsSidebar();
-      this.renderActivityDashboard();
-      return;
-    }
-
-    if (key === "q") {
-      this.exitDashboardClientOrProcess();
-      return;
-    }
-
-    if (key === "escape" || key === "d") {
-      this.setDashboardScreen("dashboard");
-      this.renderDashboard();
-      return;
-    }
-    if (this.handleDashboardSubscreenNavigationKey(key, "activity")) return;
-    if (key === "?") {
-      this.showHelp();
-      return;
-    }
-    if (key === "u") {
-      void this.activateNextAttentionEntry();
-      return;
-    }
-    if (key === "down" || key === "j" || key === "n") {
-      if (this.activityEntries.length > 1) {
-        this.activityIndex = (this.activityIndex + 1) % this.activityEntries.length;
-        this.renderActivityDashboard();
-      }
-      return;
-    }
-    if (key === "up" || key === "k") {
-      if (this.activityEntries.length > 1) {
-        this.activityIndex = (this.activityIndex - 1 + this.activityEntries.length) % this.activityEntries.length;
-        this.renderActivityDashboard();
-      }
-      return;
-    }
-    if (key >= "1" && key <= "9") {
-      const idx = parseInt(key, 10) - 1;
-      const entry = this.activityEntries[idx];
-      if (entry) void this.activateDashboardEntry(entry);
-      return;
-    }
-    if (key === "enter" || key === "return") {
-      const entry = this.activityEntries[this.activityIndex];
-      if (entry) void this.activateDashboardEntry(entry);
-    }
+    handleActivityKeyImpl(this, data);
   }
 
   private showThreads(): void {
-    this.clearDashboardSubscreens();
-    this.threadEntries = buildThreadEntries();
-    if (this.threadIndex >= this.threadEntries.length) {
-      this.threadIndex = Math.max(0, this.threadEntries.length - 1);
-    }
-    this.setDashboardScreen("threads");
-    this.writeStatuslineFile();
-    this.renderThreads();
+    showThreadsImpl(this);
   }
 
   private getPreferredThreadIndexForParticipant(participantId: string, entries: ThreadEntry[]): number {
-    const participantEntries = entries.filter((entry) => entry.thread.participants.includes(participantId));
-    const targetEntries = participantEntries;
-    if (targetEntries.length === 0) return -1;
-    const scored = targetEntries
-      .map((entry) => {
-        const waitingOnMe = (entry.thread.waitingOn ?? []).includes(participantId) ? 3 : 0;
-        const unread = (entry.thread.unreadBy ?? []).includes(participantId) ? 2 : 0;
-        const ownsWaiting = entry.thread.owner === participantId && (entry.thread.waitingOn?.length ?? 0) > 0 ? 1 : 0;
-        return { entry, score: waitingOnMe + unread + ownsWaiting };
-      })
-      .sort(
-        (a, b) =>
-          b.score - a.score ||
-          (a.entry.thread.updatedAt < b.entry.thread.updatedAt
-            ? 1
-            : a.entry.thread.updatedAt > b.entry.thread.updatedAt
-              ? -1
-              : 0),
-      );
-    const targetId = scored[0]!.entry.thread.id;
-    return entries.findIndex((entry) => entry.thread.id === targetId);
+    return getPreferredThreadIndexForParticipantImpl(this, participantId, entries);
   }
 
   private openRelevantThreadForSession(sessionId: string): void {
-    const entries = buildThreadEntries();
-    const idx = this.getPreferredThreadIndexForParticipant(sessionId, entries);
-    if (idx < 0 || idx >= entries.length) {
-      this.footerFlash = `No thread for ${sessionId}`;
-      this.footerFlashTicks = 3;
-      this.renderDashboard();
-      return;
-    }
-    this.threadEntries = entries;
-    this.threadIndex = idx;
-    this.setDashboardScreen("threads");
-    this.writeStatuslineFile();
-    const entry = this.threadEntries[this.threadIndex];
-    if (entry && (entry.thread.waitingOn ?? []).includes(sessionId)) {
-      this.threadReplyActive = true;
-      this.threadReplyBuffer = "";
-      this.renderThreadReply();
-      return;
-    }
-    this.renderThreads();
+    openRelevantThreadForSessionImpl(this, sessionId);
   }
 
   private renderThreads(): void {
-    renderThreadsScreen(this);
+    renderThreadsImpl(this);
   }
 
   private renderThreadDetails(width: number, height: number): string[] {
-    return renderThreadDetails(this, width, height);
+    return renderThreadDetailsForHostImpl(this, width, height);
   }
 
   private handleThreadsKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-    const event = events[0];
-    const key = event.name || event.char;
-    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
-
-    if (isTabToggle) {
-      this.dashboardState.toggleDetailsSidebar();
-      this.renderThreads();
-      return;
-    }
-    if (key === "q") {
-      this.exitDashboardClientOrProcess();
-      return;
-    }
-    if (key === "escape" || key === "d") {
-      this.setDashboardScreen("dashboard");
-      this.renderDashboard();
-      return;
-    }
-    if (this.handleDashboardSubscreenNavigationKey(key, "threads")) return;
-    if (key === "?") {
-      this.showHelp();
-      return;
-    }
-    if (key === "r") {
-      this.threadEntries = buildThreadEntries();
-      if (this.threadIndex >= this.threadEntries.length) {
-        this.threadIndex = Math.max(0, this.threadEntries.length - 1);
-      }
-      this.renderThreads();
-      return;
-    }
-    if (key === "s") {
-      if (this.threadEntries[this.threadIndex]) {
-        this.threadReplyActive = true;
-        this.threadReplyBuffer = "";
-        this.renderThreadReply();
-      }
-      return;
-    }
-    if (key === "a") {
-      const entry = this.threadEntries[this.threadIndex];
-      if (entry?.thread.kind === "handoff") {
-        void this.runThreadHandoffAction("accept", entry.thread.id);
-      }
-      return;
-    }
-    if (key === "c") {
-      const entry = this.threadEntries[this.threadIndex];
-      if (entry?.thread.kind === "handoff") {
-        void this.runThreadHandoffAction("complete", entry.thread.id);
-      }
-      return;
-    }
-    if (key === "b") {
-      const entry = this.threadEntries[this.threadIndex];
-      if (entry) {
-        void this.runThreadStatusAction(entry.thread.id, "blocked");
-      }
-      return;
-    }
-    if (key === "o") {
-      const entry = this.threadEntries[this.threadIndex];
-      if (entry) {
-        void this.runThreadStatusAction(entry.thread.id, "open");
-      }
-      return;
-    }
-    if (key === "x") {
-      const entry = this.threadEntries[this.threadIndex];
-      if (entry) {
-        void this.runThreadStatusAction(entry.thread.id, "done");
-      }
-      return;
-    }
-    if (key === "down" || key === "j" || key === "n") {
-      if (this.threadEntries.length > 1) {
-        this.threadIndex = (this.threadIndex + 1) % this.threadEntries.length;
-        this.renderThreads();
-      }
-      return;
-    }
-    if (key === "up" || key === "k") {
-      if (this.threadEntries.length > 1) {
-        this.threadIndex = (this.threadIndex - 1 + this.threadEntries.length) % this.threadEntries.length;
-        this.renderThreads();
-      }
-      return;
-    }
-    if (key >= "1" && key <= "9") {
-      const idx = parseInt(key, 10) - 1;
-      if (idx < this.threadEntries.length) {
-        this.threadIndex = idx;
-        this.renderThreads();
-      }
-      return;
-    }
-    if (key === "enter" || key === "return") {
-      const entry = this.threadEntries[this.threadIndex];
-      if (!entry) return;
-      const targetSessionId = entry.thread.owner ?? entry.thread.waitingOn?.[0] ?? entry.thread.participants[0];
-      if (targetSessionId) {
-        markThreadSeen(entry.thread.id, targetSessionId);
-        const dashEntry = this.getDashboardSessions().find((session) => session.id === targetSessionId);
-        if (dashEntry) {
-          void this.activateDashboardEntry(dashEntry);
-        }
-      }
-    }
+    handleThreadsKeyImpl(this, data);
   }
 
   private renderThreadReply(): void {
-    const entry = this.threadEntries[this.threadIndex];
-    if (!entry) return;
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const targets =
-      entry.thread.waitingOn?.length && entry.thread.waitingOn.length > 0
-        ? entry.thread.waitingOn
-        : entry.thread.participants.filter((participant) => participant !== "user");
-    const title = this.truncatePlain(entry.displayTitle, Math.max(16, cols - 24));
-    const buffer = this.truncatePlain(this.threadReplyBuffer, Math.max(12, cols - 24));
-    const lines = [
-      "Reply in thread:",
-      "",
-      `  Thread: ${title}`,
-      `  To: ${targets.join(", ") || "participants"}`,
-      "",
-      `  Message: ${buffer}_`,
-      "",
-      "  [Enter] send  [Esc] cancel",
-    ];
-    const boxWidth = Math.max(...lines.map((line) => this.stripAnsi(line).length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1]!;
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderThreadReplyImpl(this);
   }
 
   private describeHandoffState(thread: OrchestrationThread): string {
-    if (thread.status === "done") {
-      return `completed by ${thread.owner ?? "unknown"}`;
-    }
-    if ((thread.waitingOn?.length ?? 0) > 0) {
-      return `${thread.owner ?? thread.createdBy} waiting on ${thread.waitingOn!.join(", ")}`;
-    }
-    if (thread.owner && thread.owner !== thread.createdBy) {
-      return `accepted by ${thread.owner}`;
-    }
-    return `awaiting acceptance from ${thread.participants.filter((id) => id !== thread.createdBy).join(", ") || "recipient"}`;
+    return describeHandoffStateImpl(this, thread);
   }
 
   private async runThreadHandoffAction(mode: "accept" | "complete", threadId: string): Promise<void> {
-    try {
-      if (mode === "accept") {
-        await this.postToProjectService("/handoff/accept", {
-          threadId,
-          from: "user",
-        });
-        this.footerFlash = "⇢ Handoff accepted";
-      } else {
-        await this.postToProjectService("/handoff/complete", {
-          threadId,
-          from: "user",
-        });
-        this.footerFlash = "⇢ Handoff completed";
-      }
-      this.footerFlashTicks = 3;
-    } catch {
-      try {
-        if (mode === "accept") {
-          acceptHandoff({ threadId, from: "user" });
-          this.footerFlash = "⇢ Handoff accepted";
-        } else {
-          completeHandoff({ threadId, from: "user" });
-          this.footerFlash = "⇢ Handoff completed";
-        }
-        this.footerFlashTicks = 3;
-      } catch (error) {
-        this.showDashboardError(`Failed to ${mode} handoff`, [error instanceof Error ? error.message : String(error)]);
-        return;
-      }
-    }
-    this.threadEntries = buildThreadEntries();
-    this.threadIndex = Math.min(this.threadIndex, Math.max(0, this.threadEntries.length - 1));
-    this.renderThreads();
+    await runThreadHandoffActionImpl(this, mode, threadId);
   }
 
   private async runThreadStatusAction(threadId: string, status: ThreadStatus): Promise<void> {
-    try {
-      await this.postToProjectService("/threads/status", {
-        threadId,
-        status,
-      });
-      this.footerFlash = `Thread marked ${status}`;
-      this.footerFlashTicks = 3;
-    } catch {
-      try {
-        setThreadStatus(threadId, status);
-        this.footerFlash = `Thread marked ${status}`;
-        this.footerFlashTicks = 3;
-      } catch (error) {
-        this.showDashboardError("Failed to update thread status", [
-          error instanceof Error ? error.message : String(error),
-        ]);
-        return;
-      }
-    }
-    this.threadEntries = buildThreadEntries();
-    this.threadIndex = Math.min(this.threadIndex, Math.max(0, this.threadEntries.length - 1));
-    this.renderThreads();
+    await runThreadStatusActionImpl(this, threadId, status);
   }
 
   private async runTaskLifecycleAction(
     mode: "accept" | "block" | "complete" | "reopen",
     taskId: string,
   ): Promise<void> {
-    try {
-      if (mode === "accept") {
-        await this.postToProjectService("/tasks/accept", { taskId, from: "user" });
-        this.footerFlash = "⧫ Task accepted";
-      } else if (mode === "block") {
-        await this.postToProjectService("/tasks/block", { taskId, from: "user" });
-        this.footerFlash = "⧫ Task blocked";
-      } else if (mode === "reopen") {
-        await this.postToProjectService("/tasks/reopen", { taskId, from: "user" });
-        this.footerFlash = "↺ Task reopened";
-      } else {
-        await this.postToProjectService("/tasks/complete", { taskId, from: "user" });
-        this.footerFlash = "✓ Task completed";
-      }
-      this.footerFlashTicks = 3;
-    } catch {
-      try {
-        if (mode === "accept") {
-          await acceptTask({ taskId, from: "user" });
-          this.footerFlash = "⧫ Task accepted";
-        } else if (mode === "block") {
-          await blockTask({ taskId, from: "user" });
-          this.footerFlash = "⧫ Task blocked";
-        } else if (mode === "reopen") {
-          await reopenTask({ taskId, from: "user" });
-          this.footerFlash = "↺ Task reopened";
-        } else {
-          await completeTask({ taskId, from: "user" });
-          this.footerFlash = "✓ Task completed";
-        }
-        this.footerFlashTicks = 3;
-      } catch (error) {
-        this.showDashboardError(`Failed to ${mode} task`, [error instanceof Error ? error.message : String(error)]);
-        return;
-      }
-    }
-    this.workflowEntries = this.buildWorkflowEntries();
-    this.workflowIndex = Math.min(this.workflowIndex, Math.max(0, this.workflowEntries.length - 1));
-    this.renderWorkflow();
+    await runTaskLifecycleActionImpl(this, mode, taskId);
   }
 
   private async runReviewLifecycleAction(mode: "approve" | "request_changes", taskId: string): Promise<void> {
-    try {
-      if (mode === "approve") {
-        await this.postToProjectService("/reviews/approve", { taskId, from: "user" });
-        this.footerFlash = "✓ Review approved";
-      } else {
-        await this.postToProjectService("/reviews/request-changes", { taskId, from: "user" });
-        this.footerFlash = "↺ Changes requested";
-      }
-      this.footerFlashTicks = 3;
-    } catch {
-      try {
-        if (mode === "approve") {
-          await approveReview({ taskId, from: "user" });
-          this.footerFlash = "✓ Review approved";
-        } else {
-          await requestTaskChanges({ taskId, from: "user" });
-          this.footerFlash = "↺ Changes requested";
-        }
-        this.footerFlashTicks = 3;
-      } catch (error) {
-        this.showDashboardError(`Failed to ${mode === "approve" ? "approve review" : "request changes"}`, [
-          error instanceof Error ? error.message : String(error),
-        ]);
-        return;
-      }
-    }
-    this.workflowEntries = this.buildWorkflowEntries();
-    this.workflowIndex = Math.min(this.workflowIndex, Math.max(0, this.workflowEntries.length - 1));
-    this.renderWorkflow();
+    await runReviewLifecycleActionImpl(this, mode, taskId);
   }
 
   private describeWorkflowFilter(): string {
-    if (this.workflowFilter === "on_me") return "waiting on me";
-    if (this.workflowFilter === "blocked") return "blocked";
-    if (this.workflowFilter === "families") return "families";
-    return "all";
+    return describeWorkflowFilterImpl(this);
   }
 
   private cycleWorkflowFilter(): void {
-    const order: WorkflowFilter[] = ["all", "on_me", "blocked", "families"];
-    const current = order.indexOf(this.workflowFilter);
-    this.workflowFilter = order[(current + 1) % order.length] ?? "all";
-    this.workflowEntries = this.buildWorkflowEntries();
-    this.workflowIndex = Math.min(this.workflowIndex, Math.max(0, this.workflowEntries.length - 1));
-    this.footerFlash = `Workflow filter: ${this.describeWorkflowFilter()}`;
-    this.footerFlashTicks = 3;
-    this.renderWorkflow();
+    cycleWorkflowFilterImpl(this);
   }
 
   private handleThreadReplyKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-    const event = events[0];
-    const key = event.name || event.char;
-
-    if (key === "escape") {
-      this.threadReplyActive = false;
-      this.threadReplyBuffer = "";
-      this.renderThreads();
-      return;
-    }
-
-    if (key === "enter" || key === "return") {
-      const body = this.threadReplyBuffer.trim();
-      const entry = this.threadEntries[this.threadIndex];
-      this.threadReplyActive = false;
-      this.threadReplyBuffer = "";
-      if (!entry || !body) {
-        this.renderThreads();
-        return;
-      }
-      try {
-        this.sendOrchestrationMessage({
-          threadId: entry.thread.id,
-          from: "user",
-          kind: "reply",
-          body,
-        });
-      } catch (error) {
-        this.showDashboardError("Failed to reply in thread", [error instanceof Error ? error.message : String(error)]);
-        return;
-      }
-      this.threadEntries = buildThreadEntries();
-      this.threadIndex = Math.min(this.threadIndex, Math.max(0, this.threadEntries.length - 1));
-      this.renderThreads();
-      return;
-    }
-
-    if (key === "backspace" || key === "delete") {
-      this.threadReplyBuffer = this.threadReplyBuffer.slice(0, -1);
-      this.renderThreadReply();
-      return;
-    }
-
-    if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
-      this.threadReplyBuffer += event.char;
-      this.renderThreadReply();
-    }
+    handleThreadReplyKeyImpl(this, data);
   }
 
   private async activateNextAttentionEntry(): Promise<void> {
-    const ordered = this.getDashboardSessionsInVisualOrder()
-      .map((entry, index) => ({ entry, index, score: this.attentionScore(entry) }))
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score || a.index - b.index);
-    if (ordered.length === 0) return;
-
-    const currentSessionId =
-      this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0
-        ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.kind === "session"
-          ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.id
-          : undefined
-        : this.getDashboardSessions()[this.activeIndex]?.id;
-    const currentIdx = currentSessionId ? ordered.findIndex((entry) => entry.entry.id === currentSessionId) : -1;
-    const next = ordered[currentIdx >= 0 ? (currentIdx + 1) % ordered.length : 0]!;
-    await this.activateDashboardEntryByNumber(next.index);
+    await activateNextAttentionEntryImpl(this);
   }
 
   /** Get sessions belonging to the focused worktree (includes local, remote, offline) */
