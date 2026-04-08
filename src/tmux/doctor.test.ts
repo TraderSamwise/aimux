@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./tmux-doctor.js";
-import { TmuxRuntimeManager, type TmuxExec } from "./tmux-runtime-manager.js";
+import { buildTmuxDoctorReport, renderTmuxDoctorReport } from "./doctor.js";
+import { TmuxRuntimeManager, type TmuxExec } from "./runtime-manager.js";
 
 function createDoctorExec(): TmuxExec {
   return (args: string[]) => {

@@ -7,7 +7,7 @@ import {
   TmuxRuntimeManager,
   type TmuxTarget,
   type TmuxWindowMetadata,
-} from "./tmux-runtime-manager.js";
+} from "./tmux/runtime-manager.js";
 import { compactSessionTitle } from "./statusline-model.js";
 import { listWorktrees } from "./worktree.js";
 

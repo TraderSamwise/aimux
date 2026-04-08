@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
-import { getProjectStateDirFor } from "./paths.js";
-import { isDashboardWindowName } from "./tmux-runtime-manager.js";
+import { getProjectStateDirFor } from "../paths.js";
+import { isDashboardWindowName } from "./runtime-manager.js";
 import {
   compactSessionTitle,
   currentPathContext,
@@ -13,7 +13,7 @@ import {
   resolveScopedSessions,
   trim,
   type StatuslineData,
-} from "./statusline-model.js";
+} from "../statusline-model.js";
 
 export type TmuxStatusLine = "top" | "bottom";
 

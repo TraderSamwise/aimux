@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { TerminalHost } from "./terminal-host.js";
-import { parseKeys } from "./key-parser.js";
-import { listSwitchableAgentMenuItems } from "./fast-control.js";
-import { formatRelativeRecency } from "./recency.js";
-import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { TerminalHost } from "../terminal-host.js";
+import { parseKeys } from "../key-parser.js";
+import { listSwitchableAgentMenuItems } from "../fast-control.js";
+import { formatRelativeRecency } from "../recency.js";
+import { TmuxRuntimeManager } from "./runtime-manager.js";
 
 export interface TmuxSwitcherOptions {
   projectRoot: string;

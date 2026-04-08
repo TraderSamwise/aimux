@@ -9,13 +9,13 @@ import { initProject, loadConfig } from "./config.js";
 import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir, getProjectId } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
-import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import {
   buildTmuxDoctorReport,
   renderTmuxDoctorReport,
   renderTmuxRepairResult,
   repairTmuxRuntime,
-} from "./tmux-doctor.js";
+} from "./tmux/doctor.js";
 import {
   loadMetadataEndpoint,
   loadMetadataState,
@@ -76,7 +76,7 @@ import {
 import { notifyAlert } from "./notify.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
-import { runTmuxSwitcher } from "./tmux-switcher.js";
+import { runTmuxSwitcher } from "./tmux/switcher.js";
 import {
   findLiveDashboardTarget,
   getDashboardCommandSpec,

@@ -69,9 +69,9 @@ import {
   resolvePrevAgent,
   serializeFastControlItem,
 } from "./fast-control.js";
-import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
-import type { TmuxTarget } from "./tmux-runtime-manager.js";
-import { openTargetForClient } from "./tmux-window-open.js";
+import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import type { TmuxTarget } from "./tmux/runtime-manager.js";
+import { openTargetForClient } from "./tmux/window-open.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;

@@ -1,6 +1,6 @@
-import { debug } from "./debug.js";
-import type { SessionStatus } from "./status-detector.js";
-import { TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
+import { debug } from "../debug.js";
+import type { SessionStatus } from "../status-detector.js";
+import { TmuxRuntimeManager, type TmuxTarget } from "./runtime-manager.js";
 
 export class TmuxSessionTransport {
   readonly command: string;

@@ -11,7 +11,7 @@ import { TerminalHost } from "../terminal-host.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "../session-runtime.js";
 import { AgentTracker } from "../agent-tracker.js";
 import { InstanceDirectory } from "../instance-directory.js";
-import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "../tmux-runtime-manager.js";
+import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "../tmux/runtime-manager.js";
 import { MetadataServer } from "../metadata-server.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { PluginRuntime } from "../plugin-runtime.js";
@@ -30,7 +30,7 @@ import {
   type DashboardErrorState,
 } from "../dashboard/feedback.js";
 import { MultiplexerRuntimeSync } from "./runtime-sync.js";
-import { selectLinkedOrOpenTarget } from "../tmux-window-open.js";
+import { selectLinkedOrOpenTarget } from "../tmux/window-open.js";
 import { dashboardActionMethods, type DashboardActionMethods } from "./dashboard-actions-methods.js";
 import { agentIoMethods, type AgentIoMethods } from "./agent-io-methods.js";
 import { dashboardInteractionMethods, type DashboardInteractionMethods } from "./dashboard-interaction.js";

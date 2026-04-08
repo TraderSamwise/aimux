@@ -6,7 +6,7 @@ import type { AimuxPluginInstance, AimuxPluginAPI } from "./plugin-runtime.js";
 import { debug } from "./debug.js";
 import { readAllTasks } from "./tasks.js";
 import { listSessionIds, readHistory } from "./context/history.js";
-import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { listWorktrees } from "./worktree.js";
 
 function safeRead(path: string): string {

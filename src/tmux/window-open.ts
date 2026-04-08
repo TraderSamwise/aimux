@@ -1,4 +1,4 @@
-import type { TmuxRuntimeManager, TmuxTarget } from "./tmux-runtime-manager.js";
+import type { TmuxRuntimeManager, TmuxTarget } from "./runtime-manager.js";
 
 export function resolveLiveClientTty(
   tmux: TmuxRuntimeManager,

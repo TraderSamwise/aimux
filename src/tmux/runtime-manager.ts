@@ -4,9 +4,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./config.js";
-import { debug } from "./debug.js";
-import { getProjectStateDirFor } from "./paths.js";
+import { loadConfig } from "../config.js";
+import { debug } from "../debug.js";
+import { getProjectStateDirFor } from "../paths.js";
 
 export interface TmuxExecOptions {
   cwd?: string;

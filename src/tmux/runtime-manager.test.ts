@@ -4,7 +4,7 @@ import {
   TmuxRuntimeManager,
   type TmuxExec,
   type TmuxInteractiveExec,
-} from "./tmux-runtime-manager.js";
+} from "./runtime-manager.js";
 
 function createExecMock(): TmuxExec & { calls: Array<{ args: string[]; cwd?: string }> } {
   const calls: Array<{ args: string[]; cwd?: string }> = [];

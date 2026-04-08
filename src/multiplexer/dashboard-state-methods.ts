@@ -13,7 +13,7 @@ import {
   refreshLocalDashboardModel as refreshLocalDashboardModelImpl,
   startProjectServices as startProjectServicesImpl,
 } from "./dashboard-model.js";
-import type { TmuxTarget } from "../tmux-runtime-manager.js";
+import type { TmuxTarget } from "../tmux/runtime-manager.js";
 
 export const dashboardStateMethods = {
   isTmuxBackend(this: any): boolean {

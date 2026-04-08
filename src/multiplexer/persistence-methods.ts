@@ -9,7 +9,7 @@ import { type DashboardService, type DashboardSession } from "../dashboard/index
 import { getGraveyardPath, getLocalAimuxDir, getProjectStateDir, getStatePath } from "../paths.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
-import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux-statusline.js";
+import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 
 export const persistenceMethods = {

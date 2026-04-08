@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentObservation, AgentWatcherContext } from "./agent-watcher.js";
 import type { AimuxPluginInstance } from "./plugin-runtime.js";
-import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux-runtime-manager.js";
+import { isDashboardWindowName, TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { SessionServiceMetadata } from "./metadata-store.js";
 import { OscNotificationParser } from "./osc-notifications.js";
 

@@ -5,8 +5,8 @@ import { loadConfig } from "../config.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { getGraveyardPath, getLocalAimuxDir, getStatePath } from "../paths.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
-import { isDashboardWindowName } from "../tmux-runtime-manager.js";
-import { TmuxSessionTransport } from "../tmux-session-transport.js";
+import { isDashboardWindowName } from "../tmux/runtime-manager.js";
+import { TmuxSessionTransport } from "../tmux/session-transport.js";
 
 type RuntimeStateHost = any;
 

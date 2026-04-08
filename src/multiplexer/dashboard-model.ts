@@ -12,7 +12,7 @@ import { deriveSessionSemantics } from "../session-semantics.js";
 import { requestJson } from "../http-client.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
-import { isDashboardWindowName } from "../tmux-runtime-manager.js";
+import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 
 type DashboardModelHost = any;
 

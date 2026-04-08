@@ -9,7 +9,7 @@ import { parseKeys } from "../key-parser.js";
 import { assignTask } from "../orchestration-actions.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { loadTeamConfig } from "../team.js";
-import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux-window-open.js";
+import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
 
 type DashboardControlHost = any;

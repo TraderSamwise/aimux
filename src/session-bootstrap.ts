@@ -6,7 +6,7 @@ import { getContextDir, getHistoryDir, getPlansDir, getStatusDir } from "./paths
 import { readHistory } from "./context/history.js";
 import { debug, debugPreamble } from "./debug.js";
 import { listWorktrees as listAllWorktrees } from "./worktree.js";
-import { type TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
+import { type TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 
 export interface ForkSourceSnapshot {
   historyText?: string;

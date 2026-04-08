@@ -2,8 +2,8 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initPaths, getProjectStateDirFor } from "./paths.js";
-import { renderTmuxStatusline } from "./tmux-statusline.js";
+import { initPaths, getProjectStateDirFor } from "../paths.js";
+import { renderTmuxStatusline } from "./statusline.js";
 
 describe("renderTmuxStatusline", () => {
   const originalCwd = process.cwd();

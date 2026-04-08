@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { TmuxSessionTransport } from "./tmux-session-transport.js";
-import { TmuxRuntimeManager, type TmuxTarget } from "./tmux-runtime-manager.js";
+import { TmuxSessionTransport } from "./session-transport.js";
+import { TmuxRuntimeManager, type TmuxTarget } from "./runtime-manager.js";
 
 function createTarget(): TmuxTarget {
   return {

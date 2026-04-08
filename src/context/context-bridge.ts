@@ -7,7 +7,7 @@ import { getRecordingsDir, getContextDir } from "../paths.js";
 import { appendTurn, readHistory, type HistoryTurn } from "./history.js";
 import { algorithmicCompact } from "./compactor.js";
 import { debugTurn, debugGit, debugContext, debugCompact } from "../debug.js";
-import { TmuxRuntimeManager, type TmuxTarget } from "../tmux-runtime-manager.js";
+import { TmuxRuntimeManager, type TmuxTarget } from "../tmux/runtime-manager.js";
 import { classifyToolPane } from "../tool-output-watchers.js";
 
 const git = simpleGit();

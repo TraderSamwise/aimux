@@ -6,7 +6,7 @@ import { readHistory } from "../context/history.js";
 import { getAimuxDirFor, getProjectStateDir, getStatusDir } from "../paths.js";
 import { loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
-import { TmuxSessionTransport } from "../tmux-session-transport.js";
+import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
 import { serializeAgentInput } from "../agent-message-parts.js";
