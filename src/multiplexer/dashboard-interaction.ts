@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import type { DashboardSession } from "../dashboard.js";
+import type { DashboardSession } from "../dashboard/index.js";
 import { parseKeys } from "../key-parser.js";
 import { requestReview } from "../task-dispatcher.js";
 

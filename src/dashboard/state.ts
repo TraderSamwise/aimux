@@ -1,4 +1,4 @@
-import type { DashboardSession, DashboardWorktreeEntry } from "./dashboard.js";
+import type { DashboardSession, DashboardWorktreeEntry } from "./index.js";
 
 export type DashboardScreen = "dashboard" | "activity" | "workflow" | "threads" | "plans" | "graveyard" | "help";
 export type DashboardLevel = "worktrees" | "sessions";

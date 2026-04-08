@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import type { DashboardSession } from "./dashboard.js";
-import { type DashboardScreen, type DashboardState } from "./dashboard-state.js";
-import { getDashboardUiStatePath } from "./paths.js";
+import type { DashboardSession } from "./index.js";
+import { type DashboardScreen, type DashboardState } from "./state.js";
+import { getDashboardUiStatePath } from "../paths.js";
 
 interface DashboardUiStateSnapshot {
   screen?: DashboardScreen;

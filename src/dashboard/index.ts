@@ -1,9 +1,9 @@
-import type { SessionStatus } from "./status-detector.js";
-import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
-import type { SessionServiceMetadata } from "./metadata-store.js";
-import type { SessionSemanticState } from "./session-semantics.js";
-import { sessionSemanticStatusLabel } from "./session-semantics.js";
-import { renderDashboardFrame } from "./tui/screens/dashboard-renderers.js";
+import type { SessionStatus } from "../status-detector.js";
+import type { AgentActivityState, AgentAttentionState, AgentEvent } from "../agent-events.js";
+import type { SessionServiceMetadata } from "../metadata-store.js";
+import type { SessionSemanticState } from "../session-semantics.js";
+import { sessionSemanticStatusLabel } from "../session-semantics.js";
+import { renderDashboardFrame } from "../tui/screens/dashboard-renderers.js";
 
 export type DashboardSessionStatus = SessionStatus;
 

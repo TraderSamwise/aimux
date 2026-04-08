@@ -3,9 +3,9 @@ import {
   buildDashboardSessions,
   getRemoteOwnedSessionKeys,
   orderDashboardSessionsByVisualWorktree,
-} from "./dashboard-session-registry.js";
-import type { SessionState } from "./multiplexer.js";
-import type { InstanceInfo } from "./instance-registry.js";
+} from "./session-registry.js";
+import type { SessionState } from "../multiplexer.js";
+import type { InstanceInfo } from "../instance-registry.js";
 
 describe("dashboard-session-registry", () => {
   it("builds dashboard sessions with remote and offline dedupe", () => {

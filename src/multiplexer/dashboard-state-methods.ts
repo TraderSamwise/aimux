@@ -1,5 +1,5 @@
-import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard.js";
-import { openDashboardTarget } from "../dashboard-targets.js";
+import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard/index.js";
+import { openDashboardTarget } from "../dashboard/targets.js";
 import {
   applyDashboardModel as applyDashboardModelImpl,
   buildDashboardWorktreeGroups as buildDashboardWorktreeGroupsImpl,

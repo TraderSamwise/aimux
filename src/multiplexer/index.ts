@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { HotkeyHandler, type HotkeyAction } from "../hotkeys.js";
-import { Dashboard, type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard.js";
-import { DashboardState } from "../dashboard-state.js";
+import { Dashboard, type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard/index.js";
+import { DashboardState } from "../dashboard/state.js";
 import { ContextWatcher } from "../context/context-bridge.js";
 import { loadConfig } from "../config.js";
 import { debug } from "../debug.js";
@@ -22,13 +22,13 @@ import { ProjectEventBus, type AlertKind } from "../project-events.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { type NotificationRecord } from "../notifications.js";
 import { type ThreadEntry, type WorkflowEntry, type WorkflowFilter } from "../workflow.js";
-import { DashboardUiStateStore } from "../dashboard-ui-state-store.js";
-import { DashboardPendingActions } from "../dashboard-pending-actions.js";
+import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
+import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import {
   DashboardFeedbackController,
   type DashboardBusyState,
   type DashboardErrorState,
-} from "../dashboard-feedback.js";
+} from "../dashboard/feedback.js";
 import { MultiplexerRuntimeSync } from "./runtime-sync.js";
 import { selectLinkedOrOpenTarget } from "../tmux-window-open.js";
 import { dashboardActionMethods, type DashboardActionMethods } from "./dashboard-actions-methods.js";

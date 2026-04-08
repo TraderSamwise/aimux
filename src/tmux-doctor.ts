@@ -4,7 +4,7 @@ import {
   MANAGED_TMUX_TERMINAL_FEATURES,
   TmuxRuntimeManager,
 } from "./tmux-runtime-manager.js";
-import { getDashboardCommandSpec, resolveDashboardTarget } from "./dashboard-targets.js";
+import { getDashboardCommandSpec, resolveDashboardTarget } from "./dashboard/targets.js";
 
 export interface TmuxDoctorOptions {
   projectRoot: string;

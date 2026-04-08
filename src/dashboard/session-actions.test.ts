@@ -3,7 +3,7 @@ import {
   graveyardSessionWithFeedback,
   resumeOfflineSessionWithFeedback,
   stopSessionToOfflineWithFeedback,
-} from "./dashboard-session-actions.js";
+} from "./session-actions.js";
 
 class FakeRuntime {
   exited = false;

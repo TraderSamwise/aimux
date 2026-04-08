@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import type { DashboardSession } from "./dashboard.js";
-import type { SessionState } from "./multiplexer/index.js";
-import type { InstanceInfo } from "./instance-registry.js";
-import { listWorktrees as listAllWorktrees } from "./worktree.js";
+import type { DashboardSession } from "./index.js";
+import type { SessionState } from "../multiplexer/index.js";
+import type { InstanceInfo } from "../instance-registry.js";
+import { listWorktrees as listAllWorktrees } from "../worktree.js";
 
 export interface DashboardLocalSession {
   id: string;
@@ -32,11 +32,11 @@ export interface DashboardSessionRegistryOptions {
     | undefined;
   getSessionDerived: (sessionId: string) =>
     | {
-        activity?: import("./agent-events.js").AgentActivityState;
-        attention?: import("./agent-events.js").AgentAttentionState;
+        activity?: import("../agent-events.js").AgentActivityState;
+        attention?: import("../agent-events.js").AgentAttentionState;
         unseenCount?: number;
-        lastEvent?: import("./agent-events.js").AgentEvent;
-        services?: import("./metadata-store.js").SessionServiceMetadata[];
+        lastEvent?: import("../agent-events.js").AgentEvent;
+        services?: import("../metadata-store.js").SessionServiceMetadata[];
         threadId?: string;
         threadName?: string;
       }

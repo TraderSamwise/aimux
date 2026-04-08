@@ -7,7 +7,7 @@ import {
   stopSessionToOfflineWithFeedback as runStopSessionToOfflineWithFeedback,
   waitForSessionExit,
   waitForSessionStart,
-} from "../dashboard-session-actions.js";
+} from "../dashboard/session-actions.js";
 
 type DashboardOpsHost = any;
 

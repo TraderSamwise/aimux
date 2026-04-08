@@ -4,8 +4,8 @@ import type {
   DashboardWorktreeRemovalInfo,
   MainCheckoutInfo,
   WorktreeGroup,
-} from "../../dashboard.js";
-import { derivedStatusLabel } from "../../dashboard.js";
+} from "../../dashboard/index.js";
+import { derivedStatusLabel } from "../../dashboard/index.js";
 import { formatRelativeRecency } from "../../recency.js";
 import { sessionSemanticCompactHint } from "../../session-semantics.js";
 import { center, composeTwoPane, stripAnsi, truncate, wrapKeyValue } from "../render/text.js";

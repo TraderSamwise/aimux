@@ -1,5 +1,5 @@
 import { debug } from "../debug.js";
-import type { DashboardService, DashboardSession } from "../dashboard.js";
+import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { Multiplexer, SessionState } from "./index.js";
 import {
   forkAgent as forkAgentImpl,
@@ -61,9 +61,9 @@ import {
   wrapKeyValueForHost,
   wrapTextForHost,
 } from "./dashboard-ops.js";
-import type { PendingDashboardActionKind } from "../dashboard-pending-actions.js";
+import type { PendingDashboardActionKind } from "../dashboard/pending-actions.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
-import { orderDashboardSessionsByVisualWorktree } from "../dashboard-session-registry.js";
+import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
 import { loadConfig } from "../config.js";
 import type { SessionRuntime } from "../session-runtime.js";
 

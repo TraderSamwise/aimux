@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Dashboard } from "./dashboard.js";
+import { Dashboard } from "./index.js";
 
 describe("Dashboard", () => {
   it("renders selected session context details", () => {

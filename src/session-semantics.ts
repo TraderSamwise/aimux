@@ -1,5 +1,5 @@
 import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
-import type { DashboardSessionStatus } from "./dashboard.js";
+import type { DashboardSessionStatus } from "./dashboard/index.js";
 
 export type SessionAvailability = "available" | "busy" | "needs_input" | "blocked" | "offline";
 export type SessionWorkflowState = "none" | "waiting_on_me" | "waiting_on_them" | "blocked";

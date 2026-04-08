@@ -2,10 +2,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "../debug.js";
-import { DashboardPendingActions } from "../dashboard-pending-actions.js";
-import { type DashboardScreen } from "../dashboard-state.js";
+import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon.js";
-import { type DashboardService, type DashboardSession } from "../dashboard.js";
+import { type DashboardService, type DashboardSession } from "../dashboard/index.js";
 import { getGraveyardPath, getLocalAimuxDir, getProjectStateDir, getStatePath } from "../paths.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";

@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { statSync } from "node:fs";
-import type { TmuxCommandSpec, TmuxRuntimeManager, TmuxTarget, TmuxSessionRef } from "./tmux-runtime-manager.js";
-import { isDashboardWindowName } from "./tmux-runtime-manager.js";
+import type { TmuxCommandSpec, TmuxRuntimeManager, TmuxTarget, TmuxSessionRef } from "../tmux-runtime-manager.js";
+import { isDashboardWindowName } from "../tmux-runtime-manager.js";
 
 export interface DashboardTargetRef {
   dashboardSession: TmuxSessionRef;

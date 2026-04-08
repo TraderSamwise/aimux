@@ -7,7 +7,7 @@ import {
   type InstanceInfo,
   type InstanceSessionRef,
 } from "./instance-registry.js";
-import { getRemoteOwnedSessionKeys } from "./dashboard-session-registry.js";
+import { getRemoteOwnedSessionKeys } from "./dashboard/session-registry.js";
 
 export interface SessionsFileEntry {
   id: string;

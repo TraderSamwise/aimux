@@ -83,7 +83,7 @@ import {
   openDashboardTarget,
   pruneDashboardArtifacts,
   resolveDashboardTarget,
-} from "./dashboard-targets.js";
+} from "./dashboard/targets.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {

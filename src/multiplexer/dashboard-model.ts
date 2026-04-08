@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 
-import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard.js";
-import { buildDashboardSessions } from "../dashboard-session-registry.js";
+import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard/index.js";
+import { buildDashboardSessions } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
 import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
 import { MetadataServer } from "../metadata-server.js";
