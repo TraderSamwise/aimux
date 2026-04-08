@@ -138,6 +138,7 @@ import { MultiplexerRuntimeSync } from "./multiplexer-runtime-sync.js";
 import { openManagedServiceWindow, openManagedSessionWindow, selectLinkedOrOpenTarget } from "./tmux-window-open.js";
 import { dashboardActionMethods, type DashboardActionMethods } from "./multiplexer-dashboard-actions-methods.js";
 import { dashboardInteractionMethods, type DashboardInteractionMethods } from "./multiplexer-dashboard-interaction.js";
+import { dashboardStateMethods, type DashboardStateMethods } from "./multiplexer-dashboard-state-methods.js";
 import { persistenceMethods, type PersistenceMethods } from "./multiplexer-persistence-methods.js";
 import { dashboardViewMethods, type DashboardViewMethods } from "./multiplexer-dashboard-view-methods.js";
 import {
@@ -638,165 +639,6 @@ export class Multiplexer {
       unseenCount: derived?.unseenCount,
       hasActiveTask: Boolean(this.taskDispatcher?.getSessionTask(sessionId)),
     });
-  }
-
-  private isTmuxBackend(): boolean {
-    return true;
-  }
-
-  private openTmuxDashboardTarget(): void {
-    openDashboardTarget(this.projectRoot, this.tmuxRuntimeManager);
-  }
-
-  private invalidateDashboardFrame(): void {
-    this.lastRenderedFrame = null;
-  }
-
-  private isFocusInReport(data: Buffer): boolean {
-    return data.includes(Buffer.from("\x1b[I"));
-  }
-
-  private handleDashboardFocusIn(): void {
-    this.terminalHost.enterAlternateScreen();
-    if (this.lastRenderedFrame) {
-      process.stdout.write(this.lastRenderedFrame);
-    }
-    this.tmuxRuntimeManager.refreshStatus();
-  }
-
-  private loadDashboardUiState(): void {
-    this.dashboardUiStateStore.loadInto(this.dashboardState);
-  }
-
-  private persistDashboardUiState(): void {
-    this.dashboardUiStateStore.persist(this.mode, this.dashboardState, this.activeIndex, this.getDashboardSessions());
-  }
-
-  private restoreDashboardSelectionFromPreference(dashSessions: DashboardSession[], hasWorktrees: boolean): void {
-    this.dashboardUiStateStore.consumeSelectionRestore(
-      this.dashboardState,
-      dashSessions,
-      hasWorktrees,
-      () => this.updateWorktreeSessions(),
-      this.activeIndex,
-      (value) => {
-        this.activeIndex = value;
-      },
-    );
-  }
-
-  private writeFrame(output: string, force = false): void {
-    if (!force && this.lastRenderedFrame === output) return;
-    process.stdout.write(output);
-    this.lastRenderedFrame = output;
-  }
-
-  private getViewportSize(): { cols: number; rows: number } {
-    let cols = process.stdout.columns ?? 80;
-    let rows = process.stdout.rows ?? 24;
-
-    try {
-      const paneRaw = this.tmuxRuntimeManager.displayMessage("#{pane_width}\t#{pane_height}");
-      if (paneRaw) {
-        const [tmuxColsRaw, tmuxRowsRaw] = paneRaw.split("\t");
-        const tmuxCols = Number(tmuxColsRaw);
-        const tmuxRows = Number(tmuxRowsRaw);
-        if (Number.isFinite(tmuxCols) && tmuxCols > 0) cols = tmuxCols;
-        if (Number.isFinite(tmuxRows) && tmuxRows > 0) rows = tmuxRows;
-      } else {
-        const clientRaw = this.tmuxRuntimeManager.displayMessage("#{client_width}\t#{client_height}");
-        if (clientRaw) {
-          const [tmuxColsRaw, tmuxRowsRaw] = clientRaw.split("\t");
-          const tmuxCols = Number(tmuxColsRaw);
-          const tmuxRows = Number(tmuxRowsRaw);
-          if (Number.isFinite(tmuxCols) && tmuxCols > 0) cols = tmuxCols;
-          if (Number.isFinite(tmuxRows) && tmuxRows > 0) rows = tmuxRows;
-        }
-      }
-    } catch {}
-
-    if (typeof process.stdout.getWindowSize === "function") {
-      try {
-        const [ttyCols, ttyRows] = process.stdout.getWindowSize();
-        if (Number.isFinite(ttyCols) && ttyCols > cols) cols = ttyCols;
-        if (Number.isFinite(ttyRows) && ttyRows > rows) rows = ttyRows;
-      } catch {}
-    }
-
-    return { cols, rows };
-  }
-
-  private restoreDashboardAfterOverlayDismiss(): void {
-    this.invalidateDashboardFrame();
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    } else {
-      this.focusSession(this.activeIndex);
-    }
-  }
-
-  private buildDashboardWorktreeGroups(
-    dashSessions: DashboardSession[],
-    dashServices: DashboardService[],
-    worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>,
-    mainRepoPath?: string,
-  ): WorktreeGroup[] {
-    return buildDashboardWorktreeGroupsImpl(this, dashSessions, dashServices, worktrees, mainRepoPath);
-  }
-
-  private applyDashboardModel(
-    dashSessions: DashboardSession[],
-    dashServices: DashboardService[],
-    worktreeGroups: WorktreeGroup[],
-    mainCheckoutInfo: { name: string; branch: string },
-  ): boolean {
-    return applyDashboardModelImpl(this, dashSessions, dashServices, worktreeGroups, mainCheckoutInfo);
-  }
-
-  private invalidateDesktopStateSnapshot(): void {
-    invalidateDesktopStateSnapshotImpl(this);
-  }
-
-  private refreshDesktopStateSnapshot(): void {
-    refreshDesktopStateSnapshotImpl(this);
-  }
-
-  private computeDashboardSessions(): DashboardSession[] {
-    return computeDashboardSessionsImpl(this);
-  }
-
-  private computeDashboardServices(worktrees = this.listDesktopWorktrees()): DashboardService[] {
-    return computeDashboardServicesImpl(this, worktrees);
-  }
-
-  private readTmuxProcessInfo(target: TmuxTarget): {
-    command?: string;
-    pid?: number;
-    previewLine?: string;
-  } {
-    return readTmuxProcessInfoImpl(this, target);
-  }
-
-  private buildDesktopStateSnapshot(): {
-    sessions: DashboardSession[];
-    services: DashboardService[];
-    worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
-    mainCheckoutInfo: { name: string; branch: string };
-    mainCheckoutPath?: string;
-  } {
-    return buildDesktopStateSnapshotImpl(this);
-  }
-
-  private async refreshDashboardModelFromService(force = false): Promise<boolean> {
-    return refreshDashboardModelFromServiceImpl(this, force);
-  }
-
-  private refreshLocalDashboardModel(): void {
-    refreshLocalDashboardModelImpl(this);
-  }
-
-  private async startProjectServices(): Promise<void> {
-    await startProjectServicesImpl(this);
   }
 
   private composeOrchestrationPrompt(
@@ -1974,7 +1816,12 @@ export class Multiplexer {
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export interface Multiplexer
-  extends DashboardInteractionMethods, DashboardViewMethods, DashboardActionMethods, PersistenceMethods {}
+  extends
+    DashboardInteractionMethods,
+    DashboardViewMethods,
+    DashboardActionMethods,
+    PersistenceMethods,
+    DashboardStateMethods {}
 
 Object.assign(
   Multiplexer.prototype,
@@ -1982,4 +1829,5 @@ Object.assign(
   dashboardViewMethods,
   dashboardActionMethods,
   persistenceMethods,
+  dashboardStateMethods,
 );
