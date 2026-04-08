@@ -17,7 +17,7 @@ export function getDashboardCommandSpec(projectRoot: string): {
   dashboardBuildStamp: string;
   dashboardCommand: TmuxCommandSpec;
 } {
-  const scriptPath = fileURLToPath(new URL("./main.js", import.meta.url));
+  const scriptPath = fileURLToPath(new URL("./index.js", import.meta.url));
   const wrappedDashboardCommand = [
     "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX)",
     ";",
