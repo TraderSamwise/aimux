@@ -250,6 +250,29 @@ import {
   stopProjectServices as stopProjectServicesImpl,
 } from "./multiplexer-dashboard-model.js";
 import {
+  ensureDashboardControlPlane as ensureDashboardControlPlaneImpl,
+  getSelectedDashboardServiceForActions as getSelectedDashboardServiceForActionsImpl,
+  getSelectedDashboardSessionForActions as getSelectedDashboardSessionForActionsImpl,
+  getSelectedDashboardWorktreeEntry as getSelectedDashboardWorktreeEntryImpl,
+  handleActiveDashboardOverlayKey as handleActiveDashboardOverlayKeyImpl,
+  handleDashboardSubscreenNavigationKey as handleDashboardSubscreenNavigationKeyImpl,
+  handleOrchestrationInputKey as handleOrchestrationInputKeyImpl,
+  handleOrchestrationRoutePickerKey as handleOrchestrationRoutePickerKeyImpl,
+  isDashboardScreen as isDashboardScreenImpl,
+  noteLastUsedItem as noteLastUsedItemImpl,
+  openLiveTmuxWindowForEntry as openLiveTmuxWindowForEntryImpl,
+  openLiveTmuxWindowForService as openLiveTmuxWindowForServiceImpl,
+  postToProjectService as postToProjectServiceImpl,
+  renderActiveDashboardOverlay as renderActiveDashboardOverlayImpl,
+  renderOrchestrationInput as renderOrchestrationInputImpl,
+  renderOrchestrationRoutePicker as renderOrchestrationRoutePickerImpl,
+  setDashboardScreen as setDashboardScreenImpl,
+  showOrchestrationInput as showOrchestrationInputImpl,
+  showOrchestrationRoutePicker as showOrchestrationRoutePickerImpl,
+  syncTuiNotificationContext as syncTuiNotificationContextImpl,
+  updateWorktreeSessions as updateWorktreeSessionsImpl,
+} from "./multiplexer-dashboard-control.js";
+import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
   buildWorkflowEntriesForHost as buildWorkflowEntriesForHostImpl,
@@ -2426,464 +2449,74 @@ export class Multiplexer {
 
   /** Get sessions belonging to the focused worktree (includes local, remote, offline) */
   private updateWorktreeSessions(): void {
-    const allDash = this.getDashboardSessions();
-    this.dashboardState.worktreeSessions = allDash.filter((s) => {
-      return (s.worktreePath ?? undefined) === this.dashboardState.focusedWorktreePath;
-    });
-    const worktreeServices = this.getDashboardServices().filter((service) => {
-      return (service.worktreePath ?? undefined) === this.dashboardState.focusedWorktreePath;
-    });
-    this.dashboardState.worktreeEntries = [
-      ...this.dashboardState.worktreeSessions.map((session) => ({ kind: "session", id: session.id }) as const),
-      ...worktreeServices.map((service) => ({ kind: "service", id: service.id }) as const),
-    ];
+    updateWorktreeSessionsImpl(this);
   }
 
   private syncTuiNotificationContext(panelOpen = false): void {
-    if (this.mode !== "dashboard") return;
-    const selected =
-      this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0
-        ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.kind === "session"
-          ? this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex]?.id
-          : undefined
-        : this.getDashboardSessions()[this.activeIndex]?.id;
-    updateNotificationContext("tui", {
-      focused: true,
-      screen: this.dashboardState.screen,
-      sessionId: selected,
-      panelOpen,
-    });
+    syncTuiNotificationContextImpl(this, panelOpen);
   }
 
   private isDashboardScreen(screen: DashboardScreen): boolean {
-    return this.dashboardState.isScreen(screen);
+    return isDashboardScreenImpl(this, screen);
   }
 
   private setDashboardScreen(screen: DashboardScreen): void {
-    this.dashboardState.setScreen(screen);
-    this.syncTuiNotificationContext(false);
-    this.writeDashboardClientStatuslineFile();
-    this.persistDashboardUiState();
-    this.tmuxRuntimeManager.refreshStatus();
+    setDashboardScreenImpl(this, screen);
   }
 
   private handleActiveDashboardOverlayKey(data: Buffer): boolean {
-    if (this.dashboardBusyState) {
-      return true;
-    }
-    if (this.dashboardErrorState) {
-      const events = parseKeys(data);
-      if (events.length === 0) return true;
-      const key = events[0].name || events[0].char;
-      if (key === "escape" || key === "enter" || key === "return") {
-        this.dismissDashboardError();
-      }
-      return true;
-    }
-    if (this.pickerActive) {
-      this.handleToolPickerKey(data);
-      return true;
-    }
-    if (this.notificationPanelState) {
-      this.handleNotificationPanelKey(data);
-      return true;
-    }
-    if (this.worktreeRemoveConfirm) {
-      this.handleWorktreeRemoveConfirmKey(data);
-      return true;
-    }
-    if (this.worktreeInputActive) {
-      this.handleWorktreeInputKey(data);
-      return true;
-    }
-    if (this.serviceInputActive) {
-      this.handleServiceInputKey(data);
-      return true;
-    }
-    if (this.worktreeListActive) {
-      this.handleWorktreeListKey(data);
-      return true;
-    }
-    if (this.migratePickerActive) {
-      this.handleMigratePickerKey(data);
-      return true;
-    }
-    if (this.switcherActive) {
-      this.handleSwitcherKey(data);
-      return true;
-    }
-    if (this.threadReplyActive) {
-      this.handleThreadReplyKey(data);
-      return true;
-    }
-    if (this.orchestrationRoutePickerActive) {
-      this.handleOrchestrationRoutePickerKey(data);
-      return true;
-    }
-    if (this.orchestrationInputActive) {
-      this.handleOrchestrationInputKey(data);
-      return true;
-    }
-    if (this.labelInputActive) {
-      this.handleLabelInputKey(data);
-      return true;
-    }
-    return false;
+    return handleActiveDashboardOverlayKeyImpl(this, data);
   }
 
   private renderActiveDashboardOverlay(): boolean {
-    if (this.worktreeRemoveConfirm) {
-      this.renderWorktreeRemoveConfirm();
-      return true;
-    }
-    if (this.dashboardErrorState) {
-      this.renderDashboardErrorOverlay();
-      return true;
-    }
-    if (this.dashboardBusyState) {
-      this.renderDashboardBusyOverlay();
-      return true;
-    }
-    if (this.switcherActive) {
-      this.renderSwitcher();
-      return true;
-    }
-    if (this.notificationPanelState) {
-      this.renderNotificationPanel();
-      return true;
-    }
-    if (this.threadReplyActive) {
-      this.renderThreadReply();
-      return true;
-    }
-    if (this.orchestrationInputActive) {
-      this.renderOrchestrationInput();
-      return true;
-    }
-    if (this.migratePickerActive) {
-      this.renderMigratePicker();
-      return true;
-    }
-    if (this.worktreeListActive) {
-      this.renderWorktreeList();
-      return true;
-    }
-    if (this.labelInputActive) {
-      this.renderLabelInput();
-      return true;
-    }
-    if (this.worktreeInputActive) {
-      this.renderWorktreeInput();
-      return true;
-    }
-    if (this.serviceInputActive) {
-      this.renderServiceInput();
-      return true;
-    }
-    if (this.pickerActive) {
-      this.renderToolPicker();
-      return true;
-    }
-    if (this.orchestrationRoutePickerActive) {
-      this.renderOrchestrationRoutePicker();
-      return true;
-    }
-    return false;
+    return renderActiveDashboardOverlayImpl(this);
   }
 
   private handleDashboardSubscreenNavigationKey(
     key: string,
     currentScreen: Exclude<DashboardScreen, "dashboard">,
   ): boolean {
-    if (key === "d") {
-      this.setDashboardScreen("dashboard");
-      this.syncTuiNotificationContext(false);
-      this.renderDashboard();
-      return true;
-    }
-    if (key === "a") {
-      if (currentScreen === "activity") {
-        this.renderActivityDashboard();
-      } else {
-        this.showActivityDashboard();
-      }
-      return true;
-    }
-    if (key === "t") {
-      if (currentScreen === "threads") {
-        this.renderThreads();
-      } else {
-        this.showThreads();
-      }
-      return true;
-    }
-    if (key === "y") {
-      if (currentScreen === "workflow") {
-        this.renderWorkflow();
-      } else {
-        this.showWorkflow();
-      }
-      return true;
-    }
-    if (key === "p") {
-      if (currentScreen === "plans") {
-        this.renderPlans();
-      } else {
-        this.showPlans();
-      }
-      return true;
-    }
-    if (key === "g") {
-      if (currentScreen === "graveyard") {
-        this.renderGraveyard();
-      } else {
-        this.showGraveyard();
-      }
-      return true;
-    }
-    if (key === "i") {
-      this.showNotificationPanel();
-      return true;
-    }
-    return false;
+    return handleDashboardSubscreenNavigationKeyImpl(this, key, currentScreen);
   }
 
   private openLiveTmuxWindowForEntry(entry: { id: string; backendSessionId?: string }): "opened" | "missing" | "error" {
-    try {
-      const target = openManagedSessionWindow(this.tmuxRuntimeManager, process.cwd(), entry);
-      if (!target) return "missing";
-      this.agentTracker.markSeen(entry.id);
-      updateNotificationContext("tui", {
-        focused: true,
-        sessionId: entry.id,
-        panelOpen: false,
-      });
-      this.noteLastUsedItem(entry.id);
-      return "opened";
-    } catch (error) {
-      this.showDashboardError("Failed to open agent", [
-        error instanceof Error ? error.message : String(error),
-        "The tmux window may still be starting. Try again in a moment.",
-      ]);
-      return "error";
-    }
+    return openLiveTmuxWindowForEntryImpl(this, entry);
   }
 
   private openLiveTmuxWindowForService(serviceId: string): "opened" | "missing" | "error" {
-    try {
-      const target = openManagedServiceWindow(this.tmuxRuntimeManager, process.cwd(), serviceId);
-      if (!target) return "missing";
-      this.noteLastUsedItem(serviceId);
-      return "opened";
-    } catch (error) {
-      this.showDashboardError("Failed to open service", [
-        error instanceof Error ? error.message : String(error),
-        "The tmux window may still be starting. Try again in a moment.",
-      ]);
-      return "error";
-    }
+    return openLiveTmuxWindowForServiceImpl(this, serviceId);
   }
 
   private noteLastUsedItem(itemId: string): void {
-    markLastUsed(process.cwd(), {
-      itemId,
-      clientSession: this.tmuxRuntimeManager.currentClientSession() ?? undefined,
-    });
-    this.invalidateDesktopStateSnapshot();
+    noteLastUsedItemImpl(this, itemId);
   }
 
   private getSelectedDashboardWorktreeEntry(): DashboardWorktreeEntry | undefined {
-    if (this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0) {
-      return this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
-    }
-    return undefined;
+    return getSelectedDashboardWorktreeEntryImpl(this);
   }
 
   private getSelectedDashboardSessionForActions(): DashboardSession | undefined {
-    const selectedEntry = this.getSelectedDashboardWorktreeEntry();
-    if (selectedEntry?.kind === "session") {
-      return this.dashboardState.worktreeSessions.find((session) => session.id === selectedEntry.id);
-    }
-    if (this.dashboardState.worktreeNavOrder.length <= 1) {
-      return this.getDashboardSessions()[this.activeIndex];
-    }
-    return undefined;
+    return getSelectedDashboardSessionForActionsImpl(this);
   }
 
   private getSelectedDashboardServiceForActions(): DashboardService | undefined {
-    const selectedEntry = this.getSelectedDashboardWorktreeEntry();
-    if (selectedEntry?.kind !== "service") return undefined;
-    return this.getDashboardServices().find((service) => service.id === selectedEntry.id);
+    return getSelectedDashboardServiceForActionsImpl(this);
   }
 
   private showOrchestrationRoutePicker(mode: "message" | "handoff" | "task"): void {
-    const selected = this.getSelectedDashboardSessionForActions();
-    const options: DashboardOrchestrationTarget[] = [];
-    const focusedWorktreePath = this.mode === "dashboard" ? this.dashboardState.focusedWorktreePath : undefined;
-    const metadataState = loadMetadataState().sessions;
-    const candidates = this.sessions.map((session) => ({
-      id: session.id,
-      tool: this.sessionToolKeys.get(session.id) ?? session.command,
-      role: this.sessionRoles.get(session.id),
-      worktreePath: this.sessionWorktreePaths.get(session.id),
-      status: metadataState[session.id]?.derived?.activity,
-      availability: this.deriveSessionSemanticState(
-        session.id,
-        metadataState[session.id]?.derived?.activity === "running"
-          ? "running"
-          : metadataState[session.id]?.derived?.activity === "waiting"
-            ? "waiting"
-            : session.status,
-      ).availability,
-      workflowPressure: this.orchestrationWorkflowPressure(
-        session.id,
-        metadataState[session.id]?.derived?.activity === "running"
-          ? "running"
-          : metadataState[session.id]?.derived?.activity === "waiting"
-            ? "waiting"
-            : session.status,
-      ),
-      exited: session.exited,
-    }));
-
-    if (selected && !selected.remoteInstancePid) {
-      options.push({
-        label: `${selected.label ?? selected.command ?? selected.id} (${selected.id})`,
-        sessionId: selected.id,
-      });
-    }
-
-    const team = loadTeamConfig();
-    for (const [role, cfg] of Object.entries(team.roles)) {
-      const recipientIds = resolveOrchestrationRecipients({
-        candidates,
-        assignee: role,
-        worktreePath: focusedWorktreePath,
-      });
-      if (recipientIds.length === 0) continue;
-      options.push({
-        label: `Role: ${role}${cfg.description ? ` — ${cfg.description}` : ""}${this.formatRoutePreview(recipientIds)}`,
-        assignee: role,
-        worktreePath: focusedWorktreePath,
-        recipientIds,
-      });
-    }
-
-    const config = loadConfig();
-    for (const [toolKey, toolCfg] of Object.entries(config.tools)) {
-      if (!toolCfg.enabled) continue;
-      const recipientIds = resolveOrchestrationRecipients({
-        candidates,
-        tool: toolKey,
-        worktreePath: focusedWorktreePath,
-      });
-      if (recipientIds.length === 0) continue;
-      options.push({
-        label: `Tool: ${toolKey}${this.formatRoutePreview(recipientIds)}`,
-        tool: toolKey,
-        worktreePath: focusedWorktreePath,
-        recipientIds,
-      });
-    }
-
-    if (options.length === 0) {
-      this.showDashboardError("No orchestration targets available", [
-        "Select a local agent, define team roles, or enable tools before sending orchestration actions.",
-      ]);
-      return;
-    }
-
-    this.orchestrationRouteMode = mode;
-    this.orchestrationRouteOptions = options;
-    this.orchestrationRoutePickerActive = true;
-    this.renderOrchestrationRoutePicker();
+    showOrchestrationRoutePickerImpl(this, mode);
   }
 
   private showOrchestrationInput(mode: "message" | "handoff" | "task", target: DashboardOrchestrationTarget): void {
-    this.orchestrationInputMode = mode;
-    this.orchestrationInputTarget = target;
-    this.orchestrationInputBuffer = "";
-    this.orchestrationInputActive = true;
-    this.renderOrchestrationInput();
+    showOrchestrationInputImpl(this, mode, target);
   }
 
   private renderOrchestrationInput(): void {
-    const target = this.orchestrationInputTarget;
-    const mode = this.orchestrationInputMode;
-    if (!target || !mode) return;
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Handoff" : "Assign task";
-    const actionLabel = mode === "task" ? "assign" : "send";
-    const worktreeLine = target.worktreePath ? `  Worktree: ${target.worktreePath}` : null;
-    const recipientCount = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
-    const recipientPreview =
-      target.sessionId || recipientCount === 0
-        ? null
-        : mode === "task"
-          ? `  Route: best match from ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}`
-          : `  Recipients: ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}${target.recipientIds && target.recipientIds.length > 0 ? ` (${target.recipientIds.slice(0, 3).join(", ")}${target.recipientIds.length > 3 ? ", ..." : ""})` : ""}`;
-    const lines = [
-      `${modeLabel}:`,
-      "",
-      `  To: ${target.label}`,
-      ...(worktreeLine ? [worktreeLine] : []),
-      ...(recipientPreview ? [recipientPreview] : []),
-      `  Text: ${this.orchestrationInputBuffer}_`,
-      "",
-      `  [Enter] ${actionLabel}  [Esc] cancel`,
-    ];
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1]!;
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderOrchestrationInputImpl(this);
   }
 
   private renderOrchestrationRoutePicker(): void {
-    const mode = this.orchestrationRouteMode;
-    if (!mode) return;
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Send handoff" : "Assign task";
-    const lines = [`${modeLabel}: choose target`, ""];
-    for (let i = 0; i < Math.min(this.orchestrationRouteOptions.length, 9); i++) {
-      lines.push(`  [${i + 1}] ${this.orchestrationRouteOptions[i]!.label}`);
-    }
-    if (this.orchestrationRouteOptions.length > 9) {
-      lines.push("  ...");
-    }
-    lines.push("");
-    lines.push("  [Esc] cancel");
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1]!;
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderOrchestrationRoutePickerImpl(this);
   }
 
   private formatRoutePreview(recipientIds: string[]): string {
@@ -2894,125 +2527,19 @@ export class Multiplexer {
   }
 
   private async postToProjectService(path: string, body: unknown): Promise<any> {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const endpoint = resolveProjectServiceEndpoint(process.cwd());
-      if (!endpoint) {
-        await this.ensureDashboardControlPlane();
-        continue;
-      }
-      try {
-        const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body,
-          timeoutMs: 1_000,
-        });
-        if (status >= 200 && status < 300 && json?.ok !== false) {
-          return json;
-        }
-        if (attempt === 0) {
-          await this.ensureDashboardControlPlane();
-          continue;
-        }
-        throw new Error(json?.error || `request failed: ${status}`);
-      } catch (error) {
-        if (attempt === 0) {
-          await this.ensureDashboardControlPlane();
-          continue;
-        }
-        throw error;
-      }
-    }
-    throw new Error("no live project service endpoint");
+    return postToProjectServiceImpl(this, path, body);
   }
 
   private async ensureDashboardControlPlane(): Promise<void> {
-    if (this.dashboardServiceRecovery) {
-      await this.dashboardServiceRecovery;
-      return;
-    }
-    this.dashboardServiceRecovery = (async () => {
-      await ensureDaemonRunning();
-      await ensureProjectService(process.cwd());
-    })();
-    try {
-      await this.dashboardServiceRecovery;
-    } finally {
-      this.dashboardServiceRecovery = null;
-    }
+    await ensureDashboardControlPlaneImpl(this);
   }
 
   private handleOrchestrationInputKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-    const event = events[0];
-    const key = event.name || event.char;
-
-    if (key === "escape") {
-      this.orchestrationInputActive = false;
-      this.orchestrationInputBuffer = "";
-      this.orchestrationInputMode = null;
-      this.orchestrationInputTarget = null;
-      this.renderDashboard();
-      return;
-    }
-
-    if (key === "enter" || key === "return") {
-      const mode = this.orchestrationInputMode;
-      const target = this.orchestrationInputTarget;
-      const body = this.orchestrationInputBuffer.trim();
-      this.orchestrationInputActive = false;
-      this.orchestrationInputBuffer = "";
-      this.orchestrationInputMode = null;
-      this.orchestrationInputTarget = null;
-      if (!mode || !target || !body) {
-        this.renderDashboard();
-        return;
-      }
-      void this.submitDashboardOrchestrationAction(mode, target, body);
-      return;
-    }
-
-    if (key === "backspace" || key === "delete") {
-      this.orchestrationInputBuffer = this.orchestrationInputBuffer.slice(0, -1);
-      this.renderOrchestrationInput();
-      return;
-    }
-
-    if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
-      this.orchestrationInputBuffer += event.char;
-      this.renderOrchestrationInput();
-    }
+    handleOrchestrationInputKeyImpl(this, data);
   }
 
   private handleOrchestrationRoutePickerKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-
-    const event = events[0];
-    const key = event.name || event.char;
-
-    if (key === "escape") {
-      this.orchestrationRoutePickerActive = false;
-      this.orchestrationRouteMode = null;
-      this.orchestrationRouteOptions = [];
-      this.renderDashboard();
-      return;
-    }
-
-    if (key && /^[1-9]$/.test(key)) {
-      const idx = parseInt(key, 10) - 1;
-      const target = this.orchestrationRouteOptions[idx];
-      const mode = this.orchestrationRouteMode;
-      this.orchestrationRoutePickerActive = false;
-      this.orchestrationRouteMode = null;
-      this.orchestrationRouteOptions = [];
-      if (!target || !mode) {
-        this.renderDashboard();
-        return;
-      }
-      this.showOrchestrationInput(mode, target);
-    }
+    handleOrchestrationRoutePickerKeyImpl(this, data);
   }
 
   private async submitDashboardOrchestrationAction(
