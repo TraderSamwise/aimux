@@ -15,7 +15,7 @@ import { DashboardState, type DashboardScreen } from "./dashboard-state.js";
 import { captureGitContext, ContextWatcher, buildContextPreamble } from "./context/context-bridge.js";
 import { readHistory } from "./context/history.js";
 import { parseKeys } from "./key-parser.js";
-import { loadConfig, initProject, type ToolConfig } from "./config.js";
+import { loadConfig, initProject } from "./config.js";
 import {
   getProjectStateDir,
   getGraveyardPath,
@@ -124,8 +124,6 @@ import {
   renderNotificationPanel,
   renderServiceInputOverlay,
   renderSwitcherOverlay,
-  renderWorktreeListOverlay,
-  renderWorktreeRemoveConfirmOverlay,
 } from "./tui/screens/overlay-renderers.js";
 import { composeTwoPane, stripAnsi, truncateAnsi, truncatePlain, wrapKeyValue, wrapText } from "./tui/render/text.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux-statusline.js";
@@ -138,6 +136,61 @@ import {
 } from "./dashboard-feedback.js";
 import { MultiplexerRuntimeSync } from "./multiplexer-runtime-sync.js";
 import { openManagedServiceWindow, openManagedSessionWindow, selectLinkedOrOpenTarget } from "./tmux-window-open.js";
+import {
+  beginWorktreeRemoval as beginWorktreeRemovalImpl,
+  finishWorktreeRemoval as finishWorktreeRemovalImpl,
+  handleWorktreeInputKey as handleWorktreeInputKeyImpl,
+  handleWorktreeListKey as handleWorktreeListKeyImpl,
+  handleWorktreeRemoveConfirmKey as handleWorktreeRemoveConfirmKeyImpl,
+  renderWorktreeInput as renderWorktreeInputImpl,
+  renderWorktreeList as renderWorktreeListImpl,
+  renderWorktreeRemoveConfirm as renderWorktreeRemoveConfirmImpl,
+  showWorktreeCreatePrompt as showWorktreeCreatePromptImpl,
+  showWorktreeList as showWorktreeListImpl,
+} from "./multiplexer-worktrees.js";
+import {
+  closeNotificationPanel as closeNotificationPanelImpl,
+  handleNotificationPanelKey as handleNotificationPanelKeyImpl,
+  showNotificationPanel as showNotificationPanelImpl,
+} from "./multiplexer-notifications.js";
+import {
+  createService as createServiceImpl,
+  removeOfflineService as removeOfflineServiceImpl,
+  resumeOfflineService as resumeOfflineServiceImpl,
+  resumeOfflineServiceById as resumeOfflineServiceByIdImpl,
+  serviceLabelForCommand as serviceLabelForCommandImpl,
+  stopService as stopServiceImpl,
+} from "./multiplexer-services.js";
+import {
+  handleToolPickerKey as handleToolPickerKeyImpl,
+  isToolAvailable,
+  renderToolPicker as renderToolPickerImpl,
+  runSelectedTool as runSelectedToolImpl,
+  showToolPicker as showToolPickerImpl,
+} from "./multiplexer-tool-picker.js";
+import {
+  forkAgent as forkAgentImpl,
+  migrateAgentSession as migrateAgentSessionImpl,
+  renameAgent as renameAgentImpl,
+  sendAgentToGraveyard as sendAgentToGraveyardImpl,
+  spawnAgent as spawnAgentImpl,
+  stopAgent as stopAgentImpl,
+} from "./multiplexer-session-actions.js";
+import {
+  buildPlanPreview as buildPlanPreviewImpl,
+  handleGraveyardKey as handleGraveyardKeyImpl,
+  handlePlansKey as handlePlansKeyImpl,
+  loadPlanEntries as loadPlanEntriesImpl,
+  openPlanInEditor as openPlanInEditorImpl,
+  parsePlanFrontmatter as parsePlanFrontmatterImpl,
+  renderGraveyard as renderGraveyardImpl,
+  renderGraveyardDetailsForHost as renderGraveyardDetailsForHostImpl,
+  renderPlanDetailsForHost as renderPlanDetailsForHostImpl,
+  renderPlans as renderPlansImpl,
+  resurrectGraveyardEntry as resurrectGraveyardEntryImpl,
+  showGraveyard as showGraveyardImpl,
+  showPlans as showPlansImpl,
+} from "./multiplexer-archives.js";
 import {
   graveyardSessionWithFeedback as runGraveyardSessionWithFeedback,
   resumeOfflineSessionWithFeedback as runResumeOfflineSessionWithFeedback,
@@ -4001,163 +4054,19 @@ export class Multiplexer {
   }
 
   private renderToolPicker(): void {
-    const config = loadConfig();
-    const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
-
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-
-    const lines = [
-      this.pickerMode === "fork" && this.forkSourceSessionId
-        ? `Fork from ${this.forkSourceSessionId}: select tool`
-        : "Select tool:",
-    ];
-    for (let i = 0; i < tools.length; i++) {
-      const available = isToolAvailable(tools[i][1].command);
-      const label = available ? `  [${i + 1}] ${tools[i][0]}` : `  [${i + 1}] ${tools[i][0]} (not installed)`;
-      lines.push(label);
-    }
-    lines.push("");
-    lines.push("  [Esc] Cancel");
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7"; // save cursor
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1];
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8"; // restore cursor
-    process.stdout.write(output);
+    renderToolPickerImpl(this);
   }
 
-  private runSelectedTool(toolKey: string, tool: ToolConfig): void {
-    const wtPath = this.mode === "dashboard" ? this.dashboardState.focusedWorktreePath : undefined;
-
-    if (this.pickerMode === "fork") {
-      const sourceSessionId = this.forkSourceSessionId;
-      this.pickerMode = "create";
-      this.forkSourceSessionId = null;
-      if (!sourceSessionId) {
-        this.showDashboardError("Cannot fork session", ["Fork source was lost before tool selection. Try again."]);
-        return;
-      }
-      this.startDashboardBusy("Forking agent", [
-        `Source: ${sourceSessionId}`,
-        `Tool: ${toolKey}`,
-        "Seeding carried-over context",
-      ]);
-      void this.forkAgent({
-        sourceSessionId,
-        targetToolConfigKey: toolKey,
-        targetWorktreePath: wtPath,
-        open: true,
-      })
-        .catch((error) => this.showDashboardError("Cannot fork session", [String(error)]))
-        .finally(() => this.clearDashboardBusy());
-      return;
-    }
-
-    this.pickerMode = "create";
-    this.forkSourceSessionId = null;
-    const sessionId = this.generateDashboardSessionId(tool.command);
-    const shouldRenderPending = this.startedInDashboard && this.mode === "dashboard";
-    if (shouldRenderPending) {
-      this.setPendingDashboardSessionAction(sessionId, "creating");
-    }
-    try {
-      this.createSession(
-        tool.command,
-        tool.args,
-        tool.preambleFlag,
-        toolKey,
-        undefined,
-        tool.sessionIdFlag,
-        wtPath,
-        undefined,
-        sessionId,
-        shouldRenderPending,
-      );
-      this.settleDashboardCreatePending(sessionId);
-    } catch (error) {
-      if (shouldRenderPending) {
-        this.setPendingDashboardSessionAction(sessionId, null);
-      }
-      throw error;
-    }
+  private runSelectedTool(toolKey: string, tool: any): void {
+    runSelectedToolImpl(this, toolKey, tool);
   }
 
   private showToolPicker(sourceSessionId?: string): void {
-    const config = loadConfig();
-    const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
-    this.pickerMode = sourceSessionId ? "fork" : "create";
-    this.forkSourceSessionId = sourceSessionId ?? null;
-
-    if (tools.length === 1) {
-      const [key, tool] = tools[0];
-      if (!isToolAvailable(tool.command)) {
-        // Show all tools anyway so user sees what's supported
-      } else {
-        // Only one available tool — skip picker, spawn directly
-        this.runSelectedTool(key, tool);
-        return;
-      }
-    }
-
-    this.pickerActive = true;
-    this.renderToolPicker();
+    showToolPickerImpl(this, sourceSessionId);
   }
 
   private handleToolPickerKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-
-    const event = events[0];
-    const key = event.name || event.char;
-
-    this.pickerActive = false;
-
-    if (key === "escape") {
-      this.pickerMode = "create";
-      this.forkSourceSessionId = null;
-      this.restoreDashboardAfterOverlayDismiss();
-      return;
-    }
-
-    if (key >= "1" && key <= "9") {
-      const config = loadConfig();
-      const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
-      const idx = parseInt(key) - 1;
-      if (idx < tools.length) {
-        const [key, tool] = tools[idx];
-        if (!isToolAvailable(tool.command)) {
-          // Show brief error then redraw
-          process.stdout.write(
-            `\x1b7\x1b[${(process.stdout.rows ?? 24) - 2};1H\x1b[41;97m "${tool.command}" is not installed. Install it first. \x1b[0m\x1b8`,
-          );
-          setTimeout(() => {
-            this.pickerActive = false;
-            this.restoreDashboardAfterOverlayDismiss();
-          }, 2000);
-          return;
-        }
-        this.runSelectedTool(key, tool);
-        return;
-      }
-    }
-
-    // Invalid key — redraw current view
-    this.pickerMode = "create";
-    this.forkSourceSessionId = null;
-    this.renderDashboard();
+    handleToolPickerKeyImpl(this, data);
   }
 
   private async forkSessionFromSource(
@@ -4291,25 +4200,7 @@ export class Multiplexer {
     targetWorktreePath?: string;
     open?: boolean;
   }): Promise<{ sessionId: string; threadId: string }> {
-    this.syncSessionsFromState();
-    const result = await this.forkSessionFromSource(
-      opts.sourceSessionId,
-      opts.targetToolConfigKey,
-      opts.instruction,
-      opts.targetWorktreePath,
-    );
-    if (!result) {
-      throw new Error(`Unable to fork session ${opts.sourceSessionId}`);
-    }
-    if (opts.open !== false && result.target) {
-      if (!this.openLiveTmuxWindowForEntry({ id: result.sessionId })) {
-        this.tmuxRuntimeManager.openTarget(result.target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
-      }
-    }
-    return {
-      sessionId: result.sessionId,
-      threadId: result.threadId,
-    };
+    return forkAgentImpl(this, opts);
   }
 
   async spawnAgent(opts: {
@@ -4317,73 +4208,15 @@ export class Multiplexer {
     targetWorktreePath?: string;
     open?: boolean;
   }): Promise<{ sessionId: string }> {
-    this.syncSessionsFromState();
-
-    const config = loadConfig();
-    const toolCfg = config.tools[opts.toolConfigKey];
-    if (!toolCfg) {
-      throw new Error(`Unknown tool config: ${opts.toolConfigKey}`);
-    }
-    if (!toolCfg.enabled) {
-      throw new Error(`Tool "${opts.toolConfigKey}" is disabled`);
-    }
-    if (!isToolAvailable(toolCfg.command)) {
-      throw new Error(`Tool "${toolCfg.command}" is not installed or not on PATH`);
-    }
-
-    const targetWorktreePath = opts.targetWorktreePath === process.cwd() ? undefined : opts.targetWorktreePath;
-    const transport = this.createSession(
-      toolCfg.command,
-      toolCfg.args,
-      toolCfg.preambleFlag,
-      opts.toolConfigKey,
-      undefined,
-      toolCfg.sessionIdFlag,
-      targetWorktreePath,
-    );
-
-    const target = this.sessionTmuxTargets.get(transport.id);
-    if (opts.open !== false && target) {
-      if (!this.openLiveTmuxWindowForEntry({ id: transport.id })) {
-        this.tmuxRuntimeManager.openTarget(target, { insideTmux: this.tmuxRuntimeManager.isInsideTmux() });
-      }
-    }
-
-    return { sessionId: transport.id };
+    return spawnAgentImpl(this, opts);
   }
 
   async renameAgent(sessionId: string, label?: string): Promise<{ sessionId: string; label?: string }> {
-    this.syncSessionsFromState();
-
-    const runningSession = this.sessions.find((session) => session.id === sessionId);
-    const offlineSession = this.offlineSessions.find((session) => session.id === sessionId);
-    if (!runningSession && !offlineSession) {
-      throw new Error(`Session "${sessionId}" not found`);
-    }
-
-    await this.updateSessionLabel(sessionId, label);
-    return { sessionId, label: this.getSessionLabel(sessionId) };
+    return renameAgentImpl(this, sessionId, label);
   }
 
   async stopAgent(sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
-    this.syncSessionsFromState();
-
-    const runningSession = this.sessions.find((session) => session.id === sessionId);
-    if (!runningSession) {
-      const offlineSession = this.offlineSessions.find((session) => session.id === sessionId);
-      if (offlineSession) {
-        return { sessionId, status: "offline" };
-      }
-      throw new Error(`Session "${sessionId}" not found`);
-    }
-
-    if (!this.stoppingSessionIds.has(sessionId)) {
-      this.stopSessionToOffline(runningSession);
-    }
-    await waitForSessionExit(runningSession);
-    this.saveState();
-
-    return { sessionId, status: "offline" };
+    return stopAgentImpl(this, sessionId);
   }
 
   async sendAgentToGraveyard(sessionId: string): Promise<{
@@ -4391,56 +4224,18 @@ export class Multiplexer {
     status: "graveyard";
     previousStatus: "running" | "offline";
   }> {
-    this.syncSessionsFromState();
-
-    let previousStatus: "running" | "offline";
-    const runningSession = this.sessions.find((session) => session.id === sessionId);
-    if (runningSession) {
-      previousStatus = "running";
-      this.graveyardAfterStopSessionIds.add(sessionId);
-      if (!this.stoppingSessionIds.has(sessionId)) {
-        this.stopSessionToOffline(runningSession);
-      }
-      await waitForSessionExit(runningSession);
-      this.saveState();
-    } else {
-      const offlineSession = this.offlineSessions.find((session) => session.id === sessionId);
-      if (!offlineSession) {
-        throw new Error(`Session "${sessionId}" not found`);
-      }
-      previousStatus = "offline";
-    }
-
-    this.graveyardAfterStopSessionIds.delete(sessionId);
-    this.graveyardSession(sessionId);
-    return { sessionId, status: "graveyard", previousStatus };
+    return sendAgentToGraveyardImpl(this, sessionId);
   }
 
   async migrateAgentSession(
     sessionId: string,
     targetWorktreePath: string,
   ): Promise<{ sessionId: string; worktreePath?: string }> {
-    this.syncSessionsFromState();
-
-    const runningSession = this.sessions.find((session) => session.id === sessionId);
-    if (!runningSession) {
-      const offlineSession = this.offlineSessions.find((session) => session.id === sessionId);
-      if (offlineSession) {
-        throw new Error(`Session "${sessionId}" is offline and cannot be migrated`);
-      }
-      throw new Error(`Session "${sessionId}" not found`);
-    }
-
-    await this.migrateAgent(sessionId, targetWorktreePath);
-    await waitForSessionExit(runningSession);
-    return { sessionId, worktreePath: this.getSessionWorktreePath(sessionId) };
+    return migrateAgentSessionImpl(this, sessionId, targetWorktreePath);
   }
 
   private serviceLabelForCommand(commandLine: string): string {
-    const trimmed = commandLine.trim();
-    if (!trimmed) return "shell";
-    const first = trimmed.split(/\s+/)[0] ?? "service";
-    return basename(first);
+    return serviceLabelForCommandImpl(commandLine);
   }
 
   private generateDashboardSessionId(command: string): string {
@@ -4461,186 +4256,23 @@ export class Multiplexer {
   }
 
   private createService(commandLine: string, worktreePath?: string): { serviceId: string } {
-    const serviceId = `service-${randomUUID().slice(0, 8)}`;
-    const cwd = worktreePath ?? process.cwd();
-    const shell = process.env.SHELL || "zsh";
-    const trimmed = commandLine.trim();
-    let projectRoot = process.cwd();
-    try {
-      projectRoot = findMainRepo(cwd);
-    } catch {
-      projectRoot = process.cwd();
-    }
-    const wrapped = trimmed
-      ? wrapCommandWithShellIntegration({
-          projectRoot,
-          sessionId: serviceId,
-          tool: "service",
-          command: shell,
-          args: ["-lc", trimmed],
-          shellPath: shell,
-        })
-      : wrapInteractiveShellWithIntegration({
-          projectRoot,
-          sessionId: serviceId,
-          tool: "service",
-          shellPath: shell,
-        });
-    const command = wrapped.command;
-    const args = wrapped.args;
-    const label = this.serviceLabelForCommand(trimmed);
-    const tmuxSession = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
-    const shouldRenderPending = this.startedInDashboard && this.mode === "dashboard";
-    if (shouldRenderPending) {
-      this.setPendingDashboardSessionAction(serviceId, "creating");
-    }
-    try {
-      const target = this.tmuxRuntimeManager.createWindow(tmuxSession.sessionName, label, cwd, command, args, {
-        detached: true,
-      });
-      this.tmuxRuntimeManager.setWindowMetadata(target, {
-        kind: "service",
-        sessionId: serviceId,
-        command: trimmed ? shell : "shell",
-        args: trimmed ? ["-lc", trimmed] : ["-l"],
-        toolConfigKey: "service",
-        worktreePath,
-        label,
-      });
-      this.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
-      this.saveState();
-      this.invalidateDesktopStateSnapshot();
-      this.refreshLocalDashboardModel();
-      this.updateWorktreeSessions();
-      this.preferDashboardEntrySelection("service", serviceId, worktreePath);
-      this.settleDashboardCreatePending(serviceId);
-      return { serviceId };
-    } catch (error) {
-      if (shouldRenderPending) {
-        this.setPendingDashboardSessionAction(serviceId, null);
-      }
-      throw error;
-    }
+    return createServiceImpl(this, commandLine, worktreePath);
   }
 
   private stopService(serviceId: string): { serviceId: string; status: "stopped" } {
-    const tmuxSession = this.tmuxRuntimeManager.getProjectSession(process.cwd());
-    const match = this.tmuxRuntimeManager.findManagedWindow(tmuxSession.sessionName, {
-      sessionId: serviceId,
-    });
-    if (!match || match.metadata.kind !== "service") {
-      throw new Error(`Service "${serviceId}" not found`);
-    }
-    const launchCommandLine =
-      match.metadata.command === "shell"
-        ? ""
-        : match.metadata.args?.[0] === "-lc"
-          ? (match.metadata.args[1] ?? "")
-          : "";
-    this.offlineServices = [
-      ...this.offlineServices.filter((service) => service.id !== serviceId),
-      {
-        id: serviceId,
-        worktreePath: match.metadata.worktreePath,
-        label: match.metadata.label,
-        launchCommandLine,
-      },
-    ];
-    this.tmuxRuntimeManager.killWindow(match.target);
-    this.saveState();
-    this.invalidateDesktopStateSnapshot();
-    this.refreshLocalDashboardModel();
-    this.adjustAfterRemove(this.dashboardWorktreeGroupsCache.length > 0);
-    return { serviceId, status: "stopped" };
+    return stopServiceImpl(this, serviceId);
   }
 
   private removeOfflineService(serviceId: string): { serviceId: string; status: "removed" } {
-    this.offlineServices = this.offlineServices.filter((service) => service.id !== serviceId);
-    const statePath = getStatePath();
-    if (existsSync(statePath)) {
-      try {
-        const state = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
-        state.services = (state.services ?? []).filter((service) => service.id !== serviceId);
-        writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-      } catch {}
-    }
-    this.saveState();
-    this.invalidateDesktopStateSnapshot();
-    this.refreshLocalDashboardModel();
-    this.adjustAfterRemove(this.dashboardWorktreeGroupsCache.length > 0);
-    return { serviceId, status: "removed" };
+    return removeOfflineServiceImpl(this, serviceId);
   }
 
   private resumeOfflineService(service: ServiceState): { serviceId: string; status: "running" } {
-    const existing = this.tmuxRuntimeManager.findManagedWindow(
-      this.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
-      {
-        sessionId: service.id,
-      },
-    );
-    if (existing && existing.metadata.kind === "service") {
-      this.offlineServices = this.offlineServices.filter((entry) => entry.id !== service.id);
-      this.saveState();
-      this.invalidateDesktopStateSnapshot();
-      this.refreshLocalDashboardModel();
-      return { serviceId: service.id, status: "running" };
-    }
-    const cwd = service.worktreePath ?? process.cwd();
-    const shell = process.env.SHELL || "zsh";
-    const launchCommandLine = service.launchCommandLine?.trim() ?? "";
-    let projectRoot = process.cwd();
-    try {
-      projectRoot = findMainRepo(cwd);
-    } catch {
-      projectRoot = process.cwd();
-    }
-    const wrapped = launchCommandLine
-      ? wrapCommandWithShellIntegration({
-          projectRoot,
-          sessionId: service.id,
-          tool: "service",
-          command: shell,
-          args: ["-lc", launchCommandLine],
-          shellPath: shell,
-        })
-      : wrapInteractiveShellWithIntegration({
-          projectRoot,
-          sessionId: service.id,
-          tool: "service",
-          shellPath: shell,
-        });
-    const command = wrapped.command;
-    const args = wrapped.args;
-    const label = service.label ?? this.serviceLabelForCommand(launchCommandLine);
-    const tmuxSession = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
-    const target = this.tmuxRuntimeManager.createWindow(tmuxSession.sessionName, label, cwd, command, args, {
-      detached: true,
-    });
-    this.tmuxRuntimeManager.setWindowMetadata(target, {
-      kind: "service",
-      sessionId: service.id,
-      command: launchCommandLine ? shell : "shell",
-      args: launchCommandLine ? ["-lc", launchCommandLine] : ["-l"],
-      toolConfigKey: "service",
-      worktreePath: service.worktreePath,
-      label,
-    });
-    this.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
-    this.offlineServices = this.offlineServices.filter((entry) => entry.id !== service.id);
-    this.saveState();
-    this.invalidateDesktopStateSnapshot();
-    this.refreshLocalDashboardModel();
-    this.updateWorktreeSessions();
-    this.preferDashboardEntrySelection("service", service.id, service.worktreePath);
-    return { serviceId: service.id, status: "running" };
+    return resumeOfflineServiceImpl(this, service);
   }
 
   private resumeOfflineServiceById(serviceId: string): { serviceId: string; status: "running" } {
-    const service = this.offlineServices.find((entry) => entry.id === serviceId);
-    if (!service) {
-      throw new Error(`Service "${serviceId}" not found`);
-    }
-    return this.resumeOfflineService(service);
+    return resumeOfflineServiceByIdImpl(this, serviceId);
   }
 
   private renderDashboard(): void {
@@ -4698,9 +4330,7 @@ export class Multiplexer {
   }
 
   private showWorktreeCreatePrompt(): void {
-    this.worktreeInputActive = true;
-    this.worktreeInputBuffer = "";
-    this.renderWorktreeInput();
+    showWorktreeCreatePromptImpl(this);
   }
 
   private showServiceCreatePrompt(): void {
@@ -4710,34 +4340,7 @@ export class Multiplexer {
   }
 
   private renderWorktreeInput(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-
-    const lines = [
-      "Create worktree:",
-      "",
-      `  Name: ${this.worktreeInputBuffer}_`,
-      "",
-      "  [Enter] create  [Esc] cancel",
-    ];
-
-    const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-    const startRow = Math.floor((rows - lines.length - 2) / 2);
-    const startCol = Math.floor((cols - boxWidth) / 2);
-
-    let output = "\x1b7";
-    for (let i = 0; i < lines.length + 2; i++) {
-      const row = startRow + i;
-      output += `\x1b[${row};${startCol}H`;
-      if (i === 0 || i === lines.length + 1) {
-        output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-      } else {
-        const line = lines[i - 1];
-        output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-      }
-    }
-    output += "\x1b8";
-    process.stdout.write(output);
+    renderWorktreeInputImpl(this);
   }
 
   private renderServiceInput(): void {
@@ -4745,52 +4348,7 @@ export class Multiplexer {
   }
 
   private handleWorktreeInputKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-
-    const event = events[0];
-    const key = event.name || event.char;
-
-    if (key === "escape") {
-      this.worktreeInputActive = false;
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
-      return;
-    }
-
-    if (key === "enter" || key === "return") {
-      this.worktreeInputActive = false;
-      const name = this.worktreeInputBuffer.trim();
-      if (name) {
-        try {
-          createWorktree(name);
-          debug(`worktree created from UI: ${name}`, "worktree");
-        } catch (err) {
-          debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
-        }
-      }
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
-      return;
-    }
-
-    if (key === "backspace" || key === "delete") {
-      this.worktreeInputBuffer = this.worktreeInputBuffer.slice(0, -1);
-      this.renderWorktreeInput();
-      return;
-    }
-
-    // Append printable character
-    if (event.char && event.char.length === 1 && !event.ctrl && !event.alt) {
-      this.worktreeInputBuffer += event.char;
-      this.renderWorktreeInput();
-    }
+    handleWorktreeInputKeyImpl(this, data);
   }
 
   private handleServiceInputKey(data: Buffer): void {
@@ -4880,8 +4438,7 @@ export class Multiplexer {
   }
 
   private showWorktreeList(): void {
-    this.worktreeListActive = true;
-    this.renderWorktreeList();
+    showWorktreeListImpl(this);
   }
 
   private handleReviewRequest(): void {
@@ -4908,11 +4465,11 @@ export class Multiplexer {
   }
 
   private renderWorktreeList(): void {
-    renderWorktreeListOverlay(this);
+    renderWorktreeListImpl(this);
   }
 
   private renderWorktreeRemoveConfirm(): void {
-    renderWorktreeRemoveConfirmOverlay(this);
+    renderWorktreeRemoveConfirmImpl(this);
   }
 
   private renderDashboardBusyOverlay(): void {
@@ -4924,19 +4481,11 @@ export class Multiplexer {
   }
 
   private showNotificationPanel(): void {
-    const entries = listNotifications({ includeCleared: false }).slice(0, 40);
-    this.notificationPanelState = {
-      entries,
-      index: entries.length > 0 ? 0 : -1,
-    };
-    this.syncTuiNotificationContext(true);
-    this.renderDashboard();
+    showNotificationPanelImpl(this);
   }
 
   private closeNotificationPanel(): void {
-    this.notificationPanelState = null;
-    this.syncTuiNotificationContext(false);
-    this.renderDashboard();
+    closeNotificationPanelImpl(this);
   }
 
   private renderNotificationPanel(): void {
@@ -4944,54 +4493,7 @@ export class Multiplexer {
   }
 
   private handleNotificationPanelKey(data: Buffer): void {
-    const panel = this.notificationPanelState;
-    if (!panel) return;
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-    const key = events[0].name || events[0].char;
-
-    if (key === "escape" || key === "enter" || key === "return") {
-      this.closeNotificationPanel();
-      return;
-    }
-    if (key === "down" || key === "j") {
-      if (panel.entries.length > 1) {
-        panel.index = (panel.index + 1) % panel.entries.length;
-        this.renderDashboard();
-      }
-      return;
-    }
-    if (key === "up" || key === "k") {
-      if (panel.entries.length > 1) {
-        panel.index = (panel.index - 1 + panel.entries.length) % panel.entries.length;
-        this.renderDashboard();
-      }
-      return;
-    }
-    if (key === "r") {
-      const selected = panel.entries[panel.index];
-      if (!selected) return;
-      markNotificationsRead({ id: selected.id });
-      panel.entries = listNotifications({ includeCleared: false }).slice(0, 40);
-      if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
-      this.renderDashboard();
-      return;
-    }
-    if (key === "c") {
-      const selected = panel.entries[panel.index];
-      if (!selected) return;
-      clearNotifications({ id: selected.id });
-      panel.entries = listNotifications({ includeCleared: false }).slice(0, 40);
-      if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
-      this.renderDashboard();
-      return;
-    }
-    if (key === "C") {
-      clearNotifications();
-      panel.entries = [];
-      panel.index = -1;
-      this.renderDashboard();
-    }
+    handleNotificationPanelKeyImpl(this, data);
   }
 
   private startDashboardBusy(title: string, lines: string[]): void {
@@ -5015,432 +4517,71 @@ export class Multiplexer {
   }
 
   private beginWorktreeRemoval(path: string, name: string, oldIdx: number): void {
-    if (this.worktreeRemovalJob) return;
-
-    let child;
-    try {
-      child = spawn("git", ["worktree", "remove", path, "--force"], {
-        cwd: findMainRepo(),
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.showDashboardError(`Failed to remove "${name}"`, [`Path: ${path}`, `Error: ${message}`]);
-      return;
-    }
-
-    this.worktreeRemovalJob = {
-      path,
-      name,
-      startedAt: Date.now(),
-      oldIdx,
-      stderr: "",
-    };
-    this.startDashboardBusy(`Removing worktree "${name}"`, [
-      `  Path: ${path}`,
-      "  Cleaning up checkout and metadata...",
-    ]);
-
-    child.stderr.on("data", (chunk: Buffer) => {
-      if (!this.worktreeRemovalJob) return;
-      this.worktreeRemovalJob.stderr += chunk.toString();
-      const detail = this.worktreeRemovalJob.stderr
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .at(-1);
-      this.updateDashboardBusy([
-        `  Path: ${path}`,
-        detail ? `  Git: ${detail.slice(0, 80)}` : "  Cleaning up checkout and metadata...",
-      ]);
-    });
-
-    child.on("close", (code: number | null) => {
-      this.finishWorktreeRemoval(code ?? 1);
-    });
-
-    child.on("error", (err: Error) => {
-      if (!this.worktreeRemovalJob) return;
-      this.worktreeRemovalJob.stderr += `\n${err.message}`;
-      this.finishWorktreeRemoval(1);
-    });
+    beginWorktreeRemovalImpl(this, path, name, oldIdx);
   }
 
   private finishWorktreeRemoval(code: number): void {
-    const job = this.worktreeRemovalJob;
-    if (!job) return;
-
-    this.worktreeRemovalJob = null;
-    const details = job.stderr
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    if (code === 0) {
-      this.clearDashboardBusy();
-      this.footerFlash = `Removed: ${job.name}`;
-      this.footerFlashTicks = 3;
-      debug(`removed worktree: ${job.name}`, "worktree");
-
-      const newWorktrees = listAllWorktrees().filter((wt) => !wt.isBare);
-      this.dashboardState.worktreeNavOrder = [undefined, ...newWorktrees.map((wt) => wt.path)];
-      if (job.oldIdx >= 0 && job.oldIdx < this.dashboardState.worktreeNavOrder.length) {
-        this.dashboardState.focusedWorktreePath = this.dashboardState.worktreeNavOrder[job.oldIdx];
-      } else if (this.dashboardState.worktreeNavOrder.length > 1) {
-        this.dashboardState.focusedWorktreePath =
-          this.dashboardState.worktreeNavOrder[this.dashboardState.worktreeNavOrder.length - 1];
-      } else {
-        this.dashboardState.focusedWorktreePath = undefined;
-      }
-    } else {
-      const message = details[0] ?? `git worktree remove exited with code ${code}`;
-      this.footerFlash = `Failed: ${message}`;
-      this.footerFlashTicks = 5;
-      this.showDashboardError(`Failed to remove "${job.name}"`, [`Path: ${job.path}`, `Error: ${message}`, ...details]);
-      return;
-    }
-
-    this.renderDashboard();
+    finishWorktreeRemovalImpl(this, code);
   }
 
   private handleWorktreeRemoveConfirmKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-    const key = events[0].name || events[0].char;
-
-    if (key === "y") {
-      const confirm = this.worktreeRemoveConfirm;
-      if (confirm) {
-        this.worktreeRemoveConfirm = null;
-        const oldIdx = this.dashboardState.worktreeNavOrder.indexOf(confirm.path);
-        this.beginWorktreeRemoval(confirm.path, confirm.name, oldIdx);
-        return;
-      }
-    }
-
-    // Any other key cancels
-    this.worktreeRemoveConfirm = null;
-    this.restoreDashboardAfterOverlayDismiss();
+    handleWorktreeRemoveConfirmKeyImpl(this, data);
   }
 
   private handleWorktreeListKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-
-    const event = events[0];
-    const key = event.name || event.char;
-
-    if (key === "escape") {
-      this.worktreeListActive = false;
-      this.restoreDashboardAfterOverlayDismiss();
-      return;
-    }
-
-    if (key >= "1" && key <= "9") {
-      try {
-        const worktrees = listAllWorktrees();
-        const idx = parseInt(key) - 1;
-        if (idx < worktrees.length && idx > 0) {
-          // skip main worktree (index 0)
-          execSync(`git worktree remove "${worktrees[idx].path}" --force`, {
-            cwd: findMainRepo(),
-            encoding: "utf-8",
-            stdio: "pipe",
-          });
-          debug(`removed worktree from UI: ${worktrees[idx].name}`, "worktree");
-        }
-      } catch (err) {
-        debug(`worktree remove failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
-      }
-      // Re-render the list
-      this.renderWorktreeList();
-      return;
-    }
+    handleWorktreeListKeyImpl(this, data);
   }
 
   private showGraveyard(): void {
-    this.clearDashboardSubscreens();
-    const graveyardPath = getGraveyardPath();
-    try {
-      this.graveyardEntries = JSON.parse(readFileSync(graveyardPath, "utf-8")) as SessionState[];
-    } catch {
-      this.graveyardEntries = [];
-    }
-    if (this.graveyardIndex >= this.graveyardEntries.length) {
-      this.graveyardIndex = Math.max(0, this.graveyardEntries.length - 1);
-    }
-    this.setDashboardScreen("graveyard");
-    this.writeStatuslineFile();
-    this.renderGraveyard();
+    showGraveyardImpl(this);
   }
 
   private renderGraveyard(): void {
-    renderGraveyardScreen(this);
+    renderGraveyardImpl(this);
   }
 
   private handleGraveyardKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-
-    const event = events[0];
-    const key = event.name || event.char;
-    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
-
-    if (isTabToggle) {
-      this.dashboardState.toggleDetailsSidebar();
-      this.renderGraveyard();
-      return;
-    }
-
-    if (key === "q") {
-      this.exitDashboardClientOrProcess();
-      return;
-    }
-
-    if (key === "escape" || key === "d") {
-      this.setDashboardScreen("dashboard");
-      this.renderDashboard();
-      return;
-    }
-    if (this.handleDashboardSubscreenNavigationKey(key, "graveyard")) return;
-
-    if (key === "?") {
-      this.showHelp();
-      return;
-    }
-
-    if (key === "down" || key === "j" || key === "n") {
-      if (this.graveyardEntries.length > 1) {
-        this.graveyardIndex = (this.graveyardIndex + 1) % this.graveyardEntries.length;
-        this.renderGraveyard();
-      }
-      return;
-    }
-
-    if (key === "up" || key === "k") {
-      if (this.graveyardEntries.length > 1) {
-        this.graveyardIndex = (this.graveyardIndex - 1 + this.graveyardEntries.length) % this.graveyardEntries.length;
-        this.renderGraveyard();
-      }
-      return;
-    }
-
-    if (key >= "1" && key <= "9") {
-      this.resurrectGraveyardEntry(parseInt(key) - 1);
-      return;
-    }
-
-    if (key === "enter" || key === "return") {
-      this.resurrectGraveyardEntry(this.graveyardIndex);
-      return;
-    }
+    handleGraveyardKeyImpl(this, data);
   }
 
   private resurrectGraveyardEntry(idx: number): void {
-    if (idx < 0 || idx >= this.graveyardEntries.length) return;
-    const entry = this.graveyardEntries[idx];
-    if (!entry) return;
-    void this.resurrectGraveyardSession(entry.id)
-      .then(() => {
-        this.graveyardEntries = this.listGraveyardEntries();
-        if (this.graveyardEntries.length === 0) {
-          this.setDashboardScreen("dashboard");
-          if (this.mode === "dashboard") {
-            this.renderDashboard();
-          } else {
-            this.focusSession(this.activeIndex);
-          }
-          return;
-        }
-
-        if (this.graveyardIndex >= this.graveyardEntries.length) {
-          this.graveyardIndex = this.graveyardEntries.length - 1;
-        }
-        this.renderGraveyard();
-      })
-      .catch((error) => {
-        debug(`failed to resurrect ${entry.id}: ${error instanceof Error ? error.message : String(error)}`, "session");
-      });
+    resurrectGraveyardEntryImpl(this, idx);
   }
 
   private showPlans(): void {
-    this.clearDashboardSubscreens();
-    this.loadPlanEntries();
-    this.setDashboardScreen("plans");
-    if (this.planIndex >= this.planEntries.length) {
-      this.planIndex = Math.max(0, this.planEntries.length - 1);
-    }
-    this.writeStatuslineFile();
-    this.renderPlans();
+    showPlansImpl(this);
   }
 
   private loadPlanEntries(): void {
-    const plansDir = getPlansDir();
-    const entries: PlanEntry[] = [];
-    try {
-      mkdirSync(plansDir, { recursive: true });
-      const files = readdirSync(plansDir)
-        .filter((file) => file.endsWith(".md"))
-        .sort();
-      for (const file of files) {
-        const path = join(plansDir, file);
-        const content = readFileSync(path, "utf-8");
-        const sessionId = file.replace(/\.md$/, "");
-        const frontmatter = this.parsePlanFrontmatter(content);
-        entries.push({
-          sessionId,
-          tool: frontmatter.tool,
-          label: this.getSessionLabel(sessionId),
-          worktree: frontmatter.worktree,
-          updatedAt: frontmatter.updatedAt,
-          path,
-          content,
-        });
-      }
-    } catch {}
-    entries.sort((a, b) => {
-      const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0;
-      const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
-      return bTime - aTime || a.sessionId.localeCompare(b.sessionId);
-    });
-    this.planEntries = entries;
+    loadPlanEntriesImpl(this);
   }
 
   private parsePlanFrontmatter(content: string): Record<string, string> {
-    const lines = content.split(/\r?\n/);
-    if (lines[0] !== "---") return {};
-    const data: Record<string, string> = {};
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (line === "---") break;
-      const idx = line.indexOf(":");
-      if (idx <= 0) continue;
-      data[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-    }
-    return data;
+    return parsePlanFrontmatterImpl(content);
   }
 
   private renderPlans(): void {
-    renderPlansScreen(this);
+    renderPlansImpl(this);
   }
 
   private buildPlanPreview(content: string, width: number, maxLines: number): string[] {
-    const body = content.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
-    const rawLines = body.length > 0 ? body.split(/\r?\n/) : ["(empty)"];
-    const preview: string[] = [];
-    for (const line of rawLines) {
-      if (preview.length >= maxLines) break;
-      const normalized = line.length > width ? `${line.slice(0, Math.max(0, width - 1))}…` : line;
-      preview.push(normalized);
-    }
-    return preview;
+    return buildPlanPreviewImpl(content, width, maxLines);
   }
 
   private renderPlanDetails(width: number, height: number): string[] {
-    return renderPlanDetails(this, width, height);
+    return renderPlanDetailsForHostImpl(this, width, height);
   }
 
   private renderGraveyardDetails(width: number, height: number): string[] {
-    return renderGraveyardDetails(this, width, height);
+    return renderGraveyardDetailsForHostImpl(this, width, height);
   }
 
   private handlePlansKey(data: Buffer): void {
-    const events = parseKeys(data);
-    if (events.length === 0) return;
-    const event = events[0];
-    const key = event.name || event.char;
-    const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
-
-    if (isTabToggle) {
-      this.dashboardState.toggleDetailsSidebar();
-      this.renderPlans();
-      return;
-    }
-
-    if (key === "q") {
-      this.exitDashboardClientOrProcess();
-      return;
-    }
-
-    if (key === "escape" || key === "d") {
-      this.setDashboardScreen("dashboard");
-      this.renderDashboard();
-      return;
-    }
-    if (this.handleDashboardSubscreenNavigationKey(key, "plans")) return;
-
-    if (key === "?") {
-      this.showHelp();
-      return;
-    }
-
-    if (key === "r") {
-      this.loadPlanEntries();
-      if (this.planIndex >= this.planEntries.length) {
-        this.planIndex = Math.max(0, this.planEntries.length - 1);
-      }
-      this.renderPlans();
-      return;
-    }
-
-    if (key === "down" || key === "j" || key === "n") {
-      if (this.planEntries.length > 1) {
-        this.planIndex = (this.planIndex + 1) % this.planEntries.length;
-        this.renderPlans();
-      }
-      return;
-    }
-
-    if (key === "up" || key === "k") {
-      if (this.planEntries.length > 1) {
-        this.planIndex = (this.planIndex - 1 + this.planEntries.length) % this.planEntries.length;
-        this.renderPlans();
-      }
-      return;
-    }
-
-    if (key >= "1" && key <= "9") {
-      const idx = parseInt(key, 10) - 1;
-      if (idx < this.planEntries.length) {
-        this.planIndex = idx;
-        this.renderPlans();
-      }
-      return;
-    }
-
-    if (key === "e" || key === "enter" || key === "return") {
-      const selectedPlan = this.planEntries[this.planIndex];
-      if (!selectedPlan) return;
-      this.openPlanInEditor(selectedPlan.path);
-    }
+    handlePlansKeyImpl(this, data);
   }
 
   private openPlanInEditor(path: string): void {
-    const editor = process.env.VISUAL || process.env.EDITOR || "vim";
-    const shell = process.env.SHELL || "/bin/zsh";
-    const shellEscape = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
-
-    this.terminalHost.exitRawMode();
-    this.terminalHost.exitAlternateScreen();
-
-    const result = spawnSync(shell, ["-lc", `${editor} ${shellEscape(path)}`], { stdio: "inherit" });
-
-    this.terminalHost.enterRawMode();
-    this.terminalHost.enterAlternateScreen(true);
-
-    if (result.error) {
-      this.dashboardErrorState = {
-        title: `Failed to open editor "${editor}"`,
-        lines: [result.error.message],
-      };
-    }
-
-    this.loadPlanEntries();
-    this.planIndex = Math.min(this.planIndex, Math.max(0, this.planEntries.length - 1));
-    this.renderPlans();
-    if (this.dashboardErrorState) {
-      this.renderDashboardErrorOverlay();
-    }
+    openPlanInEditorImpl(this, path);
   }
 
   // --- Quick Switcher (^A s) ---
@@ -6244,6 +5385,19 @@ export class Multiplexer {
     };
   }
 
+  private reapplyDashboardPendingActions(): void {
+    this.dashboardSessionsCache = this.dashboardPendingActions.applyToSessions(
+      this.dashboardSessionsCache.map(
+        ({ pendingAction: _pendingAction, optimistic: _optimistic, ...session }) => session,
+      ),
+    );
+    this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(
+      this.dashboardServicesCache.map(
+        ({ pendingAction: _pendingAction, optimistic: _optimistic, ...service }) => service,
+      ),
+    );
+  }
+
   private listDesktopWorktrees(): Array<{ name: string; path: string; branch: string; isBare: boolean }> {
     return listAllWorktrees().filter((wt) => !wt.isBare);
   }
@@ -7010,15 +6164,5 @@ export class Multiplexer {
     }
     this.cleanup();
     process.exit(0);
-  }
-}
-
-/** Check if a command is available on PATH */
-function isToolAvailable(command: string): boolean {
-  try {
-    execSync(`which ${command}`, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
   }
 }
