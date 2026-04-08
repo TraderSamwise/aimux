@@ -323,6 +323,20 @@ import {
   writeTmuxAgentInput as writeTmuxAgentInputImpl,
 } from "./multiplexer-session-runtime-core.js";
 import {
+  createSession as createSessionImpl,
+  focusSession as focusSessionImpl,
+  getScopedSessionEntries as getScopedSessionEntriesImpl,
+  getSessionWorktreePath as getSessionWorktreePathImpl,
+  getSessionsByWorktree as getSessionsByWorktreeImpl,
+  handleAction as handleActionImpl,
+  migrateAgent as migrateAgentImpl,
+  restoreSessions as restoreSessionsImpl,
+  resumeSessions as resumeSessionsImpl,
+  run as runImpl,
+  runDashboard as runDashboardImpl,
+  runProjectService as runProjectServiceImpl,
+} from "./multiplexer-session-launch.js";
+import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
   buildWorkflowEntriesForHost as buildWorkflowEntriesForHostImpl,
@@ -1058,153 +1072,33 @@ export class Multiplexer {
     updateContextWatcherSessionsImpl(this);
   }
 
-  async run(opts: { command: string; args: string[] }): Promise<number> {
-    initProject();
-    await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
-    this.startHeartbeat();
-    this.syncSessionsFromState();
-    this.taskDispatcher = new TaskDispatcher(
+  private createTaskDispatcher(): TaskDispatcher {
+    return new TaskDispatcher(
       (id) => this.sessions.find((s) => s.id === id),
       (id) => this.sessionToolKeys.get(id),
       (id) => this.sessionRoles.get(id),
       (id) => this.deriveSessionSemanticState(id).availability,
     );
-    this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
-    this.defaultCommand = opts.command;
-    this.defaultArgs = opts.args;
+  }
 
-    // Look up preamble flag and config key from config
-    const config = loadConfig();
-    const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === opts.command);
-    const toolConfig = toolEntry?.[1];
-    const toolConfigKey = toolEntry?.[0];
+  private createOrchestrationDispatcher(): OrchestrationDispatcher {
+    return new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
+  }
 
-    // Write instruction files for tools that need them (e.g. CODEX.md)
-    this.writeInstructionFiles();
+  private selectLinkedOrOpenTarget(target: TmuxTarget): void {
+    selectLinkedOrOpenTarget(this.tmuxRuntimeManager, target);
+  }
 
-    // Create initial session
-    this.createSession(
-      opts.command,
-      opts.args,
-      toolConfig?.preambleFlag,
-      toolConfigKey,
-      undefined,
-      toolConfig?.sessionIdFlag,
-    );
-
-    this.focusSession(this.sessions.length - 1);
-    return 0;
+  async run(opts: { command: string; args: string[] }): Promise<number> {
+    return runImpl(this, opts);
   }
 
   async runDashboard(): Promise<number> {
-    initProject();
-    await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
-    this.startHeartbeat();
-    this.startedInDashboard = true;
-    this.mode = "dashboard";
-    this.syncSessionsFromState();
-
-    // Load config to set default tool for session creation
-    const config = loadConfig();
-    const defaultTool = config.tools[config.defaultTool];
-    if (defaultTool) {
-      this.defaultCommand = defaultTool.command;
-      this.defaultArgs = defaultTool.args;
-    }
-
-    this.writeInstructionFiles();
-    this.terminalHost.enterRawMode();
-
-    // Forward stdin
-    this.onStdinData = (data: Buffer) => {
-      if (this.isFocusInReport(data)) {
-        this.handleDashboardFocusIn();
-        return;
-      }
-      if (this.handleActiveDashboardOverlayKey(data)) {
-        return;
-      }
-      if (this.isDashboardScreen("activity")) {
-        this.handleActivityKey(data);
-        return;
-      }
-      if (this.isDashboardScreen("workflow")) {
-        this.handleWorkflowKey(data);
-        return;
-      }
-      if (this.isDashboardScreen("threads")) {
-        this.handleThreadsKey(data);
-        return;
-      }
-      if (this.isDashboardScreen("plans")) {
-        this.handlePlansKey(data);
-        return;
-      }
-      if (this.isDashboardScreen("help")) {
-        this.handleHelpKey(data);
-        return;
-      }
-      if (this.isDashboardScreen("graveyard")) {
-        this.handleGraveyardKey(data);
-        return;
-      }
-
-      if (this.mode === "dashboard") {
-        this.handleDashboardKey(data);
-        return;
-      }
-    };
-    process.stdin.on("data", this.onStdinData);
-
-    // Forward terminal resize
-    this.onResize = () => {
-      this.renderCurrentDashboardView();
-    };
-    process.stdout.on("resize", this.onResize);
-
-    // Enter dashboard mode directly
-    this.mode = "dashboard";
-    this.loadDashboardUiState();
-    const primed = await this.refreshDashboardModelFromService(true);
-    if (!primed) {
-      throw new Error("dashboard requires a live project service desktop-state endpoint");
-    }
-    this.terminalHost.enterAlternateScreen(true);
-    this.startStatusRefresh();
-    this.renderDashboard();
-
-    const exitCode = await new Promise<number>((resolve) => {
-      this.resolveRun = resolve;
-    });
-
-    this.teardown();
-    return exitCode;
+    return runDashboardImpl(this);
   }
 
   async runProjectService(): Promise<number> {
-    initProject();
-    this.mode = "project-service";
-    this.syncSessionsFromState();
-    this.taskDispatcher = new TaskDispatcher(
-      (id) => this.sessions.find((s) => s.id === id),
-      (id) => this.sessionToolKeys.get(id),
-      (id) => this.sessionRoles.get(id),
-      (id) => this.deriveSessionSemanticState(id).availability,
-    );
-    this.orchestrationDispatcher = new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
-    this.writeInstructionFiles();
-    await this.startProjectServices();
-    this.refreshDesktopStateSnapshot();
-    this.writeStatuslineFile();
-    this.startStatusRefresh();
-    this.startProjectServiceRefresh();
-
-    const exitCode = await new Promise<number>((resolve) => {
-      this.resolveRun = resolve;
-    });
-
-    this.teardown();
-    return exitCode;
+    return runProjectServiceImpl(this);
   }
 
   /**
@@ -1212,63 +1106,7 @@ export class Multiplexer {
    * Reads state.json and spawns sessions with resumeArgs instead of normal args.
    */
   async resumeSessions(toolFilter?: string): Promise<number> {
-    initProject();
-    await this.instanceDirectory.registerInstance(this.instanceId, process.cwd());
-    this.startHeartbeat();
-    const state = Multiplexer.loadState();
-    if (!state || state.sessions.length === 0) {
-      console.error("No saved session state found (or state is stale). Starting fresh.");
-      return this.runDashboard();
-    }
-
-    const config = loadConfig();
-    const sessionsToResume = toolFilter
-      ? state.sessions.filter((s) => s.tool === toolFilter || s.toolConfigKey === toolFilter)
-      : state.sessions;
-
-    if (sessionsToResume.length === 0) {
-      console.error(`No saved sessions found for tool "${toolFilter}". Starting fresh.`);
-      return this.runDashboard();
-    }
-
-    const ownedByOthers = this.getRemoteOwnedSessionKeys();
-
-    // Spawn each session with resumeArgs, substituting backend session ID
-    for (const saved of sessionsToResume) {
-      // Skip sessions owned by another live instance
-      if (ownedByOthers.has(saved.id) || (saved.backendSessionId && ownedByOthers.has(saved.backendSessionId))) {
-        debug(`skipping resume of ${saved.id} — owned by another instance`, "session");
-        continue;
-      }
-
-      const toolCfg = config.tools[saved.toolConfigKey];
-      if (!toolCfg) continue;
-
-      const bsid = saved.backendSessionId;
-      let resumeArgs: string[];
-      if (this.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, bsid)) {
-        // Substitute backend session ID into resume args
-        resumeArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", bsid!));
-      } else {
-        // No valid backend resume path — use tool's configured fallback
-        resumeArgs = toolCfg.resumeFallback ?? [];
-      }
-      const args = this.sessionBootstrap.composeToolArgs(toolCfg, resumeArgs, saved.args);
-      debug(`resuming ${saved.command} with backendSessionId=${bsid ?? "none (fallback)"}`, "session");
-      this.createSession(
-        saved.command,
-        args,
-        toolCfg.preambleFlag,
-        saved.toolConfigKey,
-        undefined,
-        undefined,
-        saved.worktreePath,
-        saved.backendSessionId,
-      );
-    }
-
-    this.openTmuxDashboardTarget();
-    return 0;
+    return resumeSessionsImpl(this, toolFilter);
   }
 
   /**
@@ -1276,64 +1114,7 @@ export class Multiplexer {
    * Starts fresh sessions but with context from the previous conversation.
    */
   async restoreSessions(toolFilter?: string): Promise<number> {
-    initProject();
-    const state = Multiplexer.loadState();
-    if (!state || state.sessions.length === 0) {
-      console.error("No saved session state found (or state is stale). Starting fresh.");
-      return this.runDashboard();
-    }
-
-    const config = loadConfig();
-    const sessionsToRestore = toolFilter
-      ? state.sessions.filter((s) => s.tool === toolFilter || s.toolConfigKey === toolFilter)
-      : state.sessions;
-
-    if (sessionsToRestore.length === 0) {
-      console.error(`No saved sessions found for tool "${toolFilter}". Starting fresh.`);
-      return this.runDashboard();
-    }
-
-    // Spawn each session with extended preamble containing prior history
-    for (const saved of sessionsToRestore) {
-      const toolCfg = config.tools[saved.toolConfigKey];
-      if (!toolCfg) continue;
-
-      // Read last 20 turns from this session's history
-      const turns = readHistory(saved.id, { lastN: 20 });
-      let historyContext = "";
-      if (turns.length > 0) {
-        const formattedTurns = turns.map((t) => {
-          const time = t.ts.slice(0, 16);
-          if (t.type === "prompt") return `[${time}] User: ${t.content}`;
-          if (t.type === "response") return `[${time}] Agent: ${t.content}`;
-          if (t.type === "git") return `[${time}] Git: ${t.content}${t.files ? ` (${t.files.join(", ")})` : ""}`;
-          return `[${time}] ${t.content}`;
-        });
-        historyContext =
-          "\n\n=== Your previous session context ===\n" +
-          "You were previously working in this codebase. Here's what happened:\n" +
-          formattedTurns.join("\n") +
-          "\n=== End previous context ===\n";
-      }
-
-      // Also include live.md for cross-agent context
-      const liveContext = buildContextPreamble(sessionsToRestore.filter((s) => s.id !== saved.id).map((s) => s.id));
-
-      const extraPreamble = historyContext + (liveContext ? "\n" + liveContext : "");
-
-      this.createSession(
-        saved.command,
-        saved.args,
-        toolCfg.preambleFlag,
-        saved.toolConfigKey,
-        extraPreamble.trim() || undefined,
-        undefined,
-        saved.worktreePath,
-      );
-    }
-
-    this.openTmuxDashboardTarget();
-    return 0;
+    return restoreSessionsImpl(this, toolFilter);
   }
 
   createSession(
@@ -1348,114 +1129,19 @@ export class Multiplexer {
     sessionIdOverride?: string,
     detachedInTmux = false,
   ): SessionTransport {
-    const cols = process.stdout.columns ?? 80;
-
-    // Pre-generate session ID so we can reference it in the preamble
-    const sessionId = sessionIdOverride ?? `${command}-${Math.random().toString(36).slice(2, 8)}`;
-
-    // Generate a backend session UUID for tools that support it (e.g. claude --session-id)
-    const backendSessionId = backendSessionIdOverride ?? (sessionIdFlag ? randomUUID() : undefined);
-
-    // Inject aimux preamble via tool-specific flag if available
-    const preamble = this.sessionBootstrap.buildSessionPreamble({
-      sessionId,
+    return createSessionImpl(
+      this,
       command,
-      worktreePath,
+      args,
+      preambleFlag,
+      toolConfigKey,
       extraPreamble,
-    });
-
-    this.sessionBootstrap.ensurePlanFile(sessionId, command, worktreePath);
-
-    let finalArgs = preambleFlag ? [...args, ...preambleFlag, preamble] : [...args];
-    let launchCommand = command;
-
-    // Inject backend session ID flag (e.g. --session-id <uuid>)
-    if (sessionIdFlag && backendSessionId) {
-      const expandedFlag = sessionIdFlag.map((a) => a.replace("{sessionId}", backendSessionId));
-      finalArgs = [...finalArgs, ...expandedFlag];
-    }
-
-    const toolCfg = toolConfigKey ? loadConfig().tools[toolConfigKey] : undefined;
-    let projectRoot = process.cwd();
-    try {
-      projectRoot = findMainRepo(worktreePath ?? process.cwd());
-    } catch {
-      projectRoot = process.cwd();
-    }
-
-    if (toolCfg && toolConfigKey === "claude" && toolCfg.command === command && toolCfg.wrapperEnabled !== false) {
-      finalArgs = injectClaudeHookArgs(finalArgs, {
-        sessionId,
-        projectRoot,
-        backendSessionId,
-      });
-      launchCommand = toolCfg.command;
-    } else if (toolCfg && toolCfg.command === command) {
-      const wrapped = wrapCommandWithShellIntegration({
-        projectRoot,
-        sessionId,
-        tool: toolConfigKey ?? command,
-        command: launchCommand,
-        args: finalArgs,
-      });
-      launchCommand = wrapped.command;
-      finalArgs = wrapped.args;
-    }
-
-    if (preambleFlag) {
-      this.sessionBootstrap.finalizePreamble(command, preamble);
-    }
-    debug(
-      `creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"}, cwd=${worktreePath ?? process.cwd()}, args=${finalArgs.length})`,
-      "session",
+      sessionIdFlag,
+      worktreePath,
+      backendSessionIdOverride,
+      sessionIdOverride,
+      detachedInTmux,
     );
-    // Log full args for debugging spawn failures
-    debug(
-      `spawn args: ${JSON.stringify(finalArgs.map((a) => (a.length > 100 ? a.slice(0, 100) + "..." : a)))}`,
-      "session",
-    );
-
-    const sessionStartTime = Date.now();
-
-    const tmuxSession = this.tmuxRuntimeManager.ensureProjectSession(process.cwd());
-    const target = this.tmuxRuntimeManager.createWindow(
-      tmuxSession.sessionName,
-      this.getSessionLabel(sessionId) ?? command,
-      worktreePath ?? process.cwd(),
-      launchCommand,
-      finalArgs,
-      { detached: detachedInTmux },
-    );
-    const tmuxTransport = new TmuxSessionTransport(
-      sessionId,
-      command,
-      target,
-      this.tmuxRuntimeManager,
-      cols,
-      process.stdout.rows ?? 24,
-    );
-    this.sessionTmuxTargets.set(sessionId, target);
-    const session: SessionTransport = tmuxTransport;
-    this.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
-
-    // Store backend session ID and start time
-    session.backendSessionId = backendSessionId;
-    if (session instanceof TmuxSessionTransport) {
-      this.syncTmuxWindowMetadata(sessionId);
-    }
-
-    this.activeIndex = this.sessions.length - 1;
-    if (this.startedInDashboard && this.mode === "dashboard") {
-      this.invalidateDesktopStateSnapshot();
-      this.refreshLocalDashboardModel();
-      this.updateWorktreeSessions();
-      this.preferDashboardEntrySelection("session", sessionId, worktreePath);
-      this.renderDashboard();
-    }
-
-    this.saveState();
-
-    return session;
   }
 
   /**
@@ -1464,180 +1150,29 @@ export class Multiplexer {
    * with injected prior history.
    */
   async migrateAgent(sessionId: string, targetWorktreePath: string): Promise<void> {
-    const session = this.sessions.find((s) => s.id === sessionId);
-    if (!session) {
-      throw new Error(`Session "${sessionId}" not found`);
-    }
-
-    const sourceWorktree = this.sessionWorktreePaths.get(sessionId);
-    const sourceCwd = sourceWorktree ?? process.cwd();
-
-    // Get tool config for the session
-    const toolConfigKey = this.sessionToolKeys.get(sessionId) ?? session.command;
-    const config = loadConfig();
-    const toolCfg = config.tools[toolConfigKey];
-    const originalArgs = this.sessionOriginalArgs.get(sessionId) ?? [];
-
-    const backendSessionId = session.backendSessionId as string | undefined;
-    let migrateArgs = originalArgs;
-    let historyContext = "";
-    const useBackendResume = this.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId);
-    await this.contextWatcher.syncNow(sessionId).catch(() => {});
-    const sourceSnapshot = this.sessionBootstrap.readForkSourceSnapshot(sessionId);
-
-    if (useBackendResume) {
-      migrateArgs = this.sessionBootstrap.composeToolArgs(
-        toolCfg,
-        toolCfg!.resumeArgs!.map((arg) => arg.replace("{sessionId}", backendSessionId!)),
-        originalArgs,
-      );
-    } else {
-      // Fall back to context injection when the tool has no real backend resume path.
-      if (sourceSnapshot.historyText) {
-        historyContext =
-          "\n\n=== Your previous session context ===\n" +
-          "You were previously working in a different worktree. Here's what happened:\n" +
-          sourceSnapshot.historyText +
-          "\n=== End previous context ===\n";
-      } else if (sourceSnapshot.liveText) {
-        historyContext =
-          "\n\n=== Your previous session context ===\n" +
-          "You were previously working in a different worktree. Here's the most recent terminal context:\n" +
-          sourceSnapshot.liveText +
-          "\n=== End previous context ===\n";
-      }
-    }
-
-    // Kill the old session
-    debug(`migrating session ${sessionId} from ${sourceCwd} to ${targetWorktreePath}`, "session");
-    session.kill();
-
-    // Start new session in target worktree
-    // If target is the main repo (cwd), pass undefined so it's not treated as a worktree
-    const effectiveTarget = targetWorktreePath === process.cwd() ? undefined : targetWorktreePath;
-    this.createSession(
-      session.command,
-      migrateArgs,
-      useBackendResume ? undefined : toolCfg?.preambleFlag,
-      toolConfigKey,
-      historyContext.trim() || undefined,
-      useBackendResume ? undefined : toolCfg?.sessionIdFlag,
-      effectiveTarget,
-      backendSessionId,
-      sessionId,
-    );
+    await migrateAgentImpl(this, sessionId, targetWorktreePath);
   }
 
   /** Get worktree path for a session */
   getSessionWorktreePath(sessionId: string): string | undefined {
-    return this.sessionWorktreePaths.get(sessionId);
+    return getSessionWorktreePathImpl(this, sessionId);
   }
 
   /** Get all sessions grouped by worktree path */
   getSessionsByWorktree(): Map<string | undefined, ManagedSession[]> {
-    const groups = new Map<string | undefined, ManagedSession[]>();
-    for (const session of this.sessions) {
-      const wtPath = this.sessionWorktreePaths.get(session.id);
-      const group = groups.get(wtPath) ?? [];
-      group.push(session);
-      groups.set(wtPath, group);
-    }
-    return groups;
+    return getSessionsByWorktreeImpl(this);
   }
 
   private getScopedSessionEntries(): Array<{ session: ManagedSession; index: number }> {
-    return this.sessions.map((session, index) => ({ session, index }));
+    return getScopedSessionEntriesImpl(this);
   }
 
   private focusSession(index: number): void {
-    if (index < 0 || index >= this.sessions.length) return;
-
-    this.activeIndex = index;
-
-    // Update MRU: move focused session to front
-    const sid = this.sessions[index].id;
-    this.sessionMRU = [sid, ...this.sessionMRU.filter((id) => id !== sid)];
-    this.agentTracker.markSeen(sid);
-    updateNotificationContext("tui", {
-      focused: true,
-      sessionId: sid,
-      panelOpen: false,
-    });
-    this.noteLastUsedItem(sid);
-    markNotificationsRead({ sessionId: sid });
-    this.syncTuiNotificationContext(false);
-    const target = this.sessionTmuxTargets.get(sid);
-    if (target) {
-      this.saveState();
-      selectLinkedOrOpenTarget(this.tmuxRuntimeManager, target);
-    }
+    focusSessionImpl(this, index);
   }
 
   private handleAction(action: HotkeyAction): void {
-    switch (action.type) {
-      case "dashboard":
-        this.openTmuxDashboardTarget();
-        break;
-
-      case "help":
-        this.showHelp();
-        break;
-
-      case "focus":
-        if (action.index < this.getScopedSessionEntries().length) {
-          this.focusSession(this.getScopedSessionEntries()[action.index].index);
-        }
-        break;
-
-      case "next":
-        if (this.getScopedSessionEntries().length > 1) {
-          const scoped = this.getScopedSessionEntries();
-          const currentPos = scoped.findIndex(({ index }) => index === this.activeIndex);
-          if (currentPos >= 0) {
-            this.focusSession(scoped[(currentPos + 1) % scoped.length].index);
-          }
-        }
-        break;
-
-      case "prev":
-        if (this.getScopedSessionEntries().length > 1) {
-          const scoped = this.getScopedSessionEntries();
-          const currentPos = scoped.findIndex(({ index }) => index === this.activeIndex);
-          if (currentPos >= 0) {
-            this.focusSession(scoped[(currentPos - 1 + scoped.length) % scoped.length].index);
-          }
-        }
-        break;
-
-      case "create":
-        this.showToolPicker();
-        break;
-
-      case "kill":
-        if (this.sessions.length > 0) {
-          const session = this.sessions[this.activeIndex];
-          session.kill();
-        }
-        break;
-
-      case "switcher":
-        if (this.getScopedSessionEntries().length > 1) {
-          this.showSwitcher();
-        }
-        break;
-
-      case "worktree-create":
-        this.showWorktreeCreatePrompt();
-        break;
-
-      case "worktree-list":
-        this.showWorktreeList();
-        break;
-
-      case "review":
-        this.handleReviewRequest();
-        break;
-    }
+    handleActionImpl(this, action);
   }
 
   private handleDashboardKey(data: Buffer): void {
