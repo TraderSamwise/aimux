@@ -1,6 +1,4 @@
-import { execSync } from "node:child_process";
-
-import { createWorktree, findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
+import { createWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { debug } from "../debug.js";
 import { parseKeys } from "../key-parser.js";
 import { renderWorktreeListOverlay, renderWorktreeRemoveConfirmOverlay } from "../tui/screens/overlay-renderers.js";
@@ -200,21 +198,6 @@ export function handleWorktreeListKey(host: WorktreeHost, data: Buffer): void {
   }
 
   if (key >= "1" && key <= "9") {
-    try {
-      const worktrees = listAllWorktrees();
-      const idx = parseInt(key) - 1;
-      if (idx < worktrees.length && idx > 0) {
-        debug(`legacy worktree remove path: name=${worktrees[idx].name} path=${worktrees[idx].path}`, "worktree");
-        execSync(`git worktree remove "${worktrees[idx].path}" --force`, {
-          cwd: findMainRepo(),
-          encoding: "utf-8",
-          stdio: "pipe",
-        });
-        debug(`removed worktree from UI: ${worktrees[idx].name}`, "worktree");
-      }
-    } catch (err) {
-      debug(`worktree remove failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
-    }
     renderWorktreeList(host);
   }
 }

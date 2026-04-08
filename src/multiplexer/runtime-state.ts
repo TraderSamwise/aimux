@@ -1,10 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
-
 import { loadConfig } from "../config.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { getGraveyardPath, getLocalAimuxDir, getStatePath } from "../paths.js";
-import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
+import { listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 
@@ -496,66 +494,4 @@ export function listDesktopWorktrees(
   _host: RuntimeStateHost,
 ): Array<{ name: string; path: string; branch: string; isBare: boolean }> {
   return listAllWorktrees().filter((wt: { isBare: boolean }) => !wt.isBare);
-}
-
-export async function removeDesktopWorktree(host: RuntimeStateHost, path: string): Promise<{ path: string }> {
-  host.syncSessionsFromState();
-
-  const mainRepo = findMainRepo();
-  if (path === mainRepo) {
-    throw new Error("Cannot remove the main checkout");
-  }
-
-  const matching = host.listDesktopWorktrees().find((worktree: any) => worktree.path === path);
-  if (!matching) {
-    throw new Error(`Worktree "${path}" not found`);
-  }
-
-  const attachedSession = host.sessions.find(
-    (session: any) => session.worktreePath === path && isSessionRuntimeLive(host, session),
-  );
-  if (attachedSession) {
-    throw new Error(
-      `Cannot remove "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
-    );
-  }
-  const attachedService = buildLiveServiceStates(host).find((service: any) => service.worktreePath === path);
-  if (attachedService) {
-    throw new Error(
-      `Cannot remove "${matching.name}" while service "${attachedService.label || attachedService.id}" is attached`,
-    );
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    let stderr = "";
-    let child;
-    try {
-      child = spawn("git", ["worktree", "remove", path, "--force"], {
-        cwd: mainRepo,
-        stdio: ["ignore", "ignore", "pipe"],
-      });
-    } catch (error) {
-      reject(error);
-      return;
-    }
-
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      const detail = stderr
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .at(-1);
-      reject(new Error(detail || `git worktree remove exited with code ${code ?? 1}`));
-    });
-  });
-  return { path };
 }

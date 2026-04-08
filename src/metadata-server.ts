@@ -1,8 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { getProjectId, getProjectStateDir } from "./paths.js";
 import {
   type MetadataTone,
@@ -72,6 +69,7 @@ import {
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { TmuxTarget } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
+import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -260,19 +258,6 @@ function markTargetUsed(
     itemId: resolvedItemId,
     clientSession: currentClientSession,
   });
-}
-
-function getDashboardCommandSpec(projectRoot: string) {
-  const currentFile = fileURLToPath(import.meta.url);
-  const mainScript = join(dirname(currentFile), "main.js");
-  return {
-    dashboardCommand: {
-      cwd: projectRoot,
-      command: process.execPath,
-      args: [mainScript, "--tmux-dashboard-internal"],
-    },
-    dashboardBuildStamp: String(statSync(mainScript).mtimeMs),
-  };
 }
 
 function desiredPort(): number {
