@@ -174,11 +174,11 @@ export class TmuxRuntimeManager {
 
   private getManagedRuntimeBuildStamp(): string {
     const runtimeScript = fileURLToPath(import.meta.url);
-    const controlScript = fileURLToPath(new URL("../scripts/tmux-control.sh", import.meta.url));
-    const statuslineScript = fileURLToPath(new URL("../scripts/tmux-statusline.sh", import.meta.url));
+    const controlScript = fileURLToPath(new URL("../../scripts/tmux-control.sh", import.meta.url));
+    const statuslineScript = fileURLToPath(new URL("../../scripts/tmux-statusline.sh", import.meta.url));
     const dashboardScript = this.getExistingRuntimeArtifact([
-      fileURLToPath(new URL("./main.js", import.meta.url)),
-      fileURLToPath(new URL("./main.ts", import.meta.url)),
+      fileURLToPath(new URL("../main.js", import.meta.url)),
+      fileURLToPath(new URL("../main.ts", import.meta.url)),
     ]);
     return [runtimeScript, controlScript, statuslineScript, dashboardScript]
       .map((path) => `${basename(path)}:${Math.trunc(statSync(path).mtimeMs)}`)
@@ -1031,7 +1031,7 @@ export class TmuxRuntimeManager {
 
   private getControlScriptShellCommand(): string {
     const currentFile = fileURLToPath(import.meta.url);
-    const scriptPath = join(dirname(currentFile), "..", "scripts", "tmux-control.sh");
+    const scriptPath = join(dirname(currentFile), "..", "..", "scripts", "tmux-control.sh");
     return `sh ${shellQuote(scriptPath)}`;
   }
 }

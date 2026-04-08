@@ -51,7 +51,7 @@ function renderSwitcher(
 }
 
 function runWindowSwitch(options: TmuxSwitcherOptions, targetWindowId: string): number {
-  const scriptPath = fileURLToPath(new URL("../scripts/tmux-control.sh", import.meta.url));
+  const scriptPath = fileURLToPath(new URL("../../scripts/tmux-control.sh", import.meta.url));
   const args = [
     scriptPath,
     "window",
