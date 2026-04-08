@@ -209,6 +209,26 @@ import {
   showSwitcher as showSwitcherImpl,
 } from "./multiplexer-navigation.js";
 import {
+  basenameForHost,
+  clearDashboardSubscreens as clearDashboardSubscreensImpl,
+  composeSplitScreen as composeSplitScreenImpl,
+  composeTwoPaneLines as composeTwoPaneLinesImpl,
+  dashboardSessionActionDeps as dashboardSessionActionDepsImpl,
+  graveyardSessionWithFeedback as graveyardSessionWithFeedbackImpl,
+  migrateSessionWithFeedback as migrateSessionWithFeedbackImpl,
+  renderSessionDetails as renderSessionDetailsImpl,
+  resumeOfflineSessionWithFeedback as resumeOfflineSessionWithFeedbackImpl,
+  runDashboardOperation as runDashboardOperationImpl,
+  setPendingDashboardSessionAction as setPendingDashboardSessionActionImpl,
+  stopSessionToOfflineWithFeedback as stopSessionToOfflineWithFeedbackImpl,
+  takeoverFromDashEntryWithFeedback as takeoverFromDashEntryWithFeedbackImpl,
+  truncateAnsiForHost,
+  truncatePlainForHost,
+  waitForSessionStartForHost,
+  wrapKeyValueForHost,
+  wrapTextForHost,
+} from "./multiplexer-dashboard-ops.js";
+import {
   graveyardSessionWithFeedback as runGraveyardSessionWithFeedback,
   resumeOfflineSessionWithFeedback as runResumeOfflineSessionWithFeedback,
   stopSessionToOfflineWithFeedback as runStopSessionToOfflineWithFeedback,
@@ -4666,87 +4686,23 @@ export class Multiplexer {
     work: () => Promise<T> | T,
     errorTitle = title,
   ): Promise<T | undefined> {
-    return this.dashboardFeedback.runOperation(title, lines, work, errorTitle);
+    return runDashboardOperationImpl(this, title, lines, work, errorTitle);
   }
 
   private setPendingDashboardSessionAction(sessionId: string, kind: PendingDashboardActionKind | null): void {
-    this.dashboardPendingActions.set(sessionId, kind);
+    setPendingDashboardSessionActionImpl(this, sessionId, kind);
   }
 
   private async stopSessionToOfflineWithFeedback(session: ManagedSession): Promise<void> {
-    await runStopSessionToOfflineWithFeedback(this.dashboardSessionActionDeps(), session);
+    await stopSessionToOfflineWithFeedbackImpl(this, session);
   }
 
   private clearDashboardSubscreens(): void {
-    this.dashboardState.resetSubscreen();
+    clearDashboardSubscreensImpl(this);
   }
 
   private renderSessionDetails(session: DashboardSession | undefined, width: number, height: number): string[] {
-    if (!session) return new Array(height).fill("");
-    const lines: string[] = [];
-    lines.push("\x1b[1mDetails\x1b[0m");
-    lines.push(...this.wrapKeyValue("Agent", `${session.label ?? session.command} (${session.id})`, width));
-    lines.push(...this.wrapKeyValue("Tool", session.command, width));
-    if (session.worktreeName || session.worktreeBranch) {
-      lines.push(
-        ...this.wrapKeyValue(
-          "Worktree",
-          `${session.worktreeName ?? "main"}${session.worktreeBranch ? ` · ${session.worktreeBranch}` : ""}`,
-          width,
-        ),
-      );
-    }
-    if (session.cwd) {
-      lines.push(...this.wrapKeyValue("CWD", session.cwd, width));
-    }
-    if (session.prNumber || session.prTitle || session.prUrl) {
-      const prHeader = [`PR${session.prNumber ? ` #${session.prNumber}` : ""}`];
-      if (session.prTitle) prHeader.push(session.prTitle);
-      lines.push(...this.wrapKeyValue("PR", prHeader.join(": "), width));
-      if (session.prUrl) lines.push(...this.wrapKeyValue("URL", session.prUrl, width));
-    }
-    if (session.repoOwner || session.repoName) {
-      lines.push(...this.wrapKeyValue("Repo", `${session.repoOwner ?? "?"}/${session.repoName ?? "?"}`, width));
-    }
-    if (session.repoRemote) {
-      lines.push(...this.wrapKeyValue("Remote", session.repoRemote, width));
-    }
-    if (session.activity) {
-      lines.push(...this.wrapKeyValue("Activity", session.activity, width));
-    }
-    if (session.attention && session.attention !== "normal") {
-      lines.push(...this.wrapKeyValue("Attention", session.attention, width));
-    }
-    if ((session.unseenCount ?? 0) > 0) {
-      lines.push(...this.wrapKeyValue("Unseen", String(session.unseenCount), width));
-    }
-    if (session.lastEvent?.message) {
-      lines.push(...this.wrapKeyValue("Last", session.lastEvent.message, width));
-    }
-    if (session.threadName || session.threadId) {
-      lines.push(...this.wrapKeyValue("Thread", session.threadName ?? session.threadId ?? "", width));
-    }
-    if (
-      (session.threadUnreadCount ?? 0) > 0 ||
-      (session.threadWaitingOnMeCount ?? 0) > 0 ||
-      (session.threadWaitingOnThemCount ?? 0) > 0 ||
-      (session.threadPendingCount ?? 0) > 0
-    ) {
-      lines.push(
-        ...this.wrapKeyValue(
-          "Threads",
-          `${session.threadUnreadCount ?? 0} unread · ${session.threadWaitingOnMeCount ?? 0} on me · ${session.threadWaitingOnThemCount ?? 0} on them · ${session.threadPendingCount ?? 0} pending`,
-          width,
-        ),
-      );
-    }
-    if ((session.services?.length ?? 0) > 0) {
-      lines.push(
-        ...this.wrapKeyValue("Services", session.services!.map((s) => s.url ?? `:${s.port}`).join(", "), width),
-      );
-    }
-    while (lines.length < height) lines.push("");
-    return lines.slice(0, height);
+    return renderSessionDetailsImpl(this, session, width, height);
   }
 
   private composeSplitScreen(
@@ -4757,50 +4713,31 @@ export class Multiplexer {
     focusLine: number,
     twoPane: boolean,
   ): string[] {
-    const content = [...leftLines];
-    let scrollOffset = 0;
-    const maxScroll = Math.max(0, content.length - viewportHeight);
-    if (focusLine >= 0) {
-      if (focusLine < scrollOffset + 1) {
-        scrollOffset = Math.max(0, focusLine - 1);
-      } else if (focusLine >= scrollOffset + viewportHeight - 1) {
-        scrollOffset = Math.min(maxScroll, focusLine - viewportHeight + 2);
-      }
-    }
-    const visibleLeft = content.slice(scrollOffset, scrollOffset + viewportHeight);
-    const canScrollUp = scrollOffset > 0;
-    const canScrollDown = scrollOffset < maxScroll;
-    if (canScrollUp && visibleLeft.length > 0) visibleLeft[0] = this.centerInWidth("\x1b[2m▲ more ▲\x1b[0m", cols);
-    if (canScrollDown && visibleLeft.length > 0) {
-      visibleLeft[visibleLeft.length - 1] = this.centerInWidth("\x1b[2m▼ more ▼\x1b[0m", cols);
-    }
-    while (visibleLeft.length < viewportHeight) visibleLeft.push("");
-    if (!twoPane) return visibleLeft;
-    return this.composeTwoPaneLines(visibleLeft, rightLines, cols);
+    return composeSplitScreenImpl(this, leftLines, rightLines, cols, viewportHeight, focusLine, twoPane);
   }
 
   private composeTwoPaneLines(left: string[], right: string[], cols: number): string[] {
-    return composeTwoPane(left, right, cols);
+    return composeTwoPaneLinesImpl(left, right, cols);
   }
 
   private wrapKeyValue(key: string, value: string, width: number): string[] {
-    return wrapKeyValue(key, value, width);
+    return wrapKeyValueForHost(key, value, width);
   }
 
   private wrapText(text: string, width: number): string[] {
-    return wrapText(text, width);
+    return wrapTextForHost(text, width);
   }
 
   private truncatePlain(text: string, max: number): string {
-    return truncatePlain(text, max);
+    return truncatePlainForHost(text, max);
   }
 
   private truncateAnsi(text: string, max: number): string {
-    return truncateAnsi(text, max);
+    return truncateAnsiForHost(text, max);
   }
 
   private basename(value: string): string {
-    return basename(value);
+    return basenameForHost(value);
   }
 
   private listAllWorktrees(): Array<{ name: string; branch: string; path: string; isBare: boolean }> {
@@ -4808,50 +4745,23 @@ export class Multiplexer {
   }
 
   private async graveyardSessionWithFeedback(sessionId: string, hasWorktrees: boolean): Promise<void> {
-    const session =
-      this.offlineSessions.find((s) => s.id === sessionId) ?? this.sessions.find((s) => s.id === sessionId);
-    await runGraveyardSessionWithFeedback(this.dashboardSessionActionDeps(), session, sessionId, hasWorktrees);
+    await graveyardSessionWithFeedbackImpl(this, sessionId, hasWorktrees);
   }
 
   private async resumeOfflineSessionWithFeedback(session: SessionState): Promise<void> {
-    await runResumeOfflineSessionWithFeedback(this.dashboardSessionActionDeps(), session);
+    await resumeOfflineSessionWithFeedbackImpl(this, session);
   }
 
   private async waitForSessionStart(sessionId: string, timeoutMs = 8000): Promise<boolean> {
-    return waitForSessionStart(sessionId, this.dashboardSessionActionDeps(), timeoutMs);
+    return waitForSessionStartForHost(this, sessionId, timeoutMs);
   }
 
   private dashboardSessionActionDeps() {
-    return {
-      getSessionLabel: (sessionId: string) => this.getSessionLabel(sessionId),
-      getPendingAction: (sessionId: string) => this.dashboardPendingActions.get(sessionId),
-      setPendingAction: (sessionId: string, kind: PendingDashboardActionKind | null) =>
-        this.setPendingDashboardSessionAction(sessionId, kind),
-      stopSessionToOffline: (session: ManagedSession) => this.stopSessionToOffline(session),
-      isGraveyardAfterStop: (sessionId: string) => this.graveyardAfterStopSessionIds.has(sessionId),
-      sendAgentToGraveyard: (sessionId: string) => this.sendAgentToGraveyard(sessionId).then(() => undefined),
-      resumeOfflineSession: (session: SessionState) => this.resumeOfflineSession(session),
-      refreshLocalDashboardModel: () => this.refreshLocalDashboardModel(),
-      adjustAfterRemove: (hasWorktrees: boolean) => this.adjustAfterRemove(hasWorktrees),
-      renderDashboard: () => this.renderDashboard(),
-      showDashboardError: (title: string, lines: string[]) => this.showDashboardError(title, lines),
-      setFooterFlash: (message: string, ticks: number) => {
-        this.footerFlash = message;
-        this.footerFlashTicks = ticks;
-      },
-      getRuntimeById: (sessionId: string) => this.sessions.find((session) => session.id === sessionId),
-      isSessionRuntimeLive: (session: ManagedSession) => this.isSessionRuntimeLive(session),
-    };
+    return dashboardSessionActionDepsImpl(this);
   }
 
   private async takeoverFromDashEntryWithFeedback(entry: DashboardSession): Promise<void> {
-    const label = entry.label ?? entry.command;
-    await this.runDashboardOperation(
-      `Taking over "${label}"`,
-      [`  Session: ${entry.id}`],
-      () => this.takeoverSessionFromDashEntry(entry),
-      `Failed to take over "${label}"`,
-    );
+    await takeoverFromDashEntryWithFeedbackImpl(this, entry);
   }
 
   private async migrateSessionWithFeedback(
@@ -4859,17 +4769,7 @@ export class Multiplexer {
     targetPath: string,
     targetName: string,
   ): Promise<void> {
-    const label = this.getSessionLabel(session.id) ?? session.command;
-    await this.runDashboardOperation(
-      `Migrating "${label}"`,
-      [`  From: ${this.sessionWorktreePaths.get(session.id) ?? "(main)"}`, `  To: ${targetName}`],
-      async () => {
-        await this.migrateAgent(session.id, targetPath);
-        await waitForSessionExit(session);
-        this.renderDashboard();
-      },
-      `Failed to migrate "${label}"`,
-    );
+    await migrateSessionWithFeedbackImpl(this, session, targetPath, targetName);
   }
 
   private handleMigratePickerKey(data: Buffer): void {
