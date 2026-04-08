@@ -137,6 +137,7 @@ import {
 import { MultiplexerRuntimeSync } from "./multiplexer-runtime-sync.js";
 import { openManagedServiceWindow, openManagedSessionWindow, selectLinkedOrOpenTarget } from "./tmux-window-open.js";
 import { dashboardActionMethods, type DashboardActionMethods } from "./multiplexer-dashboard-actions-methods.js";
+import { agentIoMethods, type AgentIoMethods } from "./multiplexer-agent-io-methods.js";
 import { dashboardInteractionMethods, type DashboardInteractionMethods } from "./multiplexer-dashboard-interaction.js";
 import { dashboardStateMethods, type DashboardStateMethods } from "./multiplexer-dashboard-state-methods.js";
 import { persistenceMethods, type PersistenceMethods } from "./multiplexer-persistence-methods.js";
@@ -639,257 +640,6 @@ export class Multiplexer {
       unseenCount: derived?.unseenCount,
       hasActiveTask: Boolean(this.taskDispatcher?.getSessionTask(sessionId)),
     });
-  }
-
-  private composeOrchestrationPrompt(
-    threadId: string,
-    from: string,
-    body: string,
-    kind: MessageKind,
-    title?: string,
-  ): string {
-    const prefix = `[AIMUX MESSAGE ${threadId} from ${from}]`;
-    const headline = title ? `${title}\n\n` : "";
-    return (
-      `${prefix} ${headline}${body}\n\n` +
-      `Read .aimux/threads/${threadId}.json and .aimux/threads/${threadId}.jsonl for context. ` +
-      `This is a ${kind} message. Reply in-thread if needed.`
-    );
-  }
-
-  private orchestrationWorkflowPressure(sessionId: string, status?: DashboardSession["status"]): number {
-    const semantic = this.deriveSessionSemanticState(sessionId, status);
-    return (
-      semantic.waitingOnMeCount * 5 +
-      semantic.blockedCount * 6 +
-      semantic.pendingDeliveryCount * 3 +
-      semantic.unreadCount * 2 +
-      semantic.waitingOnThemCount
-    );
-  }
-
-  private deliverOrchestrationMessage(
-    recipients: string[],
-    threadId: string,
-    from: string,
-    body: string,
-    kind: MessageKind,
-    title?: string,
-    messageId?: string,
-  ): string[] {
-    const delivered: string[] = [];
-    for (const recipient of recipients) {
-      const session = this.sessions.find((candidate) => candidate.id === recipient && !candidate.exited);
-      if (!session) continue;
-      const availability = this.deriveSessionSemanticState(session.id, session.status).availability;
-      if (availability === "blocked" || availability === "offline" || availability === "needs_input") continue;
-      if (availability !== "available" && availability !== "busy") continue;
-      session.write(this.composeOrchestrationPrompt(threadId, from, body, kind, title) + "\r");
-      if (messageId) {
-        markMessageDelivered(threadId, messageId, recipient);
-      }
-      delivered.push(recipient);
-    }
-    return delivered;
-  }
-
-  private sendOrchestrationMessage(input: {
-    threadId?: string;
-    from?: string;
-    to?: string[];
-    assignee?: string;
-    tool?: string;
-    worktreePath?: string;
-    kind?: MessageKind;
-    body: string;
-    title?: string;
-  }): { thread: unknown; message: unknown; deliveredTo: string[]; threadCreated: boolean } {
-    const from = input.from?.trim() || "user";
-    const kind = input.kind ?? "request";
-    const resolvedRecipients =
-      input.threadId && !input.to?.length
-        ? undefined
-        : resolveOrchestrationRecipients({
-            candidates: this.sessions.map((session) => ({
-              id: session.id,
-              tool: this.sessionToolKeys.get(session.id),
-              role: this.sessionRoles.get(session.id),
-              worktreePath: this.sessionWorktreePaths.get(session.id),
-              status: session.status,
-              availability: this.deriveSessionSemanticState(session.id, session.status).availability,
-              workflowPressure: this.orchestrationWorkflowPressure(session.id, session.status),
-              exited: session.exited,
-            })),
-            to: input.to,
-            assignee: input.assignee,
-            tool: input.tool,
-            worktreePath: input.worktreePath,
-          });
-    const result = input.threadId
-      ? sendThreadMessage({
-          threadId: input.threadId,
-          from,
-          to: resolvedRecipients,
-          kind,
-          body: input.body,
-        })
-      : sendDirectMessage({
-          from,
-          to: resolvedRecipients ?? [],
-          kind: kind as any,
-          body: input.body,
-          title: input.title,
-          worktreePath: input.worktreePath,
-        });
-    const deliveredTo = this.deliverOrchestrationMessage(
-      result.message.to ?? [],
-      result.thread.id,
-      from,
-      input.body,
-      kind,
-      result.thread.title,
-      result.message.id,
-    );
-    this.writeStatuslineFile();
-    if (this.mode === "dashboard") {
-      this.renderCurrentDashboardView();
-    }
-    return {
-      thread: result.thread,
-      message: result.message,
-      deliveredTo,
-      threadCreated: result.threadCreated,
-    };
-  }
-
-  private sendHandoffMessage(input: {
-    from?: string;
-    to?: string[];
-    assignee?: string;
-    tool?: string;
-    body: string;
-    title?: string;
-    worktreePath?: string;
-  }): { thread: unknown; message: unknown; deliveredTo: string[]; threadCreated: boolean } {
-    const from = input.from?.trim() || "user";
-    const resolvedRecipients = resolveOrchestrationRecipients({
-      candidates: this.sessions.map((session) => ({
-        id: session.id,
-        tool: this.sessionToolKeys.get(session.id),
-        role: this.sessionRoles.get(session.id),
-        worktreePath: this.sessionWorktreePaths.get(session.id),
-        status: session.status,
-        availability: this.deriveSessionSemanticState(session.id, session.status).availability,
-        workflowPressure: this.orchestrationWorkflowPressure(session.id, session.status),
-        exited: session.exited,
-      })),
-      to: input.to,
-      assignee: input.assignee,
-      tool: input.tool,
-      worktreePath: input.worktreePath,
-    });
-    const result = sendHandoff({
-      from,
-      to: resolvedRecipients,
-      body: input.body,
-      title: input.title,
-      worktreePath: input.worktreePath,
-    });
-    const deliveredTo = this.deliverOrchestrationMessage(
-      result.message.to ?? [],
-      result.thread.id,
-      from,
-      input.body,
-      "handoff",
-      result.thread.title,
-      result.message.id,
-    );
-    this.writeStatuslineFile();
-    if (this.mode === "dashboard") {
-      this.renderCurrentDashboardView();
-    }
-    return {
-      thread: result.thread,
-      message: result.message,
-      deliveredTo,
-      threadCreated: result.threadCreated,
-    };
-  }
-
-  private async stopProjectServices(): Promise<void> {
-    await stopProjectServicesImpl(this);
-  }
-
-  private getSessionLabel(sessionId: string): string | undefined {
-    return getSessionLabelImpl(this, sessionId);
-  }
-
-  private applySessionLabel(sessionId: string, label?: string): void {
-    applySessionLabelImpl(this, sessionId, label);
-  }
-
-  private applyDashboardSessionLabel(sessionId: string, label?: string): void {
-    applyDashboardSessionLabelImpl(this, sessionId, label);
-  }
-
-  private async updateSessionLabel(sessionId: string, label?: string): Promise<void> {
-    await updateSessionLabelImpl(this, sessionId, label);
-  }
-
-  private readStatusHeadline(sessionId: string): string | undefined {
-    return readStatusHeadlineImpl(this, sessionId);
-  }
-
-  private deriveHeadline(sessionId: string): string | undefined {
-    return deriveHeadlineImpl(this, sessionId);
-  }
-
-  private resolveRunningSession(sessionId: string): ManagedSession {
-    return resolveRunningSessionImpl(this, sessionId);
-  }
-
-  private writeTmuxAgentInput(sessionId: string, transport: TmuxSessionTransport, data: string): void {
-    writeTmuxAgentInputImpl(this, sessionId, transport, data);
-  }
-
-  private normalizeAgentInput(data: string, submit: boolean): string {
-    return normalizeAgentInputImpl(this, data, submit);
-  }
-
-  private paneStillContainsAgentDraft(target: TmuxTarget, draft: string): boolean {
-    return paneStillContainsAgentDraftImpl(this, target, draft);
-  }
-
-  private scheduleTmuxAgentSubmit(sessionId: string, target: TmuxTarget, draft: string): void {
-    scheduleTmuxAgentSubmitImpl(this, sessionId, target, draft);
-  }
-
-  async writeAgentInput(
-    sessionId: string,
-    data = "",
-    parts?: AgentInputPart[],
-    clientMessageId?: string,
-    submit = false,
-  ): Promise<{ sessionId: string }> {
-    return writeAgentInputImpl(this, sessionId, data, parts, clientMessageId, submit);
-  }
-
-  async readAgentHistory(
-    sessionId: string,
-    lastN?: number,
-  ): Promise<{ sessionId: string; messages: ReturnType<typeof readSessionMessages>; lastN?: number }> {
-    return readAgentHistoryImpl(this, sessionId, lastN);
-  }
-
-  async interruptAgent(sessionId: string): Promise<{ sessionId: string }> {
-    return interruptAgentImpl(this, sessionId);
-  }
-
-  async readAgentOutput(
-    sessionId: string,
-    startLine?: number,
-  ): Promise<{ sessionId: string; output: string; startLine?: number; parsed: ParsedAgentOutput }> {
-    return readAgentOutputImpl(this, sessionId, startLine);
   }
 
   private registerManagedSession(
@@ -1821,7 +1571,8 @@ export interface Multiplexer
     DashboardViewMethods,
     DashboardActionMethods,
     PersistenceMethods,
-    DashboardStateMethods {}
+    DashboardStateMethods,
+    AgentIoMethods {}
 
 Object.assign(
   Multiplexer.prototype,
@@ -1830,4 +1581,5 @@ Object.assign(
   dashboardActionMethods,
   persistenceMethods,
   dashboardStateMethods,
+  agentIoMethods,
 );
