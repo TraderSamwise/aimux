@@ -301,6 +301,28 @@ import {
   writeSessionsFile as writeSessionsFileImpl,
 } from "./multiplexer-runtime-state.js";
 import {
+  applyDashboardSessionLabel as applyDashboardSessionLabelImpl,
+  applySessionLabel as applySessionLabelImpl,
+  buildTmuxWindowMetadata as buildTmuxWindowMetadataImpl,
+  deriveHeadline as deriveHeadlineImpl,
+  getSessionLabel as getSessionLabelImpl,
+  handleSessionRuntimeEvent as handleSessionRuntimeEventImpl,
+  interruptAgent as interruptAgentImpl,
+  normalizeAgentInput as normalizeAgentInputImpl,
+  paneStillContainsAgentDraft as paneStillContainsAgentDraftImpl,
+  readAgentHistory as readAgentHistoryImpl,
+  readAgentOutput as readAgentOutputImpl,
+  readStatusHeadline as readStatusHeadlineImpl,
+  registerManagedSession as registerManagedSessionImpl,
+  resolveRunningSession as resolveRunningSessionImpl,
+  scheduleTmuxAgentSubmit as scheduleTmuxAgentSubmitImpl,
+  syncTmuxWindowMetadata as syncTmuxWindowMetadataImpl,
+  updateContextWatcherSessions as updateContextWatcherSessionsImpl,
+  updateSessionLabel as updateSessionLabelImpl,
+  writeAgentInput as writeAgentInputImpl,
+  writeTmuxAgentInput as writeTmuxAgentInputImpl,
+} from "./multiplexer-session-runtime-core.js";
+import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
   buildWorkflowEntriesForHost as buildWorkflowEntriesForHostImpl,
@@ -938,192 +960,47 @@ export class Multiplexer {
   }
 
   private getSessionLabel(sessionId: string): string | undefined {
-    return this.sessionLabels.get(sessionId) ?? this.offlineSessions.find((session) => session.id === sessionId)?.label;
+    return getSessionLabelImpl(this, sessionId);
   }
 
   private applySessionLabel(sessionId: string, label?: string): void {
-    const trimmed = label?.trim();
-    if (trimmed) {
-      this.sessionLabels.set(sessionId, trimmed);
-    } else {
-      this.sessionLabels.delete(sessionId);
-    }
-
-    const offline = this.offlineSessions.find((session) => session.id === sessionId);
-    if (offline) {
-      if (trimmed) offline.label = trimmed;
-      else delete offline.label;
-    }
+    applySessionLabelImpl(this, sessionId, label);
   }
 
   private applyDashboardSessionLabel(sessionId: string, label?: string): void {
-    const trimmed = label?.trim();
-    this.dashboardSessionsCache = this.dashboardSessionsCache.map((session) =>
-      session.id === sessionId ? { ...session, label: trimmed || undefined } : session,
-    );
-    this.dashboardWorktreeGroupsCache = this.dashboardWorktreeGroupsCache.map((group) => ({
-      ...group,
-      sessions: group.sessions.map((session) =>
-        session.id === sessionId ? { ...session, label: trimmed || undefined } : session,
-      ),
-    }));
-    this.dashboardState.worktreeSessions = this.dashboardState.worktreeSessions.map((session) =>
-      session.id === sessionId ? { ...session, label: trimmed || undefined } : session,
-    );
+    applyDashboardSessionLabelImpl(this, sessionId, label);
   }
 
   private async updateSessionLabel(sessionId: string, label?: string): Promise<void> {
-    if (this.mode === "dashboard") {
-      this.applySessionLabel(sessionId, label);
-      this.applyDashboardSessionLabel(sessionId, label);
-      this.setPendingDashboardSessionAction(sessionId, "renaming");
-      this.writeStatuslineFile();
-      this.renderCurrentDashboardView();
-      void this.postToProjectService("/agents/rename", { sessionId, label })
-        .then(() => {
-          this.invalidateDesktopStateSnapshot();
-          this.setPendingDashboardSessionAction(sessionId, null);
-          this.writeStatuslineFile();
-          this.renderCurrentDashboardView();
-        })
-        .catch((err) => {
-          this.setPendingDashboardSessionAction(sessionId, null);
-          this.footerFlash = `Rename failed: ${err instanceof Error ? err.message : String(err)}`;
-          this.footerFlashTicks = 4;
-          this.writeStatuslineFile();
-          this.renderCurrentDashboardView();
-        });
-      return;
-    }
-
-    this.applySessionLabel(sessionId, label);
-    this.invalidateDesktopStateSnapshot();
-
-    const localSession = this.sessions.find((session) => session.id === sessionId)?.transport;
-    if (localSession instanceof TmuxSessionTransport) {
-      localSession.renameWindow(localSession.command);
-      const target = localSession.tmuxTarget;
-      this.sessionTmuxTargets.set(sessionId, target);
-      this.syncTmuxWindowMetadata(sessionId);
-    }
-
-    this.saveState();
-    this.writeStatuslineFile();
-
-    this.renderDashboard();
+    await updateSessionLabelImpl(this, sessionId, label);
   }
 
   private readStatusHeadline(sessionId: string): string | undefined {
-    try {
-      const statusPath = join(getStatusDir(), `${sessionId}.md`);
-      if (!existsSync(statusPath)) return undefined;
-      const content = readFileSync(statusPath, "utf-8").trim();
-      if (!content) return undefined;
-      return content.split("\n")[0].slice(0, 80);
-    } catch {
-      return undefined;
-    }
+    return readStatusHeadlineImpl(this, sessionId);
   }
 
   private deriveHeadline(sessionId: string): string | undefined {
-    const taskDescription = this.taskDispatcher?.getSessionTask(sessionId);
-    if (taskDescription) return taskDescription.slice(0, 80);
-
-    const statusHeadline = this.readStatusHeadline(sessionId);
-    if (statusHeadline) return statusHeadline;
-
-    try {
-      const turns = readHistory(sessionId, { lastN: 3 });
-      const lastPrompt = turns.filter((turn) => turn.type === "prompt").pop();
-      if (lastPrompt) return lastPrompt.content.slice(0, 80);
-    } catch {}
-
-    return undefined;
+    return deriveHeadlineImpl(this, sessionId);
   }
 
   private resolveRunningSession(sessionId: string): ManagedSession {
-    const session = this.sessions.find((candidate) => candidate.id === sessionId);
-    if (!session || session.exited) {
-      throw new Error(`Session "${sessionId}" is not running`);
-    }
-    return session;
+    return resolveRunningSessionImpl(this, sessionId);
   }
 
   private writeTmuxAgentInput(sessionId: string, transport: TmuxSessionTransport, data: string): void {
-    const target = this.sessionTmuxTargets.get(sessionId) ?? transport.tmuxTarget;
-    let textBuffer = "";
-    const flushText = () => {
-      if (!textBuffer) return;
-      this.tmuxRuntimeManager.sendText(target, textBuffer);
-      textBuffer = "";
-    };
-
-    for (const ch of data) {
-      if (ch === "\r") {
-        flushText();
-        this.tmuxRuntimeManager.sendEnter(target);
-        continue;
-      }
-      if (ch === "\n") {
-        flushText();
-        this.tmuxRuntimeManager.sendKey(target, "C-j");
-        continue;
-      }
-      textBuffer += ch;
-    }
-
-    flushText();
+    writeTmuxAgentInputImpl(this, sessionId, transport, data);
   }
 
   private normalizeAgentInput(data: string, submit: boolean): string {
-    if (!submit) return data;
-    return data.replace(/(?:\r\n|\r|\n)+$/g, "");
+    return normalizeAgentInputImpl(this, data, submit);
   }
 
   private paneStillContainsAgentDraft(target: TmuxTarget, draft: string): boolean {
-    try {
-      const pane = this.tmuxRuntimeManager.captureTarget(target, { startLine: -60 });
-      const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
-      const normalizedDraft = normalize(draft);
-      if (!normalizedDraft) return false;
-      return normalize(pane).includes(normalizedDraft);
-    } catch {
-      return false;
-    }
+    return paneStillContainsAgentDraftImpl(this, target, draft);
   }
 
   private scheduleTmuxAgentSubmit(sessionId: string, target: TmuxTarget, draft: string): void {
-    const submitOnce = () => {
-      try {
-        this.tmuxRuntimeManager.sendEnter(target);
-      } catch {}
-    };
-
-    const step = (attempt = 1) => {
-      if (attempt > 4) return;
-      setTimeout(
-        () => {
-          try {
-            const currentTarget = this.sessionTmuxTargets.get(sessionId);
-            if (!currentTarget || currentTarget.windowId !== target.windowId) {
-              return;
-            }
-            submitOnce();
-            if (attempt >= 4) return;
-            setTimeout(() => {
-              try {
-                if (this.paneStillContainsAgentDraft(target, draft)) {
-                  step(attempt + 1);
-                }
-              } catch {}
-            }, 700);
-          } catch {}
-        },
-        attempt === 1 ? 150 : 700,
-      );
-    };
-
-    step();
+    scheduleTmuxAgentSubmitImpl(this, sessionId, target, draft);
   }
 
   async writeAgentInput(
@@ -1133,76 +1010,25 @@ export class Multiplexer {
     clientMessageId?: string,
     submit = false,
   ): Promise<{ sessionId: string }> {
-    const session = this.resolveRunningSession(sessionId);
-    appendSessionMessage(sessionId, { data, parts, clientMessageId });
-    const serializedData = serializeAgentInput(
-      { data, parts },
-      {
-        tool: this.sessionToolKeys.get(sessionId),
-        resolveAttachmentPath,
-      },
-    );
-    const normalizedData = this.normalizeAgentInput(serializedData, submit);
-    if (!normalizedData && !submit) {
-      throw new Error("input data is required");
-    }
-    if (session.transport instanceof TmuxSessionTransport) {
-      if (normalizedData) {
-        this.writeTmuxAgentInput(sessionId, session.transport, normalizedData);
-      }
-      if (submit) {
-        const target = this.sessionTmuxTargets.get(sessionId) ?? session.transport.tmuxTarget;
-        this.scheduleTmuxAgentSubmit(sessionId, target, normalizedData);
-      }
-    } else {
-      session.write(submit ? `${normalizedData}\r` : normalizedData);
-    }
-    return { sessionId };
+    return writeAgentInputImpl(this, sessionId, data, parts, clientMessageId, submit);
   }
 
   async readAgentHistory(
     sessionId: string,
     lastN?: number,
   ): Promise<{ sessionId: string; messages: ReturnType<typeof readSessionMessages>; lastN?: number }> {
-    this.resolveRunningSession(sessionId);
-    return {
-      sessionId,
-      messages: readSessionMessages(sessionId, { lastN: lastN ?? 20 }),
-      lastN: lastN ?? 20,
-    };
+    return readAgentHistoryImpl(this, sessionId, lastN);
   }
 
   async interruptAgent(sessionId: string): Promise<{ sessionId: string }> {
-    const session = this.resolveRunningSession(sessionId);
-    if (session.transport instanceof TmuxSessionTransport) {
-      const target = this.sessionTmuxTargets.get(sessionId) ?? session.transport.tmuxTarget;
-      this.tmuxRuntimeManager.sendEscape(target);
-    } else {
-      session.write("\x1b");
-    }
-    return { sessionId };
+    return interruptAgentImpl(this, sessionId);
   }
 
   async readAgentOutput(
     sessionId: string,
     startLine?: number,
   ): Promise<{ sessionId: string; output: string; startLine?: number; parsed: ParsedAgentOutput }> {
-    this.resolveRunningSession(sessionId);
-    const target = this.sessionTmuxTargets.get(sessionId);
-    if (!target) {
-      throw new Error(`Session "${sessionId}" does not have a tmux target`);
-    }
-    const output = this.tmuxRuntimeManager.captureTarget(target, {
-      startLine: startLine ?? -120,
-    });
-    return {
-      sessionId,
-      output,
-      startLine: startLine ?? -120,
-      parsed: parseAgentOutput(output, {
-        tool: this.sessionToolKeys.get(sessionId),
-      }),
-    };
+    return readAgentOutputImpl(this, sessionId, startLine);
   }
 
   private registerManagedSession(
@@ -1213,162 +1039,23 @@ export class Multiplexer {
     role?: string,
     startTime?: number,
   ): ManagedSession {
-    const existing = this.sessions.find((runtime) => runtime.transport === session);
-    if (existing) return existing;
-
-    const runtime = new SessionRuntime(session, startTime, {
-      onEvent: (event) => this.handleSessionRuntimeEvent(runtime, event),
-    });
-
-    if (toolConfigKey) {
-      this.sessionToolKeys.set(runtime.id, toolConfigKey);
-    }
-    this.sessionOriginalArgs.set(runtime.id, args);
-    if (worktreePath) {
-      this.sessionWorktreePaths.set(runtime.id, worktreePath);
-    }
-    if (role) {
-      this.sessionRoles.set(runtime.id, role);
-    } else if (!this.sessionRoles.has(runtime.id)) {
-      try {
-        const teamConfig = loadTeamConfig();
-        this.sessionRoles.set(runtime.id, teamConfig.defaultRole);
-      } catch {}
-    }
-    const label = this.offlineSessions.find((offline) => offline.id === runtime.id)?.label;
-    if (label) {
-      this.sessionLabels.set(runtime.id, label);
-    }
-
-    this.sessions.push(runtime);
-    this.writeSessionsFile();
-    this.updateContextWatcherSessions();
-    if (this.sessions.length === 1) this.contextWatcher.start();
-    return runtime;
+    return registerManagedSessionImpl(this, session, args, toolConfigKey, worktreePath, role, startTime);
   }
 
   private handleSessionRuntimeEvent(runtime: ManagedSession, event: SessionRuntimeEvent): void {
-    if (event.type === "output") {
-      this.writeStatuslineFile();
-      return;
-    }
-
-    if (event.type !== "exit") return;
-    const _code = event.code;
-
-    debug(`session exited: ${runtime.id} (code=${_code})`, "session");
-
-    const uptime = runtime.startTime ? Date.now() - runtime.startTime : Infinity;
-    let errorHint = "";
-    if (_code !== 0 && uptime < 10_000) {
-      const sessionCwd = this.sessionWorktreePaths.get(runtime.id);
-      const searchDirs = [getProjectStateDir(), sessionCwd ? getAimuxDirFor(sessionCwd) : null].filter(
-        Boolean,
-      ) as string[];
-      for (const dir of searchDirs) {
-        if (errorHint) break;
-        try {
-          const logPath = join(dir, "recordings", `${runtime.id}.log`);
-          if (existsSync(logPath)) {
-            const raw = readFileSync(logPath, "utf-8");
-            const lines = raw
-              .split("\n")
-              .map((l) => l.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim())
-              .filter(Boolean);
-            const errorLine = lines.find(
-              (l) => l.includes("Error") || l.includes("error") || l.includes("unmatched") || l.includes("not found"),
-            );
-            if (errorLine) errorHint = `: ${errorLine.slice(0, 60)}`;
-          }
-        } catch {}
-      }
-      this.footerFlash = `✗ ${runtime.id} crashed (code ${_code})${errorHint}`;
-      this.footerFlashTicks = 8;
-      debug(`quick crash: ${runtime.id} (code=${_code}, uptime=${uptime}ms)${errorHint}`, "session");
-    }
-
-    if (_code !== 0) {
-      this.publishAlert({
-        kind: "task_failed",
-        sessionId: runtime.id,
-        title: `${runtime.id} failed`,
-        message: errorHint ? `Agent exited with code ${_code}${errorHint}` : `Agent exited with code ${_code}.`,
-        dedupeKey: `exit-failed:${runtime.id}`,
-        cooldownMs: 15_000,
-      });
-    }
-    captureGitContext(runtime.id, runtime.command).catch(() => {});
-
-    const idx = this.sessions.indexOf(runtime);
-    if (idx === -1) return;
-
-    this.sessions.splice(idx, 1);
-    this.stoppingSessionIds.delete(runtime.id);
-    this.writeSessionsFile();
-    this.updateContextWatcherSessions();
-    const mappedTarget = this.sessionTmuxTargets.get(runtime.id);
-    const runtimeTarget = runtime.transport instanceof TmuxSessionTransport ? runtime.transport.tmuxTarget : undefined;
-    if (!mappedTarget || !runtimeTarget || mappedTarget.windowId === runtimeTarget.windowId) {
-      this.sessionTmuxTargets.delete(runtime.id);
-    }
-    this.saveState();
-
-    if (this.sessions.length === 0) {
-      if (this.startedInDashboard) {
-        this.renderDashboard();
-        return;
-      }
-      this.resolveRun?.(_code);
-      return;
-    }
-
-    if (this.activeIndex >= this.sessions.length) {
-      this.activeIndex = this.sessions.length - 1;
-    }
-
-    this.renderDashboard();
+    handleSessionRuntimeEventImpl(this, runtime, event);
   }
 
   private buildTmuxWindowMetadata(sessionId: string, command: string): TmuxWindowMetadata {
-    const sessionMetadata = loadMetadataState().sessions[sessionId];
-    return {
-      kind: "agent",
-      sessionId,
-      command,
-      args: this.sessionOriginalArgs.get(sessionId) ?? [],
-      toolConfigKey: this.sessionToolKeys.get(sessionId) ?? command,
-      backendSessionId: this.sessions.find((session) => session.id === sessionId)?.backendSessionId,
-      worktreePath: this.sessionWorktreePaths.get(sessionId),
-      label: this.getSessionLabel(sessionId),
-      role: this.sessionRoles.get(sessionId),
-      activity: sessionMetadata?.derived?.activity,
-      attention: sessionMetadata?.derived?.attention,
-      unseenCount: sessionMetadata?.derived?.unseenCount,
-      statusText: sessionMetadata?.status?.text,
-    };
+    return buildTmuxWindowMetadataImpl(this, sessionId, command);
   }
 
   private syncTmuxWindowMetadata(sessionId: string): void {
-    const runtime = this.sessions.find((session) => session.id === sessionId);
-    if (!runtime || !(runtime.transport instanceof TmuxSessionTransport)) return;
-    const metadata = this.buildTmuxWindowMetadata(sessionId, runtime.command);
-    this.tmuxRuntimeManager.setWindowMetadata(runtime.transport.tmuxTarget, metadata);
-    this.tmuxRuntimeManager.applyManagedAgentWindowPolicy(runtime.transport.tmuxTarget, metadata.toolConfigKey);
+    syncTmuxWindowMetadataImpl(this, sessionId);
   }
 
   private updateContextWatcherSessions(): void {
-    this.contextWatcher.updateSessions(
-      this.sessions.map((s) => {
-        const key = this.sessionToolKeys.get(s.id);
-        const tc = key ? loadConfig().tools[key] : undefined;
-        return {
-          id: s.id,
-          command: s.command,
-          turnPatterns: tc?.turnPatterns?.map((p) => new RegExp(p)),
-          tmuxTarget: this.sessionTmuxTargets.get(s.id),
-        };
-      }),
-    );
+    updateContextWatcherSessionsImpl(this);
   }
 
   async run(opts: { command: string; args: string[] }): Promise<number> {
