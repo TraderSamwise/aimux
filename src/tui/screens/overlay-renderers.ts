@@ -37,11 +37,11 @@ export function renderWorktreeListOverlay(ctx: any): void {
     for (let i = 0; i < worktrees.length; i++) {
       const wt = worktrees[i];
       const isMain = i === 0 ? " \x1b[2m(main)\x1b[0m" : "";
-      lines.push(`  [${i + 1}] ${wt.name} (${wt.branch})${isMain}`);
+      lines.push(`  ${wt.name} (${wt.branch})${isMain}`);
     }
   }
   lines.push("");
-  lines.push("  [1-9] remove  [Esc] back");
+  lines.push("  [Esc] back");
   process.stdout.write(renderOverlayBox(lines, cols, rows, "blue"));
 }
 

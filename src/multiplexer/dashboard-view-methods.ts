@@ -30,7 +30,6 @@ import {
   renderNotificationPanel,
   renderServiceInputOverlay,
 } from "../tui/screens/overlay-renderers.js";
-import type { Multiplexer } from "./index.js";
 
 export const dashboardViewMethods = {
   serviceLabelForCommand(this: any, commandLine: string): string {

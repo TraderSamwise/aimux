@@ -1,5 +1,5 @@
-import { loadConfig } from "../config.js";
 import { waitForSessionExit } from "../dashboard/session-actions.js";
+import { loadConfig } from "../config.js";
 import { isToolAvailable } from "./tool-picker.js";
 
 type SessionActionsHost = any;
@@ -25,7 +25,7 @@ export async function forkAgent(
     throw new Error(`Unable to fork session ${opts.sourceSessionId}`);
   }
   if (opts.open !== false && result.target) {
-    if (!host.openLiveTmuxWindowForEntry({ id: result.sessionId })) {
+    if (host.openLiveTmuxWindowForEntry({ id: result.sessionId }) === "missing") {
       host.tmuxRuntimeManager.openTarget(result.target, { insideTmux: host.tmuxRuntimeManager.isInsideTmux() });
     }
   }
@@ -70,7 +70,7 @@ export async function spawnAgent(
 
   const target = host.sessionTmuxTargets.get(transport.id);
   if (opts.open !== false && target) {
-    if (!host.openLiveTmuxWindowForEntry({ id: transport.id })) {
+    if (host.openLiveTmuxWindowForEntry({ id: transport.id }) === "missing") {
       host.tmuxRuntimeManager.openTarget(target, { insideTmux: host.tmuxRuntimeManager.isInsideTmux() });
     }
   }

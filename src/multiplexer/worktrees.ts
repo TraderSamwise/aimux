@@ -194,10 +194,5 @@ export function handleWorktreeListKey(host: WorktreeHost, data: Buffer): void {
   if (key === "escape") {
     host.worktreeListActive = false;
     host.restoreDashboardAfterOverlayDismiss();
-    return;
-  }
-
-  if (key >= "1" && key <= "9") {
-    renderWorktreeList(host);
   }
 }
