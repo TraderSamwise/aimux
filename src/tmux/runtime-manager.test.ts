@@ -166,9 +166,10 @@ describe("TmuxRuntimeManager", () => {
         (call) =>
           call.args[0] === "bind-key" &&
           call.args.join(" ").includes(" prefix d ") &&
-          call.args[4] === "select-window" &&
-          call.args[5] === "-t" &&
-          call.args[6] === ":0",
+          call.args[4] === "if-shell" &&
+          call.args.join(" ").includes("tmux select-window -t :0") &&
+          call.args.join(" ").includes("scripts/tmux-control.sh") &&
+          call.args.join(" ").includes(" dashboard --project-root "),
       ),
     ).toBe(true);
     expect(

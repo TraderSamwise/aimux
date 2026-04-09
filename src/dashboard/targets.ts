@@ -70,9 +70,10 @@ export function findLiveDashboardTarget(projectRoot: string, tmux: TmuxRuntimeMa
   const { dashboardBuildStamp } = getDashboardCommandSpec(projectRoot);
   pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
   const dashboardSession = tmux.getProjectSession(projectRoot);
+  const preferredOpenSession = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
   const candidateSessions = [
+    preferredOpenSession,
     tmux.currentClientSession(),
-    tmux.peekOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux()),
     dashboardSession.sessionName,
     ...tmux
       .listSessionNames()

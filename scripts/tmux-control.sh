@@ -520,6 +520,7 @@ PY
 fallback_local_control() {
   case "$action" in
     dashboard)
+      printf '%s\n' "aimux: tmux dashboard fallback for session=${current_client_session:-unknown} window=${current_window_id:-unknown}" >>"$debug_log"
       switch_local_dashboard || open_dashboard_via_aimux
       ;;
     menu)
