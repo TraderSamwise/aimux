@@ -7,7 +7,7 @@ import { getAimuxDirFor, getProjectStateDir, getStatusDir } from "../paths.js";
 import { loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
-import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
+import { loadMetadataState } from "../metadata-store.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
 import { serializeAgentInput } from "../agent-message-parts.js";
 import { resolveAttachmentPath } from "../attachment-store.js";

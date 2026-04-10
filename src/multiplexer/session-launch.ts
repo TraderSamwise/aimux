@@ -1,15 +1,13 @@
 import { randomUUID } from "node:crypto";
 
 import { initProject, loadConfig } from "../config.js";
-import { buildContextPreamble, captureGitContext } from "../context/context-bridge.js";
+import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { injectClaudeHookArgs } from "../claude-hooks.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
-import { loadMetadataState } from "../metadata-store.js";
 import { debug } from "../debug.js";
-import { parseKeys } from "../key-parser.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
 

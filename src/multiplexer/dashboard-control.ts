@@ -6,7 +6,6 @@ import { requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
 import { loadMetadataState, resolveProjectServiceEndpoint } from "../metadata-store.js";
 import { parseKeys } from "../key-parser.js";
-import { assignTask } from "../orchestration-actions.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { loadTeamConfig } from "../team.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";

@@ -13,7 +13,6 @@ import {
 import {
   buildThreadEntries,
   buildWorkflowEntries,
-  describeWorkflowNextAction,
   filterWorkflowEntries,
   type ThreadEntry,
   type WorkflowEntry,

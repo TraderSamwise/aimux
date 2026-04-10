@@ -7,7 +7,6 @@ export type PendingDashboardActionKind =
   | "graveyarding"
   | "renaming"
   | "removing";
-type PendingDashboardSessionActionKind = Exclude<PendingDashboardActionKind, "removing">;
 
 interface PendingActionEntry {
   kind: PendingDashboardActionKind;
