@@ -1,6 +1,6 @@
 {
   "name": "aimux-cli",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Native CLI agent multiplexer — run AI coding tools with their native TUIs intact",
   "main": "dist/main.js",
   "bin": {
