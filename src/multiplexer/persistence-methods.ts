@@ -34,6 +34,7 @@ export const persistenceMethods = {
   writeStatuslineFile(this: any): void {
     try {
       if (this.mode !== "project-service") return;
+      this.repairManagedTmuxTargets();
       for (const session of this.sessions) {
         this.syncTmuxWindowMetadata(session.id);
       }
@@ -53,6 +54,29 @@ export const persistenceMethods = {
       this.writePrecomputedTmuxStatuslineFiles(data);
       this.tmuxRuntimeManager.refreshStatus();
     } catch {}
+  },
+
+  repairManagedTmuxTargets(this: any): void {
+    const managedWindows = this.tmuxRuntimeManager.listProjectManagedWindows(process.cwd());
+    const liveTargets = new Map<string, any>();
+    for (const { target, metadata } of managedWindows) {
+      liveTargets.set(metadata.sessionId, target);
+    }
+    for (const session of this.sessions) {
+      const target = liveTargets.get(session.id);
+      if (!target) continue;
+      this.sessionTmuxTargets.set(session.id, target);
+      if (session.transport instanceof Object && typeof session.transport.retarget === "function") {
+        session.transport.retarget(target);
+      }
+    }
+  },
+
+  refreshProjectStatusline(this: any, _input?: { sessionId?: string }): { ok: true } {
+    this.repairManagedTmuxTargets();
+    this.invalidateDesktopStateSnapshot();
+    this.writeStatuslineFile();
+    return { ok: true };
   },
 
   getTmuxStatuslineDir(this: any): string {

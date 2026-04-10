@@ -442,8 +442,10 @@ export function syncTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: stri
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   if (!runtime || !(runtime.transport instanceof TmuxSessionTransport)) return;
   const metadata = buildTmuxWindowMetadata(host, sessionId, runtime.command);
-  host.tmuxRuntimeManager.setWindowMetadata(runtime.transport.tmuxTarget, metadata);
-  host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(runtime.transport.tmuxTarget, metadata.toolConfigKey);
+  const target = host.sessionTmuxTargets.get(sessionId) ?? runtime.transport.tmuxTarget;
+  runtime.transport.retarget(target);
+  host.tmuxRuntimeManager.setWindowMetadata(target, metadata);
+  host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, metadata.toolConfigKey);
 }
 
 export function updateContextWatcherSessions(host: SessionRuntimeHost): void {

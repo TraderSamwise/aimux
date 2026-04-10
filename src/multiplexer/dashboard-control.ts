@@ -1,4 +1,6 @@
 import { loadConfig } from "../config.js";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
 import type { DashboardScreen } from "../dashboard/state.js";
 import { updateNotificationContext } from "../notification-context.js";
@@ -7,7 +9,9 @@ import { markLastUsed } from "../last-used.js";
 import { loadMetadataState, resolveProjectServiceEndpoint } from "../metadata-store.js";
 import { parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
+import { getProjectStateDir } from "../paths.js";
 import { loadTeamConfig } from "../team.js";
+import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
 
@@ -20,6 +24,36 @@ type DashboardOrchestrationTarget = {
   worktreePath?: string;
   recipientIds?: string[];
 };
+
+function writeStatuslineTextFile(name: string, content: string): void {
+  const dir = join(getProjectStateDir(), "tmux-statusline");
+  mkdirSync(dir, { recursive: true });
+  const filePath = join(dir, name);
+  const tmpPath = `${filePath}.tmp`;
+  writeFileSync(tmpPath, `${content}\n`);
+  renameSync(tmpPath, filePath);
+}
+
+function primeLiveTmuxFooter(host: DashboardControlHost, target: { windowId: string; windowName: string }): void {
+  try {
+    const data = loadStatusline(process.cwd());
+    if (!data) return;
+    const currentPath =
+      host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? process.cwd();
+    const top = renderTmuxStatuslineFromData(data, process.cwd(), "top", {
+      currentWindow: target.windowName,
+      currentWindowId: target.windowId,
+      currentPath,
+    });
+    const bottom = renderTmuxStatuslineFromData(data, process.cwd(), "bottom", {
+      currentWindow: target.windowName,
+      currentWindowId: target.windowId,
+      currentPath,
+    });
+    writeStatuslineTextFile(`top-${target.windowId}.txt`, top);
+    writeStatuslineTextFile(`bottom-${target.windowId}.txt`, bottom);
+  } catch {}
+}
 
 export function updateWorktreeSessions(host: DashboardControlHost): void {
   const allDash = host.getDashboardSessions();
@@ -254,6 +288,8 @@ export function openLiveTmuxWindowForEntry(
   try {
     const target = openManagedSessionWindow(host.tmuxRuntimeManager, process.cwd(), entry);
     if (!target) return "missing";
+    primeLiveTmuxFooter(host, target);
+    void host.postToProjectService("/statusline/refresh", { sessionId: entry.id }).catch(() => {});
     host.agentTracker.markSeen(entry.id);
     updateNotificationContext("tui", {
       focused: true,
@@ -278,6 +314,8 @@ export function openLiveTmuxWindowForService(
   try {
     const target = openManagedServiceWindow(host.tmuxRuntimeManager, process.cwd(), serviceId);
     if (!target) return "missing";
+    primeLiveTmuxFooter(host, target);
+    void host.postToProjectService("/statusline/refresh", { sessionId: serviceId }).catch(() => {});
     noteLastUsedItem(host, serviceId);
     return "opened";
   } catch (error) {

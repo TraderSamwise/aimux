@@ -43,6 +43,10 @@ export class TmuxSessionTransport {
     return this.target;
   }
 
+  retarget(target: TmuxTarget): void {
+    this.target = target;
+  }
+
   write(data: string): void {
     if (this._exited || !data) return;
     let textBuffer = "";
