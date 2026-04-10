@@ -4,8 +4,12 @@ import {
   MANAGED_TMUX_TERMINAL_FEATURES,
   TmuxRuntimeManager,
 } from "./runtime-manager.js";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { getDashboardCommandSpec } from "../dashboard/command-spec.js";
 import { resolveDashboardTarget } from "../dashboard/targets.js";
+import { getProjectStateDirFor } from "../paths.js";
 
 export interface TmuxDoctorOptions {
   projectRoot: string;
@@ -52,6 +56,19 @@ export interface TmuxDoctorReport {
     tool: string;
     allowPassthrough: string | null;
   }>;
+  statusline: {
+    scriptPath: string;
+    scriptExists: boolean;
+    projectStateDir: string;
+    statuslineJsonExists: boolean;
+    tmuxStatuslineDirExists: boolean;
+    bottomDashboardExists: boolean;
+    bottomDashboardClientExists: boolean;
+    sessionFormat: string | null;
+    windowFormat: string | null;
+    helperPreview: string | null;
+    helperError: string | null;
+  };
 }
 
 export interface TmuxRepairResult {
@@ -65,6 +82,50 @@ export interface TmuxRepairResult {
 
 function buildCheck(expected: string, observed: string | null): TmuxDoctorCheck {
   return { expected, observed, ok: observed === expected };
+}
+
+function resolveStatuslineScriptPath(): string {
+  return fileURLToPath(new URL("../../scripts/tmux-statusline.sh", import.meta.url));
+}
+
+function previewStatuslineHelper(input: {
+  scriptPath: string;
+  projectStateDir: string;
+  currentSession: string | null;
+  currentWindow: string | null;
+  currentWindowId: string | null;
+}): { output: string | null; error: string | null } {
+  if (!existsSync(input.scriptPath)) {
+    return { output: null, error: `missing script: ${input.scriptPath}` };
+  }
+  try {
+    const output = execFileSync(
+      "sh",
+      [
+        input.scriptPath,
+        "--line",
+        "bottom",
+        "--project-state-dir",
+        input.projectStateDir,
+        "--current-session",
+        input.currentSession ?? "",
+        "--current-window",
+        input.currentWindow ?? "",
+        "--current-window-id",
+        input.currentWindowId ?? "",
+      ],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    ).trim();
+    return { output: output || null, error: null };
+  } catch (error) {
+    return {
+      output: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export function buildTmuxDoctorReport(
@@ -145,6 +206,19 @@ export function buildTmuxDoctorReport(
       }))
     : [];
 
+  const projectStateDir = getProjectStateDirFor(projectRoot);
+  const statuslineScript = resolveStatuslineScriptPath();
+  const bottomDashboardClientPath = currentClientSession
+    ? `${projectStateDir}/tmux-statusline/bottom-dashboard-${currentClientSession}.txt`
+    : null;
+  const helperPreview = previewStatuslineHelper({
+    scriptPath: statuslineScript,
+    projectStateDir,
+    currentSession: currentClientSession,
+    currentWindow: currentWindowName,
+    currentWindowId,
+  });
+
   return {
     env: {
       term: env.TERM || null,
@@ -166,6 +240,19 @@ export function buildTmuxDoctorReport(
     },
     activeWindow,
     managedWindows,
+    statusline: {
+      scriptPath: statuslineScript,
+      scriptExists: existsSync(statuslineScript),
+      projectStateDir,
+      statuslineJsonExists: existsSync(`${projectStateDir}/statusline.json`),
+      tmuxStatuslineDirExists: existsSync(`${projectStateDir}/tmux-statusline`),
+      bottomDashboardExists: existsSync(`${projectStateDir}/tmux-statusline/bottom-dashboard.txt`),
+      bottomDashboardClientExists: bottomDashboardClientPath ? existsSync(bottomDashboardClientPath) : false,
+      sessionFormat: sessionExists ? tmux.getSessionOption(resolvedSessionName, "status-format[0]") : null,
+      windowFormat: sessionExists ? tmux.getSessionOption(resolvedSessionName, "status-format[1]") : null,
+      helperPreview: helperPreview.output,
+      helperError: helperPreview.error,
+    },
   };
 }
 
@@ -213,6 +300,19 @@ export function renderTmuxDoctorReport(report: TmuxDoctorReport): string {
       );
     }
   }
+
+  lines.push("  statusline:");
+  lines.push(`    script: ${report.statusline.scriptPath}`);
+  lines.push(`    script exists: ${report.statusline.scriptExists ? "yes" : "no"}`);
+  lines.push(`    project state dir: ${report.statusline.projectStateDir}`);
+  lines.push(`    statusline.json: ${report.statusline.statuslineJsonExists ? "yes" : "no"}`);
+  lines.push(`    tmux-statusline dir: ${report.statusline.tmuxStatuslineDirExists ? "yes" : "no"}`);
+  lines.push(`    bottom-dashboard.txt: ${report.statusline.bottomDashboardExists ? "yes" : "no"}`);
+  lines.push(`    bottom-dashboard-<client>.txt: ${report.statusline.bottomDashboardClientExists ? "yes" : "no"}`);
+  lines.push(`    status-format[0]: ${report.statusline.sessionFormat ?? "(missing)"}`);
+  lines.push(`    status-format[1]: ${report.statusline.windowFormat ?? "(missing)"}`);
+  lines.push(`    helper preview: ${report.statusline.helperPreview ?? "(empty)"}`);
+  lines.push(`    helper error: ${report.statusline.helperError ?? "(none)"}`);
 
   return lines.join("\n");
 }

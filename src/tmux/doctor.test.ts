@@ -18,6 +18,8 @@ function createDoctorExec(): TmuxExec {
     if (joined === "show-options -v -t aimux-mobile-abc terminal-features") {
       return "xterm*:clipboard:ccolour:cstyle:focus:title\nxterm*:extkeys\nxterm*:hyperlinks";
     }
+    if (joined === "show-options -v -t aimux-mobile-abc status-format[0]") return "#(top)";
+    if (joined === "show-options -v -t aimux-mobile-abc status-format[1]") return "#(bottom)";
     if (joined.startsWith("list-windows -t aimux-mobile-abc -F ")) {
       return "@0\t0\tdashboard\t0\n@3\t3\tcodex\t1";
     }
@@ -55,6 +57,10 @@ describe("tmux doctor", () => {
     expect(report.managedSession.terminalFeatures["xterm*:hyperlinks"]?.ok).toBe(true);
     expect(report.activeWindow?.tool).toBe("codex");
     expect(report.activeWindow?.options["allow-passthrough"]?.ok).toBe(true);
+    expect(report.statusline.scriptExists).toBe(true);
+    expect(report.statusline.statuslineJsonExists).toBe(false);
+    expect(report.statusline.sessionFormat).toBe("#(top)");
+    expect(report.statusline.windowFormat).toBe("#(bottom)");
     expect(report.managedWindows).toEqual([
       {
         windowId: "@3",
@@ -83,5 +89,7 @@ describe("tmux doctor", () => {
     expect(text).toContain("managed session exists: yes");
     expect(text).toContain("allow-passthrough: on");
     expect(text).toContain("xterm*:hyperlinks: present");
+    expect(text).toContain("statusline:");
+    expect(text).toContain("status-format[1]: #(bottom)");
   });
 });

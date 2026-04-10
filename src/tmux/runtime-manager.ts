@@ -1014,6 +1014,7 @@ export class TmuxRuntimeManager {
 
   private getStatuslineCommandSpec(): TmuxCommandSpec {
     const scriptPath = fileURLToPath(new URL("../../scripts/tmux-statusline.sh", import.meta.url));
+    statSync(scriptPath);
     return {
       cwd: process.cwd(),
       command: "sh",
