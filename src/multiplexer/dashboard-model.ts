@@ -445,7 +445,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       migrateAgent: (input: any) => host.migrateAgent(input.sessionId, input.worktreePath),
       killAgent: (input: any) => host.sendAgentToGraveyard(input.sessionId),
       writeAgentInput: (input: any) =>
-        host.writeAgentInput(input.sessionId, input.data, input.parts, undefined, input.submit),
+        host.writeAgentInput(input.sessionId, input.data, input.parts, input.clientMessageId, input.submit),
       readAgentOutput: (input: any) => host.readAgentOutput(input.sessionId, input.startLine),
       readAgentHistory: (input: any) => host.readAgentHistory(input.sessionId, input.lastN),
     },

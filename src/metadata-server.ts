@@ -51,6 +51,7 @@ import { markLastUsed } from "./last-used.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
 import type { AgentInputPart } from "./agent-message-parts.js";
+import type { SessionInputOperationRecord } from "./session-input-operations.js";
 import {
   getAttachment,
   getAttachmentContent,
@@ -226,7 +227,21 @@ interface MetadataServerOptions {
       parts?: AgentInputPart[];
       clientMessageId?: string;
       submit?: boolean;
-    }) => Promise<{ sessionId: string }> | { sessionId: string };
+    }) =>
+      | Promise<{
+          sessionId: string;
+          accepted: boolean;
+          operation: SessionInputOperationRecord;
+          messageId?: string;
+          error?: string;
+        }>
+      | {
+          sessionId: string;
+          accepted: boolean;
+          operation: SessionInputOperationRecord;
+          messageId?: string;
+          error?: string;
+        };
     readAgentOutput?: (input: {
       sessionId: string;
       startLine?: number;
@@ -1569,7 +1584,7 @@ export class MetadataServer {
           }
         }
         this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: result.accepted, ...result });
         return;
       }
 

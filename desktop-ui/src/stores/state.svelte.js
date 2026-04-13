@@ -16,6 +16,7 @@ let terminalSwitching = $state(false);
 let nativeChatOutput = $state("");
 let nativeChatBlocks = $state([]);
 let nativeChatHistory = $state([]);
+let nativeChatPendingMessages = $state({});
 let nativeChatLoading = $state(false);
 let nativeChatError = $state(null);
 let nativeChatComposerError = $state(null);
@@ -75,6 +76,47 @@ function syncCurrentAction() {
   currentAction = inFlightActions.length > 0
     ? inFlightActions[inFlightActions.length - 1].message
     : null;
+}
+
+function getNativeChatPendingMessagesForSession(sessionId) {
+  return sessionId ? (nativeChatPendingMessages[sessionId] || []) : [];
+}
+
+function setNativeChatPendingMessagesForSession(sessionId, messages) {
+  if (!sessionId) return;
+  const next = { ...nativeChatPendingMessages };
+  if (messages.length === 0) {
+    delete next[sessionId];
+  } else {
+    next[sessionId] = messages;
+  }
+  nativeChatPendingMessages = next;
+}
+
+function mergeNativeChatHistoryWithPending(sessionId, historyMessages = nativeChatHistory) {
+  const serverMessages = Array.isArray(historyMessages) ? historyMessages : [];
+  const pendingMessages = getNativeChatPendingMessagesForSession(sessionId);
+  if (pendingMessages.length === 0) return serverMessages;
+  return [...serverMessages, ...pendingMessages].sort((left, right) =>
+    String(left?.ts || "").localeCompare(String(right?.ts || ""))
+  );
+}
+
+function reconcileNativeChatPendingMessages(sessionId, historyMessages) {
+  const pendingMessages = getNativeChatPendingMessagesForSession(sessionId);
+  if (pendingMessages.length === 0) return;
+  const deliveredIds = new Set(
+    (Array.isArray(historyMessages) ? historyMessages : [])
+      .map((message) => message?.clientMessageId)
+      .filter(Boolean),
+  );
+  const nextPending = pendingMessages.filter((message) => {
+    if (message?.deliveryState === "failed") return true;
+    return !message?.clientMessageId || !deliveredIds.has(message.clientMessageId);
+  });
+  if (nextPending.length !== pendingMessages.length) {
+    setNativeChatPendingMessagesForSession(sessionId, nextPending);
+  }
 }
 
 function pushAlert(event) {
@@ -898,6 +940,7 @@ function setNativeChatSnapshot(projectPath, sessionId, snapshot) {
   nativeChatOutput = String(snapshot?.output ?? "");
   nativeChatBlocks = Array.isArray(snapshot?.parsed?.blocks) ? snapshot.parsed.blocks : [];
   nativeChatHistory = Array.isArray(snapshot?.history?.messages) ? snapshot.history.messages : [];
+  reconcileNativeChatPendingMessages(sessionId, nativeChatHistory);
   if (didNativeChatInterruptSettle(projectPath, sessionId, nativeChatBlocks)) {
     nativeChatInterruptState = null;
     if (nativeChatInterruptTimer) {
@@ -1008,6 +1051,7 @@ async function refreshNativeChatHistory(projectPath, sessionId, token) {
     });
     if (token !== nativeChatStreamToken) return;
     nativeChatHistory = Array.isArray(history?.messages) ? history.messages : [];
+    reconcileNativeChatPendingMessages(sessionId, nativeChatHistory);
   } finally {
     nativeChatHistoryInFlight = false;
   }
@@ -1217,7 +1261,7 @@ export function getState() {
     },
     get nativeChatOutput() { return nativeChatOutput; },
     get nativeChatBlocks() { return nativeChatBlocks; },
-    get nativeChatHistory() { return nativeChatHistory; },
+    get nativeChatHistory() { return mergeNativeChatHistoryWithPending(selectedSessionId, nativeChatHistory); },
     get nativeChatLoading() { return nativeChatLoading; },
     get nativeChatError() { return nativeChatError; },
     get nativeChatComposerError() { return nativeChatComposerError; },
@@ -1771,6 +1815,7 @@ export async function sendNativeChatMessage() {
 
   const parts = [];
   const historyParts = [];
+  const clientMessageId = crypto.randomUUID();
   for (const part of outboundParts) {
     if (part.type === "text") {
       parts.push({ type: "text", text: part.text });
@@ -1791,8 +1836,21 @@ export async function sendNativeChatMessage() {
     }
   }
 
+  const pendingHistoryEntry = {
+    id: `pending-${clientMessageId}`,
+    clientMessageId,
+    role: "user",
+    ts: new Date().toISOString(),
+    parts: historyParts,
+    deliveryState: "sending",
+  };
+  setNativeChatPendingMessagesForSession(sessionId, [
+    ...getNativeChatPendingMessagesForSession(sessionId).filter((entry) => entry.clientMessageId !== clientMessageId),
+    pendingHistoryEntry,
+  ]);
+
   try {
-    await trackAction(
+    const result = await trackAction(
       {
         kind: "agent-send",
         message: `Sending to ${sessionId}...`,
@@ -1805,20 +1863,51 @@ export async function sendNativeChatMessage() {
           sessionId,
           data: "",
           parts,
+          clientMessageId,
           submit: true,
         }),
     );
-    nativeChatHistory = [
-      ...nativeChatHistory,
-      {
-        id: `local-${crypto.randomUUID()}`,
-        role: "user",
-        ts: new Date().toISOString(),
-        parts: historyParts,
-      },
-    ];
+    if (!result?.accepted) {
+      const errorMessage = String(result?.error || "The agent input operation failed.");
+      setNativeChatPendingMessagesForSession(
+        sessionId,
+        getNativeChatPendingMessagesForSession(sessionId).map((entry) =>
+          entry.clientMessageId === clientMessageId
+            ? { ...entry, deliveryState: "failed", deliveryError: errorMessage }
+            : entry,
+        ),
+      );
+      nativeChatComposerError = errorMessage;
+      return;
+    }
+    setNativeChatPendingMessagesForSession(
+      sessionId,
+      getNativeChatPendingMessagesForSession(sessionId).map((entry) =>
+        entry.clientMessageId === clientMessageId
+          ? {
+              ...entry,
+              id: result?.messageId || entry.id,
+              deliveryState: result?.operation?.state || "submitted",
+              operationId: result?.operation?.id,
+            }
+          : entry,
+      ),
+    );
     setNativeChatDraftPartsForSession(sessionId, [createNativeChatTextPart("")]);
+    if (nativeChatProjectPath === projectPath && nativeChatSessionId === sessionId) {
+      scheduleNativeChatHistoryRefresh(projectPath, sessionId, nativeChatStreamToken, 0);
+    }
   } catch (error) {
+    const errorMessage = String(error);
+    setNativeChatPendingMessagesForSession(
+      sessionId,
+      getNativeChatPendingMessagesForSession(sessionId).map((entry) =>
+        entry.clientMessageId === clientMessageId
+          ? { ...entry, deliveryState: "failed", deliveryError: errorMessage }
+          : entry,
+      ),
+    );
+    nativeChatComposerError = errorMessage;
     throw error;
   }
 }

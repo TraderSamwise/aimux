@@ -423,6 +423,8 @@
         type: "prompt",
         text: block.text,
         parts: Array.isArray(message?.parts) ? message.parts : null,
+        deliveryState: message?.deliveryState,
+        deliveryError: message?.deliveryError,
       };
     });
 
@@ -437,6 +439,8 @@
         type: "prompt",
         text: messagePromptText(message),
         parts: Array.isArray(message?.parts) ? message.parts : null,
+        deliveryState: message?.deliveryState,
+        deliveryError: message?.deliveryError,
       });
     }
 
@@ -906,7 +910,13 @@
                   <article class="message" class:prompt={entry.type === "prompt"} class:response={entry.type === "response"} class:status={entry.type === "status"} class:interrupt-status={entry.type === "status"}>
                   <div class="message-kind">
                     {#if entry.type === "prompt"}
-                      You
+                      {#if entry.deliveryState === "failed"}
+                        You · failed
+                      {:else if entry.deliveryState === "sending" || entry.deliveryState === "queued" || entry.deliveryState === "applied" || entry.deliveryState === "submitted"}
+                        You · {entry.deliveryState}
+                      {:else}
+                        You
+                      {/if}
                     {:else if entry.type === "status"}
                       Interrupted
                     {:else}
@@ -931,6 +941,9 @@
                     </div>
                   {:else}
                     <pre class="message-text">{entry.type === "response" ? displayedResponseText(entry) : entry.text}</pre>
+                  {/if}
+                  {#if entry.type === "prompt" && entry.deliveryError}
+                    <div class="message-kind">{entry.deliveryError}</div>
                   {/if}
                   </article>
                 </article>

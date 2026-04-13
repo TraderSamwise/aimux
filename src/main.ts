@@ -787,6 +787,9 @@ hostCmd
       data: payload,
       submit: opts.submit === true,
     });
+    if (result.accepted === false) {
+      throw new Error(result.error || `agent input failed for ${result.sessionId}`);
+    }
     console.log(`sent input to ${result.sessionId}`);
   });
 

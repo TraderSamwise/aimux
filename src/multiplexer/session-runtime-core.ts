@@ -12,6 +12,11 @@ import { parseAgentOutput } from "../agent-output-parser.js";
 import { serializeAgentInput } from "../agent-message-parts.js";
 import { resolveAttachmentPath } from "../attachment-store.js";
 import { appendSessionMessage, readSessionMessages } from "../session-message-history.js";
+import {
+  createSessionInputOperation,
+  saveSessionInputOperation,
+  type SessionInputOperationRecord,
+} from "../session-input-operations.js";
 import { captureGitContext } from "../context/context-bridge.js";
 
 type SessionRuntimeHost = any;
@@ -219,9 +224,14 @@ export async function writeAgentInput(
   parts?: any[],
   clientMessageId?: string,
   submit = false,
-): Promise<{ sessionId: string }> {
+): Promise<{
+  sessionId: string;
+  accepted: boolean;
+  operation: SessionInputOperationRecord;
+  messageId?: string;
+  error?: string;
+}> {
   const session = resolveRunningSession(host, sessionId);
-  appendSessionMessage(sessionId, { data, parts, clientMessageId });
   const serializedData = serializeAgentInput(
     { data, parts },
     {
@@ -233,18 +243,55 @@ export async function writeAgentInput(
   if (!normalizedData && !submit) {
     throw new Error("input data is required");
   }
-  if (session.transport instanceof TmuxSessionTransport) {
-    if (normalizedData) {
-      writeTmuxAgentInput(host, sessionId, session.transport, normalizedData);
+
+  let operation = createSessionInputOperation({ sessionId, clientMessageId, submit });
+  try {
+    const message = appendSessionMessage(sessionId, { data, parts, clientMessageId });
+    if (message?.id) {
+      operation = saveSessionInputOperation({
+        ...operation,
+        messageId: message.id,
+      });
     }
-    if (submit) {
-      const target = host.sessionTmuxTargets.get(sessionId) ?? session.transport.tmuxTarget;
-      scheduleTmuxAgentSubmit(host, sessionId, target, normalizedData);
+    if (session.transport instanceof TmuxSessionTransport) {
+      if (normalizedData) {
+        writeTmuxAgentInput(host, sessionId, session.transport, normalizedData);
+      }
+      operation = saveSessionInputOperation({
+        ...operation,
+        state: submit ? "submitted" : "applied",
+      });
+      if (submit) {
+        const target = host.sessionTmuxTargets.get(sessionId) ?? session.transport.tmuxTarget;
+        scheduleTmuxAgentSubmit(host, sessionId, target, normalizedData);
+      }
+    } else {
+      session.write(submit ? `${normalizedData}\r` : normalizedData);
+      operation = saveSessionInputOperation({
+        ...operation,
+        state: submit ? "submitted" : "applied",
+      });
     }
-  } else {
-    session.write(submit ? `${normalizedData}\r` : normalizedData);
+    return {
+      sessionId,
+      accepted: true,
+      operation,
+      messageId: message?.id,
+    };
+  } catch (error) {
+    operation = saveSessionInputOperation({
+      ...operation,
+      state: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      sessionId,
+      accepted: false,
+      operation,
+      messageId: operation.messageId,
+      error: operation.error,
+    };
   }
-  return { sessionId };
 }
 
 export async function readAgentHistory(

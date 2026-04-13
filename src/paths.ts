@@ -215,6 +215,10 @@ export function getSessionMessagesDir(): string {
   return join(getLocalAimuxDir(), "session-messages");
 }
 
+export function getSessionInputOperationsDir(): string {
+  return join(getLocalAimuxDir(), "session-input-ops");
+}
+
 /** Escape hatch for cross-worktree operations. Prefer the no-arg variants above. */
 export function getAimuxDirFor(cwd: string): string {
   return join(resolveRepoRoot(cwd), ".aimux");
@@ -232,6 +236,7 @@ function ensureLocalSharedDirs(): void {
     "threads",
     "attachments",
     "session-messages",
+    "session-input-ops",
   ]) {
     mkdirSync(join(localDir, subdir), { recursive: true });
   }
