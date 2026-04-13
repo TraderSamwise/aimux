@@ -211,6 +211,9 @@ export class Multiplexer {
   private statusInterval: ReturnType<typeof setInterval> | null = null;
   private dashboardViewportPollInterval: ReturnType<typeof setInterval> | null = null;
   private dashboardLastViewportKey: string | null = null;
+  private dashboardLastViewportSize: { cols: number; rows: number } | null = null;
+  private dashboardPendingExpandedViewportSize: { cols: number; rows: number } | null = null;
+  private dashboardPendingExpandedViewportCount = 0;
   private agentTracker = new AgentTracker();
   private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher((target) =>

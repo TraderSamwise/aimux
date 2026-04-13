@@ -86,10 +86,38 @@ export const dashboardStateMethods = {
         const tmuxCols = Number(tmuxColsRaw);
         const tmuxRows = Number(tmuxRowsRaw);
         if (Number.isFinite(tmuxCols) && tmuxCols > 0 && Number.isFinite(tmuxRows) && tmuxRows > 0) {
-          return { cols: tmuxCols, rows: tmuxRows };
+          const size = { cols: tmuxCols, rows: tmuxRows };
+          const previous = this.dashboardLastViewportSize;
+          if (previous) {
+            const expands = size.cols > previous.cols || size.rows > previous.rows;
+            if (expands) {
+              const samePending =
+                this.dashboardPendingExpandedViewportSize &&
+                this.dashboardPendingExpandedViewportSize.cols === size.cols &&
+                this.dashboardPendingExpandedViewportSize.rows === size.rows;
+              this.dashboardPendingExpandedViewportSize = size;
+              this.dashboardPendingExpandedViewportCount = samePending
+                ? this.dashboardPendingExpandedViewportCount + 1
+                : 1;
+              if (this.dashboardPendingExpandedViewportCount < 2) {
+                return previous;
+              }
+            } else {
+              this.dashboardPendingExpandedViewportSize = null;
+              this.dashboardPendingExpandedViewportCount = 0;
+            }
+          }
+          this.dashboardLastViewportSize = size;
+          this.dashboardPendingExpandedViewportSize = null;
+          this.dashboardPendingExpandedViewportCount = 0;
+          return size;
         }
       }
     } catch {}
+
+    if (target && this.dashboardLastViewportSize) {
+      return this.dashboardLastViewportSize;
+    }
 
     let cols = process.stdout.columns ?? 0;
     let rows = process.stdout.rows ?? 0;
@@ -105,7 +133,9 @@ export const dashboardStateMethods = {
     if (!(Number.isFinite(cols) && cols > 0)) cols = 80;
     if (!(Number.isFinite(rows) && rows > 0)) rows = 24;
 
-    return { cols, rows };
+    const size = { cols, rows };
+    this.dashboardLastViewportSize = size;
+    return size;
   },
 
   restoreDashboardAfterOverlayDismiss(this: any): void {

@@ -113,7 +113,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
     host.dashboardLastViewportKey = viewportKey;
     host.invalidateDashboardFrame();
     host.renderCurrentDashboardView();
-  }, 150);
+  }, 40);
 
   host.mode = "dashboard";
   host.loadDashboardUiState();
