@@ -80,7 +80,7 @@ interface MetadataServerOptions {
   desktop?: {
     getState?: () => Record<string, unknown>;
     listWorktrees?: () => unknown[];
-    refreshStatusline?: (input?: { sessionId?: string }) => Promise<{ ok: true }> | { ok: true };
+    refreshStatusline?: (input?: { sessionId?: string; force?: boolean }) => Promise<{ ok: true }> | { ok: true };
     createWorktree?: (input: { name: string }) => Promise<{ path: string }> | { path: string };
     removeWorktree?: (input: { path: string }) => Promise<{ path: string }> | { path: string };
     createService?: (input: {
@@ -632,9 +632,10 @@ export class MetadataServer {
         send(res, 501, { ok: false, error: "statusline refresh not supported by this service" });
         return;
       }
-      const body = (await readJson(req).catch(() => ({}))) as { sessionId?: string };
+      const body = (await readJson(req).catch(() => ({}))) as { sessionId?: string; force?: boolean };
       await this.options.desktop.refreshStatusline({
         sessionId: body.sessionId?.trim() || undefined,
+        force: body.force === true,
       });
       send(res, 200, { ok: true });
       return;

@@ -10,6 +10,7 @@ import { getGraveyardPath, getLocalAimuxDir, getProjectStateDir, getStatePath } 
 import { loadMetadataState } from "../metadata-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
+import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 
 export const persistenceMethods = {
@@ -31,7 +32,7 @@ export const persistenceMethods = {
     writeFileSync(`${dir}/sessions.json`, JSON.stringify(data, null, 2) + "\n");
   },
 
-  writeStatuslineFile(this: any): void {
+  writeStatuslineFile(this: any, input?: { force?: boolean }): void {
     try {
       if (this.mode !== "project-service") return;
       this.repairManagedTmuxTargets();
@@ -45,7 +46,7 @@ export const persistenceMethods = {
       const data = this.buildStatuslineSnapshot();
       const { updatedAt: _updatedAt, ...stableData } = data;
       const snapshotKey = JSON.stringify(stableData);
-      if (snapshotKey === this.lastStatuslineSnapshotKey) {
+      if (!input?.force && snapshotKey === this.lastStatuslineSnapshotKey) {
         return;
       }
       this.lastStatuslineSnapshotKey = snapshotKey;
@@ -72,17 +73,19 @@ export const persistenceMethods = {
     }
   },
 
-  refreshProjectStatusline(this: any, _input?: { sessionId?: string }): { ok: true } {
+  refreshProjectStatusline(this: any, _input?: { sessionId?: string; force?: boolean }): { ok: true } {
+    if (_input?.force) {
+      invalidateTmuxStatuslineArtifacts(process.cwd());
+      this.lastStatuslineSnapshotKey = null;
+    }
     this.repairManagedTmuxTargets();
     this.invalidateDesktopStateSnapshot();
-    this.writeStatuslineFile();
+    this.writeStatuslineFile({ force: _input?.force === true });
     return { ok: true };
   },
 
   getTmuxStatuslineDir(this: any): string {
-    const dir = join(getProjectStateDir(), "tmux-statusline");
-    mkdirSync(dir, { recursive: true });
-    return dir;
+    return ensureTmuxStatuslineDir();
   },
 
   writeStatuslineTextFile(this: any, name: string, content: string): void {

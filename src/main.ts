@@ -84,6 +84,7 @@ import {
   pruneDashboardArtifacts,
   resolveDashboardTarget,
 } from "./dashboard/targets.js";
+import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -529,10 +530,12 @@ program
       const originalCwd = process.cwd();
       const projectRoot = resolveProjectRoot(originalCwd);
       await ensureDaemonProjectSpawned(projectRoot);
+      invalidateTmuxStatuslineArtifacts(projectRoot);
 
       const tmux = new TmuxRuntimeManager();
       ensureTmuxAvailable(tmux);
       const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
+      await postProjectServiceJson("/statusline/refresh", { force: true });
 
       if (opts.open) {
         tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
