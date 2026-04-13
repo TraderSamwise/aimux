@@ -931,13 +931,20 @@ export class TmuxRuntimeManager {
   private applyDefaultRootMouseBindings(): void {
     const dir = mkdtempSync(join(tmpdir(), "aimux-tmux-"));
     const file = join(dir, "mouse-bindings.conf");
+    const openHyperlinkScript = fileURLToPath(new URL("../../scripts/tmux-open-hyperlink.sh", import.meta.url));
     try {
       writeFileSync(
         file,
         [
           "bind-key -T root MouseDown1Pane select-pane -t = \\; send-keys -M",
           'bind-key -T root MouseDrag1Pane if-shell -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -M }',
-          'bind-key -T root WheelUpPane if-shell -F "#{||:#{alternate_on},#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -e }',
+          'bind-key -T root WheelUpPane if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { copy-mode -e }',
+          'bind-key -T root WheelDownPane if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { send-keys -M }',
+          `bind-key -T root DoubleClick1Pane if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { run-shell -b "AIMUX_HYPERLINK=#{q:mouse_hyperlink} sh ${shellQuote(openHyperlinkScript)} >/dev/null 2>&1" }`,
+          "bind-key -T copy-mode WheelUpPane send-keys -X -N 1 scroll-up",
+          "bind-key -T copy-mode WheelDownPane send-keys -X -N 1 scroll-down",
+          "bind-key -T copy-mode-vi WheelUpPane send-keys -X -N 1 scroll-up",
+          "bind-key -T copy-mode-vi WheelDownPane send-keys -X -N 1 scroll-down",
           "bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel",
           "bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel",
           "",
