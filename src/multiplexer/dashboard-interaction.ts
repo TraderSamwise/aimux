@@ -329,7 +329,7 @@ export const dashboardInteractionMethods = {
             if (service.pendingAction === "creating" || service.pendingAction === "starting") {
               return;
             }
-            if (service.status === "offline") {
+            if (service.status !== "running") {
               try {
                 this.resumeOfflineServiceById(service.id);
                 this.footerFlash = `◆ Started service ${service.label ?? service.id}`;

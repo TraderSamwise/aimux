@@ -8,6 +8,27 @@ import { wrapCommandWithShellIntegration, wrapInteractiveShellWithIntegration } 
 
 type ServiceHost = any;
 
+function getServiceLaunchCommandLine(metadata: { command?: string; args?: string[] }): string {
+  return metadata.command === "shell" ? "" : metadata.args?.[0] === "-lc" ? (metadata.args[1] ?? "") : "";
+}
+
+function buildServiceStateFromMetadata(
+  serviceId: string,
+  metadata: {
+    command?: string;
+    args?: string[];
+    worktreePath?: string;
+    label?: string;
+  },
+): ServiceState {
+  return {
+    id: serviceId,
+    worktreePath: metadata.worktreePath,
+    label: metadata.label,
+    launchCommandLine: getServiceLaunchCommandLine(metadata),
+  };
+}
+
 export function serviceLabelForCommand(commandLine: string): string {
   const trimmed = commandLine.trim();
   if (!trimmed) return "shell";
@@ -86,16 +107,9 @@ export function stopService(host: ServiceHost, serviceId: string): { serviceId: 
   if (!match || match.metadata.kind !== "service") {
     throw new Error(`Service "${serviceId}" not found`);
   }
-  const launchCommandLine =
-    match.metadata.command === "shell" ? "" : match.metadata.args?.[0] === "-lc" ? (match.metadata.args[1] ?? "") : "";
   host.offlineServices = [
     ...host.offlineServices.filter((service: ServiceState) => service.id !== serviceId),
-    {
-      id: serviceId,
-      worktreePath: match.metadata.worktreePath,
-      label: match.metadata.label,
-      launchCommandLine,
-    },
+    buildServiceStateFromMetadata(serviceId, match.metadata),
   ];
   host.tmuxRuntimeManager.killWindow(match.target);
   host.saveState();
@@ -133,11 +147,16 @@ export function resumeOfflineService(
     },
   );
   if (existing && existing.metadata.kind === "service") {
-    host.offlineServices = host.offlineServices.filter((entry: ServiceState) => entry.id !== service.id);
-    host.saveState();
-    host.invalidateDesktopStateSnapshot();
-    host.refreshLocalDashboardModel();
-    return { serviceId: service.id, status: "running" };
+    if (host.tmuxRuntimeManager.isWindowAlive(existing.target)) {
+      host.offlineServices = host.offlineServices.filter((entry: ServiceState) => entry.id !== service.id);
+      host.saveState();
+      host.invalidateDesktopStateSnapshot();
+      host.refreshLocalDashboardModel();
+      return { serviceId: service.id, status: "running" };
+    }
+    try {
+      host.tmuxRuntimeManager.killWindow(existing.target);
+    } catch {}
   }
   const cwd = service.worktreePath ?? process.cwd();
   const shell = process.env.SHELL || "zsh";
@@ -194,8 +213,21 @@ export function resumeOfflineServiceById(
   serviceId: string,
 ): { serviceId: string; status: "running" } {
   const service = host.offlineServices.find((entry: ServiceState) => entry.id === serviceId);
-  if (!service) {
+  if (service) {
+    return resumeOfflineService(host, service);
+  }
+  const existing = host.tmuxRuntimeManager.findManagedWindow(
+    host.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+    {
+      sessionId: serviceId,
+    },
+  );
+  if (!existing || existing.metadata.kind !== "service") {
     throw new Error(`Service "${serviceId}" not found`);
   }
-  return resumeOfflineService(host, service);
+  if (host.tmuxRuntimeManager.isWindowAlive(existing.target)) {
+    return { serviceId, status: "running" };
+  }
+  const restored = buildServiceStateFromMetadata(serviceId, existing.metadata);
+  return resumeOfflineService(host, restored);
 }

@@ -108,7 +108,16 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.loadDashboardUiState();
   const primed = await host.refreshDashboardModelFromService(true);
   if (!primed) {
-    throw new Error("dashboard requires a live project service desktop-state endpoint");
+    host.refreshLocalDashboardModel();
+    void host
+      .ensureDashboardControlPlane()
+      .then(async () => {
+        const refreshed = await host.refreshDashboardModelFromService(true);
+        if (refreshed && host.mode === "dashboard") {
+          host.renderDashboard();
+        }
+      })
+      .catch(() => {});
   }
   host.terminalHost.enterAlternateScreen(true);
   host.startStatusRefresh();
