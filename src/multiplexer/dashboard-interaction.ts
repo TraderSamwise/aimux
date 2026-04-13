@@ -24,7 +24,12 @@ export const dashboardInteractionMethods = {
     this.renderDashboard();
   },
 
-  focusDashboardQuickJumpEntry(this: any, worktreePath: string | undefined, entryIndex: number): void {
+  focusDashboardQuickJumpEntry(
+    this: any,
+    worktreePath: string | undefined,
+    entryIndex: number,
+    opts?: { render?: boolean },
+  ): void {
     this.dashboardState.focusedWorktreePath = worktreePath;
     this.updateWorktreeSessions();
     this.dashboardState.level = "sessions";
@@ -38,7 +43,9 @@ export const dashboardInteractionMethods = {
     } else {
       this.dashboardUiStateStore.markSelectionDirty();
     }
-    this.renderDashboard();
+    if (opts?.render !== false) {
+      this.renderDashboard();
+    }
   },
 
   activateSelectedDashboardWorktreeEntry(this: any): void {
@@ -106,7 +113,7 @@ export const dashboardInteractionMethods = {
     );
     if (!target) return false;
     if (target.kind === "entry") {
-      this.focusDashboardQuickJumpEntry(target.worktree.path, target.entryIndex);
+      this.focusDashboardQuickJumpEntry(target.worktree.path, target.entryIndex, { render: false });
       this.activateSelectedDashboardWorktreeEntry();
     } else {
       this.focusDashboardQuickJumpWorktree(target.worktree.path);
