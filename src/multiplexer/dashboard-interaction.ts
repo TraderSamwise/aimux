@@ -28,7 +28,7 @@ export const dashboardInteractionMethods = {
     this: any,
     worktreePath: string | undefined,
     entryIndex: number,
-    opts?: { render?: boolean },
+    opts?: { render?: boolean; persist?: boolean },
   ): void {
     this.dashboardState.focusedWorktreePath = worktreePath;
     this.updateWorktreeSessions();
@@ -42,6 +42,9 @@ export const dashboardInteractionMethods = {
       this.preferDashboardEntrySelection(selectedEntry.kind, selectedEntry.id, worktreePath);
     } else {
       this.dashboardUiStateStore.markSelectionDirty();
+    }
+    if (opts?.persist !== false) {
+      this.persistDashboardUiState();
     }
     if (opts?.render !== false) {
       this.renderDashboard();
@@ -126,6 +129,23 @@ export const dashboardInteractionMethods = {
     const nextDigits = `${this.dashboardState.quickJumpDigits}${key}`.slice(0, 2);
     this.clearDashboardQuickJump();
     if (nextDigits.length === 1) {
+      const target = resolveDashboardQuickJumpTarget(
+        buildDashboardQuickJumpWorktrees({
+          sessions: this.dashboardSessionsCache,
+          services: this.dashboardServicesCache,
+          worktreeGroups: this.dashboardWorktreeGroupsCache,
+          mainCheckout: this.dashboardMainCheckoutInfoCache,
+        }),
+        nextDigits,
+      );
+      if (target?.kind === "worktree") {
+        this.dashboardRenderOptions = {
+          skipStatusline: true,
+          skipPersist: true,
+          fastViewport: true,
+        };
+        this.focusDashboardQuickJumpWorktree(target.worktree.path);
+      }
       this.dashboardState.quickJumpDigits = nextDigits;
       this.dashboardQuickJumpTimeout = setTimeout(() => {
         void this.commitDashboardQuickJump(nextDigits);

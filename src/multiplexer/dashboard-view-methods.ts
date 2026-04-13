@@ -74,9 +74,19 @@ export const dashboardViewMethods = {
   },
 
   renderDashboard(this: any): void {
-    this.writeStatuslineFile();
+    const renderOptions = this.dashboardRenderOptions ?? null;
+    this.dashboardRenderOptions = null;
 
-    const { cols, rows } = this.getViewportSize();
+    if (!renderOptions?.skipStatusline) {
+      this.writeStatuslineFile();
+    }
+
+    const { cols, rows } = renderOptions?.fastViewport
+      ? {
+          cols: process.stdout.columns ?? 80,
+          rows: process.stdout.rows ?? 24,
+        }
+      : this.getViewportSize();
     const dashSessions = this.dashboardSessionsCache;
     const dashServices = this.dashboardServicesCache;
     const worktreeGroups = this.dashboardWorktreeGroupsCache;
@@ -122,7 +132,9 @@ export const dashboardViewMethods = {
     );
     this.syncTuiNotificationContext(Boolean(this.notificationPanelState));
     this.writeFrame(this.dashboard.render(cols, rows));
-    this.persistDashboardUiState();
+    if (!renderOptions?.skipPersist) {
+      this.persistDashboardUiState();
+    }
     if (this.dashboardBusyState) {
       this.renderDashboardBusyOverlay();
     } else if (this.dashboardErrorState) {
