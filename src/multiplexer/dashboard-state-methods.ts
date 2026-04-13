@@ -34,9 +34,8 @@ export const dashboardStateMethods = {
 
   handleDashboardFocusIn(this: any): void {
     this.terminalHost.enterAlternateScreen();
-    if (this.lastRenderedFrame) {
-      process.stdout.write(this.lastRenderedFrame);
-    }
+    this.invalidateDashboardFrame();
+    this.renderCurrentDashboardView();
     this.tmuxRuntimeManager.refreshStatus();
   },
 

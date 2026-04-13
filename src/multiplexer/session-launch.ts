@@ -100,7 +100,12 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   process.stdin.on("data", host.onStdinData);
 
   host.onResize = () => {
-    host.renderCurrentDashboardView();
+    host.invalidateDashboardFrame();
+    setImmediate(() => {
+      if (host.mode === "dashboard") {
+        host.renderCurrentDashboardView();
+      }
+    });
   };
   process.stdout.on("resize", host.onResize);
 

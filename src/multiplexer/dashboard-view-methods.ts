@@ -77,68 +77,82 @@ export const dashboardViewMethods = {
     const renderOptions = this.dashboardRenderOptions ?? null;
     this.dashboardRenderOptions = null;
 
-    if (!renderOptions?.skipStatusline) {
-      this.writeStatuslineFile();
-    }
+    try {
+      if (!renderOptions?.skipStatusline) {
+        this.writeStatuslineFile();
+      }
 
-    const { cols, rows } = renderOptions?.fastViewport
-      ? {
-          cols: process.stdout.columns ?? 80,
-          rows: process.stdout.rows ?? 24,
-        }
-      : this.getViewportSize();
-    const dashSessions = this.dashboardSessionsCache;
-    const dashServices = this.dashboardServicesCache;
-    const worktreeGroups = this.dashboardWorktreeGroupsCache;
-    const mainCheckoutInfo = this.dashboardMainCheckoutInfoCache;
-
-    const hasWorktrees = worktreeGroups.length > 0;
-    this.dashboardState.worktreeNavOrder = [undefined, ...worktreeGroups.map((wt: any) => wt.path)];
-    if (!this.dashboardState.worktreeNavOrder.includes(this.dashboardState.focusedWorktreePath)) {
-      this.dashboardState.focusedWorktreePath = undefined;
-      this.dashboardUiStateStore.markSelectionDirty();
-    }
-    this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
-
-    let selectedSession: string | undefined;
-    let selectedService: string | undefined;
-
-    if (hasWorktrees && this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0) {
-      const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
-      if (selectedEntry?.kind === "session") selectedSession = selectedEntry.id;
-      if (selectedEntry?.kind === "service") selectedService = selectedEntry.id;
-    } else if (!hasWorktrees && dashSessions.length > 0) {
-      selectedSession = dashSessions[this.activeIndex]?.id;
-    }
-
-    this.dashboard.update(
-      dashSessions,
-      dashServices,
-      worktreeGroups,
-      this.dashboardState.focusedWorktreePath,
-      hasWorktrees ? this.dashboardState.level : "sessions",
-      selectedSession,
-      selectedService,
-      "tmux",
-      mainCheckoutInfo,
-      this.worktreeRemovalJob
+      const { cols, rows } = renderOptions?.fastViewport
         ? {
-            path: this.worktreeRemovalJob.path,
-            name: this.worktreeRemovalJob.name,
-            startedAt: this.worktreeRemovalJob.startedAt,
-            stderr: this.worktreeRemovalJob.stderr,
+            cols: process.stdout.columns ?? 80,
+            rows: process.stdout.rows ?? 24,
           }
-        : undefined,
-    );
-    this.syncTuiNotificationContext(Boolean(this.notificationPanelState));
-    this.writeFrame(this.dashboard.render(cols, rows));
-    if (!renderOptions?.skipPersist) {
-      this.persistDashboardUiState();
-    }
-    if (this.dashboardBusyState) {
-      this.renderDashboardBusyOverlay();
-    } else if (this.dashboardErrorState) {
-      this.renderDashboardErrorOverlay();
+        : this.getViewportSize();
+      const dashSessions = this.dashboardSessionsCache;
+      const dashServices = this.dashboardServicesCache;
+      const worktreeGroups = this.dashboardWorktreeGroupsCache;
+      const mainCheckoutInfo = this.dashboardMainCheckoutInfoCache;
+
+      const hasWorktrees = worktreeGroups.length > 0;
+      this.dashboardState.worktreeNavOrder = [undefined, ...worktreeGroups.map((wt: any) => wt.path)];
+      if (!this.dashboardState.worktreeNavOrder.includes(this.dashboardState.focusedWorktreePath)) {
+        this.dashboardState.focusedWorktreePath = undefined;
+        this.dashboardUiStateStore.markSelectionDirty();
+      }
+      this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
+
+      let selectedSession: string | undefined;
+      let selectedService: string | undefined;
+
+      if (hasWorktrees && this.dashboardState.level === "sessions" && this.dashboardState.worktreeEntries.length > 0) {
+        const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
+        if (selectedEntry?.kind === "session") selectedSession = selectedEntry.id;
+        if (selectedEntry?.kind === "service") selectedService = selectedEntry.id;
+      } else if (!hasWorktrees && dashSessions.length > 0) {
+        selectedSession = dashSessions[this.activeIndex]?.id;
+      }
+
+      this.dashboard.update(
+        dashSessions,
+        dashServices,
+        worktreeGroups,
+        this.dashboardState.focusedWorktreePath,
+        hasWorktrees ? this.dashboardState.level : "sessions",
+        selectedSession,
+        selectedService,
+        "tmux",
+        mainCheckoutInfo,
+        this.worktreeRemovalJob
+          ? {
+              path: this.worktreeRemovalJob.path,
+              name: this.worktreeRemovalJob.name,
+              startedAt: this.worktreeRemovalJob.startedAt,
+              stderr: this.worktreeRemovalJob.stderr,
+            }
+          : undefined,
+      );
+      this.syncTuiNotificationContext(Boolean(this.notificationPanelState));
+      this.writeFrame(this.dashboard.render(cols, rows));
+      if (!renderOptions?.skipPersist) {
+        this.persistDashboardUiState();
+      }
+      if (this.dashboardBusyState) {
+        this.renderDashboardBusyOverlay();
+      } else if (this.dashboardErrorState) {
+        this.renderDashboardErrorOverlay();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.dashboardFeedback.clearBusy();
+      this.dashboardFeedback.errorState = {
+        title: "Dashboard render failed",
+        lines: [message],
+      };
+      this.lastRenderedFrame = "\x1b[2J\x1b[H";
+      process.stdout.write(this.lastRenderedFrame);
+      try {
+        this.renderDashboardErrorOverlay();
+      } catch {}
     }
   },
 
