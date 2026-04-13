@@ -60,6 +60,7 @@ export const dashboardInteractionMethods = {
       if (
         service.pendingAction === "creating" ||
         service.pendingAction === "forking" ||
+        service.pendingAction === "migrating" ||
         service.pendingAction === "starting"
       ) {
         return;
@@ -86,6 +87,7 @@ export const dashboardInteractionMethods = {
     if (
       dashEntry.pendingAction === "creating" ||
       dashEntry.pendingAction === "forking" ||
+      dashEntry.pendingAction === "migrating" ||
       dashEntry.pendingAction === "starting"
     ) {
       return;
@@ -400,6 +402,7 @@ export const dashboardInteractionMethods = {
           if (
             entry?.pendingAction === "creating" ||
             entry?.pendingAction === "forking" ||
+            entry?.pendingAction === "migrating" ||
             entry?.pendingAction === "starting"
           ) {
             return;
@@ -513,7 +516,12 @@ export const dashboardInteractionMethods = {
 
   async activateDashboardEntry(this: any, entry: DashboardSession): Promise<void> {
     if (!entry) return;
-    if (entry.pendingAction === "creating" || entry.pendingAction === "forking" || entry.pendingAction === "starting") {
+    if (
+      entry.pendingAction === "creating" ||
+      entry.pendingAction === "forking" ||
+      entry.pendingAction === "migrating" ||
+      entry.pendingAction === "starting"
+    ) {
       return;
     }
 

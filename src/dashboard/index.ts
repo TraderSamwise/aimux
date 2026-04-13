@@ -60,7 +60,7 @@ export interface DashboardSession {
   workflowTopLabel?: string;
   workflowNextAction?: string;
   semantic?: SessionSemanticState;
-  pendingAction?: "creating" | "forking" | "starting" | "stopping" | "graveyarding" | "renaming";
+  pendingAction?: "creating" | "forking" | "migrating" | "starting" | "stopping" | "graveyarding" | "renaming";
   optimistic?: boolean;
 }
 
@@ -81,7 +81,7 @@ export interface DashboardService {
   foregroundCommand?: string;
   pid?: number;
   previewLine?: string;
-  pendingAction?: "creating" | "forking" | "starting" | "stopping" | "graveyarding" | "renaming";
+  pendingAction?: "creating" | "forking" | "migrating" | "starting" | "stopping" | "graveyarding" | "renaming";
   optimistic?: boolean;
 }
 
@@ -123,6 +123,7 @@ const STATUS_LABELS: Record<DashboardSessionStatus, string> = {
 export function derivedStatusLabel(session: DashboardSession): string {
   if (session.pendingAction === "creating") return "creating";
   if (session.pendingAction === "forking") return "forking";
+  if (session.pendingAction === "migrating") return "migrating";
   if (session.pendingAction === "starting") return "starting";
   if (session.pendingAction === "stopping") return "stopping";
   if (session.pendingAction === "graveyarding") return "graveyarding";

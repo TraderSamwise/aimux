@@ -216,15 +216,19 @@ export async function migrateSessionWithFeedback(
   targetName: string,
 ): Promise<void> {
   const label = host.getSessionLabel(session.id) ?? session.command;
-  await runDashboardOperation(
-    host,
-    `Migrating "${label}"`,
-    [`  From: ${host.sessionWorktreePaths.get(session.id) ?? "(main)"}`, `  To: ${targetName}`],
-    async () => {
+  host.setPendingDashboardSessionAction(session.id, "migrating");
+  void (async () => {
+    try {
       await host.migrateAgent(session.id, targetPath);
       await waitForSessionExit(session);
+      host.setPendingDashboardSessionAction(session.id, null);
+      host.refreshLocalDashboardModel();
+      host.footerFlash = `Migrated ${label} to ${targetName}`;
+      host.footerFlashTicks = 3;
       host.renderDashboard();
-    },
-    `Failed to migrate "${label}"`,
-  );
+    } catch (error) {
+      host.setPendingDashboardSessionAction(session.id, null);
+      host.showDashboardError(`Failed to migrate "${label}"`, [error instanceof Error ? error.message : String(error)]);
+    }
+  })();
 }
