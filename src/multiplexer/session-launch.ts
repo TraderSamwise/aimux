@@ -436,9 +436,64 @@ export async function migrateAgent(
   }
 
   debug(`migrating session ${sessionId} from ${sourceCwd} to ${targetWorktreePath}`, "session");
-  session.kill();
 
   const effectiveTarget = targetWorktreePath === process.cwd() ? undefined : targetWorktreePath;
+  const waitForExit = (timeoutMs = 8000) =>
+    new Promise<void>((resolve, reject) => {
+      if (session.exited) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${sessionId} to exit`)), timeoutMs);
+      session.onExit(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
+  session.kill();
+  await waitForExit().catch(() => {});
+
+  if (!toolCfg?.preambleFlag) {
+    const transport = createSession(
+      host,
+      session.command,
+      originalArgs,
+      undefined,
+      toolConfigKey,
+      undefined,
+      undefined,
+      effectiveTarget,
+      backendSessionId,
+      sessionId,
+      true,
+    );
+    const kickoff = host.sessionBootstrap.buildMigrationKickoffPrompt(
+      sessionId,
+      sourceCwd,
+      targetWorktreePath,
+      sourceSnapshot,
+    );
+    await new Promise<void>((resolve) => {
+      setTimeout(async () => {
+        try {
+          const target = host.sessionTmuxTargets.get(sessionId);
+          if (target) {
+            host.tmuxRuntimeManager.sendText(target, kickoff);
+            await host.sessionBootstrap.waitForCodexKickoffSubmit(sessionId, target, kickoff);
+          } else {
+            transport.write(kickoff + "\r");
+          }
+        } catch {
+          // Continue even if kickoff automation fails; user can still recover manually.
+        } finally {
+          resolve();
+        }
+      }, 1800);
+    });
+    return;
+  }
+
   createSession(
     host,
     session.command,

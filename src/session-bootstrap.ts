@@ -331,6 +331,32 @@ export class SessionBootstrapService {
       .join(" ");
   }
 
+  buildMigrationKickoffPrompt(
+    sessionId: string,
+    sourceWorktreePath: string,
+    targetWorktreePath: string,
+    snapshot: ForkSourceSnapshot,
+    instruction?: string,
+  ): string {
+    const activitySummary = this.summarizeForkSourceActivity(snapshot);
+    const summaryPath = join(getContextDir(), sessionId, "summary.md");
+    const livePath = join(getContextDir(), sessionId, "live.md");
+    const planPath = join(getPlansDir(), `${sessionId}.md`);
+    return [
+      `This session was migrated from ${sourceWorktreePath} to ${targetWorktreePath}.`,
+      `Read ${summaryPath}, ${livePath}, and ${planPath} first.`,
+      "Treat them as real carried-over memory, not fresh-session scaffolding.",
+      "Do not start with git archaeology.",
+      "You are now working from the new worktree.",
+      "Re-orient to this worktree before continuing.",
+      activitySummary ? `Recent session activity: ${activitySummary}` : undefined,
+      instruction?.trim(),
+      "After reading them, briefly summarize what we were doing in the new worktree and continue from that context.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
   seedForkArtifacts(sourceSessionId: string, targetSessionId: string, targetToolConfigKey: string): void {
     const snapshot = this.readForkSourceSnapshot(sourceSessionId);
     const activitySummary = this.summarizeForkSourceActivity(snapshot);
