@@ -480,6 +480,7 @@ export class Multiplexer {
   private async forkSessionFromSource(
     sourceSessionId: string,
     targetToolConfigKey: string,
+    requestedTargetSessionId?: string,
     instruction?: string,
     targetWorktreePath?: string,
   ): Promise<{ sessionId: string; threadId: string; target?: TmuxTarget } | undefined> {
@@ -494,7 +495,7 @@ export class Multiplexer {
       this.showDashboardError("Cannot fork session", [`Unknown tool config: ${targetToolConfigKey}`]);
       return undefined;
     }
-    const targetSessionId = `${toolCfg.command}-${Math.random().toString(36).slice(2, 8)}`;
+    const targetSessionId = requestedTargetSessionId ?? `${toolCfg.command}-${Math.random().toString(36).slice(2, 8)}`;
     const targetWorktree =
       targetWorktreePath === process.cwd()
         ? undefined

@@ -64,20 +64,31 @@ export function runSelectedTool(host: ToolPickerHost, toolKey: string, tool: Too
       host.showDashboardError("Cannot fork session", ["Fork source was lost before tool selection. Try again."]);
       return;
     }
-    host.startDashboardBusy("Forking agent", [
-      `Source: ${sourceSessionId}`,
-      `Tool: ${toolKey}`,
-      "Seeding carried-over context",
-    ]);
+    const targetSessionId = host.generateDashboardSessionId(tool.command);
+    const shouldRenderPending = host.startedInDashboard && host.mode === "dashboard";
+    if (shouldRenderPending) {
+      host.setPendingDashboardSessionAction(targetSessionId, "forking");
+      host.renderDashboard();
+    }
     void host
       .forkAgent({
         sourceSessionId,
         targetToolConfigKey: toolKey,
+        targetSessionId,
         targetWorktreePath: wtPath,
-        open: true,
+        open: false,
       })
-      .catch((error: unknown) => host.showDashboardError("Cannot fork session", [String(error)]))
-      .finally(() => host.clearDashboardBusy());
+      .then(() => {
+        if (shouldRenderPending) {
+          host.settleDashboardCreatePending(targetSessionId);
+        }
+      })
+      .catch((error: unknown) => {
+        if (shouldRenderPending) {
+          host.setPendingDashboardSessionAction(targetSessionId, null);
+        }
+        host.showDashboardError("Cannot fork session", [String(error)]);
+      });
     return;
   }
 

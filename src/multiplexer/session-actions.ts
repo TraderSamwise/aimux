@@ -9,6 +9,7 @@ export async function forkAgent(
   opts: {
     sourceSessionId: string;
     targetToolConfigKey: string;
+    targetSessionId?: string;
     instruction?: string;
     targetWorktreePath?: string;
     open?: boolean;
@@ -18,6 +19,7 @@ export async function forkAgent(
   const result = await host.forkSessionFromSource(
     opts.sourceSessionId,
     opts.targetToolConfigKey,
+    opts.targetSessionId,
     opts.instruction,
     opts.targetWorktreePath,
   );

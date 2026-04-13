@@ -2,6 +2,7 @@ import type { DashboardService, DashboardSession, WorktreeGroup } from "./index.
 
 export type PendingDashboardActionKind =
   | "creating"
+  | "forking"
   | "starting"
   | "stopping"
   | "graveyarding"
