@@ -184,6 +184,7 @@ describe("renderTmuxStatusline", () => {
     });
     expect(rendered).toContain("#[fg=black,bg=yellow] coder(coder) on you ? #[default]");
     expect(rendered).toContain("claude ✓");
+    expect(rendered).toContain("  |  Fix auth flow");
     expect(rendered).toContain("Fix auth flow");
   });
 

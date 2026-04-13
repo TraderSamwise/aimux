@@ -197,26 +197,50 @@ function renderBottomLine(
   width?: number,
 ): string {
   if (!data) return "";
-  const segments =
-    currentWindow && isDashboardWindowName(currentWindow)
-      ? renderDashboardScreens(data.dashboardScreen)
-      : [
-          ...resolveScopedSessions(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath).map(
-            renderSessionChip,
-          ),
-          renderExactHeadline(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath),
-        ].filter((segment): segment is string => Boolean(segment));
   const maxWidth = Math.max(24, (width ?? 120) - 2);
-  const separator = "  ·  ";
-  const chosen: string[] = [];
+  if (currentWindow && isDashboardWindowName(currentWindow)) {
+    const separator = "  ·  ";
+    const chosen: string[] = [];
+    let used = 0;
+    for (const segment of renderDashboardScreens(data.dashboardScreen)) {
+      const next = visibleSegmentLength(segment) + (chosen.length > 0 ? separator.length : 0);
+      if (used + next > maxWidth) break;
+      chosen.push(segment);
+      used += next;
+    }
+    return chosen.join(separator);
+  }
+
+  const chips = resolveScopedSessions(
+    data,
+    projectRoot,
+    currentSession,
+    currentWindow,
+    currentWindowId,
+    currentPath,
+  ).map(renderSessionChip);
+  const headline = renderExactHeadline(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
+  const chipSeparator = "  ·  ";
+  const detailSeparator = "  |  ";
+
+  const chosenChips: string[] = [];
   let used = 0;
-  for (const segment of segments) {
-    const next = visibleSegmentLength(segment) + (chosen.length > 0 ? separator.length : 0);
+  for (const chip of chips) {
+    const next = visibleSegmentLength(chip) + (chosenChips.length > 0 ? chipSeparator.length : 0);
     if (used + next > maxWidth) break;
-    chosen.push(segment);
+    chosenChips.push(chip);
     used += next;
   }
-  return chosen.join(separator);
+
+  if (headline) {
+    const headlineWidth = visibleSegmentLength(headline);
+    const separatorWidth = chosenChips.length > 0 ? detailSeparator.length : 0;
+    if (used + separatorWidth + headlineWidth <= maxWidth) {
+      return chosenChips.length > 0 ? `${chosenChips.join(chipSeparator)}${detailSeparator}${headline}` : headline;
+    }
+  }
+
+  return chosenChips.join(chipSeparator);
 }
 
 export function renderTmuxStatuslineFromData(
