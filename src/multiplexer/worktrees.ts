@@ -1,4 +1,4 @@
-import { createWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
+import { listWorktrees as listAllWorktrees } from "../worktree.js";
 import { debug } from "../debug.js";
 import { parseKeys } from "../key-parser.js";
 import { renderWorktreeListOverlay, renderWorktreeRemoveConfirmOverlay } from "../tui/screens/overlay-renderers.js";
@@ -58,10 +58,16 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
     const name = host.worktreeInputBuffer.trim();
     if (name) {
       try {
-        createWorktree(name);
+        host.createDesktopWorktree(name);
         debug(`worktree created from UI: ${name}`, "worktree");
+        if (host.mode === "dashboard") {
+          return;
+        }
       } catch (err) {
         debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
+        if (host.mode === "dashboard") {
+          host.showDashboardError(`Failed to create "${name}"`, [err instanceof Error ? err.message : String(err)]);
+        }
       }
     }
     if (host.mode === "dashboard") {

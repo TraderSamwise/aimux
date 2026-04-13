@@ -100,6 +100,12 @@ interface WorktreeRemovalJob {
   stderr: string;
 }
 
+interface WorktreeCreateJob {
+  path: string;
+  name: string;
+  startedAt: number;
+}
+
 interface PlanEntry {
   sessionId: string;
   tool?: string;
@@ -160,7 +166,9 @@ export class Multiplexer {
   private worktreeListActive = false;
   private worktreeRemoveConfirm: { path: string; name: string } | null = null;
   private worktreeRemovalJob: WorktreeRemovalJob | null = null;
+  private worktreeCreateJob: WorktreeCreateJob | null = null;
   private pendingWorktreeRemovals = new Map<string, Promise<{ path: string; status: "removing" | "removed" }>>();
+  private pendingWorktreeCreates = new Map<string, Promise<{ path: string; status: "creating" | "created" }>>();
   private readonly dashboardFeedback = new DashboardFeedbackController({
     renderDashboard: () => this.renderDashboard(),
     isDashboardMode: () => this.mode === "dashboard",

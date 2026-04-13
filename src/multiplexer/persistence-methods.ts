@@ -11,7 +11,7 @@ import { loadMetadataState } from "../metadata-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
-import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
+import { findMainRepo, getWorktreeCreatePath, listWorktrees as listAllWorktrees } from "../worktree.js";
 
 export const persistenceMethods = {
   writeSessionsFile(this: any): void {
@@ -261,17 +261,168 @@ export const persistenceMethods = {
     );
   },
 
-  listDesktopWorktrees(this: any): Array<{ name: string; path: string; branch: string; isBare: boolean }> {
+  listDesktopWorktrees(this: any): Array<{
+    name: string;
+    path: string;
+    branch: string;
+    isBare: boolean;
+    pending?: boolean;
+    removing?: boolean;
+    pendingAction?: "creating";
+  }> {
+    const pendingCreates = this.pendingWorktreeCreates as
+      | Map<string, Promise<{ path: string; status: "creating" | "created" }>>
+      | undefined;
     const pendingRemovals = this.pendingWorktreeRemovals as
       | Map<string, Promise<{ path: string; status: "removing" | "removed" }>>
       | undefined;
-    return listAllWorktrees()
+    const worktrees: Array<{
+      name: string;
+      path: string;
+      branch: string;
+      isBare: boolean;
+      pending?: boolean;
+      removing?: boolean;
+      pendingAction?: "creating";
+    }> = listAllWorktrees()
       .filter((wt) => !wt.isBare)
       .map((wt) => ({
         ...wt,
         pending: pendingRemovals?.has(wt.path) ?? false,
         removing: pendingRemovals?.has(wt.path) ?? false,
       }));
+    if (pendingCreates?.size) {
+      let mainRepo: string | undefined;
+      try {
+        mainRepo = findMainRepo();
+      } catch {}
+      for (const path of pendingCreates.keys()) {
+        if (worktrees.some((wt) => wt.path === path)) continue;
+        worktrees.push({
+          name: basename(path),
+          path,
+          branch: "(creating)",
+          isBare: false,
+          pending: true,
+          pendingAction: "creating",
+        });
+      }
+      worktrees.sort((a, b) => {
+        const aMain = a.path === mainRepo;
+        const bMain = b.path === mainRepo;
+        if (aMain !== bMain) return aMain ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+    }
+    return worktrees;
+  },
+
+  createDesktopWorktree(this: any, name: string): { path: string; status: "creating" | "created" } {
+    const targetPath = getWorktreeCreatePath(name);
+    const pendingCreates = this.pendingWorktreeCreates as Map<
+      string,
+      Promise<{ path: string; status: "creating" | "created" }>
+    >;
+    const existingCreate = pendingCreates.get(targetPath);
+    if (existingCreate) {
+      return { path: targetPath, status: "creating" };
+    }
+    if (this.listDesktopWorktrees().some((worktree: any) => worktree.path === targetPath && !worktree.pending)) {
+      throw new Error(`Worktree "${name}" already exists`);
+    }
+
+    let resolveCreate!: (value: { path: string; status: "creating" | "created" }) => void;
+    let rejectCreate!: (reason?: unknown) => void;
+    const createPromise = new Promise<{ path: string; status: "creating" | "created" }>((resolve, reject) => {
+      resolveCreate = resolve;
+      rejectCreate = reject;
+    });
+    pendingCreates.set(targetPath, createPromise);
+    this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), "creating", {
+      timeoutMs: 180_000,
+      onTimeout: () => {
+        this.footerFlash = `Timed out creating ${name}`;
+        this.footerFlashTicks = 5;
+        this.invalidateDesktopStateSnapshot();
+        this.refreshLocalDashboardModel();
+        if (this.mode === "dashboard") {
+          this.renderDashboard();
+        }
+      },
+    });
+    this.worktreeCreateJob = {
+      path: targetPath,
+      name,
+      startedAt: Date.now(),
+    };
+    this.invalidateDesktopStateSnapshot();
+    this.refreshLocalDashboardModel();
+    if (this.mode === "dashboard") {
+      this.renderDashboard();
+    }
+
+    void (async () => {
+      try {
+        const mainRepo = findMainRepo();
+        await new Promise<void>((resolve, reject) => {
+          let stderr = "";
+          let child;
+          try {
+            child = spawn("git", ["worktree", "add", targetPath, "-b", name], {
+              cwd: mainRepo,
+              stdio: ["ignore", "ignore", "pipe"],
+            });
+          } catch (error) {
+            reject(error);
+            return;
+          }
+
+          child.stderr.on("data", (chunk: Buffer) => {
+            stderr += chunk.toString();
+          });
+
+          child.on("error", reject);
+          child.on("close", (code: number | null) => {
+            if (code === 0) {
+              resolve();
+              return;
+            }
+            const detail = stderr
+              .split("\n")
+              .map((line) => line.trim())
+              .filter(Boolean)
+              .at(-1);
+            reject(new Error(detail || `git worktree add exited with code ${code ?? 1}`));
+          });
+        });
+        resolveCreate({ path: targetPath, status: "created" });
+      } catch (error) {
+        rejectCreate(error);
+      } finally {
+        pendingCreates.delete(targetPath);
+        this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), null);
+        this.worktreeCreateJob = null;
+        this.invalidateDesktopStateSnapshot();
+        this.refreshLocalDashboardModel();
+        if (this.mode === "dashboard") {
+          this.renderDashboard();
+        }
+      }
+    })()
+      .then(() => {
+        this.footerFlash = `Created: ${name}`;
+        this.footerFlashTicks = 3;
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.footerFlash = `Failed: ${message}`;
+        this.footerFlashTicks = 5;
+        if (this.mode === "dashboard") {
+          this.showDashboardError(`Failed to create "${name}"`, [`Path: ${targetPath}`, `Error: ${message}`]);
+        }
+      });
+
+    return { path: targetPath, status: "creating" };
   },
 
   async removeDesktopWorktree(this: any, path: string): Promise<{ path: string; status: "removing" | "removed" }> {

@@ -94,7 +94,7 @@ export interface WorktreeGroup {
   status: "active" | "offline";
   pending?: boolean;
   removing?: boolean;
-  pendingAction?: "removing";
+  pendingAction?: "removing" | "creating";
   optimistic?: boolean;
   sessions: DashboardSession[];
   services: DashboardService[];

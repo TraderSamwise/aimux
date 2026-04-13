@@ -82,7 +82,7 @@ export class DashboardPendingActions {
         ...worktree,
         pending: true,
         removing: pendingAction === "removing",
-        pendingAction: pendingAction === "removing" ? "removing" : undefined,
+        pendingAction: pendingAction === "removing" || pendingAction === "creating" ? pendingAction : undefined,
         optimistic: true,
       };
     });

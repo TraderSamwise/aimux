@@ -53,7 +53,16 @@
     }
 
     for (const wt of listedWorktrees) {
-      ensureGroup(wt.path, () => ({ path: wt.path, name: wt.name, branch: wt.branch, agents: [], services: [] }));
+      ensureGroup(wt.path, () => ({
+        path: wt.path,
+        name: wt.name,
+        branch: wt.branch,
+        pending: wt.pending,
+        removing: wt.removing,
+        pendingAction: wt.pendingAction,
+        agents: [],
+        services: [],
+      }));
     }
 
     for (const s of daemonSessions) {
@@ -65,7 +74,16 @@
       const branch = ctx?.branch || null;
       const key = wtPath || "__unassigned__";
 
-      const group = ensureGroup(key, () => ({ path: wtPath, name: wtName || "Unassigned", branch, agents: [], services: [] }));
+      const group = ensureGroup(key, () => ({
+        path: wtPath,
+        name: wtName || "Unassigned",
+        branch,
+        pending: false,
+        removing: false,
+        pendingAction: null,
+        agents: [],
+        services: [],
+      }));
       if (branch && !group.branch) group.branch = branch;
       if (wtName && (!group.name || group.name === "Unassigned")) group.name = wtName;
 
@@ -86,6 +104,9 @@
         path: wtPath,
         name: listed?.name || service.worktreeName || wtPath?.split("/").pop() || "Unassigned",
         branch: listed?.branch || service.worktreeBranch || null,
+        pending: listed?.pending || false,
+        removing: listed?.removing || false,
+        pendingAction: listed?.pendingAction || null,
         agents: [],
         services: [],
       }));
@@ -110,9 +131,6 @@
     const result = orderedKeys.map((key) => groups.get(key));
 
     return result.sort((a, b) => {
-      const aPendingCreate = String(a.path || "").startsWith("pending-worktree:");
-      const bPendingCreate = String(b.path || "").startsWith("pending-worktree:");
-      if (aPendingCreate !== bPendingCreate) return aPendingCreate ? 1 : -1;
       const aUnassigned = a.path === null;
       const bUnassigned = b.path === null;
       if (aUnassigned !== bUnassigned) return aUnassigned ? 1 : -1;
@@ -750,7 +768,9 @@
         <div class="worktree-group" class:unassigned={!wt.path}>
           <div class="worktree-header">
             {#if wt.path}
-              <span class="worktree-name">{wt.name}</span>
+              <span class="worktree-name">
+                {wt.pendingAction === "creating" ? `${wt.name} (creating...)` : wt.name}
+              </span>
               {#if wt.branch}
                 <span class="worktree-branch">{wt.branch}</span>
               {/if}

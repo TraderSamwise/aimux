@@ -400,7 +400,14 @@ function reconcileActions(incomingProjects) {
     }
 
     if (action.kind === "create-worktree" && action.worktreePath) {
-      if ((project.worktrees || []).some((worktree) => worktree.path === action.worktreePath)) {
+      if (
+        (project.worktrees || []).some(
+          (worktree) =>
+            worktree.path === action.worktreePath &&
+            !worktree.pending &&
+            worktree.pendingAction !== "creating",
+        )
+      ) {
         finished.push(action.key);
       }
       continue;
@@ -737,12 +744,13 @@ function applyActionOverlays(project) {
     }
 
     if (action.kind === "create-worktree") {
-      const pendingPath = `pending-worktree:${action.key}`;
+      const pendingPath = action.worktreePath || `pending-worktree:${action.key}`;
       const pendingWorktree = {
         name: action.worktreeName,
         path: pendingPath,
         branch: "creating",
         pending: true,
+        pendingAction: "creating",
       };
       if (!next.worktrees.some((worktree) => worktree.path === pendingPath)) {
         next.worktrees = [...next.worktrees, pendingWorktree];

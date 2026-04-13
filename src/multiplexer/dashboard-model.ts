@@ -409,7 +409,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       getState: () => host.buildDesktopState(),
       listWorktrees: () => host.listDesktopWorktrees(),
       refreshStatusline: ({ sessionId, force }: any) => host.refreshProjectStatusline({ sessionId, force }),
-      createWorktree: ({ name }: any) => ({ path: host.createWorktree(name) }),
+      createWorktree: ({ name }: any) => host.createDesktopWorktree(name),
       removeWorktree: ({ path }: any) => host.removeDesktopWorktree(path),
       createService: ({ command, worktreePath }: any) => host.createService(command ?? "", worktreePath),
       stopService: ({ serviceId }: any) => host.stopService(serviceId),

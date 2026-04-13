@@ -17,6 +17,7 @@ export interface DashboardQuickJumpWorktree {
   branch: string;
   pending?: boolean;
   removing?: boolean;
+  pendingAction?: "creating" | "removing";
   sessions: DashboardSession[];
   services: DashboardService[];
   entries: DashboardQuickJumpEntry[];
@@ -101,6 +102,7 @@ export function buildDashboardQuickJumpWorktrees(input: {
       branch: group.branch,
       pending: group.pending,
       removing: group.removing,
+      pendingAction: group.pendingAction,
       sessions: wtSessionMap.get(group.path) ?? [],
       services: wtServiceMap.get(group.path) ?? [],
     });
