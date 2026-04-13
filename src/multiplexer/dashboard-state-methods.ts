@@ -28,6 +28,16 @@ export const dashboardStateMethods = {
     this.lastRenderedFrame = null;
   },
 
+  getDashboardViewportTarget(this: any): string | null {
+    const paneId = process.env.TMUX_PANE?.trim();
+    return paneId || null;
+  },
+
+  getViewportKey(this: any): string {
+    const { cols, rows } = this.getViewportSize();
+    return `${cols}x${rows}`;
+  },
+
   isFocusInReport(this: any, data: Buffer): boolean {
     return data.includes(Buffer.from("\x1b[I"));
   },
@@ -67,36 +77,33 @@ export const dashboardStateMethods = {
   },
 
   getViewportSize(this: any): { cols: number; rows: number } {
-    let cols = process.stdout.columns ?? 80;
-    let rows = process.stdout.rows ?? 24;
+    const target = this.getDashboardViewportTarget();
 
     try {
-      const paneRaw = this.tmuxRuntimeManager.displayMessage("#{pane_width}\t#{pane_height}");
+      const paneRaw = target ? this.tmuxRuntimeManager.displayMessage("#{pane_width}\t#{pane_height}", target) : null;
       if (paneRaw) {
         const [tmuxColsRaw, tmuxRowsRaw] = paneRaw.split("\t");
         const tmuxCols = Number(tmuxColsRaw);
         const tmuxRows = Number(tmuxRowsRaw);
-        if (Number.isFinite(tmuxCols) && tmuxCols > 0) cols = tmuxCols;
-        if (Number.isFinite(tmuxRows) && tmuxRows > 0) rows = tmuxRows;
-      } else {
-        const clientRaw = this.tmuxRuntimeManager.displayMessage("#{client_width}\t#{client_height}");
-        if (clientRaw) {
-          const [tmuxColsRaw, tmuxRowsRaw] = clientRaw.split("\t");
-          const tmuxCols = Number(tmuxColsRaw);
-          const tmuxRows = Number(tmuxRowsRaw);
-          if (Number.isFinite(tmuxCols) && tmuxCols > 0) cols = tmuxCols;
-          if (Number.isFinite(tmuxRows) && tmuxRows > 0) rows = tmuxRows;
+        if (Number.isFinite(tmuxCols) && tmuxCols > 0 && Number.isFinite(tmuxRows) && tmuxRows > 0) {
+          return { cols: tmuxCols, rows: tmuxRows };
         }
       }
     } catch {}
 
+    let cols = process.stdout.columns ?? 0;
+    let rows = process.stdout.rows ?? 0;
+
     if (typeof process.stdout.getWindowSize === "function") {
       try {
         const [ttyCols, ttyRows] = process.stdout.getWindowSize();
-        if (Number.isFinite(ttyCols) && ttyCols > cols) cols = ttyCols;
-        if (Number.isFinite(ttyRows) && ttyRows > rows) rows = ttyRows;
+        if (Number.isFinite(ttyCols) && ttyCols > 0) cols = ttyCols;
+        if (Number.isFinite(ttyRows) && ttyRows > 0) rows = ttyRows;
       } catch {}
     }
+
+    if (!(Number.isFinite(cols) && cols > 0)) cols = 80;
+    if (!(Number.isFinite(rows) && rows > 0)) rows = 24;
 
     return { cols, rows };
   },

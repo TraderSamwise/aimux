@@ -100,14 +100,20 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   process.stdin.on("data", host.onStdinData);
 
   host.onResize = () => {
+    host.dashboardLastViewportKey = host.getViewportKey();
     host.invalidateDashboardFrame();
-    setImmediate(() => {
-      if (host.mode === "dashboard") {
-        host.renderCurrentDashboardView();
-      }
-    });
+    host.renderCurrentDashboardView();
   };
   process.stdout.on("resize", host.onResize);
+  host.dashboardLastViewportKey = host.getViewportKey();
+  host.dashboardViewportPollInterval = setInterval(() => {
+    if (host.mode !== "dashboard") return;
+    const viewportKey = host.getViewportKey();
+    if (viewportKey === host.dashboardLastViewportKey) return;
+    host.dashboardLastViewportKey = viewportKey;
+    host.invalidateDashboardFrame();
+    host.renderCurrentDashboardView();
+  }, 150);
 
   host.mode = "dashboard";
   host.loadDashboardUiState();

@@ -209,6 +209,8 @@ export class Multiplexer {
   private dashboardState = new DashboardState();
   private dashboardUiStateStore = new DashboardUiStateStore();
   private statusInterval: ReturnType<typeof setInterval> | null = null;
+  private dashboardViewportPollInterval: ReturnType<typeof setInterval> | null = null;
+  private dashboardLastViewportKey: string | null = null;
   private agentTracker = new AgentTracker();
   private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher((target) =>

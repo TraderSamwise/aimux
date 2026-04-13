@@ -47,6 +47,7 @@ type RuntimeLifecycleHost = {
   contextWatcher: { stop(): void };
   onStdinData: ((data: Buffer) => void) | null;
   onResize: (() => void) | null;
+  dashboardViewportPollInterval: ReturnType<typeof setInterval> | null;
   hotkeys: { destroy(): void };
   terminalHost: { restoreTerminalState(): void };
   tmuxRuntimeManager: {
@@ -289,6 +290,10 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     }
     if (mux.onResize) {
       process.stdout.removeListener("resize", mux.onResize);
+    }
+    if (mux.dashboardViewportPollInterval) {
+      clearInterval(mux.dashboardViewportPollInterval);
+      mux.dashboardViewportPollInterval = null;
     }
     mux.hotkeys.destroy();
     mux.terminalHost.restoreTerminalState();
