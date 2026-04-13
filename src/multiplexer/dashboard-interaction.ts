@@ -32,8 +32,63 @@ export const dashboardInteractionMethods = {
       0,
       Math.min(entryIndex, this.dashboardState.worktreeEntries.length - 1),
     );
-    this.dashboardUiStateStore.markSelectionDirty();
+    const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
+    if (selectedEntry) {
+      this.preferDashboardEntrySelection(selectedEntry.kind, selectedEntry.id, worktreePath);
+    } else {
+      this.dashboardUiStateStore.markSelectionDirty();
+    }
     this.renderDashboard();
+  },
+
+  activateSelectedDashboardWorktreeEntry(this: any): void {
+    const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
+    if (!selectedEntry) return;
+    if (selectedEntry.kind === "service") {
+      const service = this.getDashboardServices().find((entry: any) => entry.id === selectedEntry.id);
+      if (!service) return;
+      if (service.pendingAction === "creating" || service.pendingAction === "starting") {
+        return;
+      }
+      this.preferDashboardEntrySelection("service", service.id, this.dashboardState.focusedWorktreePath);
+      if (service.status !== "running") {
+        try {
+          this.resumeOfflineServiceById(service.id);
+          this.footerFlash = `◆ Started service ${service.label ?? service.id}`;
+          this.footerFlashTicks = 3;
+          this.renderDashboard();
+        } catch (error) {
+          this.showDashboardError("Failed to start service", [error instanceof Error ? error.message : String(error)]);
+        }
+        return;
+      }
+      if (this.openLiveTmuxWindowForService(selectedEntry.id) !== "missing") {
+        return;
+      }
+      return;
+    }
+    const dashEntry = this.dashboardState.worktreeSessions.find((entry: any) => entry.id === selectedEntry.id);
+    if (!dashEntry) return;
+    if (dashEntry.pendingAction === "creating" || dashEntry.pendingAction === "starting") {
+      return;
+    }
+    this.preferDashboardEntrySelection("session", dashEntry.id, this.dashboardState.focusedWorktreePath);
+    if (this.openLiveTmuxWindowForEntry(dashEntry) !== "missing") {
+      return;
+    }
+    if (dashEntry.remoteInstanceId) {
+      void this.takeoverFromDashEntryWithFeedback(dashEntry);
+      return;
+    }
+    if (dashEntry.status === "offline") {
+      const offline = this.offlineSessions.find((s: any) => s.id === dashEntry.id);
+      if (offline) {
+        void this.resumeOfflineSessionWithFeedback(offline);
+      }
+      return;
+    }
+    const ptyIdx = this.sessions.findIndex((s: any) => s.id === dashEntry.id);
+    if (ptyIdx >= 0) this.focusSession(ptyIdx);
   },
 
   commitDashboardQuickJump(this: any, digits?: string): boolean {
@@ -52,6 +107,7 @@ export const dashboardInteractionMethods = {
     if (!target) return false;
     if (target.kind === "entry") {
       this.focusDashboardQuickJumpEntry(target.worktree.path, target.entryIndex);
+      this.activateSelectedDashboardWorktreeEntry();
     } else {
       this.focusDashboardQuickJumpWorktree(target.worktree.path);
     }
@@ -397,53 +453,7 @@ export const dashboardInteractionMethods = {
           }
           break;
         case "enter": {
-          const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
-          if (!selectedEntry) break;
-          if (selectedEntry.kind === "service") {
-            const service = this.getDashboardServices().find((entry: any) => entry.id === selectedEntry.id);
-            if (!service) break;
-            if (service.pendingAction === "creating" || service.pendingAction === "starting") {
-              return;
-            }
-            if (service.status !== "running") {
-              try {
-                this.resumeOfflineServiceById(service.id);
-                this.footerFlash = `◆ Started service ${service.label ?? service.id}`;
-                this.footerFlashTicks = 3;
-                this.renderDashboard();
-              } catch (error) {
-                this.showDashboardError("Failed to start service", [
-                  error instanceof Error ? error.message : String(error),
-                ]);
-              }
-              return;
-            }
-            if (this.openLiveTmuxWindowForService(selectedEntry.id) !== "missing") {
-              return;
-            }
-            break;
-          }
-          const dashEntry = this.dashboardState.worktreeSessions.find((entry: any) => entry.id === selectedEntry.id);
-          if (!dashEntry) break;
-          if (dashEntry.pendingAction === "creating" || dashEntry.pendingAction === "starting") {
-            return;
-          }
-          if (this.openLiveTmuxWindowForEntry(dashEntry) !== "missing") {
-            return;
-          }
-          if (dashEntry.remoteInstanceId) {
-            void this.takeoverFromDashEntryWithFeedback(dashEntry);
-            return;
-          }
-          if (dashEntry.status === "offline") {
-            const offline = this.offlineSessions.find((s: any) => s.id === dashEntry.id);
-            if (offline) {
-              void this.resumeOfflineSessionWithFeedback(offline);
-            }
-            return;
-          }
-          const ptyIdx = this.sessions.findIndex((s: any) => s.id === dashEntry.id);
-          if (ptyIdx >= 0) this.focusSession(ptyIdx);
+          this.activateSelectedDashboardWorktreeEntry();
           break;
         }
         case "escape":
