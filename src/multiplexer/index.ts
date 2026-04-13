@@ -188,6 +188,7 @@ export class Multiplexer {
   });
   private stoppingSessionIds = new Set<string>();
   private graveyardAfterStopSessionIds = new Set<string>();
+  private dashboardQuickJumpTimeout: ReturnType<typeof setTimeout> | null = null;
   /** Quick switcher overlay state */
   private switcherActive = false;
   private switcherIndex = 0;

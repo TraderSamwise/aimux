@@ -5,6 +5,7 @@ import type {
   MainCheckoutInfo,
   WorktreeGroup,
 } from "../../dashboard/index.js";
+import { buildDashboardQuickJumpWorktrees } from "../../dashboard/quick-jump.js";
 import { derivedStatusLabel } from "../../dashboard/index.js";
 import { formatRelativeRecency } from "../../recency.js";
 import { sessionSemanticCompactHint } from "../../session-semantics.js";
@@ -71,12 +72,10 @@ export function renderDashboardFrame(
     return lines;
   };
 
-  let renderSessionCounter = 0;
-
-  const renderSession = (session: DashboardSession, indent: string): string => {
-    const num = ++renderSessionCounter;
+  const renderSession = (session: DashboardSession, indent: string, quickDigit?: number): string => {
     const isSelected = state.navLevel === "sessions" && session.id === state.selectedSessionId;
     const prefix = isSelected ? "\x1b[33m▸\x1b[0m " : "  ";
+    const numberBadge = quickDigit ? `[${quickDigit}] ` : "";
     const taskBadge = session.taskDescription ? ` \x1b[2;35m⧫ ${truncate(session.taskDescription, 40)}\x1b[0m` : "";
     const threadBadge =
       (session.threadUnreadCount ?? 0) > 0 ||
@@ -112,7 +111,7 @@ export function renderDashboardFrame(
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      return `${indent}${prefix}${icon} [${num}] ${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${lastUsedHint} — ${ownerTag}`;
+      return `${indent}${prefix}${icon} ${numberBadge}${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${lastUsedHint} — ${ownerTag}`;
     }
 
     const icon = STATUS_ICONS[session.status];
@@ -123,98 +122,56 @@ export function renderDashboardFrame(
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} [${num}] ${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${lastUsedHint}`;
+    return `${indent}${prefix}${icon} ${numberBadge}${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${lastUsedHint}`;
   };
 
-  const renderService = (service: DashboardService, indent: string): string => {
+  const renderService = (service: DashboardService, indent: string, quickDigit?: number): string => {
     const isSelected = state.navLevel === "sessions" && service.id === state.selectedServiceId;
     const prefix = isSelected ? "\x1b[33m▸\x1b[0m " : "  ";
     const icon = SERVICE_ICONS[service.status];
+    const numberBadge = quickDigit ? `[${quickDigit}] ` : "";
     const identity = service.label ?? service.command;
     const statusLabel = service.pendingAction ?? service.status;
     const commandHint = service.foregroundCommand ? ` \x1b[2m· ${truncate(service.foregroundCommand, 22)}\x1b[0m` : "";
     const pidHint = service.pid ? ` \x1b[2m(pid ${service.pid})\x1b[0m` : "";
     const previewHint = service.previewLine ? ` \x1b[2m· ${truncate(service.previewLine, 40)}\x1b[0m` : "";
     const lastUsedHint = service.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(service.lastUsedAt)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} ${identity} \x1b[2m[service]\x1b[0m — ${statusLabel}${commandHint}${pidHint}${previewHint}${lastUsedHint}`;
+    return `${indent}${prefix}${icon} ${numberBadge}${identity} \x1b[2m[service]\x1b[0m — ${statusLabel}${commandHint}${pidHint}${previewHint}${lastUsedHint}`;
   };
 
   const renderWorktreeGrouped = (lines: string[]): void => {
     const isFocused = (wtPath: string | undefined) => wtPath === state.focusedWorktreePath;
     const wtCursor = "\x1b[33m▸\x1b[0m";
-    const wtSessionMap = new Map<string, DashboardSession[]>();
-    const wtServiceMap = new Map<string, DashboardService[]>();
-    const mainSessions: DashboardSession[] = [];
-    const mainServices: DashboardService[] = [];
+    const quickJumpWorktrees = buildDashboardQuickJumpWorktrees({
+      sessions: state.sessions,
+      services: state.services,
+      worktreeGroups: state.worktreeGroups,
+      mainCheckout: state.mainCheckout,
+    });
 
-    for (const session of state.sessions) {
-      if (!session.worktreePath) {
-        mainSessions.push(session);
-      } else {
-        const group = wtSessionMap.get(session.worktreePath) ?? [];
-        group.push(session);
-        wtSessionMap.set(session.worktreePath, group);
-      }
-    }
-    for (const service of state.services) {
-      if (!service.worktreePath) {
-        mainServices.push(service);
-      } else {
-        const group = wtServiceMap.get(service.worktreePath) ?? [];
-        group.push(service);
-        wtServiceMap.set(service.worktreePath, group);
-      }
-    }
-
-    const focused = isFocused(undefined);
-    const prefix = focused && state.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
-    const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
-    const mainBranch = state.mainCheckout.branch ? ` \x1b[2m${state.mainCheckout.branch}\x1b[0m` : "";
-    const mainLabel = `${state.mainCheckout.name}${mainBranch}`;
-    if (mainSessions.length > 0 || mainServices.length > 0) {
-      lines.push(`${prefix} ${highlight}${mainLabel}\x1b[0m`);
-      for (const session of mainSessions) lines.push(renderSession(session, "    "));
-      for (const service of mainServices) lines.push(renderService(service, "    "));
-      lines.push("");
-    } else {
-      lines.push(`${prefix} ${highlight}${mainLabel}\x1b[0m`);
-    }
-
-    const renderedPaths = new Set<string>();
-    for (const group of state.worktreeGroups) {
-      const sessions = wtSessionMap.get(group.path) ?? [];
-      const services = wtServiceMap.get(group.path) ?? [];
-      const gFocused = isFocused(group.path);
-      const gPrefix = gFocused && state.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
-      const gHighlight = gFocused ? "\x1b[1;33m" : "";
-      const gReset = gFocused ? "\x1b[0m" : "";
-      const gPending = group.removing || group.pending ? " \x1b[2;33m(removing...)\x1b[0m" : "";
-
-      if (sessions.length > 0 || services.length > 0) {
-        lines.push(
-          `${gPrefix} ${gHighlight}\x1b[1m${group.name}\x1b[0m${gReset} \x1b[2m${group.branch}\x1b[0m${gPending}`,
-        );
-        for (const session of sessions) lines.push(renderSession(session, "    "));
-        for (const service of services) lines.push(renderService(service, "    "));
+    for (const worktree of quickJumpWorktrees) {
+      const focused = isFocused(worktree.path);
+      const prefix = focused && state.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
+      const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
+      const pending = worktree.removing || worktree.pending ? " \x1b[2;33m(removing...)\x1b[0m" : "";
+      const worktreeBadge = worktree.digit ? `[${worktree.digit}] ` : "";
+      const branchSuffix = worktree.branch ? ` \x1b[2m${worktree.branch}\x1b[0m` : "";
+      const worktreeLabel = `${worktreeBadge}${worktree.name}${branchSuffix}`;
+      if (worktree.sessions.length > 0 || worktree.services.length > 0) {
+        lines.push(`${prefix} ${highlight}${worktreeLabel}\x1b[0m${pending}`);
+        for (const [sessionIndex, session] of worktree.sessions.entries()) {
+          lines.push(renderSession(session, "    ", sessionIndex < 9 ? sessionIndex + 1 : undefined));
+        }
+        for (const [serviceIndex, service] of worktree.services.entries()) {
+          const quickDigit =
+            worktree.sessions.length + serviceIndex < 9 ? worktree.sessions.length + serviceIndex + 1 : undefined;
+          lines.push(renderService(service, "    ", quickDigit));
+        }
         lines.push("");
       } else {
-        lines.push(`${gPrefix} \x1b[2m${gHighlight}${group.name}\x1b[0m \x1b[2m${group.branch}\x1b[0m${gPending}`);
+        const dim = worktree.path === undefined ? "" : "\x1b[2m";
+        lines.push(`${prefix} ${dim}${highlight}${worktreeLabel}\x1b[0m${pending}`);
       }
-      renderedPaths.add(group.path);
-    }
-
-    const orphanPaths = new Set<string>([...Array.from(wtSessionMap.keys()), ...Array.from(wtServiceMap.keys())]);
-    for (const path of orphanPaths) {
-      if (!path || renderedPaths.has(path)) continue;
-      const sessions = wtSessionMap.get(path) ?? [];
-      const services = wtServiceMap.get(path) ?? [];
-      const exemplar = sessions[0] ?? services[0];
-      const name = exemplar?.worktreeName ?? "unknown";
-      const branch = exemplar?.worktreeBranch ?? "unknown";
-      lines.push(`  \x1b[1m${name}\x1b[0m \x1b[2m${branch}\x1b[0m`);
-      for (const session of sessions) lines.push(renderSession(session, "    "));
-      for (const service of services) lines.push(renderService(service, "    "));
-      lines.push("");
     }
   };
 
@@ -256,10 +213,10 @@ export function renderDashboardFrame(
     }
     if (state.hasWorktrees && state.navLevel === "sessions") {
       const xPart = xLabel ? `  ${xLabel}` : "";
-      return ` ↑↓ items  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [m] migrate${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ items  1-9/12 jump  ${enterLabel}  Esc back  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [m] migrate${xPart}${rLabel}  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (state.hasWorktrees) {
-      return ` ↑↓ worktrees  Enter step in  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork(step in)  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit `;
+      return ` ↑↓ worktrees  1-9/12 jump  Enter step in  [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork(step in)  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit `;
     }
     if (state.sessions.length > 0) {
       const xPart = xLabel ? `  ${xLabel}` : "";

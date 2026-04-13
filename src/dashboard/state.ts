@@ -12,6 +12,7 @@ export class DashboardState {
   sessionIndex = 0;
   worktreeSessions: DashboardSession[] = [];
   worktreeEntries: DashboardWorktreeEntry[] = [];
+  quickJumpDigits = "";
 
   isScreen(screen: DashboardScreen): boolean {
     return this.screen === screen;

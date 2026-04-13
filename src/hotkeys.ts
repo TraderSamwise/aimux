@@ -1,7 +1,7 @@
 import { parseKeys, matchKey, type KeyEvent } from "./key-parser.js";
 import { debug } from "./debug.js";
 
-const TIMEOUT_MS = 1000;
+export const HOTKEY_TIMEOUT_MS = 1000;
 
 export type HotkeyAction =
   | { type: "dashboard" }
@@ -54,7 +54,7 @@ export class HotkeyHandler {
         this.hideLeaderIndicator();
         // Timeout: forward the original data
         this.onAction({ type: "passthrough", data: data.toString() });
-      }, TIMEOUT_MS);
+      }, HOTKEY_TIMEOUT_MS);
       return null;
     }
 
