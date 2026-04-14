@@ -1,12 +1,29 @@
 import { Command } from "commander";
-import { existsSync, readFileSync, writeFileSync, readdirSync, copyFileSync, mkdirSync, chmodSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+  copyFileSync,
+  mkdirSync,
+  chmodSync,
+  renameSync,
+} from "node:fs";
 import { join as pathJoin, resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Multiplexer } from "./multiplexer/index.js";
 import { llmCompact } from "./context/compactor.js";
 import { initProject, loadConfig } from "./config.js";
-import { initPaths, getHistoryDir, getGraveyardPath, getStatePath, getContextDir, getProjectId } from "./paths.js";
+import {
+  initPaths,
+  getHistoryDir,
+  getGraveyardPath,
+  getStatePath,
+  getContextDir,
+  getProjectId,
+  getProjectStateDirFor,
+} from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
@@ -85,6 +102,7 @@ import {
   resolveDashboardTarget,
 } from "./dashboard/targets.js";
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
+import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -199,6 +217,58 @@ async function waitForVerifiedProjectService(
   }
 
   throw new Error(`${lastError}${lastServiceInfo ? `; last serviceInfo=${JSON.stringify(lastServiceInfo)}` : ""}`);
+}
+
+function rewriteLocalStatuslineArtifacts(
+  projectRoot: string,
+  tmux: TmuxRuntimeManager,
+  dashboardSessionName?: string,
+): void {
+  const data = loadStatusline(projectRoot);
+  if (!data) return;
+  const statusDir = pathJoin(getProjectStateDirFor(projectRoot), "tmux-statusline");
+  mkdirSync(statusDir, { recursive: true });
+
+  const writeStatusFile = (name: string, content: string): void => {
+    const filePath = pathJoin(statusDir, name);
+    const tmpPath = `${filePath}.tmp`;
+    writeFileSync(tmpPath, `${content}\n`);
+    renameSync(tmpPath, filePath);
+  };
+
+  const dashboardTop = renderTmuxStatuslineFromData(data, projectRoot, "top", {
+    currentWindow: "dashboard",
+    currentPath: projectRoot,
+  });
+  const dashboardBottom = renderTmuxStatuslineFromData(data, projectRoot, "bottom", {
+    currentWindow: "dashboard",
+    currentPath: projectRoot,
+    currentSession: dashboardSessionName,
+  });
+  writeStatusFile("top-dashboard.txt", dashboardTop);
+  writeStatusFile("bottom-dashboard.txt", dashboardBottom);
+  if (dashboardSessionName) {
+    writeStatusFile(`bottom-dashboard-${dashboardSessionName}.txt`, dashboardBottom);
+  }
+
+  for (const entry of data.sessions ?? []) {
+    if (!entry.tmuxWindowId) continue;
+    const renderOptions = {
+      currentWindow: entry.windowName,
+      currentWindowId: entry.tmuxWindowId,
+      currentPath: entry.worktreePath ?? projectRoot,
+    };
+    writeStatusFile(
+      `top-${entry.tmuxWindowId}.txt`,
+      renderTmuxStatuslineFromData(data, projectRoot, "top", renderOptions),
+    );
+    writeStatusFile(
+      `bottom-${entry.tmuxWindowId}.txt`,
+      renderTmuxStatuslineFromData(data, projectRoot, "bottom", renderOptions),
+    );
+  }
+
+  tmux.refreshStatus();
 }
 
 async function postProjectServiceJson(path: string, body: unknown): Promise<any> {
@@ -536,6 +606,7 @@ program
       ensureTmuxAvailable(tmux);
       const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
       await postProjectServiceJson("/statusline/refresh", { force: true });
+      rewriteLocalStatuslineArtifacts(projectRoot, tmux, dashboardSession.sessionName);
 
       if (opts.open) {
         tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });

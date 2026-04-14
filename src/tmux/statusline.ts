@@ -17,6 +17,10 @@ import {
 
 export type TmuxStatusLine = "top" | "bottom";
 
+function renderStatusRange(range: string, label: string): string {
+  return `#[range=user|${range}]${label}#[norange]`;
+}
+
 export function loadStatusline(projectRoot: string): StatuslineData | null {
   try {
     const path = `${getProjectStateDirFor(projectRoot)}/statusline.json`;
@@ -71,7 +75,12 @@ function renderActiveContext(
       ? trim(context.worktreeName, 16)
       : null;
   const branch = liveContext?.branch ? trim(liveContext.branch, 18) : context?.branch ? trim(context.branch, 18) : null;
-  const pr = context?.pr?.number ? `PR #${context.pr.number}` : null;
+  const pr =
+    context?.pr?.number && context?.pr?.url
+      ? renderStatusRange("pr", `PR #${context.pr.number}`)
+      : context?.pr?.number
+        ? `PR #${context.pr.number}`
+        : null;
   const service =
     services.length > 0
       ? services[0]?.port
