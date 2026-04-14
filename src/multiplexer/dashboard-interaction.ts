@@ -152,7 +152,6 @@ export const dashboardInteractionMethods = {
         this.dashboardRenderOptions = {
           skipStatusline: true,
           skipPersist: true,
-          fastViewport: true,
         };
         this.focusDashboardQuickJumpWorktree(target.worktree.path);
       }
