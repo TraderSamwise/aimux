@@ -1,7 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { getProjectStateDirFor } from "./paths.js";
-import { getAimuxCliEntryPath } from "./claude-hooks.js";
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -25,12 +24,25 @@ function buildZshRc(): string {
 
 function buildZshIntegration(): string {
   return [
+    "_aimux_read_endpoint() {",
+    '  [ -n "$AIMUX_METADATA_ENDPOINT_FILE" ] || return 1',
+    '  [ -f "$AIMUX_METADATA_ENDPOINT_FILE" ] || return 1',
+    '  local endpoint=""',
+    '  IFS= read -r endpoint < "$AIMUX_METADATA_ENDPOINT_FILE" || return 1',
+    '  [ -n "$endpoint" ] || return 1',
+    '  printf "%s" "$endpoint"',
+    "}",
+    "",
     "_aimux_report_shell_state() {",
-    '  [ -n "$AIMUX_NODE_BIN" ] || return 0',
-    '  [ -n "$AIMUX_CLI_ENTRY" ] || return 0',
     '  [ -n "$AIMUX_SESSION_ID" ] || return 0',
-    '  [ -n "$AIMUX_PROJECT_ROOT" ] || return 0',
-    '  "$AIMUX_NODE_BIN" "$AIMUX_CLI_ENTRY" shell-hook "$1" --session "$AIMUX_SESSION_ID" --project "$AIMUX_PROJECT_ROOT" --tool "$AIMUX_TOOL" >/dev/null 2>&1 || true',
+    '  [ -n "$AIMUX_TOOL" ] || AIMUX_TOOL="shell"',
+    '  [ "${AIMUX_LAST_SHELL_STATE:-}" = "$1" ] && return 0',
+    '  local endpoint="" payload=""',
+    '  endpoint="$(_aimux_read_endpoint)" || return 0',
+    '  payload=$(printf \'{"state":"%s","sessionId":"%s","tool":"%s"}\' "$1" "$AIMUX_SESSION_ID" "$AIMUX_TOOL")',
+    '  AIMUX_LAST_SHELL_STATE="$1"',
+    '  ( command -v curl >/dev/null 2>&1 || exit 0; command curl --silent --show-error --fail --max-time 1 --output /dev/null -H "content-type: application/json" --data "$payload" "$endpoint/shell-state" >/dev/null 2>&1 || true ) >/dev/null 2>&1 &',
+    "  disown $! 2>/dev/null || true",
     "}",
     "",
     "_aimux_preexec() {",
@@ -67,12 +79,25 @@ function buildBashRc(): string {
 
 function buildBashIntegration(): string {
   return [
+    "_aimux_read_endpoint() {",
+    '  [ -n "$AIMUX_METADATA_ENDPOINT_FILE" ] || return 1',
+    '  [ -f "$AIMUX_METADATA_ENDPOINT_FILE" ] || return 1',
+    '  local endpoint=""',
+    '  IFS= read -r endpoint < "$AIMUX_METADATA_ENDPOINT_FILE" || return 1',
+    '  [ -n "$endpoint" ] || return 1',
+    '  printf "%s" "$endpoint"',
+    "}",
+    "",
     "_aimux_report_shell_state() {",
-    '  [ -n "$AIMUX_NODE_BIN" ] || return 0',
-    '  [ -n "$AIMUX_CLI_ENTRY" ] || return 0',
     '  [ -n "$AIMUX_SESSION_ID" ] || return 0',
-    '  [ -n "$AIMUX_PROJECT_ROOT" ] || return 0',
-    '  "$AIMUX_NODE_BIN" "$AIMUX_CLI_ENTRY" shell-hook "$1" --session "$AIMUX_SESSION_ID" --project "$AIMUX_PROJECT_ROOT" --tool "$AIMUX_TOOL" >/dev/null 2>&1 || true',
+    '  [ -n "$AIMUX_TOOL" ] || AIMUX_TOOL="shell"',
+    '  [ "${AIMUX_LAST_SHELL_STATE:-}" = "$1" ] && return 0',
+    '  local endpoint="" payload=""',
+    '  endpoint="$(_aimux_read_endpoint)" || return 0',
+    '  payload=$(printf \'{"state":"%s","sessionId":"%s","tool":"%s"}\' "$1" "$AIMUX_SESSION_ID" "$AIMUX_TOOL")',
+    '  AIMUX_LAST_SHELL_STATE="$1"',
+    '  ( command -v curl >/dev/null 2>&1 || exit 0; command curl --silent --show-error --fail --max-time 1 --output /dev/null -H "content-type: application/json" --data "$payload" "$endpoint/shell-state" >/dev/null 2>&1 || true ) >/dev/null 2>&1 &',
+    "  disown $! 2>/dev/null || true",
     "}",
     "",
     "_aimux_preexec_command() {",
@@ -137,11 +162,9 @@ export function wrapCommandWithShellIntegration(opts: {
 }): { command: string; args: string[] } {
   const prepared = prepareShellIntegration(opts.projectRoot, opts.shellPath);
   const envArgs = [
-    `AIMUX_NODE_BIN=${process.execPath}`,
-    `AIMUX_CLI_ENTRY=${getAimuxCliEntryPath()}`,
     `AIMUX_SESSION_ID=${opts.sessionId}`,
-    `AIMUX_PROJECT_ROOT=${opts.projectRoot}`,
     `AIMUX_TOOL=${opts.tool}`,
+    `AIMUX_METADATA_ENDPOINT_FILE=${join(getProjectStateDirFor(opts.projectRoot), "metadata-api.txt")}`,
     `AIMUX_SHELL_INTEGRATION_SCRIPT=${prepared.integrationScriptPath}`,
   ];
   const commandString = [opts.command, ...opts.args].map(shellQuote).join(" ");
@@ -161,11 +184,9 @@ export function wrapInteractiveShellWithIntegration(opts: {
 }): { command: string; args: string[] } {
   const prepared = prepareShellIntegration(opts.projectRoot, opts.shellPath);
   const envArgs = [
-    `AIMUX_NODE_BIN=${process.execPath}`,
-    `AIMUX_CLI_ENTRY=${getAimuxCliEntryPath()}`,
     `AIMUX_SESSION_ID=${opts.sessionId}`,
-    `AIMUX_PROJECT_ROOT=${opts.projectRoot}`,
     `AIMUX_TOOL=${opts.tool}`,
+    `AIMUX_METADATA_ENDPOINT_FILE=${join(getProjectStateDirFor(opts.projectRoot), "metadata-api.txt")}`,
     `AIMUX_SHELL_INTEGRATION_SCRIPT=${prepared.integrationScriptPath}`,
   ];
   const shellArgs =

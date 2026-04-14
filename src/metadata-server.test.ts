@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
+import { loadMetadataState } from "./metadata-store.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -442,6 +443,43 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain("event: alert");
     expect(text).toContain('"kind":"needs_input"');
     expect(text).toContain('"sessionId":"codex-1"');
+  });
+
+  it("updates shell service state over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const runningRes = await fetch(`${base}/shell-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        state: "running",
+        sessionId: "shell-1",
+        tool: "shell",
+      }),
+    });
+    expect(runningRes.ok).toBe(true);
+
+    let derived = loadMetadataState(repoRoot).sessions["shell-1"]?.derived;
+    expect(derived?.activity).toBe("running");
+    expect(derived?.attention).toBe("normal");
+    expect(derived?.unseenCount).toBe(0);
+
+    const promptRes = await fetch(`${base}/shell-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        state: "prompt",
+        sessionId: "shell-1",
+        tool: "shell",
+      }),
+    });
+    expect(promptRes.ok).toBe(true);
+
+    derived = loadMetadataState(repoRoot).sessions["shell-1"]?.derived;
+    expect(derived?.activity).toBe("idle");
+    expect(derived?.attention).toBe("normal");
   });
 
   it("streams session chat events over SSE", async () => {

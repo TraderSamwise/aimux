@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { wrapCommandWithShellIntegration, wrapInteractiveShellWithIntegration } from "./shell-hooks.js";
+import { getProjectStateDirFor } from "./paths.js";
 
 describe("shell hooks", () => {
   it("wraps generic tool launches through env + shell integration", () => {
+    const endpointFile = `${getProjectStateDirFor("/repo/project")}/metadata-api.txt`;
     const wrapped = wrapCommandWithShellIntegration({
       projectRoot: "/repo/project",
       sessionId: "codex-123",
@@ -15,12 +17,16 @@ describe("shell hooks", () => {
     expect(wrapped.command).toBe("env");
     expect(wrapped.args.join(" ")).toContain("AIMUX_SESSION_ID=codex-123");
     expect(wrapped.args.join(" ")).toContain("AIMUX_TOOL=codex");
+    expect(wrapped.args.join(" ")).toContain(`AIMUX_METADATA_ENDPOINT_FILE=${endpointFile}`);
+    expect(wrapped.args.join(" ")).not.toContain("AIMUX_NODE_BIN=");
+    expect(wrapped.args.join(" ")).not.toContain("AIMUX_CLI_ENTRY=");
     expect(wrapped.args).toContain("/bin/zsh");
     expect(wrapped.args).toContain("-ic");
     expect(wrapped.args.at(-1)).toContain("'codex'");
   });
 
   it("wraps interactive shell services through env + shell integration", () => {
+    const endpointFile = `${getProjectStateDirFor("/repo/project")}/metadata-api.txt`;
     const wrapped = wrapInteractiveShellWithIntegration({
       projectRoot: "/repo/project",
       sessionId: "service-123",
@@ -31,6 +37,9 @@ describe("shell hooks", () => {
     expect(wrapped.command).toBe("env");
     expect(wrapped.args.join(" ")).toContain("AIMUX_SESSION_ID=service-123");
     expect(wrapped.args.join(" ")).toContain("AIMUX_TOOL=service");
+    expect(wrapped.args.join(" ")).toContain(`AIMUX_METADATA_ENDPOINT_FILE=${endpointFile}`);
+    expect(wrapped.args.join(" ")).not.toContain("AIMUX_NODE_BIN=");
+    expect(wrapped.args.join(" ")).not.toContain("AIMUX_CLI_ENTRY=");
     expect(wrapped.args).toContain("/bin/bash");
     expect(wrapped.args).toContain("--rcfile");
     expect(wrapped.args).toContain("-i");

@@ -60,6 +60,7 @@ import {
 } from "./attachment-store.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
+import { applyShellStateTransition } from "./shell-state.js";
 import {
   listSwitchableAgentItems,
   resolveAttentionAgent,
@@ -1200,6 +1201,20 @@ export class MetadataServer {
           sessionId: body.sessionId?.trim() || undefined,
         });
         send(res, 200, { ok: true, cleared });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/shell-state") {
+        const body = (await readJson(req)) as { state: string; sessionId: string; tool?: string };
+        const result = applyShellStateTransition({
+          state: body.state,
+          sessionId: body.sessionId,
+          tool: body.tool,
+          tracker: this.tracker,
+          emitAlert: (input) => this.emitAlert(input),
+        });
+        this.options.onChange?.();
+        send(res, 200, result);
         return;
       }
 
