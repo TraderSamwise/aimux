@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Multiplexer } from "./multiplexer/index.js";
 import { llmCompact } from "./context/compactor.js";
-import { initProject, loadConfig } from "./config.js";
+import { initProject } from "./config.js";
 import {
   initPaths,
   getHistoryDir,
@@ -35,7 +35,6 @@ import {
 } from "./tmux/doctor.js";
 import {
   loadMetadataEndpoint,
-  loadMetadataState,
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   updateSessionMetadata,
   clearSessionLogs,
