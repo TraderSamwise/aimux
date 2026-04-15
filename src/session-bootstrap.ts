@@ -31,35 +31,42 @@ export class SessionBootstrapService {
     command: string;
     worktreePath?: string;
     extraPreamble?: string;
+    includeAimuxPreamble?: boolean;
   }): string {
-    const { sessionId, worktreePath, extraPreamble } = opts;
-    let preamble =
-      "You are running inside aimux, an agent multiplexer. " +
-      "Other agents may be working on this codebase simultaneously.\n" +
-      `Your session ID is ${sessionId}.\n` +
-      `- .aimux/context/${sessionId}/live.md — your recent conversation history\n` +
-      `- .aimux/context/${sessionId}/summary.md — your compacted history\n` +
-      `- .aimux/plans/${sessionId}.md — your shared working plan\n` +
-      "- .aimux/sessions.json — all running agents\n" +
-      "- Other agent contexts are in .aimux/context/{their-session-id}/. Check sessions.json for the list.\n" +
-      "- Other agent plans are in .aimux/plans/{their-session-id}.md.\n" +
-      "- .aimux/history/ — full raw conversation history (JSONL)";
+    const { sessionId, worktreePath, extraPreamble, includeAimuxPreamble = true } = opts;
+    let preamble = "";
 
-    const globalAimuxMd = join(homedir(), "AIMUX.md");
-    const projectAimuxMd = join(process.cwd(), "AIMUX.md");
-    for (const mdPath of [globalAimuxMd, projectAimuxMd]) {
-      if (!existsSync(mdPath)) continue;
-      try {
-        const userPreamble = readFileSync(mdPath, "utf-8").trim();
-        if (!userPreamble) continue;
-        preamble += "\n\n" + userPreamble;
-        debug(`loaded ${mdPath} (${userPreamble.length} chars)`, "preamble");
-      } catch {
-        // Ignore unreadable user preamble files.
+    if (includeAimuxPreamble) {
+      preamble =
+        "You are running inside aimux, an agent multiplexer. " +
+        "Other agents may be working on this codebase simultaneously.\n" +
+        `Your session ID is ${sessionId}.\n` +
+        `- .aimux/context/${sessionId}/live.md — your recent conversation history\n` +
+        `- .aimux/context/${sessionId}/summary.md — your compacted history\n` +
+        `- .aimux/plans/${sessionId}.md — your shared working plan\n` +
+        "- .aimux/sessions.json — all running agents\n" +
+        "- Other agent contexts are in .aimux/context/{their-session-id}/. Check sessions.json for the list.\n" +
+        "- Other agent plans are in .aimux/plans/{their-session-id}.md.\n" +
+        "- .aimux/history/ — full raw conversation history (JSONL)";
+    }
+
+    if (includeAimuxPreamble) {
+      const globalAimuxMd = join(homedir(), "AIMUX.md");
+      const projectAimuxMd = join(process.cwd(), "AIMUX.md");
+      for (const mdPath of [globalAimuxMd, projectAimuxMd]) {
+        if (!existsSync(mdPath)) continue;
+        try {
+          const userPreamble = readFileSync(mdPath, "utf-8").trim();
+          if (!userPreamble) continue;
+          preamble += "\n\n" + userPreamble;
+          debug(`loaded ${mdPath} (${userPreamble.length} chars)`, "preamble");
+        } catch {
+          // Ignore unreadable user preamble files.
+        }
       }
     }
 
-    if (worktreePath) {
+    if (includeAimuxPreamble && worktreePath) {
       try {
         const allWt = listAllWorktrees(worktreePath);
         const thisWt = allWt.find((w) => w.path === worktreePath);
@@ -78,63 +85,82 @@ export class SessionBootstrapService {
       }
     }
 
-    preamble +=
-      "\n\n## Planning\n" +
-      "Maintain a plan file at .aimux/plans/" +
-      sessionId +
-      ".md.\n" +
-      "Keep it current enough that other agents can audit, annotate, or continue your work.\n" +
-      "Use this structure:\n" +
-      "- Goal\n" +
-      "- Current Status\n" +
-      "- Steps\n" +
-      "- Notes\n" +
-      "Update it when your plan materially changes or when you complete a step.";
+    if (includeAimuxPreamble) {
+      preamble +=
+        "\n\n## Planning\n" +
+        "Maintain a plan file at .aimux/plans/" +
+        sessionId +
+        ".md.\n" +
+        "Keep it current enough that other agents can audit, annotate, or continue your work.\n" +
+        "Use this structure:\n" +
+        "- Goal\n" +
+        "- Current Status\n" +
+        "- Steps\n" +
+        "- Notes\n" +
+        "Update it when your plan materially changes or when you complete a step.";
 
-    preamble +=
-      "\n\n## Status\n" +
-      "Maintain a status file at .aimux/status/" +
-      sessionId +
-      ".md (3-5 lines max).\n" +
-      "Update it whenever your focus changes. Include:\n" +
-      "- What you're currently working on\n" +
-      "- Key files involved\n" +
-      "- Current state (investigating, implementing, testing, blocked, etc.)";
+      preamble +=
+        "\n\n## Status\n" +
+        "Maintain a status file at .aimux/status/" +
+        sessionId +
+        ".md (3-5 lines max).\n" +
+        "Update it whenever your focus changes. Include:\n" +
+        "- What you're currently working on\n" +
+        "- Key files involved\n" +
+        "- Current state (investigating, implementing, testing, blocked, etc.)";
 
-    preamble +=
-      "\n\n## Aimux Cross-Agent Delegation\n" +
-      "IMPORTANT: This is the aimux delegation system for coordinating work across agents in this multiplexer. " +
-      "It is separate from any built-in task/todo features in your own tool.\n\n" +
-      "### Delegating work to another agent\n" +
-      "When asked to delegate, hand off, or assign work to another agent, create a JSON file:\n" +
-      "```\n" +
-      ".aimux/tasks/{short-descriptive-name}.json\n" +
-      "```\n" +
-      "Contents:\n" +
-      "```json\n" +
-      '{\n  "id": "{same as filename without .json}",\n  "status": "pending",\n' +
-      '  "assignedBy": "' +
-      sessionId +
-      '",\n' +
-      '  "description": "Brief summary of the task",\n' +
-      '  "prompt": "Detailed instructions for the other agent",\n' +
-      '  "createdAt": "{ISO timestamp}",\n  "updatedAt": "{ISO timestamp}"\n}\n' +
-      "```\n" +
-      "Optional fields: `assignedTo` (target session ID), `tool` (preferred tool type).\n" +
-      "Aimux will automatically dispatch pending tasks to idle agents and inject the prompt.\n" +
-      "Check .aimux/sessions.json for available agents and their session IDs.\n\n" +
-      "### Receiving a delegated task\n" +
-      "When you see `[AIMUX TASK ...]` in your input, another agent delegated work to you.\n" +
-      "Complete the work, then update the task file:\n" +
-      '- Success: set `status` to `"done"` and add a `result` field with a summary\n' +
-      '- Failure: set `status` to `"failed"` and add an `error` field\n' +
-      "The delegating agent will be notified automatically.";
+      preamble +=
+        "\n\n## Aimux Cross-Agent Delegation\n" +
+        "IMPORTANT: This is the aimux delegation system for coordinating work across agents in this multiplexer. " +
+        "It is separate from any built-in task/todo features in your own tool.\n\n" +
+        "### Delegating work to another agent\n" +
+        "When asked to delegate, hand off, or assign work to another agent, create a JSON file:\n" +
+        "```\n" +
+        ".aimux/tasks/{short-descriptive-name}.json\n" +
+        "```\n" +
+        "Contents:\n" +
+        "```json\n" +
+        '{\n  "id": "{same as filename without .json}",\n  "status": "pending",\n' +
+        '  "assignedBy": "' +
+        sessionId +
+        '",\n' +
+        '  "description": "Brief summary of the task",\n' +
+        '  "prompt": "Detailed instructions for the other agent",\n' +
+        '  "createdAt": "{ISO timestamp}",\n  "updatedAt": "{ISO timestamp}"\n}\n' +
+        "```\n" +
+        "Optional fields: `assignedTo` (target session ID), `tool` (preferred tool type).\n" +
+        "Aimux will automatically dispatch pending tasks to idle agents and inject the prompt.\n" +
+        "Check .aimux/sessions.json for available agents and their session IDs.\n\n" +
+        "### Receiving a delegated task\n" +
+        "When you see `[AIMUX TASK ...]` in your input, another agent delegated work to you.\n" +
+        "Complete the work, then update the task file:\n" +
+        '- Success: set `status` to `"done"` and add a `result` field with a summary\n' +
+        '- Failure: set `status` to `"failed"` and add an `error` field\n' +
+        "The delegating agent will be notified automatically.";
+    }
 
     if (extraPreamble) {
-      preamble += "\n" + extraPreamble;
+      preamble += (preamble ? "\n" : "") + extraPreamble;
     }
 
     return preamble;
+  }
+
+  buildInitialKickoffPrompt(sessionId: string, preamble: string): string {
+    const summaryPath = join(getContextDir(), sessionId, "summary.md");
+    const livePath = join(getContextDir(), sessionId, "live.md");
+    const planPath = join(getPlansDir(), `${sessionId}.md`);
+    const statusPath = join(getStatusDir(), `${sessionId}.md`);
+    return [
+      `This is an aimux-managed session with session ID ${sessionId}.`,
+      `Your shared session files live at ${summaryPath}, ${livePath}, ${planPath}, and ${statusPath}.`,
+      "Read and follow these operating instructions for this session before continuing.",
+      "Treat them as standing session rules and coordination context, not as a user request.",
+      "",
+      preamble.trim(),
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   ensurePlanFile(sessionId: string, command: string, worktreePath?: string): void {
@@ -311,16 +337,19 @@ export class SessionBootstrapService {
       .join("\n");
   }
 
-  buildForkKickoffPrompt(
+  buildCodexForkKickoffPrompt(
     sourceSessionId: string,
     targetSessionId: string,
     snapshot: ForkSourceSnapshot,
     instruction?: string,
   ): string {
     const activitySummary = this.summarizeForkSourceActivity(snapshot);
+    const summaryPath = join(getContextDir(), targetSessionId, "summary.md");
+    const livePath = join(getContextDir(), targetSessionId, "live.md");
+    const planPath = join(getPlansDir(), `${targetSessionId}.md`);
     return [
       `This session is a fork of ${sourceSessionId}.`,
-      `Read .aimux/context/${targetSessionId}/summary.md, .aimux/context/${targetSessionId}/live.md, and .aimux/plans/${targetSessionId}.md first.`,
+      `Read ${summaryPath}, ${livePath}, and ${planPath} first.`,
       "Treat them as real carried-over memory, not fresh-session scaffolding.",
       "Do not start with git archaeology.",
       activitySummary ? `Recent source activity: ${activitySummary}` : undefined,
@@ -331,7 +360,7 @@ export class SessionBootstrapService {
       .join(" ");
   }
 
-  buildMigrationKickoffPrompt(
+  buildCodexMigrationKickoffPrompt(
     sessionId: string,
     sourceWorktreePath: string,
     targetWorktreePath: string,
@@ -355,6 +384,24 @@ export class SessionBootstrapService {
     ]
       .filter(Boolean)
       .join(" ");
+  }
+
+  deliverDetachedCodexKickoffPrompt(targetSessionId: string, kickoff: string, delayMs = 1800): Promise<void> {
+    return new Promise<void>((resolve) => {
+      setTimeout(async () => {
+        try {
+          const target = this.deps.getSessionTmuxTarget(targetSessionId);
+          if (target) {
+            this.deps.tmuxRuntimeManager.sendText(target, kickoff);
+            await this.waitForDetachedCodexKickoffSubmit(targetSessionId, target, kickoff);
+          }
+        } catch {
+          // Continue even if kickoff automation fails; user can still recover manually.
+        } finally {
+          resolve();
+        }
+      }, delayMs);
+    });
   }
 
   seedForkArtifacts(sourceSessionId: string, targetSessionId: string, targetToolConfigKey: string): void {
@@ -427,12 +474,40 @@ export class SessionBootstrapService {
     );
   }
 
-  waitForCodexKickoffSubmit(targetSessionId: string, target: TmuxTarget, kickoff: string): Promise<boolean> {
-    const startedAt = Date.now();
+  waitForDetachedCodexKickoffSubmit(targetSessionId: string, target: TmuxTarget, kickoff: string): Promise<boolean> {
     return new Promise((resolve) => {
-      const step = (attempt = 1, lastFingerprint = "") => {
-        if (Date.now() - startedAt > 12000 || attempt > 12) {
-          debug(`fork kickoff submit: target=${targetSessionId} timeout`, "fork");
+      const waitForDraft = (attempt = 1, visibleCount = 0, lastSignature = "") => {
+        if (attempt > 20) {
+          step(1);
+          return;
+        }
+        setTimeout(
+          () => {
+            try {
+              const currentTarget = this.deps.getSessionTmuxTarget(targetSessionId);
+              if (!currentTarget || currentTarget.windowId !== target.windowId) {
+                resolve(false);
+                return;
+              }
+              const stillDraft = this.paneStillContainsDraft(target, kickoff);
+              const signature = stillDraft ? this.captureDraftSignature(target) : "";
+              const nextVisibleCount =
+                stillDraft && signature && signature === lastSignature ? visibleCount + 1 : stillDraft ? 1 : 0;
+              if (nextVisibleCount >= 2) {
+                step(1);
+                return;
+              }
+              waitForDraft(attempt + 1, nextVisibleCount, signature);
+            } catch {
+              waitForDraft(attempt + 1, visibleCount, lastSignature);
+            }
+          },
+          attempt === 1 ? 300 : 250,
+        );
+      };
+
+      const step = (attempt = 1) => {
+        if (attempt > 4) {
           resolve(false);
           return;
         }
@@ -441,41 +516,34 @@ export class SessionBootstrapService {
             try {
               const currentTarget = this.deps.getSessionTmuxTarget(targetSessionId);
               if (!currentTarget || currentTarget.windowId !== target.windowId) {
-                debug(`fork kickoff submit: target=${targetSessionId} no longer active`, "fork");
                 resolve(false);
                 return;
               }
-              const stillDraft = this.paneStillContainsDraft(target, kickoff);
-              const fingerprint = this.capturePaneFingerprint(target);
-              const settled = stillDraft && fingerprint.length > 0 && fingerprint === lastFingerprint;
-              debug(
-                `fork kickoff submit: target=${targetSessionId} attempt=${attempt} stillDraft=${stillDraft ? "yes" : "no"} settled=${settled ? "yes" : "no"} mode=Enter`,
-                "fork",
-              );
-              if (!stillDraft && attempt > 1) {
+              this.deps.tmuxRuntimeManager.sendCarriageReturn(target);
+              if (attempt >= 4) {
                 resolve(true);
                 return;
               }
-              if (!settled) {
-                step(attempt, fingerprint);
-                return;
-              }
-              const client = this.deps.tmuxRuntimeManager.getAttachedClientForTarget(target);
-              if (client) {
-                this.deps.tmuxRuntimeManager.switchClientToTarget(client.tty, target);
-                this.deps.tmuxRuntimeManager.sendClientCarriageReturn(client.tty, target);
-              } else {
-                this.deps.tmuxRuntimeManager.sendEnter(target);
-              }
-              step(attempt + 1, "");
+              setTimeout(() => {
+                try {
+                  const stillDraft = this.paneStillContainsDraft(target, kickoff);
+                  if (stillDraft) {
+                    step(attempt + 1);
+                    return;
+                  }
+                } catch {
+                  // Fall through and treat it as submitted; the next user-visible render will confirm.
+                }
+                resolve(true);
+              }, 700);
             } catch {
               resolve(false);
             }
           },
-          attempt === 1 ? 1200 : 700,
+          attempt === 1 ? 200 : 700,
         );
       };
-      step();
+      waitForDraft();
     });
   }
 
@@ -497,22 +565,25 @@ export class SessionBootstrapService {
       const pane = this.deps.tmuxRuntimeManager.captureTarget(target, { startLine: -60 });
       const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
       const normalizedPane = normalize(pane);
-      const expectedFragments = [
-        "this session is a fork of",
-        "treat them as real carried-over memory",
-        "after reading them, briefly summarize",
-      ].filter((fragment) => normalize(draft).includes(fragment));
-      if (expectedFragments.length === 0) return false;
-      return expectedFragments.every((fragment) => normalizedPane.includes(fragment));
+      const normalizedDraft = normalize(draft);
+      if (!normalizedDraft) return false;
+      if (normalizedPane.includes(normalizedDraft)) return true;
+      if (normalizedPane.includes("[pasted content")) return true;
+      const fragments = normalizedDraft
+        .split(/[.!?]\s+/)
+        .map((fragment) => fragment.trim())
+        .filter((fragment) => fragment.length >= 24)
+        .slice(0, 3);
+      return fragments.some((fragment) => normalizedPane.includes(fragment));
     } catch {
       return false;
     }
   }
 
-  private capturePaneFingerprint(target: TmuxTarget): string {
+  private captureDraftSignature(target: TmuxTarget): string {
     try {
-      const pane = this.deps.tmuxRuntimeManager.captureTarget(target, { startLine: -80 });
-      return pane.replace(/\s+/g, " ").trim().slice(-800);
+      const pane = this.deps.tmuxRuntimeManager.captureTarget(target, { startLine: -20 });
+      return pane.replace(/\s+/g, " ").trim().slice(-240);
     } catch {
       return "";
     }

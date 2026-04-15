@@ -547,37 +547,13 @@ export class Multiplexer {
       !toolCfg.preambleFlag,
     );
     if (!toolCfg.preambleFlag) {
-      const kickoff = this.sessionBootstrap.buildForkKickoffPrompt(
+      const kickoff = this.sessionBootstrap.buildCodexForkKickoffPrompt(
         sourceSessionId,
         targetSessionId,
         sourceSnapshot,
         instruction,
       );
-      await new Promise<void>((resolve) => {
-        setTimeout(async () => {
-          try {
-            const target = this.sessionTmuxTargets.get(targetSessionId);
-            debug(
-              `fork kickoff: source=${sourceSessionId} target=${targetSessionId} toolKey=${targetToolConfigKey} targetFound=${target ? "yes" : "no"} kickoffPreview=${JSON.stringify(kickoff.slice(0, 220))}`,
-              "fork",
-            );
-            if (target) {
-              this.tmuxRuntimeManager.sendText(target, kickoff);
-              await this.sessionBootstrap.waitForCodexKickoffSubmit(targetSessionId, target, kickoff);
-            } else {
-              debug(
-                `fork kickoff fallback transport write: target=${targetSessionId} toolKey=${targetToolConfigKey}`,
-                "fork",
-              );
-              transport.write(kickoff + "\r");
-            }
-          } catch {
-            // Continue even if kickoff automation fails; user can still recover manually.
-          } finally {
-            resolve();
-          }
-        }, 1800);
-      });
+      await this.sessionBootstrap.deliverDetachedCodexKickoffPrompt(targetSessionId, kickoff, 1800);
     }
     this.agentTracker.emit(sourceSessionId, {
       kind: "status",

@@ -29,6 +29,8 @@ export interface TmuxRuntimeConfig {
 }
 
 export interface RuntimeConfig {
+  /** Whether aimux injects automatic session preamble / kickoff instructions. */
+  agentPreambleEnabled: boolean;
   tmux: TmuxRuntimeConfig;
 }
 
@@ -95,6 +97,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
     onComplete: true,
   },
   runtime: {
+    agentPreambleEnabled: true,
     tmux: {
       sessionPrefix: "aimux",
     },

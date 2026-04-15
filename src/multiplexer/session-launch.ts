@@ -294,17 +294,21 @@ export function createSession(
   const cols = process.stdout.columns ?? 80;
   const sessionId = sessionIdOverride ?? `${command}-${Math.random().toString(36).slice(2, 8)}`;
   const backendSessionId = backendSessionIdOverride ?? (sessionIdFlag ? randomUUID() : undefined);
+  const config = loadConfig();
+  const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;
 
   const preamble = host.sessionBootstrap.buildSessionPreamble({
     sessionId,
     command,
     worktreePath,
     extraPreamble,
+    includeAimuxPreamble: automaticPreambleEnabled,
   });
+  const shouldInjectLaunchPreamble = Boolean(preambleFlag && preamble.trim());
 
   host.sessionBootstrap.ensurePlanFile(sessionId, command, worktreePath);
 
-  let finalArgs = preambleFlag ? [...args, ...preambleFlag, preamble] : [...args];
+  let finalArgs = shouldInjectLaunchPreamble ? [...args, ...preambleFlag!, preamble] : [...args];
   let launchCommand = command;
 
   if (sessionIdFlag && backendSessionId) {
@@ -339,7 +343,7 @@ export function createSession(
     finalArgs = wrapped.args;
   }
 
-  if (preambleFlag) {
+  if (shouldInjectLaunchPreamble) {
     host.sessionBootstrap.finalizePreamble(command, preamble);
   }
   debug(
@@ -388,6 +392,10 @@ export function createSession(
   }
 
   host.saveState();
+  if (!preambleFlag && !extraPreamble && automaticPreambleEnabled && preamble.trim()) {
+    const kickoff = host.sessionBootstrap.buildInitialKickoffPrompt(sessionId, preamble);
+    void host.sessionBootstrap.deliverDetachedCodexKickoffPrompt(sessionId, kickoff, 1800);
+  }
   return session;
 }
 
@@ -468,29 +476,13 @@ export async function migrateAgent(
       sessionId,
       true,
     );
-    const kickoff = host.sessionBootstrap.buildMigrationKickoffPrompt(
+    const kickoff = host.sessionBootstrap.buildCodexMigrationKickoffPrompt(
       sessionId,
       sourceCwd,
       targetWorktreePath,
       sourceSnapshot,
     );
-    await new Promise<void>((resolve) => {
-      setTimeout(async () => {
-        try {
-          const target = host.sessionTmuxTargets.get(sessionId);
-          if (target) {
-            host.tmuxRuntimeManager.sendText(target, kickoff);
-            await host.sessionBootstrap.waitForCodexKickoffSubmit(sessionId, target, kickoff);
-          } else {
-            transport.write(kickoff + "\r");
-          }
-        } catch {
-          // Continue even if kickoff automation fails; user can still recover manually.
-        } finally {
-          resolve();
-        }
-      }, 1800);
-    });
+    await host.sessionBootstrap.deliverDetachedCodexKickoffPrompt(sessionId, kickoff, 1800);
     return;
   }
 
