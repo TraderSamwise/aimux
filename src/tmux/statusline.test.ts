@@ -188,6 +188,54 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("Fix auth flow");
   });
 
+  it("renders plugin-provided statusline segments for the active session", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "a",
+            tool: "codex",
+            label: "coder",
+            windowName: "coder",
+            tmuxWindowId: "@1",
+            role: "coder",
+            status: "running",
+            active: true,
+            headline: "Fix auth flow",
+            worktreePath: repoRoot,
+          },
+        ],
+        metadata: {
+          a: {
+            statusline: {
+              top: [{ id: "transcript-length", text: "80kb" }],
+              bottom: [{ id: "transcript-length", text: "80kb" }],
+            },
+          },
+        },
+      }),
+    );
+    const renderedTop = renderTmuxStatusline(repoRoot, "top", {
+      currentWindow: "coder",
+      currentWindowId: "@1",
+      currentPath: repoRoot,
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    const renderedBottom = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "coder",
+      currentWindowId: "@1",
+      currentPath: repoRoot,
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    expect(renderedTop).toContain("80kb");
+    expect(renderedBottom).toContain("80kb");
+  });
+
   it("renders scoped services alongside agents in the bottom line", () => {
     const nestedPath = join(repoRoot, ".aimux", "worktrees", "tealstreet-pr5180");
     mkdirSync(nestedPath, { recursive: true });

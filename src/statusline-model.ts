@@ -45,6 +45,10 @@ export interface StatuslineMetadataEntry {
   status?: { text: string; tone?: string };
   progress?: { current: number; total: number; label?: string };
   logs?: Array<{ message: string; source?: string; tone?: string; ts: string }>;
+  statusline?: {
+    top?: Array<{ id?: string; text: string; tone?: string }>;
+    bottom?: Array<{ id?: string; text: string; tone?: string }>;
+  };
   context?: {
     cwd?: string;
     worktreePath?: string;

@@ -5,10 +5,12 @@ import { getGlobalAimuxDir, getLocalAimuxDir, getProjectId, getRepoRoot } from "
 import {
   updateSessionMetadata,
   clearSessionLogs,
+  loadMetadataState,
   type MetadataTone,
   type MetadataApiEndpoint,
   type SessionContextMetadata,
   type SessionServiceMetadata,
+  type SessionStatuslineSegment,
 } from "./metadata-store.js";
 import { debug } from "./debug.js";
 import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
@@ -16,6 +18,8 @@ import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import { type AlertKind, type ProjectEventBus } from "./project-events.js";
 import { createToolOutputWatcher } from "./tool-output-watchers.js";
+import { loadConfig } from "./config.js";
+import { createTranscriptLengthPlugin } from "./default-plugins/transcript-length.js";
 
 export interface AimuxMetadataAPI {
   setStatus(session: string, text: string, tone?: MetadataTone): void;
@@ -23,6 +27,8 @@ export interface AimuxMetadataAPI {
   log(session: string, message: string, opts?: { source?: string; tone?: MetadataTone }): void;
   clearLog(session: string): void;
   setContext(session: string, context: SessionContextMetadata): void;
+  setStatuslineSegment(session: string, line: "top" | "bottom", segment: SessionStatuslineSegment): void;
+  clearStatuslineSegment(session: string, id: string, line?: "top" | "bottom"): void;
   setServices(session: string, services: SessionServiceMetadata[]): void;
   emitEvent(session: string, event: AgentEvent): void;
   markSeen(session: string): void;
@@ -36,6 +42,9 @@ export interface AimuxPluginAPI {
   serverHost: string;
   serverPort: number;
   metadata: AimuxMetadataAPI;
+  sessions: {
+    list(): Array<{ id: string }>;
+  };
 }
 
 export interface AimuxPluginInstance {
@@ -59,7 +68,13 @@ export class PluginRuntime {
   constructor(
     private readonly endpoint: MetadataApiEndpoint,
     private readonly eventBus?: ProjectEventBus,
+    private readonly onMetadataChange?: () => void,
   ) {}
+
+  private applyMetadataChange(mutator: () => void): void {
+    mutator();
+    this.onMetadataChange?.();
+  }
 
   private publishEventAlert(sessionId: string, event: AgentEvent): void {
     if (!this.eventBus) return;
@@ -70,6 +85,7 @@ export class PluginRuntime {
 
   async start(): Promise<void> {
     const tracker = new AgentTracker();
+    const config = loadConfig();
     const api: AimuxPluginAPI = {
       projectRoot: getRepoRoot(),
       projectId: getProjectId(),
@@ -77,60 +93,116 @@ export class PluginRuntime {
       serverPort: this.endpoint.port,
       metadata: {
         setStatus: (session, text, tone) => {
-          updateSessionMetadata(session, (current) => ({
-            ...current,
-            status: { text, tone },
-          }));
+          this.applyMetadataChange(() => {
+            updateSessionMetadata(session, (current) => ({
+              ...current,
+              status: { text, tone },
+            }));
+          });
         },
         setProgress: (session, current, total, label) => {
-          updateSessionMetadata(session, (existing) => ({
-            ...existing,
-            progress: { current, total, label },
-          }));
+          this.applyMetadataChange(() => {
+            updateSessionMetadata(session, (existing) => ({
+              ...existing,
+              progress: { current, total, label },
+            }));
+          });
         },
         log: (session, message, opts) => {
-          updateSessionMetadata(session, (existing) => ({
-            ...existing,
-            logs: [
-              ...(existing.logs ?? []).slice(-19),
-              { message, source: opts?.source, tone: opts?.tone, ts: new Date().toISOString() },
-            ],
-          }));
+          this.applyMetadataChange(() => {
+            updateSessionMetadata(session, (existing) => ({
+              ...existing,
+              logs: [
+                ...(existing.logs ?? []).slice(-19),
+                { message, source: opts?.source, tone: opts?.tone, ts: new Date().toISOString() },
+              ],
+            }));
+          });
         },
         clearLog: (session) => {
-          clearSessionLogs(session);
+          this.applyMetadataChange(() => {
+            clearSessionLogs(session);
+          });
         },
         setContext: (session, context) => {
-          updateSessionMetadata(session, (existing) => ({
-            ...existing,
-            context: {
-              ...(existing.context ?? {}),
-              ...context,
-            },
-          }));
+          this.applyMetadataChange(() => {
+            updateSessionMetadata(session, (existing) => ({
+              ...existing,
+              context: {
+                ...(existing.context ?? {}),
+                ...context,
+              },
+            }));
+          });
+        },
+        setStatuslineSegment: (session, line, segment) => {
+          this.applyMetadataChange(() => {
+            updateSessionMetadata(session, (existing) => ({
+              ...existing,
+              statusline: {
+                ...(existing.statusline ?? {}),
+                [line]: [...(existing.statusline?.[line] ?? []).filter((entry) => entry.id !== segment.id), segment],
+              },
+            }));
+          });
+        },
+        clearStatuslineSegment: (session, id, line) => {
+          this.applyMetadataChange(() => {
+            updateSessionMetadata(session, (existing) => {
+              const next = { ...existing };
+              if (!next.statusline) return next;
+              const lines = line ? [line] : (["top", "bottom"] as const);
+              next.statusline = { ...next.statusline };
+              for (const currentLine of lines) {
+                const filtered = (next.statusline[currentLine] ?? []).filter((entry) => entry.id !== id);
+                if (filtered.length > 0) {
+                  next.statusline[currentLine] = filtered;
+                } else {
+                  delete next.statusline[currentLine];
+                }
+              }
+              if (!next.statusline.top?.length && !next.statusline.bottom?.length) {
+                delete next.statusline;
+              }
+              return next;
+            });
+          });
         },
         setServices: (session, services) => {
-          updateSessionMetadata(session, (existing) => ({
-            ...existing,
-            derived: {
-              ...(existing.derived ?? {}),
-              services,
-            },
-          }));
+          this.applyMetadataChange(() => {
+            updateSessionMetadata(session, (existing) => ({
+              ...existing,
+              derived: {
+                ...(existing.derived ?? {}),
+                services,
+              },
+            }));
+          });
         },
         emitEvent: (session, event) => {
-          tracker.emit(session, event);
-          this.publishEventAlert(session, event);
+          this.applyMetadataChange(() => {
+            tracker.emit(session, event);
+            this.publishEventAlert(session, event);
+          });
         },
         markSeen: (session) => {
-          tracker.markSeen(session);
+          this.applyMetadataChange(() => {
+            tracker.markSeen(session);
+          });
         },
         setActivity: (session, activity) => {
-          tracker.setActivity(session, activity);
+          this.applyMetadataChange(() => {
+            tracker.setActivity(session, activity);
+          });
         },
         setAttention: (session, attention) => {
-          tracker.setAttention(session, attention);
+          this.applyMetadataChange(() => {
+            tracker.setAttention(session, attention);
+          });
         },
+      },
+      sessions: {
+        list: () => Object.keys(loadMetadataState().sessions).map((id) => ({ id })),
       },
     };
 
@@ -142,6 +214,14 @@ export class PluginRuntime {
     const outputWatcher = createToolOutputWatcher({ api });
     if (outputWatcher.start) await outputWatcher.start();
     this.instances.push(outputWatcher);
+
+    if (config.statusline.defaultPlugins.transcriptLength.enabled) {
+      const transcriptPlugin = createTranscriptLengthPlugin(api, {
+        line: config.statusline.defaultPlugins.transcriptLength.line ?? "top",
+      });
+      await transcriptPlugin.start?.();
+      this.instances.push(transcriptPlugin);
+    }
 
     const pluginFiles = [
       ...listPluginFiles(join(getGlobalAimuxDir(), "plugins")),

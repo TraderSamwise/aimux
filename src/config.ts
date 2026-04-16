@@ -28,6 +28,17 @@ export interface TmuxRuntimeConfig {
   sessionPrefix: string;
 }
 
+export interface StatuslineDefaultPluginConfig {
+  enabled: boolean;
+  line?: "top" | "bottom";
+}
+
+export interface StatuslineConfig {
+  defaultPlugins: {
+    transcriptLength: StatuslineDefaultPluginConfig;
+  };
+}
+
 export interface RuntimeConfig {
   /** Whether aimux injects automatic session preamble / kickoff instructions. */
   agentPreambleEnabled: boolean;
@@ -40,6 +51,7 @@ export interface AimuxConfig {
   liveWindowSize: number;
   compactEveryNTurns: number;
   notifications: NotificationConfig;
+  statusline: StatuslineConfig;
   runtime: RuntimeConfig;
   worktrees: WorktreeConfig;
   tools: Record<string, ToolConfig>;
@@ -95,6 +107,14 @@ const DEFAULT_CONFIG: AimuxConfig = {
     onPrompt: true,
     onError: true,
     onComplete: true,
+  },
+  statusline: {
+    defaultPlugins: {
+      transcriptLength: {
+        enabled: true,
+        line: "top",
+      },
+    },
   },
   runtime: {
     agentPreambleEnabled: true,

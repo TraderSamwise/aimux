@@ -52,6 +52,17 @@ export interface SessionServiceMetadata {
   port?: number;
 }
 
+export interface SessionStatuslineSegment {
+  id?: string;
+  text: string;
+  tone?: MetadataTone;
+}
+
+export interface SessionStatuslineMetadata {
+  top?: SessionStatuslineSegment[];
+  bottom?: SessionStatuslineSegment[];
+}
+
 export interface SessionDerivedMetadata extends SessionDerivedState {
   activity?: AgentActivityState;
   attention?: AgentAttentionState;
@@ -67,6 +78,7 @@ export interface SessionMetadata {
   progress?: SessionProgressMetadata;
   logs?: SessionLogEntry[];
   context?: SessionContextMetadata;
+  statusline?: SessionStatuslineMetadata;
   derived?: SessionDerivedMetadata;
   updatedAt: string;
 }

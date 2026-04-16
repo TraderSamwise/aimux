@@ -467,6 +467,12 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
         updatedAt: new Date().toISOString(),
       },
       host.eventBus,
+      () => {
+        host.writeStatuslineFile();
+        if (host.mode === "dashboard") {
+          host.renderCurrentDashboardView();
+        }
+      },
     );
     await host.pluginRuntime.start();
   }

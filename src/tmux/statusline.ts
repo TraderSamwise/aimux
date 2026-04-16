@@ -44,6 +44,36 @@ function renderControlPlane(data: StatuslineData): string {
   return "ctl ok";
 }
 
+function renderPluginSegment(segment: { text: string; tone?: string }): string {
+  const text = trim(segment.text, 18);
+  if (!segment.tone || segment.tone === "neutral") return text;
+  if (segment.tone === "info") return `#[fg=cyan]${text}#[default]`;
+  if (segment.tone === "success") return `#[fg=green]${text}#[default]`;
+  if (segment.tone === "warn") return `#[fg=yellow]${text}#[default]`;
+  if (segment.tone === "error") return `#[fg=red]${text}#[default]`;
+  return text;
+}
+
+function renderPluginSegments(
+  data: StatuslineData,
+  projectRoot: string,
+  line: "top" | "bottom",
+  currentSession?: string,
+  currentWindow?: string,
+  currentWindowId?: string,
+  currentPath?: string,
+): string[] {
+  const metadata = resolveExactSessionMetadata(
+    data,
+    projectRoot,
+    currentSession,
+    currentWindow,
+    currentWindowId,
+    currentPath,
+  );
+  return (metadata?.statusline?.[line] ?? []).map(renderPluginSegment).filter(Boolean);
+}
+
 function renderProjectIdentity(projectRoot: string): string {
   return `aimux ${basename(projectRoot)}`;
 }
@@ -178,6 +208,9 @@ function renderTopLine(
     data ? renderActiveContext(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath) : null,
     data ? renderTasks(data) : null,
     data ? renderActiveMetadata(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath) : null,
+    ...(data
+      ? renderPluginSegments(data, projectRoot, "top", currentSession, currentWindow, currentWindowId, currentPath)
+      : []),
   ].filter((segment): segment is string => Boolean(segment));
   const separator = "  ·  ";
   const joined = segments.join(separator);
@@ -229,6 +262,15 @@ function renderBottomLine(
     currentPath,
   ).map(renderSessionChip);
   const headline = renderExactHeadline(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
+  const pluginSegments = renderPluginSegments(
+    data,
+    projectRoot,
+    "bottom",
+    currentSession,
+    currentWindow,
+    currentWindowId,
+    currentPath,
+  );
   const chipSeparator = "  ·  ";
   const detailSeparator = "  |  ";
 
@@ -241,11 +283,14 @@ function renderBottomLine(
     used += next;
   }
 
-  if (headline) {
-    const headlineWidth = visibleSegmentLength(headline);
+  const detailParts = [headline, ...pluginSegments].filter((segment): segment is string => Boolean(segment));
+  const detail = detailParts.join("  ·  ");
+
+  if (detail) {
+    const headlineWidth = visibleSegmentLength(detail);
     const separatorWidth = chosenChips.length > 0 ? detailSeparator.length : 0;
     if (used + separatorWidth + headlineWidth <= maxWidth) {
-      return chosenChips.length > 0 ? `${chosenChips.join(chipSeparator)}${detailSeparator}${headline}` : headline;
+      return chosenChips.length > 0 ? `${chosenChips.join(chipSeparator)}${detailSeparator}${detail}` : detail;
     }
   }
 
