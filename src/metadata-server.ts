@@ -363,6 +363,10 @@ export class MetadataServer {
     return this.eventBus;
   }
 
+  notifyChange(): void {
+    this.options.onChange?.();
+  }
+
   private listen(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!this.server) return reject(new Error("server not initialized"));

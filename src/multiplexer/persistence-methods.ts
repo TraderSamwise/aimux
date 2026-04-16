@@ -404,6 +404,7 @@ export const persistenceMethods = {
         this.worktreeCreateJob = null;
         this.invalidateDesktopStateSnapshot();
         this.refreshLocalDashboardModel();
+        this.metadataServer?.notifyChange?.();
         if (this.mode === "dashboard") {
           this.renderDashboard();
         }
@@ -549,6 +550,7 @@ export const persistenceMethods = {
       pendingRemovals.delete(path);
       this.invalidateDesktopStateSnapshot();
       this.refreshLocalDashboardModel();
+      this.metadataServer?.notifyChange?.();
       if (this.mode === "dashboard") {
         this.renderDashboard();
       }
