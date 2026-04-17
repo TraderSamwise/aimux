@@ -14,11 +14,13 @@ function isUsableDashboardTarget(
 ): boolean {
   const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
   const paneCommand = tmux.displayMessage("#{pane_current_command}", dashboardTarget.windowId);
+  const paneTail = paneCommand === "bash" ? tmux.captureTarget(dashboardTarget, { startLine: -40 }) : "";
   return (
     tmux.isWindowAlive(dashboardTarget) &&
     currentBuildStamp === dashboardBuildStamp &&
     paneCommand !== "cat" &&
-    paneCommand !== "tail"
+    paneCommand !== "tail" &&
+    !paneTail.includes("aimux dashboard failed to start.")
   );
 }
 

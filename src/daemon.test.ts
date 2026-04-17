@@ -108,7 +108,7 @@ describe("daemon supervision", () => {
     expect(spawnMock).toHaveBeenCalledTimes(2);
   });
 
-  it("respawns a live project service when its metadata endpoint is missing", async () => {
+  it("keeps a just-started live project service when its metadata endpoint is missing", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
 
     const daemon = new AimuxDaemon();
@@ -116,9 +116,9 @@ describe("daemon supervision", () => {
 
     const second = await (daemon as any).ensureProject(projectRoot);
 
-    expect(second.pid).not.toBe(first.pid);
-    expect(spawnMock).toHaveBeenCalledTimes(2);
-    expect(livePids.has(first.pid)).toBe(false);
+    expect(second.pid).toBe(first.pid);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(livePids.has(first.pid)).toBe(true);
   });
 
   it("prunes dead services from persisted daemon state", async () => {

@@ -152,8 +152,6 @@ export async function runProjectService(host: SessionLaunchHost): Promise<number
   await host.startProjectServices();
   host.refreshDesktopStateSnapshot();
   host.writeStatuslineFile();
-  host.startStatusRefresh();
-  host.startProjectServiceRefresh();
 
   const exitCode = await new Promise<number>((resolve) => {
     host.resolveRun = resolve;

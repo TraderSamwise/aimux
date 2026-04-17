@@ -211,10 +211,6 @@ export class PluginRuntime {
       this.instances.push(watcher);
     }
 
-    const outputWatcher = createToolOutputWatcher({ api });
-    if (outputWatcher.start) await outputWatcher.start();
-    this.instances.push(outputWatcher);
-
     if (config.statusline.defaultPlugins.transcriptLength.enabled) {
       const transcriptPlugin = createTranscriptLengthPlugin(api, {
         line: config.statusline.defaultPlugins.transcriptLength.line ?? "top",

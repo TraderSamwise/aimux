@@ -40,6 +40,7 @@ export async function requestJson<T = any>(
       {
         method: options.method ?? (bodyString === undefined ? "GET" : "POST"),
         headers,
+        agent: false,
       },
       (res) => {
         const chunks: Buffer[] = [];

@@ -10,6 +10,7 @@ import { requestJson } from "./http-client.js";
 const DAEMON_PORT = 43190;
 const DAEMON_HOST = "127.0.0.1";
 const DAEMON_STARTUP_TIMEOUT_MS = 10_000;
+const PROJECT_SERVICE_STARTUP_GRACE_MS = 15_000;
 
 export interface AimuxDaemonInfo {
   pid: number;
@@ -162,7 +163,28 @@ export async function requestDaemonJson(path: string, init?: RequestInit): Promi
 
 export async function ensureDaemonRunning(): Promise<AimuxDaemonInfo> {
   const existing = loadDaemonInfo();
-  if (existing) return existing;
+  if (existing) {
+    try {
+      await requestDaemonJson("/health");
+      return existing;
+    } catch {
+      clearFile(getDaemonInfoPath());
+    }
+  }
+
+  try {
+    const { status, json } = await requestJson(`http://${DAEMON_HOST}:${DAEMON_PORT}/health`);
+    if (status >= 200 && status < 300 && json?.ok !== false && typeof json?.pid === "number") {
+      const adopted: AimuxDaemonInfo = {
+        pid: json.pid,
+        port: typeof json?.port === "number" ? json.port : DAEMON_PORT,
+        startedAt: loadDaemonInfo()?.startedAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      saveJson(getDaemonInfoPath(), adopted);
+      return adopted;
+    }
+  } catch {}
 
   const child = spawn(process.execPath, [process.argv[1]!, "daemon", "run"], {
     detached: true,
@@ -317,8 +339,23 @@ export class AimuxDaemon {
     const projectId = getProjectIdFor(resolvedRoot);
     const existing = this.state.projects[projectId];
     if (existing && isPidAlive(existing.pid)) {
+      const startedAtMs = Date.parse(existing.startedAt);
+      const withinStartupGrace =
+        Number.isFinite(startedAtMs) && Date.now() - startedAtMs < PROJECT_SERVICE_STARTUP_GRACE_MS;
+      const refreshExisting = (): ProjectServiceState => {
+        const next = {
+          ...existing,
+          updatedAt: new Date().toISOString(),
+        };
+        this.state.projects[projectId] = next;
+        this.refreshState();
+        return next;
+      };
       const endpoint = loadMetadataEndpoint(resolvedRoot);
       if (!endpoint) {
+        if (withinStartupGrace) {
+          return refreshExisting();
+        }
         try {
           process.kill(existing.pid, "SIGTERM");
         } catch {}
@@ -327,11 +364,16 @@ export class AimuxDaemon {
         return this.spawnProjectService(resolvedRoot, projectId);
       }
       try {
-        const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`);
+        const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
+          timeoutMs: 1000,
+        });
         if (status < 200 || status >= 300 || json?.ok === false) {
           throw new Error(json?.error || `health request failed: ${status}`);
         }
       } catch {
+        if (withinStartupGrace) {
+          return refreshExisting();
+        }
         try {
           process.kill(existing.pid, "SIGTERM");
         } catch {}
@@ -339,13 +381,7 @@ export class AimuxDaemon {
         this.refreshState();
         return this.spawnProjectService(resolvedRoot, projectId);
       }
-      const next = {
-        ...existing,
-        updatedAt: new Date().toISOString(),
-      };
-      this.state.projects[projectId] = next;
-      this.refreshState();
-      return next;
+      return refreshExisting();
     }
     return this.spawnProjectService(resolvedRoot, projectId);
   }

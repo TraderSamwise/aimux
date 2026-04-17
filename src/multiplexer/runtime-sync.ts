@@ -64,7 +64,6 @@ export class MultiplexerRuntimeSync {
     if (this.projectServiceInterval) return;
     this.projectServiceInterval = setInterval(() => {
       this.deps.syncSessionsFromState();
-      this.deps.writeStatuslineFile();
     }, 2000);
   }
 

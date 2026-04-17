@@ -545,7 +545,7 @@ export const persistenceMethods = {
       }
     })();
 
-    removalPromise.finally(() => {
+    const finalizeRemoval = () => {
       this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(path), null);
       pendingRemovals.delete(path);
       this.invalidateDesktopStateSnapshot();
@@ -554,7 +554,8 @@ export const persistenceMethods = {
       if (this.mode === "dashboard") {
         this.renderDashboard();
       }
-    });
+    };
+    void removalPromise.then(finalizeRemoval, finalizeRemoval);
 
     return removalPromise;
   },

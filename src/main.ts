@@ -147,7 +147,9 @@ async function fetchProjectServiceHealth(endpoint: { host: string; port: number 
   serviceInfo?: ProjectServiceManifest;
   pid?: number;
 }> {
-  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`);
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
+    timeoutMs: 1000,
+  });
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `health request failed: ${status}`);
   }
@@ -162,7 +164,9 @@ async function waitForVerifiedProjectService(
   health: { serviceInfo?: ProjectServiceManifest; pid?: number };
 }> {
   const expected = getProjectServiceManifest();
-  const deadline = Date.now() + (opts?.timeoutMs ?? 8000);
+  const timeoutMs = opts?.timeoutMs ?? 8000;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
   let lastError = "project service did not become reachable";
   let lastServiceInfo: unknown = null;
   let respawnAttempted = false;
@@ -215,7 +219,13 @@ async function waitForVerifiedProjectService(
     throw new ProjectServiceVersionError(lastError, projectRoot, expected, lastServiceInfo as ProjectServiceManifest);
   }
 
-  throw new Error(`${lastError}${lastServiceInfo ? `; last serviceInfo=${JSON.stringify(lastServiceInfo)}` : ""}`);
+  const elapsedMs = Date.now() - startedAt;
+  const elapsedSeconds = (elapsedMs / 1000).toFixed(1);
+  throw new Error(
+    `project service did not become ready after ${elapsedSeconds}s (budget ${timeoutMs}ms); last error: ${lastError}${
+      lastServiceInfo ? `; last serviceInfo=${JSON.stringify(lastServiceInfo)}` : ""
+    }`,
+  );
 }
 
 function rewriteLocalStatuslineArtifacts(
@@ -270,10 +280,10 @@ function rewriteLocalStatuslineArtifacts(
   tmux.refreshStatus();
 }
 
-async function postProjectServiceJson(path: string, body: unknown): Promise<any> {
+async function postProjectServiceJson(path: string, body: unknown, options?: { timeoutMs?: number }): Promise<any> {
   let endpoint = await resolveProjectServiceEndpoint();
   if (!endpoint) {
-    await ensureProjectService(resolveProjectRoot(process.cwd()));
+    await ensureDaemonProjectReady(resolveProjectRoot(process.cwd()));
     endpoint = await resolveProjectServiceEndpoint();
   }
   if (!endpoint) {
@@ -283,6 +293,7 @@ async function postProjectServiceJson(path: string, body: unknown): Promise<any>
     method: "POST",
     headers: { "content-type": "application/json" },
     body,
+    timeoutMs: options?.timeoutMs,
   });
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `request failed: ${status}`);
@@ -293,7 +304,7 @@ async function postProjectServiceJson(path: string, body: unknown): Promise<any>
 async function getProjectServiceJson(path: string): Promise<any> {
   let endpoint = await resolveProjectServiceEndpoint();
   if (!endpoint) {
-    await ensureProjectService(resolveProjectRoot(process.cwd()));
+    await ensureDaemonProjectReady(resolveProjectRoot(process.cwd()));
     endpoint = await resolveProjectServiceEndpoint();
   }
   if (!endpoint) {
@@ -312,6 +323,10 @@ async function postProjectServiceJsonOrLocal(path: string, body: unknown, fallba
   } catch {
     return fallback();
   }
+}
+
+function exitAfterOpen(): never {
+  process.exit(0);
 }
 
 async function postLiveProjectServiceJsonOrLocal(
@@ -389,7 +404,12 @@ async function ensureDaemonProjectReady(projectRoot: string, opts?: { repairVers
       throw error;
     }
     await restartStaleControlPlane(projectRoot);
-    await waitForVerifiedProjectService(projectRoot);
+    try {
+      await waitForVerifiedProjectService(projectRoot, { timeoutMs: 15_000 });
+    } catch {
+      await ensureProjectService(projectRoot);
+      await waitForVerifiedProjectService(projectRoot, { timeoutMs: 15_000 });
+    }
   }
 }
 
@@ -518,13 +538,13 @@ program
               insideTmux: tmux.isInsideTmux(),
               alreadyResolved: true,
             });
-            return;
+            exitAfterOpen();
           }
         }
-        await ensureDaemonProjectSpawned(projectRoot);
+        await ensureDaemonProjectReady(projectRoot);
         if (!tool && !opts.resume && !opts.restore) {
           openDashboardTarget(projectRoot, tmux);
-          return;
+          exitAfterOpen();
         }
       }
 
@@ -598,18 +618,20 @@ program
     try {
       const originalCwd = process.cwd();
       const projectRoot = resolveProjectRoot(originalCwd);
-      await ensureDaemonProjectSpawned(projectRoot);
+      await ensureDaemonProjectReady(projectRoot);
       invalidateTmuxStatuslineArtifacts(projectRoot);
 
       const tmux = new TmuxRuntimeManager();
       ensureTmuxAvailable(tmux);
       const { dashboardSession, dashboardTarget } = resolveDashboardTarget(projectRoot, tmux, { forceReload: true });
-      await postProjectServiceJson("/statusline/refresh", { force: true });
+      try {
+        await postProjectServiceJson("/statusline/refresh", { force: true }, { timeoutMs: 1500 });
+      } catch {}
       rewriteLocalStatuslineArtifacts(projectRoot, tmux, dashboardSession.sessionName);
 
       if (opts.open) {
         tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
-        return;
+        exitAfterOpen();
       }
 
       console.log(`Reloaded dashboard for ${dashboardSession.sessionName}`);
@@ -694,7 +716,7 @@ program
       const projectRoot = resolveProjectRoot(opts.projectRoot);
       await initPaths(projectRoot);
       const result = await restartProjectRuntime(projectRoot, { open: opts.open });
-      if (opts.open) return;
+      if (opts.open) exitAfterOpen();
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -2288,14 +2310,14 @@ repairCmd
   .action(async (opts: { projectRoot: string; open?: boolean; json?: boolean }) => {
     const projectRoot = resolveProjectRoot(opts.projectRoot);
     await initPaths(projectRoot);
-    await ensureDaemonProjectSpawned(projectRoot);
+    await ensureDaemonProjectReady(projectRoot);
     const tmux = new TmuxRuntimeManager();
     ensureTmuxAvailable(tmux);
     const result = repairTmuxRuntime(tmux, { projectRoot });
     if (opts.open) {
       const { dashboardTarget } = resolveDashboardTarget(projectRoot, tmux);
       tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
-      return;
+      exitAfterOpen();
     }
     if (opts.json) {
       console.log(JSON.stringify(result, null, 2));

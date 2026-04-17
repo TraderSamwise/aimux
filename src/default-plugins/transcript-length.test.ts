@@ -25,7 +25,6 @@ describe("createTranscriptLengthPlugin", () => {
 
   it("resets transcript length after compaction checkpoints", () => {
     const writes: Array<{ session: string; line: "top" | "bottom"; text: string }> = [];
-    const clears: string[] = [];
     const plugin = createTranscriptLengthPlugin(
       {
         projectRoot: repoRoot,
@@ -41,9 +40,7 @@ describe("createTranscriptLengthPlugin", () => {
           setStatuslineSegment: (_session, line, segment) => {
             writes.push({ session: _session, line, text: segment.text });
           },
-          clearStatuslineSegment: (session) => {
-            clears.push(session);
-          },
+          clearStatuslineSegment: () => {},
           setServices: () => {},
           emitEvent: () => {},
           markSeen: () => {},
@@ -75,7 +72,43 @@ describe("createTranscriptLengthPlugin", () => {
     );
 
     vi.advanceTimersByTime(2_100);
-    expect(clears).toContain("codex-1");
+    expect(writes.at(-1)).toEqual({ session: "codex-1", line: "top", text: "0b" });
+    plugin.stop?.();
+  });
+
+  it("renders 0b when a session has no transcript history", () => {
+    const writes: Array<{ session: string; line: "top" | "bottom"; text: string }> = [];
+    const plugin = createTranscriptLengthPlugin(
+      {
+        projectRoot: repoRoot,
+        projectId: "test",
+        serverHost: "127.0.0.1",
+        serverPort: 9999,
+        metadata: {
+          setStatus: () => {},
+          setProgress: () => {},
+          log: () => {},
+          clearLog: () => {},
+          setContext: () => {},
+          setStatuslineSegment: (_session, line, segment) => {
+            writes.push({ session: _session, line, text: segment.text });
+          },
+          clearStatuslineSegment: () => {},
+          setServices: () => {},
+          emitEvent: () => {},
+          markSeen: () => {},
+          setActivity: () => {},
+          setAttention: () => {},
+        },
+        sessions: {
+          list: () => [{ id: "codex-empty" }],
+        },
+      },
+      { line: "top" },
+    );
+
+    plugin.start?.();
+    expect(writes.at(-1)).toEqual({ session: "codex-empty", line: "top", text: "0b" });
     plugin.stop?.();
   });
 });

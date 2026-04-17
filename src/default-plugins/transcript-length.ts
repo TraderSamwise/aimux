@@ -41,7 +41,6 @@ function transcriptBytesSinceCheckpoint(sessionId: string): number {
 
 function buildSegmentText(sessionId: string): string | null {
   const bytes = transcriptBytesSinceCheckpoint(sessionId);
-  if (bytes <= 0) return null;
   return formatBytes(bytes);
 }
 

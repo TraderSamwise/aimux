@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { basename, join } from "node:path";
-import { execSync } from "node:child_process";
+import { execFile, type ExecFileException } from "node:child_process";
 import { getPlansDir, getStatusDir, getTasksDir, getHistoryDir } from "./paths.js";
 import type { AimuxPluginInstance, AimuxPluginAPI } from "./plugin-runtime.js";
 import { debug } from "./debug.js";
 import { readAllTasks } from "./tasks.js";
 import { listSessionIds, readHistory } from "./context/history.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
-import { listWorktrees } from "./worktree.js";
+import { listWorktreesAsync } from "./worktree.js";
 
 function safeRead(path: string): string {
   try {
@@ -70,42 +70,73 @@ class DirectoryWatcher implements AimuxPluginInstance {
 
 class PollingWatcher implements AimuxPluginInstance {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private running = false;
+  private rerunRequested = false;
+  private stopped = false;
 
   constructor(
     private readonly intervalMs: number,
-    private readonly onPoll: () => void,
+    private readonly onPoll: () => void | Promise<void>,
   ) {}
 
   start(): void {
-    this.onPoll();
-    this.timer = setInterval(() => this.onPoll(), this.intervalMs);
+    this.stopped = false;
+    void this.runPoll();
+    this.timer = setInterval(() => void this.runPoll(), this.intervalMs);
     this.timer.unref?.();
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
   }
-}
 
-function gitOutput(cwd: string, command: string): string | null {
-  try {
-    return execSync(command, {
-      cwd,
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return null;
+  private async runPoll(): Promise<void> {
+    if (this.running) {
+      this.rerunRequested = true;
+      return;
+    }
+    this.running = true;
+    try {
+      do {
+        this.rerunRequested = false;
+        await this.onPoll();
+      } while (this.rerunRequested && !this.stopped);
+    } finally {
+      this.running = false;
+    }
   }
 }
 
-function gitBranch(cwd: string): string | undefined {
-  return gitOutput(cwd, "git rev-parse --abbrev-ref HEAD") || undefined;
+function execFileText(cwd: string, command: string, args: string[], timeoutMs = 2_000): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(
+      command,
+      args,
+      {
+        cwd,
+        encoding: "utf8",
+        timeout: timeoutMs,
+        maxBuffer: 1024 * 1024,
+      },
+      (error: ExecFileException | null, stdout: string) => {
+        if (error) {
+          resolve(null);
+          return;
+        }
+        resolve(stdout.trim());
+      },
+    );
+  });
 }
 
-function gitRemote(cwd: string): string | undefined {
-  return gitOutput(cwd, "git remote get-url origin") || undefined;
+async function gitBranch(cwd: string): Promise<string | undefined> {
+  return (await execFileText(cwd, "git", ["rev-parse", "--abbrev-ref", "HEAD"])) || undefined;
+}
+
+async function gitRemote(cwd: string): Promise<string | undefined> {
+  return (await execFileText(cwd, "git", ["remote", "get-url", "origin"])) || undefined;
 }
 
 function parseRemote(remote: string | undefined): { owner?: string; name?: string; remote?: string } {
@@ -119,12 +150,6 @@ function parseRemote(remote: string | undefined): { owner?: string; name?: strin
   };
 }
 
-function worktreeNameFor(path: string, projectRoot: string): string {
-  const worktrees = listWorktrees(projectRoot);
-  const match = worktrees.find((entry) => entry.path === path);
-  return match?.name ?? basename(path);
-}
-
 type PrContext = {
   number?: number;
   title?: string;
@@ -135,15 +160,24 @@ type PrContext = {
 
 const prCache = new Map<string, { expiresAt: number; value: PrContext | null }>();
 
-function ghPr(cwd: string, branch: string | undefined): PrContext | undefined {
+async function ghPr(cwd: string, branch: string | undefined): Promise<PrContext | undefined> {
   if (!branch) return undefined;
   const key = `${cwd}:${branch}`;
   const cached = prCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value ?? undefined;
   let value: PrContext | null = null;
-  const raw = gitOutput(
+  const raw = await execFileText(
     cwd,
-    "gh pr view --json number,title,url,headRefName,baseRefName --jq '{number: .number, title: .title, url: .url, headRef: .headRefName, baseRef: .baseRefName}'",
+    "gh",
+    [
+      "pr",
+      "view",
+      "--json",
+      "number,title,url,headRefName,baseRefName",
+      "--jq",
+      "{number: .number, title: .title, url: .url, headRef: .headRefName, baseRef: .baseRefName}",
+    ],
+    3_000,
   );
   if (raw) {
     try {
@@ -261,30 +295,6 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
     }
   });
 
-  const contextWatcher = new PollingWatcher(15_000, () => {
-    const tmux = new TmuxRuntimeManager();
-    let managed: ReturnType<TmuxRuntimeManager["listManagedWindows"]> = [];
-    try {
-      managed = tmux.listManagedWindows(tmux.getProjectSession(projectRoot).sessionName);
-    } catch {
-      return;
-    }
-    for (const { metadata: windowMeta } of managed) {
-      if (!windowMeta.sessionId) continue;
-      const cwd = windowMeta.worktreePath || projectRoot;
-      const branch = gitBranch(cwd);
-      const remote = gitRemote(cwd);
-      metadata.setContext(windowMeta.sessionId, {
-        cwd,
-        worktreePath: windowMeta.worktreePath || projectRoot,
-        worktreeName: worktreeNameFor(windowMeta.worktreePath || projectRoot, projectRoot),
-        branch,
-        repo: parseRemote(remote),
-        pr: ghPr(cwd, branch),
-      });
-    }
-  });
-
   debug("registered builtin metadata watchers", "plugin");
-  return [planWatcher, statusWatcher, taskWatcher, historyWatcher, contextWatcher];
+  return [planWatcher, statusWatcher, taskWatcher, historyWatcher];
 }

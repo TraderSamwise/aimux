@@ -1,7 +1,12 @@
 import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashboard/index.js";
 import { buildDashboardSessions } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
-import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
+import {
+  loadMetadataEndpoint,
+  loadMetadataState,
+  removeMetadataEndpoint,
+  resolveProjectServiceEndpoint,
+} from "../metadata-store.js";
 import { MetadataServer } from "../metadata-server.js";
 import { PluginRuntime } from "../plugin-runtime.js";
 import { findMainRepo } from "../worktree.js";
@@ -13,6 +18,26 @@ import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 
 type DashboardModelHost = any;
+
+function runProjectServiceUiRefresh(host: DashboardModelHost): void {
+  host.writeStatuslineFile();
+  if (host.mode === "dashboard") {
+    host.renderCurrentDashboardView();
+  }
+}
+
+function scheduleProjectServiceUiRefresh(host: DashboardModelHost): void {
+  if (host.projectServiceStartupMetadataSettling) {
+    host.projectServiceUiRefreshPending = true;
+    return;
+  }
+  if (host.projectServiceUiRefreshTimer) return;
+  host.projectServiceUiRefreshTimer = setTimeout(() => {
+    host.projectServiceUiRefreshTimer = null;
+    runProjectServiceUiRefresh(host);
+  }, 75);
+  host.projectServiceUiRefreshTimer.unref?.();
+}
 
 export function buildDashboardWorktreeGroups(
   _host: DashboardModelHost,
@@ -403,6 +428,8 @@ export function refreshLocalDashboardModel(host: DashboardModelHost): void {
 
 export async function startProjectServices(host: DashboardModelHost): Promise<void> {
   if (host.metadataServer) return;
+  host.projectServiceStartupMetadataSettling = true;
+  host.projectServiceUiRefreshPending = false;
   host.metadataServer = new MetadataServer({
     events: { bus: host.eventBus },
     desktop: {
@@ -450,10 +477,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       readAgentHistory: (input: any) => host.readAgentHistory(input.sessionId, input.lastN),
     },
     onChange: () => {
-      host.writeStatuslineFile();
-      if (host.mode === "dashboard") {
-        host.renderCurrentDashboardView();
-      }
+      scheduleProjectServiceUiRefresh(host);
     },
   });
   await host.metadataServer.start();
@@ -468,20 +492,32 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       },
       host.eventBus,
       () => {
-        host.writeStatuslineFile();
-        if (host.mode === "dashboard") {
-          host.renderCurrentDashboardView();
-        }
+        scheduleProjectServiceUiRefresh(host);
       },
     );
     await host.pluginRuntime.start();
   }
+  host.projectServiceStartupMetadataSettling = false;
+  if (host.projectServiceUiRefreshPending) {
+    host.projectServiceUiRefreshPending = false;
+    runProjectServiceUiRefresh(host);
+  }
 }
 
 export async function stopProjectServices(host: DashboardModelHost): Promise<void> {
-  host.metadataServer?.stop();
+  if (host.projectServiceUiRefreshTimer) {
+    clearTimeout(host.projectServiceUiRefreshTimer);
+    host.projectServiceUiRefreshTimer = null;
+  }
+  host.projectServiceStartupMetadataSettling = false;
+  host.projectServiceUiRefreshPending = false;
+  const ownedMetadataServer = host.metadataServer;
+  ownedMetadataServer?.stop();
   host.metadataServer = null;
-  removeMetadataEndpoint();
+  const endpoint = loadMetadataEndpoint();
+  if (ownedMetadataServer && endpoint?.pid === process.pid) {
+    removeMetadataEndpoint();
+  }
   await host.pluginRuntime?.stop?.();
   host.pluginRuntime = null;
 }

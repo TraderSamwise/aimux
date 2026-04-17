@@ -122,7 +122,7 @@ function loadJson<T>(path: string, fallback: T): T {
 
 function saveJson(path: string, value: unknown): void {
   ensureParent(path);
-  const tmpPath = `${path}.tmp`;
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
   writeFileSync(tmpPath, JSON.stringify(value, null, 2) + "\n");
   renameSync(tmpPath, path);
 }

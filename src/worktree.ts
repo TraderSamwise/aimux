@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFile, execSync, type ExecFileException } from "node:child_process";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import { loadConfig } from "./config.js";
@@ -8,6 +8,63 @@ export interface WorktreeInfo {
   path: string;
   branch: string;
   isBare: boolean;
+}
+
+function execFileText(command: string, args: string[], cwd: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(
+      command,
+      args,
+      {
+        cwd,
+        encoding: "utf8",
+        timeout: 2_000,
+        maxBuffer: 1024 * 1024,
+      },
+      (error: ExecFileException | null, stdout: string) => {
+        if (error) {
+          resolve(null);
+          return;
+        }
+        resolve(stdout.trim());
+      },
+    );
+  });
+}
+
+function parseWorktreeList(output: string): WorktreeInfo[] {
+  const worktrees: WorktreeInfo[] = [];
+  const blocks = output.split("\n\n").filter(Boolean);
+
+  for (const block of blocks) {
+    const lines = block.split("\n");
+    let path = "";
+    let branch = "";
+    let isBare = false;
+
+    for (const line of lines) {
+      if (line.startsWith("worktree ")) {
+        path = line.slice("worktree ".length);
+      } else if (line.startsWith("branch ")) {
+        branch = line.slice("branch ".length).replace(/^refs\/heads\//, "");
+      } else if (line === "bare") {
+        isBare = true;
+      } else if (line.startsWith("HEAD ") || line === "detached") {
+        if (!branch) branch = "(detached)";
+      }
+    }
+
+    if (!path) continue;
+
+    worktrees.push({
+      name: basename(path),
+      path,
+      branch: branch || basename(path),
+      isBare,
+    });
+  }
+
+  return worktrees;
 }
 
 /**
@@ -46,41 +103,14 @@ export function listWorktrees(cwd?: string): WorktreeInfo[] {
   } catch {
     return [];
   }
+  return parseWorktreeList(output);
+}
 
-  const worktrees: WorktreeInfo[] = [];
-  const blocks = output.split("\n\n").filter(Boolean);
-
-  for (const block of blocks) {
-    const lines = block.split("\n");
-    let path = "";
-    let branch = "";
-    let isBare = false;
-
-    for (const line of lines) {
-      if (line.startsWith("worktree ")) {
-        path = line.slice("worktree ".length);
-      } else if (line.startsWith("branch ")) {
-        // "branch refs/heads/feat/foo" → "feat/foo"
-        branch = line.slice("branch ".length).replace(/^refs\/heads\//, "");
-      } else if (line === "bare") {
-        isBare = true;
-      } else if (line.startsWith("HEAD ") || line === "detached") {
-        // detached HEAD — use short hash as name
-        if (!branch) branch = "(detached)";
-      }
-    }
-
-    if (!path) continue;
-
-    worktrees.push({
-      name: basename(path),
-      path,
-      branch: branch || basename(path),
-      isBare,
-    });
-  }
-
-  return worktrees;
+export async function listWorktreesAsync(cwd?: string): Promise<WorktreeInfo[]> {
+  const effectiveCwd = cwd ?? process.cwd();
+  const output = await execFileText("git", ["worktree", "list", "--porcelain"], effectiveCwd);
+  if (!output) return [];
+  return parseWorktreeList(output);
 }
 
 /**
