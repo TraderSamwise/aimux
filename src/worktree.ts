@@ -1,6 +1,6 @@
 import { execFile, execSync, type ExecFileException } from "node:child_process";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { loadConfig } from "./config.js";
 
 export interface WorktreeInfo {
@@ -103,14 +103,14 @@ export function listWorktrees(cwd?: string): WorktreeInfo[] {
   } catch {
     return [];
   }
-  return parseWorktreeList(output);
+  return parseWorktreeList(output).filter((worktree) => worktree.isBare || existsSync(worktree.path));
 }
 
 export async function listWorktreesAsync(cwd?: string): Promise<WorktreeInfo[]> {
   const effectiveCwd = cwd ?? process.cwd();
   const output = await execFileText("git", ["worktree", "list", "--porcelain"], effectiveCwd);
   if (!output) return [];
-  return parseWorktreeList(output);
+  return parseWorktreeList(output).filter((worktree) => worktree.isBare || existsSync(worktree.path));
 }
 
 /**

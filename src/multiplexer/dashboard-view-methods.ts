@@ -236,6 +236,7 @@ export const dashboardViewMethods = {
 
   dismissDashboardError(this: any): void {
     this.dashboardFeedback.dismissError();
+    this.restoreDashboardAfterOverlayDismiss();
   },
 
   beginWorktreeRemoval(this: any, path: string, name: string, oldIdx: number): void {

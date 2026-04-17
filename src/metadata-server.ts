@@ -1697,9 +1697,35 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree create not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.createWorktree(body);
+        const resultPromise = Promise.resolve(this.options.desktop.createWorktree(body));
+        const earlyResult:
+          | { kind: "resolved"; result: any }
+          | { kind: "rejected"; error: unknown }
+          | { kind: "pending" } = await Promise.race([
+          resultPromise.then(
+            (result) => ({ kind: "resolved" as const, result }),
+            (error) => ({ kind: "rejected" as const, error }),
+          ),
+          new Promise<{ kind: "pending" }>((resolve) => {
+            setTimeout(() => resolve({ kind: "pending" }), 50);
+          }),
+        ]);
+        if (earlyResult.kind === "resolved") {
+          this.options.onChange?.();
+          send(res, 200, { ok: true, ...earlyResult.result });
+          return;
+        }
+        if (earlyResult.kind === "rejected") {
+          const message = earlyResult.error instanceof Error ? earlyResult.error.message : String(earlyResult.error);
+          send(res, 500, { ok: false, error: message });
+          return;
+        }
         this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        void resultPromise.then(
+          () => this.options.onChange?.(),
+          () => this.options.onChange?.(),
+        );
+        send(res, 202, { ok: true, path: body.name, status: "creating" });
         return;
       }
 
@@ -1709,9 +1735,35 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "worktree remove not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.removeWorktree(body);
+        const resultPromise = Promise.resolve(this.options.desktop.removeWorktree(body));
+        const earlyResult:
+          | { kind: "resolved"; result: any }
+          | { kind: "rejected"; error: unknown }
+          | { kind: "pending" } = await Promise.race([
+          resultPromise.then(
+            (result) => ({ kind: "resolved" as const, result }),
+            (error) => ({ kind: "rejected" as const, error }),
+          ),
+          new Promise<{ kind: "pending" }>((resolve) => {
+            setTimeout(() => resolve({ kind: "pending" }), 50);
+          }),
+        ]);
+        if (earlyResult.kind === "resolved") {
+          this.options.onChange?.();
+          send(res, 200, { ok: true, ...earlyResult.result });
+          return;
+        }
+        if (earlyResult.kind === "rejected") {
+          const message = earlyResult.error instanceof Error ? earlyResult.error.message : String(earlyResult.error);
+          send(res, 500, { ok: false, error: message });
+          return;
+        }
         this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        void resultPromise.then(
+          () => this.options.onChange?.(),
+          () => this.options.onChange?.(),
+        );
+        send(res, 202, { ok: true, path: body.path, status: "removing" });
         return;
       }
 

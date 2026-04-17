@@ -50,6 +50,7 @@ export function buildDashboardWorktreeGroups(
     isBare: boolean;
     pending?: boolean;
     removing?: boolean;
+    pendingAction?: "creating";
   }>,
   mainRepoPath?: string,
 ): WorktreeGroup[] {
@@ -64,6 +65,7 @@ export function buildDashboardWorktreeGroups(
         path: wt.path,
         pending: wt.pending,
         removing: wt.removing,
+        pendingAction: wt.pendingAction,
         status: (wtSessions.length > 0 || wtServices.length > 0 ? "active" : "offline") as "active" | "offline",
         sessions: wtSessions,
         services: wtServices,
@@ -376,7 +378,15 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
               ok?: boolean;
               sessions?: DashboardSession[];
               services?: DashboardService[];
-              worktrees?: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+              worktrees?: Array<{
+                name: string;
+                path: string;
+                branch: string;
+                isBare: boolean;
+                pending?: boolean;
+                removing?: boolean;
+                pendingAction?: "creating";
+              }>;
               mainCheckoutInfo?: { name: string; branch: string };
               mainCheckoutPath?: string;
             };

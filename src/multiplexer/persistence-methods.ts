@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "../debug.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
@@ -11,7 +11,12 @@ import { loadMetadataState } from "../metadata-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
-import { findMainRepo, getWorktreeCreatePath, listWorktrees as listAllWorktrees } from "../worktree.js";
+import {
+  findMainRepo,
+  getWorktreeBaseDir,
+  getWorktreeCreatePath,
+  listWorktrees as listAllWorktrees,
+} from "../worktree.js";
 
 export const persistenceMethods = {
   writeSessionsFile(this: any): void {
@@ -292,10 +297,6 @@ export const persistenceMethods = {
         removing: pendingRemovals?.has(wt.path) ?? false,
       }));
     if (pendingCreates?.size) {
-      let mainRepo: string | undefined;
-      try {
-        mainRepo = findMainRepo();
-      } catch {}
       for (const path of pendingCreates.keys()) {
         if (worktrees.some((wt) => wt.path === path)) continue;
         worktrees.push({
@@ -307,13 +308,8 @@ export const persistenceMethods = {
           pendingAction: "creating",
         });
       }
-      worktrees.sort((a, b) => {
-        const aMain = a.path === mainRepo;
-        const bMain = b.path === mainRepo;
-        if (aMain !== bMain) return aMain ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
     }
+    sortDesktopWorktrees(worktrees);
     return worktrees;
   },
 
@@ -364,14 +360,19 @@ export const persistenceMethods = {
     void (async () => {
       try {
         const mainRepo = findMainRepo();
+        const branchExists = branchExistsInRepo(mainRepo, name);
         await new Promise<void>((resolve, reject) => {
           let stderr = "";
           let child;
           try {
-            child = spawn("git", ["worktree", "add", targetPath, "-b", name], {
-              cwd: mainRepo,
-              stdio: ["ignore", "ignore", "pipe"],
-            });
+            child = spawn(
+              "git",
+              branchExists ? ["worktree", "add", targetPath, name] : ["worktree", "add", targetPath, "-b", name],
+              {
+                cwd: mainRepo,
+                stdio: ["ignore", "ignore", "pipe"],
+              },
+            );
           } catch (error) {
             reject(error);
             return;
@@ -398,18 +399,10 @@ export const persistenceMethods = {
         resolveCreate({ path: targetPath, status: "created" });
       } catch (error) {
         rejectCreate(error);
-      } finally {
-        pendingCreates.delete(targetPath);
-        this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), null);
-        this.worktreeCreateJob = null;
-        this.invalidateDesktopStateSnapshot();
-        this.refreshLocalDashboardModel();
-        this.metadataServer?.notifyChange?.();
-        if (this.mode === "dashboard") {
-          this.renderDashboard();
-        }
       }
-    })()
+    })();
+
+    void createPromise
       .then(() => {
         this.footerFlash = `Created: ${name}`;
         this.footerFlashTicks = 3;
@@ -422,6 +415,19 @@ export const persistenceMethods = {
           this.showDashboardError(`Failed to create "${name}"`, [`Path: ${targetPath}`, `Error: ${message}`]);
         }
       });
+
+    const finalizeCreate = () => {
+      pendingCreates.delete(targetPath);
+      this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), null);
+      this.worktreeCreateJob = null;
+      this.invalidateDesktopStateSnapshot();
+      this.refreshLocalDashboardModel();
+      this.metadataServer?.notifyChange?.();
+      if (this.mode === "dashboard") {
+        this.renderDashboard();
+      }
+    };
+    void createPromise.then(finalizeCreate, finalizeCreate);
 
     return { path: targetPath, status: "creating" };
   },
@@ -470,12 +476,17 @@ export const persistenceMethods = {
           throw new Error("Cannot remove the main checkout");
         }
 
+        if (!existsSync(path)) {
+          await removeOrphanedDesktopWorktree(this, mainRepo, path);
+          resolveRemoval({ path, status: "removed" });
+          return;
+        }
+
         const matching = this.listDesktopWorktrees().find((worktree: any) => worktree.path === path);
         if (!matching) {
-          if (!existsSync(path)) {
-            this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
-            this.offlineServices = this.offlineServices.filter((service: any) => service.worktreePath !== path);
-            this.saveState();
+          const worktreeBaseDir = getWorktreeBaseDir();
+          if (path.startsWith(`${worktreeBaseDir}/`) || path === worktreeBaseDir) {
+            await removeOrphanedDesktopWorktree(this, mainRepo, path);
             resolveRemoval({ path, status: "removed" });
             return;
           }
@@ -616,3 +627,59 @@ export const persistenceMethods = {
 };
 
 export type PersistenceMethods = typeof persistenceMethods;
+
+async function pruneGitWorktrees(mainRepo: string): Promise<void> {
+  try {
+    const child = spawn("git", ["worktree", "prune"], {
+      cwd: mainRepo,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    await new Promise<void>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", () => resolve());
+    });
+  } catch {}
+}
+
+function branchExistsInRepo(mainRepo: string, branch: string): boolean {
+  try {
+    execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+      cwd: mainRepo,
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sortDesktopWorktrees(
+  worktrees: Array<{
+    name: string;
+    path: string;
+    branch: string;
+    isBare: boolean;
+  }>,
+): void {
+  let mainRepo: string | undefined;
+  try {
+    mainRepo = findMainRepo();
+  } catch {}
+  worktrees.sort((a, b) => {
+    const aMain = a.path === mainRepo;
+    const bMain = b.path === mainRepo;
+    if (aMain !== bMain) return aMain ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+async function removeOrphanedDesktopWorktree(host: any, mainRepo: string, path: string): Promise<void> {
+  await pruneGitWorktrees(mainRepo);
+  if (existsSync(path)) {
+    rmSync(path, { recursive: true, force: true });
+  }
+  await pruneGitWorktrees(mainRepo);
+  host.offlineSessions = host.offlineSessions.filter((session: any) => session.worktreePath !== path);
+  host.offlineServices = host.offlineServices.filter((service: any) => service.worktreePath !== path);
+  host.saveState();
+}
