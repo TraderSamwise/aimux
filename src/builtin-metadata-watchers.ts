@@ -1,13 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { basename, join } from "node:path";
-import { execFile, type ExecFileException } from "node:child_process";
 import { getPlansDir, getStatusDir, getTasksDir, getHistoryDir } from "./paths.js";
 import type { AimuxPluginInstance, AimuxPluginAPI } from "./plugin-runtime.js";
 import { debug } from "./debug.js";
 import { readAllTasks } from "./tasks.js";
 import { listSessionIds, readHistory } from "./context/history.js";
-import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
-import { listWorktreesAsync } from "./worktree.js";
 
 function safeRead(path: string): string {
   try {
@@ -68,128 +65,8 @@ class DirectoryWatcher implements AimuxPluginInstance {
   }
 }
 
-class PollingWatcher implements AimuxPluginInstance {
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private running = false;
-  private rerunRequested = false;
-  private stopped = false;
-
-  constructor(
-    private readonly intervalMs: number,
-    private readonly onPoll: () => void | Promise<void>,
-  ) {}
-
-  start(): void {
-    this.stopped = false;
-    void this.runPoll();
-    this.timer = setInterval(() => void this.runPoll(), this.intervalMs);
-    this.timer.unref?.();
-  }
-
-  async stop(): Promise<void> {
-    this.stopped = true;
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-  }
-
-  private async runPoll(): Promise<void> {
-    if (this.running) {
-      this.rerunRequested = true;
-      return;
-    }
-    this.running = true;
-    try {
-      do {
-        this.rerunRequested = false;
-        await this.onPoll();
-      } while (this.rerunRequested && !this.stopped);
-    } finally {
-      this.running = false;
-    }
-  }
-}
-
-function execFileText(cwd: string, command: string, args: string[], timeoutMs = 2_000): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(
-      command,
-      args,
-      {
-        cwd,
-        encoding: "utf8",
-        timeout: timeoutMs,
-        maxBuffer: 1024 * 1024,
-      },
-      (error: ExecFileException | null, stdout: string) => {
-        if (error) {
-          resolve(null);
-          return;
-        }
-        resolve(stdout.trim());
-      },
-    );
-  });
-}
-
-async function gitBranch(cwd: string): Promise<string | undefined> {
-  return (await execFileText(cwd, "git", ["rev-parse", "--abbrev-ref", "HEAD"])) || undefined;
-}
-
-async function gitRemote(cwd: string): Promise<string | undefined> {
-  return (await execFileText(cwd, "git", ["remote", "get-url", "origin"])) || undefined;
-}
-
-function parseRemote(remote: string | undefined): { owner?: string; name?: string; remote?: string } {
-  if (!remote) return {};
-  const match = remote.match(/github\.com[:/](.+?)\/(.+?)(?:\.git)?$/);
-  if (!match) return { remote };
-  return {
-    owner: match[1],
-    name: match[2],
-    remote,
-  };
-}
-
-type PrContext = {
-  number?: number;
-  title?: string;
-  url?: string;
-  headRef?: string;
-  baseRef?: string;
-};
-
-const prCache = new Map<string, { expiresAt: number; value: PrContext | null }>();
-
-async function ghPr(cwd: string, branch: string | undefined): Promise<PrContext | undefined> {
-  if (!branch) return undefined;
-  const key = `${cwd}:${branch}`;
-  const cached = prCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.value ?? undefined;
-  let value: PrContext | null = null;
-  const raw = await execFileText(
-    cwd,
-    "gh",
-    [
-      "pr",
-      "view",
-      "--json",
-      "number,title,url,headRefName,baseRefName",
-      "--jq",
-      "{number: .number, title: .title, url: .url, headRef: .headRefName, baseRef: .baseRefName}",
-    ],
-    3_000,
-  );
-  if (raw) {
-    try {
-      value = JSON.parse(raw) as PrContext;
-    } catch {}
-  }
-  prCache.set(key, { value, expiresAt: Date.now() + 60_000 });
-  return value ?? undefined;
-}
-
 export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginInstance[] {
-  const { metadata, projectRoot } = api;
+  const { metadata } = api;
   const lastStatusBySession = new Map<string, string>();
   const lastTaskBySession = new Map<string, string>();
   const lastHistoryBySession = new Map<string, string>();

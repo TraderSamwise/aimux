@@ -17,7 +17,6 @@ import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import { type AlertKind, type ProjectEventBus } from "./project-events.js";
-import { createToolOutputWatcher } from "./tool-output-watchers.js";
 import { loadConfig } from "./config.js";
 import { createTranscriptLengthPlugin } from "./default-plugins/transcript-length.js";
 

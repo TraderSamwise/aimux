@@ -461,7 +461,7 @@ export async function migrateAgent(
   await waitForExit().catch(() => {});
 
   if (!toolCfg?.preambleFlag) {
-    const transport = createSession(
+    createSession(
       host,
       session.command,
       originalArgs,

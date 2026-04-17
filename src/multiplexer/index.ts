@@ -4,7 +4,6 @@ import { Dashboard, type DashboardService, type DashboardSession, type WorktreeG
 import { DashboardState } from "../dashboard/state.js";
 import { ContextWatcher } from "../context/context-bridge.js";
 import { loadConfig } from "../config.js";
-import { debug } from "../debug.js";
 import { findMainRepo } from "../worktree.js";
 import { TaskDispatcher } from "../task-dispatcher.js";
 import { TerminalHost } from "../terminal-host.js";
