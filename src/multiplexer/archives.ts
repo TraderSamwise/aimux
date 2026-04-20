@@ -65,7 +65,7 @@ export function handleGraveyardKey(host: ArchivesHost, data: Buffer): void {
     return;
   }
 
-  if (key === "down" || key === "j" || key === "n") {
+  if (key === "down" || key === "j") {
     if (host.graveyardEntries.length > 1) {
       host.graveyardIndex = (host.graveyardIndex + 1) % host.graveyardEntries.length;
       renderGraveyard(host);
@@ -239,7 +239,7 @@ export function handlePlansKey(host: ArchivesHost, data: Buffer): void {
     return;
   }
 
-  if (key === "down" || key === "j" || key === "n") {
+  if (key === "down" || key === "j") {
     if (host.planEntries.length > 1) {
       host.planIndex = (host.planIndex + 1) % host.planEntries.length;
       renderPlans(host);

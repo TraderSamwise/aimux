@@ -20,11 +20,18 @@ import {
 } from "../workflow.js";
 import {
   renderActivityScreen,
+  renderNotificationsScreen,
   renderThreadDetails,
   renderThreadsScreen,
   renderWorkflowDetails,
   renderWorkflowScreen,
 } from "../tui/screens/subscreen-renderers.js";
+import {
+  handleNotificationsKey as handleNotificationsKeyImpl,
+  notificationTargetLabel as notificationTargetLabelImpl,
+  renderNotifications as renderNotificationsImpl,
+  showNotifications as showNotificationsImpl,
+} from "./notifications.js";
 import { navigationUrgencyScore } from "../fast-control.js";
 
 type SubscreenHost = any;
@@ -64,6 +71,18 @@ export function showActivityDashboard(host: SubscreenHost): void {
   host.setDashboardScreen("activity");
   host.writeStatuslineFile();
   renderActivityDashboard(host);
+}
+
+export function showNotifications(host: SubscreenHost): void {
+  showNotificationsImpl(host);
+}
+
+export function renderNotifications(host: SubscreenHost): void {
+  renderNotificationsImpl(host);
+}
+
+export function notificationTargetLabel(host: SubscreenHost, sessionId?: string): string | null {
+  return notificationTargetLabelImpl(host, sessionId);
 }
 
 export function buildWorkflowEntriesForHost(host: SubscreenHost): WorkflowEntry[] {
@@ -182,7 +201,7 @@ export function handleWorkflowKey(host: SubscreenHost, data: Buffer): void {
     }
     return;
   }
-  if (key === "down" || key === "j" || key === "n") {
+  if (key === "down" || key === "j") {
     if (host.workflowEntries.length > 1) {
       host.workflowIndex = (host.workflowIndex + 1) % host.workflowEntries.length;
       renderWorkflow(host);
@@ -251,7 +270,7 @@ export function handleActivityKey(host: SubscreenHost, data: Buffer): void {
     void activateNextAttentionEntry(host);
     return;
   }
-  if (key === "down" || key === "j" || key === "n") {
+  if (key === "down" || key === "j") {
     if (host.activityEntries.length > 1) {
       host.activityIndex = (host.activityIndex + 1) % host.activityEntries.length;
       renderActivityDashboard(host);
@@ -414,7 +433,7 @@ export function handleThreadsKey(host: SubscreenHost, data: Buffer): void {
     if (entry) void runThreadStatusAction(host, entry.thread.id, "done");
     return;
   }
-  if (key === "down" || key === "j" || key === "n") {
+  if (key === "down" || key === "j") {
     if (host.threadEntries.length > 1) {
       host.threadIndex = (host.threadIndex + 1) % host.threadEntries.length;
       renderThreads(host);
@@ -446,6 +465,10 @@ export function handleThreadsKey(host: SubscreenHost, data: Buffer): void {
       if (dashEntry) void host.activateDashboardEntry(dashEntry);
     }
   }
+}
+
+export function handleNotificationsKey(host: SubscreenHost, data: Buffer): void {
+  handleNotificationsKeyImpl(host, data);
 }
 
 export function renderThreadReply(host: SubscreenHost): void {

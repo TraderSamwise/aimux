@@ -257,7 +257,7 @@ export const dashboardInteractionMethods = {
         this.showGraveyard();
         return;
       case "i":
-        this.showNotificationPanel();
+        this.showNotifications();
         return;
       case "y":
         this.showWorkflow();
@@ -381,7 +381,6 @@ export const dashboardInteractionMethods = {
       switch (key) {
         case "down":
         case "j":
-        case "n":
           if (totalCount > 1) {
             this.activeIndex = (this.activeIndex + 1) % totalCount;
             this.renderDashboard();
@@ -437,8 +436,7 @@ export const dashboardInteractionMethods = {
     if (this.dashboardState.level === "worktrees") {
       switch (key) {
         case "down":
-        case "j":
-        case "n": {
+        case "j": {
           const curIdx = this.dashboardState.worktreeNavOrder.indexOf(this.dashboardState.focusedWorktreePath);
           this.dashboardState.focusedWorktreePath =
             this.dashboardState.worktreeNavOrder[(curIdx + 1) % this.dashboardState.worktreeNavOrder.length];
@@ -476,7 +474,6 @@ export const dashboardInteractionMethods = {
       switch (key) {
         case "down":
         case "j":
-        case "n":
           if (this.dashboardState.worktreeEntries.length > 1) {
             this.dashboardState.sessionIndex =
               (this.dashboardState.sessionIndex + 1) % this.dashboardState.worktreeEntries.length;

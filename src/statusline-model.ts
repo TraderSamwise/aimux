@@ -68,7 +68,15 @@ export interface StatuslineMetadataEntry {
 
 export interface StatuslineData {
   project?: string;
-  dashboardScreen?: "dashboard" | "plans" | "graveyard" | "activity" | "threads" | "workflow" | "help";
+  dashboardScreen?:
+    | "dashboard"
+    | "plans"
+    | "graveyard"
+    | "activity"
+    | "threads"
+    | "notifications"
+    | "workflow"
+    | "help";
   sessions?: StatuslineSession[];
   metadata?: Record<string, StatuslineMetadataEntry>;
   controlPlane?: {
@@ -149,6 +157,7 @@ export function renderDashboardScreens(activeScreen: StatuslineData["dashboardSc
   const screens: Array<{ key: StatuslineData["dashboardScreen"]; label: string }> = [
     { key: "dashboard", label: "dashboard" },
     { key: "activity", label: "activity" },
+    { key: "notifications", label: "inbox" },
     { key: "threads", label: "threads" },
     { key: "workflow", label: "workflow" },
     { key: "plans", label: "plans" },

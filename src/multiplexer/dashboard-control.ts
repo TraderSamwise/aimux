@@ -250,6 +250,14 @@ export function handleDashboardSubscreenNavigationKey(
     }
     return true;
   }
+  if (key === "i") {
+    if (currentScreen === "notifications") {
+      host.renderNotifications();
+    } else {
+      host.showNotifications();
+    }
+    return true;
+  }
   if (key === "y") {
     if (currentScreen === "workflow") {
       host.renderWorkflow();
@@ -272,10 +280,6 @@ export function handleDashboardSubscreenNavigationKey(
     } else {
       host.showGraveyard();
     }
-    return true;
-  }
-  if (key === "i") {
-    host.showNotificationPanel();
     return true;
   }
   return false;

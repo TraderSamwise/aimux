@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
-import { getProjectId, getProjectStateDir } from "./paths.js";
+import { readFileSync, writeFileSync } from "node:fs";
+import { getDashboardUiStatePath, getProjectId, getProjectStateDir } from "./paths.js";
 import {
   type MetadataTone,
   updateSessionMetadata,
@@ -97,6 +98,11 @@ interface MetadataServerOptions {
     removeService?: (input: {
       serviceId: string;
     }) => Promise<{ serviceId: string; status: "removed" }> | { serviceId: string; status: "removed" };
+    resumeAgent?: (input: {
+      sessionId: string;
+    }) =>
+      | Promise<{ sessionId: string; status: "running" | "offline" }>
+      | { sessionId: string; status: "running" | "offline" };
     listGraveyard?: () => unknown[];
     resurrectGraveyard?: (input: { sessionId: string }) =>
       | Promise<{ sessionId: string; status: "offline" }>
@@ -256,6 +262,18 @@ interface MetadataServerOptions {
       | Promise<{ sessionId: string; messages: unknown[]; lastN?: number }>
       | { sessionId: string; messages: unknown[]; lastN?: number };
   };
+}
+
+function persistDashboardScreenPreference(screen: "dashboard" | "notifications"): void {
+  try {
+    const path = getDashboardUiStatePath();
+    const raw = readFileSync(path, "utf-8");
+    const snapshot = JSON.parse(raw) as Record<string, unknown>;
+    snapshot.screen = screen;
+    writeFileSync(path, JSON.stringify(snapshot, null, 2) + "\n");
+  } catch {
+    writeFileSync(getDashboardUiStatePath(), JSON.stringify({ screen }, null, 2) + "\n");
+  }
 }
 
 function markTargetUsed(
@@ -844,6 +862,127 @@ export class MetadataServer {
         }
         openTargetForClient(tmux, target, currentClientSession, clientTty);
         send(res, 200, { ok: true });
+        return;
+      }
+
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/open-inbox") {
+        const body =
+          req.method === "POST"
+            ? ((await readJson(req)) as {
+                currentClientSession?: string;
+                clientTty?: string;
+              })
+            : {};
+        const currentClientSession =
+          body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
+        const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        if (!currentClientSession) {
+          send(res, 400, { ok: false, error: "currentClientSession is required" });
+          return;
+        }
+        persistDashboardScreenPreference("notifications");
+        const tmux = new TmuxRuntimeManager();
+        const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
+        const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
+        const openSessionName = tmux.hasSession(currentClientSession)
+          ? currentClientSession
+          : tmux.getOpenSessionName(dashboardSession.sessionName);
+        const target = tmux.ensureDashboardWindow(openSessionName, process.cwd(), dashboardCommand);
+        const currentBuildStamp = tmux.getWindowOption(target, "@aimux-dashboard-build");
+        if (!tmux.isWindowAlive(target) || currentBuildStamp !== dashboardBuildStamp) {
+          tmux.respawnWindow(target, dashboardCommand);
+          tmux.setWindowOption(target, "@aimux-dashboard-build", dashboardBuildStamp);
+        }
+        openTargetForClient(tmux, target, currentClientSession, clientTty);
+        send(res, 200, { ok: true });
+        return;
+      }
+
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/open-notification-target") {
+        const body =
+          req.method === "POST"
+            ? ((await readJson(req)) as {
+                sessionId?: string;
+                currentClientSession?: string;
+                clientTty?: string;
+              })
+            : {};
+        const sessionId = body.sessionId?.trim() || url.searchParams.get("sessionId")?.trim() || undefined;
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        if (!this.options.desktop?.getState) {
+          send(res, 501, { ok: false, error: "desktop state not supported by this service" });
+          return;
+        }
+        const currentClientSession =
+          body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
+        const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        const desktop = this.options.desktop.getState() as { sessions?: any[]; services?: any[] };
+        const session = (desktop.sessions ?? []).find((entry) => entry.id === sessionId);
+        const service = (desktop.services ?? []).find((entry) => entry.id === sessionId);
+        const tmux = new TmuxRuntimeManager();
+
+        const openWindowId = (windowId: string, itemId?: string) => {
+          const sessionName = currentClientSession || tmux.getProjectSession(process.cwd()).sessionName;
+          const target =
+            tmux.getTargetByWindowId(sessionName, windowId) ??
+            tmux.getTargetByWindowId(tmux.getProjectSession(process.cwd()).sessionName, windowId);
+          if (!target) {
+            send(res, 404, { ok: false, error: "window not found" });
+            return;
+          }
+          openTargetForClient(tmux, target, currentClientSession, clientTty);
+          markTargetUsed(tmux, process.cwd(), target, currentClientSession, itemId);
+          send(res, 200, { ok: true });
+        };
+
+        if (session?.tmuxWindowId) {
+          openWindowId(session.tmuxWindowId, session.id);
+          return;
+        }
+        if (service?.tmuxWindowId) {
+          openWindowId(service.tmuxWindowId, service.id);
+          return;
+        }
+        if (service && service.status !== "running") {
+          if (!this.options.desktop.resumeService) {
+            send(res, 409, { ok: false, error: "service is offline" });
+            return;
+          }
+          await this.options.desktop.resumeService({ serviceId: service.id });
+          const match = tmux.findManagedWindow(tmux.getProjectSession(process.cwd()).sessionName, {
+            sessionId: service.id,
+          });
+          if (!match) {
+            send(res, 404, { ok: false, error: "service window not found after resume" });
+            return;
+          }
+          openTargetForClient(tmux, match.target, currentClientSession, clientTty);
+          markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, service.id);
+          send(res, 200, { ok: true });
+          return;
+        }
+        if (session && session.status === "offline") {
+          if (!this.options.desktop.resumeAgent) {
+            send(res, 409, { ok: false, error: "agent is offline" });
+            return;
+          }
+          await this.options.desktop.resumeAgent({ sessionId: session.id });
+          const match = tmux.findManagedWindow(tmux.getProjectSession(process.cwd()).sessionName, {
+            sessionId: session.id,
+          });
+          if (!match) {
+            send(res, 404, { ok: false, error: "agent window not found after resume" });
+            return;
+          }
+          openTargetForClient(tmux, match.target, currentClientSession, clientTty);
+          markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, session.id);
+          send(res, 200, { ok: true });
+          return;
+        }
+        send(res, 404, { ok: false, error: "notification target is no longer available" });
         return;
       }
 

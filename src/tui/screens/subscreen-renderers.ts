@@ -1,3 +1,5 @@
+import { formatRelativeRecency } from "../../recency.js";
+
 export function renderWorkflowScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header: string[] = [];
@@ -8,7 +10,7 @@ export function renderWorkflowScreen(ctx: any): void {
   header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
   header.push("");
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [f] filter  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a] accept  [b] block  [c/x] complete  [P] approve  [J] changes  [E] reopen  [Enter] thread  [Esc] dashboard  [q] quit",
+    "[↑↓] select  [f] filter  [Tab] details  [d/a/n/y/t/p/g] screens  [s] reply  [a] accept  [b] block  [c/x] complete  [P] approve  [J] changes  [E] reopen  [Enter] thread  [Esc] dashboard  [q] quit",
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -100,7 +102,7 @@ export function renderActivityScreen(ctx: any): void {
   header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
   header.push("");
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
+    "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [1-9/Enter] focus  [u] next attention  [Esc] dashboard  [q] quit",
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -160,7 +162,7 @@ export function renderThreadsScreen(ctx: any): void {
   header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
   header.push("");
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [s] reply  [a] accept  [c] complete  [b/o/x] state  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
+    "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [s] reply  [a] accept  [c] complete  [b/o/x] state  [Enter] jump  [r] refresh  [Esc] dashboard  [q] quit",
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -252,6 +254,88 @@ export function renderThreadDetails(ctx: any, width: number, height: number): st
   return lines.slice(0, height);
 }
 
+export function renderNotificationsScreen(ctx: any): void {
+  const { cols, rows } = ctx.getViewportSize();
+  const header: string[] = [];
+  header.push("");
+  header.push(ctx.centerInWidth("\x1b[1maimux\x1b[0m — inbox", cols));
+  header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
+  header.push("");
+  const footer = ctx.centerInWidth(
+    "[↑↓] select  [Tab] details  [d/a/i/y/t/p/g] screens  [Enter] jump  [r] read  [R] read all  [c] clear  [C] clear all  [Esc] dashboard  [q] quit",
+    cols,
+  );
+  const viewportHeight = rows - header.length - 2;
+  const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
+  const listLines: string[] = [];
+
+  if (ctx.notificationEntries.length === 0) {
+    listLines.push("  Inbox");
+    listLines.push("    No unread or recent inbox items.");
+  } else {
+    listLines.push("  Inbox");
+    for (let i = 0; i < ctx.notificationEntries.length; i++) {
+      const entry = ctx.notificationEntries[i]!;
+      const selected = i === ctx.notificationIndex;
+      const marker = selected ? "\x1b[33m▸\x1b[0m " : "  ";
+      const state = entry.unread ? "\x1b[36munread\x1b[0m" : "\x1b[2mread\x1b[0m";
+      const target = entry.sessionId ? ctx.notificationTargetLabel(entry.sessionId) : null;
+      const targetState = entry.sessionId ? ctx.notificationTargetState(entry.sessionId) : "none";
+      const targetStateLabel =
+        targetState === "live"
+          ? "\x1b[32mlive\x1b[0m"
+          : targetState === "offline"
+            ? "\x1b[33moffline\x1b[0m"
+            : targetState === "missing"
+              ? "\x1b[31mmissing\x1b[0m"
+              : "";
+      const targetHint = target ? ` \x1b[2m· ${ctx.truncatePlain(target, 24)}\x1b[0m` : "";
+      const kind = entry.kind ? ` \x1b[2m(${entry.kind})\x1b[0m` : "";
+      const when = ` \x1b[2m· ${formatRelativeRecency(entry.createdAt)}\x1b[0m`;
+      listLines.push(
+        `${marker}[${i + 1}] ${ctx.truncatePlain(entry.title, 44)}${kind} — ${state}${targetStateLabel ? ` · ${targetStateLabel}` : ""}${targetHint}${when}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+      );
+    }
+  }
+
+  const focusLine = ctx.notificationEntries.length === 0 ? 1 : ctx.notificationIndex + 1;
+  const body = ctx.composeSplitScreen(
+    listLines,
+    renderNotificationDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
+    cols,
+    viewportHeight,
+    focusLine,
+    twoPane,
+  );
+  ctx.writeFrame(
+    "\x1b[2J\x1b[H" +
+      [...header, ...body, ctx.centerInWidth("─".repeat(Math.min(cols - 4, 72)), cols), footer].join("\r\n"),
+  );
+}
+
+export function renderNotificationDetails(ctx: any, width: number, height: number): string[] {
+  const entry = ctx.notificationEntries[ctx.notificationIndex];
+  if (!entry) return new Array(height).fill("");
+  const lines: string[] = [];
+  lines.push("\x1b[1mDetails\x1b[0m");
+  lines.push(...ctx.wrapKeyValue("Title", entry.title, width));
+  if (entry.subtitle) lines.push(...ctx.wrapKeyValue("Subtitle", entry.subtitle, width));
+  lines.push(...ctx.wrapKeyValue("State", entry.unread ? "unread" : "read", width));
+  lines.push(...ctx.wrapKeyValue("Created", entry.createdAt, width));
+  if (entry.kind) lines.push(...ctx.wrapKeyValue("Kind", entry.kind, width));
+  if (entry.sessionId) {
+    lines.push(...ctx.wrapKeyValue("Session", entry.sessionId, width));
+    lines.push(...ctx.wrapKeyValue("Target State", ctx.notificationTargetState(entry.sessionId), width));
+    const targetLabel = ctx.notificationTargetLabel(entry.sessionId);
+    if (targetLabel) lines.push(...ctx.wrapKeyValue("Target", targetLabel, width));
+  }
+  lines.push("");
+  lines.push("\x1b[1mBody\x1b[0m");
+  lines.push(...ctx.wrapKeyValue("", entry.body, width));
+  while (lines.length < height) lines.push("");
+  return lines.slice(0, height);
+}
+
 export function renderGraveyardScreen(ctx: any): void {
   const { cols, rows } = ctx.getViewportSize();
   const header: string[] = [];
@@ -260,7 +344,7 @@ export function renderGraveyardScreen(ctx: any): void {
   header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
   header.push("");
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
+    "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
     cols,
   );
   const viewportHeight = rows - header.length - 2;
@@ -336,7 +420,7 @@ export function renderPlansScreen(ctx: any): void {
   header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
   header.push("");
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [Tab] details  [d/a/y/t/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
+    "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [e/Enter] edit  [r] refresh  [Esc] dashboard  [q] quit",
     cols,
   );
   const viewportHeight = rows - header.length - 2;

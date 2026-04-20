@@ -22,6 +22,13 @@ import {
   updateWorktreeSessions as updateWorktreeSessionsImpl,
 } from "./dashboard-control.js";
 import {
+  handleNotificationsKey as handleNotificationsKeyImpl,
+  notificationTargetLabel as notificationTargetLabelImpl,
+  renderNotifications as renderNotificationsImpl,
+  showNotifications as showNotificationsImpl,
+  notificationTargetState as notificationTargetStateImpl,
+} from "./notifications.js";
+import {
   activateNextAttentionEntry as activateNextAttentionEntryImpl,
   attentionScore as attentionScoreImpl,
   buildWorkflowEntriesForHost as buildWorkflowEntriesForHostImpl,
@@ -66,6 +73,18 @@ export const dashboardActionMethods = {
   showActivityDashboard(this: any): void {
     showActivityDashboardImpl(this);
   },
+  showNotifications(this: any): void {
+    showNotificationsImpl(this);
+  },
+  renderNotifications(this: any): void {
+    renderNotificationsImpl(this);
+  },
+  notificationTargetLabel(this: any, sessionId?: string): string | null {
+    return notificationTargetLabelImpl(this, sessionId);
+  },
+  notificationTargetState(this: any, sessionId?: string): "live" | "offline" | "missing" | "none" {
+    return notificationTargetStateImpl(this, sessionId);
+  },
   buildWorkflowEntries(this: any): any[] {
     return buildWorkflowEntriesForHostImpl(this);
   },
@@ -86,6 +105,9 @@ export const dashboardActionMethods = {
   },
   handleActivityKey(this: any, data: Buffer): void {
     handleActivityKeyImpl(this, data);
+  },
+  handleNotificationsKey(this: any, data: Buffer): void {
+    handleNotificationsKeyImpl(this, data);
   },
   showThreads(this: any): void {
     showThreadsImpl(this);

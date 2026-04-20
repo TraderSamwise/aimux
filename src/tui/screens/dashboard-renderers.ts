@@ -102,7 +102,6 @@ export function renderDashboardFrame(
           : session.attention === "blocked"
             ? " \x1b[35m!\x1b[0m"
             : "";
-    const unseenBadge = session.unseenCount && session.unseenCount > 0 ? ` \x1b[36m${session.unseenCount}\x1b[0m` : "";
     const lastUsedHint = session.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(session.lastUsedAt)}\x1b[0m` : "";
 
     if (session.remoteInstancePid) {
@@ -111,7 +110,9 @@ export function renderDashboardFrame(
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      return `${indent}${prefix}${icon} ${numberBadge}${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${lastUsedHint} — ${ownerTag}`;
+      const remoteUnseenBadge =
+        session.unseenCount && session.unseenCount > 0 ? ` \x1b[36m${session.unseenCount}\x1b[0m` : "";
+      return `${indent}${prefix}${icon} ${numberBadge}${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${remoteUnseenBadge}${lastUsedHint} — ${ownerTag}`;
     }
 
     const icon = STATUS_ICONS[session.status];
@@ -119,6 +120,10 @@ export function renderDashboardFrame(
     const compactHintValue = session.semantic ? sessionSemanticCompactHint(session.semantic) : null;
     const compactHint =
       compactHintValue && compactHintValue !== statusLabel ? ` \x1b[2m· ${compactHintValue}\x1b[0m` : "";
+    const unseenBadge =
+      session.unseenCount && session.unseenCount > 0 && !(compactHintValue && /\bunread\b/i.test(compactHintValue))
+        ? ` \x1b[36m${session.unseenCount}\x1b[0m`
+        : "";
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";

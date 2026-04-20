@@ -14,7 +14,7 @@ pane_id=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    next|prev|attention|dashboard|menu|window)
+    next|prev|attention|dashboard|inbox|menu|window)
       action="$1"
       shift
       ;;
@@ -153,7 +153,7 @@ request_control() {
     "${endpoint}${path}" >/dev/null 2>>"$debug_log"
 }
 
-switch_local_dashboard() {
+focus_local_dashboard_target() {
   resolve_live_client || true
 
   dashboard_session=""
@@ -187,10 +187,10 @@ switch_local_dashboard() {
 
   [ -n "$dashboard_session" ] || return 1
   [ -n "$dashboard_index" ] || return 1
-  target="${dashboard_session}:${dashboard_index}"
+  dashboard_switch_target="${dashboard_session}:${dashboard_index}"
 
-  if [ "$(tmux display-message -p -t "$target" '#{pane_in_mode}' 2>/dev/null || printf '0')" = "1" ]; then
-    tmux send-keys -t "$target" -X cancel >/dev/null 2>&1 || true
+  if [ "$(tmux display-message -p -t "$dashboard_switch_target" '#{pane_in_mode}' 2>/dev/null || printf '0')" = "1" ]; then
+    tmux send-keys -t "$dashboard_switch_target" -X cancel >/dev/null 2>&1 || true
   fi
 
   dashboard_window_id=$(tmux list-windows -t "$dashboard_session" -F '#{window_index}|#{window_id}|#{window_name}' 2>/dev/null | awk -F '|' -v idx="$dashboard_index" '$1 == idx { print $2; exit }')
@@ -209,12 +209,18 @@ switch_local_dashboard() {
     esac
   fi
 
+  return 0
+}
+
+switch_local_dashboard() {
+  focus_local_dashboard_target || return 1
+
   if [ -n "${live_client_tty-}" ]; then
-    tmux switch-client -c "$live_client_tty" -t "$target" >/dev/null 2>&1 || return 1
+    tmux switch-client -c "$live_client_tty" -t "$dashboard_switch_target" >/dev/null 2>&1 || return 1
   elif [ -n "$client_tty" ]; then
-    tmux switch-client -c "$client_tty" -t "$target" >/dev/null 2>&1 || return 1
+    tmux switch-client -c "$client_tty" -t "$dashboard_switch_target" >/dev/null 2>&1 || return 1
   else
-    tmux switch-client -t "$target" >/dev/null 2>&1 || return 1
+    tmux switch-client -t "$dashboard_switch_target" >/dev/null 2>&1 || return 1
   fi
   if [ -n "${live_client_tty-}" ]; then
     tmux refresh-client -t "$live_client_tty" -S >/dev/null 2>&1 || true
@@ -223,7 +229,24 @@ switch_local_dashboard() {
   else
     tmux refresh-client -S >/dev/null 2>&1 || true
   fi
-  tmux send-keys -t "$target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  tmux send-keys -t "$dashboard_switch_target" -H 1b 5b 49 >/dev/null 2>&1 || true
+  exit 0
+}
+
+show_local_inbox_popup() {
+  if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
+    resolve_live_client || return 1
+  fi
+  popup_client_tty="${live_client_tty-}"
+  [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
+  popup_session="${live_client_session-}"
+  [ -n "$popup_session" ] || popup_session="$current_client_session"
+  inbox_cmd="exec $(shell_quote "$aimux_bin") inbox-popup --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id")"
+  if [ -n "$popup_client_tty" ]; then
+    tmux display-popup -c "$popup_client_tty" -T "aimux inbox" -x P -y P -w 96 -h 18 -E "$inbox_cmd" >/dev/null 2>&1 || return 1
+  else
+    tmux display-popup -T "aimux inbox" -x P -y P -w 96 -h 18 -E "$inbox_cmd" >/dev/null 2>&1 || return 1
+  fi
   exit 0
 }
 
@@ -523,6 +546,9 @@ fallback_local_control() {
       printf '%s\n' "aimux: tmux dashboard fallback for session=${current_client_session:-unknown} window=${current_window_id:-unknown}" >>"$debug_log"
       switch_local_dashboard || open_dashboard_via_aimux
       ;;
+    inbox)
+      show_local_inbox_popup
+      ;;
     menu)
       show_local_switcher
       ;;
@@ -558,13 +584,14 @@ case "$action" in
   prev) path="/control/switch-prev" ;;
   attention) path="/control/switch-attention" ;;
   dashboard) path="/control/open-dashboard" ;;
+  inbox) path="/control/open-inbox" ;;
   window) path="/control/focus-window" ;;
   menu) path="" ;;
   *) exit 1 ;;
 esac
 
 case "$action" in
-  next|prev|attention|dashboard|menu|window)
+  next|prev|attention|dashboard|inbox|menu|window)
     fallback_local_control && exit 0
     ;;
 esac

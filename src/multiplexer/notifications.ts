@@ -1,5 +1,7 @@
+import type { NotificationRecord } from "../notifications.js";
 import { clearNotifications, listNotifications, markNotificationsRead } from "../notifications.js";
 import { parseKeys } from "../key-parser.js";
+import { renderNotificationsScreen } from "../tui/screens/subscreen-renderers.js";
 
 type NotificationHost = any;
 
@@ -71,5 +73,207 @@ export function handleNotificationPanelKey(host: NotificationHost, data: Buffer)
     panel.entries = [];
     panel.index = -1;
     host.renderDashboard();
+  }
+}
+
+function loadNotificationEntries(): NotificationRecord[] {
+  return listNotifications({ includeCleared: false }).slice(0, 200);
+}
+
+function refreshNotificationEntries(host: NotificationHost): void {
+  host.notificationEntries = loadNotificationEntries();
+  if (host.notificationIndex >= host.notificationEntries.length) {
+    host.notificationIndex = Math.max(0, host.notificationEntries.length - 1);
+  }
+}
+
+function ensureNotificationState(host: NotificationHost): void {
+  if (!Array.isArray(host.notificationEntries)) {
+    host.notificationEntries = [];
+  }
+  if (typeof host.notificationIndex !== "number" || Number.isNaN(host.notificationIndex)) {
+    host.notificationIndex = host.notificationEntries.length > 0 ? 0 : -1;
+  }
+}
+
+export function showNotifications(host: NotificationHost): void {
+  host.clearDashboardSubscreens();
+  refreshNotificationEntries(host);
+  host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
+  host.setDashboardScreen("notifications");
+  host.writeStatuslineFile();
+  renderNotifications(host);
+}
+
+export function renderNotifications(host: NotificationHost): void {
+  ensureNotificationState(host);
+  refreshNotificationEntries(host);
+  renderNotificationsScreen(host);
+}
+
+export function notificationTargetLabel(host: NotificationHost, sessionId?: string): string | null {
+  if (!sessionId) return null;
+  const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
+  if (session) {
+    return `${session.label ?? session.command}${session.worktreeName ? ` · ${session.worktreeName}` : ""}`;
+  }
+  const service = host.getDashboardServices().find((entry: any) => entry.id === sessionId);
+  if (service) {
+    return `${service.label ?? service.command} [service]${service.worktreeName ? ` · ${service.worktreeName}` : ""}`;
+  }
+  return null;
+}
+
+export function notificationTargetState(
+  host: NotificationHost,
+  sessionId?: string,
+): "live" | "offline" | "missing" | "none" {
+  if (!sessionId) return "none";
+  const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
+  if (session) {
+    return session.status === "offline" ? "offline" : "live";
+  }
+  const service = host.getDashboardServices().find((entry: any) => entry.id === sessionId);
+  if (service) {
+    return service.status === "running" ? "live" : "offline";
+  }
+  return "missing";
+}
+
+function openSelectedNotification(host: NotificationHost): void {
+  const entry = host.notificationEntries[host.notificationIndex];
+  if (!entry) return;
+  if (!entry.sessionId) {
+    if (entry.unread) {
+      markNotificationsRead({ id: entry.id });
+      refreshNotificationEntries(host);
+    }
+    renderNotifications(host);
+    return;
+  }
+  const targetState = notificationTargetState(host, entry.sessionId);
+  if (targetState === "missing") {
+    host.footerFlash = "Notification target is no longer available";
+    host.footerFlashTicks = 3;
+    renderNotifications(host);
+    return;
+  }
+  const session = host.getDashboardSessions().find((candidate: any) => candidate.id === entry.sessionId);
+  if (session) {
+    if (entry.unread) {
+      markNotificationsRead({ id: entry.id });
+      refreshNotificationEntries(host);
+    }
+    void host.activateDashboardEntry(session);
+    return;
+  }
+  const service = host.getDashboardServices().find((candidate: any) => candidate.id === entry.sessionId);
+  if (!service) {
+    host.footerFlash = "Notification target is no longer available";
+    host.footerFlashTicks = 3;
+    renderNotifications(host);
+    return;
+  }
+  if (service.status !== "running") {
+    try {
+      if (entry.unread) {
+        markNotificationsRead({ id: entry.id });
+        refreshNotificationEntries(host);
+      }
+      host.resumeOfflineServiceById(service.id);
+      return;
+    } catch (error) {
+      host.showDashboardError("Failed to open notification target", [
+        error instanceof Error ? error.message : String(error),
+      ]);
+      return;
+    }
+  }
+  if (entry.unread) {
+    markNotificationsRead({ id: entry.id });
+    refreshNotificationEntries(host);
+  }
+  host.openLiveTmuxWindowForService(service.id);
+}
+
+export function handleNotificationsKey(host: NotificationHost, data: Buffer): void {
+  const events = parseKeys(data);
+  if (events.length === 0) return;
+  const event = events[0];
+  const key = event.name || event.char;
+  const isTabToggle = key === "tab" || event.raw === "\t" || (event.ctrl && key === "i");
+
+  if (isTabToggle) {
+    host.dashboardState.toggleDetailsSidebar();
+    renderNotifications(host);
+    return;
+  }
+  if (key === "q") {
+    host.exitDashboardClientOrProcess();
+    return;
+  }
+  if (key === "escape" || key === "d") {
+    host.setDashboardScreen("dashboard");
+    host.renderDashboard();
+    return;
+  }
+  if (host.handleDashboardSubscreenNavigationKey(key, "notifications")) return;
+  if (key === "?") {
+    host.showHelp();
+    return;
+  }
+  if (key === "down" || key === "j") {
+    if (host.notificationEntries.length > 1) {
+      host.notificationIndex = (host.notificationIndex + 1) % host.notificationEntries.length;
+      renderNotifications(host);
+    }
+    return;
+  }
+  if (key === "up" || key === "k") {
+    if (host.notificationEntries.length > 1) {
+      host.notificationIndex =
+        (host.notificationIndex - 1 + host.notificationEntries.length) % host.notificationEntries.length;
+      renderNotifications(host);
+    }
+    return;
+  }
+  if (key >= "1" && key <= "9") {
+    const idx = parseInt(key, 10) - 1;
+    if (idx < host.notificationEntries.length) {
+      host.notificationIndex = idx;
+      renderNotifications(host);
+    }
+    return;
+  }
+  if (key === "r") {
+    const entry = host.notificationEntries[host.notificationIndex];
+    if (!entry) return;
+    markNotificationsRead({ id: entry.id });
+    refreshNotificationEntries(host);
+    renderNotifications(host);
+    return;
+  }
+  if (key === "R") {
+    markNotificationsRead();
+    refreshNotificationEntries(host);
+    renderNotifications(host);
+    return;
+  }
+  if (key === "c") {
+    const entry = host.notificationEntries[host.notificationIndex];
+    if (!entry) return;
+    clearNotifications({ id: entry.id });
+    refreshNotificationEntries(host);
+    renderNotifications(host);
+    return;
+  }
+  if (key === "C") {
+    clearNotifications();
+    refreshNotificationEntries(host);
+    renderNotifications(host);
+    return;
+  }
+  if (key === "enter" || key === "return") {
+    openSelectedNotification(host);
   }
 }

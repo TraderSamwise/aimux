@@ -452,6 +452,14 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       stopService: ({ serviceId }: any) => host.stopService(serviceId),
       resumeService: ({ serviceId }: any) => host.resumeOfflineServiceById(serviceId),
       removeService: ({ serviceId }: any) => host.removeOfflineService(serviceId),
+      resumeAgent: ({ sessionId }: any) => {
+        const offline = host.offlineSessions.find((session: any) => session.id === sessionId);
+        if (!offline) {
+          throw new Error(`Agent "${sessionId}" not found`);
+        }
+        host.resumeOfflineSession(offline);
+        return { sessionId, status: "running" as const };
+      },
       listGraveyard: () => host.listGraveyardEntries(),
       resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
     },

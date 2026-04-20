@@ -99,7 +99,7 @@ export function renderNotificationPanel(ctx: any): void {
   const header = [`${title}`, "", "  [↑↓] select  [r] read  [c] clear  [C] clear all  [Esc] close", ""];
   const items =
     panel.entries.length === 0
-      ? ["  No notifications."]
+      ? ["  No inbox items."]
       : panel.entries.map((entry: any, index: number) => {
           const marker = index === panel.index ? "▸" : " ";
           const state = entry.unread ? "unread" : "read";
@@ -169,9 +169,10 @@ export function renderHelpOverlay(_ctx: any): void {
     "  Ctrl+A v  request review",
     "  Ctrl+A 1-9  focus numbered agent",
     "  Ctrl+A d  return to dashboard window",
-    "  arrows / j k n p  navigate",
+    "  arrows / j k  navigate",
     "  Enter  open, resume, or takeover",
     "  a  activity",
+    "  i  inbox",
     "  y  workflow",
     "  p  plans",
     "  r  name agent",
