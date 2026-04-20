@@ -43,10 +43,28 @@ describe("OrchestrationDispatcher", () => {
     const dispatcher = new OrchestrationDispatcher((id) => (id === "codex-1" ? session : undefined));
     dispatcher.tick(["codex-1"]);
     expect(session.written).toHaveLength(1);
-    expect(session.written[0]).toContain("[AIMUX MESSAGE");
+    expect(session.written[0]).toContain("Aimux: new request for you.");
+    expect(session.written[0]).toContain(`aimux thread show ${result.thread.id}`);
     const messages = readMessages(result.thread.id);
     expect(messages[0]?.deliveredTo).toContain("codex-1");
     expect(dispatcher.drainEvents()).toHaveLength(1);
+  });
+
+  it("uses semantic availability for tmux-backed sessions whose raw status stays running", () => {
+    const result = sendDirectMessage({
+      from: "user",
+      to: ["codex-1"],
+      body: "Please pick up the parser fix.",
+    });
+    const session = makeSession("codex-1", "running");
+    const dispatcher = new OrchestrationDispatcher(
+      (id) => (id === "codex-1" ? session : undefined),
+      (id) => (id === "codex-1" ? "available" : undefined),
+    );
+    dispatcher.tick(["codex-1"]);
+    expect(session.written).toHaveLength(1);
+    const messages = readMessages(result.thread.id);
+    expect(messages[0]?.deliveredTo).toEqual(["codex-1"]);
   });
 
   it("does not redeliver a message once marked delivered", () => {

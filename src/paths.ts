@@ -13,7 +13,7 @@
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, readdirSync } from "node:fs";
-import { join, basename, resolve, dirname } from "node:path";
+import { join, basename, resolve, dirname, sep } from "node:path";
 import { homedir } from "node:os";
 
 // ── Cached state (populated by initPaths) ──────────────────────────
@@ -30,6 +30,13 @@ function assertInitialized(): void {
 // ── Project ID resolution ──────────────────────────────────────────
 
 function resolveRepoRoot(cwd: string): string {
+  const resolvedCwd = resolve(cwd);
+  const aimuxWorktreesMarker = `${sep}.aimux${sep}worktrees${sep}`;
+  const markerIndex = resolvedCwd.indexOf(aimuxWorktreesMarker);
+  if (markerIndex >= 0) {
+    return resolvedCwd.slice(0, markerIndex);
+  }
+
   try {
     const gitCommonDir = execSync("git rev-parse --git-common-dir", {
       cwd,
@@ -38,10 +45,15 @@ function resolveRepoRoot(cwd: string): string {
     }).trim();
     // gitCommonDir is either ".git" (main worktree) or an absolute path
     const absGitDir = resolve(cwd, gitCommonDir);
+    const commonWorktreesMarker = `${sep}.git${sep}worktrees${sep}`;
+    const commonMarkerIndex = absGitDir.indexOf(commonWorktreesMarker);
+    if (commonMarkerIndex >= 0) {
+      return absGitDir.slice(0, commonMarkerIndex);
+    }
     return dirname(absGitDir);
   } catch {
     // Not a git repo — use cwd
-    return resolve(cwd);
+    return resolvedCwd;
   }
 }
 

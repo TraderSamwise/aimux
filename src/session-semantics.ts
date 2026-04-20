@@ -59,6 +59,8 @@ export function deriveSessionSemantics(input: DeriveSessionSemanticsInput): Sess
     availability = "blocked";
   } else if (attention === "needs_input" || workflowState === "waiting_on_me") {
     availability = "needs_input";
+  } else if (input.activity === "idle" || input.activity === "done" || input.activity === "interrupted") {
+    availability = "available";
   } else if (
     input.status === "running" ||
     input.status === "waiting" ||

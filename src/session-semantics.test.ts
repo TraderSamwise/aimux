@@ -43,6 +43,16 @@ describe("session semantics", () => {
     expect(sessionSemanticAttentionScore(semantic)).toBe(0);
   });
 
+  it("lets parsed idle activity override tmux transport running status", () => {
+    const semantic = deriveSessionSemantics({
+      status: "running",
+      activity: "idle",
+      attention: "normal",
+    });
+
+    expect(semantic.availability).toBe("available");
+  });
+
   it("produces compact hints for waiting-on-me and unread semantics", () => {
     expect(
       sessionSemanticCompactHint(

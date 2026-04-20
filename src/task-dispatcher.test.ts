@@ -13,6 +13,7 @@ vi.mock("./paths.js", () => ({
 
 import { TaskDispatcher } from "./task-dispatcher.js";
 import { writeTask, readTask, type Task } from "./tasks.js";
+import { readMessages } from "./threads.js";
 
 function makeTmpDir(): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "aimux-test-")));
@@ -87,6 +88,9 @@ describe("TaskDispatcher", () => {
       const task = readTask("t1");
       expect(task?.status).toBe("assigned");
       expect(task?.assignedTo).toBe("claude-worker");
+      expect(task?.threadId).toBeDefined();
+      const messages = readMessages(task?.threadId ?? "");
+      expect(messages[0]?.deliveredTo).toContain("claude-worker");
     });
 
     it("does not inject into busy session", async () => {

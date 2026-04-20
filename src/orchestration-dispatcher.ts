@@ -1,4 +1,5 @@
 import { listThreads, markMessageDelivered, readMessages, type MessageKind } from "./threads.js";
+import type { SessionAvailability } from "./session-semantics.js";
 
 interface DispatchSession {
   id: string;
@@ -22,7 +23,10 @@ function shouldDispatch(kind: MessageKind): boolean {
 export class OrchestrationDispatcher {
   private pendingEvents: OrchestrationDeliveryEvent[] = [];
 
-  constructor(private readonly getSession: (id: string) => DispatchSession | undefined) {}
+  constructor(
+    private readonly getSession: (id: string) => DispatchSession | undefined,
+    private readonly getSessionAvailability: (id: string) => SessionAvailability | undefined = () => undefined,
+  ) {}
 
   tick(localSessionIds: string[]): void {
     for (const thread of listThreads()) {
@@ -34,11 +38,20 @@ export class OrchestrationDispatcher {
           if (!localSessionIds.includes(recipient)) continue;
           const session = this.getSession(recipient);
           if (!session || session.exited) continue;
-          if (session.status !== "idle" && session.status !== "waiting") continue;
+          const availability = this.getSessionAvailability(recipient);
+          const canDeliver =
+            availability === "available" ||
+            availability === "needs_input" ||
+            (availability === undefined && (session.status === "idle" || session.status === "waiting"));
+          if (!canDeliver) continue;
           const prompt =
-            `[AIMUX MESSAGE ${thread.id} from ${message.from}] ${message.body}\n\n` +
-            `Read .aimux/threads/${thread.id}.json and .aimux/threads/${thread.id}.jsonl for context. ` +
-            `This is a ${message.kind} message. Reply in-thread if needed.`;
+            `Aimux: new ${message.kind} for you.\n\n` +
+            `Thread: ${thread.id}\n` +
+            `Message: ${message.id}\n` +
+            `From: ${message.from}\n\n` +
+            `Run:\n` +
+            `  aimux thread show ${thread.id}\n\n` +
+            `Then reply, accept, complete, or request clarification using aimux as appropriate.`;
           session.write(prompt + "\r");
           markMessageDelivered(thread.id, message.id, recipient);
           this.pendingEvents.push({

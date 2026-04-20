@@ -82,6 +82,7 @@ import {
   requestTaskChanges,
   sendHandoff,
 } from "./orchestration-actions.js";
+import { readAllTasks, readTask } from "./tasks.js";
 import {
   addNotification,
   clearNotifications,
@@ -1283,6 +1284,33 @@ worktreeCmd.action(() => {
 });
 
 const threadCmd = program.command("thread").description("Inspect and manage orchestration threads");
+program
+  .command("threads")
+  .description("Alias for thread list")
+  .option("--session <sessionId>", "Filter to threads involving a session")
+  .option("--json", "Emit JSON")
+  .action((opts: { session?: string; json?: boolean }) => {
+    const summaries = listThreadSummaries(opts.session);
+    if (opts.json) {
+      console.log(JSON.stringify(summaries, null, 2));
+      return;
+    }
+    if (summaries.length === 0) {
+      console.log("No threads found.");
+      return;
+    }
+    for (const summary of summaries) {
+      const unread = summary.thread.unreadBy?.length ? ` unread=${summary.thread.unreadBy.length}` : "";
+      const waiting = summary.thread.waitingOn?.length ? ` waiting=${summary.thread.waitingOn.join(",")}` : "";
+      console.log(`${summary.thread.id}  ${summary.thread.kind}  ${summary.thread.status}${unread}${waiting}`);
+      console.log(`  ${summary.thread.title}`);
+      if (summary.latestMessage) {
+        console.log(
+          `  latest: ${summary.latestMessage.from} [${summary.latestMessage.kind}] ${summary.latestMessage.body}`,
+        );
+      }
+    }
+  });
 
 threadCmd
   .command("list")
@@ -1626,6 +1654,65 @@ handoffCmd
   });
 
 const taskCmd = program.command("task").description("Create and manage orchestrated tasks");
+
+taskCmd
+  .command("list")
+  .description("List orchestrated tasks")
+  .option("--session <sessionId>", "Filter to tasks assigned to or created by a session")
+  .option("--status <status>", "Filter by task status")
+  .option("--json", "Emit JSON")
+  .action((opts: { session?: string; status?: string; json?: boolean }) => {
+    const tasks = readAllTasks()
+      .filter((task) => !opts.session || task.assignedTo === opts.session || task.assignedBy === opts.session)
+      .filter((task) => !opts.status || task.status === opts.status);
+    if (opts.json) {
+      console.log(JSON.stringify({ tasks }, null, 2));
+      return;
+    }
+    if (tasks.length === 0) {
+      console.log("No tasks found.");
+      return;
+    }
+    for (const task of tasks) {
+      const target = task.assignedTo ?? task.assignee ?? task.tool ?? "unassigned";
+      const thread = task.threadId ? ` thread=${task.threadId}` : "";
+      console.log(`${task.id}  ${task.type ?? "task"}  ${task.status}  target=${target}${thread}`);
+      console.log(`  ${task.description}`);
+    }
+  });
+
+taskCmd
+  .command("show")
+  .description("Show an orchestrated task")
+  .argument("<taskId>")
+  .option("--json", "Emit JSON")
+  .action((taskId: string, opts: { json?: boolean }) => {
+    const task = readTask(taskId);
+    if (!task) {
+      console.error(`aimux: task not found: ${taskId}`);
+      process.exit(1);
+    }
+    const thread = task.threadId ? readThread(task.threadId) : undefined;
+    const messages = task.threadId ? readMessages(task.threadId) : [];
+    if (opts.json) {
+      console.log(JSON.stringify({ task, thread, messages }, null, 2));
+      return;
+    }
+    console.log(`${task.description} (${task.type ?? "task"})`);
+    console.log(`id: ${task.id}`);
+    console.log(`status: ${task.status}`);
+    console.log(`assignedBy: ${task.assignedBy}`);
+    if (task.assignedTo) console.log(`assignedTo: ${task.assignedTo}`);
+    if (task.assignee) console.log(`assignee: ${task.assignee}`);
+    if (task.tool) console.log(`tool: ${task.tool}`);
+    if (task.threadId) console.log(`thread: ${task.threadId}`);
+    if (task.reviewStatus) console.log(`reviewStatus: ${task.reviewStatus}`);
+    if (task.reviewFeedback) console.log(`reviewFeedback: ${task.reviewFeedback}`);
+    if (task.result) console.log(`result: ${task.result}`);
+    if (task.error) console.log(`error: ${task.error}`);
+    console.log("");
+    console.log(task.prompt);
+  });
 
 taskCmd
   .command("assign")

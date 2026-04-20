@@ -383,7 +383,10 @@ export class Multiplexer {
   }
 
   private createOrchestrationDispatcher(): OrchestrationDispatcher {
-    return new OrchestrationDispatcher((id) => this.sessions.find((s) => s.id === id));
+    return new OrchestrationDispatcher(
+      (id) => this.sessions.find((s) => s.id === id),
+      (id) => this.deriveSessionSemanticState(id).availability,
+    );
   }
 
   private selectLinkedOrOpenTarget(target: TmuxTarget): void {

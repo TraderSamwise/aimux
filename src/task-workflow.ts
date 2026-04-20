@@ -1,6 +1,6 @@
 import { type Task, writeTask } from "./tasks.js";
 import { loadTeamConfig } from "./team.js";
-import { openTaskThread, updateThread } from "./threads.js";
+import { markMessageDelivered, openTaskThread, updateThread } from "./threads.js";
 import { sendThreadMessage } from "./orchestration.js";
 import type { TaskEvent } from "./task-dispatcher.js";
 
@@ -18,7 +18,7 @@ export class TaskWorkflow {
       kind: task.type === "review" ? "review" : "task",
     });
     task.threadId = thread.id;
-    sendThreadMessage({
+    const initialMessage = sendThreadMessage({
       threadId: thread.id,
       from: task.assignedBy,
       to: [session.id],
@@ -26,6 +26,7 @@ export class TaskWorkflow {
       body: task.description,
       metadata: { taskId: task.id },
     });
+    markMessageDelivered(thread.id, initialMessage.message.id, session.id);
 
     const prefix =
       task.type === "review"
@@ -39,13 +40,21 @@ export class TaskWorkflow {
     }
 
     prompt +=
-      `Read .aimux/tasks/${task.id}.json for full details. When done, update that file: ` +
-      `set status to "done" and add a "result" field.`;
+      `Run:\n` +
+      `  aimux task show ${task.id}\n` +
+      `  aimux thread show ${thread.id}\n\n` +
+      `Acknowledge with:\n` +
+      `  aimux task accept ${task.id} --from ${session.id}\n\n` +
+      `When done, complete with:\n` +
+      `  aimux task complete ${task.id} --from ${session.id} --body "<summary>"`;
 
     if (task.type === "review") {
-      prompt += ` Also set "reviewStatus" to "approved" or "changes_requested", and optionally add "reviewFeedback".`;
+      prompt +=
+        `\n\nFor review verdicts use:\n` +
+        `  aimux review approve ${task.id} --from ${session.id} --body "<notes>"\n` +
+        `  aimux review request-changes ${task.id} --from ${session.id} --body "<requested changes>"`;
     } else {
-      prompt += ` If you can't complete it, set status to "failed" with an "error" field.`;
+      prompt += `\n\nIf blocked, use:\n  aimux task block ${task.id} --from ${session.id} --body "<reason>"`;
     }
 
     session.write(prompt + "\r");
