@@ -20,7 +20,6 @@ import {
 } from "../workflow.js";
 import {
   renderActivityScreen,
-  renderNotificationsScreen,
   renderThreadDetails,
   renderThreadsScreen,
   renderWorkflowDetails,
