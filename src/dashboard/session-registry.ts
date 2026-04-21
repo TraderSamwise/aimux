@@ -9,6 +9,7 @@ export interface DashboardLocalSession {
   command: string;
   tmuxWindowId?: string;
   backendSessionId?: string;
+  createdAt?: string;
   status: DashboardSession["status"];
   worktreePath?: string;
 }
@@ -63,6 +64,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
     command: session.command,
     tmuxWindowId: session.tmuxWindowId,
     backendSessionId: session.backendSessionId,
+    createdAt: session.createdAt,
     status: session.status,
     active: index === options.activeIndex,
     worktreePath: normalizeWtPath(session.worktreePath),
@@ -94,6 +96,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
         id: session.id,
         command: session.tool,
         backendSessionId: session.backendSessionId,
+        createdAt: session.createdAt,
         status: "running",
         active: false,
         worktreePath: normalizeWtPath(session.worktreePath),
@@ -136,6 +139,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       id: offline.id,
       command: offline.command,
       backendSessionId: offline.backendSessionId,
+      createdAt: offline.createdAt,
       status: "offline",
       active: false,
       worktreePath,

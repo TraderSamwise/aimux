@@ -16,6 +16,7 @@ import { requestJson } from "../http-client.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
+import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 
 type DashboardModelHost = any;
 
@@ -48,29 +49,37 @@ export function buildDashboardWorktreeGroups(
     path: string;
     branch: string;
     isBare: boolean;
+    createdAt?: string;
     pending?: boolean;
     removing?: boolean;
     pendingAction?: "creating";
   }>,
   mainRepoPath?: string,
 ): WorktreeGroup[] {
-  return worktrees
-    .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
-    .map((wt) => {
-      const wtSessions = dashSessions.filter((s) => s.worktreePath === wt.path);
-      const wtServices = dashServices.filter((s) => s.worktreePath === wt.path);
-      return {
-        name: wt.name,
-        branch: wt.branch,
-        path: wt.path,
-        pending: wt.pending,
-        removing: wt.removing,
-        pendingAction: wt.pendingAction,
-        status: (wtSessions.length > 0 || wtServices.length > 0 ? "active" : "offline") as "active" | "offline",
-        sessions: wtSessions,
-        services: wtServices,
-      };
-    });
+  return sortWorktreeGroups(
+    worktrees
+      .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
+      .map((wt) => {
+        const wtSessions = sortDashboardEntriesByCreatedAt(dashSessions.filter((s) => s.worktreePath === wt.path));
+        const wtServices = sortDashboardEntriesByCreatedAt(dashServices.filter((s) => s.worktreePath === wt.path));
+        return {
+          name: wt.name,
+          branch: wt.branch,
+          path: wt.path,
+          createdAt: wt.createdAt,
+          pending: wt.pending,
+          removing: wt.removing,
+          pendingAction: wt.pendingAction,
+          status: (wtSessions.length > 0 || wtServices.length > 0 ? "active" : "offline") as "active" | "offline",
+          sessions: wtSessions,
+          services: wtServices,
+        };
+      }),
+  );
+}
+
+function sortWorktreeGroups(groups: WorktreeGroup[]): WorktreeGroup[] {
+  return [...groups].sort((a, b) => dashboardCreatedSortKey(b) - dashboardCreatedSortKey(a));
 }
 
 export function applyDashboardModel(
@@ -197,6 +206,7 @@ export function computeDashboardSessions(host: DashboardModelHost): DashboardSes
       id: session.id,
       command: session.command,
       backendSessionId: session.backendSessionId,
+      createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
       status: session.status,
       worktreePath: host.sessionWorktreePaths.get(session.id),
       tmuxWindowId: host.sessionTmuxTargets.get(session.id)?.windowId,
@@ -212,14 +222,21 @@ export function computeDashboardSessions(host: DashboardModelHost): DashboardSes
     getSessionContext: (sessionId: string) => metadata[sessionId]?.context,
     getSessionDerived: (sessionId: string) => metadata[sessionId]?.derived,
   });
+  const metadataBySessionId = new Map<string, { createdAt?: string; target?: { windowIndex?: number } }>();
+  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+    if (metadata.kind !== "agent") continue;
+    metadataBySessionId.set(metadata.sessionId, { createdAt: metadata.createdAt, target });
+  }
   return sessions.map((session) => {
     const stats = threadStats.get(session.id);
     const workflow = workflowStats.get(session.id);
     const target = host.sessionTmuxTargets.get(session.id);
+    const metadata = metadataBySessionId.get(session.id);
     const runtimeInfo = target ? readTmuxProcessInfo(host, target) : {};
     return {
       ...session,
       tmuxWindowIndex: target?.windowIndex,
+      createdAt: session.createdAt ?? metadata?.createdAt,
       lastUsedAt: lastUsedState.items[session.id]?.lastUsedAt,
       foregroundCommand: runtimeInfo.command,
       pid: runtimeInfo.pid,
@@ -274,6 +291,7 @@ export function computeDashboardServices(
         args: metadata.args ?? [],
         tmuxWindowId: target.windowId,
         tmuxWindowIndex: target.windowIndex,
+        createdAt: metadata.createdAt,
         lastUsedAt: lastUsedState.items[metadata.sessionId]?.lastUsedAt,
         worktreePath: metadata.worktreePath,
         worktreeName: worktree?.name,
@@ -298,6 +316,7 @@ export function computeDashboardServices(
         id: service.id,
         command: service.launchCommandLine?.trim() ?? "",
         args: [],
+        createdAt: service.createdAt,
         lastUsedAt: lastUsedState.items[service.id]?.lastUsedAt,
         worktreePath: service.worktreePath,
         worktreeName: worktree?.name,

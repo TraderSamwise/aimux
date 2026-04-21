@@ -67,6 +67,7 @@ export interface TmuxWindowMetadata {
   command: string;
   args: string[];
   toolConfigKey: string;
+  createdAt?: string;
   backendSessionId?: string;
   worktreePath?: string;
   label?: string;

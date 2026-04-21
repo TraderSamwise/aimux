@@ -17,12 +17,14 @@ function buildServiceStateFromMetadata(
   metadata: {
     command?: string;
     args?: string[];
+    createdAt?: string;
     worktreePath?: string;
     label?: string;
   },
 ): ServiceState {
   return {
     id: serviceId,
+    createdAt: metadata.createdAt,
     worktreePath: metadata.worktreePath,
     label: metadata.label,
     launchCommandLine: getServiceLaunchCommandLine(metadata),
@@ -80,6 +82,7 @@ export function createService(host: ServiceHost, commandLine: string, worktreePa
       command: trimmed ? shell : "shell",
       args: trimmed ? ["-lc", trimmed] : ["-l"],
       toolConfigKey: "service",
+      createdAt: new Date().toISOString(),
       worktreePath,
       label,
     });
@@ -195,6 +198,7 @@ export function resumeOfflineService(
     command: launchCommandLine ? shell : "shell",
     args: launchCommandLine ? ["-lc", launchCommandLine] : ["-l"],
     toolConfigKey: "service",
+    createdAt: service.createdAt ?? new Date().toISOString(),
     worktreePath: service.worktreePath,
     label,
   });

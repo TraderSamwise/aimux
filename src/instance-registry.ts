@@ -8,6 +8,7 @@ import { debug } from "./debug.js";
 export interface InstanceSessionRef {
   id: string;
   tool: string;
+  createdAt?: string;
   backendSessionId?: string;
   worktreePath?: string;
 }

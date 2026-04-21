@@ -26,6 +26,7 @@ export const persistenceMethods = {
     const localSessions = this.sessions.map((s: any) => ({
       id: s.id,
       tool: s.command,
+      createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
       backendSessionId: s.backendSessionId,
       worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
@@ -271,6 +272,7 @@ export const persistenceMethods = {
     path: string;
     branch: string;
     isBare: boolean;
+    createdAt?: string;
     pending?: boolean;
     removing?: boolean;
     pendingAction?: "creating";
@@ -286,6 +288,7 @@ export const persistenceMethods = {
       path: string;
       branch: string;
       isBare: boolean;
+      createdAt?: string;
       pending?: boolean;
       removing?: boolean;
       pendingAction?: "creating";
@@ -304,6 +307,10 @@ export const persistenceMethods = {
           path,
           branch: "(creating)",
           isBare: false,
+          createdAt:
+            this.worktreeCreateJob?.path === path
+              ? new Date(this.worktreeCreateJob.startedAt).toISOString()
+              : undefined,
           pending: true,
           pendingAction: "creating",
         });
@@ -659,6 +666,7 @@ function sortDesktopWorktrees(
     path: string;
     branch: string;
     isBare: boolean;
+    createdAt?: string;
   }>,
 ): void {
   let mainRepo: string | undefined;
@@ -669,6 +677,11 @@ function sortDesktopWorktrees(
     const aMain = a.path === mainRepo;
     const bMain = b.path === mainRepo;
     if (aMain !== bMain) return aMain ? -1 : 1;
+    const aCreated = a.createdAt ? Date.parse(a.createdAt) : Number.NaN;
+    const bCreated = b.createdAt ? Date.parse(b.createdAt) : Number.NaN;
+    if (Number.isFinite(aCreated) || Number.isFinite(bCreated)) {
+      return (Number.isFinite(bCreated) ? bCreated : 0) - (Number.isFinite(aCreated) ? aCreated : 0);
+    }
     return a.name.localeCompare(b.name);
   });
 }

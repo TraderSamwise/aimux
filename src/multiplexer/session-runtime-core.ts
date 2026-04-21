@@ -488,8 +488,13 @@ export function buildTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: str
 export function syncTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: string): void {
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   if (!runtime || !(runtime.transport instanceof TmuxSessionTransport)) return;
-  const metadata = buildTmuxWindowMetadata(host, sessionId, runtime.command);
   const target = host.sessionTmuxTargets.get(sessionId) ?? runtime.transport.tmuxTarget;
+  const existing = host.tmuxRuntimeManager.getWindowMetadata(target);
+  const metadata = buildTmuxWindowMetadata(host, sessionId, runtime.command);
+  metadata.createdAt =
+    existing?.createdAt ??
+    (runtime.startTime ? new Date(runtime.startTime).toISOString() : undefined) ??
+    new Date().toISOString();
   runtime.transport.retarget(target);
   host.tmuxRuntimeManager.setWindowMetadata(target, metadata);
   host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, metadata.toolConfigKey);

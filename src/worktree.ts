@@ -1,6 +1,6 @@
 import { execFile, execSync, type ExecFileException } from "node:child_process";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { loadConfig } from "./config.js";
 
 export interface WorktreeInfo {
@@ -8,6 +8,7 @@ export interface WorktreeInfo {
   path: string;
   branch: string;
   isBare: boolean;
+  createdAt?: string;
 }
 
 function execFileText(command: string, args: string[], cwd: string): Promise<string | null> {
@@ -103,14 +104,29 @@ export function listWorktrees(cwd?: string): WorktreeInfo[] {
   } catch {
     return [];
   }
-  return parseWorktreeList(output).filter((worktree) => worktree.isBare || existsSync(worktree.path));
+  return parseWorktreeList(output)
+    .filter((worktree) => worktree.isBare || existsSync(worktree.path))
+    .map(withWorktreeCreatedAt);
 }
 
 export async function listWorktreesAsync(cwd?: string): Promise<WorktreeInfo[]> {
   const effectiveCwd = cwd ?? process.cwd();
   const output = await execFileText("git", ["worktree", "list", "--porcelain"], effectiveCwd);
   if (!output) return [];
-  return parseWorktreeList(output).filter((worktree) => worktree.isBare || existsSync(worktree.path));
+  return parseWorktreeList(output)
+    .filter((worktree) => worktree.isBare || existsSync(worktree.path))
+    .map(withWorktreeCreatedAt);
+}
+
+function withWorktreeCreatedAt(worktree: WorktreeInfo): WorktreeInfo {
+  if (worktree.isBare) return worktree;
+  try {
+    const stat = statSync(worktree.path);
+    const createdMs = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.ctimeMs;
+    return { ...worktree, createdAt: new Date(createdMs).toISOString() };
+  } catch {
+    return worktree;
+  }
 }
 
 /**

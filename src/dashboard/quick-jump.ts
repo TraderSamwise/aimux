@@ -1,5 +1,6 @@
 import type { DashboardService, DashboardSession, MainCheckoutInfo, WorktreeGroup } from "./index.js";
 import { HOTKEY_TIMEOUT_MS } from "../hotkeys.js";
+import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "./sort.js";
 
 export const DASHBOARD_QUICK_JUMP_TIMEOUT_MS = HOTKEY_TIMEOUT_MS;
 export const DASHBOARD_QUICK_JUMP_LIMIT = 9;
@@ -77,6 +78,13 @@ export function buildDashboardQuickJumpWorktrees(input: {
     }
   }
 
+  for (const [path, sessions] of wtSessionMap) {
+    wtSessionMap.set(path, sortDashboardEntriesByCreatedAt(sessions));
+  }
+  for (const [path, services] of wtServiceMap) {
+    wtServiceMap.set(path, sortDashboardEntriesByCreatedAt(services));
+  }
+
   const worktrees: DashboardQuickJumpWorktree[] = [];
   const pushWorktree = (worktree: Omit<DashboardQuickJumpWorktree, "digit" | "entries">): void => {
     worktrees.push({
@@ -90,12 +98,15 @@ export function buildDashboardQuickJumpWorktrees(input: {
     path: undefined,
     name: input.mainCheckout.name,
     branch: input.mainCheckout.branch,
-    sessions: mainSessions,
-    services: mainServices,
+    sessions: sortDashboardEntriesByCreatedAt(mainSessions),
+    services: sortDashboardEntriesByCreatedAt(mainServices),
   });
 
   const renderedPaths = new Set<string>();
-  for (const group of input.worktreeGroups) {
+  const orderedGroups = [...input.worktreeGroups].sort(
+    (a, b) => dashboardCreatedSortKey(b) - dashboardCreatedSortKey(a),
+  );
+  for (const group of orderedGroups) {
     pushWorktree({
       path: group.path,
       name: group.name,

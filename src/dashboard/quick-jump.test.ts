@@ -104,4 +104,78 @@ describe("dashboard quick jump", () => {
       entryIndex: 1,
     });
   });
+
+  it("keeps main first and sorts agents and services newest first inside each worktree", () => {
+    const worktrees = buildDashboardQuickJumpWorktrees({
+      sessions: [
+        {
+          index: 0,
+          id: "old-agent",
+          command: "codex",
+          status: "running",
+          active: false,
+          worktreePath: "/repo/w1",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          index: 1,
+          id: "new-agent",
+          command: "claude",
+          status: "running",
+          active: false,
+          worktreePath: "/repo/w1",
+          createdAt: "2026-01-03T00:00:00.000Z",
+        },
+      ],
+      services: [
+        {
+          id: "old-service",
+          command: "shell",
+          args: [],
+          status: "running",
+          active: false,
+          worktreePath: "/repo/w1",
+          createdAt: "2026-01-02T00:00:00.000Z",
+        },
+        {
+          id: "new-service",
+          command: "shell",
+          args: [],
+          status: "running",
+          active: false,
+          worktreePath: "/repo/w1",
+          createdAt: "2026-01-04T00:00:00.000Z",
+        },
+      ],
+      worktreeGroups: [
+        {
+          name: "older",
+          branch: "older",
+          path: "/repo/older",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          status: "offline",
+          sessions: [],
+          services: [],
+        },
+        {
+          name: "w1",
+          branch: "feat/w1",
+          path: "/repo/w1",
+          createdAt: "2026-01-05T00:00:00.000Z",
+          status: "active",
+          sessions: [],
+          services: [],
+        },
+      ],
+      mainCheckout: { name: "Main Checkout", branch: "master" },
+    });
+
+    expect(worktrees.map((worktree) => worktree.name)).toEqual(["Main Checkout", "w1", "older"]);
+    expect(worktrees[1]?.entries.map((entry) => [entry.digit, entry.kind, entry.id])).toEqual([
+      [1, "session", "new-agent"],
+      [2, "session", "old-agent"],
+      [3, "service", "new-service"],
+      [4, "service", "old-service"],
+    ]);
+  });
 });

@@ -225,6 +225,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       toolConfigKey: mux.sessionToolKeys.get(s.id) ?? s.command,
       command: s.command,
       args: mux.sessionOriginalArgs.get(s.id) ?? [],
+      createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
       backendSessionId: s.backendSessionId,
       worktreePath: mux.sessionWorktreePaths.get(s.id),
       label: this.getSessionLabel(s.id),

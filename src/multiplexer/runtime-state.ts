@@ -214,6 +214,7 @@ export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
       metadata.command === "shell" ? "" : metadata.args?.[0] === "-lc" ? (metadata.args[1] ?? "") : "";
     liveServices.push({
       id: metadata.sessionId,
+      createdAt: metadata.createdAt,
       worktreePath: metadata.worktreePath,
       label: metadata.label,
       launchCommandLine,
@@ -242,7 +243,14 @@ export function restoreTmuxSessionsFromState(host: RuntimeStateHost, state = hos
     );
     transport.backendSessionId = metadata.backendSessionId;
     host.sessionTmuxTargets.set(metadata.sessionId, target);
-    host.registerManagedSession(transport, metadata.args, metadata.toolConfigKey, metadata.worktreePath, undefined);
+    host.registerManagedSession(
+      transport,
+      metadata.args,
+      metadata.toolConfigKey,
+      metadata.worktreePath,
+      undefined,
+      metadata.createdAt ? Date.parse(metadata.createdAt) : undefined,
+    );
 
     const saved = savedById.get(metadata.sessionId);
     const label = metadata.label ?? saved?.label;
@@ -264,6 +272,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
     toolConfigKey: host.sessionToolKeys.get(session.id) ?? session.command,
     command: session.command,
     args: host.sessionOriginalArgs.get(session.id) ?? [],
+    createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
     backendSessionId: session.backendSessionId as string | undefined,
     worktreePath: host.sessionWorktreePaths.get(session.id),
     label: host.getSessionLabel(session.id),

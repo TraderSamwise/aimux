@@ -14,6 +14,7 @@ import { loadTeamConfig } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
+import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = {
@@ -57,12 +58,15 @@ function primeLiveTmuxFooter(host: DashboardControlHost, target: { windowId: str
 
 export function updateWorktreeSessions(host: DashboardControlHost): void {
   const allDash = host.getDashboardSessions();
-  host.dashboardState.worktreeSessions = allDash.filter((s: DashboardSession) => {
-    return (s.worktreePath ?? undefined) === host.dashboardState.focusedWorktreePath;
-  });
-  const worktreeServices = host.getDashboardServices().filter((service: DashboardService) => {
+  host.dashboardState.worktreeSessions = sortDashboardEntriesByCreatedAt(
+    allDash.filter((s: DashboardSession) => {
+      return (s.worktreePath ?? undefined) === host.dashboardState.focusedWorktreePath;
+    }),
+  );
+  const filteredServices: DashboardService[] = host.getDashboardServices().filter((service: DashboardService) => {
     return (service.worktreePath ?? undefined) === host.dashboardState.focusedWorktreePath;
   });
+  const worktreeServices = sortDashboardEntriesByCreatedAt(filteredServices);
   host.dashboardState.worktreeEntries = [
     ...host.dashboardState.worktreeSessions.map(
       (session: DashboardSession) => ({ kind: "session", id: session.id }) as const,

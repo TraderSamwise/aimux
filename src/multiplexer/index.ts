@@ -68,6 +68,7 @@ export interface SessionState {
   toolConfigKey: string;
   command: string;
   args: string[];
+  createdAt?: string;
   backendSessionId?: string;
   worktreePath?: string;
   label?: string;
@@ -77,6 +78,7 @@ export interface SessionState {
 
 export interface ServiceState {
   id: string;
+  createdAt?: string;
   worktreePath?: string;
   label?: string;
   launchCommandLine?: string;
