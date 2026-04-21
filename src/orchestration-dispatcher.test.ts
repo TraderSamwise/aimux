@@ -40,7 +40,10 @@ describe("OrchestrationDispatcher", () => {
       body: "Please pick up the parser fix.",
     });
     const session = makeSession("codex-1", "idle");
-    const dispatcher = new OrchestrationDispatcher((id) => (id === "codex-1" ? session : undefined));
+    const dispatcher = new OrchestrationDispatcher(
+      (id) => (id === "codex-1" ? session : undefined),
+      (id) => (id === "codex-1" ? "available" : "offline"),
+    );
     dispatcher.tick(["codex-1"]);
     expect(session.written).toHaveLength(1);
     expect(session.written[0]).toContain("Aimux: new request for you.");
@@ -74,7 +77,10 @@ describe("OrchestrationDispatcher", () => {
       body: "Please pick up the parser fix.",
     });
     const session = makeSession("codex-1", "idle");
-    const dispatcher = new OrchestrationDispatcher((id) => (id === "codex-1" ? session : undefined));
+    const dispatcher = new OrchestrationDispatcher(
+      (id) => (id === "codex-1" ? session : undefined),
+      (id) => (id === "codex-1" ? "available" : "offline"),
+    );
     dispatcher.tick(["codex-1"]);
     dispatcher.drainEvents();
     dispatcher.tick(["codex-1"]);

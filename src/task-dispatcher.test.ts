@@ -60,6 +60,11 @@ function makeMockSession(id: string, status: string, exited = false) {
   };
 }
 
+function availabilityFor(session: ReturnType<typeof makeMockSession> | undefined) {
+  if (!session || session.exited) return "offline";
+  return session.status === "idle" ? "available" : "busy";
+}
+
 describe("TaskDispatcher", () => {
   beforeEach(() => {
     tmpDir = makeTmpDir();
@@ -76,6 +81,8 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
+        () => undefined,
+        (id) => availabilityFor(id === "claude-worker" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }));
@@ -98,6 +105,8 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
+        () => undefined,
+        (id) => availabilityFor(id === "claude-worker" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1" }));
@@ -113,6 +122,8 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-leader" ? (session as any) : undefined),
         () => "claude",
+        () => undefined,
+        (id) => availabilityFor(id === "claude-leader" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }));
@@ -132,6 +143,8 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => sessions.get(id) as any,
         () => "claude",
+        () => undefined,
+        (id) => availabilityFor(sessions.get(id)),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "leader", assignedTo: "worker-2" }));
@@ -147,6 +160,8 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
+        () => undefined,
+        (id) => availabilityFor(id === "claude-worker" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "leader", status: "assigned", assignedTo: "claude-worker" }));
@@ -164,6 +179,8 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-leader" ? (leader as any) : undefined),
         () => "claude",
+        () => undefined,
+        (id) => availabilityFor(id === "claude-leader" ? leader : undefined),
       );
 
       await writeTask(
@@ -191,6 +208,8 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-leader" ? (leader as any) : undefined),
         () => "claude",
+        () => undefined,
+        (id) => availabilityFor(id === "claude-leader" ? leader : undefined),
       );
 
       await writeTask(
@@ -215,6 +234,8 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
+        () => undefined,
+        (id) => availabilityFor(id === "claude-worker" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "leader", status: "assigned", assignedTo: "claude-worker" }));
@@ -232,6 +253,8 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         () => undefined,
         () => "claude",
+        () => undefined,
+        () => "offline",
       );
 
       await writeTask(makeTask({ id: "t1", status: "pending" }));
@@ -253,6 +276,8 @@ describe("TaskDispatcher", () => {
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
+        () => undefined,
+        (id) => availabilityFor(id === "claude-worker" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "leader" }));

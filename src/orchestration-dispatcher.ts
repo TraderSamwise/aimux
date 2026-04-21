@@ -25,7 +25,7 @@ export class OrchestrationDispatcher {
 
   constructor(
     private readonly getSession: (id: string) => DispatchSession | undefined,
-    private readonly getSessionAvailability: (id: string) => SessionAvailability | undefined = () => undefined,
+    private readonly getSessionAvailability: (id: string) => SessionAvailability,
   ) {}
 
   tick(localSessionIds: string[]): void {
@@ -39,10 +39,7 @@ export class OrchestrationDispatcher {
           const session = this.getSession(recipient);
           if (!session || session.exited) continue;
           const availability = this.getSessionAvailability(recipient);
-          const canDeliver =
-            availability === "available" ||
-            availability === "needs_input" ||
-            (availability === undefined && (session.status === "idle" || session.status === "waiting"));
+          const canDeliver = availability === "available" || availability === "needs_input";
           if (!canDeliver) continue;
           const prompt =
             `Aimux: new ${message.kind} for you.\n\n` +

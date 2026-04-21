@@ -21,7 +21,7 @@ export class TaskDispatcher {
   private getSession: (id: string) => DispatchSession | undefined;
   private getSessionTool: (id: string) => string | undefined;
   private getSessionRole: (id: string) => string | undefined;
-  private getSessionAvailability: (id: string) => SessionAvailability | undefined;
+  private getSessionAvailability: (id: string) => SessionAvailability;
   private tickCount = 0;
   private lastCounts = { pending: 0, assigned: 0 };
   private workflow = new TaskWorkflow();
@@ -33,13 +33,13 @@ export class TaskDispatcher {
   constructor(
     getSession: (id: string) => DispatchSession | undefined,
     getSessionTool: (id: string) => string | undefined,
-    getSessionRole?: (id: string) => string | undefined,
-    getSessionAvailability?: (id: string) => SessionAvailability | undefined,
+    getSessionRole: (id: string) => string | undefined,
+    getSessionAvailability: (id: string) => SessionAvailability,
   ) {
     this.getSession = getSession;
     this.getSessionTool = getSessionTool;
-    this.getSessionRole = getSessionRole ?? (() => undefined);
-    this.getSessionAvailability = getSessionAvailability ?? (() => undefined);
+    this.getSessionRole = getSessionRole;
+    this.getSessionAvailability = getSessionAvailability;
   }
 
   /**
@@ -79,7 +79,7 @@ export class TaskDispatcher {
       if ((task.status !== "done" && task.status !== "failed") || task.notifiedAt) continue;
 
       const assignerSession = this.getSession(task.assignedBy);
-      if (assignerSession && !assignerSession.exited && assignerSession.status === "idle") {
+      if (assignerSession && this.canReceiveInjectedPrompt(assignerSession)) {
         this.workflow.notifyAssigner(assignerSession, task);
         this.pendingEvents.push({
           type: task.status === "done" ? "completed" : "failed",
@@ -127,12 +127,7 @@ export class TaskDispatcher {
       if (id === task.assignedBy) return undefined; // don't delegate to self
       if (hasActiveTask(id)) return undefined; // already working a task
       const session = this.getSession(id);
-      const availability = this.getSessionAvailability(id);
-      if (
-        session &&
-        !session.exited &&
-        (availability === "available" || (availability === undefined && session.status === "idle"))
-      ) {
+      if (session && this.canReceiveInjectedPrompt(session)) {
         return session;
       }
       return undefined;
@@ -171,6 +166,11 @@ export class TaskDispatcher {
     }
 
     return undefined;
+  }
+
+  private canReceiveInjectedPrompt(session: DispatchSession): boolean {
+    if (session.exited) return false;
+    return this.getSessionAvailability(session.id) === "available";
   }
 
   private inject(session: DispatchSession, task: Task): void {
