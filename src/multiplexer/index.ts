@@ -434,6 +434,7 @@ export class Multiplexer {
     backendSessionIdOverride?: string,
     sessionIdOverride?: string,
     detachedInTmux = false,
+    suppressStartupPreamble = false,
   ): SessionTransport {
     return createSessionImpl(
       this,
@@ -447,6 +448,7 @@ export class Multiplexer {
       backendSessionIdOverride,
       sessionIdOverride,
       detachedInTmux,
+      suppressStartupPreamble,
     );
   }
 

@@ -126,7 +126,49 @@ describe("createBuiltinMetadataWatchers", () => {
           session === "s1" && message.includes("Prompt: Explain auth flow") && source === "history",
       ),
     ).toBe(true);
-    expect(events).toContainEqual(["s1", "task_assigned", "Task: Ship auth"]);
+    expect(events).not.toContainEqual(["s1", "task_assigned", "Task: Ship auth"]);
     expect(events).toContainEqual(["s1", "prompt", "Explain auth flow"]);
+  });
+
+  it("does not emit task notifications for tasks that already exist on startup", async () => {
+    mkdirSync(getTasksDir(), { recursive: true });
+    await writeTask({
+      id: "t1",
+      status: "done",
+      assignedBy: "leader",
+      assignedTo: "s1",
+      description: "Review of bybit-open-trigger",
+      prompt: "review it",
+      result: "done",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const watchers = createBuiltinMetadataWatchers({
+      projectRoot: repoRoot,
+      projectId: "proj",
+      serverHost: "127.0.0.1",
+      serverPort: 43000,
+      metadata: {
+        setStatus() {},
+        setProgress() {},
+        log(session, message, opts) {
+          logs.push([session, message, opts?.source]);
+        },
+        clearLog() {},
+        setContext() {},
+        emitEvent(session, event) {
+          events.push([session, event.kind, event.message]);
+        },
+        markSeen() {},
+        setActivity() {},
+        setAttention() {},
+      },
+    });
+
+    for (const watcher of watchers) watcher.start?.();
+
+    expect(logs).toContainEqual(["s1", "Done: Review of bybit-open-trigger", "tasks"]);
+    expect(events).not.toContainEqual(["s1", "task_done", "Done: Review of bybit-open-trigger"]);
   });
 });

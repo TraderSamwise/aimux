@@ -451,6 +451,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
       undefined,
       claimed.worktreePath,
       target.backendSessionId,
+      undefined,
+      false,
+      true,
     );
 
     this.renderDashboard();

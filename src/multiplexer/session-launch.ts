@@ -214,6 +214,9 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
       undefined,
       saved.worktreePath,
       saved.backendSessionId,
+      undefined,
+      false,
+      true,
     );
   }
 
@@ -292,6 +295,7 @@ export function createSession(
   backendSessionIdOverride?: string,
   sessionIdOverride?: string,
   detachedInTmux = false,
+  suppressStartupPreamble = false,
 ): any {
   const cols = process.stdout.columns ?? 80;
   const sessionId = sessionIdOverride ?? `${command}-${Math.random().toString(36).slice(2, 8)}`;
@@ -299,14 +303,16 @@ export function createSession(
   const config = loadConfig();
   const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;
 
-  const preamble = host.sessionBootstrap.buildSessionPreamble({
-    sessionId,
-    command,
-    worktreePath,
-    extraPreamble,
-    includeAimuxPreamble: automaticPreambleEnabled,
-  });
-  const shouldInjectLaunchPreamble = Boolean(preambleFlag && preamble.trim());
+  const preamble = suppressStartupPreamble
+    ? ""
+    : host.sessionBootstrap.buildSessionPreamble({
+        sessionId,
+        command,
+        worktreePath,
+        extraPreamble,
+        includeAimuxPreamble: automaticPreambleEnabled,
+      });
+  const shouldInjectLaunchPreamble = Boolean(!suppressStartupPreamble && preambleFlag && preamble.trim());
 
   host.sessionBootstrap.ensurePlanFile(sessionId, command, worktreePath);
 
@@ -394,7 +400,7 @@ export function createSession(
   }
 
   host.saveState();
-  if (!preambleFlag && !extraPreamble && automaticPreambleEnabled && preamble.trim()) {
+  if (!suppressStartupPreamble && !preambleFlag && !extraPreamble && automaticPreambleEnabled && preamble.trim()) {
     const kickoff = host.sessionBootstrap.buildInitialKickoffPrompt(sessionId, preamble);
     void host.sessionBootstrap.deliverDetachedCodexKickoffPrompt(sessionId, kickoff, 1800);
   }
@@ -476,6 +482,7 @@ export async function migrateAgent(
       effectiveTarget,
       backendSessionId,
       sessionId,
+      true,
       true,
     );
     const kickoff = host.sessionBootstrap.buildCodexMigrationKickoffPrompt(

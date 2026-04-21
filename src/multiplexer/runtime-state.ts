@@ -150,6 +150,7 @@ export function loadOfflineSessions(host: RuntimeStateHost, state = host.constru
   const nextOfflineSessions = state.sessions.filter((s: any) => {
     if (ownedIds.has(s.id)) return false;
     if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
+    if (host.dashboardPendingActions?.get?.(s.id) === "starting") return false;
     if (s.worktreePath && !existsSync(s.worktreePath)) return false;
     return true;
   });
@@ -401,7 +402,6 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   const preservedLabel = session.label ?? host.getSessionLabel(session.id);
   host.offlineSessions = host.offlineSessions.filter((s: any) => s.id !== session.id);
   host.invalidateDesktopStateSnapshot();
-  host.saveState();
   host.writeStatuslineFile();
 
   if (preservedLabel) {
@@ -423,6 +423,7 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     useBackendResume ? session.backendSessionId : undefined,
     session.id,
     true,
+    !relaunchFresh,
   );
 }
 

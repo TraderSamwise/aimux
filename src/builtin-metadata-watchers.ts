@@ -70,6 +70,7 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
   const lastStatusBySession = new Map<string, string>();
   const lastTaskBySession = new Map<string, string>();
   const lastHistoryBySession = new Map<string, string>();
+  let taskWatcherPrimed = false;
   const planWatcher = new DirectoryWatcher(getPlansDir(), () => {
     for (const file of existsSync(getPlansDir()) ? readdirSync(getPlansDir()) : []) {
       const sessionId = sessionIdFromFile(file, ".md");
@@ -116,15 +117,18 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
     for (const [sessionId, entry] of latestBySession) {
       metadata.log(sessionId, entry.message, { source: "tasks", tone: entry.tone });
       if (lastTaskBySession.get(sessionId) !== entry.message) {
-        metadata.emitEvent(sessionId, {
-          kind: entry.tone === "error" ? "task_failed" : entry.tone === "success" ? "task_done" : "task_assigned",
-          message: entry.message,
-          tone: entry.tone,
-          source: "tasks",
-        });
+        if (taskWatcherPrimed) {
+          metadata.emitEvent(sessionId, {
+            kind: entry.tone === "error" ? "task_failed" : entry.tone === "success" ? "task_done" : "task_assigned",
+            message: entry.message,
+            tone: entry.tone,
+            source: "tasks",
+          });
+        }
         lastTaskBySession.set(sessionId, entry.message);
       }
     }
+    taskWatcherPrimed = true;
   });
 
   const historyWatcher = new DirectoryWatcher(getHistoryDir(), () => {
