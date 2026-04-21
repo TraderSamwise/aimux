@@ -23,6 +23,7 @@ describe("TmuxSessionTransport", () => {
       openTarget: vi.fn(),
       isInsideTmux: vi.fn().mockReturnValue(false),
       getTargetByWindowId: vi.fn().mockReturnValue(createTarget()),
+      isWindowAlive: vi.fn().mockReturnValue(true),
     } as unknown as TmuxRuntimeManager;
 
     const transport = new TmuxSessionTransport("codex-1", "codex", createTarget(), manager, 80, 24);
@@ -51,6 +52,31 @@ describe("TmuxSessionTransport", () => {
       openTarget: vi.fn(),
       isInsideTmux: vi.fn().mockReturnValue(false),
       getTargetByWindowId: vi.fn().mockReturnValueOnce(createTarget()).mockReturnValueOnce(null),
+      isWindowAlive: vi.fn().mockReturnValue(true),
+    } as unknown as TmuxRuntimeManager;
+
+    const transport = new TmuxSessionTransport("codex-1", "codex", createTarget(), manager, 80, 24);
+    const onExit = vi.fn();
+    transport.onExit(onExit);
+    vi.advanceTimersByTime(2200);
+    expect(onExit).toHaveBeenCalledWith(0);
+    transport.destroy();
+    vi.useRealTimers();
+  });
+
+  it("marks exit when the tmux pane is dead but the window still exists", () => {
+    vi.useFakeTimers();
+    const manager = {
+      sendText: vi.fn(),
+      sendEnter: vi.fn(),
+      sendKey: vi.fn(),
+      captureTarget: vi.fn().mockReturnValue(""),
+      killWindow: vi.fn(),
+      renameWindow: vi.fn(),
+      openTarget: vi.fn(),
+      isInsideTmux: vi.fn().mockReturnValue(false),
+      getTargetByWindowId: vi.fn().mockReturnValue(createTarget()),
+      isWindowAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
     } as unknown as TmuxRuntimeManager;
 
     const transport = new TmuxSessionTransport("codex-1", "codex", createTarget(), manager, 80, 24);

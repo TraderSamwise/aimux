@@ -116,6 +116,10 @@ export class TmuxSessionTransport {
         return;
       }
       this.target = resolved;
+      if (!this.manager.isWindowAlive(this.target)) {
+        this.markExited(0);
+        return;
+      }
     } catch (error) {
       debug(`tmux poll failed for ${this.id}: ${String(error)}`, "tmux");
     }
