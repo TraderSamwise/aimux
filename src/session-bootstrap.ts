@@ -392,6 +392,12 @@ export class SessionBootstrapService {
         try {
           const target = this.deps.getSessionTmuxTarget(targetSessionId);
           if (target) {
+            const ready = await this.waitForDetachedCodexInputReady(targetSessionId, target);
+            if (!ready) {
+              debug(`codex kickoff skipped: input prompt not ready for ${targetSessionId}`, "fork");
+              resolve();
+              return;
+            }
             this.deps.tmuxRuntimeManager.sendText(target, kickoff);
             await this.waitForDetachedCodexKickoffSubmit(targetSessionId, target, kickoff);
           }
@@ -401,6 +407,37 @@ export class SessionBootstrapService {
           resolve();
         }
       }, delayMs);
+    });
+  }
+
+  waitForDetachedCodexInputReady(targetSessionId: string, target: TmuxTarget): Promise<boolean> {
+    return new Promise((resolve) => {
+      const poll = (attempt = 1) => {
+        if (attempt > 80) {
+          resolve(false);
+          return;
+        }
+        setTimeout(
+          () => {
+            try {
+              const currentTarget = this.deps.getSessionTmuxTarget(targetSessionId);
+              if (!currentTarget || currentTarget.windowId !== target.windowId) {
+                resolve(false);
+                return;
+              }
+              if (this.paneLooksLikeCodexInputReady(target)) {
+                resolve(true);
+                return;
+              }
+            } catch {
+              // Keep polling; tmux capture can fail briefly while the window is starting.
+            }
+            poll(attempt + 1);
+          },
+          attempt === 1 ? 150 : 250,
+        );
+      };
+      poll();
     });
   }
 
@@ -587,6 +624,22 @@ export class SessionBootstrapService {
     } catch {
       return "";
     }
+  }
+
+  private paneLooksLikeCodexInputReady(target: TmuxTarget): boolean {
+    const pane = this.deps.tmuxRuntimeManager.captureTarget(target, { startLine: -40 });
+    const lines = pane
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines.length === 0) return false;
+
+    const text = lines.join("\n");
+    const hasCodexHeader = text.includes("OpenAI Codex") || /\bgpt-[\w.-]+\b/.test(text);
+    if (!hasCodexHeader) return false;
+
+    const recentLines = lines.slice(-12);
+    return recentLines.some((line) => /^([›>]\s*$|[›>]\s+\S)/.test(line));
   }
 }
 
