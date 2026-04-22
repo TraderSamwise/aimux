@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { loadOfflineSessions, resumeOfflineSession } from "./runtime-state.js";
+import { loadOfflineSessions, restoreTmuxSessionsFromState, resumeOfflineSession } from "./runtime-state.js";
 
 describe("resumeOfflineSession", () => {
   let repoRoot = "";
@@ -89,5 +89,48 @@ describe("resumeOfflineSession", () => {
 
     expect(changed).toBe(false);
     expect(host.offlineSessions).toEqual([]);
+  });
+
+  it("restores team role from tmux metadata", () => {
+    const host: any = {
+      sessions: [],
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: {
+              sessionName: "aimux-test",
+              windowId: "@1",
+              windowIndex: 1,
+              windowName: "codex",
+            },
+            metadata: {
+              kind: "agent",
+              sessionId: "codex-1",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: repoRoot,
+              role: "reviewer",
+              createdAt: "2026-04-21T00:00:00.000Z",
+            },
+          },
+        ]),
+      },
+      registerManagedSession: vi.fn(),
+      sessionLabels: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+    };
+
+    restoreTmuxSessionsFromState(host, { sessions: [] });
+
+    expect(host.registerManagedSession).toHaveBeenCalledWith(
+      expect.anything(),
+      [],
+      "codex",
+      repoRoot,
+      "reviewer",
+      Date.parse("2026-04-21T00:00:00.000Z"),
+    );
   });
 });

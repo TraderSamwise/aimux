@@ -10,6 +10,8 @@ interface DispatchSession {
   write(data: string): void;
 }
 
+type PromptDelivery = (session: Pick<DispatchSession, "id" | "write">, prompt: string) => void;
+
 export interface TaskEvent {
   type: "assigned" | "completed" | "failed" | "review_created" | "review_approved" | "changes_requested";
   taskId: string;
@@ -24,7 +26,7 @@ export class TaskDispatcher {
   private getSessionAvailability: (id: string) => SessionAvailability;
   private tickCount = 0;
   private lastCounts = { pending: 0, assigned: 0 };
-  private workflow = new TaskWorkflow();
+  private workflow: TaskWorkflow;
   /** Per-session task info: sessionId → task description */
   private sessionTasks = new Map<string, string>();
   /** Recent events for flash notifications, drained by caller */
@@ -35,11 +37,13 @@ export class TaskDispatcher {
     getSessionTool: (id: string) => string | undefined,
     getSessionRole: (id: string) => string | undefined,
     getSessionAvailability: (id: string) => SessionAvailability,
+    deliverPrompt?: PromptDelivery,
   ) {
     this.getSession = getSession;
     this.getSessionTool = getSessionTool;
     this.getSessionRole = getSessionRole;
     this.getSessionAvailability = getSessionAvailability;
+    this.workflow = new TaskWorkflow(deliverPrompt);
   }
 
   /**
@@ -170,7 +174,8 @@ export class TaskDispatcher {
 
   private canReceiveInjectedPrompt(session: DispatchSession): boolean {
     if (session.exited) return false;
-    return this.getSessionAvailability(session.id) === "available";
+    const availability = this.getSessionAvailability(session.id);
+    return availability === "available" || availability === "needs_input";
   }
 
   private inject(session: DispatchSession, task: Task): void {

@@ -12,7 +12,7 @@ vi.mock("./paths.js", () => ({
 }));
 
 import { TaskDispatcher } from "./task-dispatcher.js";
-import { writeTask, readTask, type Task } from "./tasks.js";
+import { writeTask, readTask, readAllTasks, type Task } from "./tasks.js";
 import { readMessages } from "./threads.js";
 
 function makeTmpDir(): string {
@@ -78,19 +78,23 @@ describe("TaskDispatcher", () => {
   describe("tick - dispatch pending tasks", () => {
     it("injects pending task into idle session", async () => {
       const session = makeMockSession("claude-worker", "idle");
+      const deliveries: Array<{ sessionId: string; prompt: string }> = [];
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
         () => undefined,
         (id) => availabilityFor(id === "claude-worker" ? session : undefined),
+        (target, prompt) => deliveries.push({ sessionId: target.id, prompt }),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }));
       dispatcher.tick(["claude-worker"]);
       await flush();
 
-      expect(session.written.length).toBe(1);
-      expect(session.written[0]).toContain("[AIMUX TASK t1");
+      expect(session.written.length).toBe(0);
+      expect(deliveries).toHaveLength(1);
+      expect(deliveries[0]).toMatchObject({ sessionId: "claude-worker" });
+      expect(deliveries[0]?.prompt).toContain("[AIMUX TASK t1");
 
       const task = readTask("t1");
       expect(task?.status).toBe("assigned");
@@ -115,6 +119,24 @@ describe("TaskDispatcher", () => {
 
       expect(session.written.length).toBe(0);
       expect(readTask("t1")?.status).toBe("pending");
+    });
+
+    it("injects into sessions that are waiting for input", async () => {
+      const session = makeMockSession("claude-worker", "idle");
+      const dispatcher = new TaskDispatcher(
+        (id) => (id === "claude-worker" ? (session as any) : undefined),
+        () => "claude",
+        () => undefined,
+        (id) => (id === "claude-worker" ? "needs_input" : "offline"),
+      );
+
+      await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }));
+      dispatcher.tick(["claude-worker"]);
+      await flush();
+
+      expect(session.written.length).toBe(1);
+      expect(session.written[0]).toContain("[AIMUX TASK t1");
+      expect(readTask("t1")?.status).toBe("assigned");
     });
 
     it("does not inject task into assigner (no self-delegation)", async () => {
@@ -176,11 +198,13 @@ describe("TaskDispatcher", () => {
   describe("tick - notify assigners", () => {
     it("notifies assigner when task completes", async () => {
       const leader = makeMockSession("claude-leader", "idle");
+      const deliveries: Array<{ sessionId: string; prompt: string }> = [];
       const dispatcher = new TaskDispatcher(
         (id) => (id === "claude-leader" ? (leader as any) : undefined),
         () => "claude",
         () => undefined,
         (id) => availabilityFor(id === "claude-leader" ? leader : undefined),
+        (target, prompt) => deliveries.push({ sessionId: target.id, prompt }),
       );
 
       await writeTask(
@@ -195,9 +219,11 @@ describe("TaskDispatcher", () => {
       dispatcher.tick(["claude-leader"]);
       await flush();
 
-      expect(leader.written.length).toBe(1);
-      expect(leader.written[0]).toContain("[AIMUX TASK COMPLETE t1]");
-      expect(leader.written[0]).toContain("All tests pass");
+      expect(leader.written.length).toBe(0);
+      expect(deliveries).toHaveLength(1);
+      expect(deliveries[0]).toMatchObject({ sessionId: "claude-leader" });
+      expect(deliveries[0]?.prompt).toContain("[AIMUX TASK COMPLETE t1]");
+      expect(deliveries[0]?.prompt).toContain("All tests pass");
 
       const task = readTask("t1");
       expect(task?.notifiedAt).toBeDefined();
@@ -225,6 +251,40 @@ describe("TaskDispatcher", () => {
       await flush();
 
       expect(leader.written.length).toBe(0);
+    });
+
+    it("turns direct request-changes review results into a revision task", async () => {
+      const coder = makeMockSession("codex-coder", "idle");
+      const dispatcher = new TaskDispatcher(
+        (id) => (id === "codex-coder" ? (coder as any) : undefined),
+        () => "codex",
+        (id) => (id === "codex-coder" ? "coder" : undefined),
+        (id) => (id === "codex-coder" ? "needs_input" : "offline"),
+      );
+
+      await writeTask(
+        makeTask({
+          id: "review-chart-widget-settings",
+          status: "done",
+          assignedBy: "codex-coder",
+          assignedTo: "claude-reviewer",
+          assignee: "reviewer",
+          assigner: "coder",
+          type: "review",
+          reviewStatus: "request-changes",
+          reviewOf: "chart-widget-settings",
+          result: "MEDIUM: restore per-tab hide positions.",
+        }),
+      );
+      dispatcher.tick(["codex-coder"]);
+      await flush();
+
+      expect(coder.written.length).toBe(1);
+      expect(coder.written[0]).toContain("[AIMUX TASK COMPLETE review-chart-widget-settings]");
+      const revision = readAllTasks().find((task) => task.id.startsWith("revision-chart-widget-settings-"));
+      expect(revision?.status).toBe("pending");
+      expect(revision?.assignee).toBe("coder");
+      expect(revision?.prompt).toContain("MEDIUM: restore per-tab hide positions.");
     });
   });
 

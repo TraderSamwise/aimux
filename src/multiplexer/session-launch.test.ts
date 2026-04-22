@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { createSession } from "./session-launch.js";
+import { createSession, runProjectService } from "./session-launch.js";
 
 describe("createSession", () => {
   it("does not inject startup preamble when explicitly suppressed", async () => {
@@ -61,5 +61,32 @@ describe("createSession", () => {
 
     session.destroy();
     rmSync(repoRoot, { recursive: true, force: true });
+  });
+});
+
+describe("runProjectService", () => {
+  it("starts the dispatcher refresh loop", async () => {
+    const resolveRun = vi.fn();
+    const host: any = {
+      mode: "dashboard",
+      syncSessionsFromState: vi.fn(),
+      createTaskDispatcher: vi.fn(() => ({ tick: vi.fn(), drainEvents: vi.fn(() => []) })),
+      createOrchestrationDispatcher: vi.fn(() => ({ tick: vi.fn(), drainEvents: vi.fn(() => []) })),
+      writeInstructionFiles: vi.fn(),
+      startProjectServices: vi.fn(),
+      startStatusRefresh: vi.fn(() => resolveRun(0)),
+      refreshDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+    };
+
+    const runPromise = runProjectService(host);
+    await vi.waitFor(() => expect(host.resolveRun).toBeTypeOf("function"));
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.mode).toBe("project-service");
+    expect(host.startStatusRefresh).toHaveBeenCalledOnce();
   });
 });

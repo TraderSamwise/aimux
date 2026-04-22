@@ -154,6 +154,7 @@ export async function runProjectService(host: SessionLaunchHost): Promise<number
   host.orchestrationDispatcher = host.createOrchestrationDispatcher();
   host.writeInstructionFiles();
   await host.startProjectServices();
+  host.startStatusRefresh();
   host.refreshDesktopStateSnapshot();
   host.writeStatuslineFile();
 

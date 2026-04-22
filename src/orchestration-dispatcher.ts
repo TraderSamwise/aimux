@@ -8,6 +8,8 @@ interface DispatchSession {
   write(data: string): void;
 }
 
+type PromptDelivery = (session: DispatchSession, prompt: string) => void;
+
 export interface OrchestrationDeliveryEvent {
   type: "message_delivered";
   threadId: string;
@@ -26,6 +28,7 @@ export class OrchestrationDispatcher {
   constructor(
     private readonly getSession: (id: string) => DispatchSession | undefined,
     private readonly getSessionAvailability: (id: string) => SessionAvailability,
+    private readonly deliverPrompt: PromptDelivery = (session, prompt) => session.write(prompt + "\r"),
   ) {}
 
   tick(localSessionIds: string[]): void {
@@ -49,7 +52,7 @@ export class OrchestrationDispatcher {
             `Run:\n` +
             `  aimux thread show ${thread.id}\n\n` +
             `Then reply, accept, complete, or request clarification using aimux as appropriate.`;
-          session.write(prompt + "\r");
+          this.deliverPrompt(session, prompt);
           markMessageDelivered(thread.id, message.id, recipient);
           this.pendingEvents.push({
             type: "message_delivered",

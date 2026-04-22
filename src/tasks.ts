@@ -4,6 +4,14 @@ import * as lockfile from "proper-lockfile";
 import { getTasksDir } from "./paths.js";
 
 export type TaskStatus = "pending" | "assigned" | "in_progress" | "blocked" | "done" | "failed";
+export type ReviewStatus = "pending" | "approved" | "changes_requested";
+export type ReviewStatusInput =
+  | ReviewStatus
+  | "approve"
+  | "request-changes"
+  | "request_changes"
+  | "changes-requested"
+  | "changes requested";
 
 export interface Task {
   id: string;
@@ -26,7 +34,7 @@ export interface Task {
   /** Task type: regular task or code review */
   type?: "task" | "review";
   /** Review verdict */
-  reviewStatus?: "pending" | "approved" | "changes_requested";
+  reviewStatus?: ReviewStatusInput;
   /** Reviewer feedback text */
   reviewFeedback?: string;
   /** Git diff associated with the task */
@@ -35,6 +43,18 @@ export interface Task {
   iteration?: number;
   /** ID of the task this review refers to */
   reviewOf?: string;
+}
+
+export function normalizeReviewStatus(status: unknown): ReviewStatus | undefined {
+  if (!status) return undefined;
+  const normalized = String(status)
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, "_");
+  if (normalized === "approve" || normalized === "approved") return "approved";
+  if (normalized === "pending") return "pending";
+  if (normalized === "request_changes" || normalized === "changes_requested") return "changes_requested";
+  return undefined;
 }
 
 const LOCK_RETRIES = { retries: 5, minTimeout: 50 };
@@ -146,7 +166,11 @@ export function cleanupTasks(maxAgeMs: number): void {
  */
 export function listPendingReviews(role: string): Task[] {
   return readAllTasks().filter(
-    (t) => t.type === "review" && t.assignee === role && t.status === "pending" && t.reviewStatus === "pending",
+    (t) =>
+      t.type === "review" &&
+      t.assignee === role &&
+      t.status === "pending" &&
+      normalizeReviewStatus(t.reviewStatus) === "pending",
   );
 }
 

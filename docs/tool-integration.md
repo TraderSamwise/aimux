@@ -174,6 +174,9 @@ At minimum:
     - an auto-submitted first-turn kickoff prompt
   - that kickoff path is timing-sensitive and must be tested live if touched
   - do not assume Codex fork startup behaves like Claude preamble startup
+  - do not submit Codex injected prompts with plain tmux `Enter`; use the shared aimux submit path that waits for the visible draft/pasted-content marker and sends raw carriage return
+  - keep Codex injected prompts single-line before submission; multiline pasted drafts are materially less reliable than the startup kickoff shape
+  - this applies to every push-injection path, not just fork/migrate: fresh preamble kickoff, task dispatch, message dispatch, handoff, review, and future orchestration prompts must all go through the same hardened submit logic
 
 ### Claude
 
@@ -218,6 +221,8 @@ Do not assume that fixing one path fixes the others:
 - Codex fork uses a startup kickoff flow
 - Codex migrate usually uses native backend resume
 - Claude migrate uses aimux-owned continuity fallback
+
+When changing prompt injection code, verify injected prompts are actually submitted, not merely pasted into the input buffer. For Codex, the failure mode is a visible `[Pasted Content ...]` draft or expanded prompt text that never starts running.
 
 Also keep the ownership boundary clear:
 

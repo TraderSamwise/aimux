@@ -1,4 +1,4 @@
-import { readAllTasks, type Task } from "./tasks.js";
+import { normalizeReviewStatus, readAllTasks, type Task } from "./tasks.js";
 import { listThreadSummaries, readMessages, type ThreadSummary } from "./threads.js";
 
 export interface ThreadEntry extends ThreadSummary {
@@ -114,7 +114,7 @@ export function describeWorkflowNextAction(entry: WorkflowEntry, currentParticip
   }
   if (entry.task?.type === "review") {
     if (waitsOnMe) return "review decision";
-    if (entry.task.reviewStatus === "changes_requested") return "follow up changes";
+    if (normalizeReviewStatus(entry.task.reviewStatus) === "changes_requested") return "follow up changes";
     return "review thread";
   }
   if (entry.task) {

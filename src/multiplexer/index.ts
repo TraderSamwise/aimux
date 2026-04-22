@@ -381,6 +381,9 @@ export class Multiplexer {
       (id) => this.sessionToolKeys.get(id),
       (id) => this.sessionRoles.get(id),
       (id) => this.deriveSessionSemanticState(id).availability,
+      (session, prompt) => {
+        void this.writeAgentInput(session.id, prompt, undefined, undefined, true);
+      },
     );
   }
 
@@ -388,6 +391,9 @@ export class Multiplexer {
     return new OrchestrationDispatcher(
       (id) => this.sessions.find((s) => s.id === id),
       (id) => this.deriveSessionSemanticState(id).availability,
+      (session, prompt) => {
+        void this.writeAgentInput(session.id, prompt, undefined, undefined, true);
+      },
     );
   }
 

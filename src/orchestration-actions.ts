@@ -1,4 +1,4 @@
-import { readTask, writeTask, type Task } from "./tasks.js";
+import { normalizeReviewStatus, readTask, writeTask, type Task } from "./tasks.js";
 import {
   appendMessage,
   createThread,
@@ -195,7 +195,7 @@ function requireTask(taskId: string): Task {
 }
 
 async function createReworkTaskFromReview(reviewTask: Task): Promise<Task | undefined> {
-  if (reviewTask.reviewStatus !== "changes_requested") return undefined;
+  if (normalizeReviewStatus(reviewTask.reviewStatus) !== "changes_requested") return undefined;
   const iteration = (reviewTask.iteration ?? 1) + 1;
   if (iteration > 5) return undefined;
   const followUp: Task = {
@@ -204,7 +204,7 @@ async function createReworkTaskFromReview(reviewTask: Task): Promise<Task | unde
     assignedBy: reviewTask.assignedTo ?? reviewTask.assignedBy,
     description: `Revision ${iteration}: ${reviewTask.description.replace(/^Review: /, "")}`,
     prompt:
-      `Changes requested by reviewer:\n\n${reviewTask.reviewFeedback ?? "(no feedback)"}\n\n` +
+      `Changes requested by reviewer:\n\n${reviewTask.reviewFeedback ?? reviewTask.result ?? "(no feedback)"}\n\n` +
       `Original task: ${reviewTask.description}`,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

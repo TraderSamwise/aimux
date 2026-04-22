@@ -40,14 +40,18 @@ describe("OrchestrationDispatcher", () => {
       body: "Please pick up the parser fix.",
     });
     const session = makeSession("codex-1", "idle");
+    const deliveries: Array<{ sessionId: string; prompt: string }> = [];
     const dispatcher = new OrchestrationDispatcher(
       (id) => (id === "codex-1" ? session : undefined),
       (id) => (id === "codex-1" ? "available" : "offline"),
+      (target, prompt) => deliveries.push({ sessionId: target.id, prompt }),
     );
     dispatcher.tick(["codex-1"]);
-    expect(session.written).toHaveLength(1);
-    expect(session.written[0]).toContain("Aimux: new request for you.");
-    expect(session.written[0]).toContain(`aimux thread show ${result.thread.id}`);
+    expect(session.written).toHaveLength(0);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({ sessionId: "codex-1" });
+    expect(deliveries[0]?.prompt).toContain("Aimux: new request for you.");
+    expect(deliveries[0]?.prompt).toContain(`aimux thread show ${result.thread.id}`);
     const messages = readMessages(result.thread.id);
     expect(messages[0]?.deliveredTo).toContain("codex-1");
     expect(dispatcher.drainEvents()).toHaveLength(1);

@@ -36,7 +36,8 @@ export const agentIoMethods = {
     return (
       `${prefix} ${headline}${body}\n\n` +
       `Read .aimux/threads/${threadId}.json and .aimux/threads/${threadId}.jsonl for context. ` +
-      `This is a ${kind} message. Reply in-thread if needed.`
+      `This is a ${kind} message delivered by aimux. ` +
+      `Check the thread now, then either reply in-thread or briefly acknowledge that no action is needed.`
     );
   },
 
@@ -68,7 +69,13 @@ export const agentIoMethods = {
       const availability = this.deriveSessionSemanticState(session.id, session.status).availability;
       if (availability === "blocked" || availability === "offline" || availability === "needs_input") continue;
       if (availability !== "available" && availability !== "busy") continue;
-      session.write(this.composeOrchestrationPrompt(threadId, from, body, kind, title) + "\r");
+      void this.writeAgentInput(
+        recipient,
+        this.composeOrchestrationPrompt(threadId, from, body, kind, title),
+        undefined,
+        undefined,
+        true,
+      );
       if (messageId) {
         markMessageDelivered(threadId, messageId, recipient);
       }
@@ -224,8 +231,8 @@ export const agentIoMethods = {
     writeTmuxAgentInputImpl(this, sessionId, transport, data);
   },
 
-  normalizeAgentInput(this: any, data: string, submit: boolean): string {
-    return normalizeAgentInputImpl(this, data, submit);
+  normalizeAgentInput(this: any, data: string, submit: boolean, sessionId?: string): string {
+    return normalizeAgentInputImpl(this, data, submit, sessionId);
   },
 
   paneStillContainsAgentDraft(this: any, target: any, draft: string): boolean {

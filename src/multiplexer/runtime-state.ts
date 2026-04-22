@@ -249,7 +249,7 @@ export function restoreTmuxSessionsFromState(host: RuntimeStateHost, state = hos
       metadata.args,
       metadata.toolConfigKey,
       metadata.worktreePath,
-      undefined,
+      metadata.role,
       metadata.createdAt ? Date.parse(metadata.createdAt) : undefined,
     );
 

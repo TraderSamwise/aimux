@@ -1,4 +1,4 @@
-import { type Task, writeTask } from "./tasks.js";
+import { normalizeReviewStatus, type Task, writeTask } from "./tasks.js";
 import { loadTeamConfig } from "./team.js";
 import { markMessageDelivered, openTaskThread, updateThread } from "./threads.js";
 import { sendThreadMessage } from "./orchestration.js";
@@ -10,6 +10,10 @@ interface DispatchSession {
 }
 
 export class TaskWorkflow {
+  constructor(
+    private readonly deliverPrompt: (session: DispatchSession, prompt: string) => void = defaultDeliverPrompt,
+  ) {}
+
   injectIntoSession(session: DispatchSession, task: Task): TaskEvent {
     const thread = openTaskThread(task.id, {
       title: `${task.type === "review" ? "Review" : "Task"}: ${task.description}`,
@@ -57,7 +61,7 @@ export class TaskWorkflow {
       prompt += `\n\nIf blocked, use:\n  aimux task block ${task.id} --from ${session.id} --body "<reason>"`;
     }
 
-    session.write(prompt + "\r");
+    this.deliverPrompt(session, prompt);
     task.status = "assigned";
     task.assignedTo = session.id;
     writeTask(task);
@@ -90,8 +94,9 @@ export class TaskWorkflow {
       }));
     }
 
-    session.write(
-      `[AIMUX TASK COMPLETE ${task.id}] Agent ${task.assignedTo} finished: ${task.result ?? task.error ?? "no details"}\r`,
+    this.deliverPrompt(
+      session,
+      `[AIMUX TASK COMPLETE ${task.id}] Agent ${task.assignedTo} finished: ${task.result ?? task.error ?? "no details"}`,
     );
     task.notifiedAt = new Date().toISOString();
     writeTask(task);
@@ -140,7 +145,8 @@ export class TaskWorkflow {
   }
 
   private handleReviewCompletion(reviewTask: Task): TaskEvent[] {
-    if (reviewTask.reviewStatus === "approved") {
+    const reviewStatus = normalizeReviewStatus(reviewTask.reviewStatus);
+    if (reviewStatus === "approved") {
       return [
         {
           type: "review_approved",
@@ -151,7 +157,7 @@ export class TaskWorkflow {
       ];
     }
 
-    if (reviewTask.reviewStatus !== "changes_requested") {
+    if (reviewStatus !== "changes_requested") {
       return [];
     }
 
@@ -164,7 +170,7 @@ export class TaskWorkflow {
       assignedBy: reviewTask.assignedTo ?? reviewTask.assignedBy,
       description: `Revision ${iteration}: ${reviewTask.description.replace(/^Review: /, "")}`,
       prompt:
-        `Changes requested by reviewer:\n\n${reviewTask.reviewFeedback ?? "(no feedback)"}\n\n` +
+        `Changes requested by reviewer:\n\n${reviewTask.reviewFeedback ?? reviewTask.result ?? "(no feedback)"}\n\n` +
         `Original task: ${reviewTask.description}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -185,4 +191,8 @@ export class TaskWorkflow {
       },
     ];
   }
+}
+
+function defaultDeliverPrompt(session: DispatchSession, prompt: string): void {
+  session.write(prompt + "\r");
 }

@@ -166,28 +166,54 @@ export function writeTmuxAgentInput(
   flushText();
 }
 
-export function normalizeAgentInput(_host: SessionRuntimeHost, data: string, submit: boolean): string {
+export function normalizeAgentInput(
+  host: SessionRuntimeHost,
+  data: string,
+  submit: boolean,
+  sessionId?: string,
+): string {
   if (!submit) return data;
-  return data.replace(/(?:\r\n|\r|\n)+$/g, "");
+  const trimmed = data.replace(/(?:\r\n|\r|\n)+$/g, "");
+  const tool = sessionId ? host.sessionToolKeys?.get(sessionId) : undefined;
+  if (tool === "codex") {
+    return trimmed.replace(/\s*(?:\r\n|\r|\n)+\s*/g, " ");
+  }
+  return trimmed;
 }
 
 export function paneStillContainsAgentDraft(host: SessionRuntimeHost, target: any, draft: string): boolean {
   try {
     const pane = host.tmuxRuntimeManager.captureTarget(target, { startLine: -60 });
     const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+    const normalizedPane = normalize(pane);
     const normalizedDraft = normalize(draft);
     if (!normalizedDraft) return false;
-    return normalize(pane).includes(normalizedDraft);
+    if (normalizedPane.includes(normalizedDraft)) return true;
+    if (normalizedPane.includes("[pasted content")) return true;
+    const fragments = normalizedDraft
+      .split(/[.!?]\s+/)
+      .map((fragment) => fragment.trim())
+      .filter((fragment) => fragment.length >= 24)
+      .slice(0, 3);
+    return fragments.some((fragment) => normalizedPane.includes(fragment));
   } catch {
     return false;
   }
 }
 
+function captureAgentDraftSignature(host: SessionRuntimeHost, target: any): string {
+  try {
+    const pane = host.tmuxRuntimeManager.captureTarget(target, { startLine: -20 });
+    return pane.replace(/\s+/g, " ").trim().slice(-240);
+  } catch {
+    return "";
+  }
+}
+
 export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: string, target: any, draft: string): void {
-  const submitOnce = () => {
-    try {
-      host.tmuxRuntimeManager.sendEnter(target);
-    } catch {}
+  const targetStillCurrent = () => {
+    const currentTarget = host.sessionTmuxTargets.get(sessionId);
+    return Boolean(currentTarget && currentTarget.windowId === target.windowId);
   };
 
   const step = (attempt = 1) => {
@@ -195,11 +221,8 @@ export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: str
     setTimeout(
       () => {
         try {
-          const currentTarget = host.sessionTmuxTargets.get(sessionId);
-          if (!currentTarget || currentTarget.windowId !== target.windowId) {
-            return;
-          }
-          submitOnce();
+          if (!targetStillCurrent()) return;
+          host.tmuxRuntimeManager.sendCarriageReturn(target);
           if (attempt >= 4) return;
           setTimeout(() => {
             try {
@@ -214,7 +237,33 @@ export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: str
     );
   };
 
-  step();
+  const waitForDraft = (attempt = 1, visibleCount = 0, lastSignature = "") => {
+    if (attempt > 20) {
+      step(1);
+      return;
+    }
+    setTimeout(
+      () => {
+        try {
+          if (!targetStillCurrent()) return;
+          const stillDraft = paneStillContainsAgentDraft(host, target, draft);
+          const signature = stillDraft ? captureAgentDraftSignature(host, target) : "";
+          const nextVisibleCount =
+            stillDraft && signature && signature === lastSignature ? visibleCount + 1 : stillDraft ? 1 : 0;
+          if (nextVisibleCount >= 2) {
+            step(1);
+            return;
+          }
+          waitForDraft(attempt + 1, nextVisibleCount, signature);
+        } catch {
+          waitForDraft(attempt + 1, visibleCount, lastSignature);
+        }
+      },
+      attempt === 1 ? 300 : 250,
+    );
+  };
+
+  waitForDraft();
 }
 
 export async function writeAgentInput(
@@ -239,7 +288,7 @@ export async function writeAgentInput(
       resolveAttachmentPath,
     },
   );
-  const normalizedData = normalizeAgentInput(host, serializedData, submit);
+  const normalizedData = normalizeAgentInput(host, serializedData, submit, sessionId);
   if (!normalizedData && !submit) {
     throw new Error("input data is required");
   }
