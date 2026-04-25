@@ -28,6 +28,7 @@ export class OrchestrationDispatcher {
   constructor(
     private readonly getSession: (id: string) => DispatchSession | undefined,
     private readonly getSessionAvailability: (id: string) => SessionAvailability,
+    // Production multiplexer wiring overrides this with writeAgentInput(..., submit: true).
     private readonly deliverPrompt: PromptDelivery = (session, prompt) => session.write(prompt + "\r"),
   ) {}
 

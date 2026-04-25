@@ -18,6 +18,11 @@ import {
   type SessionInputOperationRecord,
 } from "../session-input-operations.js";
 import { captureGitContext } from "../context/context-bridge.js";
+import {
+  normalizeSubmittedPrompt,
+  paneStillContainsPromptDraft,
+  scheduleTmuxPromptSubmit,
+} from "../agent-prompt-delivery.js";
 
 type SessionRuntimeHost = any;
 
@@ -172,98 +177,26 @@ export function normalizeAgentInput(
   submit: boolean,
   sessionId?: string,
 ): string {
-  if (!submit) return data;
-  const trimmed = data.replace(/(?:\r\n|\r|\n)+$/g, "");
   const tool = sessionId ? host.sessionToolKeys?.get(sessionId) : undefined;
-  if (tool === "codex") {
-    return trimmed.replace(/\s*(?:\r\n|\r|\n)+\s*/g, " ");
-  }
-  return trimmed;
+  return normalizeSubmittedPrompt(tool, data, submit);
 }
 
 export function paneStillContainsAgentDraft(host: SessionRuntimeHost, target: any, draft: string): boolean {
-  try {
-    const pane = host.tmuxRuntimeManager.captureTarget(target, { startLine: -60 });
-    const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
-    const normalizedPane = normalize(pane);
-    const normalizedDraft = normalize(draft);
-    if (!normalizedDraft) return false;
-    if (normalizedPane.includes(normalizedDraft)) return true;
-    if (normalizedPane.includes("[pasted content")) return true;
-    const fragments = normalizedDraft
-      .split(/[.!?]\s+/)
-      .map((fragment) => fragment.trim())
-      .filter((fragment) => fragment.length >= 24)
-      .slice(0, 3);
-    return fragments.some((fragment) => normalizedPane.includes(fragment));
-  } catch {
-    return false;
-  }
-}
-
-function captureAgentDraftSignature(host: SessionRuntimeHost, target: any): string {
-  try {
-    const pane = host.tmuxRuntimeManager.captureTarget(target, { startLine: -20 });
-    return pane.replace(/\s+/g, " ").trim().slice(-240);
-  } catch {
-    return "";
-  }
+  return paneStillContainsPromptDraft(host.tmuxRuntimeManager, target, draft);
 }
 
 export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: string, target: any, draft: string): void {
-  const targetStillCurrent = () => {
+  const isTargetCurrent = () => {
     const currentTarget = host.sessionTmuxTargets.get(sessionId);
     return Boolean(currentTarget && currentTarget.windowId === target.windowId);
   };
 
-  const step = (attempt = 1) => {
-    if (attempt > 4) return;
-    setTimeout(
-      () => {
-        try {
-          if (!targetStillCurrent()) return;
-          host.tmuxRuntimeManager.sendCarriageReturn(target);
-          if (attempt >= 4) return;
-          setTimeout(() => {
-            try {
-              if (paneStillContainsAgentDraft(host, target, draft)) {
-                step(attempt + 1);
-              }
-            } catch {}
-          }, 700);
-        } catch {}
-      },
-      attempt === 1 ? 150 : 700,
-    );
-  };
-
-  const waitForDraft = (attempt = 1, visibleCount = 0, lastSignature = "") => {
-    if (attempt > 20) {
-      step(1);
-      return;
-    }
-    setTimeout(
-      () => {
-        try {
-          if (!targetStillCurrent()) return;
-          const stillDraft = paneStillContainsAgentDraft(host, target, draft);
-          const signature = stillDraft ? captureAgentDraftSignature(host, target) : "";
-          const nextVisibleCount =
-            stillDraft && signature && signature === lastSignature ? visibleCount + 1 : stillDraft ? 1 : 0;
-          if (nextVisibleCount >= 2) {
-            step(1);
-            return;
-          }
-          waitForDraft(attempt + 1, nextVisibleCount, signature);
-        } catch {
-          waitForDraft(attempt + 1, visibleCount, lastSignature);
-        }
-      },
-      attempt === 1 ? 300 : 250,
-    );
-  };
-
-  waitForDraft();
+  scheduleTmuxPromptSubmit({
+    tmuxRuntimeManager: host.tmuxRuntimeManager,
+    target,
+    draft,
+    isTargetCurrent,
+  });
 }
 
 export async function writeAgentInput(

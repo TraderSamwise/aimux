@@ -194,5 +194,6 @@ export class TaskWorkflow {
 }
 
 function defaultDeliverPrompt(session: DispatchSession, prompt: string): void {
+  // Production multiplexer wiring overrides this with writeAgentInput(..., submit: true).
   session.write(prompt + "\r");
 }

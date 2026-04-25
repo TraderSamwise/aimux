@@ -158,6 +158,24 @@ At minimum:
 
 ## Current State
 
+## Prompt Delivery
+
+Prompt injection is a shared runtime concern, not a per-feature detail.
+
+Production code that pushes text into a tmux-backed agent and expects it to run must use the shared prompt delivery path in `src/agent-prompt-delivery.ts`, normally via `writeAgentInput(..., submit: true)`.
+
+Do not add new production paths that call `session.write(prompt + "\r")`, plain tmux `Enter`, or ad hoc delayed submits. Those paths can paste into Codex without actually submitting, especially when Codex collapses a large prompt into `[Pasted Content ...]`.
+
+The shared delivery path owns:
+
+- Codex single-line submit normalization
+- waiting for the draft or pasted-content marker to appear
+- waiting for the draft to stabilize before submitting
+- raw carriage-return submission
+- bounded retry when the draft remains visible after submit
+
+Raw `session.write(prompt + "\r")` should only remain in non-tmux fallbacks or tests/standalone adapters that are not driving a live tmux pane.
+
 ### Codex
 
 - native backend resume path: yes

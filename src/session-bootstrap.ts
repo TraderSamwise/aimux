@@ -7,6 +7,7 @@ import { readHistory } from "./context/history.js";
 import { debug, debugPreamble } from "./debug.js";
 import { listWorktrees as listAllWorktrees } from "./worktree.js";
 import { type TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
+import { deliverTmuxPrompt } from "./agent-prompt-delivery.js";
 
 export interface ForkSourceSnapshot {
   historyText?: string;
@@ -398,8 +399,16 @@ export class SessionBootstrapService {
               resolve();
               return;
             }
-            this.deps.tmuxRuntimeManager.sendText(target, kickoff);
-            await this.waitForDetachedCodexKickoffSubmit(targetSessionId, target, kickoff);
+            await deliverTmuxPrompt({
+              tmuxRuntimeManager: this.deps.tmuxRuntimeManager,
+              target,
+              prompt: kickoff,
+              submit: true,
+              isTargetCurrent: () => {
+                const currentTarget = this.deps.getSessionTmuxTarget(targetSessionId);
+                return Boolean(currentTarget && currentTarget.windowId === target.windowId);
+              },
+            });
           }
         } catch {
           // Continue even if kickoff automation fails; user can still recover manually.
@@ -511,79 +520,6 @@ export class SessionBootstrapService {
     );
   }
 
-  waitForDetachedCodexKickoffSubmit(targetSessionId: string, target: TmuxTarget, kickoff: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      const waitForDraft = (attempt = 1, visibleCount = 0, lastSignature = "") => {
-        if (attempt > 20) {
-          step(1);
-          return;
-        }
-        setTimeout(
-          () => {
-            try {
-              const currentTarget = this.deps.getSessionTmuxTarget(targetSessionId);
-              if (!currentTarget || currentTarget.windowId !== target.windowId) {
-                resolve(false);
-                return;
-              }
-              const stillDraft = this.paneStillContainsDraft(target, kickoff);
-              const signature = stillDraft ? this.captureDraftSignature(target) : "";
-              const nextVisibleCount =
-                stillDraft && signature && signature === lastSignature ? visibleCount + 1 : stillDraft ? 1 : 0;
-              if (nextVisibleCount >= 2) {
-                step(1);
-                return;
-              }
-              waitForDraft(attempt + 1, nextVisibleCount, signature);
-            } catch {
-              waitForDraft(attempt + 1, visibleCount, lastSignature);
-            }
-          },
-          attempt === 1 ? 300 : 250,
-        );
-      };
-
-      const step = (attempt = 1) => {
-        if (attempt > 4) {
-          resolve(false);
-          return;
-        }
-        setTimeout(
-          () => {
-            try {
-              const currentTarget = this.deps.getSessionTmuxTarget(targetSessionId);
-              if (!currentTarget || currentTarget.windowId !== target.windowId) {
-                resolve(false);
-                return;
-              }
-              this.deps.tmuxRuntimeManager.sendCarriageReturn(target);
-              if (attempt >= 4) {
-                resolve(true);
-                return;
-              }
-              setTimeout(() => {
-                try {
-                  const stillDraft = this.paneStillContainsDraft(target, kickoff);
-                  if (stillDraft) {
-                    step(attempt + 1);
-                    return;
-                  }
-                } catch {
-                  // Fall through and treat it as submitted; the next user-visible render will confirm.
-                }
-                resolve(true);
-              }, 700);
-            } catch {
-              resolve(false);
-            }
-          },
-          attempt === 1 ? 200 : 700,
-        );
-      };
-      waitForDraft();
-    });
-  }
-
   finalizePreamble(command: string, preamble: string): void {
     debugPreamble(command, Buffer.byteLength(preamble));
   }
@@ -595,35 +531,6 @@ export class SessionBootstrapService {
       normalized.includes("# Current Status\n\nTBD") &&
       normalized.includes("# Steps\n\n- [ ] TBD")
     );
-  }
-
-  private paneStillContainsDraft(target: TmuxTarget, draft: string): boolean {
-    try {
-      const pane = this.deps.tmuxRuntimeManager.captureTarget(target, { startLine: -60 });
-      const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
-      const normalizedPane = normalize(pane);
-      const normalizedDraft = normalize(draft);
-      if (!normalizedDraft) return false;
-      if (normalizedPane.includes(normalizedDraft)) return true;
-      if (normalizedPane.includes("[pasted content")) return true;
-      const fragments = normalizedDraft
-        .split(/[.!?]\s+/)
-        .map((fragment) => fragment.trim())
-        .filter((fragment) => fragment.length >= 24)
-        .slice(0, 3);
-      return fragments.some((fragment) => normalizedPane.includes(fragment));
-    } catch {
-      return false;
-    }
-  }
-
-  private captureDraftSignature(target: TmuxTarget): string {
-    try {
-      const pane = this.deps.tmuxRuntimeManager.captureTarget(target, { startLine: -20 });
-      return pane.replace(/\s+/g, " ").trim().slice(-240);
-    } catch {
-      return "";
-    }
   }
 
   private paneLooksLikeCodexInputReady(target: TmuxTarget): boolean {
