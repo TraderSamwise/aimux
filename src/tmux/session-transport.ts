@@ -4,12 +4,14 @@ import { TmuxRuntimeManager, type TmuxTarget } from "./runtime-manager.js";
 
 export class TmuxSessionTransport {
   readonly command: string;
+  private static readonly EXIT_AFTER_CONSECUTIVE_UNHEALTHY_POLLS = 2;
   backendSessionId?: string;
   private _exited = false;
   private _exitCode: number | undefined;
   private readonly dataListeners: Array<(data: string) => void> = [];
   private readonly exitListeners: Array<(code: number) => void> = [];
   private readonly pollInterval: ReturnType<typeof setInterval>;
+  private unhealthyPolls = 0;
   private cols: number;
   private rows: number;
 
@@ -112,17 +114,26 @@ export class TmuxSessionTransport {
     try {
       const resolved = this.manager.getTargetByWindowId(this.target.sessionName, this.target.windowId);
       if (!resolved) {
-        this.markExited(0);
+        this.recordUnhealthyPoll();
         return;
       }
       this.target = resolved;
       if (!this.manager.isWindowAlive(this.target)) {
-        this.markExited(0);
+        this.recordUnhealthyPoll();
         return;
       }
+      this.unhealthyPolls = 0;
     } catch (error) {
       debug(`tmux poll failed for ${this.id}: ${String(error)}`, "tmux");
     }
+  }
+
+  private recordUnhealthyPoll(): void {
+    this.unhealthyPolls += 1;
+    if (this.unhealthyPolls < TmuxSessionTransport.EXIT_AFTER_CONSECUTIVE_UNHEALTHY_POLLS) {
+      return;
+    }
+    this.markExited(0);
   }
 
   private markExited(code: number): void {

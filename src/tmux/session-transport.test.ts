@@ -58,7 +58,7 @@ describe("TmuxSessionTransport", () => {
     const transport = new TmuxSessionTransport("codex-1", "codex", createTarget(), manager, 80, 24);
     const onExit = vi.fn();
     transport.onExit(onExit);
-    vi.advanceTimersByTime(2200);
+    vi.advanceTimersByTime(3200);
     expect(onExit).toHaveBeenCalledWith(0);
     transport.destroy();
     vi.useRealTimers();
@@ -82,8 +82,36 @@ describe("TmuxSessionTransport", () => {
     const transport = new TmuxSessionTransport("codex-1", "codex", createTarget(), manager, 80, 24);
     const onExit = vi.fn();
     transport.onExit(onExit);
-    vi.advanceTimersByTime(2200);
+    vi.advanceTimersByTime(3200);
     expect(onExit).toHaveBeenCalledWith(0);
+    transport.destroy();
+    vi.useRealTimers();
+  });
+
+  it("does not mark exit on a single transient unhealthy poll during startup", () => {
+    vi.useFakeTimers();
+    const manager = {
+      sendText: vi.fn(),
+      sendEnter: vi.fn(),
+      sendKey: vi.fn(),
+      captureTarget: vi.fn().mockReturnValue(""),
+      killWindow: vi.fn(),
+      renameWindow: vi.fn(),
+      openTarget: vi.fn(),
+      isInsideTmux: vi.fn().mockReturnValue(false),
+      getTargetByWindowId: vi
+        .fn()
+        .mockReturnValue(createTarget())
+        .mockReturnValue(createTarget())
+        .mockReturnValue(createTarget()),
+      isWindowAlive: vi.fn().mockReturnValueOnce(false).mockReturnValue(true).mockReturnValue(true),
+    } as unknown as TmuxRuntimeManager;
+
+    const transport = new TmuxSessionTransport("codex-1", "codex", createTarget(), manager, 80, 24);
+    const onExit = vi.fn();
+    transport.onExit(onExit);
+    vi.advanceTimersByTime(3200);
+    expect(onExit).not.toHaveBeenCalled();
     transport.destroy();
     vi.useRealTimers();
   });
