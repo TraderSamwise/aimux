@@ -226,6 +226,8 @@ Daemon rebuild quirk:
 
 - The global daemon and each project service run from the built `dist/` output, not directly from `src/`.
 - If you change project-service HTTP behavior, rebuild first with `yarn build`.
+- More generally: if you change any `src/*.ts` runtime or CLI behavior, rebuild before testing or asking someone else to test.
+- `yarn vitest` / `yarn typecheck` validate source, but they do not update the runtime artifact that `aimux` actually executes.
 - If a daemon is already running, restart the project runtime first.
 - If a build mismatch persists after `aimux restart-runtime --open`, use the advanced daemon path.
 

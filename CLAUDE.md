@@ -19,6 +19,21 @@ cd src-tauri && cargo tauri dev
 - `src-tauri/src/main.rs` Rust changes → `cargo tauri dev` auto-recompiles + restarts app
 - `src/*.ts` Node CLI changes → need `yarn build` so the desktop app sees updated `dist/` code
 
+### Runtime Verification Rule
+
+For `aimux` runtime / CLI behavior, source-level validation is not enough.
+
+- Changes under `src/*.ts` do not affect the running CLI until `yarn build` updates `dist/`
+- `yarn vitest` and `yarn typecheck` only validate source correctness; they do not prove the live runtime changed
+- Before asking someone to verify runtime behavior manually, always:
+
+```bash
+yarn build
+```
+
+- If a daemon or project runtime is already running, rebuild alone may still leave stale processes alive; restart or reload the relevant runtime after the build
+- Do not send a user to test behavior changes against stale `dist/`
+
 ### Building the .app bundle
 
 Only build the bundle for final testing or distribution:
