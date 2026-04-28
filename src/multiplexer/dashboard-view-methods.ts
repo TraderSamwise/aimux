@@ -100,6 +100,9 @@ export const dashboardViewMethods = {
         this.dashboardUiStateStore.markSelectionDirty();
       }
       this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
+      if (hasWorktrees) {
+        this.updateWorktreeSessions();
+      }
 
       let selectedSession: string | undefined;
       let selectedService: string | undefined;

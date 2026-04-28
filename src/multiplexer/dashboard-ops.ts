@@ -23,6 +23,9 @@ export async function runDashboardOperation<T>(
 
 export function setPendingDashboardSessionAction(host: DashboardOpsHost, sessionId: string, kind: any): void {
   host.dashboardPendingActions.set(sessionId, kind);
+  if (typeof host.reapplyDashboardPendingActions === "function") {
+    host.reapplyDashboardPendingActions();
+  }
 }
 
 export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
@@ -184,7 +187,10 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
     stopSessionToOffline: (session: any) => host.stopSessionToOffline(session),
     isGraveyardAfterStop: (sessionId: string) => host.graveyardAfterStopSessionIds.has(sessionId),
     sendAgentToGraveyard: (sessionId: string) => host.sendAgentToGraveyard(sessionId).then(() => undefined),
-    resumeOfflineSession: (session: any) => host.resumeOfflineSession(session),
+    resumeOfflineSession: (session: any) =>
+      host.mode === "dashboard"
+        ? host.postToProjectService("/agents/resume", { sessionId: session.id }).then(() => undefined)
+        : host.resumeOfflineSession(session),
     refreshLocalDashboardModel: () => host.refreshLocalDashboardModel(),
     adjustAfterRemove: (hasWorktrees: boolean) => host.adjustAfterRemove(hasWorktrees),
     renderDashboard: () => host.renderDashboard(),

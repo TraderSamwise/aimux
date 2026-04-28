@@ -14,7 +14,7 @@ interface DashboardActionDeps {
   stopSessionToOffline(session: SessionRuntime): void;
   isGraveyardAfterStop(sessionId: string): boolean;
   sendAgentToGraveyard(sessionId: string): Promise<void>;
-  resumeOfflineSession(session: DashboardOfflineEntryLike): void;
+  resumeOfflineSession(session: DashboardOfflineEntryLike): void | Promise<void>;
   refreshLocalDashboardModel(): void;
   adjustAfterRemove(hasWorktrees: boolean): void;
   renderDashboard(): void;
@@ -106,8 +106,9 @@ export async function resumeOfflineSessionWithFeedback(
   }
   deps.setPendingAction(session.id, "starting");
   deps.setFooterFlash(`Restoring ${label}`, 3);
+  deps.renderDashboard();
   try {
-    deps.resumeOfflineSession(session);
+    await deps.resumeOfflineSession(session);
     const started = await waitForSessionStart(session.id, deps);
     deps.setPendingAction(session.id, null);
     deps.refreshLocalDashboardModel();
@@ -115,6 +116,7 @@ export async function resumeOfflineSessionWithFeedback(
     deps.renderDashboard();
   } catch {
     deps.setPendingAction(session.id, null);
+    deps.refreshLocalDashboardModel();
     deps.setFooterFlash(`Failed to restore ${label}`, 4);
     deps.renderDashboard();
   }

@@ -1669,6 +1669,18 @@ export class MetadataServer {
         return;
       }
 
+      if (req.method === "POST" && url.pathname === "/agents/resume") {
+        const body = (await readJson(req)) as { sessionId: string };
+        if (!this.options.desktop?.resumeAgent) {
+          send(res, 501, { ok: false, error: "agent resume not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.resumeAgent(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/agents/interrupt") {
         const body = (await readJson(req)) as { sessionId: string };
         if (!this.options.lifecycle?.interruptAgent) {
