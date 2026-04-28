@@ -26,6 +26,32 @@ describe("classifyToolPane", () => {
     expect(classified.interruptedVisible).toBe(true);
   });
 
+  it("detects Codex update prompts", () => {
+    const classified = classifyToolPane(
+      "codex",
+      [
+        "✨ Update available! 0.121.0 -> 0.122.0",
+        "Run npm install -g @openai/codex to update.",
+        "See full release notes:",
+      ].join("\n"),
+    );
+
+    expect(classified.updatePromptVisible).toBe(true);
+    expect(classified.blockedMessage).toContain("npm install -g @openai/codex");
+    expect(classified.promptVisible).toBe(false);
+  });
+
+  it("detects Claude update prompts", () => {
+    const classified = classifyToolPane(
+      "claude",
+      ["Claude Code v2.1.116", "Update available.", "Run `claude update` to install."].join("\n"),
+    );
+
+    expect(classified.updatePromptVisible).toBe(true);
+    expect(classified.blockedMessage).toContain("claude update");
+    expect(classified.promptVisible).toBe(false);
+  });
+
   it("does not keep stale error state once later output exists", () => {
     const classified = classifyToolPane(
       "codex",
@@ -112,6 +138,62 @@ describe("deriveObservation", () => {
       message: "Ready for input",
       source: "claude",
       tone: "warn",
+    });
+  });
+
+  it("blocks Codex on update prompt with explicit instructions", () => {
+    const { observation } = deriveObservation(
+      "codex-1",
+      "codex",
+      ["✨ Update available! 0.121.0 -> 0.122.0", "Run npm install -g @openai/codex to update."].join("\n"),
+      undefined,
+    );
+
+    expect(observation).toMatchObject({
+      activity: "waiting",
+      attention: "blocked",
+      event: {
+        kind: "blocked",
+        source: "codex",
+        tone: "warn",
+      },
+    });
+    expect(observation?.event?.message).toContain("npm install -g @openai/codex");
+  });
+
+  it("blocks Claude on update prompt with explicit instructions", () => {
+    const { observation } = deriveObservation(
+      "claude-1",
+      "claude",
+      ["Claude Code v2.1.116", "Update available.", "Run `claude update` to install."].join("\n"),
+      undefined,
+    );
+
+    expect(observation).toMatchObject({
+      activity: "waiting",
+      attention: "blocked",
+      event: {
+        kind: "blocked",
+        source: "claude",
+        tone: "warn",
+      },
+    });
+    expect(observation?.event?.message).toContain("claude update");
+  });
+
+  it("recovers from blocked update prompt back to running for Codex", () => {
+    const { observation } = deriveObservation("codex-1", "codex", "OpenAI Codex\nstill working", {
+      fingerprint: "prev",
+      promptVisible: false,
+      errorVisible: false,
+      lastObservedAt: Date.now() - 1000,
+      lastAppliedActivity: "waiting",
+      lastAppliedAttention: "blocked",
+    });
+
+    expect(observation).toMatchObject({
+      activity: "running",
+      attention: "normal",
     });
   });
 });

@@ -67,6 +67,42 @@ function usesExplicitCompletionHooks(tool: string): boolean {
   return tool.trim().toLowerCase() === "claude";
 }
 
+function classifyToolUpdatePrompt(
+  tool: string,
+  text: string,
+): {
+  updatePromptVisible: boolean;
+  blockedMessage?: string;
+} {
+  const normalizedTool = tool.trim().toLowerCase();
+  if (normalizedTool === "codex") {
+    const hasBanner = /update available!/i.test(text);
+    const hasCommand = /npm install -g @openai\/codex/i.test(text);
+    if (hasBanner && hasCommand) {
+      return {
+        updatePromptVisible: true,
+        blockedMessage:
+          "Codex update prompt detected. In-session update is not supported in aimux. Exit this agent, run `npm install -g @openai/codex`, then restart it.",
+      };
+    }
+  }
+
+  if (normalizedTool === "claude") {
+    const hasClaudeHeader = /claude code/i.test(text);
+    const hasCommand = /\bclaude (update|upgrade)\b/i.test(text);
+    const hasUpdateLanguage = /\bupdate\b|\bupgrade\b/i.test(text);
+    if (hasClaudeHeader && hasCommand && hasUpdateLanguage) {
+      return {
+        updatePromptVisible: true,
+        blockedMessage:
+          "Claude update prompt detected. In-session update is not supported in aimux. Exit this agent, run `claude update`, then restart it.",
+      };
+    }
+  }
+
+  return { updatePromptVisible: false };
+}
+
 export function classifyToolPane(
   tool: string,
   text: string,
@@ -74,17 +110,21 @@ export function classifyToolPane(
   promptVisible: boolean;
   errorVisible: boolean;
   interruptedVisible: boolean;
+  updatePromptVisible: boolean;
+  blockedMessage?: string;
 } {
   const lastLine = lastMeaningfulLine(text);
   const { errorVisible, interruptedVisible } = classifyActiveTailError(text);
   const explicitPromptTool = usesExplicitCompletionHooks(tool);
+  const { updatePromptVisible, blockedMessage } = classifyToolUpdatePrompt(tool, text);
   const promptVisible =
+    !updatePromptVisible &&
     explicitPromptTool &&
     (/^\s*[›>❯]\s?.*$/.test(lastLine) ||
       /use \/skills to list available skills/i.test(text) ||
       /find and fix a bug in @filename/i.test(text));
   void tool;
-  return { promptVisible, errorVisible, interruptedVisible };
+  return { promptVisible, errorVisible, interruptedVisible, updatePromptVisible, blockedMessage };
 }
 
 export function deriveObservation(
@@ -95,7 +135,10 @@ export function deriveObservation(
 ): { snapshot: PaneSnapshot; observation?: AgentObservation } {
   const now = Date.now();
   const nextFingerprint = fingerprint(text);
-  const { promptVisible, errorVisible, interruptedVisible } = classifyToolPane(tool, text);
+  const { promptVisible, errorVisible, interruptedVisible, updatePromptVisible, blockedMessage } = classifyToolPane(
+    tool,
+    text,
+  );
   const next: PaneSnapshot = {
     fingerprint: nextFingerprint,
     promptVisible,
@@ -106,6 +149,25 @@ export function deriveObservation(
   };
 
   if (!previous || previous.fingerprint !== nextFingerprint) {
+    if (updatePromptVisible && previous?.lastAppliedAttention !== "blocked") {
+      next.lastAppliedActivity = "waiting";
+      next.lastAppliedAttention = "blocked";
+      return {
+        snapshot: next,
+        observation: {
+          sessionId,
+          tool,
+          activity: "waiting",
+          attention: "blocked",
+          event: {
+            kind: "blocked",
+            message: blockedMessage ?? "Tool update required",
+            source: tool,
+            tone: "warn",
+          },
+        },
+      };
+    }
     if (errorVisible && previous?.errorVisible !== true) {
       next.lastAppliedActivity = "error";
       next.lastAppliedAttention = "error";
@@ -160,6 +222,32 @@ export function deriveObservation(
         observation: {
           sessionId,
           tool,
+          attention: "normal",
+        },
+      };
+    }
+    if (!updatePromptVisible && previous?.lastAppliedAttention === "blocked") {
+      if (promptVisible) {
+        next.lastAppliedActivity = "waiting";
+        next.lastAppliedAttention = "needs_input";
+        return {
+          snapshot: next,
+          observation: {
+            sessionId,
+            tool,
+            activity: "waiting",
+            attention: "needs_input",
+          },
+        };
+      }
+      next.lastAppliedActivity = "running";
+      next.lastAppliedAttention = "normal";
+      return {
+        snapshot: next,
+        observation: {
+          sessionId,
+          tool,
+          activity: "running",
           attention: "normal",
         },
       };
@@ -235,6 +323,25 @@ export function deriveObservation(
         tool,
         activity: "waiting",
         attention: "needs_input",
+      },
+    };
+  }
+  if (updatePromptVisible && previous?.lastAppliedAttention !== "blocked") {
+    next.lastAppliedActivity = "waiting";
+    next.lastAppliedAttention = "blocked";
+    return {
+      snapshot: next,
+      observation: {
+        sessionId,
+        tool,
+        activity: "waiting",
+        attention: "blocked",
+        event: {
+          kind: "blocked",
+          message: blockedMessage ?? "Tool update required",
+          source: tool,
+          tone: "warn",
+        },
       },
     };
   }
