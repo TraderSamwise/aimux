@@ -67,21 +67,7 @@ export const dashboardInteractionMethods = {
       }
       this.preferDashboardEntrySelection("service", service.id, this.dashboardState.focusedWorktreePath);
       if (service.status !== "running") {
-        this.setPendingDashboardSessionAction(service.id, "starting");
-        this.footerFlash = `Restoring ${service.label ?? service.id}`;
-        this.footerFlashTicks = 3;
-        this.renderDashboard();
-        try {
-          this.resumeOfflineServiceById(service.id);
-          this.setPendingDashboardSessionAction(service.id, null);
-          this.footerFlash = `◆ Started service ${service.label ?? service.id}`;
-          this.footerFlashTicks = 3;
-          this.renderDashboard();
-        } catch (error) {
-          this.setPendingDashboardSessionAction(service.id, null);
-          this.refreshLocalDashboardModel();
-          this.showDashboardError("Failed to start service", [error instanceof Error ? error.message : String(error)]);
-        }
+        void this.resumeOfflineServiceWithFeedback(service);
         return;
       }
       if (this.openLiveTmuxWindowForService(selectedEntry.id) !== "missing") {

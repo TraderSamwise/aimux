@@ -171,6 +171,30 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
   await runResumeOfflineSessionWithFeedback(dashboardSessionActionDeps(host), session);
 }
 
+export async function resumeOfflineServiceWithFeedback(
+  host: DashboardOpsHost,
+  service: { id: string; label?: string },
+): Promise<void> {
+  if (host.dashboardPendingActions.get(service.id) === "starting") {
+    return;
+  }
+  host.setPendingDashboardSessionAction(service.id, "starting");
+  host.footerFlash = `Restoring ${service.label ?? service.id}`;
+  host.footerFlashTicks = 3;
+  host.renderDashboard();
+  try {
+    host.resumeOfflineServiceById(service.id);
+    host.setPendingDashboardSessionAction(service.id, null);
+    host.footerFlash = `◆ Started service ${service.label ?? service.id}`;
+    host.footerFlashTicks = 3;
+    host.renderDashboard();
+  } catch (error) {
+    host.setPendingDashboardSessionAction(service.id, null);
+    host.refreshLocalDashboardModel();
+    host.showDashboardError("Failed to start service", [error instanceof Error ? error.message : String(error)]);
+  }
+}
+
 export async function waitForSessionStartForHost(
   host: DashboardOpsHost,
   sessionId: string,

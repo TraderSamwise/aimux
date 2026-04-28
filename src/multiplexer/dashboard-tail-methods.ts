@@ -50,6 +50,7 @@ import {
   graveyardSessionWithFeedback as graveyardSessionWithFeedbackImpl,
   migrateSessionWithFeedback as migrateSessionWithFeedbackImpl,
   renderSessionDetails as renderSessionDetailsImpl,
+  resumeOfflineServiceWithFeedback as resumeOfflineServiceWithFeedbackImpl,
   resumeOfflineSessionWithFeedback as resumeOfflineSessionWithFeedbackImpl,
   runDashboardOperation as runDashboardOperationImpl,
   setPendingDashboardSessionAction as setPendingDashboardSessionActionImpl,
@@ -175,6 +176,7 @@ export type DashboardTailMethods = {
   basename(this: Multiplexer, value: string): string;
   listAllWorktrees(this: Multiplexer): Array<{ name: string; branch: string; path: string; isBare: boolean }>;
   graveyardSessionWithFeedback(this: Multiplexer, sessionId: string, hasWorktrees: boolean): Promise<void>;
+  resumeOfflineServiceWithFeedback(this: Multiplexer, service: Pick<DashboardService, "id" | "label">): Promise<void>;
   resumeOfflineSessionWithFeedback(this: Multiplexer, session: SessionState): Promise<void>;
   waitForSessionStart(this: Multiplexer, sessionId: string, timeoutMs?: number): Promise<boolean>;
   dashboardSessionActionDeps(this: Multiplexer): ReturnType<typeof dashboardSessionActionDepsImpl>;
@@ -342,6 +344,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   async graveyardSessionWithFeedback(sessionId, hasWorktrees) {
     await graveyardSessionWithFeedbackImpl(this, sessionId, hasWorktrees);
+  },
+  async resumeOfflineServiceWithFeedback(service) {
+    await resumeOfflineServiceWithFeedbackImpl(this, service);
   },
   async resumeOfflineSessionWithFeedback(session) {
     await resumeOfflineSessionWithFeedbackImpl(this, session);
