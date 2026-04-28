@@ -34,6 +34,21 @@ yarn build
 - If a daemon or project runtime is already running, rebuild alone may still leave stale processes alive; restart or reload the relevant runtime after the build
 - Do not send a user to test behavior changes against stale `dist/`
 
+### Navigation Layer Rule
+
+Aimux has multiple navigation layers. Do not assume a visible UI behavior is owned by the Node runtime.
+
+- Dashboard subscreen navigation is one layer
+- Live pane prefix navigation inside tmux-managed agent/service windows is a different layer
+
+If a requested shortcut is described as behaving like an existing live-pane prefix shortcut such as `ctrl-a n/p`, treat the tmux control path as the default source of truth first:
+
+- inspect [src/tmux/runtime-manager.ts](src/tmux/runtime-manager.ts)
+- inspect [scripts/tmux-control.sh](scripts/tmux-control.sh)
+- inspect [src/tmux/control-script.test.ts](src/tmux/control-script.test.ts)
+
+Do not re-implement “similar logic” in `src/hotkeys.ts` or `src/multiplexer/session-launch.ts` unless the feature is explicitly meant to be owned by the in-process Node runtime. For live-pane, latency-sensitive navigation, prefer tmux-local metadata and tmux bindings over Node-side session lists.
+
 ### Building the .app bundle
 
 Only build the bundle for final testing or distribution:

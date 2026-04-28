@@ -239,6 +239,16 @@ aimux restart-runtime --open
 aimux daemon restart
 ```
 
+Navigation ownership rule:
+
+- Not all aimux navigation is owned by the main Node runtime.
+- Live pane prefix navigation inside tmux-managed agent/service windows is performance-sensitive and may be implemented in tmux control instead of `src/hotkeys.ts` / `src/multiplexer/session-launch.ts`.
+- If a new shortcut should behave like existing live-pane `ctrl-a n/p`, use the same tmux control path and target resolution source of truth:
+  - [src/tmux/runtime-manager.ts](src/tmux/runtime-manager.ts)
+  - [scripts/tmux-control.sh](scripts/tmux-control.sh)
+  - [src/tmux/control-script.test.ts](src/tmux/control-script.test.ts)
+- Do not clone “similar” ordering logic in the Node runtime for live-pane shortcuts. If the user is pointing at the visible live footer chips and references `n/p`, the shortcut belongs to the tmux layer unless there is a strong reason otherwise.
+
 The desktop app now exposes these flows directly over daemon/project-service HTTP:
 
 - dashboard worktree/agent management
