@@ -12,6 +12,25 @@ function getServiceLaunchCommandLine(metadata: { command?: string; args?: string
   return metadata.command === "shell" ? "" : metadata.args?.[0] === "-lc" ? (metadata.args[1] ?? "") : "";
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildServiceLaunchScript(commandLine: string, shellPath: string): string {
+  const trimmed = commandLine.trim();
+  if (!trimmed) return "";
+  const quotedShell = shellQuote(shellPath);
+  return [
+    `${trimmed}`,
+    "_aimux_service_status=$?",
+    'if [ "$_aimux_service_status" -ne 0 ]; then',
+    '  printf "\\n[aimux] Service command exited with status %s. Dropping into an interactive shell for debugging.\\n" "$_aimux_service_status"',
+    `  exec ${quotedShell} -i`,
+    "fi",
+    'exit "$_aimux_service_status"',
+  ].join("; ");
+}
+
 function buildServiceStateFromMetadata(
   serviceId: string,
   metadata: {
@@ -43,6 +62,7 @@ export function createService(host: ServiceHost, commandLine: string, worktreePa
   const cwd = worktreePath ?? process.cwd();
   const shell = process.env.SHELL || "zsh";
   const trimmed = commandLine.trim();
+  const launchScript = buildServiceLaunchScript(trimmed, shell);
   let projectRoot = process.cwd();
   try {
     projectRoot = findMainRepo(cwd);
@@ -55,7 +75,7 @@ export function createService(host: ServiceHost, commandLine: string, worktreePa
         sessionId: serviceId,
         tool: "service",
         command: shell,
-        args: ["-lc", trimmed],
+        args: ["-lc", launchScript],
         shellPath: shell,
       })
     : wrapInteractiveShellWithIntegration({
@@ -123,6 +143,17 @@ export function stopService(host: ServiceHost, serviceId: string): { serviceId: 
 }
 
 export function removeOfflineService(host: ServiceHost, serviceId: string): { serviceId: string; status: "removed" } {
+  const existing = host.tmuxRuntimeManager.findManagedWindow(
+    host.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
+    {
+      sessionId: serviceId,
+    },
+  );
+  if (existing && existing.metadata.kind === "service") {
+    try {
+      host.tmuxRuntimeManager.killWindow(existing.target);
+    } catch {}
+  }
   host.offlineServices = host.offlineServices.filter((service: ServiceState) => service.id !== serviceId);
   const statePath = getStatePath();
   if (existsSync(statePath)) {
@@ -164,6 +195,7 @@ export function resumeOfflineService(
   const cwd = service.worktreePath ?? process.cwd();
   const shell = process.env.SHELL || "zsh";
   const launchCommandLine = service.launchCommandLine?.trim() ?? "";
+  const launchScript = buildServiceLaunchScript(launchCommandLine, shell);
   let projectRoot = process.cwd();
   try {
     projectRoot = findMainRepo(cwd);
@@ -176,7 +208,7 @@ export function resumeOfflineService(
         sessionId: service.id,
         tool: "service",
         command: shell,
-        args: ["-lc", launchCommandLine],
+        args: ["-lc", launchScript],
         shellPath: shell,
       })
     : wrapInteractiveShellWithIntegration({

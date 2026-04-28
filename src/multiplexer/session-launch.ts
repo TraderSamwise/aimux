@@ -10,6 +10,7 @@ import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
+import { DASHBOARD_SCREEN_TABS } from "../statusline-model.js";
 
 type SessionLaunchHost = any;
 
@@ -562,13 +563,17 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
       host.persistDashboardUiState();
       host.openTmuxDashboardTarget();
       break;
+    case "dashboard-tab": {
+      const screen = DASHBOARD_SCREEN_TABS[action.index]?.key;
+      if (!screen) break;
+      host.clearDashboardSubscreens();
+      host.setDashboardScreen(screen);
+      host.persistDashboardUiState();
+      host.openTmuxDashboardTarget();
+      break;
+    }
     case "help":
       host.showHelp();
-      break;
-    case "focus":
-      if (action.index < host.getScopedSessionEntries().length) {
-        host.focusSession(host.getScopedSessionEntries()[action.index].index);
-      }
       break;
     case "next":
       if (host.getScopedSessionEntries().length > 1) {

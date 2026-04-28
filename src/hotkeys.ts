@@ -7,7 +7,7 @@ export type HotkeyAction =
   | { type: "dashboard" }
   | { type: "notifications" }
   | { type: "help" }
-  | { type: "focus"; index: number }
+  | { type: "dashboard-tab"; index: number }
   | { type: "next" }
   | { type: "prev" }
   | { type: "create" }
@@ -109,7 +109,7 @@ export class HotkeyHandler {
       default:
         // Check for digits 1-9
         if (key >= "1" && key <= "9") {
-          this.onAction({ type: "focus", index: parseInt(key) - 1 });
+          this.onAction({ type: "dashboard-tab", index: parseInt(key, 10) - 1 });
           return null;
         }
         // Unknown action key — forward raw data

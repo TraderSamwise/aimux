@@ -97,6 +97,19 @@ export interface ResolvedStatuslineSession extends StatuslineSession {
   isCurrent: boolean;
 }
 
+export const DASHBOARD_SCREEN_TABS: Array<{
+  key: NonNullable<StatuslineData["dashboardScreen"]>;
+  label: string;
+}> = [
+  { key: "dashboard", label: "dashboard" },
+  { key: "activity", label: "activity" },
+  { key: "notifications", label: "inbox" },
+  { key: "threads", label: "threads" },
+  { key: "workflow", label: "workflow" },
+  { key: "plans", label: "plans" },
+  { key: "graveyard", label: "graveyard" },
+];
+
 export function trim(text: string, max: number): string {
   if (text.length <= max) return text;
   if (max <= 1) return text.slice(0, max);
@@ -154,16 +167,7 @@ export function renderSessionCompactHint(session: {
 
 export function renderDashboardScreens(activeScreen: StatuslineData["dashboardScreen"]): string[] {
   const active = activeScreen ?? "dashboard";
-  const screens: Array<{ key: StatuslineData["dashboardScreen"]; label: string }> = [
-    { key: "dashboard", label: "dashboard" },
-    { key: "activity", label: "activity" },
-    { key: "notifications", label: "inbox" },
-    { key: "threads", label: "threads" },
-    { key: "workflow", label: "workflow" },
-    { key: "plans", label: "plans" },
-    { key: "graveyard", label: "graveyard" },
-  ];
-  return screens.map((screen) =>
+  return DASHBOARD_SCREEN_TABS.map((screen) =>
     screen.key === active ? `#[fg=black,bg=yellow] ${screen.label} #[default]` : screen.label,
   );
 }
