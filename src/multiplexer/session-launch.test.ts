@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { createSession, handleAction, runProjectService } from "./session-launch.js";
+import { createSession, runProjectService } from "./session-launch.js";
 
 describe("createSession", () => {
   it("does not inject startup preamble when explicitly suppressed", async () => {
@@ -88,39 +88,5 @@ describe("runProjectService", () => {
 
     expect(host.mode).toBe("project-service");
     expect(host.startStatusRefresh).toHaveBeenCalledOnce();
-  });
-});
-
-describe("handleAction", () => {
-  it("opens the dashboard chip tab by bottom-chip order for leader digits", () => {
-    const host: any = {
-      clearDashboardSubscreens: vi.fn(),
-      setDashboardScreen: vi.fn(),
-      persistDashboardUiState: vi.fn(),
-      openTmuxDashboardTarget: vi.fn(),
-    };
-
-    handleAction(host, { type: "dashboard-tab", index: 2 });
-
-    expect(host.clearDashboardSubscreens).toHaveBeenCalledOnce();
-    expect(host.setDashboardScreen).toHaveBeenCalledWith("notifications");
-    expect(host.persistDashboardUiState).toHaveBeenCalledOnce();
-    expect(host.openTmuxDashboardTarget).toHaveBeenCalledOnce();
-  });
-
-  it("ignores out-of-range dashboard chip indices", () => {
-    const host: any = {
-      clearDashboardSubscreens: vi.fn(),
-      setDashboardScreen: vi.fn(),
-      persistDashboardUiState: vi.fn(),
-      openTmuxDashboardTarget: vi.fn(),
-    };
-
-    handleAction(host, { type: "dashboard-tab", index: 8 });
-
-    expect(host.clearDashboardSubscreens).not.toHaveBeenCalled();
-    expect(host.setDashboardScreen).not.toHaveBeenCalled();
-    expect(host.persistDashboardUiState).not.toHaveBeenCalled();
-    expect(host.openTmuxDashboardTarget).not.toHaveBeenCalled();
   });
 });
