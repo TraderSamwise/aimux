@@ -8,6 +8,15 @@ import {
 import { parseKeys } from "../key-parser.js";
 import { requestReview } from "../task-dispatcher.js";
 
+function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
+  return (
+    entry?.pendingAction === "creating" ||
+    entry?.pendingAction === "forking" ||
+    entry?.pendingAction === "migrating" ||
+    entry?.pendingAction === "starting"
+  );
+}
+
 export const dashboardInteractionMethods = {
   clearDashboardQuickJump(this: any): void {
     if (this.dashboardQuickJumpTimeout) {
@@ -57,12 +66,7 @@ export const dashboardInteractionMethods = {
     if (selectedEntry.kind === "service") {
       const service = this.getDashboardServices().find((entry: any) => entry.id === selectedEntry.id);
       if (!service) return;
-      if (
-        service.pendingAction === "creating" ||
-        service.pendingAction === "forking" ||
-        service.pendingAction === "migrating" ||
-        service.pendingAction === "starting"
-      ) {
+      if (hasBlockingPendingDashboardAction(service)) {
         return;
       }
       this.preferDashboardEntrySelection("service", service.id, this.dashboardState.focusedWorktreePath);
@@ -77,12 +81,7 @@ export const dashboardInteractionMethods = {
     }
     const dashEntry = this.dashboardState.worktreeSessions.find((entry: any) => entry.id === selectedEntry.id);
     if (!dashEntry) return;
-    if (
-      dashEntry.pendingAction === "creating" ||
-      dashEntry.pendingAction === "forking" ||
-      dashEntry.pendingAction === "migrating" ||
-      dashEntry.pendingAction === "starting"
-    ) {
+    if (hasBlockingPendingDashboardAction(dashEntry)) {
       return;
     }
     this.preferDashboardEntrySelection("session", dashEntry.id, this.dashboardState.focusedWorktreePath);
@@ -390,12 +389,7 @@ export const dashboardInteractionMethods = {
         case "enter": {
           const ds = this.getDashboardSessions();
           const entry = ds[this.activeIndex];
-          if (
-            entry?.pendingAction === "creating" ||
-            entry?.pendingAction === "forking" ||
-            entry?.pendingAction === "migrating" ||
-            entry?.pendingAction === "starting"
-          ) {
+          if (hasBlockingPendingDashboardAction(entry)) {
             return;
           }
           if (entry && this.openLiveTmuxWindowForEntry(entry) !== "missing") {
@@ -505,12 +499,7 @@ export const dashboardInteractionMethods = {
 
   async activateDashboardEntry(this: any, entry: DashboardSession): Promise<void> {
     if (!entry) return;
-    if (
-      entry.pendingAction === "creating" ||
-      entry.pendingAction === "forking" ||
-      entry.pendingAction === "migrating" ||
-      entry.pendingAction === "starting"
-    ) {
+    if (hasBlockingPendingDashboardAction(entry)) {
       return;
     }
 
