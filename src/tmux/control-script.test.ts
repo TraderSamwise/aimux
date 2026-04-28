@@ -624,6 +624,112 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-live");
   });
 
+  it("jumps to the rendered chip index using live tmux metadata order", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@shell", index: 0, name: "shell" },
+          { id: "@claude", index: 1, name: "claude" },
+          { id: "@codex", index: 6, name: "codex" },
+        ],
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      windowMetadata: {
+        "@shell": { sessionId: "service-1", kind: "service", worktreePath: "/repo/project/worktree" },
+        "@claude": { sessionId: "claude-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(
+      join(envRoot.projectStateDir, "statusline.json"),
+      JSON.stringify({
+        sessions: [
+          { tmuxWindowId: "@shell", tmuxWindowIndex: 0, kind: "service", worktreePath: "/repo/project/worktree" },
+          { tmuxWindowId: "@codex", tmuxWindowIndex: 1, kind: "agent", worktreePath: "/repo/project/worktree" },
+          { tmuxWindowId: "@claude", tmuxWindowIndex: 6, kind: "agent", worktreePath: "/repo/project/worktree" },
+        ],
+      }),
+    );
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "window",
+      "--index",
+      "2",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-stale",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@claude",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log).toContain("link-window -d -s @codex -t aimux-proj-client-live");
+    expect(log).not.toContain("link-window -d -s @shell -t aimux-proj-client-live");
+  });
+
+  it("rejects out-of-range window index jumps", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@claude", index: 1, name: "claude" },
+          { id: "@codex", index: 6, name: "codex" },
+        ],
+        "aimux-proj-client-live": [{ id: "@claude", index: 1, name: "claude" }],
+      },
+      windowMetadata: {
+        "@claude": { sessionId: "claude-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@codex": { sessionId: "codex-1", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "statusline.json"), JSON.stringify({ sessions: [] }));
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    expect(() =>
+      runControl(envRoot, [
+        "window",
+        "--index",
+        "9",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-stale",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "claude",
+        "--current-window-id",
+        "@claude",
+        "--current-path",
+        "/repo/project/worktree",
+      ]),
+    ).toThrow();
+  });
+
   it("keeps next scoped to main checkout items when current window has no explicit worktree path", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@main-agent" }],

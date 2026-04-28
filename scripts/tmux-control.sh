@@ -11,6 +11,7 @@ current_window_id=""
 current_path=""
 window_id=""
 pane_id=""
+item_index=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -52,6 +53,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --window-id)
       window_id="${2-}"
+      shift 2
+      ;;
+    --index)
+      item_index="${2-}"
       shift 2
       ;;
     *)
@@ -359,9 +364,9 @@ show_local_switcher() {
 resolve_local_target_from_statusline() {
   [ -f "$statusline_json" ] || return 1
   resolved_target=$(
-    python3 - "$statusline_json" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" <<'PY'
+    python3 - "$statusline_json" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" <<'PY'
 import json, sys
-path, project_root, current_path, current_window_id, explicit_window_id, action = sys.argv[1:]
+path, project_root, current_path, current_window_id, explicit_window_id, action, item_index = sys.argv[1:]
 try:
     data = json.load(open(path))
 except Exception:
@@ -426,6 +431,15 @@ if action == "attention":
         raise SystemExit(1)
     print(target.get("tmuxWindowId", ""))
     raise SystemExit(0)
+if action == "window":
+    try:
+        index = int(item_index)
+    except Exception:
+        raise SystemExit(1)
+    if index < 1 or index > len(items):
+        raise SystemExit(1)
+    print(items[index - 1].get("tmuxWindowId", ""))
+    raise SystemExit(0)
 raise SystemExit(1)
 PY
   ) || return 1
@@ -449,9 +463,9 @@ resolve_local_target_from_tmux_metadata() {
   resolve_live_client || true
   host_session=$(resolve_host_session_name) || return 1
   resolved_target=$(
-    python3 - "$host_session" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" <<'PY'
+    python3 - "$host_session" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" <<'PY'
 import json, subprocess, sys
-host_session, project_root, current_path, current_window_id, explicit_window_id, action = sys.argv[1:]
+host_session, project_root, current_path, current_window_id, explicit_window_id, action, item_index = sys.argv[1:]
 
 def run(*args):
     return subprocess.check_output(["tmux", *args], text=True)
@@ -532,6 +546,15 @@ if action == "attention":
     if rank(ranked[0]) == (0, 0, 0):
         raise SystemExit(1)
     print(ranked[0]["windowId"])
+    raise SystemExit(0)
+if action == "window":
+    try:
+        index = int(item_index)
+    except Exception:
+        raise SystemExit(1)
+    if index < 1 or index > len(items):
+        raise SystemExit(1)
+    print(items[index - 1]["windowId"])
     raise SystemExit(0)
 raise SystemExit(1)
 PY

@@ -125,7 +125,26 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "u")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "d")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "K")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "0")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "1")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "bind-key" && call.args[3] === "C-a")).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[3] === "0" &&
+          call.args.includes("run-shell") &&
+          call.args.includes("true"),
+      ),
+    ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[3] === "1" &&
+          call.args.join(" ").includes("scripts/tmux-control.sh' window --index 1"),
+      ),
+    ).toBe(true);
     expect(
       exec.calls.some(
         (call) => call.args[0] === "bind-key" && call.args.join(" ").includes("scripts/tmux-control.sh' menu"),
