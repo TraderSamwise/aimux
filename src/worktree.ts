@@ -76,6 +76,7 @@ export function findMainRepo(cwd?: string): string {
   const output = execSync("git worktree list --porcelain", {
     cwd: cwd ?? process.cwd(),
     encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
   });
   const firstLine = output.split("\n")[0];
   const match = firstLine.match(/^worktree\s+(.+)$/);
@@ -83,6 +84,7 @@ export function findMainRepo(cwd?: string): string {
     return execSync("git rev-parse --show-toplevel", {
       cwd: cwd ?? process.cwd(),
       encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
     }).trim();
   }
   return match[1];
