@@ -1,5 +1,13 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { wrapCommandWithShellIntegration, wrapInteractiveShellWithIntegration } from "./shell-hooks.js";
+import {
+  prepareShellIntegration,
+  wrapCommandWithShellIntegration,
+  wrapInteractiveShellWithIntegration,
+} from "./shell-hooks.js";
 import { getProjectStateDirFor } from "./paths.js";
 
 describe("shell hooks", () => {
@@ -43,5 +51,39 @@ describe("shell hooks", () => {
     expect(wrapped.args).toContain("/bin/bash");
     expect(wrapped.args).toContain("--rcfile");
     expect(wrapped.args).toContain("-i");
+  });
+
+  it("preserves zshenv by writing a shim into the temporary ZDOTDIR", () => {
+    const prepared = prepareShellIntegration("/repo/project", "/bin/zsh");
+
+    expect(prepared.zshEnvPath).toBe(join(dirname(prepared.rcPath), ".zshenv"));
+    expect(readFileSync(prepared.zshEnvPath!, "utf8")).toContain('source "$HOME/.zshenv"');
+    expect(readFileSync(prepared.rcPath, "utf8")).toContain('source "$HOME/.zshrc"');
+  });
+
+  it("executes zsh shells with both zshenv and zshrc from the user's HOME", () => {
+    const homeDir = mkdtempSync(join(tmpdir(), "aimux-shell-hooks-home-"));
+    try {
+      writeFileSync(join(homeDir, ".zshenv"), 'export AIMUX_TEST_ZSHENV="from-zshenv"\n');
+      writeFileSync(join(homeDir, ".zshrc"), 'export AIMUX_TEST_ZSHRC="from-zshrc"\n');
+
+      const wrapped = wrapCommandWithShellIntegration({
+        projectRoot: "/repo/project-zsh-runtime",
+        sessionId: "service-zsh-runtime",
+        tool: "service",
+        command: "/bin/zsh",
+        args: ["-lc", 'printf "%s|%s" "$AIMUX_TEST_ZSHENV" "$AIMUX_TEST_ZSHRC"'],
+        shellPath: "/bin/zsh",
+      });
+
+      const output = execFileSync(wrapped.command, wrapped.args, {
+        env: { ...process.env, HOME: homeDir },
+        encoding: "utf8",
+      }).trim();
+
+      expect(output).toBe("from-zshenv|from-zshrc");
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
   });
 });

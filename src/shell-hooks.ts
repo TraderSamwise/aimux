@@ -10,6 +10,10 @@ function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true });
 }
 
+function buildZshEnv(): string {
+  return ['if [ -f "$HOME/.zshenv" ]; then', '  source "$HOME/.zshenv"', "fi", ""].join("\n");
+}
+
 function buildZshRc(): string {
   return [
     'if [ -f "$HOME/.zshrc" ]; then',
@@ -125,6 +129,7 @@ export interface PreparedShellIntegration {
   shellName: "zsh" | "bash";
   integrationScriptPath: string;
   rcPath: string;
+  zshEnvPath?: string;
 }
 
 export function prepareShellIntegration(
@@ -141,15 +146,20 @@ export function prepareShellIntegration(
     shellName === "bash" ? "aimux-bash-integration.bash" : "aimux-zsh-integration.zsh",
   );
   const rcPath = join(baseDir, shellName === "bash" ? "aimux-bashrc" : ".zshrc");
+  const zshEnvPath = shellName === "zsh" ? join(baseDir, ".zshenv") : undefined;
 
   writeFileSync(integrationScriptPath, shellName === "bash" ? buildBashIntegration() : buildZshIntegration());
   writeFileSync(rcPath, shellName === "bash" ? buildBashRc() : buildZshRc());
+  if (zshEnvPath) {
+    writeFileSync(zshEnvPath, buildZshEnv());
+  }
 
   return {
     shellPath,
     shellName,
     integrationScriptPath,
     rcPath,
+    zshEnvPath,
   };
 }
 
