@@ -6,6 +6,7 @@ import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { injectClaudeHookArgs } from "../claude-hooks.js";
+import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
@@ -340,6 +341,16 @@ export function createSession(
       backendSessionId,
     });
     launchCommand = toolCfg.command;
+    const wrapped = wrapCommandWithManagedLaunchEnv({
+      command: launchCommand,
+      args: finalArgs,
+      extraEnv: {
+        AIMUX_SESSION_ID: sessionId,
+        AIMUX_TOOL: toolConfigKey ?? command,
+      },
+    });
+    launchCommand = wrapped.command;
+    finalArgs = wrapped.args;
   } else if (toolCfg && toolCfg.command === command) {
     const wrapped = wrapCommandWithShellIntegration({
       projectRoot,

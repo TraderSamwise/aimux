@@ -23,6 +23,7 @@ describe("shell hooks", () => {
     });
 
     expect(wrapped.command).toBe("env");
+    expect(wrapped.args[0]).toBe("-i");
     expect(wrapped.args.join(" ")).toContain("AIMUX_SESSION_ID=codex-123");
     expect(wrapped.args.join(" ")).toContain("AIMUX_TOOL=codex");
     expect(wrapped.args.join(" ")).toContain(`AIMUX_METADATA_ENDPOINT_FILE=${endpointFile}`);
@@ -43,6 +44,7 @@ describe("shell hooks", () => {
     });
 
     expect(wrapped.command).toBe("env");
+    expect(wrapped.args[0]).toBe("-i");
     expect(wrapped.args.join(" ")).toContain("AIMUX_SESSION_ID=service-123");
     expect(wrapped.args.join(" ")).toContain("AIMUX_TOOL=service");
     expect(wrapped.args.join(" ")).toContain(`AIMUX_METADATA_ENDPOINT_FILE=${endpointFile}`);
@@ -74,6 +76,7 @@ describe("shell hooks", () => {
         command: "/bin/zsh",
         args: ["-lc", 'printf "%s|%s" "$AIMUX_TEST_ZSHENV" "$AIMUX_TEST_ZSHRC"'],
         shellPath: "/bin/zsh",
+        env: { ...process.env, HOME: homeDir },
       });
 
       const output = execFileSync(wrapped.command, wrapped.args, {

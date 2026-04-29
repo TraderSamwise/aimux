@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { getProjectStateDirFor } from "./paths.js";
+import { wrapCommandWithManagedLaunchEnv } from "./managed-launch-env.js";
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -170,6 +171,7 @@ export function wrapCommandWithShellIntegration(opts: {
   command: string;
   args: string[];
   shellPath?: string;
+  env?: NodeJS.ProcessEnv;
 }): { command: string; args: string[] } {
   const prepared = prepareShellIntegration(opts.projectRoot, opts.shellPath);
   const envArgs = [
@@ -183,8 +185,11 @@ export function wrapCommandWithShellIntegration(opts: {
     prepared.shellName === "bash"
       ? [...envArgs, prepared.shellPath, "--rcfile", prepared.rcPath, "-ic", commandString]
       : [...envArgs, "ZDOTDIR=" + dirname(prepared.rcPath), prepared.shellPath, "-ic", commandString];
-
-  return { command: "env", args: shellArgs };
+  return wrapCommandWithManagedLaunchEnv({
+    command: "env",
+    args: shellArgs,
+    env: opts.env,
+  });
 }
 
 export function wrapInteractiveShellWithIntegration(opts: {
@@ -192,6 +197,7 @@ export function wrapInteractiveShellWithIntegration(opts: {
   sessionId: string;
   tool: string;
   shellPath?: string;
+  env?: NodeJS.ProcessEnv;
 }): { command: string; args: string[] } {
   const prepared = prepareShellIntegration(opts.projectRoot, opts.shellPath);
   const envArgs = [
@@ -204,5 +210,9 @@ export function wrapInteractiveShellWithIntegration(opts: {
     prepared.shellName === "bash"
       ? [...envArgs, prepared.shellPath, "--rcfile", prepared.rcPath, "-i"]
       : [...envArgs, "ZDOTDIR=" + dirname(prepared.rcPath), prepared.shellPath, "-i"];
-  return { command: "env", args: shellArgs };
+  return wrapCommandWithManagedLaunchEnv({
+    command: "env",
+    args: shellArgs,
+    env: opts.env,
+  });
 }
