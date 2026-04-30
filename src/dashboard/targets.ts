@@ -9,14 +9,17 @@ export interface DashboardTargetRef {
 
 function isUsableDashboardTarget(
   tmux: TmuxRuntimeManager,
+  projectRoot: string,
   dashboardBuildStamp: string,
   dashboardTarget: TmuxTarget,
 ): boolean {
   const currentBuildStamp = tmux.getWindowOption(dashboardTarget, "@aimux-dashboard-build");
+  const targetProjectRoot = tmux.getSessionOption(dashboardTarget.sessionName, "@aimux-project-root");
   const paneCommand = tmux.displayMessage("#{pane_current_command}", dashboardTarget.windowId);
   const paneTail = paneCommand === "bash" ? tmux.captureTarget(dashboardTarget, { startLine: -40 }) : "";
   return (
     tmux.isWindowAlive(dashboardTarget) &&
+    targetProjectRoot === projectRoot &&
     currentBuildStamp === dashboardBuildStamp &&
     paneCommand !== "cat" &&
     paneCommand !== "tail" &&
@@ -73,9 +76,16 @@ export function findLiveDashboardTarget(projectRoot: string, tmux: TmuxRuntimeMa
   pruneDashboardArtifacts(projectRoot, dashboardBuildStamp, tmux);
   const dashboardSession = tmux.getProjectSession(projectRoot);
   const preferredOpenSession = tmux.getOpenSessionName(dashboardSession.sessionName, tmux.isInsideTmux());
+  const currentClientSession = tmux.currentClientSession();
+  const sameProjectCurrentClientSession =
+    currentClientSession &&
+    (currentClientSession === dashboardSession.sessionName ||
+      currentClientSession.startsWith(`${dashboardSession.sessionName}-client-`))
+      ? currentClientSession
+      : null;
   const candidateSessions = [
     preferredOpenSession,
-    tmux.currentClientSession(),
+    sameProjectCurrentClientSession,
     dashboardSession.sessionName,
     ...tmux
       .listSessionNames()
@@ -92,7 +102,7 @@ export function findLiveDashboardTarget(projectRoot: string, tmux: TmuxRuntimeMa
         windowIndex: window.index,
         windowName: window.name,
       };
-      if (!isUsableDashboardTarget(tmux, dashboardBuildStamp, target)) continue;
+      if (!isUsableDashboardTarget(tmux, projectRoot, dashboardBuildStamp, target)) continue;
       return { dashboardSession, dashboardTarget: target };
     }
   }
