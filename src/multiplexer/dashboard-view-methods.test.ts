@@ -44,16 +44,17 @@ describe("dashboardViewMethods.renderDashboard", () => {
     dashboardViewMethods.renderDashboard.call(host);
 
     expect(dashboardUpdate).toHaveBeenCalledWith(
-      host.dashboardSessionsCache,
-      host.dashboardServicesCache,
-      host.dashboardWorktreeGroupsCache,
-      "/wt",
-      "sessions",
-      "live-session",
-      undefined,
-      "tmux",
-      host.dashboardMainCheckoutInfoCache,
-      undefined,
+      expect.objectContaining({
+        sessions: host.dashboardSessionsCache,
+        services: host.dashboardServicesCache,
+        worktreeGroups: host.dashboardWorktreeGroupsCache,
+        focusedWorktreePath: "/wt",
+        navLevel: "sessions",
+        selectedSessionId: "live-session",
+        selectedServiceId: undefined,
+        runtimeLabel: "tmux",
+        mainCheckout: host.dashboardMainCheckoutInfoCache,
+      }),
     );
     expect(host.persistDashboardUiState).not.toHaveBeenCalled();
   });
@@ -149,7 +150,7 @@ describe("dashboardStateMethods.writeFrame", () => {
 
     expect(host.lastRenderedBaseFrame).toBe("base-frame");
     expect(host.lastRenderedFrame).toBe("base-frameoverlay-frame");
-    expect(writes).toEqual(["base-frameoverlay-frame"]);
+    expect(writes).toEqual(["\x1b[H\x1b[Jbase-frameoverlay-frame"]);
     stdoutWrite.mockRestore();
   });
 });

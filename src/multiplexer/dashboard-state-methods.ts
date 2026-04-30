@@ -121,7 +121,7 @@ export const dashboardStateMethods = {
       const overlayOutput = this.buildActiveDashboardOverlayOutput?.() ?? null;
       const finalOutput = overlayOutput ? `${output}${overlayOutput}` : output;
       if (!force && this.lastRenderedFrame === finalOutput) return;
-      process.stdout.write(finalOutput);
+      process.stdout.write(`\x1b[H\x1b[J${finalOutput}`);
       this.lastRenderedFrame = finalOutput;
       return;
     }
