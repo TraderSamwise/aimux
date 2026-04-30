@@ -19,6 +19,12 @@ interface DashboardWorktreeMutationOptions {
   onError?: (error: unknown) => void;
 }
 
+function assertDashboardWorktreeMutationSettled(settled: boolean, action: "creating" | "removing"): void {
+  if (!settled) {
+    throw new Error(`worktree ${action} did not settle before timing out`);
+  }
+}
+
 async function waitForRenderedDashboardWorktreeState(
   host: WorktreeHost,
   path: string,
@@ -40,7 +46,7 @@ async function runDashboardWorktreeMutation(host: WorktreeHost, opts: DashboardW
   host.renderDashboard();
   try {
     await opts.request();
-    await opts.settle();
+    assertDashboardWorktreeMutationSettled(await opts.settle(), opts.pendingAction);
     host.dashboardPendingActions.set(opts.pendingKey, null);
     opts.onSuccess?.();
   } catch (error) {
@@ -155,9 +161,15 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
           pendingKey,
           pendingAction: "creating",
           request: async () => {
-            await postToProjectService(host, "/worktrees/create", { name });
+            await postToProjectService(host, "/worktrees/create", { name }, { timeoutMs: 10_000 });
           },
-          settle: () => waitForRenderedDashboardWorktreeState(host, targetPath, (group) => Boolean(group)),
+          settle: () =>
+            waitForRenderedDashboardWorktreeState(
+              host,
+              targetPath,
+              (group) => Boolean(group) && group.pendingAction !== "creating" && group.pending !== true,
+              15_000,
+            ),
           onSuccess: () => {
             debug(`worktree created from UI: ${name}`, "worktree");
             host.settleDashboardCreatePending?.(pendingKey);
@@ -245,7 +257,7 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
       pendingKey,
       pendingAction: "removing",
       request: async () => {
-        await postToProjectService(host, "/worktrees/remove", { path });
+        await postToProjectService(host, "/worktrees/remove", { path }, { timeoutMs: 10_000 });
       },
       settle: () => waitForRenderedDashboardWorktreeState(host, path, (group) => !group),
       onSuccess: () => {
@@ -324,7 +336,7 @@ export function handleWorktreeRemoveConfirmKey(host: WorktreeHost, data: Buffer)
   if (events.length === 0) return;
   const key = events[0].name || events[0].char;
 
-  if (key === "y") {
+  if (key === "y" || key === "enter" || key === "return") {
     const confirm = host.worktreeRemoveConfirm;
     if (confirm) {
       host.worktreeRemoveConfirm = null;
@@ -335,9 +347,11 @@ export function handleWorktreeRemoveConfirmKey(host: WorktreeHost, data: Buffer)
     }
   }
 
-  host.worktreeRemoveConfirm = null;
-  host.clearDashboardOverlay();
-  host.restoreDashboardAfterOverlayDismiss();
+  if (key === "n" || key === "escape") {
+    host.worktreeRemoveConfirm = null;
+    host.clearDashboardOverlay();
+    host.restoreDashboardAfterOverlayDismiss();
+  }
 }
 
 export function handleWorktreeListKey(host: WorktreeHost, data: Buffer): void {

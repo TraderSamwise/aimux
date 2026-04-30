@@ -56,6 +56,12 @@ interface DashboardServiceMutationOptions {
   errorTitle: string;
 }
 
+function assertDashboardMutationSettled(settled: boolean, action: string): void {
+  if (!settled) {
+    throw new Error(`${action} did not settle before timing out`);
+  }
+}
+
 async function waitForRenderedDashboardSessionState(
   host: DashboardOpsHost,
   sessionId: string,
@@ -97,7 +103,7 @@ async function runDashboardSessionMutation(
   host.renderDashboard();
   try {
     await opts.request();
-    await opts.settle();
+    assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
     host.setPendingDashboardSessionAction(opts.sessionId, null);
     opts.onAfterSettle?.();
     if (opts.successFlash) {
@@ -121,7 +127,7 @@ async function runDashboardServiceMutation(
   host.renderDashboard();
   try {
     await opts.request();
-    await opts.settle();
+    assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
     host.setPendingDashboardSessionAction(opts.serviceId, null);
     opts.onAfterSettle?.();
     if (opts.successFlash) {

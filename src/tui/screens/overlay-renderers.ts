@@ -68,7 +68,7 @@ export function buildWorktreeRemoveConfirmOverlayOutput(ctx: any): string | null
     `  Path: ${confirm.path}`,
     "  This runs: git worktree remove --force",
     "",
-    "  [y] yes  [n/Esc] cancel",
+    "  [Enter/y] yes  [n/Esc] cancel",
   ];
   return renderOverlayBox(lines, cols, rows, "red");
 }
