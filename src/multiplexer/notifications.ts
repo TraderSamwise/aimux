@@ -183,19 +183,25 @@ function openSelectedNotification(host: NotificationHost): void {
     return;
   }
   if (service.status !== "running") {
-    try {
-      if (entry.unread) {
-        markNotificationsRead({ id: entry.id });
-        refreshNotificationEntries(host);
-      }
-      host.resumeOfflineServiceById(service.id);
+    if (entry.unread) {
+      markNotificationsRead({ id: entry.id });
+      refreshNotificationEntries(host);
+    }
+    if (typeof host.resumeOfflineServiceWithFeedback === "function") {
+      void host.resumeOfflineServiceWithFeedback({
+        id: service.id,
+        label: service.label ?? service.command ?? "service",
+      });
       return;
+    }
+    try {
+      host.resumeOfflineServiceById(service.id);
     } catch (error) {
       host.showDashboardError("Failed to open notification target", [
         error instanceof Error ? error.message : String(error),
       ]);
-      return;
     }
+    return;
   }
   if (entry.unread) {
     markNotificationsRead({ id: entry.id });

@@ -27,7 +27,11 @@ export async function forkAgent(
     throw new Error(`Unable to fork session ${opts.sourceSessionId}`);
   }
   if (opts.open !== false && result.target) {
-    if (host.openLiveTmuxWindowForEntry({ id: result.sessionId }) === "missing") {
+    const openResult =
+      typeof host.waitAndOpenLiveTmuxWindowForEntry === "function"
+        ? await host.waitAndOpenLiveTmuxWindowForEntry({ id: result.sessionId })
+        : host.openLiveTmuxWindowForEntry({ id: result.sessionId });
+    if (openResult === "missing") {
       host.tmuxRuntimeManager.openTarget(result.target, { insideTmux: host.tmuxRuntimeManager.isInsideTmux() });
     }
   }
@@ -75,7 +79,11 @@ export async function spawnAgent(
 
   const target = host.sessionTmuxTargets.get(transport.id);
   if (opts.open !== false && target) {
-    if (host.openLiveTmuxWindowForEntry({ id: transport.id }) === "missing") {
+    const openResult =
+      typeof host.waitAndOpenLiveTmuxWindowForEntry === "function"
+        ? await host.waitAndOpenLiveTmuxWindowForEntry({ id: transport.id })
+        : host.openLiveTmuxWindowForEntry({ id: transport.id });
+    if (openResult === "missing") {
       host.tmuxRuntimeManager.openTarget(target, { insideTmux: host.tmuxRuntimeManager.isInsideTmux() });
     }
   }
