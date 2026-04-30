@@ -94,18 +94,32 @@ export function buildDashboardQuickJumpWorktrees(input: {
     });
   };
 
-  pushWorktree({
-    path: undefined,
-    name: input.mainCheckout.name,
-    branch: input.mainCheckout.branch,
-    sessions: sortDashboardEntriesByCreatedAt(mainSessions),
-    services: sortDashboardEntriesByCreatedAt(mainServices),
-  });
-
   const renderedPaths = new Set<string>();
-  const orderedGroups = [...input.worktreeGroups].sort(
-    (a, b) => dashboardCreatedSortKey(b) - dashboardCreatedSortKey(a),
-  );
+  const mainGroup = input.worktreeGroups.find((group) => group.path === undefined);
+  if (mainGroup) {
+    pushWorktree({
+      path: undefined,
+      name: mainGroup.name,
+      branch: mainGroup.branch,
+      pending: mainGroup.pending,
+      removing: mainGroup.removing,
+      pendingAction: mainGroup.pendingAction,
+      sessions: mainSessions,
+      services: mainServices,
+    });
+  } else {
+    pushWorktree({
+      path: undefined,
+      name: input.mainCheckout.name,
+      branch: input.mainCheckout.branch,
+      sessions: sortDashboardEntriesByCreatedAt(mainSessions),
+      services: sortDashboardEntriesByCreatedAt(mainServices),
+    });
+  }
+
+  const orderedGroups = [...input.worktreeGroups]
+    .filter((group): group is WorktreeGroup & { path: string } => group.path !== undefined)
+    .sort((a, b) => dashboardCreatedSortKey(b) - dashboardCreatedSortKey(a));
   for (const group of orderedGroups) {
     pushWorktree({
       path: group.path,
