@@ -182,32 +182,11 @@ function openSelectedNotification(host: NotificationHost): void {
     renderNotifications(host);
     return;
   }
-  if (service.status !== "running") {
-    if (entry.unread) {
-      markNotificationsRead({ id: entry.id });
-      refreshNotificationEntries(host);
-    }
-    if (typeof host.resumeOfflineServiceWithFeedback === "function") {
-      void host.resumeOfflineServiceWithFeedback({
-        id: service.id,
-        label: service.label ?? service.command ?? "service",
-      });
-      return;
-    }
-    try {
-      host.resumeOfflineServiceById(service.id);
-    } catch (error) {
-      host.showDashboardError("Failed to open notification target", [
-        error instanceof Error ? error.message : String(error),
-      ]);
-    }
-    return;
-  }
   if (entry.unread) {
     markNotificationsRead({ id: entry.id });
     refreshNotificationEntries(host);
   }
-  void host.waitAndOpenLiveTmuxWindowForService(service.id);
+  void host.activateDashboardService(service);
 }
 
 export function handleNotificationsKey(host: NotificationHost, data: Buffer): void {

@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import type { DashboardSession } from "../dashboard/index.js";
+import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import {
   DASHBOARD_QUICK_JUMP_TIMEOUT_MS,
   buildDashboardQuickJumpWorktrees,
@@ -85,38 +85,12 @@ export const dashboardInteractionMethods = {
     if (selectedEntry.kind === "service") {
       const service = this.getDashboardServices().find((entry: any) => entry.id === selectedEntry.id);
       if (!service) return;
-      if (hasBlockingPendingDashboardAction(service)) {
-        return;
-      }
-      this.preferDashboardEntrySelection("service", service.id, this.dashboardState.focusedWorktreePath);
-      if (service.status !== "running") {
-        void this.resumeOfflineServiceWithFeedback(service);
-        return;
-      }
-      void this.waitAndOpenLiveTmuxWindowForService(selectedEntry.id);
+      void this.activateDashboardService(service);
       return;
     }
     const dashEntry = this.dashboardState.worktreeSessions.find((entry: any) => entry.id === selectedEntry.id);
     if (!dashEntry) return;
-    if (hasBlockingPendingDashboardAction(dashEntry)) {
-      return;
-    }
-    this.preferDashboardEntrySelection("session", dashEntry.id, this.dashboardState.focusedWorktreePath);
-    void this.waitAndOpenLiveTmuxWindowForEntry(dashEntry);
-    if (dashEntry.status !== "offline") return;
-    if (dashEntry.remoteInstanceId) {
-      void this.takeoverFromDashEntryWithFeedback(dashEntry);
-      return;
-    }
-    if (dashEntry.status === "offline") {
-      const offline = this.offlineSessions.find((s: any) => s.id === dashEntry.id);
-      if (offline) {
-        void this.resumeOfflineSessionWithFeedback(offline);
-      }
-      return;
-    }
-    const ptyIdx = this.sessions.findIndex((s: any) => s.id === dashEntry.id);
-    if (ptyIdx >= 0) this.focusSession(ptyIdx);
+    void this.activateDashboardEntry(dashEntry);
   },
 
   commitDashboardQuickJump(this: any, digits?: string): boolean {
@@ -395,22 +369,8 @@ export const dashboardInteractionMethods = {
         case "enter": {
           const ds = this.getDashboardSessions();
           const entry = ds[this.activeIndex];
-          if (hasBlockingPendingDashboardAction(entry)) {
-            return;
-          }
           if (entry) {
             void this.activateDashboardEntry(entry);
-            return;
-          }
-          if (entry?.remoteInstanceId) {
-            void this.takeoverFromDashEntryWithFeedback(entry);
-            return;
-          }
-          if (entry?.status === "offline") {
-            const offline = this.offlineSessions.find((s: any) => s.id === entry.id);
-            if (offline) {
-              void this.resumeOfflineSessionWithFeedback(offline);
-            }
             return;
           }
           if (this.sessions.length > 0) {
@@ -511,6 +471,27 @@ export const dashboardInteractionMethods = {
     await this.activateDashboardEntry(entry);
   },
 
+  async activateDashboardService(this: any, service: DashboardService): Promise<void> {
+    if (!service) return;
+    const worktreeGroup = findDashboardWorktreeGroup(this, service.worktreePath);
+    if (isRemovingDashboardWorktree(worktreeGroup)) {
+      this.footerFlash = blockedRemovingWorktreeMessage(worktreeGroup, service.worktreePath);
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
+      return;
+    }
+    if (hasBlockingPendingDashboardAction(service)) {
+      return;
+    }
+
+    this.preferDashboardEntrySelection("service", service.id, service.worktreePath);
+    if (service.status !== "running") {
+      await this.resumeOfflineServiceWithFeedback(service);
+      return;
+    }
+    await this.waitAndOpenLiveTmuxWindowForService(service.id);
+  },
+
   async activateDashboardEntry(this: any, entry: DashboardSession): Promise<void> {
     if (!entry) return;
     const worktreeGroup = findDashboardWorktreeGroup(this, entry.worktreePath);
@@ -524,7 +505,12 @@ export const dashboardInteractionMethods = {
       return;
     }
 
-    if ((await this.waitAndOpenLiveTmuxWindowForEntry(entry)) !== "missing") {
+    const openResult = await this.waitAndOpenLiveTmuxWindowForEntry(entry);
+    if (openResult !== "missing") {
+      if (entry.status === "offline") {
+        this.refreshLocalDashboardModel();
+        this.renderDashboard();
+      }
       return;
     }
 

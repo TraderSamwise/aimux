@@ -27,6 +27,7 @@ describe("notification target open", () => {
       notificationIndex: 0,
       getDashboardSessions: vi.fn(() => []),
       getDashboardServices: vi.fn(() => [{ id: "service-1", status: "offline", label: "shell", command: "shell" }]),
+      activateDashboardService: vi.fn(),
       resumeOfflineServiceWithFeedback: vi.fn(async () => undefined),
       resumeOfflineServiceById: vi.fn(),
       waitAndOpenLiveTmuxWindowForService: vi.fn(),
@@ -46,10 +47,16 @@ describe("notification target open", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
-  it("uses the lifecycle helper for offline service notification targets", () => {
+  it("routes service notification targets through the unified service activator", () => {
     handleNotificationsKey(host, Buffer.from("\r"));
 
-    expect(host.resumeOfflineServiceWithFeedback).toHaveBeenCalledWith({ id: "service-1", label: "shell" });
+    expect(host.activateDashboardService).toHaveBeenCalledWith({
+      id: "service-1",
+      status: "offline",
+      label: "shell",
+      command: "shell",
+    });
+    expect(host.resumeOfflineServiceWithFeedback).not.toHaveBeenCalled();
     expect(host.resumeOfflineServiceById).not.toHaveBeenCalled();
   });
 });

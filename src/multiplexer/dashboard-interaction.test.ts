@@ -99,6 +99,85 @@ describe("dashboardInteractionMethods", () => {
 
     expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
   });
+
+  it("routes selected worktree session activation through the unified entry path", () => {
+    const dashEntry = {
+      id: "codex-1",
+      status: "offline",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardState: {
+        worktreeEntries: [{ kind: "session", id: "codex-1" }],
+        worktreeSessions: [dashEntry],
+        sessionIndex: 0,
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+      },
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          removing: false,
+          sessions: [],
+          services: [],
+        },
+      ],
+      activateDashboardEntry: vi.fn(),
+      getDashboardServices: vi.fn(() => []),
+    };
+
+    dashboardInteractionMethods.activateSelectedDashboardWorktreeEntry.call(host);
+
+    expect(host.activateDashboardEntry).toHaveBeenCalledWith(dashEntry);
+  });
+
+  it("routes selected worktree service activation through the unified service path", () => {
+    const service = {
+      id: "service-1",
+      status: "offline",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardState: {
+        worktreeEntries: [{ kind: "service", id: "service-1" }],
+        sessionIndex: 0,
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+      },
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          removing: false,
+          sessions: [],
+          services: [],
+        },
+      ],
+      activateDashboardService: vi.fn(),
+      getDashboardServices: vi.fn(() => [service]),
+    };
+
+    dashboardInteractionMethods.activateSelectedDashboardWorktreeEntry.call(host);
+
+    expect(host.activateDashboardService).toHaveBeenCalledWith(service);
+  });
+
+  it("uses the unified entry path for flat dashboard enter", () => {
+    const entry = { id: "claude-1", status: "offline" };
+    const host: any = {
+      dashboardState: { hasWorktrees: () => false, quickJumpDigits: "" },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      dashboardStateHasWorktrees: false,
+      getDashboardSessions: vi.fn(() => [entry]),
+      activeIndex: 0,
+      activateDashboardEntry: vi.fn(),
+      sessions: [],
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\r"));
+
+    expect(host.activateDashboardEntry).toHaveBeenCalledWith(entry);
+  });
 });
 
 function dashboardActionWaitStub(kind: "entry" | "service") {
