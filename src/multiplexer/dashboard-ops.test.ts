@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { resumeOfflineServiceWithFeedback } from "./dashboard-ops.js";
+import {
+  forkDashboardAgentWithFeedback,
+  graveyardSessionWithFeedback,
+  resumeOfflineSessionWithFeedback,
+  resumeOfflineServiceWithFeedback,
+  spawnDashboardAgentWithFeedback,
+  stopSessionToOfflineWithFeedback,
+} from "./dashboard-ops.js";
 
 describe("dashboard-ops", () => {
   it("shows optimistic starting state and clears it on successful service resume", async () => {
@@ -47,5 +54,182 @@ describe("dashboard-ops", () => {
     expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
     expect(host.refreshLocalDashboardModel).toHaveBeenCalledOnce();
     expect(host.showDashboardError).toHaveBeenCalledWith("Failed to start service", ["boom"]);
+  });
+
+  it("stops an agent through the project service in dashboard mode and waits for offline render state", async () => {
+    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const sessions = [
+      { ...session, status: "running" },
+      { ...session, status: "offline" },
+    ];
+    let sessionIndex = 0;
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        this.dashboardPendingActions.set(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      getSessionLabel: vi.fn(() => "claude"),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => [sessions[sessionIndex]]),
+      showDashboardError: vi.fn(),
+    };
+
+    await stopSessionToOfflineWithFeedback(host, session);
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "sess-1" });
+    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Stopped claude");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("resumes an offline agent through the project service in dashboard mode and waits for the rendered row", async () => {
+    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const sessions = [
+      [{ ...session, status: "offline", pendingAction: "starting" }],
+      [{ ...session, status: "waiting" }],
+    ];
+    let sessionIndex = 0;
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        this.dashboardPendingActions.set(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/resume", { sessionId: "sess-1" });
+    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restored claude");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("graveyards an agent through the project service in dashboard mode and waits for row removal", async () => {
+    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const sessions = [[session], []];
+    let sessionIndex = 0;
+    const host = {
+      mode: "dashboard",
+      offlineSessions: [] as any[],
+      sessions: [session],
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        this.dashboardPendingActions.set(sessionId, kind);
+      },
+      getSessionLabel: vi.fn(() => "claude"),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      adjustAfterRemove: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      showDashboardError: vi.fn(),
+    };
+
+    await graveyardSessionWithFeedback(host, "sess-1", true);
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/kill", { sessionId: "sess-1" });
+    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.adjustAfterRemove).toHaveBeenCalledWith(true);
+    expect(host.footerFlash).toBe("Sent claude to graveyard");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("spawns an agent through the project service in dashboard mode and waits for the row to appear", async () => {
+    const sessions = [[], [{ id: "claude-abcd12", status: "running" }]];
+    let sessionIndex = 0;
+    const host = {
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        this.dashboardPendingActions.set(sessionId, kind);
+      },
+      preferDashboardEntrySelection: vi.fn(),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await spawnDashboardAgentWithFeedback(host, {
+      sessionId: "claude-abcd12",
+      tool: "claude",
+      worktreePath: "/repo",
+    });
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/spawn", {
+      tool: "claude",
+      sessionId: "claude-abcd12",
+      worktreePath: "/repo",
+      open: false,
+    });
+    expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "claude-abcd12", "/repo");
+    expect(host.dashboardPendingActions.get("claude-abcd12")).toBeNull();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("forks an agent through the project service in dashboard mode and waits for the row to appear", async () => {
+    const sessions = [[], [{ id: "codex-fork12", status: "running" }]];
+    let sessionIndex = 0;
+    const host = {
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        this.dashboardPendingActions.set(sessionId, kind);
+      },
+      preferDashboardEntrySelection: vi.fn(),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await forkDashboardAgentWithFeedback(host, {
+      sourceSessionId: "claude-src",
+      targetSessionId: "codex-fork12",
+      tool: "codex",
+      worktreePath: "/repo",
+    });
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/fork", {
+      sourceSessionId: "claude-src",
+      targetSessionId: "codex-fork12",
+      tool: "codex",
+      instruction: undefined,
+      worktreePath: "/repo",
+      open: false,
+    });
+    expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "codex-fork12", "/repo");
+    expect(host.dashboardPendingActions.get("codex-fork12")).toBeNull();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 });
