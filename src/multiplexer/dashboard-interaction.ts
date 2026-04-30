@@ -485,6 +485,7 @@ export const dashboardInteractionMethods = {
     }
 
     this.preferDashboardEntrySelection("service", service.id, service.worktreePath);
+    this.persistDashboardUiState();
     if (service.status !== "running") {
       await this.resumeOfflineServiceWithFeedback(service);
       return;
@@ -504,6 +505,9 @@ export const dashboardInteractionMethods = {
     if (hasBlockingPendingDashboardAction(entry)) {
       return;
     }
+
+    this.preferDashboardEntrySelection("session", entry.id, entry.worktreePath);
+    this.persistDashboardUiState();
 
     const openResult = await this.waitAndOpenLiveTmuxWindowForEntry(entry);
     if (openResult !== "missing") {

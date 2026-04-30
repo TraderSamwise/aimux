@@ -195,6 +195,7 @@ describe("dashboard-ops", () => {
         sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
         return true;
       }),
+      waitForSessionStart: vi.fn(async () => false),
       getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
       showDashboardError: vi.fn(),
     };
@@ -208,6 +209,65 @@ describe("dashboard-ops", () => {
     );
     expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored claude");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("treats a live runtime as successful resume even if the rendered row stays stale", async () => {
+    const session = { id: "sess-1", command: "codex", label: "codex" };
+    const sessions = [
+      [{ ...session, status: "offline", pendingAction: "starting", pid: 77545, foregroundCommand: "volta-shim" }],
+    ];
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        this.dashboardPendingActions.set(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      waitForSessionStart: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() => sessions[0]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.waitForSessionStart).not.toHaveBeenCalled();
+    expect(host.refreshLocalDashboardModel).toHaveBeenCalled();
+    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restored codex");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("treats a live service entry as successful resume even if the rendered row stays stale", async () => {
+    const service = { id: "svc-1", label: "shell" };
+    const services = [
+      [{ ...service, status: "offline", pendingAction: "starting", pid: 61700, foregroundCommand: "zsh" }],
+    ];
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(serviceId: string, kind: string | null) {
+        this.dashboardPendingActions.set(serviceId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => services[0]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineServiceWithFeedback(host, service);
+
+    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.footerFlash).toBe("◆ Started service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 

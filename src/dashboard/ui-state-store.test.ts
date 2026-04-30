@@ -86,4 +86,34 @@ describe("DashboardUiStateStore", () => {
     expect(state.focusedWorktreePath).toBe("/repo/wt-b");
     expect(state.level).toBe("sessions");
   });
+
+  it("re-arms selection restore when a preferred entry is loaded from client state", () => {
+    const persisted = Object.assign(new DashboardState(), {
+      focusedWorktreePath: "/repo/wt",
+      level: "sessions",
+      worktreeEntries: [{ kind: "session", id: "claude-1" }],
+      sessionIndex: 0,
+    });
+
+    const writer = new DashboardUiStateStore();
+    writer.persist("dashboard", "client-a", persisted, 0, [{ id: "claude-1" } as any]);
+
+    const state = new DashboardState();
+    state.focusedWorktreePath = "/repo/wt";
+    state.level = "sessions";
+    state.worktreeEntries = [
+      { kind: "session", id: "other-0" },
+      { kind: "session", id: "claude-1" },
+    ];
+    state.sessionIndex = 0;
+
+    const store = new DashboardUiStateStore();
+    store.markSelectionDirty();
+    store.consumeSelectionRestore(state, [], true, 0, () => undefined);
+    expect(state.sessionIndex).toBe(0);
+
+    store.loadInto(state, "client-a");
+    store.consumeSelectionRestore(state, [], true, 0, () => undefined);
+    expect(state.sessionIndex).toBe(1);
+  });
 });

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initPaths } from "./paths.js";
+import { getDashboardClientUiStatePath, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState } from "./metadata-store.js";
+import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -169,6 +170,89 @@ describe("MetadataServer threads API", () => {
     const body = (await res.json()) as { ok: boolean; sessionId: string; status: string };
     expect(res.ok).toBe(true);
     expect(body).toEqual({ ok: true, sessionId: "claude-1", status: "running" });
+  });
+
+  it("persists the current live window as the preferred dashboard selection when reopening dashboard", async () => {
+    const ensureProjectSession = TmuxRuntimeManager.prototype.ensureProjectSession;
+    const hasSession = TmuxRuntimeManager.prototype.hasSession;
+    const ensureDashboardWindow = TmuxRuntimeManager.prototype.ensureDashboardWindow;
+    const getWindowOption = TmuxRuntimeManager.prototype.getWindowOption;
+    const isWindowAlive = TmuxRuntimeManager.prototype.isWindowAlive;
+    const respawnWindow = TmuxRuntimeManager.prototype.respawnWindow;
+    const setWindowOption = TmuxRuntimeManager.prototype.setWindowOption;
+    const listProjectManagedWindows = TmuxRuntimeManager.prototype.listProjectManagedWindows;
+    const listClients = TmuxRuntimeManager.prototype.listClients;
+    const getAttachedClientForTarget = TmuxRuntimeManager.prototype.getAttachedClientForTarget;
+    const switchClientToTarget = TmuxRuntimeManager.prototype.switchClientToTarget;
+    const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
+    const sendFocusIn = TmuxRuntimeManager.prototype.sendFocusIn;
+
+    TmuxRuntimeManager.prototype.ensureProjectSession = () => ({ sessionName: "aimux-repo-abc" }) as any;
+    TmuxRuntimeManager.prototype.hasSession = () => true;
+    TmuxRuntimeManager.prototype.ensureDashboardWindow = () =>
+      ({
+        sessionName: "aimux-repo-abc-client-123",
+        windowId: "@99",
+        windowIndex: 0,
+        windowName: "dashboard-123",
+      }) as any;
+    TmuxRuntimeManager.prototype.getWindowOption = () => "test-build";
+    TmuxRuntimeManager.prototype.isWindowAlive = () => true;
+    TmuxRuntimeManager.prototype.respawnWindow = () => undefined as any;
+    TmuxRuntimeManager.prototype.setWindowOption = () => undefined as any;
+    TmuxRuntimeManager.prototype.listProjectManagedWindows = () =>
+      [
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@42", windowIndex: 4, windowName: "codex" },
+          metadata: {
+            kind: "agent",
+            sessionId: "codex-1",
+            worktreePath: "/repo/.aimux/worktrees/demo",
+          },
+        },
+      ] as any;
+    TmuxRuntimeManager.prototype.listClients = () =>
+      [{ tty: "/dev/ttys001", sessionName: "aimux-repo-abc-client-123" }] as any;
+    TmuxRuntimeManager.prototype.getAttachedClientForTarget = () => undefined as any;
+    TmuxRuntimeManager.prototype.switchClientToTarget = () => undefined as any;
+    TmuxRuntimeManager.prototype.refreshStatus = () => undefined as any;
+    TmuxRuntimeManager.prototype.sendFocusIn = () => undefined as any;
+
+    try {
+      const endpoint = server?.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(
+        `${base}/control/open-dashboard?currentClientSession=aimux-repo-abc-client-123&clientTty=%2Fdev%2Fttys001&currentWindowId=%4042`,
+      );
+      expect(res.ok).toBe(true);
+
+      const snapshot = JSON.parse(
+        readFileSync(getDashboardClientUiStatePath("aimux-repo-abc-client-123"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(snapshot).toMatchObject({
+        screen: "dashboard",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        level: "sessions",
+        selectedEntryKind: "session",
+        selectedEntryId: "codex-1",
+      });
+    } finally {
+      TmuxRuntimeManager.prototype.ensureProjectSession = ensureProjectSession;
+      TmuxRuntimeManager.prototype.hasSession = hasSession;
+      TmuxRuntimeManager.prototype.ensureDashboardWindow = ensureDashboardWindow;
+      TmuxRuntimeManager.prototype.getWindowOption = getWindowOption;
+      TmuxRuntimeManager.prototype.isWindowAlive = isWindowAlive;
+      TmuxRuntimeManager.prototype.respawnWindow = respawnWindow;
+      TmuxRuntimeManager.prototype.setWindowOption = setWindowOption;
+      TmuxRuntimeManager.prototype.listProjectManagedWindows = listProjectManagedWindows;
+      TmuxRuntimeManager.prototype.listClients = listClients;
+      TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
+      TmuxRuntimeManager.prototype.switchClientToTarget = switchClientToTarget;
+      TmuxRuntimeManager.prototype.refreshStatus = refreshStatus;
+      TmuxRuntimeManager.prototype.sendFocusIn = sendFocusIn;
+    }
   });
 
   it("updates task lifecycle over HTTP", async () => {

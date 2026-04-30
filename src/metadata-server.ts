@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { getDashboardUiStatePath, getProjectId, getProjectStateDir } from "./paths.js";
+import { getDashboardClientUiStatePath, getDashboardUiStatePath, getProjectId, getProjectStateDir } from "./paths.js";
 import {
   type MetadataTone,
   updateSessionMetadata,
@@ -284,6 +284,43 @@ function persistDashboardScreenPreference(screen: "dashboard" | "notifications")
   } catch {
     writeFileSync(getDashboardUiStatePath(), JSON.stringify({ screen }, null, 2) + "\n");
   }
+}
+
+function dashboardClientKeyFromSession(sessionName: string): string {
+  return sessionName.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function persistDashboardClientPreference(
+  clientSession: string,
+  update: (snapshot: Record<string, unknown>) => void,
+): void {
+  const path = getDashboardClientUiStatePath(dashboardClientKeyFromSession(clientSession));
+  let snapshot: Record<string, unknown> = {};
+  try {
+    snapshot = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+  } catch {}
+  update(snapshot);
+  writeFileSync(path, JSON.stringify(snapshot, null, 2) + "\n");
+}
+
+function persistDashboardReturnSelection(
+  tmux: TmuxRuntimeManager,
+  projectRoot: string,
+  currentClientSession: string,
+  currentWindowId?: string,
+): void {
+  persistDashboardClientPreference(currentClientSession, (snapshot) => {
+    snapshot.screen = "dashboard";
+    if (!currentWindowId) return;
+    const match = tmux
+      .listProjectManagedWindows(projectRoot)
+      .find((entry) => entry.target.windowId === currentWindowId);
+    if (!match) return;
+    snapshot.focusedWorktreePath = match.metadata.worktreePath;
+    snapshot.level = "sessions";
+    snapshot.selectedEntryKind = match.metadata.kind === "service" ? "service" : "session";
+    snapshot.selectedEntryId = match.metadata.sessionId;
+  });
 }
 
 function markTargetUsed(
@@ -853,15 +890,19 @@ export class MetadataServer {
             ? ((await readJson(req)) as {
                 currentClientSession?: string;
                 clientTty?: string;
+                currentWindowId?: string;
               })
             : {};
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
+        const currentWindowId =
+          body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
         if (!currentClientSession) {
           send(res, 400, { ok: false, error: "currentClientSession is required" });
           return;
         }
+        persistDashboardReturnSelection(new TmuxRuntimeManager(), process.cwd(), currentClientSession, currentWindowId);
         const tmux = new TmuxRuntimeManager();
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
         const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);
@@ -894,7 +935,9 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "currentClientSession is required" });
           return;
         }
-        persistDashboardScreenPreference("notifications");
+        persistDashboardClientPreference(currentClientSession, (snapshot) => {
+          snapshot.screen = "notifications";
+        });
         const tmux = new TmuxRuntimeManager();
         const { dashboardCommand, dashboardBuildStamp } = getDashboardCommandSpec(process.cwd());
         const dashboardSession = tmux.ensureProjectSession(process.cwd(), dashboardCommand);

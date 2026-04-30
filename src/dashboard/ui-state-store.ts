@@ -47,9 +47,11 @@ export class DashboardUiStateStore {
           kind: snapshot.selectedEntryKind,
           id: snapshot.selectedEntryId,
         };
+        this.selectionNeedsRestore = true;
       }
       if (snapshot.flatSessionId) {
         this.flatSessionId = snapshot.flatSessionId;
+        this.selectionNeedsRestore = true;
       }
     } catch {}
   }

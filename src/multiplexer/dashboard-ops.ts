@@ -78,6 +78,65 @@ async function waitForRenderedDashboardSessionState(
   return false;
 }
 
+function isLiveDashboardSessionEntry(entry: any | undefined): boolean {
+  if (!entry) return false;
+  if (entry.status !== "offline" && entry.pendingAction !== "starting") {
+    return true;
+  }
+  return (
+    typeof entry.pid === "number" ||
+    Boolean(entry.foregroundCommand) ||
+    Boolean(entry.previewLine) ||
+    Boolean(entry.tmuxWindowId)
+  );
+}
+
+async function waitForDashboardSessionResumeSettle(
+  host: DashboardOpsHost,
+  sessionId: string,
+  timeoutMs = 10_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await host.refreshDashboardModelFromService(true);
+    const entry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
+    if (isLiveDashboardSessionEntry(entry)) {
+      if (entry?.status === "offline" || entry?.pendingAction === "starting") {
+        if (typeof host.refreshLocalDashboardModel === "function") {
+          host.refreshLocalDashboardModel();
+        }
+        if (typeof host.renderDashboard === "function") {
+          host.renderDashboard();
+        }
+      }
+      return true;
+    }
+    if (
+      typeof host.waitForSessionStart === "function" &&
+      (await host.waitForSessionStart(sessionId, Math.min(100, Math.max(0, deadline - Date.now()))))
+    ) {
+      host.refreshLocalDashboardModel();
+      host.renderDashboard();
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+function isLiveDashboardServiceEntry(entry: any | undefined): boolean {
+  if (!entry) return false;
+  if (entry.status === "running" && entry.pendingAction !== "starting") {
+    return true;
+  }
+  return (
+    typeof entry.pid === "number" ||
+    Boolean(entry.foregroundCommand) ||
+    Boolean(entry.previewLine) ||
+    Boolean(entry.tmuxWindowId)
+  );
+}
+
 async function waitForRenderedDashboardServiceState(
   host: DashboardOpsHost,
   serviceId: string,
@@ -88,7 +147,20 @@ async function waitForRenderedDashboardServiceState(
   while (Date.now() < deadline) {
     await host.refreshDashboardModelFromService(true);
     const service = host.getDashboardServices().find((entry: any) => entry.id === serviceId);
-    if (predicate(service)) return true;
+    if (predicate(service)) {
+      if (
+        isLiveDashboardServiceEntry(service) &&
+        (service?.status !== "running" || service?.pendingAction === "starting")
+      ) {
+        if (typeof host.refreshLocalDashboardModel === "function") {
+          host.refreshLocalDashboardModel();
+        }
+        if (typeof host.renderDashboard === "function") {
+          host.renderDashboard();
+        }
+      }
+      return true;
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return false;
@@ -440,12 +512,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
       request: async () => {
         await host.postToProjectService("/agents/resume", { sessionId: session.id }, { timeoutMs: 10_000 });
       },
-      settle: () =>
-        waitForRenderedDashboardSessionState(
-          host,
-          session.id,
-          (entry) => Boolean(entry) && entry.status !== "offline" && entry.pendingAction !== "starting",
-        ),
+      settle: () => waitForDashboardSessionResumeSettle(host, session.id),
       successFlash: { message: `Restored ${label}` },
       onError: () => host.refreshDashboardModelFromService(true),
       errorTitle: `Failed to restore "${label}"`,
@@ -474,11 +541,7 @@ export async function resumeOfflineServiceWithFeedback(
         await host.postToProjectService("/services/resume", { serviceId: service.id }, { timeoutMs: 10_000 });
       },
       settle: () =>
-        waitForRenderedDashboardServiceState(
-          host,
-          service.id,
-          (entry) => Boolean(entry) && entry.status === "running" && entry.pendingAction !== "starting",
-        ),
+        waitForRenderedDashboardServiceState(host, service.id, (entry) => isLiveDashboardServiceEntry(entry)),
       successFlash: { message: `◆ Started service ${service.label ?? service.id}` },
       onError: () => host.refreshDashboardModelFromService(true),
       errorTitle: "Failed to start service",

@@ -93,11 +93,56 @@ describe("dashboardInteractionMethods", () => {
       sessions: [],
       noteLastUsedItem: vi.fn(),
       focusSession: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
     };
 
     await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
 
+    expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith(
+      "session",
+      "codex-1",
+      "/repo/.aimux/worktrees/demo",
+    );
+    expect(host.persistDashboardUiState).toHaveBeenCalled();
     expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
+  });
+
+  it("persists preferred service selection before opening a service", async () => {
+    const service = {
+      id: "service-1",
+      status: "running",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          removing: false,
+          sessions: [],
+          services: [],
+        },
+      ],
+      dashboardPendingActions: new Map(),
+      waitAndOpenLiveTmuxWindowForService: vi.fn(async () => "opened"),
+      resumeOfflineServiceWithFeedback: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.activateDashboardService.call(host, service);
+
+    expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith(
+      "service",
+      "service-1",
+      "/repo/.aimux/worktrees/demo",
+    );
+    expect(host.persistDashboardUiState).toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForService).toHaveBeenCalledWith("service-1");
   });
 
   it("routes selected worktree session activation through the unified entry path", () => {
