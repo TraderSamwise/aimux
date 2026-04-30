@@ -3,6 +3,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "../debug.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import { composeDashboardWorktreeGroups } from "./dashboard-model.js";
 import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon.js";
 import { type DashboardService, type DashboardSession } from "../dashboard/index.js";
@@ -254,16 +255,20 @@ export const persistenceMethods = {
         ({ pendingAction: _pendingAction, optimistic: _optimistic, ...service }: any) => service,
       ),
     );
-    this.dashboardWorktreeGroupsCache = this.dashboardPendingActions.applyToWorktrees(
-      this.dashboardWorktreeGroupsCache.map(
-        ({
-          pendingAction: _pendingAction,
-          optimistic: _optimistic,
-          pending: _pending,
-          removing: _removing,
-          ...wt
-        }: any) => wt,
+    this.dashboardWorktreeGroupsCache = composeDashboardWorktreeGroups(
+      this.dashboardPendingActions.applyToWorktrees(
+        this.dashboardWorktreeGroupsCache.map(
+          ({
+            pendingAction: _pendingAction,
+            optimistic: _optimistic,
+            pending: _pending,
+            removing: _removing,
+            ...wt
+          }: any) => wt,
+        ),
       ),
+      this.dashboardSessionsCache,
+      this.dashboardServicesCache,
     );
   },
 

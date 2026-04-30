@@ -8,8 +8,29 @@ import {
   waitForSessionExit,
   waitForSessionStart,
 } from "../dashboard/session-actions.js";
+import type { DashboardSession } from "../dashboard/index.js";
 
 type DashboardOpsHost = any;
+
+function buildPendingSessionSeed(input: {
+  sessionId: string;
+  tool: string;
+  worktreePath?: string;
+  pendingAction: "creating" | "forking";
+}): DashboardSession {
+  return {
+    index: -1,
+    id: input.sessionId,
+    command: input.tool,
+    label: input.tool,
+    createdAt: new Date().toISOString(),
+    status: "waiting",
+    active: false,
+    worktreePath: input.worktreePath,
+    pendingAction: input.pendingAction,
+    optimistic: true,
+  };
+}
 
 interface DashboardSessionMutationOptions {
   sessionId: string;
@@ -136,7 +157,17 @@ export async function spawnDashboardAgentWithFeedback(
   await runDashboardSessionMutation(host, {
     sessionId: input.sessionId,
     pendingAction: "creating",
-    onBeforeRequest: () => host.preferDashboardEntrySelection("session", input.sessionId, input.worktreePath),
+    onBeforeRequest: () => {
+      host.preferDashboardEntrySelection("session", input.sessionId, input.worktreePath);
+      host.setPendingDashboardSessionAction(input.sessionId, "creating", {
+        sessionSeed: buildPendingSessionSeed({
+          sessionId: input.sessionId,
+          tool: input.tool,
+          worktreePath: input.worktreePath,
+          pendingAction: "creating",
+        }),
+      });
+    },
     request: async () => {
       await host.postToProjectService(
         "/agents/spawn",
@@ -168,7 +199,17 @@ export async function forkDashboardAgentWithFeedback(
   await runDashboardSessionMutation(host, {
     sessionId: input.targetSessionId,
     pendingAction: "forking",
-    onBeforeRequest: () => host.preferDashboardEntrySelection("session", input.targetSessionId, input.worktreePath),
+    onBeforeRequest: () => {
+      host.preferDashboardEntrySelection("session", input.targetSessionId, input.worktreePath);
+      host.setPendingDashboardSessionAction(input.targetSessionId, "forking", {
+        sessionSeed: buildPendingSessionSeed({
+          sessionId: input.targetSessionId,
+          tool: input.tool,
+          worktreePath: input.worktreePath,
+          pendingAction: "forking",
+        }),
+      });
+    },
     request: async () => {
       await host.postToProjectService(
         "/agents/fork",
@@ -189,8 +230,13 @@ export async function forkDashboardAgentWithFeedback(
   });
 }
 
-export function setPendingDashboardSessionAction(host: DashboardOpsHost, sessionId: string, kind: any): void {
-  host.dashboardPendingActions.set(sessionId, kind);
+export function setPendingDashboardSessionAction(
+  host: DashboardOpsHost,
+  sessionId: string,
+  kind: any,
+  opts?: { sessionSeed?: DashboardSession },
+): void {
+  host.dashboardPendingActions.set(sessionId, kind, opts);
   if (typeof host.reapplyDashboardPendingActions === "function") {
     host.reapplyDashboardPendingActions();
   }

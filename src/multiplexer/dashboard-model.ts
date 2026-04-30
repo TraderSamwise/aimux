@@ -98,6 +98,29 @@ function sortWorktreeGroups(groups: WorktreeGroup[]): WorktreeGroup[] {
   return [...groups].sort((a, b) => dashboardCreatedSortKey(b) - dashboardCreatedSortKey(a));
 }
 
+export function composeDashboardWorktreeGroups(
+  worktreeGroups: WorktreeGroup[],
+  dashSessions: DashboardSession[],
+  dashServices: DashboardService[],
+): WorktreeGroup[] {
+  return sortWorktreeGroups(
+    worktreeGroups.map((group) => {
+      const groupSessions = sortDashboardEntriesByCreatedAt(
+        dashSessions.filter((session) => session.worktreePath === group.path),
+      );
+      const groupServices = sortDashboardEntriesByCreatedAt(
+        dashServices.filter((service) => service.worktreePath === group.path),
+      );
+      return {
+        ...group,
+        status: (groupSessions.length > 0 || groupServices.length > 0 ? "active" : "offline") as "active" | "offline",
+        sessions: groupSessions,
+        services: groupServices,
+      };
+    }),
+  );
+}
+
 export function applyDashboardModel(
   host: DashboardModelHost,
   dashSessions: DashboardSession[],
@@ -118,7 +141,11 @@ export function applyDashboardModel(
   host.dashboardModelSnapshotKey = snapshotKey;
   host.dashboardSessionsCache = host.dashboardPendingActions.applyToSessions(dashSessions);
   host.dashboardServicesCache = host.dashboardPendingActions.applyToServices(dashServices);
-  host.dashboardWorktreeGroupsCache = host.dashboardPendingActions.applyToWorktrees(worktreeGroups);
+  host.dashboardWorktreeGroupsCache = composeDashboardWorktreeGroups(
+    host.dashboardPendingActions.applyToWorktrees(worktreeGroups),
+    host.dashboardSessionsCache,
+    host.dashboardServicesCache,
+  );
   host.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
   host.dashboardModelVersion = (host.dashboardModelVersion ?? 0) + 1;
   host.dashboardModelRefreshedAt = Date.now();

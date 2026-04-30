@@ -13,6 +13,7 @@ export type PendingDashboardActionKind =
 interface PendingActionEntry {
   kind: PendingDashboardActionKind;
   timeoutId?: ReturnType<typeof setTimeout>;
+  sessionSeed?: DashboardSession;
 }
 
 export class DashboardPendingActions {
@@ -28,7 +29,7 @@ export class DashboardPendingActions {
   set(
     sessionId: string,
     kind: PendingDashboardActionKind | null,
-    opts?: { timeoutMs?: number; onTimeout?: () => void },
+    opts?: { timeoutMs?: number; onTimeout?: () => void; sessionSeed?: DashboardSession },
   ): void {
     const existing = this.actions.get(sessionId);
     const previousKind = existing?.kind;
@@ -46,7 +47,7 @@ export class DashboardPendingActions {
           this.onChange();
         }, opts.timeoutMs);
       }
-      this.actions.set(sessionId, { kind, timeoutId });
+      this.actions.set(sessionId, { kind, timeoutId, sessionSeed: opts?.sessionSeed });
     } else {
       this.actions.delete(sessionId);
     }
@@ -66,12 +67,26 @@ export class DashboardPendingActions {
 
   applyToSessions(sessions: DashboardSession[]): DashboardSession[] {
     if (this.actions.size === 0) return sessions;
-    return sessions.map((session) => {
+    const seen = new Set<string>();
+    const applied = sessions.map((session) => {
+      seen.add(session.id);
       const pendingAction = this.actions.get(session.id)?.kind;
       if (pendingAction === "removing") return session;
       if (!pendingAction) return session;
       return { ...session, pendingAction, optimistic: true };
     });
+    for (const [sessionId, entry] of this.actions.entries()) {
+      if (seen.has(sessionId)) continue;
+      if (!entry.sessionSeed) continue;
+      if (entry.kind !== "creating" && entry.kind !== "forking") continue;
+      applied.push({
+        ...entry.sessionSeed,
+        id: sessionId,
+        pendingAction: entry.kind,
+        optimistic: true,
+      });
+    }
+    return applied;
   }
 
   applyToServices(services: DashboardService[]): DashboardService[] {
