@@ -23,6 +23,7 @@ import {
   serviceLabelForCommand as serviceLabelForCommandImpl,
   stopService as stopServiceImpl,
 } from "./services.js";
+import { derivedStatusLabel } from "../dashboard/index.js";
 
 export const dashboardViewMethods = {
   serviceLabelForCommand(this: any, commandLine: string): string {
@@ -99,17 +100,18 @@ export const dashboardViewMethods = {
         selectedSession = dashSessions[this.activeIndex]?.id;
       }
 
-      this.dashboard.update(
-        dashSessions,
-        dashServices,
+      this.dashboard.update({
+        sessions: dashSessions,
+        services: dashServices,
         worktreeGroups,
-        this.dashboardState.focusedWorktreePath,
-        hasWorktrees ? this.dashboardState.level : "sessions",
-        selectedSession,
-        selectedService,
-        "tmux",
-        mainCheckoutInfo,
-        this.worktreeRemovalJob
+        hasWorktrees,
+        focusedWorktreePath: this.dashboardState.focusedWorktreePath,
+        navLevel: hasWorktrees ? this.dashboardState.level : "sessions",
+        selectedSessionId: selectedSession,
+        selectedServiceId: selectedService,
+        runtimeLabel: "tmux",
+        mainCheckout: mainCheckoutInfo,
+        worktreeRemoval: this.worktreeRemovalJob
           ? {
               path: this.worktreeRemovalJob.path,
               name: this.worktreeRemovalJob.name,
@@ -117,7 +119,8 @@ export const dashboardViewMethods = {
               stderr: this.worktreeRemovalJob.stderr,
             }
           : undefined,
-      );
+        derivedStatusLabel,
+      });
       this.syncTuiNotificationContext(Boolean(this.notificationPanelState));
       this.writeFrame(this.dashboard.render(cols, rows));
     } catch (error) {

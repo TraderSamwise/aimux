@@ -4,8 +4,8 @@ import { Dashboard } from "./index.js";
 describe("Dashboard", () => {
   it("renders selected session context details", () => {
     const dashboard = new Dashboard();
-    dashboard.update(
-      [
+    dashboard.update({
+      sessions: [
         {
           index: 0,
           id: "codex-1",
@@ -23,15 +23,18 @@ describe("Dashboard", () => {
           repoName: "mobile",
         },
       ],
-      [],
-      undefined,
-      undefined,
-      "sessions",
-      "codex-1",
-      undefined,
-      "tmux",
-      { name: "Main Checkout", branch: "master" },
-    );
+      services: [],
+      worktreeGroups: [],
+      hasWorktrees: false,
+      focusedWorktreePath: undefined,
+      navLevel: "sessions",
+      selectedSessionId: "codex-1",
+      selectedServiceId: undefined,
+      runtimeLabel: "tmux",
+      mainCheckout: { name: "Main Checkout", branch: "master" },
+      worktreeRemoval: undefined,
+      derivedStatusLabel: (session) => session.status,
+    });
 
     const rendered = dashboard.render(120, 40);
     expect(rendered).toContain("Details");

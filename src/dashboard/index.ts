@@ -92,7 +92,7 @@ export type DashboardWorktreeEntry = { kind: "session"; id: string } | { kind: "
 export interface WorktreeGroup {
   name: string;
   branch: string;
-  path: string;
+  path?: string;
   createdAt?: string;
   status: "active" | "offline";
   pending?: boolean;
@@ -113,6 +113,23 @@ export interface DashboardWorktreeRemovalInfo {
 export interface MainCheckoutInfo {
   name: string;
   branch: string;
+}
+
+export interface DashboardViewModel {
+  sessions: DashboardSession[];
+  services: DashboardService[];
+  worktreeGroups: WorktreeGroup[];
+  hasWorktrees: boolean;
+  focusedWorktreePath?: string;
+  navLevel: "worktrees" | "sessions";
+  selectedSessionId?: string;
+  selectedServiceId?: string;
+  runtimeLabel?: string;
+  mainCheckout: MainCheckoutInfo;
+  worktreeRemoval?: DashboardWorktreeRemovalInfo;
+  detailsPaneVisible: boolean;
+  scrollOffset: number;
+  derivedStatusLabel: typeof derivedStatusLabel;
 }
 
 const STATUS_LABELS: Record<DashboardSessionStatus, string> = {
@@ -146,44 +163,31 @@ export function derivedStatusLabel(session: DashboardSession): string {
 }
 
 export class Dashboard {
-  private sessions: DashboardSession[] = [];
-  private services: DashboardService[] = [];
-  private worktreeGroups: WorktreeGroup[] = [];
-  private hasWorktrees = false;
-  private focusedWorktreePath: string | undefined = undefined;
-  private navLevel: "worktrees" | "sessions" = "sessions";
-  private selectedSessionId: string | undefined = undefined;
-  private selectedServiceId: string | undefined = undefined;
+  private viewModel: DashboardViewModel = {
+    sessions: [],
+    services: [],
+    worktreeGroups: [],
+    hasWorktrees: false,
+    focusedWorktreePath: undefined,
+    navLevel: "sessions",
+    selectedSessionId: undefined,
+    selectedServiceId: undefined,
+    runtimeLabel: undefined,
+    mainCheckout: { name: "Main Checkout", branch: "" },
+    worktreeRemoval: undefined,
+    detailsPaneVisible: true,
+    scrollOffset: 0,
+    derivedStatusLabel,
+  };
   private scrollOffset = 0;
-  private runtimeLabel: string | undefined = undefined;
-  private mainCheckout: MainCheckoutInfo = { name: "Main Checkout", branch: "" };
   private detailsPaneVisible = true;
-  private worktreeRemoval: DashboardWorktreeRemovalInfo | undefined = undefined;
 
-  update(
-    sessions: DashboardSession[],
-    services: DashboardService[],
-    worktreeGroups?: WorktreeGroup[],
-    focusedWorktreePath?: string,
-    navLevel?: "worktrees" | "sessions",
-    selectedSessionId?: string,
-    selectedServiceId?: string,
-    runtimeLabel?: string,
-    mainCheckout?: MainCheckoutInfo,
-    worktreeRemoval?: DashboardWorktreeRemovalInfo,
-  ): void {
-    this.sessions = sessions;
-    this.services = services;
-    this.worktreeGroups = worktreeGroups ?? [];
-    this.hasWorktrees =
-      this.worktreeGroups.length > 0 || sessions.some((s) => s.worktreePath) || services.some((s) => s.worktreePath);
-    this.focusedWorktreePath = focusedWorktreePath;
-    this.navLevel = navLevel ?? "sessions";
-    this.selectedSessionId = selectedSessionId;
-    this.selectedServiceId = selectedServiceId;
-    this.runtimeLabel = runtimeLabel;
-    this.mainCheckout = mainCheckout ?? { name: "Main Checkout", branch: "" };
-    this.worktreeRemoval = worktreeRemoval;
+  update(viewModel: Omit<DashboardViewModel, "detailsPaneVisible" | "scrollOffset">): void {
+    this.viewModel = {
+      ...viewModel,
+      detailsPaneVisible: this.detailsPaneVisible,
+      scrollOffset: this.scrollOffset,
+    };
   }
 
   /** Scroll the viewport (called from multiplexer key handler) */
@@ -192,31 +196,14 @@ export class Dashboard {
   }
 
   render(cols: number, rows: number): string {
-    const { frame, scrollOffset } = renderDashboardFrame(
-      {
-        sessions: this.sessions,
-        services: this.services,
-        worktreeGroups: this.worktreeGroups,
-        hasWorktrees: this.hasWorktrees,
-        focusedWorktreePath: this.focusedWorktreePath,
-        navLevel: this.navLevel,
-        selectedSessionId: this.selectedSessionId,
-        selectedServiceId: this.selectedServiceId,
-        runtimeLabel: this.runtimeLabel,
-        mainCheckout: this.mainCheckout,
-        worktreeRemoval: this.worktreeRemoval,
-        detailsPaneVisible: this.detailsPaneVisible,
-        scrollOffset: this.scrollOffset,
-        derivedStatusLabel,
-      },
-      cols,
-      rows,
-    );
+    const { frame, scrollOffset } = renderDashboardFrame(this.viewModel, cols, rows);
     this.scrollOffset = scrollOffset;
+    this.viewModel.scrollOffset = scrollOffset;
     return frame;
   }
 
   toggleDetailsPane(): void {
     this.detailsPaneVisible = !this.detailsPaneVisible;
+    this.viewModel.detailsPaneVisible = this.detailsPaneVisible;
   }
 }

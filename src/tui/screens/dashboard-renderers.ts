@@ -1,34 +1,8 @@
-import type {
-  DashboardService,
-  DashboardSession,
-  DashboardWorktreeRemovalInfo,
-  MainCheckoutInfo,
-  WorktreeGroup,
-} from "../../dashboard/index.js";
+import type { DashboardService, DashboardSession, DashboardViewModel, WorktreeGroup } from "../../dashboard/index.js";
 import { buildDashboardQuickJumpWorktrees } from "../../dashboard/quick-jump.js";
-import { derivedStatusLabel } from "../../dashboard/index.js";
 import { formatRelativeRecency } from "../../recency.js";
 import { sessionSemanticCompactHint } from "../../session-semantics.js";
 import { center, composeTwoPane, stripAnsi, truncate, wrapKeyValue } from "../render/text.js";
-
-type DashboardNavLevel = "worktrees" | "sessions";
-
-export interface DashboardRenderState {
-  sessions: DashboardSession[];
-  services: DashboardService[];
-  worktreeGroups: WorktreeGroup[];
-  hasWorktrees: boolean;
-  focusedWorktreePath?: string;
-  navLevel: DashboardNavLevel;
-  selectedSessionId?: string;
-  selectedServiceId?: string;
-  runtimeLabel?: string;
-  mainCheckout: MainCheckoutInfo;
-  worktreeRemoval?: DashboardWorktreeRemovalInfo;
-  detailsPaneVisible: boolean;
-  scrollOffset: number;
-  derivedStatusLabel: typeof derivedStatusLabel;
-}
 
 const STATUS_ICONS: Record<DashboardSession["status"], string> = {
   running: "\x1b[33m●\x1b[0m",
@@ -45,7 +19,7 @@ const SERVICE_ICONS: Record<DashboardService["status"], string> = {
 };
 
 export function renderDashboardFrame(
-  state: DashboardRenderState,
+  state: DashboardViewModel,
   cols: number,
   rows: number,
 ): { frame: string; scrollOffset: number } {
@@ -250,18 +224,25 @@ export function renderDashboardFrame(
       const focusedServices = state.services.filter(
         (service) => (service.worktreePath ?? undefined) === focusedWorktreePath,
       );
-      const worktree: { name: string; branch: string; path: string } | { name: string; branch: string; path: string } =
+      const worktree: { name: string; branch: string; path: string } =
         focusedWorktreePath === undefined
           ? {
               name: state.mainCheckout.name,
               branch: state.mainCheckout.branch,
               path: "(main checkout)",
             }
-          : (state.worktreeGroups.find((group) => group.path === focusedWorktreePath) ?? {
-              name: focusedSessions[0]?.worktreeName ?? focusedServices[0]?.worktreeName ?? "Worktree",
-              branch: focusedSessions[0]?.worktreeBranch ?? focusedServices[0]?.worktreeBranch ?? "",
-              path: focusedWorktreePath,
-            });
+          : (() => {
+              const focusedGroup = state.worktreeGroups.find(
+                (group): group is WorktreeGroup & { path: string } => group.path === focusedWorktreePath,
+              );
+              return (
+                focusedGroup ?? {
+                  name: focusedSessions[0]?.worktreeName ?? focusedServices[0]?.worktreeName ?? "Worktree",
+                  branch: focusedSessions[0]?.worktreeBranch ?? focusedServices[0]?.worktreeBranch ?? "",
+                  path: focusedWorktreePath,
+                }
+              );
+            })();
 
       const lines: string[] = ["\x1b[1mWorktree\x1b[0m"];
       lines.push(...wrapKeyValue("Name", worktree.name, width));
