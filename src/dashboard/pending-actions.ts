@@ -17,11 +17,12 @@ interface PendingActionEntry {
 
 export class DashboardPendingActions {
   private actions = new Map<string, PendingActionEntry>();
+  private version = 0;
 
   constructor(private readonly onChange: () => void) {}
 
-  static worktreeKey(path: string): string {
-    return `worktree:${path}`;
+  static worktreeKey(path?: string): string {
+    return `worktree:${path ?? "__main__"}`;
   }
 
   set(
@@ -30,6 +31,7 @@ export class DashboardPendingActions {
     opts?: { timeoutMs?: number; onTimeout?: () => void },
   ): void {
     const existing = this.actions.get(sessionId);
+    const previousKind = existing?.kind;
     if (existing?.timeoutId) {
       clearTimeout(existing.timeoutId);
     }
@@ -48,11 +50,18 @@ export class DashboardPendingActions {
     } else {
       this.actions.delete(sessionId);
     }
+    if (previousKind !== kind) {
+      this.version += 1;
+    }
     this.onChange();
   }
 
   get(sessionId: string): PendingDashboardActionKind | undefined {
     return this.actions.get(sessionId)?.kind;
+  }
+
+  getVersion(): number {
+    return this.version;
   }
 
   applyToSessions(sessions: DashboardSession[]): DashboardSession[] {

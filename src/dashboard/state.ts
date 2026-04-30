@@ -55,20 +55,39 @@ export class DashboardState {
   hasWorktrees(): boolean {
     return this.worktreeNavOrder.length > 0;
   }
+
+  renderStateKey(): string {
+    return [
+      this.screen,
+      this.detailsSidebarVisible ? "details:1" : "details:0",
+      `focus:${this.focusedWorktreePath ?? "__main__"}`,
+      `order:${this.worktreeNavOrder.join(",")}`,
+      `level:${this.level}`,
+      `index:${this.sessionIndex}`,
+      `sessions:${this.worktreeSessions.length}`,
+      `entries:${this.worktreeEntries.length}`,
+      `quick:${this.quickJumpDigits}`,
+    ].join("|");
+  }
 }
 
 export class DashboardOverlayState {
   kind: DashboardOverlayKind = "none";
+  version = 0;
 
   is(kind: DashboardOverlayKind): boolean {
     return this.kind === kind;
   }
 
   open(kind: Exclude<DashboardOverlayKind, "none">): void {
+    if (this.kind === kind) return;
     this.kind = kind;
+    this.version += 1;
   }
 
   clear(): void {
+    if (this.kind === "none") return;
     this.kind = "none";
+    this.version += 1;
   }
 }

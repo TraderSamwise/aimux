@@ -27,6 +27,7 @@ export const dashboardStateMethods = {
   invalidateDashboardFrame(this: any): void {
     this.lastRenderedFrame = null;
     this.lastRenderedBaseFrame = null;
+    this.lastRenderedFrameKey = null;
   },
 
   getDashboardViewportTarget(this: any): string | null {
@@ -120,9 +121,17 @@ export const dashboardStateMethods = {
       this.lastRenderedBaseFrame = output;
       const overlayOutput = this.buildActiveDashboardOverlayOutput?.() ?? null;
       const finalOutput = overlayOutput ? `${output}${overlayOutput}` : output;
-      if (!force && this.lastRenderedFrame === finalOutput) return;
+      const renderKey = [
+        this.getViewportKey(),
+        `model:${this.dashboardModelVersion ?? 0}`,
+        `pending:${this.dashboardPendingActions.getVersion?.() ?? 0}`,
+        `overlay:${this.dashboardOverlayState.version ?? 0}`,
+        `ui:${this.dashboardState.renderStateKey?.() ?? ""}`,
+      ].join("|");
+      if (!force && this.lastRenderedFrameKey === renderKey && this.lastRenderedFrame === finalOutput) return;
       process.stdout.write(`\x1b[H\x1b[J${finalOutput}`);
       this.lastRenderedFrame = finalOutput;
+      this.lastRenderedFrameKey = renderKey;
       return;
     }
     if (!force && this.lastRenderedFrame === output) return;

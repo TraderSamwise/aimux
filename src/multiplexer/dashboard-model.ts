@@ -56,7 +56,21 @@ export function buildDashboardWorktreeGroups(
   }>,
   mainRepoPath?: string,
 ): WorktreeGroup[] {
-  return sortWorktreeGroups(
+  const mainSessions = sortDashboardEntriesByCreatedAt(dashSessions.filter((s) => !s.worktreePath));
+  const mainServices = sortDashboardEntriesByCreatedAt(dashServices.filter((s) => !s.worktreePath));
+  const mainWorktree = mainRepoPath ? worktrees.find((wt) => !wt.isBare && wt.path === mainRepoPath) : undefined;
+
+  const mainGroup: WorktreeGroup = {
+    name: "Main Checkout",
+    branch: mainWorktree?.branch ?? "",
+    path: undefined,
+    createdAt: mainWorktree?.createdAt,
+    status: (mainSessions.length > 0 || mainServices.length > 0 ? "active" : "offline") as "active" | "offline",
+    sessions: mainSessions,
+    services: mainServices,
+  };
+
+  const secondaryGroups = sortWorktreeGroups(
     worktrees
       .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
       .map((wt) => {
@@ -76,6 +90,8 @@ export function buildDashboardWorktreeGroups(
         };
       }),
   );
+
+  return [mainGroup, ...secondaryGroups];
 }
 
 function sortWorktreeGroups(groups: WorktreeGroup[]): WorktreeGroup[] {
@@ -104,6 +120,7 @@ export function applyDashboardModel(
   host.dashboardServicesCache = host.dashboardPendingActions.applyToServices(dashServices);
   host.dashboardWorktreeGroupsCache = host.dashboardPendingActions.applyToWorktrees(worktreeGroups);
   host.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
+  host.dashboardModelVersion = (host.dashboardModelVersion ?? 0) + 1;
   host.dashboardModelRefreshedAt = Date.now();
   host.dashboardUiStateStore.markSelectionDirty();
   return true;
@@ -492,6 +509,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       spawnAgent: (input: any) =>
         host.spawnAgent({
           toolConfigKey: input.tool,
+          targetSessionId: input.sessionId,
           targetWorktreePath: input.worktreePath,
           open: input.open ?? false,
         }),
@@ -499,6 +517,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
         host.forkAgent({
           sourceSessionId: input.sourceSessionId,
           targetToolConfigKey: input.tool,
+          targetSessionId: input.targetSessionId,
           instruction: input.instruction,
           targetWorktreePath: input.worktreePath,
           open: input.open ?? false,

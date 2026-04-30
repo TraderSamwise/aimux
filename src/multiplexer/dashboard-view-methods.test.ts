@@ -143,6 +143,12 @@ describe("dashboardStateMethods.writeFrame", () => {
       mode: "dashboard",
       lastRenderedFrame: null,
       lastRenderedBaseFrame: null,
+      lastRenderedFrameKey: null,
+      getViewportKey: vi.fn(() => "120x40"),
+      dashboardModelVersion: 3,
+      dashboardPendingActions: { getVersion: vi.fn(() => 7) },
+      dashboardOverlayState: { version: 2 },
+      dashboardState: { renderStateKey: vi.fn(() => "screen:dashboard|level:worktrees") },
       buildActiveDashboardOverlayOutput: vi.fn(() => "overlay-frame"),
     };
 
@@ -150,6 +156,7 @@ describe("dashboardStateMethods.writeFrame", () => {
 
     expect(host.lastRenderedBaseFrame).toBe("base-frame");
     expect(host.lastRenderedFrame).toBe("base-frameoverlay-frame");
+    expect(host.lastRenderedFrameKey).toBe("120x40|model:3|pending:7|overlay:2|ui:screen:dashboard|level:worktrees");
     expect(writes).toEqual(["\x1b[H\x1b[Jbase-frameoverlay-frame"]);
     stdoutWrite.mockRestore();
   });

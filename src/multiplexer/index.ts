@@ -206,6 +206,7 @@ export class Multiplexer {
   private dashboardLastViewportSize: { cols: number; rows: number } | null = null;
   private dashboardPendingExpandedViewportSize: { cols: number; rows: number } | null = null;
   private dashboardPendingExpandedViewportCount = 0;
+  private dashboardModelVersion = 0;
   private agentTracker = new AgentTracker();
   private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher((target) =>
@@ -240,6 +241,8 @@ export class Multiplexer {
   private eventBus = new ProjectEventBus();
   private pluginRuntime: PluginRuntime | null = null;
   private lastRenderedFrame: string | null = null;
+  private lastRenderedBaseFrame: string | null = null;
+  private lastRenderedFrameKey: string | null = null;
   private lastStatuslineSnapshotKey: string | null = null;
   private desktopStateSnapshot: ReturnType<Multiplexer["buildDesktopStateSnapshot"]> | null = null;
   private dashboardSessionsCache: DashboardSession[] = [];
