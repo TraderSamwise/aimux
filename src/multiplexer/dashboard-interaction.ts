@@ -17,6 +17,18 @@ function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | n
   );
 }
 
+function findDashboardWorktreeGroup(host: any, worktreePath: string | undefined): any | undefined {
+  return host.dashboardWorktreeGroupsCache.find((group: any) => group.path === worktreePath);
+}
+
+function isRemovingDashboardWorktree(group: any | undefined): boolean {
+  return Boolean(group?.removing || group?.pendingAction === "removing");
+}
+
+function blockedRemovingWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
+  return `Worktree ${group?.name ?? worktreePath?.split("/").pop() ?? "worktree"} is removing`;
+}
+
 export const dashboardInteractionMethods = {
   clearDashboardQuickJump(this: any): void {
     if (this.dashboardQuickJumpTimeout) {
@@ -63,6 +75,13 @@ export const dashboardInteractionMethods = {
   activateSelectedDashboardWorktreeEntry(this: any): void {
     const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
     if (!selectedEntry) return;
+    const focusedGroup = findDashboardWorktreeGroup(this, this.dashboardState.focusedWorktreePath);
+    if (isRemovingDashboardWorktree(focusedGroup)) {
+      this.footerFlash = blockedRemovingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
+      return;
+    }
     if (selectedEntry.kind === "service") {
       const service = this.getDashboardServices().find((entry: any) => entry.id === selectedEntry.id);
       if (!service) return;
@@ -434,6 +453,13 @@ export const dashboardInteractionMethods = {
         case "enter":
         case "right":
         case "l":
+          if (isRemovingDashboardWorktree(findDashboardWorktreeGroup(this, this.dashboardState.focusedWorktreePath))) {
+            const focusedGroup = findDashboardWorktreeGroup(this, this.dashboardState.focusedWorktreePath);
+            this.footerFlash = blockedRemovingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
+            this.footerFlashTicks = 3;
+            this.renderDashboard();
+            break;
+          }
           this.updateWorktreeSessions();
           if (this.dashboardState.worktreeEntries.length > 0) {
             this.dashboardState.level = "sessions";
@@ -489,6 +515,13 @@ export const dashboardInteractionMethods = {
 
   async activateDashboardEntry(this: any, entry: DashboardSession): Promise<void> {
     if (!entry) return;
+    const worktreeGroup = findDashboardWorktreeGroup(this, entry.worktreePath);
+    if (isRemovingDashboardWorktree(worktreeGroup)) {
+      this.footerFlash = blockedRemovingWorktreeMessage(worktreeGroup, entry.worktreePath);
+      this.footerFlashTicks = 3;
+      this.renderDashboard();
+      return;
+    }
     if (hasBlockingPendingDashboardAction(entry)) {
       return;
     }

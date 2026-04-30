@@ -130,14 +130,14 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
       .then(async () => {
         const refreshed = await host.refreshDashboardModelFromService(true);
         if (refreshed && host.mode === "dashboard") {
-          host.renderDashboard();
+          host.renderCurrentDashboardView();
         }
       })
       .catch(() => {});
   }
   host.terminalHost.enterAlternateScreen(true);
   host.startStatusRefresh();
-  host.renderDashboard();
+  host.renderCurrentDashboardView();
 
   const exitCode = await new Promise<number>((resolve) => {
     host.resolveRun = resolve;

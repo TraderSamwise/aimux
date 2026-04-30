@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { createSession, runProjectService } from "./session-launch.js";
+import { createSession, runDashboard, runProjectService } from "./session-launch.js";
 
 describe("createSession", () => {
   it("does not inject startup preamble when explicitly suppressed", async () => {
@@ -179,5 +179,48 @@ describe("runProjectService", () => {
 
     expect(host.mode).toBe("project-service");
     expect(host.startStatusRefresh).toHaveBeenCalledOnce();
+  });
+});
+
+describe("runDashboard", () => {
+  it("uses the reconciled dashboard render path on initial startup", async () => {
+    const host: any = {
+      instanceId: "inst-1",
+      instanceDirectory: { registerInstance: vi.fn(async () => undefined) },
+      startHeartbeat: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      syncSessionsFromState: vi.fn(),
+      writeInstructionFiles: vi.fn(),
+      terminalHost: {
+        enterRawMode: vi.fn(),
+        enterAlternateScreen: vi.fn(),
+      },
+      isFocusInReport: vi.fn(() => false),
+      handleActiveDashboardOverlayKey: vi.fn(() => false),
+      isDashboardScreen: vi.fn(() => false),
+      handleDashboardKey: vi.fn(),
+      getViewportKey: vi.fn(() => "120x40"),
+      invalidateDashboardFrame: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      renderDashboard: vi.fn(),
+      loadDashboardUiState: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      refreshLocalDashboardModel: vi.fn(),
+      ensureDashboardControlPlane: vi.fn(async () => undefined),
+      startStatusRefresh: vi.fn(),
+      teardown: vi.fn(),
+      resolveRun: undefined,
+      defaultCommand: undefined,
+      defaultArgs: undefined,
+    };
+
+    const runPromise = runDashboard(host);
+    await vi.waitFor(() => expect(host.resolveRun).toBeTypeOf("function"));
+    host.resolveRun(0);
+    await expect(runPromise).resolves.toBe(0);
+
+    expect(host.renderCurrentDashboardView).toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
   });
 });
