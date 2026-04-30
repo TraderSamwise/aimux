@@ -10,12 +10,43 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 
 type WorktreeHost = any;
 
-function forceDashboardServiceRefresh(host: WorktreeHost): void {
-  if (typeof host.refreshDashboardModelFromService !== "function") return;
-  void host.refreshDashboardModelFromService(true).then((refreshed: boolean) => {
-    if (!refreshed || host.mode !== "dashboard") return;
-    host.renderDashboard();
-  });
+interface DashboardWorktreeMutationOptions {
+  pendingKey: string;
+  pendingAction: "creating" | "removing";
+  request: () => Promise<void>;
+  settle: () => Promise<boolean>;
+  onSuccess?: () => void;
+  onError?: (error: unknown) => void;
+}
+
+async function waitForRenderedDashboardWorktreeState(
+  host: WorktreeHost,
+  path: string,
+  predicate: (group: any | undefined) => boolean,
+  timeoutMs = 10_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await host.refreshDashboardModelFromService(true);
+    const group = host.dashboardWorktreeGroupsCache.find((entry: any) => entry.path === path);
+    if (predicate(group)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+async function runDashboardWorktreeMutation(host: WorktreeHost, opts: DashboardWorktreeMutationOptions): Promise<void> {
+  host.dashboardPendingActions.set(opts.pendingKey, opts.pendingAction);
+  host.renderDashboard();
+  try {
+    await opts.request();
+    await opts.settle();
+    host.dashboardPendingActions.set(opts.pendingKey, null);
+    opts.onSuccess?.();
+  } catch (error) {
+    host.dashboardPendingActions.set(opts.pendingKey, null);
+    opts.onError?.(error);
+  }
 }
 
 function sortDashboardWorktrees(worktrees: Array<any>): void {
@@ -119,21 +150,24 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
     if (name) {
       if (host.mode === "dashboard") {
         const targetPath = showOptimisticDashboardWorktreeCreate(host, name);
-        host.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), "creating");
-        host.renderDashboard();
-        void (async () => {
-          try {
+        const pendingKey = DashboardPendingActions.worktreeKey(targetPath);
+        void runDashboardWorktreeMutation(host, {
+          pendingKey,
+          pendingAction: "creating",
+          request: async () => {
             await postToProjectService(host, "/worktrees/create", { name });
+          },
+          settle: () => waitForRenderedDashboardWorktreeState(host, targetPath, (group) => Boolean(group)),
+          onSuccess: () => {
             debug(`worktree created from UI: ${name}`, "worktree");
-            host.settleDashboardCreatePending?.(DashboardPendingActions.worktreeKey(targetPath));
-            forceDashboardServiceRefresh(host);
-          } catch (err) {
-            host.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), null);
+            host.settleDashboardCreatePending?.(pendingKey);
+          },
+          onError: (err) => {
             removeOptimisticDashboardWorktree(host, targetPath);
             debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
             host.showDashboardError(`Failed to create "${name}"`, [err instanceof Error ? err.message : String(err)]);
-          }
-        })();
+          },
+        });
         return;
       }
       try {
@@ -205,14 +239,20 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
   };
   host.refreshLocalDashboardModel();
   host.renderDashboard();
-  forceDashboardServiceRefresh(host);
   if (host.mode === "dashboard") {
-    void (async () => {
-      try {
+    const pendingKey = DashboardPendingActions.worktreeKey(path);
+    void runDashboardWorktreeMutation(host, {
+      pendingKey,
+      pendingAction: "removing",
+      request: async () => {
         await postToProjectService(host, "/worktrees/remove", { path });
+      },
+      settle: () => waitForRenderedDashboardWorktreeState(host, path, (group) => !group),
+      onSuccess: () => {
         debug(`removeDesktopWorktree succeeded: name=${name} path=${path}`, "worktree");
         finishWorktreeRemoval(host, 0);
-      } catch (err) {
+      },
+      onError: (err) => {
         if (host.worktreeRemovalJob) {
           host.worktreeRemovalJob.stderr += `\n${err instanceof Error ? err.message : String(err)}`;
         }
@@ -221,8 +261,8 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
           "worktree",
         );
         finishWorktreeRemoval(host, 1);
-      }
-    })();
+      },
+    });
     return;
   }
   void (async () => {
@@ -273,12 +313,10 @@ export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
     host.footerFlash = `Failed: ${message}`;
     host.footerFlashTicks = 5;
     host.showDashboardError(`Failed to remove "${job.name}"`, [`Path: ${job.path}`, `Error: ${message}`, ...details]);
-    forceDashboardServiceRefresh(host);
     return;
   }
 
   host.renderDashboard();
-  forceDashboardServiceRefresh(host);
 }
 
 export function handleWorktreeRemoveConfirmKey(host: WorktreeHost, data: Buffer): void {
