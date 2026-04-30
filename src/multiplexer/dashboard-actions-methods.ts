@@ -11,6 +11,8 @@ import {
   noteLastUsedItem as noteLastUsedItemImpl,
   openLiveTmuxWindowForEntry as openLiveTmuxWindowForEntryImpl,
   openLiveTmuxWindowForService as openLiveTmuxWindowForServiceImpl,
+  waitAndOpenLiveTmuxWindowForEntry as waitAndOpenLiveTmuxWindowForEntryImpl,
+  waitAndOpenLiveTmuxWindowForService as waitAndOpenLiveTmuxWindowForServiceImpl,
   postToProjectService as postToProjectServiceImpl,
   buildActiveDashboardOverlayOutput as buildActiveDashboardOverlayOutputImpl,
   renderActiveDashboardOverlay as renderActiveDashboardOverlayImpl,
@@ -192,8 +194,22 @@ export const dashboardActionMethods = {
   ): "opened" | "missing" | "error" {
     return openLiveTmuxWindowForEntryImpl(this, entry);
   },
+  async waitAndOpenLiveTmuxWindowForEntry(
+    this: any,
+    entry: { id: string; backendSessionId?: string },
+    timeoutMs?: number,
+  ): Promise<"opened" | "missing" | "error"> {
+    return waitAndOpenLiveTmuxWindowForEntryImpl(this, entry, timeoutMs);
+  },
   openLiveTmuxWindowForService(this: any, serviceId: string): "opened" | "missing" | "error" {
     return openLiveTmuxWindowForServiceImpl(this, serviceId);
+  },
+  async waitAndOpenLiveTmuxWindowForService(
+    this: any,
+    serviceId: string,
+    timeoutMs?: number,
+  ): Promise<"opened" | "missing" | "error"> {
+    return waitAndOpenLiveTmuxWindowForServiceImpl(this, serviceId, timeoutMs);
   },
   noteLastUsedItem(this: any, itemId: string): void {
     noteLastUsedItemImpl(this, itemId);

@@ -93,9 +93,7 @@ export const dashboardInteractionMethods = {
         void this.resumeOfflineServiceWithFeedback(service);
         return;
       }
-      if (this.openLiveTmuxWindowForService(selectedEntry.id) !== "missing") {
-        return;
-      }
+      void this.waitAndOpenLiveTmuxWindowForService(selectedEntry.id);
       return;
     }
     const dashEntry = this.dashboardState.worktreeSessions.find((entry: any) => entry.id === selectedEntry.id);
@@ -104,9 +102,8 @@ export const dashboardInteractionMethods = {
       return;
     }
     this.preferDashboardEntrySelection("session", dashEntry.id, this.dashboardState.focusedWorktreePath);
-    if (this.openLiveTmuxWindowForEntry(dashEntry) !== "missing") {
-      return;
-    }
+    void this.waitAndOpenLiveTmuxWindowForEntry(dashEntry);
+    if (dashEntry.status !== "offline") return;
     if (dashEntry.remoteInstanceId) {
       void this.takeoverFromDashEntryWithFeedback(dashEntry);
       return;
@@ -401,7 +398,8 @@ export const dashboardInteractionMethods = {
           if (hasBlockingPendingDashboardAction(entry)) {
             return;
           }
-          if (entry && this.openLiveTmuxWindowForEntry(entry) !== "missing") {
+          if (entry) {
+            void this.activateDashboardEntry(entry);
             return;
           }
           if (entry?.remoteInstanceId) {
@@ -526,7 +524,7 @@ export const dashboardInteractionMethods = {
       return;
     }
 
-    if (this.openLiveTmuxWindowForEntry(entry) !== "missing") {
+    if ((await this.waitAndOpenLiveTmuxWindowForEntry(entry)) !== "missing") {
       return;
     }
 

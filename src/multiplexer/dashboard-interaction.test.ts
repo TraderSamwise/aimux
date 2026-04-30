@@ -67,4 +67,42 @@ describe("dashboardInteractionMethods", () => {
     expect(host.footerFlashTicks).toBe(3);
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
+
+  it("waits briefly for a live agent window to become enterable", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "running",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          removing: false,
+          sessions: [],
+          services: [],
+        },
+      ],
+      dashboardPendingActions: new Map(),
+      openLiveTmuxWindowForEntry: vi.fn().mockReturnValueOnce("missing").mockReturnValueOnce("opened"),
+      waitAndOpenLiveTmuxWindowForEntry: dashboardActionWaitStub("entry"),
+      takeOverFromDashEntryWithFeedback: vi.fn(),
+      takeoffFromDashEntryWithFeedback: vi.fn(),
+      resumeOfflineSessionWithFeedback: vi.fn(),
+      sessions: [],
+      noteLastUsedItem: vi.fn(),
+      focusSession: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
+
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
+  });
 });
+
+function dashboardActionWaitStub(kind: "entry" | "service") {
+  return vi.fn(async function (this: any, target: any) {
+    return kind === "entry" ? this.openLiveTmuxWindowForEntry(target) : this.openLiveTmuxWindowForService(target);
+  });
+}

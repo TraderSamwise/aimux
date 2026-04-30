@@ -312,6 +312,20 @@ export function openLiveTmuxWindowForEntry(
   }
 }
 
+export async function waitAndOpenLiveTmuxWindowForEntry(
+  host: DashboardControlHost,
+  entry: { id: string; backendSessionId?: string },
+  timeoutMs = 3000,
+): Promise<"opened" | "missing" | "error"> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = openLiveTmuxWindowForEntry(host, entry);
+    if (result !== "missing") return result;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return "missing";
+}
+
 export function openLiveTmuxWindowForService(
   host: DashboardControlHost,
   serviceId: string,
@@ -330,6 +344,20 @@ export function openLiveTmuxWindowForService(
     ]);
     return "error";
   }
+}
+
+export async function waitAndOpenLiveTmuxWindowForService(
+  host: DashboardControlHost,
+  serviceId: string,
+  timeoutMs = 3000,
+): Promise<"opened" | "missing" | "error"> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = openLiveTmuxWindowForService(host, serviceId);
+    if (result !== "missing") return result;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return "missing";
 }
 
 export function noteLastUsedItem(host: DashboardControlHost, itemId: string): void {
