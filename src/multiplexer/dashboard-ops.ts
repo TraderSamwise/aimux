@@ -23,6 +23,18 @@ interface DashboardSessionMutationOptions {
   errorTitle: string;
 }
 
+interface DashboardServiceMutationOptions {
+  serviceId: string;
+  pendingAction: "starting" | "stopping" | "removing";
+  request: () => Promise<void>;
+  settle: () => Promise<boolean>;
+  onBeforeRequest?: () => void;
+  onAfterSettle?: () => void;
+  onError?: () => Promise<void> | void;
+  successFlash?: { message: string; ticks?: number };
+  errorTitle: string;
+}
+
 async function waitForRenderedDashboardSessionState(
   host: DashboardOpsHost,
   sessionId: string,
@@ -34,6 +46,22 @@ async function waitForRenderedDashboardSessionState(
     await host.refreshDashboardModelFromService(true);
     const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
     if (predicate(session)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+async function waitForRenderedDashboardServiceState(
+  host: DashboardOpsHost,
+  serviceId: string,
+  predicate: (service: any | undefined) => boolean,
+  timeoutMs = 10_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await host.refreshDashboardModelFromService(true);
+    const service = host.getDashboardServices().find((entry: any) => entry.id === serviceId);
+    if (predicate(service)) return true;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return false;
@@ -58,6 +86,30 @@ async function runDashboardSessionMutation(
     host.renderDashboard();
   } catch (error) {
     host.setPendingDashboardSessionAction(opts.sessionId, null);
+    await opts.onError?.();
+    host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
+  }
+}
+
+async function runDashboardServiceMutation(
+  host: DashboardOpsHost,
+  opts: DashboardServiceMutationOptions,
+): Promise<void> {
+  host.setPendingDashboardSessionAction(opts.serviceId, opts.pendingAction);
+  opts.onBeforeRequest?.();
+  host.renderDashboard();
+  try {
+    await opts.request();
+    await opts.settle();
+    host.setPendingDashboardSessionAction(opts.serviceId, null);
+    opts.onAfterSettle?.();
+    if (opts.successFlash) {
+      host.footerFlash = opts.successFlash.message;
+      host.footerFlashTicks = opts.successFlash.ticks ?? 3;
+    }
+    host.renderDashboard();
+  } catch (error) {
+    host.setPendingDashboardSessionAction(opts.serviceId, null);
     await opts.onError?.();
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
   }
@@ -350,6 +402,29 @@ export async function resumeOfflineServiceWithFeedback(
   if (host.dashboardPendingActions.get(service.id) === "starting") {
     return;
   }
+  if (host.mode === "dashboard") {
+    await runDashboardServiceMutation(host, {
+      serviceId: service.id,
+      pendingAction: "starting",
+      onBeforeRequest: () => {
+        host.footerFlash = `Restoring ${service.label ?? service.id}`;
+        host.footerFlashTicks = 3;
+      },
+      request: async () => {
+        await host.postToProjectService("/services/resume", { serviceId: service.id });
+      },
+      settle: () =>
+        waitForRenderedDashboardServiceState(
+          host,
+          service.id,
+          (entry) => Boolean(entry) && entry.status === "running" && entry.pendingAction !== "starting",
+        ),
+      successFlash: { message: `◆ Started service ${service.label ?? service.id}` },
+      onError: () => host.refreshDashboardModelFromService(true),
+      errorTitle: "Failed to start service",
+    });
+    return;
+  }
   host.setPendingDashboardSessionAction(service.id, "starting");
   host.footerFlash = `Restoring ${service.label ?? service.id}`;
   host.footerFlashTicks = 3;
@@ -365,6 +440,45 @@ export async function resumeOfflineServiceWithFeedback(
     host.refreshLocalDashboardModel();
     host.showDashboardError("Failed to start service", [error instanceof Error ? error.message : String(error)]);
   }
+}
+
+export async function stopDashboardServiceWithFeedback(
+  host: DashboardOpsHost,
+  service: { id: string; label?: string },
+): Promise<void> {
+  await runDashboardServiceMutation(host, {
+    serviceId: service.id,
+    pendingAction: "stopping",
+    onBeforeRequest: () => {
+      host.footerFlash = `Stopping ${service.label ?? service.id}`;
+      host.footerFlashTicks = 3;
+    },
+    request: async () => {
+      await host.postToProjectService("/services/stop", { serviceId: service.id });
+    },
+    settle: () =>
+      waitForRenderedDashboardServiceState(host, service.id, (entry) => !entry || entry.status === "offline"),
+    successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
+    onError: () => host.refreshDashboardModelFromService(true),
+    errorTitle: "Failed to stop service",
+  });
+}
+
+export async function removeDashboardServiceWithFeedback(
+  host: DashboardOpsHost,
+  service: { id: string; label?: string },
+): Promise<void> {
+  await runDashboardServiceMutation(host, {
+    serviceId: service.id,
+    pendingAction: "removing",
+    request: async () => {
+      await host.postToProjectService("/services/remove", { serviceId: service.id });
+    },
+    settle: () => waitForRenderedDashboardServiceState(host, service.id, (entry) => !entry),
+    successFlash: { message: `◆ Deleted service ${service.label ?? service.id}` },
+    onError: () => host.refreshDashboardModelFromService(true),
+    errorTitle: "Failed to delete service",
+  });
 }
 
 export async function waitForSessionStartForHost(

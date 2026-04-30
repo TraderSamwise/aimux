@@ -291,21 +291,10 @@ export const dashboardInteractionMethods = {
 
         const selectedService = this.getSelectedDashboardServiceForActions();
         if (selectedService) {
-          try {
-            if (selectedService.status === "offline") {
-              this.removeOfflineService(selectedService.id);
-              this.footerFlash = `◆ Deleted service ${selectedService.label ?? selectedService.id}`;
-            } else {
-              this.stopService(selectedService.id);
-              this.footerFlash = `◆ Stopped service ${selectedService.label ?? selectedService.id}`;
-            }
-            this.footerFlashTicks = 3;
-            this.renderDashboard();
-          } catch (error) {
-            this.showDashboardError(
-              selectedService.status === "offline" ? "Failed to delete service" : "Failed to stop service",
-              [error instanceof Error ? error.message : String(error)],
-            );
+          if (selectedService.status === "offline") {
+            void this.removeDashboardServiceWithFeedback(selectedService);
+          } else {
+            void this.stopDashboardServiceWithFeedback(selectedService);
           }
           return;
         }

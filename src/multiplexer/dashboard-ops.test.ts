@@ -2,15 +2,23 @@ import { describe, expect, it, vi } from "vitest";
 import {
   forkDashboardAgentWithFeedback,
   graveyardSessionWithFeedback,
+  removeDashboardServiceWithFeedback,
   resumeOfflineSessionWithFeedback,
   resumeOfflineServiceWithFeedback,
   spawnDashboardAgentWithFeedback,
+  stopDashboardServiceWithFeedback,
   stopSessionToOfflineWithFeedback,
 } from "./dashboard-ops.js";
 
 describe("dashboard-ops", () => {
   it("shows optimistic starting state and clears it on successful service resume", async () => {
+    const services = [
+      [{ id: "svc-1", status: "offline", pendingAction: "starting" }],
+      [{ id: "svc-1", status: "running" }],
+    ];
+    let serviceIndex = 0;
     const host = {
+      mode: "dashboard",
       dashboardPendingActions: new Map<string, string | null>(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
         this.dashboardPendingActions.set(sessionId, kind);
@@ -18,14 +26,18 @@ describe("dashboard-ops", () => {
       footerFlash: "",
       footerFlashTicks: 0,
       renderDashboard: vi.fn(),
-      resumeOfflineServiceById: vi.fn(),
-      refreshLocalDashboardModel: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        serviceIndex = Math.min(serviceIndex + 1, services.length - 1);
+        return true;
+      }),
+      getDashboardServices: vi.fn(() => services[serviceIndex]),
       showDashboardError: vi.fn(),
     };
 
     await resumeOfflineServiceWithFeedback(host, { id: "svc-1", label: "shell" });
 
-    expect(host.resumeOfflineServiceById).toHaveBeenCalledWith("svc-1");
+    expect(host.postToProjectService).toHaveBeenCalledWith("/services/resume", { serviceId: "svc-1" });
     expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Started service shell");
     expect(host.footerFlashTicks).toBe(3);
@@ -54,6 +66,62 @@ describe("dashboard-ops", () => {
     expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
     expect(host.refreshLocalDashboardModel).toHaveBeenCalledOnce();
     expect(host.showDashboardError).toHaveBeenCalledWith("Failed to start service", ["boom"]);
+  });
+
+  it("stops a service through the project service in dashboard mode and waits for offline render state", async () => {
+    const services = [[{ id: "svc-1", status: "running" }], [{ id: "svc-1", status: "offline" }]];
+    let serviceIndex = 0;
+    const host = {
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        this.dashboardPendingActions.set(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        serviceIndex = Math.min(serviceIndex + 1, services.length - 1);
+        return true;
+      }),
+      getDashboardServices: vi.fn(() => services[serviceIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await stopDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/services/stop", { serviceId: "svc-1" });
+    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.footerFlash).toBe("◆ Stopped service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("removes an offline service through the project service in dashboard mode and waits for row removal", async () => {
+    const services = [[{ id: "svc-1", status: "offline" }], []];
+    let serviceIndex = 0;
+    const host = {
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        this.dashboardPendingActions.set(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        serviceIndex = Math.min(serviceIndex + 1, services.length - 1);
+        return true;
+      }),
+      getDashboardServices: vi.fn(() => services[serviceIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await removeDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/services/remove", { serviceId: "svc-1" });
+    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.footerFlash).toBe("◆ Deleted service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("stops an agent through the project service in dashboard mode and waits for offline render state", async () => {

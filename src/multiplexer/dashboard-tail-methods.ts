@@ -49,11 +49,13 @@ import {
   dashboardSessionActionDeps as dashboardSessionActionDepsImpl,
   graveyardSessionWithFeedback as graveyardSessionWithFeedbackImpl,
   migrateSessionWithFeedback as migrateSessionWithFeedbackImpl,
+  removeDashboardServiceWithFeedback as removeDashboardServiceWithFeedbackImpl,
   renderSessionDetails as renderSessionDetailsImpl,
   resumeOfflineServiceWithFeedback as resumeOfflineServiceWithFeedbackImpl,
   resumeOfflineSessionWithFeedback as resumeOfflineSessionWithFeedbackImpl,
   runDashboardOperation as runDashboardOperationImpl,
   setPendingDashboardSessionAction as setPendingDashboardSessionActionImpl,
+  stopDashboardServiceWithFeedback as stopDashboardServiceWithFeedbackImpl,
   stopSessionToOfflineWithFeedback as stopSessionToOfflineWithFeedbackImpl,
   takeoverFromDashEntryWithFeedback as takeoverFromDashEntryWithFeedbackImpl,
   truncateAnsiForHost,
@@ -177,6 +179,8 @@ export type DashboardTailMethods = {
   listAllWorktrees(this: Multiplexer): Array<{ name: string; branch: string; path: string; isBare: boolean }>;
   graveyardSessionWithFeedback(this: Multiplexer, sessionId: string, hasWorktrees: boolean): Promise<void>;
   resumeOfflineServiceWithFeedback(this: Multiplexer, service: Pick<DashboardService, "id" | "label">): Promise<void>;
+  stopDashboardServiceWithFeedback(this: Multiplexer, service: Pick<DashboardService, "id" | "label">): Promise<void>;
+  removeDashboardServiceWithFeedback(this: Multiplexer, service: Pick<DashboardService, "id" | "label">): Promise<void>;
   resumeOfflineSessionWithFeedback(this: Multiplexer, session: SessionState): Promise<void>;
   waitForSessionStart(this: Multiplexer, sessionId: string, timeoutMs?: number): Promise<boolean>;
   dashboardSessionActionDeps(this: Multiplexer): ReturnType<typeof dashboardSessionActionDepsImpl>;
@@ -347,6 +351,12 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   async resumeOfflineServiceWithFeedback(service) {
     await resumeOfflineServiceWithFeedbackImpl(this, service);
+  },
+  async stopDashboardServiceWithFeedback(service) {
+    await stopDashboardServiceWithFeedbackImpl(this, service);
+  },
+  async removeDashboardServiceWithFeedback(service) {
+    await removeDashboardServiceWithFeedbackImpl(this, service);
   },
   async resumeOfflineSessionWithFeedback(session) {
     await resumeOfflineSessionWithFeedbackImpl(this, session);
