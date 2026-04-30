@@ -1628,7 +1628,12 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/agents/spawn") {
-        const body = (await readJson(req)) as { tool: string; worktreePath?: string; open?: boolean };
+        const body = (await readJson(req)) as {
+          tool: string;
+          sessionId?: string;
+          worktreePath?: string;
+          open?: boolean;
+        };
         if (!this.options.lifecycle?.spawnAgent) {
           send(res, 501, { ok: false, error: "agent spawn not supported by this service" });
           return;
@@ -1643,6 +1648,7 @@ export class MetadataServer {
         const body = (await readJson(req)) as {
           sourceSessionId: string;
           tool: string;
+          targetSessionId?: string;
           instruction?: string;
           worktreePath?: string;
           open?: boolean;

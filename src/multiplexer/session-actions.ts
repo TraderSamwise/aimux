@@ -41,6 +41,7 @@ export async function spawnAgent(
   host: SessionActionsHost,
   opts: {
     toolConfigKey: string;
+    targetSessionId?: string;
     targetWorktreePath?: string;
     open?: boolean;
   },
@@ -68,6 +69,8 @@ export async function spawnAgent(
     undefined,
     toolCfg.sessionIdFlag,
     targetWorktreePath,
+    undefined,
+    opts.targetSessionId,
   );
 
   const target = host.sessionTmuxTargets.get(transport.id);
