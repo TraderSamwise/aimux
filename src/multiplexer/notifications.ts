@@ -11,12 +11,14 @@ export function showNotificationPanel(host: NotificationHost): void {
     entries,
     index: entries.length > 0 ? 0 : -1,
   };
+  host.openDashboardOverlay("notification-panel");
   host.syncTuiNotificationContext(true);
   host.renderDashboard();
 }
 
 export function closeNotificationPanel(host: NotificationHost): void {
   host.notificationPanelState = null;
+  host.clearDashboardOverlay();
   host.syncTuiNotificationContext(false);
   host.renderDashboard();
 }

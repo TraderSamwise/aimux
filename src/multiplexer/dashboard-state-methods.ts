@@ -75,6 +75,18 @@ export const dashboardStateMethods = {
     return "standalone";
   },
 
+  isDashboardOverlay(this: any, kind: string): boolean {
+    return this.dashboardOverlayState.is(kind);
+  },
+
+  openDashboardOverlay(this: any, kind: string): void {
+    this.dashboardOverlayState.open(kind);
+  },
+
+  clearDashboardOverlay(this: any): void {
+    this.dashboardOverlayState.clear();
+  },
+
   reconcileDashboardRenderState(this: any): void {
     const dashSessions = this.dashboardSessionsCache;
     const worktreeGroups = this.dashboardWorktreeGroupsCache;

@@ -136,7 +136,7 @@ export const dashboardViewMethods = {
   },
 
   showServiceCreatePrompt(this: any): void {
-    this.serviceInputActive = true;
+    this.openDashboardOverlay("service-input");
     this.serviceInputBuffer = "";
     this.renderServiceInput();
   },

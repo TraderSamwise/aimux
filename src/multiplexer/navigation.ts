@@ -28,7 +28,7 @@ export function showSwitcher(host: NavigationHost): void {
   const list = getSwitcherList(host);
   if (list.length < 2) return;
 
-  host.switcherActive = true;
+  host.openDashboardOverlay("switcher");
   host.switcherIndex = 1;
   renderSwitcher(host);
   resetSwitcherTimeout(host);
@@ -46,7 +46,7 @@ export function confirmSwitcher(host: NavigationHost): void {
     clearTimeout(host.switcherTimeout);
     host.switcherTimeout = null;
   }
-  host.switcherActive = false;
+  host.clearDashboardOverlay();
 
   const list = getSwitcherList(host);
   const target = list[host.switcherIndex];
@@ -61,7 +61,7 @@ export function dismissSwitcher(host: NavigationHost): void {
     clearTimeout(host.switcherTimeout);
     host.switcherTimeout = null;
   }
-  host.switcherActive = false;
+  host.clearDashboardOverlay();
   host.renderDashboard();
 }
 
@@ -193,7 +193,7 @@ export function showMigratePicker(host: NavigationHost): void {
 
   if (host.migratePickerWorktrees.length <= 1) return;
 
-  host.migratePickerActive = true;
+  host.openDashboardOverlay("migrate-picker");
   renderMigratePicker(host);
 }
 
@@ -213,7 +213,7 @@ export function handleMigratePickerKey(host: NavigationHost, data: Buffer): void
   const event = events[0];
   const key = event.name || event.char;
 
-  host.migratePickerActive = false;
+  host.clearDashboardOverlay();
 
   if (key === "escape") {
     if (host.mode === "dashboard") {

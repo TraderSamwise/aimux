@@ -10,6 +10,20 @@ export type DashboardScreen =
   | "graveyard"
   | "help";
 export type DashboardLevel = "worktrees" | "sessions";
+export type DashboardOverlayKind =
+  | "none"
+  | "tool-picker"
+  | "worktree-input"
+  | "service-input"
+  | "label-input"
+  | "orchestration-input"
+  | "orchestration-route-picker"
+  | "worktree-list"
+  | "worktree-remove-confirm"
+  | "migrate-picker"
+  | "thread-reply"
+  | "notification-panel"
+  | "switcher";
 
 export class DashboardState {
   screen: DashboardScreen = "dashboard";
@@ -39,6 +53,22 @@ export class DashboardState {
   }
 
   hasWorktrees(): boolean {
-    return this.worktreeNavOrder.length > 1;
+    return this.worktreeNavOrder.length > 0;
+  }
+}
+
+export class DashboardOverlayState {
+  kind: DashboardOverlayKind = "none";
+
+  is(kind: DashboardOverlayKind): boolean {
+    return this.kind === kind;
+  }
+
+  open(kind: Exclude<DashboardOverlayKind, "none">): void {
+    this.kind = kind;
+  }
+
+  clear(): void {
+    this.kind = "none";
   }
 }

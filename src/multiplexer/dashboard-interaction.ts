@@ -284,6 +284,7 @@ export const dashboardInteractionMethods = {
           const wtName =
             this.dashboardState.focusedWorktreePath.split("/").pop() ?? this.dashboardState.focusedWorktreePath;
           this.worktreeRemoveConfirm = { path: this.dashboardState.focusedWorktreePath, name: wtName };
+          this.openDashboardOverlay("worktree-remove-confirm");
           this.renderWorktreeRemoveConfirm();
           return;
         }
@@ -359,7 +360,7 @@ export const dashboardInteractionMethods = {
             ? allDs2[this.activeIndex]
             : undefined;
         if (selEntry2 && !selEntry2.remoteInstancePid) {
-          this.labelInputActive = true;
+          this.openDashboardOverlay("label-input");
           this.labelInputBuffer = this.getSessionLabel(selEntry2.id) ?? "";
           this.labelInputTarget = selEntry2.id;
           this.renderLabelInput();
@@ -535,20 +536,20 @@ export const dashboardInteractionMethods = {
     const key = event.name || event.char;
 
     if (key === "escape") {
-      this.serviceInputActive = false;
-      this.renderDashboard();
+      this.clearDashboardOverlay();
+      this.restoreDashboardAfterOverlayDismiss();
       return;
     }
 
     if (key === "enter" || key === "return") {
-      this.serviceInputActive = false;
+      this.clearDashboardOverlay();
       try {
         this.createService(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
       } catch (error) {
         this.showDashboardError("Failed to create service", [error instanceof Error ? error.message : String(error)]);
         return;
       }
-      this.renderDashboard();
+      this.restoreDashboardAfterOverlayDismiss();
       return;
     }
 
@@ -572,18 +573,14 @@ export const dashboardInteractionMethods = {
     const key = event.name || event.char;
 
     if (key === "escape") {
-      this.labelInputActive = false;
+      this.clearDashboardOverlay();
       this.labelInputTarget = null;
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      } else {
-        this.focusSession(this.activeIndex);
-      }
+      this.restoreDashboardAfterOverlayDismiss();
       return;
     }
 
     if (key === "enter" || key === "return") {
-      this.labelInputActive = false;
+      this.clearDashboardOverlay();
       const label = this.labelInputBuffer.trim();
       const targetId = this.labelInputTarget;
       this.labelInputTarget = null;
@@ -591,8 +588,7 @@ export const dashboardInteractionMethods = {
         void this.updateSessionLabel(targetId, label || undefined);
         return;
       }
-      if (this.mode === "dashboard") this.renderDashboard();
-      else this.focusSession(this.activeIndex);
+      this.restoreDashboardAfterOverlayDismiss();
       return;
     }
 
@@ -672,12 +668,12 @@ export const dashboardInteractionMethods = {
         this.footerFlash = `Assigned task to ${target.label}`;
       }
       this.footerFlashTicks = 3;
-      this.orchestrationInputActive = false;
+      this.clearDashboardOverlay();
       this.orchestrationInputBuffer = "";
       this.orchestrationInputTarget = null;
       this.orchestrationInputMode = null;
     } catch (error) {
-      this.orchestrationInputActive = false;
+      this.clearDashboardOverlay();
       this.orchestrationInputBuffer = "";
       this.orchestrationInputTarget = null;
       this.orchestrationInputMode = null;

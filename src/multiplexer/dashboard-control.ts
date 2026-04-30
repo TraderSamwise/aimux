@@ -130,55 +130,46 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     }
     return true;
   }
-  if (host.pickerActive) {
-    host.handleToolPickerKey(data);
-    return true;
+  switch (host.dashboardOverlayState.kind) {
+    case "tool-picker":
+      host.handleToolPickerKey(data);
+      return true;
+    case "notification-panel":
+      host.handleNotificationPanelKey(data);
+      return true;
+    case "worktree-remove-confirm":
+      host.handleWorktreeRemoveConfirmKey(data);
+      return true;
+    case "worktree-input":
+      host.handleWorktreeInputKey(data);
+      return true;
+    case "service-input":
+      host.handleServiceInputKey(data);
+      return true;
+    case "worktree-list":
+      host.handleWorktreeListKey(data);
+      return true;
+    case "migrate-picker":
+      host.handleMigratePickerKey(data);
+      return true;
+    case "switcher":
+      host.handleSwitcherKey(data);
+      return true;
+    case "thread-reply":
+      host.handleThreadReplyKey(data);
+      return true;
+    case "orchestration-route-picker":
+      host.handleOrchestrationRoutePickerKey(data);
+      return true;
+    case "orchestration-input":
+      host.handleOrchestrationInputKey(data);
+      return true;
+    case "label-input":
+      host.handleLabelInputKey(data);
+      return true;
+    default:
+      return false;
   }
-  if (host.notificationPanelState) {
-    host.handleNotificationPanelKey(data);
-    return true;
-  }
-  if (host.worktreeRemoveConfirm) {
-    host.handleWorktreeRemoveConfirmKey(data);
-    return true;
-  }
-  if (host.worktreeInputActive) {
-    host.handleWorktreeInputKey(data);
-    return true;
-  }
-  if (host.serviceInputActive) {
-    host.handleServiceInputKey(data);
-    return true;
-  }
-  if (host.worktreeListActive) {
-    host.handleWorktreeListKey(data);
-    return true;
-  }
-  if (host.migratePickerActive) {
-    host.handleMigratePickerKey(data);
-    return true;
-  }
-  if (host.switcherActive) {
-    host.handleSwitcherKey(data);
-    return true;
-  }
-  if (host.threadReplyActive) {
-    host.handleThreadReplyKey(data);
-    return true;
-  }
-  if (host.orchestrationRoutePickerActive) {
-    host.handleOrchestrationRoutePickerKey(data);
-    return true;
-  }
-  if (host.orchestrationInputActive) {
-    host.handleOrchestrationInputKey(data);
-    return true;
-  }
-  if (host.labelInputActive) {
-    host.handleLabelInputKey(data);
-    return true;
-  }
-  return false;
 }
 
 export function renderActiveDashboardOverlay(host: DashboardControlHost): boolean {
@@ -188,7 +179,7 @@ export function renderActiveDashboardOverlay(host: DashboardControlHost): boolea
 }
 
 export function buildActiveDashboardOverlayOutput(host: DashboardControlHost): string | null {
-  if (host.worktreeRemoveConfirm) {
+  if (host.dashboardOverlayState.kind === "worktree-remove-confirm") {
     return buildWorktreeRemoveConfirmOverlayOutput(host);
   }
   if (host.dashboardErrorState) {
@@ -197,37 +188,37 @@ export function buildActiveDashboardOverlayOutput(host: DashboardControlHost): s
   if (host.dashboardBusyState) {
     return buildDashboardBusyOverlayOutput(host);
   }
-  if (host.switcherActive) {
+  if (host.dashboardOverlayState.kind === "switcher") {
     return buildSwitcherOverlayOutput(host);
   }
-  if (host.notificationPanelState) {
+  if (host.dashboardOverlayState.kind === "notification-panel") {
     return buildNotificationPanelOverlayOutput(host);
   }
-  if (host.threadReplyActive) {
+  if (host.dashboardOverlayState.kind === "thread-reply") {
     return buildThreadReplyOverlayOutput(host);
   }
-  if (host.orchestrationInputActive) {
+  if (host.dashboardOverlayState.kind === "orchestration-input") {
     return buildOrchestrationInputOverlayOutput(host);
   }
-  if (host.migratePickerActive) {
+  if (host.dashboardOverlayState.kind === "migrate-picker") {
     return buildMigratePickerOverlayOutput(host);
   }
-  if (host.worktreeListActive) {
+  if (host.dashboardOverlayState.kind === "worktree-list") {
     return buildWorktreeListOverlayOutput(host);
   }
-  if (host.labelInputActive) {
+  if (host.dashboardOverlayState.kind === "label-input") {
     return buildLabelInputOverlayOutput(host);
   }
-  if (host.worktreeInputActive) {
+  if (host.dashboardOverlayState.kind === "worktree-input") {
     return buildWorktreeInputOverlayOutput(host);
   }
-  if (host.serviceInputActive) {
+  if (host.dashboardOverlayState.kind === "service-input") {
     return buildServiceInputOverlayOutput(host);
   }
-  if (host.pickerActive) {
+  if (host.dashboardOverlayState.kind === "tool-picker") {
     return buildToolPickerOverlayOutput(host);
   }
-  if (host.orchestrationRoutePickerActive) {
+  if (host.dashboardOverlayState.kind === "orchestration-route-picker") {
     return buildOrchestrationRoutePickerOverlayOutput(host);
   }
   return null;
@@ -452,7 +443,7 @@ export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "
 
   host.orchestrationRouteMode = mode;
   host.orchestrationRouteOptions = options;
-  host.orchestrationRoutePickerActive = true;
+  host.openDashboardOverlay("orchestration-route-picker");
   host.renderOrchestrationRoutePicker();
 }
 
@@ -464,7 +455,7 @@ export function showOrchestrationInput(
   host.orchestrationInputMode = mode;
   host.orchestrationInputTarget = target;
   host.orchestrationInputBuffer = "";
-  host.orchestrationInputActive = true;
+  host.openDashboardOverlay("orchestration-input");
   host.renderOrchestrationInput();
 }
 
@@ -621,7 +612,7 @@ export function handleOrchestrationInputKey(host: DashboardControlHost, data: Bu
   const key = event.name || event.char;
 
   if (key === "escape") {
-    host.orchestrationInputActive = false;
+    host.clearDashboardOverlay();
     host.orchestrationInputBuffer = "";
     host.orchestrationInputMode = null;
     host.orchestrationInputTarget = null;
@@ -633,7 +624,7 @@ export function handleOrchestrationInputKey(host: DashboardControlHost, data: Bu
     const mode = host.orchestrationInputMode;
     const target = host.orchestrationInputTarget;
     const body = host.orchestrationInputBuffer.trim();
-    host.orchestrationInputActive = false;
+    host.clearDashboardOverlay();
     host.orchestrationInputBuffer = "";
     host.orchestrationInputMode = null;
     host.orchestrationInputTarget = null;
@@ -665,7 +656,7 @@ export function handleOrchestrationRoutePickerKey(host: DashboardControlHost, da
   const key = event.name || event.char;
 
   if (key === "escape") {
-    host.orchestrationRoutePickerActive = false;
+    host.clearDashboardOverlay();
     host.orchestrationRouteMode = null;
     host.orchestrationRouteOptions = [];
     host.renderDashboard();
@@ -676,7 +667,7 @@ export function handleOrchestrationRoutePickerKey(host: DashboardControlHost, da
     const idx = parseInt(key, 10) - 1;
     const target = host.orchestrationRouteOptions[idx];
     const mode = host.orchestrationRouteMode;
-    host.orchestrationRoutePickerActive = false;
+    host.clearDashboardOverlay();
     host.orchestrationRouteMode = null;
     host.orchestrationRouteOptions = [];
     if (!target || !mode) {

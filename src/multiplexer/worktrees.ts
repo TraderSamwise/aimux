@@ -62,7 +62,7 @@ function removeOptimisticDashboardWorktree(host: WorktreeHost, path: string): vo
 }
 
 export function showWorktreeCreatePrompt(host: WorktreeHost): void {
-  host.worktreeInputActive = true;
+  host.openDashboardOverlay("worktree-input");
   host.worktreeInputBuffer = "";
   renderWorktreeInput(host);
 }
@@ -108,13 +108,13 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
   const key = event.name || event.char;
 
   if (key === "escape") {
-    host.worktreeInputActive = false;
+    host.clearDashboardOverlay();
     host.restoreDashboardAfterOverlayDismiss();
     return;
   }
 
   if (key === "enter" || key === "return") {
-    host.worktreeInputActive = false;
+    host.clearDashboardOverlay();
     const name = host.worktreeInputBuffer.trim();
     if (name) {
       if (host.mode === "dashboard") {
@@ -160,7 +160,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
 }
 
 export function showWorktreeList(host: WorktreeHost): void {
-  host.worktreeListActive = true;
+  host.openDashboardOverlay("worktree-list");
   renderWorktreeList(host);
 }
 
@@ -290,6 +290,7 @@ export function handleWorktreeRemoveConfirmKey(host: WorktreeHost, data: Buffer)
     const confirm = host.worktreeRemoveConfirm;
     if (confirm) {
       host.worktreeRemoveConfirm = null;
+      host.clearDashboardOverlay();
       const oldIdx = host.dashboardState.worktreeNavOrder.indexOf(confirm.path);
       beginWorktreeRemoval(host, confirm.path, confirm.name, oldIdx);
       return;
@@ -297,6 +298,7 @@ export function handleWorktreeRemoveConfirmKey(host: WorktreeHost, data: Buffer)
   }
 
   host.worktreeRemoveConfirm = null;
+  host.clearDashboardOverlay();
   host.restoreDashboardAfterOverlayDismiss();
 }
 
@@ -308,7 +310,7 @@ export function handleWorktreeListKey(host: WorktreeHost, data: Buffer): void {
   const key = event.name || event.char;
 
   if (key === "escape") {
-    host.worktreeListActive = false;
+    host.clearDashboardOverlay();
     host.restoreDashboardAfterOverlayDismiss();
   }
 }

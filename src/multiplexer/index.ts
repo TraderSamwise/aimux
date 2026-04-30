@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { HotkeyHandler, type HotkeyAction } from "../hotkeys.js";
 import { Dashboard, type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard/index.js";
-import { DashboardState } from "../dashboard/state.js";
+import { DashboardOverlayState, DashboardState } from "../dashboard/state.js";
 import { ContextWatcher } from "../context/context-bridge.js";
 import { loadConfig } from "../config.js";
 import { findMainRepo } from "../worktree.js";
@@ -147,34 +147,27 @@ export class Multiplexer {
   private defaultCommand: string = "";
   private defaultArgs: string[] = [];
   private startedInDashboard = false;
-  private pickerActive = false;
+  private dashboardOverlayState = new DashboardOverlayState();
   private pickerMode: "create" | "fork" = "create";
   private forkSourceSessionId: string | null = null;
-  private worktreeInputActive = false;
   private worktreeInputBuffer = "";
-  private serviceInputActive = false;
   private serviceInputBuffer = "";
-  private labelInputActive = false;
   private labelInputBuffer = "";
   private labelInputTarget: string | null = null;
-  private orchestrationInputActive = false;
   private orchestrationInputBuffer = "";
   private orchestrationInputTarget: DashboardOrchestrationTarget | null = null;
   private orchestrationInputMode: "message" | "handoff" | "task" | null = null;
-  private orchestrationRoutePickerActive = false;
   private orchestrationRouteMode: "message" | "handoff" | "task" | null = null;
   private orchestrationRouteOptions: DashboardOrchestrationTarget[] = [];
-  private worktreeListActive = false;
   private worktreeRemoveConfirm: { path: string; name: string } | null = null;
   private worktreeRemovalJob: WorktreeRemovalJob | null = null;
   private worktreeCreateJob: WorktreeCreateJob | null = null;
   private pendingWorktreeRemovals = new Map<string, Promise<{ path: string; status: "removing" | "removed" }>>();
   private pendingWorktreeCreates = new Map<string, Promise<{ path: string; status: "creating" | "created" }>>();
   private readonly dashboardFeedback = new DashboardFeedbackController({
-    renderDashboard: () => this.renderDashboard(),
+    renderDashboard: () => this.renderCurrentDashboardView(),
     isDashboardMode: () => this.mode === "dashboard",
   });
-  private migratePickerActive = false;
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
   private graveyardEntries: SessionState[] = [];
   private graveyardIndex = 0;
@@ -185,7 +178,6 @@ export class Multiplexer {
   private workflowFilter: WorkflowFilter = "all";
   private threadEntries: ThreadEntry[] = [];
   private threadIndex = 0;
-  private threadReplyActive = false;
   private threadReplyBuffer = "";
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
@@ -199,7 +191,6 @@ export class Multiplexer {
   private graveyardAfterStopSessionIds = new Set<string>();
   private dashboardQuickJumpTimeout: ReturnType<typeof setTimeout> | null = null;
   /** Quick switcher overlay state */
-  private switcherActive = false;
   private switcherIndex = 0;
   private switcherTimeout: ReturnType<typeof setTimeout> | null = null;
   /** MRU order of session IDs (most recent first) */

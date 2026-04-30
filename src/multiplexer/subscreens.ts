@@ -145,7 +145,7 @@ export function handleWorkflowKey(host: SubscreenHost, data: Buffer): void {
         0,
         host.threadEntries.findIndex((thread: ThreadEntry) => thread.thread.id === entry.thread.id),
       );
-      host.threadReplyActive = true;
+      host.openDashboardOverlay("thread-reply");
       host.threadReplyBuffer = "";
       host.setDashboardScreen("threads");
       renderThreadReply(host);
@@ -349,7 +349,7 @@ export function openRelevantThreadForSession(host: SubscreenHost, sessionId: str
   host.writeStatuslineFile();
   const entry = host.threadEntries[host.threadIndex];
   if (entry && (entry.thread.waitingOn ?? []).includes(sessionId)) {
-    host.threadReplyActive = true;
+    host.openDashboardOverlay("thread-reply");
     host.threadReplyBuffer = "";
     renderThreadReply(host);
     return;
@@ -401,7 +401,7 @@ export function handleThreadsKey(host: SubscreenHost, data: Buffer): void {
   }
   if (key === "s") {
     if (host.threadEntries[host.threadIndex]) {
-      host.threadReplyActive = true;
+      host.openDashboardOverlay("thread-reply");
       host.threadReplyBuffer = "";
       renderThreadReply(host);
     }
@@ -694,7 +694,7 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
   const key = event.name || event.char;
 
   if (key === "escape") {
-    host.threadReplyActive = false;
+    host.clearDashboardOverlay();
     host.threadReplyBuffer = "";
     renderThreads(host);
     return;
@@ -703,7 +703,7 @@ export function handleThreadReplyKey(host: SubscreenHost, data: Buffer): void {
   if (key === "enter" || key === "return") {
     const body = host.threadReplyBuffer.trim();
     const entry = host.threadEntries[host.threadIndex];
-    host.threadReplyActive = false;
+    host.clearDashboardOverlay();
     host.threadReplyBuffer = "";
     if (!entry || !body) {
       renderThreads(host);

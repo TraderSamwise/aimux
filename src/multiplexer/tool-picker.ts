@@ -133,7 +133,7 @@ export function showToolPicker(host: ToolPickerHost, sourceSessionId?: string): 
     }
   }
 
-  host.pickerActive = true;
+  host.openDashboardOverlay("tool-picker");
   renderToolPicker(host);
 }
 
@@ -144,7 +144,7 @@ export function handleToolPickerKey(host: ToolPickerHost, data: Buffer): void {
   const event = events[0];
   const key = event.name || event.char;
 
-  host.pickerActive = false;
+  host.clearDashboardOverlay();
 
   if (key === "escape") {
     host.pickerMode = "create";
@@ -164,7 +164,7 @@ export function handleToolPickerKey(host: ToolPickerHost, data: Buffer): void {
           `\x1b7\x1b[${(process.stdout.rows ?? 24) - 2};1H\x1b[41;97m "${tool.command}" is not installed. Install it first. \x1b[0m\x1b8`,
         );
         setTimeout(() => {
-          host.pickerActive = false;
+          host.clearDashboardOverlay();
           host.restoreDashboardAfterOverlayDismiss();
         }, 2000);
         return;
