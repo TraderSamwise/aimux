@@ -46,6 +46,8 @@ export const dashboardStateMethods = {
 
   handleDashboardFocusIn(this: any): void {
     this.loadDashboardUiState();
+    this.hydrateDashboardScreenState?.();
+    this.writeDashboardClientStatuslineFile();
     this.terminalHost.enterAlternateScreen();
     this.invalidateDashboardFrame();
     this.renderCurrentDashboardView();

@@ -122,6 +122,8 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
 
   host.mode = "dashboard";
   host.loadDashboardUiState();
+  host.hydrateDashboardScreenState?.();
+  host.writeDashboardClientStatuslineFile?.();
   const primed = await host.refreshDashboardModelFromService(true);
   if (!primed) {
     host.refreshLocalDashboardModel();

@@ -13,6 +13,8 @@ import {
 } from "../tui/screens/subscreen-renderers.js";
 import { listWorktreeGraveyardEntries, type WorktreeGraveyardEntry } from "./worktree-graveyard.js";
 import { postToProjectService } from "./dashboard-control.js";
+import { requestJson } from "../http-client.js";
+import { resolveProjectServiceEndpoint } from "../metadata-store.js";
 
 type ArchivesHost = any;
 
@@ -20,18 +22,28 @@ type GraveyardItem = { kind: "worktree"; entry: WorktreeGraveyardEntry } | { kin
 
 export function showGraveyard(host: ArchivesHost): void {
   host.clearDashboardSubscreens();
-  const graveyardPath = getGraveyardPath();
-  try {
-    host.graveyardEntries = JSON.parse(readFileSync(graveyardPath, "utf-8"));
-  } catch {
-    host.graveyardEntries = [];
-  }
-  host.worktreeGraveyardEntries = listWorktreeGraveyardEntries();
+  loadGraveyardEntries(host);
   host.graveyardWorktreeDeleteConfirm = null;
   clampGraveyardSelection(host);
   host.setDashboardScreen("graveyard");
   host.writeStatuslineFile();
   renderGraveyard(host);
+  if (host.mode === "dashboard") {
+    void refreshGraveyardEntriesFromService(host);
+  }
+}
+
+export function hydrateDashboardArchiveScreenState(host: ArchivesHost): void {
+  if (host.isDashboardScreen?.("graveyard")) {
+    loadGraveyardEntries(host);
+    if (host.mode === "dashboard") {
+      void refreshGraveyardEntriesFromService(host);
+    }
+    return;
+  }
+  if (host.isDashboardScreen?.("plans")) {
+    loadPlanEntries(host);
+  }
 }
 
 export function renderGraveyard(host: ArchivesHost): void {
@@ -190,6 +202,39 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     host.showDashboardError(`Failed to delete "${entry.name}"`, [message]);
+  }
+}
+
+function loadGraveyardEntries(host: ArchivesHost): void {
+  const graveyardPath = getGraveyardPath();
+  try {
+    host.graveyardEntries = JSON.parse(readFileSync(graveyardPath, "utf-8"));
+  } catch {
+    host.graveyardEntries = [];
+  }
+  host.worktreeGraveyardEntries = listWorktreeGraveyardEntries();
+}
+
+async function refreshGraveyardEntriesFromService(host: ArchivesHost): Promise<void> {
+  const endpoint = resolveProjectServiceEndpoint(process.cwd());
+  if (!endpoint) return;
+  try {
+    const { status, json } = await requestJson<{ ok?: boolean; entries?: any[]; worktrees?: WorktreeGraveyardEntry[] }>(
+      `http://${endpoint.host}:${endpoint.port}/graveyard`,
+      { timeoutMs: 3000 },
+    );
+    if (status < 200 || status >= 300 || json?.ok !== true) return;
+    host.graveyardEntries = Array.isArray(json.entries) ? json.entries : [];
+    host.worktreeGraveyardEntries = Array.isArray(json.worktrees) ? json.worktrees : [];
+    clampGraveyardSelection(host);
+    if (host.isDashboardScreen?.("graveyard")) {
+      renderGraveyard(host);
+    }
+  } catch (error) {
+    debug(
+      `failed to refresh graveyard from service: ${error instanceof Error ? error.message : String(error)}`,
+      "session",
+    );
   }
 }
 

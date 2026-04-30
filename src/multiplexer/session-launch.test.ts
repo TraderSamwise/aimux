@@ -183,7 +183,7 @@ describe("runProjectService", () => {
 });
 
 describe("runDashboard", () => {
-  it("uses the reconciled dashboard render path on initial startup", async () => {
+  it("hydrates restored subscreens and syncs footer state on initial startup", async () => {
     const host: any = {
       instanceId: "inst-1",
       instanceDirectory: { registerInstance: vi.fn(async () => undefined) },
@@ -204,7 +204,12 @@ describe("runDashboard", () => {
       invalidateDashboardFrame: vi.fn(),
       renderCurrentDashboardView: vi.fn(),
       renderDashboard: vi.fn(),
-      loadDashboardUiState: vi.fn(),
+      loadDashboardUiState: vi.fn(function (this: any) {
+        this.dashboardState.screen = "graveyard";
+      }),
+      hydrateDashboardScreenState: vi.fn(),
+      writeDashboardClientStatuslineFile: vi.fn(),
+      dashboardState: { screen: "dashboard" },
       refreshDashboardModelFromService: vi.fn(async () => true),
       refreshLocalDashboardModel: vi.fn(),
       ensureDashboardControlPlane: vi.fn(async () => undefined),
@@ -222,5 +227,7 @@ describe("runDashboard", () => {
 
     expect(host.renderCurrentDashboardView).toHaveBeenCalled();
     expect(host.renderDashboard).not.toHaveBeenCalled();
+    expect(host.hydrateDashboardScreenState).toHaveBeenCalledOnce();
+    expect(host.writeDashboardClientStatuslineFile).toHaveBeenCalledOnce();
   });
 });
