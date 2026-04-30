@@ -89,6 +89,12 @@ function refreshNotificationEntries(host: NotificationHost): void {
   }
 }
 
+export function hydrateDashboardNotificationScreenState(host: NotificationHost): void {
+  if (!host.isDashboardScreen?.("notifications")) return;
+  refreshNotificationEntries(host);
+  host.notificationIndex = host.notificationEntries.length > 0 ? Math.max(0, host.notificationIndex ?? 0) : -1;
+}
+
 function ensureNotificationState(host: NotificationHost): void {
   if (!Array.isArray(host.notificationEntries)) {
     host.notificationEntries = [];
@@ -195,7 +201,7 @@ function openSelectedNotification(host: NotificationHost): void {
     markNotificationsRead({ id: entry.id });
     refreshNotificationEntries(host);
   }
-  host.openLiveTmuxWindowForService(service.id);
+  void host.waitAndOpenLiveTmuxWindowForService(service.id);
 }
 
 export function handleNotificationsKey(host: NotificationHost, data: Buffer): void {

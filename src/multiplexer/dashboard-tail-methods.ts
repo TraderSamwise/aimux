@@ -10,7 +10,6 @@ import {
   stopAgent as stopAgentImpl,
 } from "./session-actions.js";
 import {
-  hydrateDashboardArchiveScreenState as hydrateDashboardArchiveScreenStateImpl,
   buildPlanPreview as buildPlanPreviewImpl,
   handleGraveyardKey as handleGraveyardKeyImpl,
   handlePlansKey as handlePlansKeyImpl,
@@ -120,7 +119,6 @@ export type DashboardTailMethods = {
     targetWorktreePath: string,
   ): Promise<{ sessionId: string; worktreePath?: string }>;
   showGraveyard(this: Multiplexer): void;
-  hydrateDashboardScreenState(this: Multiplexer): void;
   renderGraveyard(this: Multiplexer): void;
   handleGraveyardKey(this: Multiplexer, data: Buffer): void;
   resurrectGraveyardEntry(this: Multiplexer, idx: number): void;
@@ -235,9 +233,6 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   showGraveyard() {
     showGraveyardImpl(this);
-  },
-  hydrateDashboardScreenState() {
-    hydrateDashboardArchiveScreenStateImpl(this);
   },
   renderGraveyard() {
     renderGraveyardImpl(this);

@@ -13,6 +13,8 @@ import {
   refreshLocalDashboardModel as refreshLocalDashboardModelImpl,
   startProjectServices as startProjectServicesImpl,
 } from "./dashboard-model.js";
+import { hydrateDashboardArchiveScreenState } from "./archives.js";
+import { hydrateDashboardNotificationScreenState } from "./notifications.js";
 import type { TmuxTarget } from "../tmux/runtime-manager.js";
 
 export const dashboardStateMethods = {
@@ -56,6 +58,11 @@ export const dashboardStateMethods = {
 
   loadDashboardUiState(this: any): void {
     this.dashboardUiStateStore.loadInto(this.dashboardState, this.getDashboardUiClientKey());
+  },
+
+  hydrateDashboardScreenState(this: any): void {
+    hydrateDashboardArchiveScreenState(this);
+    hydrateDashboardNotificationScreenState(this);
   },
 
   persistDashboardUiState(this: any): void {
