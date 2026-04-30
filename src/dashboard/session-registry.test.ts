@@ -32,4 +32,44 @@ describe("buildDashboardSessions", () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.id).toBe("claude-abc123");
   });
+
+  it("hides sessions attached to graveyarded worktrees", () => {
+    const sessions = buildDashboardSessions({
+      sessions: [
+        {
+          id: "claude-hidden",
+          command: "claude",
+          status: "running",
+          worktreePath: "/repo/.aimux/worktrees/hidden",
+        },
+        {
+          id: "claude-visible",
+          command: "claude",
+          status: "running",
+          worktreePath: "/repo/.aimux/worktrees/visible",
+        },
+      ],
+      activeIndex: 0,
+      offlineSessions: [
+        {
+          id: "codex-hidden",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          worktreePath: "/repo/.aimux/worktrees/hidden",
+        },
+      ],
+      remoteInstances: [],
+      hiddenWorktreePaths: new Set(["/repo/.aimux/worktrees/hidden"]),
+      getSessionLabel: vi.fn(() => undefined),
+      getSessionHeadline: vi.fn(() => undefined),
+      getSessionTaskDescription: vi.fn(() => undefined),
+      getSessionRole: vi.fn(() => undefined),
+      getSessionContext: vi.fn(() => undefined),
+      getSessionDerived: vi.fn(() => undefined),
+    });
+
+    expect(sessions.map((session) => session.id)).toEqual(["claude-visible"]);
+  });
 });

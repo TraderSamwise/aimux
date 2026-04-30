@@ -23,6 +23,7 @@ import { type NotificationRecord } from "../notifications.js";
 import { type ThreadEntry, type WorkflowEntry, type WorkflowFilter } from "../workflow.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import type { WorktreeGraveyardEntry } from "./worktree-graveyard.js";
 import {
   DashboardFeedbackController,
   type DashboardBusyState,
@@ -170,7 +171,9 @@ export class Multiplexer {
   });
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
   private graveyardEntries: SessionState[] = [];
+  private worktreeGraveyardEntries: WorktreeGraveyardEntry[] = [];
   private graveyardIndex = 0;
+  private graveyardWorktreeDeleteConfirm: WorktreeGraveyardEntry | null = null;
   private activityEntries: DashboardSession[] = [];
   private activityIndex = 0;
   private workflowEntries: WorkflowEntry[] = [];

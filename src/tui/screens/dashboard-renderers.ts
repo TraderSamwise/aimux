@@ -135,9 +135,11 @@ export function renderDashboardFrame(
       const pending =
         worktree.pendingAction === "creating"
           ? " \x1b[2;33m(creating...)\x1b[0m"
-          : worktree.removing || worktree.pending
-            ? " \x1b[2;33m(removing...)\x1b[0m"
-            : "";
+          : worktree.pendingAction === "graveyarding"
+            ? " \x1b[2;33m(graveyarding...)\x1b[0m"
+            : worktree.removing || worktree.pending
+              ? " \x1b[2;33m(removing...)\x1b[0m"
+              : "";
       const worktreeBadge = worktree.digit ? `[${worktree.digit}] ` : "";
       const branchSuffix = worktree.branch ? ` \x1b[2m${worktree.branch}\x1b[0m` : "";
       const worktreeLabel = `${worktreeBadge}${worktree.name}${branchSuffix}`;

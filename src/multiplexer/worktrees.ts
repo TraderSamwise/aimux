@@ -12,14 +12,17 @@ type WorktreeHost = any;
 
 interface DashboardWorktreeMutationOptions {
   pendingKey: string;
-  pendingAction: "creating" | "removing";
+  pendingAction: "creating" | "removing" | "graveyarding";
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
 }
 
-function assertDashboardWorktreeMutationSettled(settled: boolean, action: "creating" | "removing"): void {
+function assertDashboardWorktreeMutationSettled(
+  settled: boolean,
+  action: "creating" | "removing" | "graveyarding",
+): void {
   if (!settled) {
     throw new Error(`worktree ${action} did not settle before timing out`);
   }
@@ -231,17 +234,17 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
   if (host.worktreeRemovalJob?.path === path) return;
   if (host.worktreeRemovalJob && host.worktreeRemovalJob.path !== path) {
     const inFlightName = host.worktreeRemovalJob.name;
-    host.footerFlash = `Already removing ${inFlightName}`;
+    host.footerFlash = `Already graveyarding ${inFlightName}`;
     host.footerFlashTicks = 4;
-    host.showDashboardError("Worktree removal already in progress", [
-      `Finish removing "${inFlightName}" before removing "${name}".`,
+    host.showDashboardError("Worktree graveyard already in progress", [
+      `Finish graveyarding "${inFlightName}" before graveyarding "${name}".`,
     ]);
     host.renderDashboard();
     return;
   }
   if (host.pendingWorktreeRemovals?.has?.(path)) return;
 
-  debug(`begin worktree removal: name=${name} path=${path}`, "worktree");
+  debug(`begin worktree graveyard: name=${name} path=${path}`, "worktree");
   host.worktreeRemovalJob = {
     path,
     name,
@@ -255,13 +258,13 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     const pendingKey = DashboardPendingActions.worktreeKey(path);
     void runDashboardWorktreeMutation(host, {
       pendingKey,
-      pendingAction: "removing",
+      pendingAction: "graveyarding",
       request: async () => {
-        await postToProjectService(host, "/worktrees/remove", { path }, { timeoutMs: 10_000 });
+        await postToProjectService(host, "/worktrees/graveyard", { path }, { timeoutMs: 10_000 });
       },
       settle: () => waitForRenderedDashboardWorktreeState(host, path, (group) => !group),
       onSuccess: () => {
-        debug(`removeDesktopWorktree succeeded: name=${name} path=${path}`, "worktree");
+        debug(`graveyardDesktopWorktree succeeded: name=${name} path=${path}`, "worktree");
         finishWorktreeRemoval(host, 0);
       },
       onError: (err) => {
@@ -269,7 +272,7 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
           host.worktreeRemovalJob.stderr += `\n${err instanceof Error ? err.message : String(err)}`;
         }
         debug(
-          `removeDesktopWorktree failed: name=${name} path=${path} error=${err instanceof Error ? err.message : String(err)}`,
+          `graveyardDesktopWorktree failed: name=${name} path=${path} error=${err instanceof Error ? err.message : String(err)}`,
           "worktree",
         );
         finishWorktreeRemoval(host, 1);
@@ -279,15 +282,15 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
   }
   void (async () => {
     try {
-      await host.removeDesktopWorktree(path);
-      debug(`removeDesktopWorktree succeeded: name=${name} path=${path}`, "worktree");
+      await host.graveyardDesktopWorktree(path);
+      debug(`graveyardDesktopWorktree succeeded: name=${name} path=${path}`, "worktree");
       finishWorktreeRemoval(host, 0);
     } catch (err) {
       if (host.worktreeRemovalJob) {
         host.worktreeRemovalJob.stderr += `\n${err instanceof Error ? err.message : String(err)}`;
       }
       debug(
-        `removeDesktopWorktree failed: name=${name} path=${path} error=${err instanceof Error ? err.message : String(err)}`,
+        `graveyardDesktopWorktree failed: name=${name} path=${path} error=${err instanceof Error ? err.message : String(err)}`,
         "worktree",
       );
       finishWorktreeRemoval(host, 1);
@@ -306,9 +309,9 @@ export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
     .filter(Boolean);
 
   if (code === 0) {
-    host.footerFlash = `Removed: ${job.name}`;
+    host.footerFlash = `Graveyarded: ${job.name}`;
     host.footerFlashTicks = 3;
-    debug(`removed worktree: ${job.name}`, "worktree");
+    debug(`graveyarded worktree: ${job.name}`, "worktree");
 
     const newWorktrees = listAllWorktrees().filter((wt: any) => !wt.isBare);
     host.dashboardState.worktreeNavOrder = newWorktrees.map((wt: any) => wt.path);
@@ -321,10 +324,14 @@ export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
       host.dashboardState.focusedWorktreePath = undefined;
     }
   } else {
-    const message = details[0] ?? `git worktree remove exited with code ${code}`;
+    const message = details[0] ?? `worktree graveyard failed with code ${code}`;
     host.footerFlash = `Failed: ${message}`;
     host.footerFlashTicks = 5;
-    host.showDashboardError(`Failed to remove "${job.name}"`, [`Path: ${job.path}`, `Error: ${message}`, ...details]);
+    host.showDashboardError(`Failed to graveyard "${job.name}"`, [
+      `Path: ${job.path}`,
+      `Error: ${message}`,
+      ...details,
+    ]);
     return;
   }
 

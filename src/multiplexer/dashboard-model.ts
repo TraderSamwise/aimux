@@ -17,6 +17,7 @@ import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
+import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 
 type DashboardModelHost = any;
 
@@ -258,6 +259,7 @@ export function computeDashboardSessions(host: DashboardModelHost): DashboardSes
     activeIndex: host.activeIndex,
     offlineSessions: host.offlineSessions,
     remoteInstances: [],
+    hiddenWorktreePaths: listWorktreeGraveyardPaths(),
     mainRepoPath,
     getSessionLabel: (sessionId: string) => host.getSessionLabel(sessionId),
     getSessionHeadline: (sessionId: string) => host.deriveHeadline(sessionId),
@@ -319,6 +321,7 @@ export function computeDashboardServices(
   host: DashboardModelHost,
   worktrees = host.listDesktopWorktrees(),
 ): DashboardService[] {
+  const hiddenWorktreePaths = listWorktreeGraveyardPaths();
   const lastUsedState = loadLastUsedState(process.cwd());
   const worktreeByPath = new Map<string, { name: string; path: string; branch: string; isBare: boolean }>(
     worktrees.map((wt: any) => [wt.path, wt] as const),
@@ -326,6 +329,7 @@ export function computeDashboardServices(
   const liveServices = host.tmuxRuntimeManager
     .listProjectManagedWindows(process.cwd())
     .filter(({ target, metadata }: any) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
+    .filter(({ metadata }: any) => !(metadata.worktreePath && hiddenWorktreePaths.has(metadata.worktreePath)))
     .map(({ target, metadata }: any) => {
       const worktree = metadata.worktreePath ? worktreeByPath.get(metadata.worktreePath) : undefined;
       const info = readTmuxProcessInfo(host, target);
@@ -352,6 +356,7 @@ export function computeDashboardServices(
   const liveIds = new Set(liveServices.map((service: any) => service.id));
   const offlineServices = host.offlineServices
     .filter((service: any) => !liveIds.has(service.id))
+    .filter((service: any) => !(service.worktreePath && hiddenWorktreePaths.has(service.worktreePath)))
     .map((service: any) => {
       const worktree = service.worktreePath ? worktreeByPath.get(service.worktreePath) : undefined;
       const label = service.label ?? host.serviceLabelForCommand(service.launchCommandLine ?? "");
@@ -511,6 +516,10 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       refreshStatusline: ({ sessionId, force }: any) => host.refreshProjectStatusline({ sessionId, force }),
       createWorktree: ({ name }: any) => host.createDesktopWorktree(name),
       removeWorktree: ({ path }: any) => host.removeDesktopWorktree(path),
+      graveyardWorktree: ({ path }: any) => host.graveyardDesktopWorktree(path),
+      listWorktreeGraveyard: () => host.listWorktreeGraveyardEntries(),
+      resurrectGraveyardWorktree: ({ path }: any) => host.resurrectGraveyardWorktree(path),
+      deleteGraveyardWorktree: ({ path }: any) => host.deleteGraveyardWorktree(path),
       createService: ({ command, worktreePath }: any) => host.createService(command ?? "", worktreePath),
       stopService: ({ serviceId }: any) => host.stopService(serviceId),
       resumeService: ({ serviceId }: any) => host.resumeOfflineServiceById(serviceId),

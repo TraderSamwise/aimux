@@ -344,27 +344,44 @@ export function renderGraveyardScreen(ctx: any): void {
   header.push(ctx.centerInWidth("─".repeat(Math.min(50, cols - 4)), cols));
   header.push("");
   const footer = ctx.centerInWidth(
-    "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [1-9/Enter] resurrect  [Esc] dashboard  [q] quit",
+    "[↑↓] select  [Tab] details  [d/a/n/y/t/p/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
     cols,
   );
   const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const listLines: string[] = [];
-  if (ctx.graveyardEntries.length === 0) {
-    listLines.push("  Graveyard");
+  const lineByItemIndex = new Map<number, number>();
+  let itemIndex = 0;
+  listLines.push("  Worktrees");
+  if (ctx.worktreeGraveyardEntries.length === 0) {
     listLines.push("    (empty)");
   } else {
-    listLines.push("  Graveyard");
-    for (let i = 0; i < ctx.graveyardEntries.length; i++) {
-      const s = ctx.graveyardEntries[i];
+    for (const entry of ctx.worktreeGraveyardEntries) {
+      const marker = itemIndex === ctx.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
+      const branch = entry.branch ? ` \x1b[2m${entry.branch}\x1b[0m` : "";
+      listLines.push(
+        `    ${marker}[${itemIndex + 1}] ${entry.name}${branch} · ${entry.agents.length} agent${entry.agents.length === 1 ? "" : "s"}`,
+      );
+      lineByItemIndex.set(itemIndex, listLines.length - 1);
+      itemIndex += 1;
+    }
+  }
+  listLines.push("");
+  listLines.push("  Agents");
+  if (ctx.graveyardEntries.length === 0) {
+    listLines.push("    (empty)");
+  } else {
+    for (const s of ctx.graveyardEntries) {
       const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
       const identity = s.label ? ` — ${s.label}` : "";
       const headline = s.headline ? ` · ${s.headline}` : "";
-      const marker = i === ctx.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
-      listLines.push(`    ${marker}[${i + 1}] ${s.command}:${s.id}${bsid}${identity}${headline}`);
+      const marker = itemIndex === ctx.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
+      listLines.push(`    ${marker}[${itemIndex + 1}] ${s.command}:${s.id}${bsid}${identity}${headline}`);
+      lineByItemIndex.set(itemIndex, listLines.length - 1);
+      itemIndex += 1;
     }
   }
-  const focusLine = ctx.graveyardEntries.length === 0 ? 1 : ctx.graveyardIndex + 1;
+  const focusLine = lineByItemIndex.get(ctx.graveyardIndex) ?? 1;
   const body = ctx.composeSplitScreen(
     listLines,
     renderGraveyardDetails(ctx, Math.max(28, cols - Math.floor(cols * 0.56) - 3), viewportHeight),
@@ -373,14 +390,41 @@ export function renderGraveyardScreen(ctx: any): void {
     focusLine,
     twoPane,
   );
-  ctx.writeFrame(
+  let frame =
     "\x1b[2J\x1b[H" +
-      [...header, ...body, ctx.centerInWidth("─".repeat(Math.min(cols - 4, 52)), cols), footer].join("\r\n"),
-  );
+    [...header, ...body, ctx.centerInWidth("─".repeat(Math.min(cols - 4, 52)), cols), footer].join("\r\n");
+  if (ctx.graveyardWorktreeDeleteConfirm) {
+    frame += buildGraveyardWorktreeDeleteConfirmOverlay(ctx);
+  }
+  ctx.writeFrame(frame);
 }
 
 export function renderGraveyardDetails(ctx: any, width: number, height: number): string[] {
-  const selected = ctx.graveyardEntries[ctx.graveyardIndex];
+  const selectedWorktreeCount = ctx.worktreeGraveyardEntries.length;
+  if (ctx.graveyardIndex < selectedWorktreeCount) {
+    const selected = ctx.worktreeGraveyardEntries[ctx.graveyardIndex];
+    if (!selected) return new Array(height).fill("");
+    const lines: string[] = [];
+    lines.push("\x1b[1mDetails\x1b[0m");
+    lines.push(...ctx.wrapKeyValue("Worktree", selected.name, width));
+    lines.push(...ctx.wrapKeyValue("Branch", selected.branch, width));
+    lines.push(...ctx.wrapKeyValue("Path", selected.path, width));
+    lines.push(...ctx.wrapKeyValue("Status", "graveyard", width));
+    lines.push(...ctx.wrapKeyValue("Agents", String(selected.agents.length), width));
+    lines.push(...ctx.wrapKeyValue("Graveyarded", selected.graveyardedAt, width));
+    lines.push("");
+    lines.push("\x1b[1mAttached Agents\x1b[0m");
+    if (selected.agents.length === 0) {
+      lines.push("(none)");
+    } else {
+      for (const agent of selected.agents.slice(0, Math.max(1, height - lines.length))) {
+        lines.push(`- ${agent.label ?? agent.id}`);
+      }
+    }
+    while (lines.length < height) lines.push("");
+    return lines.slice(0, height);
+  }
+  const selected = ctx.graveyardEntries[ctx.graveyardIndex - selectedWorktreeCount];
   if (!selected) return new Array(height).fill("");
   const lines: string[] = [];
   const worktreeName = selected.worktreePath ? ctx.basename(selected.worktreePath) : undefined;
@@ -398,6 +442,37 @@ export function renderGraveyardDetails(ctx: any, width: number, height: number):
   if (selected.args?.length) lines.push(...ctx.wrapKeyValue("Args", selected.args.join(" "), width));
   while (lines.length < height) lines.push("");
   return lines.slice(0, height);
+}
+
+function buildGraveyardWorktreeDeleteConfirmOverlay(ctx: any): string {
+  const confirm = ctx.graveyardWorktreeDeleteConfirm;
+  if (!confirm) return "";
+  const cols = process.stdout.columns ?? 80;
+  const rows = process.stdout.rows ?? 24;
+  const lines = [
+    `Delete graveyarded worktree "${confirm.name}"?`,
+    "",
+    `  Path: ${confirm.path}`,
+    "  This runs: git worktree remove --force",
+    "  Attached agents will be deleted directly.",
+    "",
+    "  [Enter/y] yes  [n/Esc] cancel",
+  ];
+  const boxWidth = Math.max(...lines.map((line) => line.length)) + 4;
+  const startRow = Math.floor((rows - lines.length - 2) / 2);
+  const startCol = Math.floor((cols - boxWidth) / 2);
+  let output = "\x1b7";
+  for (let i = 0; i < lines.length + 2; i++) {
+    const row = startRow + i;
+    output += `\x1b[${row};${startCol}H`;
+    if (i === 0 || i === lines.length + 1) {
+      output += `\x1b[41;97m${"─".repeat(boxWidth)}\x1b[0m`;
+    } else {
+      output += `\x1b[41;97m  ${lines[i - 1].padEnd(boxWidth - 2)}\x1b[0m`;
+    }
+  }
+  output += "\x1b8";
+  return output;
 }
 
 function buildPlanPreview(ctx: any, content: string, width: number, maxLines: number): string[] {

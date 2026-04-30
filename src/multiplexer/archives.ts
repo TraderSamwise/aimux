@@ -11,8 +11,12 @@ import {
   renderPlanDetails,
   renderPlansScreen,
 } from "../tui/screens/subscreen-renderers.js";
+import { listWorktreeGraveyardEntries, type WorktreeGraveyardEntry } from "./worktree-graveyard.js";
+import { postToProjectService } from "./dashboard-control.js";
 
 type ArchivesHost = any;
+
+type GraveyardItem = { kind: "worktree"; entry: WorktreeGraveyardEntry } | { kind: "agent"; entry: any };
 
 export function showGraveyard(host: ArchivesHost): void {
   host.clearDashboardSubscreens();
@@ -22,9 +26,9 @@ export function showGraveyard(host: ArchivesHost): void {
   } catch {
     host.graveyardEntries = [];
   }
-  if (host.graveyardIndex >= host.graveyardEntries.length) {
-    host.graveyardIndex = Math.max(0, host.graveyardEntries.length - 1);
-  }
+  host.worktreeGraveyardEntries = listWorktreeGraveyardEntries();
+  host.graveyardWorktreeDeleteConfirm = null;
+  clampGraveyardSelection(host);
   host.setDashboardScreen("graveyard");
   host.writeStatuslineFile();
   renderGraveyard(host);
@@ -48,6 +52,19 @@ export function handleGraveyardKey(host: ArchivesHost, data: Buffer): void {
     return;
   }
 
+  if (host.graveyardWorktreeDeleteConfirm) {
+    if (key === "escape" || key === "n") {
+      host.graveyardWorktreeDeleteConfirm = null;
+      renderGraveyard(host);
+      return;
+    }
+    if (key === "y" || key === "enter" || key === "return") {
+      void deleteSelectedGraveyardWorktree(host);
+      return;
+    }
+    return;
+  }
+
   if (key === "q") {
     host.exitDashboardClientOrProcess();
     return;
@@ -66,16 +83,18 @@ export function handleGraveyardKey(host: ArchivesHost, data: Buffer): void {
   }
 
   if (key === "down" || key === "j") {
-    if (host.graveyardEntries.length > 1) {
-      host.graveyardIndex = (host.graveyardIndex + 1) % host.graveyardEntries.length;
+    const items = getGraveyardItems(host);
+    if (items.length > 1) {
+      host.graveyardIndex = (host.graveyardIndex + 1) % items.length;
       renderGraveyard(host);
     }
     return;
   }
 
   if (key === "up" || key === "k") {
-    if (host.graveyardEntries.length > 1) {
-      host.graveyardIndex = (host.graveyardIndex - 1 + host.graveyardEntries.length) % host.graveyardEntries.length;
+    const items = getGraveyardItems(host);
+    if (items.length > 1) {
+      host.graveyardIndex = (host.graveyardIndex - 1 + items.length) % items.length;
       renderGraveyard(host);
     }
     return;
@@ -86,20 +105,35 @@ export function handleGraveyardKey(host: ArchivesHost, data: Buffer): void {
     return;
   }
 
+  if (key === "x") {
+    const item = getGraveyardItems(host)[host.graveyardIndex];
+    if (item?.kind === "worktree") {
+      host.graveyardWorktreeDeleteConfirm = item.entry;
+      renderGraveyard(host);
+    }
+    return;
+  }
+
   if (key === "enter" || key === "return") {
     resurrectGraveyardEntry(host, host.graveyardIndex);
   }
 }
 
 export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
-  if (idx < 0 || idx >= host.graveyardEntries.length) return;
-  const entry = host.graveyardEntries[idx];
-  if (!entry) return;
-  void host
-    .resurrectGraveyardSession(entry.id)
+  const item = getGraveyardItems(host)[idx];
+  if (!item) return;
+  const promise =
+    item.kind === "worktree"
+      ? host.mode === "dashboard"
+        ? postToProjectService(host, "/graveyard/worktrees/resurrect", { path: item.entry.path }, { timeoutMs: 10_000 })
+        : host.resurrectGraveyardWorktree(item.entry.path)
+      : host.resurrectGraveyardSession(item.entry.id);
+  void promise
     .then(() => {
       host.graveyardEntries = host.listGraveyardEntries();
-      if (host.graveyardEntries.length === 0) {
+      host.worktreeGraveyardEntries = host.listWorktreeGraveyardEntries();
+      host.graveyardWorktreeDeleteConfirm = null;
+      if (getGraveyardItems(host).length === 0) {
         host.setDashboardScreen("dashboard");
         if (host.mode === "dashboard") {
           host.renderDashboard();
@@ -109,14 +143,54 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
         return;
       }
 
-      if (host.graveyardIndex >= host.graveyardEntries.length) {
-        host.graveyardIndex = host.graveyardEntries.length - 1;
-      }
+      clampGraveyardSelection(host);
       renderGraveyard(host);
     })
     .catch((error: unknown) => {
-      debug(`failed to resurrect ${entry.id}: ${error instanceof Error ? error.message : String(error)}`, "session");
+      debug(
+        `failed to resurrect ${item.kind === "worktree" ? item.entry.path : item.entry.id}: ${error instanceof Error ? error.message : String(error)}`,
+        "session",
+      );
     });
+}
+
+function getGraveyardItems(host: ArchivesHost): GraveyardItem[] {
+  return [
+    ...host.worktreeGraveyardEntries.map((entry: WorktreeGraveyardEntry) => ({ kind: "worktree", entry }) as const),
+    ...host.graveyardEntries.map((entry: any) => ({ kind: "agent", entry }) as const),
+  ];
+}
+
+function clampGraveyardSelection(host: ArchivesHost): void {
+  const items = getGraveyardItems(host);
+  if (host.graveyardIndex >= items.length) {
+    host.graveyardIndex = Math.max(0, items.length - 1);
+  }
+}
+
+async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void> {
+  const entry = host.graveyardWorktreeDeleteConfirm;
+  if (!entry) return;
+  try {
+    if (host.mode === "dashboard") {
+      await postToProjectService(host, "/graveyard/worktrees/delete", { path: entry.path }, { timeoutMs: 10_000 });
+    } else {
+      await host.deleteGraveyardWorktree(entry.path);
+    }
+    host.worktreeGraveyardEntries = host.listWorktreeGraveyardEntries();
+    host.graveyardEntries = host.listGraveyardEntries();
+    host.graveyardWorktreeDeleteConfirm = null;
+    clampGraveyardSelection(host);
+    if (getGraveyardItems(host).length === 0) {
+      host.setDashboardScreen("dashboard");
+      host.renderDashboard();
+      return;
+    }
+    renderGraveyard(host);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    host.showDashboardError(`Failed to delete "${entry.name}"`, [message]);
+  }
 }
 
 export function showPlans(host: ArchivesHost): void {

@@ -107,8 +107,11 @@ export class DashboardPendingActions {
       return {
         ...worktree,
         pending: true,
-        removing: pendingAction === "removing",
-        pendingAction: pendingAction === "removing" || pendingAction === "creating" ? pendingAction : undefined,
+        removing: pendingAction === "removing" || pendingAction === "graveyarding",
+        pendingAction:
+          pendingAction === "removing" || pendingAction === "creating" || pendingAction === "graveyarding"
+            ? pendingAction
+            : undefined,
         optimistic: true,
       };
     });

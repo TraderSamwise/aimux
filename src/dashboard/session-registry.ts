@@ -19,6 +19,7 @@ export interface DashboardSessionRegistryOptions {
   activeIndex: number;
   offlineSessions: SessionState[];
   remoteInstances: InstanceInfo[];
+  hiddenWorktreePaths?: Set<string>;
   mainRepoPath?: string;
   getSessionLabel: (sessionId: string) => string | undefined;
   getSessionHeadline: (sessionId: string) => string | undefined;
@@ -57,10 +58,13 @@ export function getRemoteOwnedSessionKeys(remoteInstances: InstanceInfo[]): Set<
 
 export function buildDashboardSessions(options: DashboardSessionRegistryOptions): DashboardSession[] {
   const normalizeWtPath = normalizeWorktreePathFactory(options.mainRepoPath);
+  const hiddenWorktreePaths = options.hiddenWorktreePaths ?? new Set<string>();
   const seenLocalSessionKeys = new Set<string>();
 
   const dashSessions: DashboardSession[] = [];
   for (const [index, session] of options.sessions.entries()) {
+    const normalizedWorktreePath = normalizeWtPath(session.worktreePath);
+    if (normalizedWorktreePath && hiddenWorktreePaths.has(normalizedWorktreePath)) continue;
     const dedupeKey = `${session.id}::${session.backendSessionId ?? ""}`;
     if (seenLocalSessionKeys.has(dedupeKey)) continue;
     seenLocalSessionKeys.add(dedupeKey);
@@ -73,7 +77,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       createdAt: session.createdAt,
       status: session.status,
       active: index === options.activeIndex,
-      worktreePath: normalizeWtPath(session.worktreePath),
+      worktreePath: normalizedWorktreePath,
       label: options.getSessionLabel(session.id),
       headline: options.getSessionHeadline(session.id),
       taskDescription: options.getSessionTaskDescription(session.id),
@@ -97,6 +101,8 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
 
   for (const inst of options.remoteInstances) {
     for (const session of inst.sessions) {
+      const normalizedWorktreePath = normalizeWtPath(session.worktreePath);
+      if (normalizedWorktreePath && hiddenWorktreePaths.has(normalizedWorktreePath)) continue;
       if (dashSessions.some((existing) => existing.id === session.id)) continue;
       dashSessions.push({
         index: dashSessions.length,
@@ -106,7 +112,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
         createdAt: session.createdAt,
         status: "running",
         active: false,
-        worktreePath: normalizeWtPath(session.worktreePath),
+        worktreePath: normalizedWorktreePath,
         remoteInstancePid: inst.pid,
         remoteInstanceId: inst.instanceId,
         remoteBackendSessionId: session.backendSessionId,
@@ -140,6 +146,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
     if (offline.worktreePath && !existsSync(offline.worktreePath)) continue;
 
     const worktreePath = normalizeWtPath(offline.worktreePath);
+    if (worktreePath && hiddenWorktreePaths.has(worktreePath)) continue;
     const worktreeInfo = resolveWorktreeInfo(worktreePath);
     dashSessions.push({
       index: dashSessions.length,

@@ -18,7 +18,7 @@ export interface DashboardQuickJumpWorktree {
   branch: string;
   pending?: boolean;
   removing?: boolean;
-  pendingAction?: "creating" | "removing";
+  pendingAction?: "creating" | "removing" | "graveyarding";
   sessions: DashboardSession[];
   services: DashboardService[];
   entries: DashboardQuickJumpEntry[];

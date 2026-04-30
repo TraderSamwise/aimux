@@ -136,9 +136,9 @@ describe("worktrees dashboard mutation protocol", () => {
 
     beginWorktreeRemoval(host, path, "demo", 0);
 
-    await vi.waitFor(() => expect(host.footerFlash).toBe("Removed: demo"));
+    await vi.waitFor(() => expect(host.footerFlash).toBe("Graveyarded: demo"));
 
-    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/remove", { path }, { timeoutMs: 10_000 });
+    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 10_000 });
     expect(pending.state.get(`worktree:${path}`)).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -172,6 +172,6 @@ describe("worktrees dashboard mutation protocol", () => {
 
     expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
     expect(host.restoreDashboardAfterOverlayDismiss).not.toHaveBeenCalled();
-    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/remove", { path }, { timeoutMs: 10_000 });
+    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 10_000 });
   });
 });

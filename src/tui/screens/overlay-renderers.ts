@@ -63,10 +63,10 @@ export function buildWorktreeRemoveConfirmOverlayOutput(ctx: any): string | null
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const lines = [
-    `Remove worktree "${confirm.name}"?`,
+    `Graveyard worktree "${confirm.name}"?`,
     "",
     `  Path: ${confirm.path}`,
-    "  This runs: git worktree remove --force",
+    "  This offlines attached agents and moves the checkout to the graveyard",
     "",
     "  [Enter/y] yes  [n/Esc] cancel",
   ];

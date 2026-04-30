@@ -145,6 +145,10 @@ export function getGraveyardPath(): string {
   return join(getProjectStateDir(), "graveyard.json");
 }
 
+export function getWorktreeGraveyardPath(): string {
+  return join(getProjectStateDir(), "worktree-graveyard.json");
+}
+
 export function getContextDir(): string {
   return join(getLocalAimuxDir(), "context");
 }
