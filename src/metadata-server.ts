@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { getDashboardClientUiStatePath, getDashboardUiStatePath, getProjectId, getProjectStateDir } from "./paths.js";
+import { getDashboardClientUiStatePath, getProjectId, getProjectStateDir } from "./paths.js";
 import {
   type MetadataTone,
   updateSessionMetadata,
@@ -272,18 +272,6 @@ interface MetadataServerOptions {
       | Promise<{ sessionId: string; messages: unknown[]; lastN?: number }>
       | { sessionId: string; messages: unknown[]; lastN?: number };
   };
-}
-
-function persistDashboardScreenPreference(screen: "dashboard" | "notifications"): void {
-  try {
-    const path = getDashboardUiStatePath();
-    const raw = readFileSync(path, "utf-8");
-    const snapshot = JSON.parse(raw) as Record<string, unknown>;
-    snapshot.screen = screen;
-    writeFileSync(path, JSON.stringify(snapshot, null, 2) + "\n");
-  } catch {
-    writeFileSync(getDashboardUiStatePath(), JSON.stringify({ screen }, null, 2) + "\n");
-  }
 }
 
 function dashboardClientKeyFromSession(sessionName: string): string {
