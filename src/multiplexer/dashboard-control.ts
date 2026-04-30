@@ -556,7 +556,12 @@ export function renderOrchestrationRoutePicker(host: DashboardControlHost): void
   if (output) process.stdout.write(output);
 }
 
-export async function postToProjectService(host: DashboardControlHost, path: string, body: unknown): Promise<any> {
+export async function postToProjectService(
+  host: DashboardControlHost,
+  path: string,
+  body: unknown,
+  opts?: { timeoutMs?: number },
+): Promise<any> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const endpoint = resolveProjectServiceEndpoint(process.cwd());
     if (!endpoint) {
@@ -568,7 +573,7 @@ export async function postToProjectService(host: DashboardControlHost, path: str
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
-        timeoutMs: 1000,
+        timeoutMs: opts?.timeoutMs ?? 1000,
       });
       if (status >= 200 && status < 300 && json?.ok !== false) {
         return json;

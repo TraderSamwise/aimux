@@ -104,6 +104,55 @@ describe("createSession", () => {
 
     rmSync(repoRoot, { recursive: true, force: true });
   });
+
+  it("rejects duplicate session ids before launching a second runtime", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-dup-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(),
+        deliverDetachedCodexKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(),
+        createWindow: vi.fn(),
+        getTargetByWindowId: vi.fn(),
+        isWindowAlive: vi.fn(),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [{ id: "claude-dup123" }],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    expect(() =>
+      createSession(
+        host,
+        "claude",
+        [],
+        undefined,
+        "claude",
+        undefined,
+        undefined,
+        repoRoot,
+        undefined,
+        "claude-dup123",
+      ),
+    ).toThrow('Session "claude-dup123" already exists');
+
+    expect(host.tmuxRuntimeManager.createWindow).not.toHaveBeenCalled();
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
 });
 
 describe("runProjectService", () => {

@@ -138,12 +138,16 @@ export async function spawnDashboardAgentWithFeedback(
     pendingAction: "creating",
     onBeforeRequest: () => host.preferDashboardEntrySelection("session", input.sessionId, input.worktreePath),
     request: async () => {
-      await host.postToProjectService("/agents/spawn", {
-        tool: input.tool,
-        sessionId: input.sessionId,
-        worktreePath: input.worktreePath,
-        open: false,
-      });
+      await host.postToProjectService(
+        "/agents/spawn",
+        {
+          tool: input.tool,
+          sessionId: input.sessionId,
+          worktreePath: input.worktreePath,
+          open: false,
+        },
+        { timeoutMs: 10_000 },
+      );
     },
     settle: () => waitForRenderedDashboardSessionState(host, input.sessionId, (entry) => Boolean(entry)),
     onError: () => host.refreshDashboardModelFromService(true),
@@ -166,14 +170,18 @@ export async function forkDashboardAgentWithFeedback(
     pendingAction: "forking",
     onBeforeRequest: () => host.preferDashboardEntrySelection("session", input.targetSessionId, input.worktreePath),
     request: async () => {
-      await host.postToProjectService("/agents/fork", {
-        sourceSessionId: input.sourceSessionId,
-        targetSessionId: input.targetSessionId,
-        tool: input.tool,
-        instruction: input.instruction,
-        worktreePath: input.worktreePath,
-        open: false,
-      });
+      await host.postToProjectService(
+        "/agents/fork",
+        {
+          sourceSessionId: input.sourceSessionId,
+          targetSessionId: input.targetSessionId,
+          tool: input.tool,
+          instruction: input.instruction,
+          worktreePath: input.worktreePath,
+          open: false,
+        },
+        { timeoutMs: 10_000 },
+      );
     },
     settle: () => waitForRenderedDashboardSessionState(host, input.targetSessionId, (entry) => Boolean(entry)),
     onError: () => host.refreshDashboardModelFromService(true),
@@ -199,7 +207,7 @@ export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, s
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService("/agents/stop", { sessionId: session.id });
+        await host.postToProjectService("/agents/stop", { sessionId: session.id }, { timeoutMs: 10_000 });
       },
       settle: () =>
         waitForRenderedDashboardSessionState(host, session.id, (entry) => !entry || entry.status === "offline"),
@@ -351,7 +359,7 @@ export async function graveyardSessionWithFeedback(
       sessionId,
       pendingAction: "graveyarding",
       request: async () => {
-        await host.postToProjectService("/agents/kill", { sessionId });
+        await host.postToProjectService("/agents/kill", { sessionId }, { timeoutMs: 10_000 });
       },
       settle: () => waitForRenderedDashboardSessionState(host, sessionId, (entry) => !entry),
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),
@@ -378,7 +386,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService("/agents/resume", { sessionId: session.id });
+        await host.postToProjectService("/agents/resume", { sessionId: session.id }, { timeoutMs: 10_000 });
       },
       settle: () =>
         waitForRenderedDashboardSessionState(
@@ -411,7 +419,7 @@ export async function resumeOfflineServiceWithFeedback(
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService("/services/resume", { serviceId: service.id });
+        await host.postToProjectService("/services/resume", { serviceId: service.id }, { timeoutMs: 10_000 });
       },
       settle: () =>
         waitForRenderedDashboardServiceState(
@@ -454,7 +462,7 @@ export async function stopDashboardServiceWithFeedback(
       host.footerFlashTicks = 3;
     },
     request: async () => {
-      await host.postToProjectService("/services/stop", { serviceId: service.id });
+      await host.postToProjectService("/services/stop", { serviceId: service.id }, { timeoutMs: 10_000 });
     },
     settle: () =>
       waitForRenderedDashboardServiceState(host, service.id, (entry) => !entry || entry.status === "offline"),
@@ -472,7 +480,7 @@ export async function removeDashboardServiceWithFeedback(
     serviceId: service.id,
     pendingAction: "removing",
     request: async () => {
-      await host.postToProjectService("/services/remove", { serviceId: service.id });
+      await host.postToProjectService("/services/remove", { serviceId: service.id }, { timeoutMs: 10_000 });
     },
     settle: () => waitForRenderedDashboardServiceState(host, service.id, (entry) => !entry),
     successFlash: { message: `◆ Deleted service ${service.label ?? service.id}` },
@@ -499,7 +507,9 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
     sendAgentToGraveyard: (sessionId: string) => host.sendAgentToGraveyard(sessionId).then(() => undefined),
     resumeOfflineSession: (session: any) =>
       host.mode === "dashboard"
-        ? host.postToProjectService("/agents/resume", { sessionId: session.id }).then(() => undefined)
+        ? host
+            .postToProjectService("/agents/resume", { sessionId: session.id }, { timeoutMs: 10_000 })
+            .then(() => undefined)
         : host.resumeOfflineSession(session),
     refreshLocalDashboardModel: () => host.refreshLocalDashboardModel(),
     adjustAfterRemove: (hasWorktrees: boolean) => host.adjustAfterRemove(hasWorktrees),

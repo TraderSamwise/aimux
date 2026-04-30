@@ -57,36 +57,43 @@ export function getRemoteOwnedSessionKeys(remoteInstances: InstanceInfo[]): Set<
 
 export function buildDashboardSessions(options: DashboardSessionRegistryOptions): DashboardSession[] {
   const normalizeWtPath = normalizeWorktreePathFactory(options.mainRepoPath);
+  const seenLocalSessionKeys = new Set<string>();
 
-  const dashSessions: DashboardSession[] = options.sessions.map((session, index) => ({
-    index,
-    id: session.id,
-    command: session.command,
-    tmuxWindowId: session.tmuxWindowId,
-    backendSessionId: session.backendSessionId,
-    createdAt: session.createdAt,
-    status: session.status,
-    active: index === options.activeIndex,
-    worktreePath: normalizeWtPath(session.worktreePath),
-    label: options.getSessionLabel(session.id),
-    headline: options.getSessionHeadline(session.id),
-    taskDescription: options.getSessionTaskDescription(session.id),
-    role: options.getSessionRole(session.id),
-    cwd: options.getSessionContext(session.id)?.cwd,
-    repoOwner: options.getSessionContext(session.id)?.repo?.owner,
-    repoName: options.getSessionContext(session.id)?.repo?.name,
-    repoRemote: options.getSessionContext(session.id)?.repo?.remote,
-    prNumber: options.getSessionContext(session.id)?.pr?.number,
-    prTitle: options.getSessionContext(session.id)?.pr?.title,
-    prUrl: options.getSessionContext(session.id)?.pr?.url,
-    activity: options.getSessionDerived(session.id)?.activity,
-    attention: options.getSessionDerived(session.id)?.attention,
-    unseenCount: options.getSessionDerived(session.id)?.unseenCount,
-    lastEvent: options.getSessionDerived(session.id)?.lastEvent,
-    services: options.getSessionDerived(session.id)?.services,
-    threadId: options.getSessionDerived(session.id)?.threadId,
-    threadName: options.getSessionDerived(session.id)?.threadName,
-  }));
+  const dashSessions: DashboardSession[] = [];
+  for (const [index, session] of options.sessions.entries()) {
+    const dedupeKey = `${session.id}::${session.backendSessionId ?? ""}`;
+    if (seenLocalSessionKeys.has(dedupeKey)) continue;
+    seenLocalSessionKeys.add(dedupeKey);
+    dashSessions.push({
+      index: dashSessions.length,
+      id: session.id,
+      command: session.command,
+      tmuxWindowId: session.tmuxWindowId,
+      backendSessionId: session.backendSessionId,
+      createdAt: session.createdAt,
+      status: session.status,
+      active: index === options.activeIndex,
+      worktreePath: normalizeWtPath(session.worktreePath),
+      label: options.getSessionLabel(session.id),
+      headline: options.getSessionHeadline(session.id),
+      taskDescription: options.getSessionTaskDescription(session.id),
+      role: options.getSessionRole(session.id),
+      cwd: options.getSessionContext(session.id)?.cwd,
+      repoOwner: options.getSessionContext(session.id)?.repo?.owner,
+      repoName: options.getSessionContext(session.id)?.repo?.name,
+      repoRemote: options.getSessionContext(session.id)?.repo?.remote,
+      prNumber: options.getSessionContext(session.id)?.pr?.number,
+      prTitle: options.getSessionContext(session.id)?.pr?.title,
+      prUrl: options.getSessionContext(session.id)?.pr?.url,
+      activity: options.getSessionDerived(session.id)?.activity,
+      attention: options.getSessionDerived(session.id)?.attention,
+      unseenCount: options.getSessionDerived(session.id)?.unseenCount,
+      lastEvent: options.getSessionDerived(session.id)?.lastEvent,
+      services: options.getSessionDerived(session.id)?.services,
+      threadId: options.getSessionDerived(session.id)?.threadId,
+      threadName: options.getSessionDerived(session.id)?.threadName,
+    });
+  }
 
   for (const inst of options.remoteInstances) {
     for (const session of inst.sessions) {

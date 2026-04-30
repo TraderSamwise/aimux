@@ -37,7 +37,11 @@ describe("dashboard-ops", () => {
 
     await resumeOfflineServiceWithFeedback(host, { id: "svc-1", label: "shell" });
 
-    expect(host.postToProjectService).toHaveBeenCalledWith("/services/resume", { serviceId: "svc-1" });
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/services/resume",
+      { serviceId: "svc-1" },
+      { timeoutMs: 10_000 },
+    );
     expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Started service shell");
     expect(host.footerFlashTicks).toBe(3);
@@ -90,7 +94,11 @@ describe("dashboard-ops", () => {
 
     await stopDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
 
-    expect(host.postToProjectService).toHaveBeenCalledWith("/services/stop", { serviceId: "svc-1" });
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/services/stop",
+      { serviceId: "svc-1" },
+      { timeoutMs: 10_000 },
+    );
     expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Stopped service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
@@ -118,7 +126,11 @@ describe("dashboard-ops", () => {
 
     await removeDashboardServiceWithFeedback(host, { id: "svc-1", label: "shell" });
 
-    expect(host.postToProjectService).toHaveBeenCalledWith("/services/remove", { serviceId: "svc-1" });
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/services/remove",
+      { serviceId: "svc-1" },
+      { timeoutMs: 10_000 },
+    );
     expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Deleted service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
@@ -152,7 +164,11 @@ describe("dashboard-ops", () => {
 
     await stopSessionToOfflineWithFeedback(host, session);
 
-    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/stop", { sessionId: "sess-1" });
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/stop",
+      { sessionId: "sess-1" },
+      { timeoutMs: 10_000 },
+    );
     expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Stopped claude");
     expect(host.showDashboardError).not.toHaveBeenCalled();
@@ -185,7 +201,11 @@ describe("dashboard-ops", () => {
 
     await resumeOfflineSessionWithFeedback(host, session);
 
-    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/resume", { sessionId: "sess-1" });
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/resume",
+      { sessionId: "sess-1" },
+      { timeoutMs: 10_000 },
+    );
     expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored claude");
     expect(host.showDashboardError).not.toHaveBeenCalled();
@@ -219,7 +239,11 @@ describe("dashboard-ops", () => {
 
     await graveyardSessionWithFeedback(host, "sess-1", true);
 
-    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/kill", { sessionId: "sess-1" });
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/kill",
+      { sessionId: "sess-1" },
+      { timeoutMs: 10_000 },
+    );
     expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
     expect(host.adjustAfterRemove).toHaveBeenCalledWith(true);
     expect(host.footerFlash).toBe("Sent claude to graveyard");
@@ -251,12 +275,16 @@ describe("dashboard-ops", () => {
       worktreePath: "/repo",
     });
 
-    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/spawn", {
-      tool: "claude",
-      sessionId: "claude-abcd12",
-      worktreePath: "/repo",
-      open: false,
-    });
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/spawn",
+      {
+        tool: "claude",
+        sessionId: "claude-abcd12",
+        worktreePath: "/repo",
+        open: false,
+      },
+      { timeoutMs: 10_000 },
+    );
     expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "claude-abcd12", "/repo");
     expect(host.dashboardPendingActions.get("claude-abcd12")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
@@ -288,14 +316,18 @@ describe("dashboard-ops", () => {
       worktreePath: "/repo",
     });
 
-    expect(host.postToProjectService).toHaveBeenCalledWith("/agents/fork", {
-      sourceSessionId: "claude-src",
-      targetSessionId: "codex-fork12",
-      tool: "codex",
-      instruction: undefined,
-      worktreePath: "/repo",
-      open: false,
-    });
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/fork",
+      {
+        sourceSessionId: "claude-src",
+        targetSessionId: "codex-fork12",
+        tool: "codex",
+        instruction: undefined,
+        worktreePath: "/repo",
+        open: false,
+      },
+      { timeoutMs: 10_000 },
+    );
     expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "codex-fork12", "/repo");
     expect(host.dashboardPendingActions.get("codex-fork12")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();

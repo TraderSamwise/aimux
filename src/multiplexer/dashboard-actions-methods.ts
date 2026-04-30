@@ -219,8 +219,8 @@ export const dashboardActionMethods = {
   renderOrchestrationRoutePicker(this: any): void {
     renderOrchestrationRoutePickerImpl(this);
   },
-  async postToProjectService(this: any, path: string, body: unknown): Promise<any> {
-    return postToProjectServiceImpl(this, path, body);
+  async postToProjectService(this: any, path: string, body: unknown, opts?: { timeoutMs?: number }): Promise<any> {
+    return postToProjectServiceImpl(this, path, body, opts);
   },
   async ensureDashboardControlPlane(this: any): Promise<void> {
     await ensureDashboardControlPlaneImpl(this);

@@ -301,6 +301,9 @@ export function createSession(
 ): any {
   const cols = process.stdout.columns ?? 80;
   const sessionId = sessionIdOverride ?? `${command}-${Math.random().toString(36).slice(2, 8)}`;
+  if (host.sessions.some((session: any) => session.id === sessionId)) {
+    throw new Error(`Session "${sessionId}" already exists`);
+  }
   const backendSessionId = backendSessionIdOverride ?? (sessionIdFlag ? randomUUID() : undefined);
   const config = loadConfig();
   const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;
