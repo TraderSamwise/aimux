@@ -15,6 +15,20 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
 import { sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
+import {
+  buildDashboardBusyOverlayOutput,
+  buildDashboardErrorOverlayOutput,
+  buildLabelInputOverlayOutput,
+  buildMigratePickerOverlayOutput,
+  buildNotificationPanelOverlayOutput,
+  buildServiceInputOverlayOutput,
+  buildSwitcherOverlayOutput,
+  buildWorktreeListOverlayOutput,
+  buildWorktreeRemoveConfirmOverlayOutput,
+} from "../tui/screens/overlay-renderers.js";
+import { buildWorktreeInputOverlayOutput } from "./worktrees.js";
+import { buildToolPickerOverlayOutput } from "./tool-picker.js";
+import { buildThreadReplyOverlayOutput } from "./subscreens.js";
 
 type DashboardControlHost = any;
 type DashboardOrchestrationTarget = {
@@ -168,63 +182,55 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
 }
 
 export function renderActiveDashboardOverlay(host: DashboardControlHost): boolean {
+  if (!buildActiveDashboardOverlayOutput(host)) return false;
+  host.redrawDashboardWithOverlay?.();
+  return true;
+}
+
+export function buildActiveDashboardOverlayOutput(host: DashboardControlHost): string | null {
   if (host.worktreeRemoveConfirm) {
-    host.renderWorktreeRemoveConfirm();
-    return true;
+    return buildWorktreeRemoveConfirmOverlayOutput(host);
   }
   if (host.dashboardErrorState) {
-    host.renderDashboardErrorOverlay();
-    return true;
+    return buildDashboardErrorOverlayOutput(host);
   }
   if (host.dashboardBusyState) {
-    host.renderDashboardBusyOverlay();
-    return true;
+    return buildDashboardBusyOverlayOutput(host);
   }
   if (host.switcherActive) {
-    host.renderSwitcher();
-    return true;
+    return buildSwitcherOverlayOutput(host);
   }
   if (host.notificationPanelState) {
-    host.renderNotificationPanel();
-    return true;
+    return buildNotificationPanelOverlayOutput(host);
   }
   if (host.threadReplyActive) {
-    host.renderThreadReply();
-    return true;
+    return buildThreadReplyOverlayOutput(host);
   }
   if (host.orchestrationInputActive) {
-    host.renderOrchestrationInput();
-    return true;
+    return buildOrchestrationInputOverlayOutput(host);
   }
   if (host.migratePickerActive) {
-    host.renderMigratePicker();
-    return true;
+    return buildMigratePickerOverlayOutput(host);
   }
   if (host.worktreeListActive) {
-    host.renderWorktreeList();
-    return true;
+    return buildWorktreeListOverlayOutput(host);
   }
   if (host.labelInputActive) {
-    host.renderLabelInput();
-    return true;
+    return buildLabelInputOverlayOutput(host);
   }
   if (host.worktreeInputActive) {
-    host.renderWorktreeInput();
-    return true;
+    return buildWorktreeInputOverlayOutput(host);
   }
   if (host.serviceInputActive) {
-    host.renderServiceInput();
-    return true;
+    return buildServiceInputOverlayOutput(host);
   }
   if (host.pickerActive) {
-    host.renderToolPicker();
-    return true;
+    return buildToolPickerOverlayOutput(host);
   }
   if (host.orchestrationRoutePickerActive) {
-    host.renderOrchestrationRoutePicker();
-    return true;
+    return buildOrchestrationRoutePickerOverlayOutput(host);
   }
-  return false;
+  return null;
 }
 
 export function handleDashboardSubscreenNavigationKey(
@@ -462,10 +468,10 @@ export function showOrchestrationInput(
   host.renderOrchestrationInput();
 }
 
-export function renderOrchestrationInput(host: DashboardControlHost): void {
+export function buildOrchestrationInputOverlayOutput(host: DashboardControlHost): string | null {
   const target = host.orchestrationInputTarget;
   const mode = host.orchestrationInputMode;
-  if (!target || !mode) return;
+  if (!target || !mode) return null;
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Handoff" : "Assign task";
@@ -504,12 +510,21 @@ export function renderOrchestrationInput(host: DashboardControlHost): void {
     }
   }
   output += "\x1b8";
-  process.stdout.write(output);
+  return output;
 }
 
-export function renderOrchestrationRoutePicker(host: DashboardControlHost): void {
+export function renderOrchestrationInput(host: DashboardControlHost): void {
+  if (host.mode === "dashboard" && typeof host.redrawDashboardWithOverlay === "function") {
+    host.redrawDashboardWithOverlay();
+    return;
+  }
+  const output = buildOrchestrationInputOverlayOutput(host);
+  if (output) process.stdout.write(output);
+}
+
+export function buildOrchestrationRoutePickerOverlayOutput(host: DashboardControlHost): string | null {
   const mode = host.orchestrationRouteMode;
-  if (!mode) return;
+  if (!mode) return null;
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Send handoff" : "Assign task";
@@ -538,7 +553,16 @@ export function renderOrchestrationRoutePicker(host: DashboardControlHost): void
     }
   }
   output += "\x1b8";
-  process.stdout.write(output);
+  return output;
+}
+
+export function renderOrchestrationRoutePicker(host: DashboardControlHost): void {
+  if (host.mode === "dashboard" && typeof host.redrawDashboardWithOverlay === "function") {
+    host.redrawDashboardWithOverlay();
+    return;
+  }
+  const output = buildOrchestrationRoutePickerOverlayOutput(host);
+  if (output) process.stdout.write(output);
 }
 
 export async function postToProjectService(host: DashboardControlHost, path: string, body: unknown): Promise<any> {

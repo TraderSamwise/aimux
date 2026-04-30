@@ -1,7 +1,10 @@
 import { getWorktreeCreatePath, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { debug } from "../debug.js";
 import { parseKeys } from "../key-parser.js";
-import { renderWorktreeListOverlay, renderWorktreeRemoveConfirmOverlay } from "../tui/screens/overlay-renderers.js";
+import {
+  buildWorktreeListOverlayOutput,
+  buildWorktreeRemoveConfirmOverlayOutput,
+} from "../tui/screens/overlay-renderers.js";
 import { postToProjectService } from "./dashboard-control.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 
@@ -45,13 +48,13 @@ function showOptimisticDashboardWorktreeCreate(host: WorktreeHost, name: string)
   }
   host.dashboardState.focusedWorktreePath = targetPath;
   host.dashboardUiStateStore.markSelectionDirty();
-  host.dashboardState.worktreeNavOrder = [undefined, ...host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path)];
+  host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path);
   return targetPath;
 }
 
 function removeOptimisticDashboardWorktree(host: WorktreeHost, path: string): void {
   host.dashboardWorktreeGroupsCache = host.dashboardWorktreeGroupsCache.filter((group: any) => group.path !== path);
-  host.dashboardState.worktreeNavOrder = [undefined, ...host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path)];
+  host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path);
   if (host.dashboardState.focusedWorktreePath === path) {
     host.dashboardState.focusedWorktreePath = undefined;
   }
@@ -64,7 +67,7 @@ export function showWorktreeCreatePrompt(host: WorktreeHost): void {
   renderWorktreeInput(host);
 }
 
-export function renderWorktreeInput(host: WorktreeHost): void {
+export function buildWorktreeInputOverlayOutput(host: WorktreeHost): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
 
@@ -86,7 +89,15 @@ export function renderWorktreeInput(host: WorktreeHost): void {
     }
   }
   output += "\x1b8";
-  process.stdout.write(output);
+  return output;
+}
+
+export function renderWorktreeInput(host: WorktreeHost): void {
+  if (host.mode === "dashboard" && typeof host.redrawDashboardWithOverlay === "function") {
+    host.redrawDashboardWithOverlay();
+    return;
+  }
+  process.stdout.write(buildWorktreeInputOverlayOutput(host));
 }
 
 export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
@@ -98,11 +109,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
 
   if (key === "escape") {
     host.worktreeInputActive = false;
-    if (host.mode === "dashboard") {
-      host.renderDashboard();
-    } else {
-      host.focusSession(host.activeIndex);
-    }
+    host.restoreDashboardAfterOverlayDismiss();
     return;
   }
 
@@ -136,11 +143,7 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
         debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
       }
     }
-    if (host.mode === "dashboard") {
-      host.renderDashboard();
-    } else {
-      host.focusSession(host.activeIndex);
-    }
+    host.restoreDashboardAfterOverlayDismiss();
     return;
   }
 
@@ -162,11 +165,20 @@ export function showWorktreeList(host: WorktreeHost): void {
 }
 
 export function renderWorktreeList(host: WorktreeHost): void {
-  renderWorktreeListOverlay(host);
+  if (host.mode === "dashboard" && typeof host.redrawDashboardWithOverlay === "function") {
+    host.redrawDashboardWithOverlay();
+    return;
+  }
+  process.stdout.write(buildWorktreeListOverlayOutput(host));
 }
 
 export function renderWorktreeRemoveConfirm(host: WorktreeHost): void {
-  renderWorktreeRemoveConfirmOverlay(host);
+  if (host.mode === "dashboard" && typeof host.redrawDashboardWithOverlay === "function") {
+    host.redrawDashboardWithOverlay();
+    return;
+  }
+  const output = buildWorktreeRemoveConfirmOverlayOutput(host);
+  if (output) process.stdout.write(output);
 }
 
 export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: string, oldIdx: number): void {
@@ -247,7 +259,7 @@ export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
     debug(`removed worktree: ${job.name}`, "worktree");
 
     const newWorktrees = listAllWorktrees().filter((wt: any) => !wt.isBare);
-    host.dashboardState.worktreeNavOrder = [undefined, ...newWorktrees.map((wt: any) => wt.path)];
+    host.dashboardState.worktreeNavOrder = newWorktrees.map((wt: any) => wt.path);
     if (job.oldIdx >= 0 && job.oldIdx < host.dashboardState.worktreeNavOrder.length) {
       host.dashboardState.focusedWorktreePath = host.dashboardState.worktreeNavOrder[job.oldIdx];
     } else if (host.dashboardState.worktreeNavOrder.length > 1) {

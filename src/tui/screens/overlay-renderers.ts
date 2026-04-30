@@ -1,6 +1,6 @@
 import { renderOverlayBox } from "../render/box.js";
 
-export function renderServiceInputOverlay(ctx: any): void {
+export function buildServiceInputOverlayOutput(ctx: any): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const lines = [
@@ -11,17 +11,25 @@ export function renderServiceInputOverlay(ctx: any): void {
     "  Empty command opens an interactive shell",
     "  [Enter] create  [Esc] cancel",
   ];
-  process.stdout.write(renderOverlayBox(lines, cols, rows, "blue"));
+  return renderOverlayBox(lines, cols, rows, "blue");
 }
 
-export function renderLabelInputOverlay(ctx: any): void {
+export function renderServiceInputOverlay(ctx: any): void {
+  process.stdout.write(buildServiceInputOverlayOutput(ctx));
+}
+
+export function buildLabelInputOverlayOutput(ctx: any): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const lines = ["Name agent:", "", `  Name: ${ctx.labelInputBuffer}_`, "", "  [Enter] save  [Esc] cancel"];
-  process.stdout.write(renderOverlayBox(lines, cols, rows, "blue"));
+  return renderOverlayBox(lines, cols, rows, "blue");
 }
 
-export function renderWorktreeListOverlay(ctx: any): void {
+export function renderLabelInputOverlay(ctx: any): void {
+  process.stdout.write(buildLabelInputOverlayOutput(ctx));
+}
+
+export function buildWorktreeListOverlayOutput(ctx: any): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
 
@@ -42,12 +50,16 @@ export function renderWorktreeListOverlay(ctx: any): void {
   }
   lines.push("");
   lines.push("  [Esc] back");
-  process.stdout.write(renderOverlayBox(lines, cols, rows, "blue"));
+  return renderOverlayBox(lines, cols, rows, "blue");
 }
 
-export function renderWorktreeRemoveConfirmOverlay(ctx: any): void {
+export function renderWorktreeListOverlay(ctx: any): void {
+  process.stdout.write(buildWorktreeListOverlayOutput(ctx));
+}
+
+export function buildWorktreeRemoveConfirmOverlayOutput(ctx: any): string | null {
   const confirm = ctx.worktreeRemoveConfirm;
-  if (!confirm) return;
+  if (!confirm) return null;
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const lines = [
@@ -58,23 +70,33 @@ export function renderWorktreeRemoveConfirmOverlay(ctx: any): void {
     "",
     "  [y] yes  [n/Esc] cancel",
   ];
-  process.stdout.write(renderOverlayBox(lines, cols, rows, "red"));
+  return renderOverlayBox(lines, cols, rows, "red");
 }
 
-export function renderDashboardBusyOverlay(ctx: any): void {
+export function renderWorktreeRemoveConfirmOverlay(ctx: any): void {
+  const output = buildWorktreeRemoveConfirmOverlayOutput(ctx);
+  if (output) process.stdout.write(output);
+}
+
+export function buildDashboardBusyOverlayOutput(ctx: any): string | null {
   const busy = ctx.dashboardBusyState;
-  if (!busy) return;
+  if (!busy) return null;
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][busy.spinnerFrame % 10];
   const elapsed = ((Date.now() - busy.startedAt) / 1000).toFixed(1);
   const lines = [`${spinner} ${busy.title}`, "", ...busy.lines, "", `  Elapsed: ${elapsed}s`, "", "  Please wait"];
-  process.stdout.write(renderOverlayBox(lines, cols, rows, "blue"));
+  return renderOverlayBox(lines, cols, rows, "blue");
 }
 
-export function renderDashboardErrorOverlay(ctx: any): void {
+export function renderDashboardBusyOverlay(ctx: any): void {
+  const output = buildDashboardBusyOverlayOutput(ctx);
+  if (output) process.stdout.write(output);
+}
+
+export function buildDashboardErrorOverlayOutput(ctx: any): string | null {
   const error = ctx.dashboardErrorState;
-  if (!error) return;
+  if (!error) return null;
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const bodyWidth = Math.max(24, Math.min(cols - 12, 84));
@@ -86,12 +108,17 @@ export function renderDashboardErrorOverlay(ctx: any): void {
   };
   const messageLines = error.lines.flatMap((line: string) => wrap(" ", line)).slice(0, Math.max(4, rows - 10));
   const lines = [ctx.stripAnsi(error.title), "", ...messageLines, "", "[Esc/Enter] dismiss"];
-  process.stdout.write(renderOverlayBox(lines, cols, rows, "red"));
+  return renderOverlayBox(lines, cols, rows, "red");
 }
 
-export function renderNotificationPanel(ctx: any): void {
+export function renderDashboardErrorOverlay(ctx: any): void {
+  const output = buildDashboardErrorOverlayOutput(ctx);
+  if (output) process.stdout.write(output);
+}
+
+export function buildNotificationPanelOverlayOutput(ctx: any): string | null {
   const panel = ctx.notificationPanelState;
-  if (!panel) return;
+  if (!panel) return null;
 
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
@@ -145,10 +172,15 @@ export function renderNotificationPanel(ctx: any): void {
     output += `\x1b[48;5;236;38;5;255m ${left} │ ${right} \x1b[0m`;
   }
   output += "\x1b8";
-  process.stdout.write(output);
+  return output;
 }
 
-export function renderHelpOverlay(_ctx: any): void {
+export function renderNotificationPanel(ctx: any): void {
+  const output = buildNotificationPanelOverlayOutput(ctx);
+  if (output) process.stdout.write(output);
+}
+
+export function buildHelpOverlayOutput(_ctx: any): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const allLines = [
@@ -216,10 +248,14 @@ export function renderHelpOverlay(_ctx: any): void {
     }
   }
   output += "\x1b8";
-  process.stdout.write(output);
+  return output;
 }
 
-export function renderSwitcherOverlay(ctx: any): void {
+export function renderHelpOverlay(ctx: any): void {
+  process.stdout.write(buildHelpOverlayOutput(ctx));
+}
+
+export function buildSwitcherOverlayOutput(ctx: any): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const list = ctx.getSwitcherList();
@@ -260,14 +296,18 @@ export function renderSwitcherOverlay(ctx: any): void {
     }
   }
   output += "\x1b8";
-  process.stdout.write(output);
+  return output;
 }
 
-export function renderMigratePickerOverlay(ctx: any): void {
+export function renderSwitcherOverlay(ctx: any): void {
+  process.stdout.write(buildSwitcherOverlayOutput(ctx));
+}
+
+export function buildMigratePickerOverlayOutput(ctx: any): string | null {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const session = ctx.sessions[ctx.activeIndex];
-  if (!session) return;
+  if (!session) return null;
 
   const currentWt = ctx.sessionWorktreePaths.get(session.id);
   const lines = [`Migrate "${session.id}" to:`, ""];
@@ -280,5 +320,10 @@ export function renderMigratePickerOverlay(ctx: any): void {
   lines.push("");
   lines.push("  [Esc] cancel");
 
-  process.stdout.write(renderOverlayBox(lines, cols, rows, "blue"));
+  return renderOverlayBox(lines, cols, rows, "blue");
+}
+
+export function renderMigratePickerOverlay(ctx: any): void {
+  const output = buildMigratePickerOverlayOutput(ctx);
+  if (output) process.stdout.write(output);
 }

@@ -12,6 +12,7 @@ import {
   openLiveTmuxWindowForEntry as openLiveTmuxWindowForEntryImpl,
   openLiveTmuxWindowForService as openLiveTmuxWindowForServiceImpl,
   postToProjectService as postToProjectServiceImpl,
+  buildActiveDashboardOverlayOutput as buildActiveDashboardOverlayOutputImpl,
   renderActiveDashboardOverlay as renderActiveDashboardOverlayImpl,
   renderOrchestrationInput as renderOrchestrationInputImpl,
   renderOrchestrationRoutePicker as renderOrchestrationRoutePickerImpl,
@@ -178,6 +179,9 @@ export const dashboardActionMethods = {
   },
   renderActiveDashboardOverlay(this: any): boolean {
     return renderActiveDashboardOverlayImpl(this);
+  },
+  buildActiveDashboardOverlayOutput(this: any): string | null {
+    return buildActiveDashboardOverlayOutputImpl(this);
   },
   handleDashboardSubscreenNavigationKey(this: any, key: string, currentScreen: any): boolean {
     return handleDashboardSubscreenNavigationKeyImpl(this, key, currentScreen);

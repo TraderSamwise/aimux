@@ -1,11 +1,14 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { DashboardSession } from "./index.js";
 import { type DashboardScreen, type DashboardState } from "./state.js";
-import { getDashboardUiStatePath } from "../paths.js";
+import { getDashboardClientUiStatePath, getDashboardUiStatePath } from "../paths.js";
 
-interface DashboardUiStateSnapshot {
-  screen?: DashboardScreen;
+interface DashboardUiSharedSnapshot {
   detailsSidebarVisible?: boolean;
+}
+
+interface DashboardUiClientSnapshot {
+  screen?: DashboardScreen;
   focusedWorktreePath?: string;
   level?: "worktrees" | "sessions";
   selectedEntryKind?: "session" | "service";
@@ -18,15 +21,20 @@ export class DashboardUiStateStore {
   private flatSessionId: string | null = null;
   private selectionNeedsRestore = true;
 
-  loadInto(state: DashboardState): void {
+  loadInto(state: DashboardState, clientKey: string): void {
     try {
       const raw = readFileSync(getDashboardUiStatePath(), "utf-8");
-      const snapshot = JSON.parse(raw) as DashboardUiStateSnapshot;
-      if (snapshot.screen) {
-        state.screen = snapshot.screen;
-      }
+      const snapshot = JSON.parse(raw) as DashboardUiSharedSnapshot;
       if (typeof snapshot.detailsSidebarVisible === "boolean") {
         state.detailsSidebarVisible = snapshot.detailsSidebarVisible;
+      }
+    } catch {}
+
+    try {
+      const raw = readFileSync(getDashboardClientUiStatePath(clientKey), "utf-8");
+      const snapshot = JSON.parse(raw) as DashboardUiClientSnapshot;
+      if (snapshot.screen) {
+        state.screen = snapshot.screen;
       }
       if ("focusedWorktreePath" in snapshot) {
         state.focusedWorktreePath = snapshot.focusedWorktreePath;
@@ -48,14 +56,17 @@ export class DashboardUiStateStore {
 
   persist(
     mode: "dashboard" | "project-service",
+    clientKey: string,
     state: DashboardState,
     activeIndex: number,
     dashSessions: DashboardSession[],
   ): void {
     if (mode !== "dashboard") return;
-    const snapshot: DashboardUiStateSnapshot = {
-      screen: state.screen,
+    const sharedSnapshot: DashboardUiSharedSnapshot = {
       detailsSidebarVisible: state.detailsSidebarVisible,
+    };
+    const clientSnapshot: DashboardUiClientSnapshot = {
+      screen: state.screen,
       focusedWorktreePath: state.focusedWorktreePath,
       level: state.level,
     };
@@ -63,8 +74,8 @@ export class DashboardUiStateStore {
     if (state.level === "sessions" && state.worktreeEntries.length > 0) {
       const selectedEntry = state.worktreeEntries[state.sessionIndex];
       if (selectedEntry) {
-        snapshot.selectedEntryKind = selectedEntry.kind;
-        snapshot.selectedEntryId = selectedEntry.id;
+        clientSnapshot.selectedEntryKind = selectedEntry.kind;
+        clientSnapshot.selectedEntryId = selectedEntry.id;
         this.preferredSelection = {
           kind: selectedEntry.kind,
           id: selectedEntry.id,
@@ -74,12 +85,13 @@ export class DashboardUiStateStore {
 
     const flatSession = dashSessions[activeIndex];
     if (flatSession) {
-      snapshot.flatSessionId = flatSession.id;
+      clientSnapshot.flatSessionId = flatSession.id;
       this.flatSessionId = flatSession.id;
     }
 
     try {
-      writeFileSync(getDashboardUiStatePath(), JSON.stringify(snapshot, null, 2) + "\n");
+      writeFileSync(getDashboardUiStatePath(), JSON.stringify(sharedSnapshot, null, 2) + "\n");
+      writeFileSync(getDashboardClientUiStatePath(clientKey), JSON.stringify(clientSnapshot, null, 2) + "\n");
     } catch {}
   }
 
@@ -98,13 +110,11 @@ export class DashboardUiStateStore {
     state: DashboardState,
     dashSessions: DashboardSession[],
     hasWorktrees: boolean,
-    updateWorktreeSessions: () => void,
     activeIndex: number,
     setActiveIndex: (value: number) => void,
   ): void {
     if (!this.selectionNeedsRestore) return;
     if (hasWorktrees) {
-      updateWorktreeSessions();
       if (state.level === "sessions" && this.preferredSelection) {
         const preferredIndex = state.worktreeEntries.findIndex(
           (entry) => entry.kind === this.preferredSelection?.kind && entry.id === this.preferredSelection?.id,

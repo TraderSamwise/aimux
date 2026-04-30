@@ -23,13 +23,6 @@ import {
   serviceLabelForCommand as serviceLabelForCommandImpl,
   stopService as stopServiceImpl,
 } from "./services.js";
-import {
-  renderDashboardBusyOverlay,
-  renderDashboardErrorOverlay,
-  renderLabelInputOverlay,
-  renderNotificationPanel,
-  renderServiceInputOverlay,
-} from "../tui/screens/overlay-renderers.js";
 
 export const dashboardViewMethods = {
   serviceLabelForCommand(this: any, commandLine: string): string {
@@ -94,15 +87,6 @@ export const dashboardViewMethods = {
       const mainCheckoutInfo = this.dashboardMainCheckoutInfoCache;
 
       const hasWorktrees = worktreeGroups.length > 0;
-      this.dashboardState.worktreeNavOrder = [undefined, ...worktreeGroups.map((wt: any) => wt.path)];
-      if (!this.dashboardState.worktreeNavOrder.includes(this.dashboardState.focusedWorktreePath)) {
-        this.dashboardState.focusedWorktreePath = undefined;
-        this.dashboardUiStateStore.markSelectionDirty();
-      }
-      this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
-      if (hasWorktrees) {
-        this.updateWorktreeSessions();
-      }
 
       let selectedSession: string | undefined;
       let selectedService: string | undefined;
@@ -136,14 +120,6 @@ export const dashboardViewMethods = {
       );
       this.syncTuiNotificationContext(Boolean(this.notificationPanelState));
       this.writeFrame(this.dashboard.render(cols, rows));
-      if (!renderOptions?.skipPersist) {
-        this.persistDashboardUiState();
-      }
-      if (this.dashboardBusyState) {
-        this.renderDashboardBusyOverlay();
-      } else if (this.dashboardErrorState) {
-        this.renderDashboardErrorOverlay();
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.dashboardFeedback.clearBusy();
@@ -151,11 +127,7 @@ export const dashboardViewMethods = {
         title: "Dashboard render failed",
         lines: [message],
       };
-      this.lastRenderedFrame = "\x1b[2J\x1b[H";
-      process.stdout.write(this.lastRenderedFrame);
-      try {
-        this.renderDashboardErrorOverlay();
-      } catch {}
+      this.writeFrame("\x1b[2J\x1b[H", true);
     }
   },
 
@@ -174,7 +146,7 @@ export const dashboardViewMethods = {
   },
 
   renderServiceInput(this: any): void {
-    renderServiceInputOverlay(this);
+    this.redrawDashboardWithOverlay();
   },
 
   handleWorktreeInputKey(this: any, data: Buffer): void {
@@ -182,7 +154,7 @@ export const dashboardViewMethods = {
   },
 
   renderLabelInput(this: any): void {
-    renderLabelInputOverlay(this);
+    this.redrawDashboardWithOverlay();
   },
 
   showWorktreeList(this: any): void {
@@ -198,11 +170,11 @@ export const dashboardViewMethods = {
   },
 
   renderDashboardBusyOverlay(this: any): void {
-    renderDashboardBusyOverlay(this);
+    this.redrawDashboardWithOverlay();
   },
 
   renderDashboardErrorOverlay(this: any): void {
-    renderDashboardErrorOverlay(this);
+    this.redrawDashboardWithOverlay();
   },
 
   showNotificationPanel(this: any): void {
@@ -214,7 +186,7 @@ export const dashboardViewMethods = {
   },
 
   renderNotificationPanel(this: any): void {
-    renderNotificationPanel(this);
+    this.redrawDashboardWithOverlay();
   },
 
   handleNotificationPanelKey(this: any, data: Buffer): void {

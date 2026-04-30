@@ -9,6 +9,7 @@ import { TmuxSessionTransport } from "../tmux/session-transport.js";
 type RuntimeStateHost = any;
 
 export function renderCurrentDashboardView(host: RuntimeStateHost): void {
+  host.reconcileDashboardRenderState();
   if (host.isDashboardScreen("activity")) {
     host.renderActivityDashboard();
     return;
@@ -38,7 +39,6 @@ export function renderCurrentDashboardView(host: RuntimeStateHost): void {
     return;
   }
   host.renderDashboard();
-  host.renderActiveDashboardOverlay();
 }
 
 export function startStatusRefresh(host: RuntimeStateHost): void {

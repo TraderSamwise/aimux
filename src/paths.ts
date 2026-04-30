@@ -196,6 +196,10 @@ export function getDashboardUiStatePath(): string {
   return join(getProjectStateDir(), "dashboard-ui.json");
 }
 
+export function getDashboardClientUiStatePath(clientKey: string): string {
+  return join(getProjectStateDir(), `dashboard-ui-client-${clientKey}.json`);
+}
+
 // ── In-repo paths ({repoRoot}/.aimux/...) ──────────────────────────
 
 export function getLocalAimuxDir(): string {

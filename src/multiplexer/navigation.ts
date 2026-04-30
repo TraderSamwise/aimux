@@ -1,9 +1,9 @@
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { parseKeys } from "../key-parser.js";
 import {
-  renderHelpOverlay,
-  renderMigratePickerOverlay,
-  renderSwitcherOverlay,
+  buildHelpOverlayOutput,
+  buildMigratePickerOverlayOutput,
+  buildSwitcherOverlayOutput,
 } from "../tui/screens/overlay-renderers.js";
 
 type NavigationHost = any;
@@ -83,7 +83,11 @@ export function dismissHelp(host: NavigationHost): void {
 }
 
 export function renderHelp(host: NavigationHost): void {
-  renderHelpOverlay(host);
+  if (host.mode === "dashboard" && typeof host.writeFrame === "function") {
+    host.writeFrame(`\x1b[2J\x1b[H${buildHelpOverlayOutput(host)}`, true);
+    return;
+  }
+  process.stdout.write(buildHelpOverlayOutput(host));
 }
 
 export function handleHelpKey(host: NavigationHost, data: Buffer): void {
@@ -131,7 +135,11 @@ export function handleHelpKey(host: NavigationHost, data: Buffer): void {
 }
 
 export function renderSwitcher(host: NavigationHost): void {
-  renderSwitcherOverlay(host);
+  if (host.mode === "dashboard" && typeof host.redrawDashboardWithOverlay === "function") {
+    host.redrawDashboardWithOverlay();
+    return;
+  }
+  process.stdout.write(buildSwitcherOverlayOutput(host));
 }
 
 export function handleSwitcherKey(host: NavigationHost, data: Buffer): void {
@@ -190,7 +198,12 @@ export function showMigratePicker(host: NavigationHost): void {
 }
 
 export function renderMigratePicker(host: NavigationHost): void {
-  renderMigratePickerOverlay(host);
+  if (host.mode === "dashboard" && typeof host.redrawDashboardWithOverlay === "function") {
+    host.redrawDashboardWithOverlay();
+    return;
+  }
+  const output = buildMigratePickerOverlayOutput(host);
+  if (output) process.stdout.write(output);
 }
 
 export function handleMigratePickerKey(host: NavigationHost, data: Buffer): void {

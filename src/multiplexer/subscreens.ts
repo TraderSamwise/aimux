@@ -471,8 +471,17 @@ export function handleNotificationsKey(host: SubscreenHost, data: Buffer): void 
 }
 
 export function renderThreadReply(host: SubscreenHost): void {
+  if (host.mode === "dashboard" && typeof host.redrawDashboardWithOverlay === "function") {
+    host.redrawDashboardWithOverlay();
+    return;
+  }
+  const output = buildThreadReplyOverlayOutput(host);
+  if (output) process.stdout.write(output);
+}
+
+export function buildThreadReplyOverlayOutput(host: SubscreenHost): string | null {
   const entry = host.threadEntries[host.threadIndex];
-  if (!entry) return;
+  if (!entry) return null;
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const targets =
@@ -506,7 +515,7 @@ export function renderThreadReply(host: SubscreenHost): void {
     }
   }
   output += "\x1b8";
-  process.stdout.write(output);
+  return output;
 }
 
 export function describeHandoffState(_host: SubscreenHost, thread: OrchestrationThread): string {

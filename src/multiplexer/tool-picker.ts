@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 
 import { loadConfig, type ToolConfig } from "../config.js";
 import { parseKeys } from "../key-parser.js";
+import { forkDashboardAgentWithFeedback, spawnDashboardAgentWithFeedback } from "./dashboard-ops.js";
 
 type ToolPickerHost = any;
 
@@ -14,7 +15,7 @@ export function isToolAvailable(command: string): boolean {
   }
 }
 
-export function renderToolPicker(host: ToolPickerHost): void {
+export function buildToolPickerOverlayOutput(host: ToolPickerHost): string {
   const config = loadConfig();
   const tools = Object.entries(config.tools).filter(([, t]) => t.enabled);
 
@@ -50,7 +51,15 @@ export function renderToolPicker(host: ToolPickerHost): void {
     }
   }
   output += "\x1b8";
-  process.stdout.write(output);
+  return output;
+}
+
+export function renderToolPicker(host: ToolPickerHost): void {
+  if (host.mode === "dashboard" && typeof host.redrawDashboardWithOverlay === "function") {
+    host.redrawDashboardWithOverlay();
+    return;
+  }
+  process.stdout.write(buildToolPickerOverlayOutput(host));
 }
 
 export function runSelectedTool(host: ToolPickerHost, toolKey: string, tool: ToolConfig): void {
@@ -67,28 +76,21 @@ export function runSelectedTool(host: ToolPickerHost, toolKey: string, tool: Too
     const targetSessionId = host.generateDashboardSessionId(tool.command);
     const shouldRenderPending = host.startedInDashboard && host.mode === "dashboard";
     if (shouldRenderPending) {
-      host.setPendingDashboardSessionAction(targetSessionId, "forking");
-      host.renderDashboard();
-    }
-    void host
-      .forkAgent({
+      void forkDashboardAgentWithFeedback(host, {
         sourceSessionId,
-        targetToolConfigKey: toolKey,
         targetSessionId,
-        targetWorktreePath: wtPath,
-        open: false,
-      })
-      .then(() => {
-        if (shouldRenderPending) {
-          host.settleDashboardCreatePending(targetSessionId);
-        }
-      })
-      .catch((error: unknown) => {
-        if (shouldRenderPending) {
-          host.setPendingDashboardSessionAction(targetSessionId, null);
-        }
-        host.showDashboardError("Cannot fork session", [String(error)]);
+        tool: toolKey,
+        worktreePath: wtPath,
       });
+      return;
+    }
+    void host.forkAgent({
+      sourceSessionId,
+      targetToolConfigKey: toolKey,
+      targetSessionId,
+      targetWorktreePath: wtPath,
+      open: false,
+    });
     return;
   }
 
@@ -97,28 +99,24 @@ export function runSelectedTool(host: ToolPickerHost, toolKey: string, tool: Too
   const sessionId = host.generateDashboardSessionId(tool.command);
   const shouldRenderPending = host.startedInDashboard && host.mode === "dashboard";
   if (shouldRenderPending) {
-    host.setPendingDashboardSessionAction(sessionId, "creating");
-  }
-  try {
-    host.createSession(
-      tool.command,
-      tool.args,
-      tool.preambleFlag,
-      toolKey,
-      undefined,
-      tool.sessionIdFlag,
-      wtPath,
-      undefined,
+    void spawnDashboardAgentWithFeedback(host, {
       sessionId,
-      shouldRenderPending,
-    );
-    host.settleDashboardCreatePending(sessionId);
-  } catch (error) {
-    if (shouldRenderPending) {
-      host.setPendingDashboardSessionAction(sessionId, null);
-    }
-    throw error;
+      tool: toolKey,
+      worktreePath: wtPath,
+    });
+    return;
   }
+  host.createSession(
+    tool.command,
+    tool.args,
+    tool.preambleFlag,
+    toolKey,
+    undefined,
+    tool.sessionIdFlag,
+    wtPath,
+    undefined,
+    sessionId,
+  );
 }
 
 export function showToolPicker(host: ToolPickerHost, sourceSessionId?: string): void {

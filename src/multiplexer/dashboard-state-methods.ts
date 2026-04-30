@@ -26,6 +26,7 @@ export const dashboardStateMethods = {
 
   invalidateDashboardFrame(this: any): void {
     this.lastRenderedFrame = null;
+    this.lastRenderedBaseFrame = null;
   },
 
   getDashboardViewportTarget(this: any): string | null {
@@ -51,11 +52,43 @@ export const dashboardStateMethods = {
   },
 
   loadDashboardUiState(this: any): void {
-    this.dashboardUiStateStore.loadInto(this.dashboardState);
+    this.dashboardUiStateStore.loadInto(this.dashboardState, this.getDashboardUiClientKey());
   },
 
   persistDashboardUiState(this: any): void {
-    this.dashboardUiStateStore.persist(this.mode, this.dashboardState, this.activeIndex, this.getDashboardSessions());
+    this.dashboardUiStateStore.persist(
+      this.mode,
+      this.getDashboardUiClientKey(),
+      this.dashboardState,
+      this.activeIndex,
+      this.getDashboardSessions(),
+    );
+  },
+
+  getDashboardUiClientKey(this: any): string {
+    try {
+      const sessionName = this.tmuxRuntimeManager?.currentClientSession?.()?.trim();
+      if (sessionName) return sessionName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    } catch {}
+    const paneId = process.env.TMUX_PANE?.trim();
+    if (paneId) return `pane-${paneId.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    return "standalone";
+  },
+
+  reconcileDashboardRenderState(this: any): void {
+    const dashSessions = this.dashboardSessionsCache;
+    const worktreeGroups = this.dashboardWorktreeGroupsCache;
+    const hasWorktrees = worktreeGroups.length > 0;
+
+    this.dashboardState.worktreeNavOrder = worktreeGroups.map((wt: any) => wt.path);
+    if (!this.dashboardState.worktreeNavOrder.includes(this.dashboardState.focusedWorktreePath)) {
+      this.dashboardState.focusedWorktreePath = undefined;
+      this.dashboardUiStateStore.markSelectionDirty();
+    }
+    if (hasWorktrees) {
+      this.updateWorktreeSessions();
+    }
+    this.restoreDashboardSelectionFromPreference(dashSessions, hasWorktrees);
   },
 
   restoreDashboardSelectionFromPreference(this: any, dashSessions: DashboardSession[], hasWorktrees: boolean): void {
@@ -63,7 +96,6 @@ export const dashboardStateMethods = {
       this.dashboardState,
       dashSessions,
       hasWorktrees,
-      () => this.updateWorktreeSessions(),
       this.activeIndex,
       (value: number) => {
         this.activeIndex = value;
@@ -72,9 +104,31 @@ export const dashboardStateMethods = {
   },
 
   writeFrame(this: any, output: string, force = false): void {
+    if (this.mode === "dashboard") {
+      this.lastRenderedBaseFrame = output;
+      const overlayOutput = this.buildActiveDashboardOverlayOutput?.() ?? null;
+      const finalOutput = overlayOutput ? `${output}${overlayOutput}` : output;
+      if (!force && this.lastRenderedFrame === finalOutput) return;
+      process.stdout.write(finalOutput);
+      this.lastRenderedFrame = finalOutput;
+      return;
+    }
     if (!force && this.lastRenderedFrame === output) return;
     process.stdout.write(output);
     this.lastRenderedFrame = output;
+  },
+
+  redrawDashboardWithOverlay(this: any, force = true): void {
+    if (this.mode !== "dashboard") {
+      this.renderCurrentDashboardView();
+      return;
+    }
+    const base = this.lastRenderedBaseFrame ?? this.lastRenderedFrame;
+    if (!base) {
+      this.renderCurrentDashboardView();
+      return;
+    }
+    this.writeFrame(base, force);
   },
 
   getViewportSize(this: any): { cols: number; rows: number } {
@@ -142,7 +196,7 @@ export const dashboardStateMethods = {
   restoreDashboardAfterOverlayDismiss(this: any): void {
     this.invalidateDashboardFrame();
     if (this.mode === "dashboard") {
-      this.renderDashboard();
+      this.renderCurrentDashboardView();
     } else {
       this.focusSession(this.activeIndex);
     }
