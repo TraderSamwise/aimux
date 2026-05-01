@@ -311,6 +311,39 @@ function persistDashboardReturnSelection(
   });
 }
 
+function markActiveWindowFocused(
+  tmux: TmuxRuntimeManager,
+  projectRoot: string,
+  currentClientSession: string | undefined,
+  currentWindow: string | undefined,
+  currentWindowId: string | undefined,
+  tracker: AgentTracker,
+): boolean {
+  if (currentWindow && /^dashboard/.test(currentWindow)) {
+    updateNotificationContext("tui", {
+      focused: true,
+      screen: "dashboard",
+      panelOpen: false,
+      sessionId: undefined,
+    });
+    return true;
+  }
+  if (!currentWindowId) return false;
+  const match = tmux.listProjectManagedWindows(projectRoot).find((entry) => entry.target.windowId === currentWindowId);
+  if (!match) return false;
+  updateNotificationContext("tui", {
+    focused: true,
+    sessionId: match.metadata.sessionId,
+    panelOpen: false,
+  });
+  if (match.metadata.kind === "agent") {
+    tracker.markSeen(match.metadata.sessionId);
+    markNotificationsRead({ sessionId: match.metadata.sessionId });
+  }
+  markTargetUsed(tmux, projectRoot, match.target, currentClientSession, match.metadata.sessionId);
+  return true;
+}
+
 function markTargetUsed(
   tmux: TmuxRuntimeManager,
   projectRoot: string,
@@ -1059,6 +1092,38 @@ export class MetadataServer {
         }
         openTargetForClient(tmux, target, currentClientSession, clientTty);
         markTargetUsed(tmux, process.cwd(), target, currentClientSession);
+        send(res, 200, { ok: true });
+        return;
+      }
+
+      if ((req.method === "GET" || req.method === "POST") && url.pathname === "/control/active-window") {
+        const body =
+          req.method === "POST"
+            ? ((await readJson(req)) as {
+                currentClientSession?: string;
+                currentWindow?: string;
+                currentWindowId?: string;
+              })
+            : {};
+        const currentClientSession =
+          body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
+        const currentWindow = body.currentWindow?.trim() || url.searchParams.get("currentWindow")?.trim() || undefined;
+        const currentWindowId =
+          body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
+        const tmux = new TmuxRuntimeManager();
+        const ok = markActiveWindowFocused(
+          tmux,
+          process.cwd(),
+          currentClientSession,
+          currentWindow,
+          currentWindowId,
+          this.tracker,
+        );
+        if (!ok) {
+          send(res, 404, { ok: false, error: "window not found" });
+          return;
+        }
+        this.options.onChange?.();
         send(res, 200, { ok: true });
         return;
       }

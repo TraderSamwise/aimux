@@ -53,7 +53,7 @@ describe("session semantics", () => {
     expect(semantic.availability).toBe("available");
   });
 
-  it("produces compact hints for waiting-on-me and unread semantics", () => {
+  it("produces compact hints for waiting-on-me, thread unread, and raw new activity", () => {
     expect(
       sessionSemanticCompactHint(
         deriveSessionSemantics({
@@ -69,9 +69,19 @@ describe("session semantics", () => {
         deriveSessionSemantics({
           status: "idle",
           attention: "normal",
-          unseenCount: 3,
+          threadUnreadCount: 3,
         }),
       ),
     ).toBe("3 unread");
+
+    expect(
+      sessionSemanticCompactHint(
+        deriveSessionSemantics({
+          status: "idle",
+          attention: "normal",
+          unseenCount: 3,
+        }),
+      ),
+    ).toBe("3 new");
   });
 });

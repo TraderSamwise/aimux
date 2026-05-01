@@ -164,6 +164,17 @@ function renderActiveMetadata(
   currentPath?: string,
 ): string | null {
   if (currentWindow && isDashboardWindowName(currentWindow)) return null;
+  const activeSessionId = resolveExactCurrentSessionId(
+    data,
+    currentSession,
+    currentWindow,
+    currentWindowId,
+    currentPath,
+    projectRoot,
+  );
+  const activeSession = activeSessionId
+    ? (data.sessions ?? []).find((entry) => entry.id === activeSessionId)
+    : undefined;
   const metadata = resolveExactSessionMetadata(
     data,
     projectRoot,
@@ -179,6 +190,12 @@ function renderActiveMetadata(
   if (metadata.derived?.activity === "running") return "running";
   if (metadata.derived?.activity === "waiting") return "waiting";
   if (metadata.derived?.activity === "done") return "done";
+  if ((activeSession?.semantic?.threadUnreadCount ?? 0) > 0) {
+    return `${activeSession?.semantic?.threadUnreadCount} unread`;
+  }
+  if ((activeSession?.semantic?.eventUnseenCount ?? 0) > 0) {
+    return `new ${activeSession?.semantic?.eventUnseenCount}`;
+  }
   if ((metadata.derived?.unseenCount ?? 0) > 0) return `unseen ${metadata.derived?.unseenCount}`;
   if (metadata.status?.text) return trim(metadata.status.text, 28);
   if (metadata.progress && metadata.progress.total > 0) {
@@ -220,7 +237,7 @@ function renderTopLine(
 function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[number]): string {
   const identity = trim(compactSessionTitle(session), 18);
   const hint = renderSessionCompactHint(session);
-  const badge = hint?.includes(" unread") ? null : renderDerivedBadge(session.derived);
+  const badge = hint?.includes(" unread") || hint?.includes(" new") ? null : renderDerivedBadge(session.derived);
   const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 28);
   return session.isCurrent ? `#[fg=black,bg=yellow] ${label} #[default]` : label;
 }

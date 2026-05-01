@@ -213,6 +213,16 @@ describe("TmuxRuntimeManager", () => {
           call.args.includes("C-l"),
       ),
     ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "set-hook" &&
+          call.args[1] === "-t" &&
+          call.args[3] === "pane-focus-in" &&
+          call.args[4]?.includes("scripts/tmux-control.sh") &&
+          call.args[4]?.includes(" active "),
+      ),
+    ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-left")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-right")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-format[0]")).toBe(true);

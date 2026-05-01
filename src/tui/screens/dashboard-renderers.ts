@@ -95,7 +95,9 @@ export function renderDashboardFrame(
     const compactHint =
       compactHintValue && compactHintValue !== statusLabel ? ` \x1b[2m· ${compactHintValue}\x1b[0m` : "";
     const unseenBadge =
-      session.unseenCount && session.unseenCount > 0 && !(compactHintValue && /\bunread\b/i.test(compactHintValue))
+      session.unseenCount &&
+      session.unseenCount > 0 &&
+      !(compactHintValue && /\b(unread|new)\b/i.test(compactHintValue))
         ? ` \x1b[36m${session.unseenCount}\x1b[0m`
         : "";
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";

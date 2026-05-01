@@ -15,7 +15,7 @@ item_index=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    next|prev|attention|dashboard|inbox|menu|window)
+    next|prev|attention|dashboard|inbox|menu|window|active)
       action="$1"
       shift
       ;;
@@ -575,6 +575,9 @@ fallback_local_control() {
     menu)
       show_local_switcher
       ;;
+    active)
+      return 0
+      ;;
     next|prev|attention|window)
       target_window_id=$(resolve_local_target_from_tmux_metadata || resolve_local_target_from_statusline) || return 1
       target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; import sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
@@ -609,12 +612,13 @@ case "$action" in
   dashboard) path="/control/open-dashboard" ;;
   inbox) path="/control/open-inbox" ;;
   window) path="/control/focus-window" ;;
+  active) path="/control/active-window" ;;
   menu) path="" ;;
   *) exit 1 ;;
 esac
 
 case "$action" in
-  next|prev|attention|dashboard|inbox|menu|window)
+  next|prev|attention|dashboard|inbox|menu|window|active)
     fallback_local_control && exit 0
     ;;
 esac

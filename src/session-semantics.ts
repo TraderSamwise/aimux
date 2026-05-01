@@ -10,6 +10,8 @@ export interface SessionSemanticState {
   availability: SessionAvailability;
   workflowState: SessionWorkflowState;
   unreadCount: number;
+  eventUnseenCount: number;
+  threadUnreadCount: number;
   pendingDeliveryCount: number;
   waitingOnMeCount: number;
   waitingOnThemCount: number;
@@ -35,7 +37,9 @@ export interface DeriveSessionSemanticsInput {
 
 export function deriveSessionSemantics(input: DeriveSessionSemanticsInput): SessionSemanticState {
   const attention = input.attention ?? "normal";
-  const unreadCount = Math.max(0, input.unseenCount ?? 0, input.threadUnreadCount ?? 0);
+  const eventUnseenCount = Math.max(0, input.unseenCount ?? 0);
+  const threadUnreadCount = Math.max(0, input.threadUnreadCount ?? 0);
+  const unreadCount = Math.max(0, eventUnseenCount, threadUnreadCount);
   const pendingDeliveryCount = Math.max(0, input.threadPendingCount ?? 0);
   const waitingOnMeCount = Math.max(0, input.threadWaitingOnMeCount ?? 0, input.workflowOnMeCount ?? 0);
   const waitingOnThemCount = Math.max(0, input.threadWaitingOnThemCount ?? 0);
@@ -80,6 +84,8 @@ export function deriveSessionSemantics(input: DeriveSessionSemanticsInput): Sess
     availability,
     workflowState,
     unreadCount,
+    eventUnseenCount,
+    threadUnreadCount,
     pendingDeliveryCount,
     waitingOnMeCount,
     waitingOnThemCount,
@@ -122,7 +128,8 @@ export function sessionSemanticCompactHint(semantic: SessionSemanticState): stri
   if (semantic.workflowState === "blocked" || semantic.attention === "blocked") return "blocked";
   if (semantic.workflowState === "waiting_on_me" || semantic.availability === "needs_input") return "on you";
   if (semantic.workflowState === "waiting_on_them") return "on them";
-  if (semantic.unreadCount > 0) return `${Math.min(semantic.unreadCount, 99)} unread`;
+  if (semantic.threadUnreadCount > 0) return `${Math.min(semantic.threadUnreadCount, 99)} unread`;
+  if (semantic.eventUnseenCount > 0) return `${Math.min(semantic.eventUnseenCount, 99)} new`;
   if (semantic.pendingDeliveryCount > 0) return `${Math.min(semantic.pendingDeliveryCount, 99)} pending`;
   if (semantic.hasActiveTask && semantic.availability === "available") return "task";
   return null;

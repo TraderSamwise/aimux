@@ -790,6 +790,13 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "copy-command", "pbcopy"]);
     this.exec(["set-option", "-t", sessionName, "repeat-time", "300"]);
     this.exec(["set-option", "-t", sessionName, "focus-events", "on"]);
+    this.exec([
+      "set-hook",
+      "-t",
+      sessionName,
+      "pane-focus-in",
+      `run-shell -b ${shellQuote(`${controlScript} active --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`)}`,
+    ]);
     this.exec(["set-option", "-t", sessionName, "bell-action", "none"]);
     this.exec(["set-window-option", "-t", sessionName, "monitor-bell", "off"]);
     this.exec(["set-option", "-t", sessionName, "extended-keys", MANAGED_TMUX_SESSION_OPTIONS.extendedKeys]);
