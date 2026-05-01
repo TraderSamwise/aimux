@@ -31,4 +31,56 @@ describe("DashboardPendingActions", () => {
       }),
     ]);
   });
+
+  it("keeps stopping session rows visible while waiting for offline state", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.set("claude-1", "stopping", {
+      sessionSeed: {
+        index: -1,
+        id: "claude-1",
+        command: "claude",
+        label: "claude",
+        status: "running",
+        active: false,
+        worktreePath: "/repo/.aimux/worktrees/demo",
+      },
+    });
+
+    const sessions = pending.applyToSessions([]);
+
+    expect(sessions).toEqual([
+      expect.objectContaining({
+        id: "claude-1",
+        status: "running",
+        pendingAction: "stopping",
+        optimistic: true,
+      }),
+    ]);
+  });
+
+  it("keeps stopping service rows visible while waiting for offline state", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.set("service-1", "stopping", {
+      serviceSeed: {
+        id: "service-1",
+        command: "shell",
+        args: [],
+        label: "shell",
+        status: "running",
+        active: false,
+        worktreePath: "/repo/.aimux/worktrees/demo",
+      },
+    });
+
+    const services = pending.applyToServices([]);
+
+    expect(services).toEqual([
+      expect.objectContaining({
+        id: "service-1",
+        status: "running",
+        pendingAction: "stopping",
+        optimistic: true,
+      }),
+    ]);
+  });
 });

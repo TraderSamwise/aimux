@@ -35,6 +35,7 @@ function buildPendingSessionSeed(input: {
 interface DashboardSessionMutationOptions {
   sessionId: string;
   pendingAction: "creating" | "forking" | "starting" | "stopping" | "graveyarding";
+  sessionSeed?: DashboardSession;
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
   onBeforeRequest?: () => void;
@@ -47,6 +48,7 @@ interface DashboardSessionMutationOptions {
 interface DashboardServiceMutationOptions {
   serviceId: string;
   pendingAction: "starting" | "stopping" | "removing";
+  serviceSeed?: any;
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
   onBeforeRequest?: () => void;
@@ -170,7 +172,7 @@ async function runDashboardSessionMutation(
   host: DashboardOpsHost,
   opts: DashboardSessionMutationOptions,
 ): Promise<void> {
-  host.setPendingDashboardSessionAction(opts.sessionId, opts.pendingAction);
+  host.setPendingDashboardSessionAction(opts.sessionId, opts.pendingAction, { sessionSeed: opts.sessionSeed });
   opts.onBeforeRequest?.();
   host.renderDashboard();
   try {
@@ -194,7 +196,7 @@ async function runDashboardServiceMutation(
   host: DashboardOpsHost,
   opts: DashboardServiceMutationOptions,
 ): Promise<void> {
-  host.setPendingDashboardSessionAction(opts.serviceId, opts.pendingAction);
+  host.setPendingDashboardSessionAction(opts.serviceId, opts.pendingAction, { serviceSeed: opts.serviceSeed });
   opts.onBeforeRequest?.();
   host.renderDashboard();
   try {
@@ -312,7 +314,7 @@ export function setPendingDashboardSessionAction(
   host: DashboardOpsHost,
   sessionId: string,
   kind: any,
-  opts?: { sessionSeed?: DashboardSession },
+  opts?: { sessionSeed?: DashboardSession; serviceSeed?: any },
 ): void {
   host.dashboardPendingActions.set(sessionId, kind, opts);
   if (typeof host.reapplyDashboardPendingActions === "function") {
@@ -323,9 +325,21 @@ export function setPendingDashboardSessionAction(
 export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
   if (host.mode === "dashboard") {
     const label = host.getSessionLabel(session.id) ?? session.label ?? session.command;
+    const sessionSeed =
+      host.getDashboardSessions?.().find((entry: any) => entry.id === session.id) ??
+      ({
+        index: -1,
+        id: session.id,
+        command: session.command,
+        label,
+        status: "running",
+        active: false,
+        worktreePath: session.worktreePath,
+      } satisfies DashboardSession);
     await runDashboardSessionMutation(host, {
       sessionId: session.id,
       pendingAction: "stopping",
+      sessionSeed,
       onBeforeRequest: () => {
         host.footerFlash = `Stopping ${label}`;
         host.footerFlashTicks = 3;
@@ -333,8 +347,7 @@ export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, s
       request: async () => {
         await host.postToProjectService("/agents/stop", { sessionId: session.id }, { timeoutMs: 10_000 });
       },
-      settle: () =>
-        waitForRenderedDashboardSessionState(host, session.id, (entry) => !entry || entry.status === "offline"),
+      settle: () => waitForRenderedDashboardSessionState(host, session.id, (entry) => entry?.status === "offline"),
       successFlash: { message: `Stopped ${label}` },
       onError: () => host.refreshDashboardModelFromService(true),
       errorTitle: `Failed to stop "${label}"`,
@@ -575,9 +588,18 @@ export async function stopDashboardServiceWithFeedback(
   host: DashboardOpsHost,
   service: { id: string; label?: string },
 ): Promise<void> {
+  const serviceSeed = host.getDashboardServices?.().find((entry: any) => entry.id === service.id) ?? {
+    id: service.id,
+    command: service.label ?? "service",
+    args: [],
+    status: "running",
+    active: false,
+    label: service.label,
+  };
   await runDashboardServiceMutation(host, {
     serviceId: service.id,
     pendingAction: "stopping",
+    serviceSeed,
     onBeforeRequest: () => {
       host.footerFlash = `Stopping ${service.label ?? service.id}`;
       host.footerFlashTicks = 3;
@@ -585,8 +607,7 @@ export async function stopDashboardServiceWithFeedback(
     request: async () => {
       await host.postToProjectService("/services/stop", { serviceId: service.id }, { timeoutMs: 10_000 });
     },
-    settle: () =>
-      waitForRenderedDashboardServiceState(host, service.id, (entry) => !entry || entry.status === "offline"),
+    settle: () => waitForRenderedDashboardServiceState(host, service.id, (entry) => entry?.status === "offline"),
     successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
     onError: () => host.refreshDashboardModelFromService(true),
     errorTitle: "Failed to stop service",

@@ -17,6 +17,16 @@ interface PendingActionEntry {
   serviceSeed?: DashboardService;
 }
 
+function canSynthesizeMissingSession(
+  kind: PendingDashboardActionKind,
+): kind is "creating" | "forking" | "starting" | "stopping" {
+  return kind === "creating" || kind === "forking" || kind === "starting" || kind === "stopping";
+}
+
+function canSynthesizeMissingService(kind: PendingDashboardActionKind): kind is "creating" | "starting" | "stopping" {
+  return kind === "creating" || kind === "starting" || kind === "stopping";
+}
+
 export class DashboardPendingActions {
   private actions = new Map<string, PendingActionEntry>();
   private version = 0;
@@ -84,7 +94,7 @@ export class DashboardPendingActions {
     for (const [sessionId, entry] of this.actions.entries()) {
       if (seen.has(sessionId)) continue;
       if (!entry.sessionSeed) continue;
-      if (entry.kind !== "creating" && entry.kind !== "forking") continue;
+      if (!canSynthesizeMissingSession(entry.kind)) continue;
       applied.push({
         ...entry.sessionSeed,
         id: sessionId,
@@ -108,7 +118,7 @@ export class DashboardPendingActions {
     for (const [serviceId, entry] of this.actions.entries()) {
       if (seen.has(serviceId)) continue;
       if (!entry.serviceSeed) continue;
-      if (entry.kind !== "creating") continue;
+      if (!canSynthesizeMissingService(entry.kind)) continue;
       applied.push({
         ...entry.serviceSeed,
         id: serviceId,

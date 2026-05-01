@@ -356,18 +356,7 @@ export const persistenceMethods = {
       throw new Error(`Worktree "${matching.name}" is already in the graveyard`);
     }
 
-    const attachedLiveService = this.buildLiveServiceStates().find((service: any) => service.worktreePath === path);
-    if (attachedLiveService) {
-      throw new Error(
-        `Cannot graveyard "${matching.name}" while service "${attachedLiveService.label || attachedLiveService.id}" is attached`,
-      );
-    }
-    const attachedOfflineService = this.offlineServices.find((service: any) => service.worktreePath === path);
-    if (attachedOfflineService) {
-      throw new Error(
-        `Cannot graveyard "${matching.name}" while service "${attachedOfflineService.label || attachedOfflineService.id}" is attached`,
-      );
-    }
+    detachWorktreeServices(this, path);
 
     const liveSessions = this.sessions.filter(
       (session: any) =>
@@ -685,12 +674,7 @@ export const persistenceMethods = {
             `Cannot remove "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
           );
         }
-        const attachedService = this.buildLiveServiceStates().find((service: any) => service.worktreePath === path);
-        if (attachedService) {
-          throw new Error(
-            `Cannot remove "${matching.name}" while service "${attachedService.label || attachedService.id}" is attached`,
-          );
-        }
+        detachWorktreeServices(this, path);
 
         await new Promise<void>((resolve, reject) => {
           let stderr = "";
@@ -898,4 +882,27 @@ async function removeOrphanedDesktopWorktree(host: any, mainRepo: string, path: 
   host.offlineSessions = host.offlineSessions.filter((session: any) => session.worktreePath !== path);
   host.offlineServices = host.offlineServices.filter((service: any) => service.worktreePath !== path);
   host.saveState();
+}
+
+function detachWorktreeServices(host: any, path: string): void {
+  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+    if (metadata.kind !== "service" || metadata.worktreePath !== path) continue;
+    try {
+      host.tmuxRuntimeManager.killWindow(target);
+    } catch {}
+  }
+
+  host.offlineServices = host.offlineServices.filter((service: any) => service.worktreePath !== path);
+  removePersistedServicesForWorktree(path);
+}
+
+function removePersistedServicesForWorktree(path: string): void {
+  const statePath = getStatePath();
+  if (!existsSync(statePath)) return;
+  try {
+    const state = JSON.parse(readFileSync(statePath, "utf-8")) as { services?: Array<{ worktreePath?: string }> };
+    const nextServices = (state.services ?? []).filter((service) => service.worktreePath !== path);
+    if (nextServices.length === (state.services ?? []).length) return;
+    writeFileSync(statePath, JSON.stringify({ ...state, services: nextServices }, null, 2) + "\n");
+  } catch {}
 }

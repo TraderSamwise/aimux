@@ -73,7 +73,7 @@ describe("dashboard-ops", () => {
   });
 
   it("stops a service through the project service in dashboard mode and waits for offline render state", async () => {
-    const services = [[{ id: "svc-1", status: "running" }], [{ id: "svc-1", status: "offline" }]];
+    const services = [[{ id: "svc-1", status: "running" }], [], [{ id: "svc-1", status: "offline" }]];
     let serviceIndex = 0;
     const host = {
       dashboardPendingActions: new Map<string, string | null>(),
@@ -138,10 +138,7 @@ describe("dashboard-ops", () => {
 
   it("stops an agent through the project service in dashboard mode and waits for offline render state", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
-    const sessions = [
-      { ...session, status: "running" },
-      { ...session, status: "offline" },
-    ];
+    const sessions = [[{ ...session, status: "running" }], [], [{ ...session, status: "offline" }]];
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
@@ -158,7 +155,7 @@ describe("dashboard-ops", () => {
         sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
         return true;
       }),
-      getDashboardSessions: vi.fn(() => [sessions[sessionIndex]]),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
       showDashboardError: vi.fn(),
     };
 
