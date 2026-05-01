@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { classifyToolPane, deriveObservation, extractLocalServices } from "./tool-output-watchers.js";
 
 describe("classifyToolPane", () => {
-  it("does not treat generic tool prompts as needs-input signals", () => {
+  it("detects Codex prompt panes as needs-input signals", () => {
     const classified = classifyToolPane("codex", ["Some output", "", "› Find and fix a bug in @filename"].join("\n"));
-    expect(classified.promptVisible).toBe(false);
+    expect(classified.promptVisible).toBe(true);
     expect(classified.errorVisible).toBe(false);
   });
 
@@ -94,7 +94,7 @@ describe("deriveObservation", () => {
     expect(observation?.event).toBeUndefined();
   });
 
-  it("does not emit generic prompt-based completion or needs-input events", () => {
+  it("does not treat plain shell chevrons as Codex needs-input prompts", () => {
     const { observation } = deriveObservation("codex-1", "codex", ["output", "", "> "].join("\n"), {
       fingerprint: "prev",
       promptVisible: false,
@@ -104,7 +104,54 @@ describe("deriveObservation", () => {
       lastAppliedAttention: "normal",
     });
 
-    expect(observation).toBeUndefined();
+    expect(observation).toMatchObject({
+      activity: "running",
+      attention: "normal",
+    });
+    expect(observation?.event).toBeUndefined();
+  });
+
+  it("emits Codex prompt-based needs-input events for Codex prompt glyphs", () => {
+    const { observation } = deriveObservation(
+      "codex-1",
+      "codex",
+      ["output", "", "› Explain this codebase"].join("\n"),
+      {
+        fingerprint: "prev",
+        promptVisible: false,
+        errorVisible: false,
+        lastObservedAt: Date.now() - 1000,
+        lastAppliedActivity: "running",
+        lastAppliedAttention: "normal",
+      },
+    );
+
+    expect(observation).toMatchObject({
+      activity: "waiting",
+      attention: "needs_input",
+      event: {
+        kind: "needs_input",
+        message: "Ready for input",
+        source: "codex",
+        tone: "warn",
+      },
+    });
+  });
+
+  it("clears Codex needs-input attention when the prompt disappears", () => {
+    const { observation } = deriveObservation("codex-1", "codex", "Working (1s · esc to interrupt)", {
+      fingerprint: "prev",
+      promptVisible: true,
+      errorVisible: false,
+      lastObservedAt: Date.now() - 1000,
+      lastAppliedActivity: "waiting",
+      lastAppliedAttention: "needs_input",
+    });
+
+    expect(observation).toMatchObject({
+      activity: "running",
+      attention: "normal",
+    });
   });
 
   it("clears stale generic error attention when pane recovers", () => {
@@ -120,7 +167,7 @@ describe("deriveObservation", () => {
     expect(observation).toMatchObject({
       attention: "normal",
     });
-    expect(observation?.activity).toBeUndefined();
+    expect(observation?.activity).toBe("running");
   });
 
   it("keeps Claude on the explicit needs_input path", () => {

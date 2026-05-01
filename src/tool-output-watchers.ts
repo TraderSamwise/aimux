@@ -63,8 +63,24 @@ function classifyActiveTailError(text: string): { errorVisible: boolean; interru
   return { errorVisible: true, interruptedVisible };
 }
 
-function usesExplicitCompletionHooks(tool: string): boolean {
-  return tool.trim().toLowerCase() === "claude";
+function tracksPromptReadiness(tool: string): boolean {
+  const normalizedTool = tool.trim().toLowerCase();
+  return normalizedTool === "claude" || normalizedTool === "codex";
+}
+
+function hasToolInputPrompt(tool: string, text: string, lastLine: string): boolean {
+  const normalizedTool = tool.trim().toLowerCase();
+  if (normalizedTool === "codex") {
+    return /^\s*[›❯]\s?.*$/.test(lastLine) || /use \/skills to list available skills/i.test(text);
+  }
+  if (normalizedTool === "claude") {
+    return (
+      /^\s*[›>❯]\s?.*$/.test(lastLine) ||
+      /use \/skills to list available skills/i.test(text) ||
+      /find and fix a bug in @filename/i.test(text)
+    );
+  }
+  return false;
 }
 
 function classifyToolUpdatePrompt(
@@ -115,15 +131,8 @@ export function classifyToolPane(
 } {
   const lastLine = lastMeaningfulLine(text);
   const { errorVisible, interruptedVisible } = classifyActiveTailError(text);
-  const explicitPromptTool = usesExplicitCompletionHooks(tool);
   const { updatePromptVisible, blockedMessage } = classifyToolUpdatePrompt(tool, text);
-  const promptVisible =
-    !updatePromptVisible &&
-    explicitPromptTool &&
-    (/^\s*[›>❯]\s?.*$/.test(lastLine) ||
-      /use \/skills to list available skills/i.test(text) ||
-      /find and fix a bug in @filename/i.test(text));
-  void tool;
+  const promptVisible = !updatePromptVisible && tracksPromptReadiness(tool) && hasToolInputPrompt(tool, text, lastLine);
   return { promptVisible, errorVisible, interruptedVisible, updatePromptVisible, blockedMessage };
 }
 
@@ -188,7 +197,7 @@ export function deriveObservation(
       };
     }
     if (!errorVisible && previous?.lastAppliedAttention === "error") {
-      if (usesExplicitCompletionHooks(tool)) {
+      if (tracksPromptReadiness(tool)) {
         if (promptVisible) {
           next.lastAppliedActivity = "waiting";
           next.lastAppliedAttention = "needs_input";
@@ -252,6 +261,19 @@ export function deriveObservation(
         },
       };
     }
+    if (!promptVisible && previous?.promptVisible && previous.lastAppliedAttention === "needs_input") {
+      next.lastAppliedActivity = "running";
+      next.lastAppliedAttention = "normal";
+      return {
+        snapshot: next,
+        observation: {
+          sessionId,
+          tool,
+          activity: "running",
+          attention: "normal",
+        },
+      };
+    }
     if (promptVisible) {
       next.lastAppliedActivity = "waiting";
       next.lastAppliedAttention = "needs_input";
@@ -282,7 +304,7 @@ export function deriveObservation(
         },
       };
     }
-    if (usesExplicitCompletionHooks(tool)) {
+    if (tracksPromptReadiness(tool)) {
       next.lastAppliedActivity = "running";
       next.lastAppliedAttention = "normal";
       return {
