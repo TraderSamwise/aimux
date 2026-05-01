@@ -85,7 +85,15 @@ export interface DashboardService {
   foregroundCommand?: string;
   pid?: number;
   previewLine?: string;
-  pendingAction?: "creating" | "forking" | "migrating" | "starting" | "stopping" | "graveyarding" | "renaming";
+  pendingAction?:
+    | "creating"
+    | "forking"
+    | "migrating"
+    | "starting"
+    | "stopping"
+    | "graveyarding"
+    | "renaming"
+    | "removing";
   optimistic?: boolean;
 }
 

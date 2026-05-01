@@ -34,7 +34,7 @@ function buildPendingSessionSeed(input: {
 
 interface DashboardSessionMutationOptions {
   sessionId: string;
-  pendingAction: "creating" | "forking" | "starting" | "stopping" | "graveyarding";
+  pendingAction: "creating" | "forking" | "migrating" | "starting" | "stopping" | "graveyarding";
   sessionSeed?: DashboardSession;
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
@@ -521,9 +521,21 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
     if (host.dashboardPendingActions.get(session.id) === "starting") {
       return;
     }
+    const sessionSeed =
+      host.getDashboardSessions?.().find((entry: any) => entry.id === session.id) ??
+      ({
+        index: -1,
+        id: session.id,
+        command: session.command,
+        label,
+        status: "offline",
+        active: false,
+        worktreePath: session.worktreePath,
+      } satisfies DashboardSession);
     await runDashboardSessionMutation(host, {
       sessionId: session.id,
       pendingAction: "starting",
+      sessionSeed,
       onBeforeRequest: () => {
         host.footerFlash = `Restoring ${label}`;
         host.footerFlashTicks = 3;
@@ -549,9 +561,18 @@ export async function resumeOfflineServiceWithFeedback(
     return;
   }
   if (host.mode === "dashboard") {
+    const serviceSeed = host.getDashboardServices?.().find((entry: any) => entry.id === service.id) ?? {
+      id: service.id,
+      command: service.label ?? "service",
+      args: [],
+      status: "offline",
+      active: false,
+      label: service.label,
+    };
     await runDashboardServiceMutation(host, {
       serviceId: service.id,
       pendingAction: "starting",
+      serviceSeed,
       onBeforeRequest: () => {
         host.footerFlash = `Restoring ${service.label ?? service.id}`;
         host.footerFlashTicks = 3;
@@ -684,8 +705,8 @@ export async function migrateSessionWithFeedback(
   targetName: string,
 ): Promise<void> {
   const label = host.getSessionLabel(session.id) ?? session.command;
-  host.setPendingDashboardSessionAction(session.id, "migrating");
-  void (async () => {
+  if (host.mode !== "dashboard") {
+    host.setPendingDashboardSessionAction(session.id, "migrating");
     try {
       await host.migrateAgent(session.id, targetPath);
       await waitForSessionExit(session);
@@ -698,5 +719,29 @@ export async function migrateSessionWithFeedback(
       host.setPendingDashboardSessionAction(session.id, null);
       host.showDashboardError(`Failed to migrate "${label}"`, [error instanceof Error ? error.message : String(error)]);
     }
-  })();
+    return;
+  }
+  const sessionSeed =
+    host.getDashboardSessions?.().find((entry: any) => entry.id === session.id) ??
+    ({
+      index: -1,
+      id: session.id,
+      command: session.command,
+      label,
+      status: "running",
+      active: false,
+      worktreePath: session.worktreePath,
+    } satisfies DashboardSession);
+  await runDashboardSessionMutation(host, {
+    sessionId: session.id,
+    pendingAction: "migrating",
+    sessionSeed,
+    request: async () => {
+      await host.migrateAgent(session.id, targetPath);
+    },
+    settle: () => waitForDashboardSessionResumeSettle(host, session.id),
+    successFlash: { message: `Migrated ${label} to ${targetName}` },
+    onError: () => host.refreshDashboardModelFromService(true),
+    errorTitle: `Failed to migrate "${label}"`,
+  });
 }

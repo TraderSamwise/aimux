@@ -68,6 +68,125 @@ describe("dashboardInteractionMethods", () => {
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
+  it("blocks activating an entry inside a graveyarding worktree", () => {
+    const host: any = {
+      dashboardState: {
+        worktreeEntries: [{ kind: "session", id: "claude-1" }],
+        sessionIndex: 0,
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+      },
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          pendingAction: "graveyarding",
+          sessions: [],
+          services: [],
+        },
+      ],
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+      getDashboardServices: vi.fn(() => []),
+      dashboardStateHasWorktrees: true,
+    };
+
+    dashboardInteractionMethods.activateSelectedDashboardWorktreeEntry.call(host);
+
+    expect(host.footerFlash).toBe("Worktree demo is graveyarding");
+    expect(host.footerFlashTicks).toBe(3);
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+  });
+
+  it("blocks activating entries with terminal pending actions", async () => {
+    const entry = {
+      id: "codex-1",
+      status: "running",
+      pendingAction: "stopping",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          sessions: [],
+          services: [],
+        },
+      ],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
+
+    expect(host.preferDashboardEntrySelection).not.toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).not.toHaveBeenCalled();
+  });
+
+  it("blocks activating services with terminal pending actions", async () => {
+    const service = {
+      id: "service-1",
+      status: "running",
+      pendingAction: "stopping",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          sessions: [],
+          services: [],
+        },
+      ],
+      waitAndOpenLiveTmuxWindowForService: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.activateDashboardService.call(host, service);
+
+    expect(host.preferDashboardEntrySelection).not.toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForService).not.toHaveBeenCalled();
+  });
+
+  it("does not stop or remove entries that are already pending", () => {
+    const entry = {
+      id: "codex-1",
+      kind: "session",
+      status: "running",
+      pendingAction: "stopping",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "session", id: "codex-1" }],
+        worktreeSessions: [entry],
+        sessionIndex: 0,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      getSelectedDashboardServiceForActions: vi.fn(() => null),
+      getDashboardSessions: vi.fn(() => [entry]),
+      sessions: [{ id: "codex-1" }],
+      dashboardWorktreeGroupsCache: [],
+      stopSessionToOfflineWithFeedback: vi.fn(),
+      graveyardSessionWithFeedback: vi.fn(),
+      isSessionRuntimeLive: vi.fn(() => true),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+
+    expect(host.stopSessionToOfflineWithFeedback).not.toHaveBeenCalled();
+    expect(host.graveyardSessionWithFeedback).not.toHaveBeenCalled();
+  });
+
   it("waits briefly for a live agent window to become enterable", async () => {
     const entry = {
       id: "codex-1",

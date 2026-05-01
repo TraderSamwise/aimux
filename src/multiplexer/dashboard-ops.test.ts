@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   forkDashboardAgentWithFeedback,
   graveyardSessionWithFeedback,
+  migrateSessionWithFeedback,
   removeDashboardServiceWithFeedback,
   resumeOfflineSessionWithFeedback,
   resumeOfflineServiceWithFeedback,
@@ -12,10 +13,7 @@ import {
 
 describe("dashboard-ops", () => {
   it("shows optimistic starting state and clears it on successful service resume", async () => {
-    const services = [
-      [{ id: "svc-1", status: "offline", pendingAction: "starting" }],
-      [{ id: "svc-1", status: "running" }],
-    ];
+    const services = [[], [{ id: "svc-1", status: "running" }]];
     let serviceIndex = 0;
     const host = {
       mode: "dashboard",
@@ -173,10 +171,7 @@ describe("dashboard-ops", () => {
 
   it("resumes an offline agent through the project service in dashboard mode and waits for the rendered row", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
-    const sessions = [
-      [{ ...session, status: "offline", pendingAction: "starting" }],
-      [{ ...session, status: "waiting" }],
-    ];
+    const sessions = [[], [{ ...session, status: "waiting" }]];
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
@@ -265,6 +260,38 @@ describe("dashboard-ops", () => {
 
     expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Started service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("keeps migrate pending until the migrated row is live", async () => {
+    const session = { id: "sess-1", command: "codex", label: "codex", status: "running" };
+    const sessions = [[session], [], [{ ...session, status: "running", pid: 77545, foregroundCommand: "codex" }]];
+    let sessionIndex = 0;
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        this.dashboardPendingActions.set(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      getSessionLabel: vi.fn(() => "codex"),
+      migrateAgent: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      refreshLocalDashboardModel: vi.fn(),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await migrateSessionWithFeedback(host, session, "/repo/.aimux/worktrees/demo", "demo");
+
+    expect(host.migrateAgent).toHaveBeenCalledWith("sess-1", "/repo/.aimux/worktrees/demo");
+    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Migrated codex to demo");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 

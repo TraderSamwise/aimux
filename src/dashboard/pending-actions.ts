@@ -19,8 +19,10 @@ interface PendingActionEntry {
 
 function canSynthesizeMissingSession(
   kind: PendingDashboardActionKind,
-): kind is "creating" | "forking" | "starting" | "stopping" {
-  return kind === "creating" || kind === "forking" || kind === "starting" || kind === "stopping";
+): kind is "creating" | "forking" | "migrating" | "starting" | "stopping" {
+  return (
+    kind === "creating" || kind === "forking" || kind === "migrating" || kind === "starting" || kind === "stopping"
+  );
 }
 
 function canSynthesizeMissingService(kind: PendingDashboardActionKind): kind is "creating" | "starting" | "stopping" {
@@ -147,13 +149,25 @@ export class DashboardPendingActions {
     });
   }
 
-  settleCreatePending(itemId: string, onSettled: () => void): void {
+  settleCreatePending(
+    itemId: string,
+    onSettled: () => void,
+    opts?: { isSettled?: () => boolean | Promise<boolean>; timeoutMs?: number },
+  ): void {
     const minVisibleMs = 250;
+    const timeoutMs = opts?.timeoutMs ?? 10_000;
     const startedAt = Date.now();
     void (async () => {
       const remaining = minVisibleMs - (Date.now() - startedAt);
       if (remaining > 0) {
         await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
+      if (opts?.isSettled) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (await opts.isSettled()) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
       }
       this.set(itemId, null);
       onSettled();

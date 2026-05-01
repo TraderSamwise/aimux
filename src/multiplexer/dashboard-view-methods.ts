@@ -36,10 +36,29 @@ export const dashboardViewMethods = {
 
   settleDashboardCreatePending(this: any, itemId: string): void {
     if (!(this.startedInDashboard && this.mode === "dashboard")) return;
-    this.dashboardPendingActions.settleCreatePending(itemId, () => {
-      this.refreshLocalDashboardModel();
-      this.renderDashboard();
-    });
+    this.dashboardPendingActions.settleCreatePending(
+      itemId,
+      () => {
+        this.refreshLocalDashboardModel();
+        this.renderDashboard();
+      },
+      {
+        isSettled: async () => {
+          if (typeof this.refreshDashboardModelFromService === "function") {
+            await this.refreshDashboardModelFromService(true);
+          }
+          if (itemId.startsWith("worktree:")) {
+            const path = itemId.slice("worktree:".length);
+            const group = this.dashboardWorktreeGroupsCache?.find((entry: any) => entry.path === path);
+            return Boolean(group) && group.pendingAction !== "creating" && group.pending !== true;
+          }
+          const service = this.getDashboardServices?.().find((entry: any) => entry.id === itemId);
+          if (service) return service.pendingAction !== "creating";
+          const session = this.getDashboardSessions?.().find((entry: any) => entry.id === itemId);
+          return Boolean(session) && session.pendingAction !== "creating";
+        },
+      },
+    );
   },
 
   preferDashboardEntrySelection(this: any, kind: "session" | "service", id: string, worktreePath?: string): void {

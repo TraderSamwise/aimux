@@ -13,7 +13,11 @@ function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | n
     entry?.pendingAction === "creating" ||
     entry?.pendingAction === "forking" ||
     entry?.pendingAction === "migrating" ||
-    entry?.pendingAction === "starting"
+    entry?.pendingAction === "starting" ||
+    entry?.pendingAction === "stopping" ||
+    entry?.pendingAction === "graveyarding" ||
+    entry?.pendingAction === "renaming" ||
+    entry?.pendingAction === "removing"
   );
 }
 
@@ -22,11 +26,12 @@ function findDashboardWorktreeGroup(host: any, worktreePath: string | undefined)
 }
 
 function isRemovingDashboardWorktree(group: any | undefined): boolean {
-  return Boolean(group?.removing || group?.pendingAction === "removing");
+  return Boolean(group?.removing || group?.pendingAction === "removing" || group?.pendingAction === "graveyarding");
 }
 
 function blockedRemovingWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
-  return `Worktree ${group?.name ?? worktreePath?.split("/").pop() ?? "worktree"} is removing`;
+  const action = group?.pendingAction === "graveyarding" ? "graveyarding" : "removing";
+  return `Worktree ${group?.name ?? worktreePath?.split("/").pop() ?? "worktree"} is ${action}`;
 }
 
 export const dashboardInteractionMethods = {
@@ -261,12 +266,14 @@ export const dashboardInteractionMethods = {
           const focusedGroup = this.dashboardWorktreeGroupsCache.find(
             (group: any) => group.path === this.dashboardState.focusedWorktreePath,
           );
-          if (
-            focusedGroup?.removing ||
-            focusedGroup?.pending ||
-            this.pendingWorktreeRemovals?.has?.(focusedGroup.path)
-          ) {
-            this.footerFlash = `Already removing ${focusedGroup.name ?? focusedGroup.path.split("/").pop() ?? "worktree"}`;
+          if (isRemovingDashboardWorktree(focusedGroup) || this.pendingWorktreeRemovals?.has?.(focusedGroup?.path)) {
+            this.footerFlash = blockedRemovingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
+            this.footerFlashTicks = 2;
+            this.renderDashboard();
+            return;
+          }
+          if (focusedGroup?.pending) {
+            this.footerFlash = `Worktree ${focusedGroup.name ?? focusedGroup.path.split("/").pop() ?? "worktree"} is ${focusedGroup.pendingAction ?? "pending"}`;
             this.footerFlashTicks = 2;
             this.renderDashboard();
             return;
@@ -281,6 +288,9 @@ export const dashboardInteractionMethods = {
 
         const selectedService = this.getSelectedDashboardServiceForActions();
         if (selectedService) {
+          if (hasBlockingPendingDashboardAction(selectedService)) {
+            return;
+          }
           if (selectedService.status === "offline") {
             void this.removeDashboardServiceWithFeedback(selectedService);
           } else {
@@ -302,6 +312,9 @@ export const dashboardInteractionMethods = {
             ? allDs[this.activeIndex]
             : undefined;
         if (!selEntry) return;
+        if (hasBlockingPendingDashboardAction(selEntry)) {
+          return;
+        }
 
         const runtime = this.sessions.find((s: any) => s.id === selEntry.id);
         const effectivelyOffline =
