@@ -59,7 +59,7 @@ describe("AgentTracker", () => {
     expect(derived?.unseenCount).toBe(1);
   });
 
-  it("does not accumulate unseen while the session is actively focused", () => {
+  it("does not accumulate unseen while focused and clears attention on response", () => {
     const tracker = new AgentTracker();
     updateNotificationContext("tui", {
       focused: true,
@@ -71,7 +71,7 @@ describe("AgentTracker", () => {
     tracker.emit("s1", { kind: "response", message: "Done." }, repoRoot);
 
     const derived = loadMetadataState(repoRoot).sessions.s1?.derived;
-    expect(derived?.attention).toBe("needs_input");
+    expect(derived?.attention).toBe("normal");
     expect(derived?.activity).toBe("idle");
     expect(derived?.unseenCount).toBe(0);
   });
