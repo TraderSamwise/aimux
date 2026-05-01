@@ -6,7 +6,6 @@ import {
   compactSessionTitle,
   currentPathContext,
   renderDashboardScreens,
-  renderDerivedBadge,
   renderSemanticBadge,
   renderSessionCompactHint,
   resolveExactCurrentSessionId,
@@ -235,10 +234,7 @@ function renderTopLine(
 function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[number]): string {
   const identity = trim(compactSessionTitle(session), 18);
   const hint = renderSessionCompactHint(session);
-  const badge =
-    hint?.includes(" unread") || hint?.includes(" new")
-      ? null
-      : (renderSemanticBadge(session.semantic) ?? renderDerivedBadge(session.derived));
+  const badge = hint?.includes(" unread") || hint?.includes(" new") ? null : renderSemanticBadge(session.semantic);
   const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 28);
   return session.isCurrent ? `#[fg=black,bg=yellow] ${label} #[default]` : label;
 }

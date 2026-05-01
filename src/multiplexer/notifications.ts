@@ -148,7 +148,7 @@ export function notificationTargetState(
   return "missing";
 }
 
-function openSelectedNotification(host: NotificationHost): void {
+async function openSelectedNotification(host: NotificationHost): Promise<void> {
   const entry = host.notificationEntries[host.notificationIndex];
   if (!entry) return;
   if (!entry.sessionId) {
@@ -168,11 +168,18 @@ function openSelectedNotification(host: NotificationHost): void {
   }
   const session = host.getDashboardSessions().find((candidate: any) => candidate.id === entry.sessionId);
   if (session) {
+    try {
+      await host.activateDashboardEntry(session);
+    } catch {
+      host.footerFlash = "Failed to open notification target";
+      host.footerFlashTicks = 3;
+      renderNotifications(host);
+      return;
+    }
     if (entry.unread) {
       markNotificationsRead({ id: entry.id });
       refreshNotificationEntries(host);
     }
-    void host.activateDashboardEntry(session);
     return;
   }
   const service = host.getDashboardServices().find((candidate: any) => candidate.id === entry.sessionId);
@@ -182,11 +189,18 @@ function openSelectedNotification(host: NotificationHost): void {
     renderNotifications(host);
     return;
   }
+  try {
+    await host.activateDashboardService(service);
+  } catch {
+    host.footerFlash = "Failed to open notification target";
+    host.footerFlashTicks = 3;
+    renderNotifications(host);
+    return;
+  }
   if (entry.unread) {
     markNotificationsRead({ id: entry.id });
     refreshNotificationEntries(host);
   }
-  void host.activateDashboardService(service);
 }
 
 export function handleNotificationsKey(host: NotificationHost, data: Buffer): void {
@@ -267,6 +281,6 @@ export function handleNotificationsKey(host: NotificationHost, data: Buffer): vo
     return;
   }
   if (key === "enter" || key === "return") {
-    openSelectedNotification(host);
+    void openSelectedNotification(host);
   }
 }

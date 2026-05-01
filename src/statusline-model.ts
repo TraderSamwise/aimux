@@ -137,11 +137,6 @@ export function sessionIdentity(session: Pick<StatuslineSession, "id" | "tool" |
   return compactSessionTitle(session);
 }
 
-export function renderDerivedBadge(derived: StatuslineMetadataEntry["derived"]): string | null {
-  void derived;
-  return null;
-}
-
 export function renderSemanticBadge(semantic: SessionSemanticState | undefined): string | null {
   if (!semantic) return null;
   if (semantic.user.attention === "error") return "✗";
