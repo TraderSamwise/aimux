@@ -55,6 +55,8 @@ let lastOverlayInputProject = null;
 let lastOverlaySignature = null;
 let lastOverlayResult = null;
 const terminalOscParsers = new Map();
+const ACTION_SETTLE_TIMEOUT_MS = 10_000;
+const STABLE_ABSENCE_MS = 500;
 
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   const updateFocus = () => setDesktopWindowFocus(!document.hidden && document.hasFocus());
@@ -185,6 +187,14 @@ async function fetchProjectNotificationSummary(project) {
       },
     };
   } catch {}
+}
+
+export async function refreshNotificationSummary(projectPath = selectedProjectPath) {
+  if (!projectPath) return;
+  const project = projects.find((entry) => entry.path === projectPath) || null;
+  if (project) {
+    await fetchProjectNotificationSummary(project);
+  }
 }
 
 function syncNotificationSummaries(nextProjects = projects) {
@@ -383,12 +393,36 @@ export function isSessionActionBlocked(projectPath, sessionId, requestedKind = n
   return true;
 }
 
+export function isServiceActionBlocked(projectPath, serviceId) {
+  return inFlightActions.some((action) => action.projectPath === projectPath && action.serviceId === serviceId);
+}
+
 function reconcileActions(incomingProjects) {
   const byPath = new Map(incomingProjects.map((project) => [project.path, project]));
   const finished = [];
+  const patches = [];
+  const now = Date.now();
+
+  function markStableAbsence(action, exists) {
+    if (exists) {
+      if (action.missingSince != null) {
+        patches.push({ key: action.key, patch: { missingSince: null } });
+      }
+      return false;
+    }
+    const missingSince = action.missingSince ?? now;
+    if (action.missingSince == null) {
+      patches.push({ key: action.key, patch: { missingSince } });
+    }
+    return now - missingSince >= STABLE_ABSENCE_MS;
+  }
 
   for (const action of inFlightActions) {
     if (action.phase !== "awaiting-sync") continue;
+    if (now - action.startedAt >= ACTION_SETTLE_TIMEOUT_MS) {
+      finished.push(action.key);
+      continue;
+    }
     const project = byPath.get(action.projectPath);
     if (!project) continue;
 
@@ -423,7 +457,7 @@ function reconcileActions(incomingProjects) {
 
     if (action.kind === "kill" && action.sessionId) {
       const exists = (project.sessions || []).some((entry) => entry.id === action.sessionId);
-      if (!exists) {
+      if (markStableAbsence(action, exists)) {
         finished.push(action.key);
       }
       continue;
@@ -466,7 +500,7 @@ function reconcileActions(incomingProjects) {
 
     if (action.kind === "remove-worktree" && action.worktreePath) {
       const exists = (project.worktrees || []).some((worktree) => worktree.path === action.worktreePath);
-      if (!exists) {
+      if (markStableAbsence(action, exists)) {
         finished.push(action.key);
       }
       continue;
@@ -497,13 +531,16 @@ function reconcileActions(incomingProjects) {
 
     if (action.kind === "remove-service" && action.serviceId) {
       const exists = (project.services || []).some((service) => service.id === action.serviceId);
-      if (!exists) {
+      if (markStableAbsence(action, exists)) {
         finished.push(action.key);
       }
       continue;
     }
   }
 
+  for (const { key, patch } of patches) {
+    updateAction(key, patch);
+  }
   for (const key of finished) {
     finishAction(key);
   }
@@ -888,7 +925,7 @@ function applyActionOverlays(project) {
               ...service,
               pending: true,
               pendingAction: "stopping",
-              status: "offline",
+              status: "stopping",
             }
           : service
       );

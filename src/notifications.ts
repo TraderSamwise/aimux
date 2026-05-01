@@ -57,6 +57,7 @@ export function addNotification(input: {
   kind?: string;
   dedupeKey?: string;
   createdAt?: string;
+  unread?: boolean;
 }): NotificationRecord {
   const now = input.createdAt ?? new Date().toISOString();
   const state = loadState();
@@ -67,7 +68,7 @@ export function addNotification(input: {
     body: input.body.trim() || input.title.trim() || "aimux",
     sessionId: input.sessionId?.trim() || undefined,
     kind: input.kind?.trim() || undefined,
-    unread: true,
+    unread: input.unread ?? true,
     cleared: false,
     createdAt: now,
     updatedAt: now,

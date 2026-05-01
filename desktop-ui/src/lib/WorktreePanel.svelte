@@ -5,12 +5,23 @@
     openService,
     openSession,
     isActionPending,
+    isServiceActionBlocked,
     isSessionActionBlocked,
     repairProjectRuntime,
     trackAction,
   } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
   import { formatRelativeRecency } from "../../../src/recency.ts";
+  import {
+    activity as semanticActivity,
+    compactHint as semanticCompactHint,
+    isBlocked as semanticIsBlocked,
+    isError as semanticIsError,
+    needsUserInput as semanticNeedsUserInput,
+    notificationUnreadCount,
+    pendingDeliveryCount,
+    statusLabel as semanticStatusLabel,
+  } from "./sessionSemantic.js";
 
   const appState = getState();
   const termInstance = getTerminal();
@@ -170,23 +181,23 @@
     if (agent.pending && agent.status === "migrating") return "migrating";
     const semantic = agent.semantic || null;
     if (semantic) {
-      let base = agent.status || "idle";
-      if (semantic.attention === "error") base = "error";
-      else if (semantic.workflowState === "blocked" || semantic.attention === "blocked") base = "blocked";
-      else if (semantic.activity === "done") base = "done";
-      else if (semantic.activity === "waiting") base = "waiting";
-      else if (semantic.activity === "running") base = "working";
-      else if (semantic.workflowState === "waiting_on_me" || semantic.availability === "needs_input") base = "needs input";
+      let base = semanticStatusLabel(semantic) || agent.status || "idle";
+      if (semanticIsError(semantic)) base = "error";
+      else if (semanticIsBlocked(semantic)) base = "blocked";
+      else if (semanticActivity(semantic) === "done") base = "done";
+      else if (semanticActivity(semantic) === "waiting") base = "waiting";
+      else if (semanticActivity(semantic) === "running") base = "working";
+      else if (semanticNeedsUserInput(semantic)) base = "needs input";
       else if (agent.status === "running") base = "working";
       else if (agent.status === "waiting") base = "thinking";
 
-      let hint = null;
-      if (semantic.workflowState === "waiting_on_me" || semantic.availability === "needs_input") hint = "on you";
-      else if (semantic.workflowState === "waiting_on_them") hint = "on them";
-      else if (!isActiveNativeChatSession(agent) && (semantic.unreadCount ?? 0) > 0) {
-        hint = `${Math.min(semantic.unreadCount, 99)} unread`;
-      } else if (!isActiveNativeChatSession(agent) && (semantic.pendingDeliveryCount ?? 0) > 0) {
-        hint = `${Math.min(semantic.pendingDeliveryCount, 99)} pending`;
+      let hint = semanticCompactHint(semantic);
+      if (isActiveNativeChatSession(agent)) {
+        const unread = notificationUnreadCount(semantic);
+        const pending = pendingDeliveryCount(semantic);
+        if (hint === `${Math.min(unread, 99)} unread` || hint === `${Math.min(pending, 99)} pending`) {
+          hint = null;
+        }
       }
 
       return hint && hint !== base ? `${base} · ${hint}` : base;
@@ -206,17 +217,17 @@
   function agentStatusTone(agent) {
     if (agent.status === "offline" && !agent.pending) return "neutral";
     const semantic = agent.semantic || null;
-    if (semantic?.attention === "error") return "error";
-    if (semantic?.workflowState === "blocked" || semantic?.attention === "blocked") return "blocked";
-    if (semantic?.workflowState === "waiting_on_me" || semantic?.availability === "needs_input") return "waiting";
+    if (semanticIsError(semantic)) return "error";
+    if (semanticIsBlocked(semantic)) return "blocked";
+    if (semanticNeedsUserInput(semantic)) return "waiting";
     if (
       !isActiveNativeChatSession(agent) &&
-      ((semantic?.unreadCount ?? 0) > 0 || (semantic?.pendingDeliveryCount ?? 0) > 0)
+      (notificationUnreadCount(semantic) > 0 || pendingDeliveryCount(semantic) > 0)
     ) {
       return "info";
     }
-    if (semantic?.activity === "done") return "success";
-    if (semantic?.activity === "running" || semantic?.activity === "waiting") return "active";
+    if (semanticActivity(semantic) === "done") return "success";
+    if (semanticActivity(semantic) === "running" || semanticActivity(semantic) === "waiting") return "active";
     if (agent.status === "running") return "active";
     return "neutral";
   }
@@ -268,8 +279,8 @@
   async function focusService(service) {
     const project = appState.selectedProject;
     if (!project) return;
+    if (isServiceActionBlocked(project.path, service.id)) return;
     if (service.status === "offline") {
-      if (isResumeServicePending(service.id)) return;
       try {
         await trackAction(
           {
@@ -590,7 +601,7 @@
     if (!project) return;
     try {
       if (service.status === "offline" || service.status === "exited") {
-        if (isRemoveServicePending(service.id)) return;
+        if (isServiceActionBlocked(project.path, service.id)) return;
         await trackAction(
           {
             kind: "remove-service",
@@ -602,7 +613,7 @@
           () => invoke("service_remove", { projectPath: project.path, serviceId: service.id }),
         );
       } else {
-        if (isStopServicePending(service.id)) return;
+        if (isServiceActionBlocked(project.path, service.id)) return;
         await trackAction(
           {
             kind: "stop-service",

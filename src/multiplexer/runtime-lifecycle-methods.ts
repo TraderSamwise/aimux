@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { closeDebug, debug } from "../debug.js";
 import { loadConfig } from "../config.js";
 import { getStatePath } from "../paths.js";
-import type { InstanceSessionRef } from "../instance-registry.js";
+import type { InstanceInfo, InstanceSessionRef } from "../instance-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
 import {
@@ -237,7 +237,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     const myServices = [...mux.offlineServices, ...liveServices].filter(
       (service, index, services) => services.findIndex((entry) => entry.id === service.id) === index,
     );
-    if (mySessions.length === 0 && myServices.length === 0) return;
 
     const statePath = getStatePath();
     let mergedSessions: SessionState[] = mySessions;
@@ -246,17 +245,25 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     if (existsSync(statePath)) {
       try {
         const existing = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
+        const remoteRefs = this.getRemoteInstancesSafe().flatMap((instance: InstanceInfo) => instance.sessions);
+        const remoteIds = new Set(remoteRefs.map((s: InstanceSessionRef) => s.id));
+        const remoteBackendIds = new Set(remoteRefs.map((s: InstanceSessionRef) => s.backendSessionId).filter(Boolean));
         const myBackendIds = new Set(mySessions.map((s) => s.backendSessionId).filter(Boolean));
         const myIds = new Set(mySessions.map((s) => s.id));
         const otherSessions = existing.sessions.filter((s) => {
+          if (remoteIds.has(s.id)) return true;
+          if (s.backendSessionId && remoteBackendIds.has(s.backendSessionId)) return true;
           if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return false;
           if (myIds.has(s.id)) return false;
-          return true;
+          return false;
         });
         mergedSessions = [...otherSessions, ...mySessions];
 
         const myServiceIds = new Set(myServices.map((service) => service.id));
-        const otherServices = (existing.services ?? []).filter((service) => !myServiceIds.has(service.id));
+        const otherServices = (existing.services ?? []).filter((service) => {
+          if (myServiceIds.has(service.id)) return false;
+          return false;
+        });
         mergedServices = [...otherServices, ...myServices];
       } catch {}
     }

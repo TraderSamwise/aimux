@@ -1,6 +1,15 @@
 <script>
   import { getState, selectScreen, openSession } from "../stores/state.svelte.js";
   import { getTerminal } from "./terminal-instance.svelte.js";
+  import {
+    activity as semanticActivity,
+    compactHint as semanticCompactHint,
+    isBlocked as semanticIsBlocked,
+    isError as semanticIsError,
+    needsUserInput as semanticNeedsUserInput,
+    notificationUnreadCount,
+    pendingDeliveryCount,
+  } from "./sessionSemantic.js";
 
   const state = getState();
   const termInstance = getTerminal();
@@ -65,27 +74,37 @@
     const derived = session?.meta?.derived || null;
     const semantic = session?.semantic || null;
     const notificationUnread = Number(notificationSummary?.unreadBySession?.[session?.id] || 0);
-    if (semantic?.attention === "error") return { glyph: "\u2717", color: "var(--red)" };
-    if (semantic?.workflowState === "blocked" || semantic?.attention === "blocked") return { glyph: "!", color: "var(--red)" };
-    if (semantic?.workflowState === "waiting_on_me" || semantic?.availability === "needs_input") return { glyph: "?", color: "var(--yellow)" };
-    const unread = isActiveNativeChatSession(session) ? 0 : Math.max(notificationUnread, semantic?.unreadCount ?? derived?.unseenCount ?? 0);
+    if (semanticIsError(semantic)) return { glyph: "\u2717", color: "var(--red)" };
+    if (semanticIsBlocked(semantic)) return { glyph: "!", color: "var(--red)" };
+    if (semanticNeedsUserInput(semantic)) return { glyph: "?", color: "var(--yellow)" };
+    const unread = isActiveNativeChatSession(session)
+      ? 0
+      : Math.max(notificationUnread, notificationUnreadCount(semantic), derived?.unseenCount ?? 0);
     if (unread > 0) return { glyph: String(Math.min(unread, 9)), color: "var(--accent)" };
-    if (semantic?.activity === "done" || derived?.activity === "done") return { glyph: "\u2713", color: "var(--green)" };
-    if (semantic?.activity === "running" || derived?.activity === "running") return { glyph: "\u21bb", color: "var(--green)" };
-    if (semantic?.activity === "waiting" || derived?.activity === "waiting") return { glyph: "\u2026", color: "var(--yellow)" };
+    if (semanticActivity(semantic) === "done" || derived?.activity === "done") return { glyph: "\u2713", color: "var(--green)" };
+    if (semanticActivity(semantic) === "running" || derived?.activity === "running") return { glyph: "\u21bb", color: "var(--green)" };
+    if (semanticActivity(semantic) === "waiting" || derived?.activity === "waiting") return { glyph: "\u2026", color: "var(--yellow)" };
     return null;
   }
 
   function compactHint(session) {
     const semantic = session?.semantic || null;
     if (!semantic) return null;
-    if (semantic.attention === "error") return "error";
-    if (semantic.workflowState === "blocked" || semantic.attention === "blocked") return "blocked";
-    if (semantic.workflowState === "waiting_on_me" || semantic.availability === "needs_input") return "on you";
-    if (semantic.workflowState === "waiting_on_them") return "on them";
+    const hint = semanticCompactHint(semantic);
+    const unread = notificationUnreadCount(semantic);
+    const pending = pendingDeliveryCount(semantic);
+    if (hint) {
+      if (
+        isActiveNativeChatSession(session) &&
+        (hint === `${Math.min(unread, 99)} unread` || hint === `${Math.min(pending, 99)} pending`)
+      ) {
+        return null;
+      }
+      return hint;
+    }
     if (isActiveNativeChatSession(session)) return null;
-    if ((semantic.unreadCount ?? 0) > 0) return `${Math.min(semantic.unreadCount, 99)} unread`;
-    if ((semantic.pendingDeliveryCount ?? 0) > 0) return `${Math.min(semantic.pendingDeliveryCount, 99)} pending`;
+    if (unread > 0) return `${Math.min(unread, 99)} unread`;
+    if (pending > 0) return `${Math.min(pending, 99)} pending`;
     return null;
   }
 

@@ -143,7 +143,7 @@ export type DashboardTailMethods = {
   handleHelpKey(this: Multiplexer, data: Buffer): void;
   renderSwitcher(this: Multiplexer): void;
   handleSwitcherKey(this: Multiplexer, data: Buffer): void;
-  showMigratePicker(this: Multiplexer): void;
+  showMigratePicker(this: Multiplexer, sessionId?: string): void;
   renderMigratePicker(this: Multiplexer): void;
   runDashboardOperation<T>(
     this: Multiplexer,
@@ -306,8 +306,8 @@ export const dashboardTailMethods: DashboardTailMethods = {
   handleSwitcherKey(data) {
     handleSwitcherKeyImpl(this, data);
   },
-  showMigratePicker() {
-    showMigratePickerImpl(this);
+  showMigratePicker(sessionId?: string) {
+    showMigratePickerImpl(this, sessionId);
   },
   renderMigratePicker() {
     renderMigratePickerImpl(this);

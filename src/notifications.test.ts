@@ -10,6 +10,8 @@ import {
   markNotificationsRead,
   unreadNotificationCount,
 } from "./notifications.js";
+import { updateNotificationContext } from "./notification-context.js";
+import { ProjectEventBus } from "./project-events.js";
 
 describe("notifications store", () => {
   let repoRoot = "";
@@ -43,5 +45,26 @@ describe("notifications store", () => {
     expect(clearNotifications({ sessionId: "claude-1" })).toBe(2);
     expect(listNotifications()).toHaveLength(0);
     expect(listNotifications({ includeCleared: true, sessionId: "claude-1" })).toHaveLength(2);
+  });
+
+  it("records focused-session alerts without marking them unread", () => {
+    updateNotificationContext("tui", {
+      focused: true,
+      sessionId: "codex-1",
+      screen: "agent",
+    });
+    const bus = new ProjectEventBus();
+
+    expect(
+      bus.publishAlert({
+        kind: "needs_input",
+        sessionId: "codex-1",
+        title: "codex needs input",
+        message: "ready",
+      }),
+    ).toBe(true);
+
+    expect(listNotifications({ includeCleared: true, sessionId: "codex-1" })).toHaveLength(1);
+    expect(unreadNotificationCount({ sessionId: "codex-1" })).toBe(0);
   });
 });

@@ -104,8 +104,8 @@ export function buildDashboardQuickJumpWorktrees(input: {
       pending: mainGroup.pending,
       removing: mainGroup.removing,
       pendingAction: mainGroup.pendingAction,
-      sessions: mainSessions,
-      services: mainServices,
+      sessions: sortDashboardEntriesByCreatedAt(mainSessions),
+      services: sortDashboardEntriesByCreatedAt(mainServices),
     });
   } else {
     pushWorktree({

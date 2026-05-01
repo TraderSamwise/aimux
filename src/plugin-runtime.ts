@@ -128,6 +128,7 @@ export function ensureBundledDefaultPluginWrappers(baseDir = getGlobalAimuxDir()
 
 export class PluginRuntime {
   private instances: AimuxPluginInstance[] = [];
+  private readonly statuslineSegments = new Set<string>();
 
   constructor(
     private readonly endpoint: MetadataApiEndpoint,
@@ -138,6 +139,43 @@ export class PluginRuntime {
   private applyMetadataChange(mutator: () => void): void {
     mutator();
     this.onMetadataChange?.();
+  }
+
+  private segmentKey(session: string, line: "top" | "bottom", id: string): string {
+    return `${session}\0${line}\0${id}`;
+  }
+
+  private clearStatuslineSegment(session: string, id: string, line?: "top" | "bottom"): void {
+    this.applyMetadataChange(() => {
+      updateSessionMetadata(session, (existing) => {
+        const next = { ...existing };
+        if (!next.statusline) return next;
+        const lines = line ? [line] : (["top", "bottom"] as const);
+        next.statusline = { ...next.statusline };
+        for (const currentLine of lines) {
+          const filtered = (next.statusline[currentLine] ?? []).filter((entry) => entry.id !== id);
+          if (filtered.length > 0) {
+            next.statusline[currentLine] = filtered;
+          } else {
+            delete next.statusline[currentLine];
+          }
+          this.statuslineSegments.delete(this.segmentKey(session, currentLine, id));
+        }
+        if (!next.statusline.top?.length && !next.statusline.bottom?.length) {
+          delete next.statusline;
+        }
+        return next;
+      });
+    });
+  }
+
+  private clearOwnedStatuslineSegments(): void {
+    const owned = [...this.statuslineSegments];
+    this.statuslineSegments.clear();
+    for (const key of owned) {
+      const [session, line, id] = key.split("\0") as [string, "top" | "bottom", string];
+      this.clearStatuslineSegment(session, id, line);
+    }
   }
 
   private publishEventAlert(sessionId: string, event: AgentEvent): void {
@@ -199,6 +237,9 @@ export class PluginRuntime {
           });
         },
         setStatuslineSegment: (session, line, segment) => {
+          if (segment.id) {
+            this.statuslineSegments.add(this.segmentKey(session, line, segment.id));
+          }
           this.applyMetadataChange(() => {
             updateSessionMetadata(session, (existing) => ({
               ...existing,
@@ -210,26 +251,7 @@ export class PluginRuntime {
           });
         },
         clearStatuslineSegment: (session, id, line) => {
-          this.applyMetadataChange(() => {
-            updateSessionMetadata(session, (existing) => {
-              const next = { ...existing };
-              if (!next.statusline) return next;
-              const lines = line ? [line] : (["top", "bottom"] as const);
-              next.statusline = { ...next.statusline };
-              for (const currentLine of lines) {
-                const filtered = (next.statusline[currentLine] ?? []).filter((entry) => entry.id !== id);
-                if (filtered.length > 0) {
-                  next.statusline[currentLine] = filtered;
-                } else {
-                  delete next.statusline[currentLine];
-                }
-              }
-              if (!next.statusline.top?.length && !next.statusline.bottom?.length) {
-                delete next.statusline;
-              }
-              return next;
-            });
-          });
+          this.clearStatuslineSegment(session, id, line);
         },
         setServices: (session, services) => {
           this.applyMetadataChange(() => {
@@ -304,6 +326,7 @@ export class PluginRuntime {
         debug(`plugin stop failed: ${error instanceof Error ? error.message : String(error)}`, "plugin");
       }
     }
+    this.clearOwnedStatuslineSegments();
     this.instances = [];
   }
 }

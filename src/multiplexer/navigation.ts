@@ -179,7 +179,7 @@ export function handleSwitcherKey(host: NavigationHost, data: Buffer): void {
   dismissSwitcher(host);
 }
 
-export function showMigratePicker(host: NavigationHost): void {
+export function showMigratePicker(host: NavigationHost, sessionId?: string): void {
   try {
     const worktrees = listAllWorktrees();
     const mainRepo = findMainRepo();
@@ -193,6 +193,7 @@ export function showMigratePicker(host: NavigationHost): void {
 
   if (host.migratePickerWorktrees.length <= 1) return;
 
+  host.migratePickerSessionId = sessionId ?? host.sessions[host.activeIndex]?.id ?? null;
   host.openDashboardOverlay("migrate-picker");
   renderMigratePicker(host);
 }
@@ -216,6 +217,7 @@ export function handleMigratePickerKey(host: NavigationHost, data: Buffer): void
   host.clearDashboardOverlay();
 
   if (key === "escape") {
+    host.migratePickerSessionId = null;
     if (host.mode === "dashboard") {
       host.renderDashboard();
     } else {
@@ -228,7 +230,10 @@ export function handleMigratePickerKey(host: NavigationHost, data: Buffer): void
     const idx = parseInt(key) - 1;
     if (idx < host.migratePickerWorktrees.length) {
       const target = host.migratePickerWorktrees[idx];
-      const session = host.sessions[host.activeIndex];
+      const session =
+        host.sessions.find((candidate: any) => candidate.id === host.migratePickerSessionId) ??
+        host.sessions[host.activeIndex];
+      host.migratePickerSessionId = null;
       if (session) {
         void host.migrateSessionWithFeedback(session, target.path, target.name);
         return;
@@ -237,8 +242,10 @@ export function handleMigratePickerKey(host: NavigationHost, data: Buffer): void
   }
 
   if (host.mode === "dashboard") {
+    host.migratePickerSessionId = null;
     host.renderDashboard();
   } else if (host.sessions.length > 0) {
+    host.migratePickerSessionId = null;
     host.focusSession(host.activeIndex);
   }
 }

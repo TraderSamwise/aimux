@@ -170,6 +170,7 @@ export class Multiplexer {
     isDashboardMode: () => this.mode === "dashboard",
   });
   private migratePickerWorktrees: Array<{ name: string; path: string }> = [];
+  private migratePickerSessionId: string | null = null;
   private graveyardEntries: SessionState[] = [];
   private worktreeGraveyardEntries: WorktreeGraveyardEntry[] = [];
   private graveyardIndex = 0;

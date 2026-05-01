@@ -335,7 +335,8 @@ export const dashboardInteractionMethods = {
       }
       case "m":
         if (this.sessions.length > 0) {
-          this.showMigratePicker();
+          const selected = this.getSelectedDashboardSessionForActions();
+          this.showMigratePicker(selected?.id);
         }
         return;
       case "r": {

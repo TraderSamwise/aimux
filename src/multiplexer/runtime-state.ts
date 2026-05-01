@@ -179,7 +179,12 @@ export function loadOfflineServices(host: RuntimeStateHost, state = host.constru
   const liveServiceIds = new Set(
     host.tmuxRuntimeManager
       .listProjectManagedWindows(process.cwd())
-      .filter(({ target, metadata }: any) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
+      .filter(
+        ({ target, metadata }: any) =>
+          !isDashboardWindowName(target.windowName) &&
+          metadata.kind === "service" &&
+          host.tmuxRuntimeManager.isWindowAlive(target),
+      )
       .map(({ metadata }: any) => metadata.sessionId),
   );
 
@@ -207,8 +212,9 @@ export function loadOfflineServices(host: RuntimeStateHost, state = host.constru
 export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
   const seen = new Set<string>();
   const liveServices: any[] = [];
-  for (const { metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
     if (metadata.kind !== "service") continue;
+    if (!host.tmuxRuntimeManager.isWindowAlive(target)) continue;
     if (seen.has(metadata.sessionId)) continue;
     seen.add(metadata.sessionId);
     const launchCommandLine =

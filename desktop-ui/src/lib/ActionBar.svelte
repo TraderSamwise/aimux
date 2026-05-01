@@ -2,6 +2,7 @@
   import {
     getState,
     repairProjectRuntime,
+    refreshNotificationSummary,
     restartProjectRuntime,
     setNotificationPanelOpen,
   } from "../stores/state.svelte.js";
@@ -110,6 +111,7 @@
       body: JSON.stringify({ id: notification.id }),
     }).catch(() => {});
     await loadNotifications();
+    await refreshNotificationSummary(selectedProject.path);
   }
 
   async function clearNotifications(input = {}) {
@@ -121,6 +123,7 @@
       body: JSON.stringify(input),
     }).catch(() => {});
     await loadNotifications();
+    await refreshNotificationSummary(selectedProject.path);
   }
 
   async function togglePanel() {

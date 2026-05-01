@@ -80,6 +80,28 @@ async function waitForRenderedDashboardSessionState(
   return false;
 }
 
+async function waitForStableDashboardSessionAbsence(
+  host: DashboardOpsHost,
+  sessionId: string,
+  timeoutMs = 10_000,
+  stableMs = 350,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  let missingSince: number | null = null;
+  while (Date.now() < deadline) {
+    await host.refreshDashboardModelFromService(true);
+    const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
+    if (session) {
+      missingSince = null;
+    } else {
+      missingSince ??= Date.now();
+      if (Date.now() - missingSince >= stableMs) return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
 function isLiveDashboardSessionEntry(entry: any | undefined): boolean {
   if (!entry) return false;
   if (entry.status !== "offline" && entry.pendingAction !== "starting") {
@@ -162,6 +184,28 @@ async function waitForRenderedDashboardServiceState(
         }
       }
       return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+async function waitForStableDashboardServiceAbsence(
+  host: DashboardOpsHost,
+  serviceId: string,
+  timeoutMs = 10_000,
+  stableMs = 350,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  let missingSince: number | null = null;
+  while (Date.now() < deadline) {
+    await host.refreshDashboardModelFromService(true);
+    const service = host.getDashboardServices().find((entry: any) => entry.id === serviceId);
+    if (service) {
+      missingSince = null;
+    } else {
+      missingSince ??= Date.now();
+      if (Date.now() - missingSince >= stableMs) return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -504,7 +548,7 @@ export async function graveyardSessionWithFeedback(
       request: async () => {
         await host.postToProjectService("/agents/kill", { sessionId }, { timeoutMs: 10_000 });
       },
-      settle: () => waitForRenderedDashboardSessionState(host, sessionId, (entry) => !entry),
+      settle: () => waitForStableDashboardSessionAbsence(host, sessionId),
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),
       successFlash: { message: `Sent ${label} to graveyard` },
       onError: () => host.refreshDashboardModelFromService(true),
@@ -645,7 +689,7 @@ export async function removeDashboardServiceWithFeedback(
     request: async () => {
       await host.postToProjectService("/services/remove", { serviceId: service.id }, { timeoutMs: 10_000 });
     },
-    settle: () => waitForRenderedDashboardServiceState(host, service.id, (entry) => !entry),
+    settle: () => waitForStableDashboardServiceAbsence(host, service.id),
     successFlash: { message: `◆ Deleted service ${service.label ?? service.id}` },
     onError: () => host.refreshDashboardModelFromService(true),
     errorTitle: "Failed to delete service",

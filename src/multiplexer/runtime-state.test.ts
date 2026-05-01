@@ -3,7 +3,13 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { loadOfflineSessions, restoreTmuxSessionsFromState, resumeOfflineSession } from "./runtime-state.js";
+import {
+  buildLiveServiceStates,
+  loadOfflineServices,
+  loadOfflineSessions,
+  restoreTmuxSessionsFromState,
+  resumeOfflineSession,
+} from "./runtime-state.js";
 
 describe("resumeOfflineSession", () => {
   let repoRoot = "";
@@ -132,5 +138,46 @@ describe("resumeOfflineSession", () => {
       "reviewer",
       Date.parse("2026-04-21T00:00:00.000Z"),
     );
+  });
+
+  it("does not treat dead service windows as live", () => {
+    const saved = {
+      id: "service-1",
+      command: "shell",
+      args: [],
+      label: "shell",
+      worktreePath: repoRoot,
+    };
+    const deadTarget = {
+      sessionName: "aimux-test",
+      windowId: "@2",
+      windowIndex: 2,
+      windowName: "shell",
+    };
+    const host: any = {
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: deadTarget,
+            metadata: {
+              kind: "service",
+              sessionId: "service-1",
+              command: "shell",
+              args: [],
+              label: "shell",
+              worktreePath: repoRoot,
+            },
+          },
+        ]),
+        isWindowAlive: vi.fn(() => false),
+      },
+    };
+
+    const changed = loadOfflineServices(host, { sessions: [], services: [saved] });
+
+    expect(changed).toBe(true);
+    expect(host.offlineServices).toEqual([saved]);
+    expect(buildLiveServiceStates(host)).toEqual([]);
   });
 });

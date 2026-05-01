@@ -1,5 +1,6 @@
 import { getProjectId } from "./paths.js";
 import { addNotification } from "./notifications.js";
+import { isSessionNotificationFocused } from "./notification-context.js";
 
 export type AlertKind =
   | "notification"
@@ -108,6 +109,7 @@ export class ProjectEventBus {
       kind: event.kind,
       dedupeKey: event.dedupeKey,
       createdAt: event.ts,
+      unread: !event.sessionId || event.forceNotify ? true : !isSessionNotificationFocused(event.sessionId),
     });
 
     this.publish(event);

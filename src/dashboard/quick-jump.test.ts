@@ -178,4 +178,62 @@ describe("dashboard quick jump", () => {
       [4, "service", "old-service"],
     ]);
   });
+
+  it("sorts main checkout entries by creation time even when the main group is explicit", () => {
+    const worktrees = buildDashboardQuickJumpWorktrees({
+      sessions: [
+        {
+          index: 0,
+          id: "old-main-agent",
+          command: "codex",
+          status: "running",
+          active: false,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          index: 1,
+          id: "new-main-agent",
+          command: "claude",
+          status: "running",
+          active: false,
+          createdAt: "2026-01-03T00:00:00.000Z",
+        },
+      ],
+      services: [
+        {
+          id: "old-main-service",
+          command: "shell",
+          args: [],
+          status: "running",
+          active: false,
+          createdAt: "2026-01-02T00:00:00.000Z",
+        },
+        {
+          id: "new-main-service",
+          command: "shell",
+          args: [],
+          status: "running",
+          active: false,
+          createdAt: "2026-01-04T00:00:00.000Z",
+        },
+      ],
+      worktreeGroups: [
+        {
+          name: "Main Checkout",
+          branch: "master",
+          status: "active",
+          sessions: [],
+          services: [],
+        },
+      ],
+      mainCheckout: { name: "Main Checkout", branch: "master" },
+    });
+
+    expect(worktrees[0]?.entries.map((entry) => [entry.digit, entry.kind, entry.id])).toEqual([
+      [1, "session", "new-main-agent"],
+      [2, "session", "old-main-agent"],
+      [3, "service", "new-main-service"],
+      [4, "service", "old-main-service"],
+    ]);
+  });
 });
