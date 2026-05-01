@@ -202,6 +202,17 @@ describe("TmuxRuntimeManager", () => {
           call.args.includes("C-l"),
       ),
     ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[1] === "-T" &&
+          call.args[2] === "prefix" &&
+          call.args[3] === "L" &&
+          call.args[4] === "clear-history" &&
+          call.args.includes("C-l"),
+      ),
+    ).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-left")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-right")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "status-format[0]")).toBe(true);
