@@ -7,6 +7,7 @@ import {
   currentPathContext,
   renderDashboardScreens,
   renderDerivedBadge,
+  renderSemanticBadge,
   renderSessionCompactHint,
   resolveExactCurrentSessionId,
   resolveExactSessionMetadata,
@@ -184,19 +185,16 @@ function renderActiveMetadata(
     currentPath,
   );
   if (!metadata) return null;
-  if (metadata.derived?.attention === "error") return "error";
-  if (metadata.derived?.attention === "needs_input") return "needs input";
-  if (metadata.derived?.attention === "blocked") return "blocked";
-  if (metadata.derived?.activity === "running") return "running";
-  if (metadata.derived?.activity === "waiting") return "waiting";
-  if (metadata.derived?.activity === "done") return "done";
-  if ((activeSession?.semantic?.threadUnreadCount ?? 0) > 0) {
-    return `${activeSession?.semantic?.threadUnreadCount} unread`;
+  if (activeSession?.semantic?.presentation.statusLabel) {
+    const label = activeSession.semantic.presentation.statusLabel;
+    if (label !== "idle" && label !== "offline") return label;
   }
-  if ((activeSession?.semantic?.eventUnseenCount ?? 0) > 0) {
-    return `new ${activeSession?.semantic?.eventUnseenCount}`;
+  if ((activeSession?.semantic?.notifications.unreadCount ?? 0) > 0) {
+    return `${activeSession?.semantic?.notifications.unreadCount} unread`;
   }
-  if ((metadata.derived?.unseenCount ?? 0) > 0) return `unseen ${metadata.derived?.unseenCount}`;
+  if ((activeSession?.semantic?.activityNewCount ?? 0) > 0) {
+    return `new ${activeSession?.semantic?.activityNewCount}`;
+  }
   if (metadata.status?.text) return trim(metadata.status.text, 28);
   if (metadata.progress && metadata.progress.total > 0) {
     const pct = Math.max(0, Math.min(100, Math.round((metadata.progress.current / metadata.progress.total) * 100)));
@@ -237,7 +235,10 @@ function renderTopLine(
 function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[number]): string {
   const identity = trim(compactSessionTitle(session), 18);
   const hint = renderSessionCompactHint(session);
-  const badge = hint?.includes(" unread") || hint?.includes(" new") ? null : renderDerivedBadge(session.derived);
+  const badge =
+    hint?.includes(" unread") || hint?.includes(" new")
+      ? null
+      : (renderSemanticBadge(session.semantic) ?? renderDerivedBadge(session.derived));
   const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 28);
   return session.isCurrent ? `#[fg=black,bg=yellow] ${label} #[default]` : label;
 }

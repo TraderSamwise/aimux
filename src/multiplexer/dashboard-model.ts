@@ -12,6 +12,7 @@ import { PluginRuntime } from "../plugin-runtime.js";
 import { findMainRepo } from "../worktree.js";
 import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
+import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { requestJson } from "../http-client.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
@@ -269,6 +270,7 @@ export function computeDashboardSessions(host: DashboardModelHost): DashboardSes
     getSessionDerived: (sessionId: string) => metadata[sessionId]?.derived,
   });
   const metadataBySessionId = new Map<string, { createdAt?: string; target?: { windowIndex?: number } }>();
+  const notificationsBySessionId = summarizeUnreadNotificationsBySession();
   for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
     if (metadata.kind !== "agent") continue;
     metadataBySessionId.set(metadata.sessionId, { createdAt: metadata.createdAt, target });
@@ -278,6 +280,7 @@ export function computeDashboardSessions(host: DashboardModelHost): DashboardSes
     const workflow = workflowStats.get(session.id);
     const target = host.sessionTmuxTargets.get(session.id);
     const metadata = metadataBySessionId.get(session.id);
+    const notifications = notificationsBySessionId.get(session.id);
     const runtimeInfo = target ? readTmuxProcessInfo(host, target) : {};
     return {
       ...session,
@@ -299,11 +302,16 @@ export function computeDashboardSessions(host: DashboardModelHost): DashboardSes
       workflowFamilyCount: workflow?.families.size ?? 0,
       workflowTopLabel: workflow?.topLabel,
       workflowNextAction: workflow?.nextAction,
+      notificationUnreadCount: notifications?.unreadCount ?? 0,
+      latestNotificationText: notifications?.latestUnread?.body || notifications?.latestUnread?.title,
       semantic: deriveSessionSemantics({
         status: session.status,
+        pendingAction: session.pendingAction,
         activity: session.activity,
         attention: session.attention,
         unseenCount: session.unseenCount,
+        notificationUnreadCount: notifications?.unreadCount ?? 0,
+        latestNotification: notifications?.latestUnread,
         threadUnreadCount: stats?.unread ?? 0,
         threadPendingCount: stats?.pending ?? 0,
         threadWaitingOnMeCount: stats?.waitingOnMe ?? 0,

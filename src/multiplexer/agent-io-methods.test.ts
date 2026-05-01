@@ -13,7 +13,7 @@ describe("agentIoMethods orchestration delivery", () => {
     const writeAgentInput = vi.fn();
     const host: any = {
       sessions: [session],
-      deriveSessionSemanticState: () => ({ availability: "available" }),
+      deriveSessionSemanticState: () => ({ runtime: { canReceiveInput: true, isAlive: true } }),
       composeOrchestrationPrompt: agentIoMethods.composeOrchestrationPrompt,
       writeAgentInput,
     };

@@ -378,14 +378,20 @@ export function renderSessionDetails(host: DashboardOpsHost, session: any, width
   if (session.repoRemote) {
     lines.push(...wrapKeyValue("Remote", session.repoRemote, width));
   }
-  if (session.activity) {
-    lines.push(...wrapKeyValue("Activity", session.activity, width));
-  }
-  if (session.attention && session.attention !== "normal") {
-    lines.push(...wrapKeyValue("Attention", session.attention, width));
-  }
-  if ((session.unseenCount ?? 0) > 0) {
-    lines.push(...wrapKeyValue("Unseen", String(session.unseenCount), width));
+  if (session.semantic) {
+    lines.push(...wrapKeyValue("State", session.semantic.presentation.statusLabel, width));
+    if (session.semantic.user.attention !== "none") {
+      lines.push(...wrapKeyValue("Attention", session.semantic.user.attention, width));
+    }
+    if (session.semantic.notifications.unreadCount > 0) {
+      lines.push(...wrapKeyValue("Unread", String(session.semantic.notifications.unreadCount), width));
+    }
+    if (session.semantic.notifications.latestText) {
+      lines.push(...wrapKeyValue("Latest", session.semantic.notifications.latestText, width));
+    }
+    if (session.semantic.activityNewCount > 0) {
+      lines.push(...wrapKeyValue("New activity", String(session.semantic.activityNewCount), width));
+    }
   }
   if (session.lastEvent?.message) {
     lines.push(...wrapKeyValue("Last", session.lastEvent.message, width));

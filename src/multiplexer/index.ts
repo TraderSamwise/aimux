@@ -19,7 +19,7 @@ import { createThread, appendMessage, updateThread } from "../threads.js";
 import { OrchestrationDispatcher } from "../orchestration-dispatcher.js";
 import { ProjectEventBus, type AlertKind } from "../project-events.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
-import { type NotificationRecord } from "../notifications.js";
+import { listNotifications, type NotificationRecord } from "../notifications.js";
 import { type ThreadEntry, type WorkflowEntry, type WorkflowFilter } from "../workflow.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
@@ -336,11 +336,15 @@ export class Multiplexer {
 
   private deriveSessionSemanticState(sessionId: string, status?: DashboardSession["status"]) {
     const derived = loadMetadataState().sessions[sessionId]?.derived;
+    const unreadNotifications = listNotifications({ unreadOnly: true, sessionId });
+    const latestNotification = unreadNotifications[0];
     return deriveSessionSemantics({
       status: status ?? this.sessions.find((session) => session.id === sessionId)?.status ?? "offline",
       activity: derived?.activity,
       attention: derived?.attention,
       unseenCount: derived?.unseenCount,
+      notificationUnreadCount: unreadNotifications.length,
+      latestNotification,
       hasActiveTask: Boolean(this.taskDispatcher?.getSessionTask(sessionId)),
     });
   }
@@ -377,7 +381,7 @@ export class Multiplexer {
       (id) => this.sessions.find((s) => s.id === id),
       (id) => this.sessionToolKeys.get(id),
       (id) => this.sessionRoles.get(id),
-      (id) => this.deriveSessionSemanticState(id).availability,
+      (id) => this.deriveSessionSemanticState(id).runtime.canReceiveInput,
       (session, prompt) => {
         void this.writeAgentInput(session.id, prompt, undefined, undefined, true);
       },
@@ -387,7 +391,7 @@ export class Multiplexer {
   private createOrchestrationDispatcher(): OrchestrationDispatcher {
     return new OrchestrationDispatcher(
       (id) => this.sessions.find((s) => s.id === id),
-      (id) => this.deriveSessionSemanticState(id).availability,
+      (id) => this.deriveSessionSemanticState(id).runtime.canReceiveInput,
       (session, prompt) => {
         void this.writeAgentInput(session.id, prompt, undefined, undefined, true);
       },

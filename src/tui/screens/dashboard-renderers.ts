@@ -1,7 +1,6 @@
 import type { DashboardService, DashboardSession, DashboardViewModel, WorktreeGroup } from "../../dashboard/index.js";
 import { buildDashboardQuickJumpWorktrees } from "../../dashboard/quick-jump.js";
 import { formatRelativeRecency } from "../../recency.js";
-import { sessionSemanticCompactHint } from "../../session-semantics.js";
 import { center, composeTwoPane, stripAnsi, truncate, wrapKeyValue } from "../render/text.js";
 
 const STATUS_ICONS: Record<DashboardSession["status"], string> = {
@@ -68,14 +67,6 @@ export function renderDashboardFrame(
     const workflowHint = session.workflowNextAction
       ? ` \x1b[2;33m→ ${truncate(session.workflowNextAction, 24)}\x1b[0m`
       : "";
-    const attentionBadge =
-      session.attention === "error"
-        ? " \x1b[31m✗\x1b[0m"
-        : session.attention === "needs_input"
-          ? " \x1b[33m?\x1b[0m"
-          : session.attention === "blocked"
-            ? " \x1b[35m!\x1b[0m"
-            : "";
     const lastUsedHint = session.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(session.lastUsedAt)}\x1b[0m` : "";
 
     if (session.remoteInstancePid) {
@@ -84,26 +75,28 @@ export function renderDashboardFrame(
       const identity = session.label ?? session.command;
       const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
       const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      const remoteUnseenBadge =
-        session.unseenCount && session.unseenCount > 0 ? ` \x1b[36m${session.unseenCount}\x1b[0m` : "";
-      return `${indent}${prefix}${icon} ${numberBadge}${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${remoteUnseenBadge}${lastUsedHint} — ${ownerTag}`;
+      const notificationBadge =
+        session.semantic && session.semantic.notifications.unreadCount > 0
+          ? ` \x1b[36m${Math.min(session.semantic.notifications.unreadCount, 99)}\x1b[0m`
+          : "";
+      return `${indent}${prefix}${icon} ${numberBadge}${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${notificationBadge}${lastUsedHint} — ${ownerTag}`;
     }
 
     const icon = STATUS_ICONS[session.status];
     const statusLabel = state.derivedStatusLabel(session);
-    const compactHintValue = session.semantic ? sessionSemanticCompactHint(session.semantic) : null;
+    const compactHintValue = session.semantic?.presentation.compactHint ?? null;
     const compactHint =
       compactHintValue && compactHintValue !== statusLabel ? ` \x1b[2m· ${compactHintValue}\x1b[0m` : "";
-    const unseenBadge =
-      session.unseenCount &&
-      session.unseenCount > 0 &&
-      !(compactHintValue && /\b(unread|new)\b/i.test(compactHintValue))
-        ? ` \x1b[36m${session.unseenCount}\x1b[0m`
+    const notificationBadge =
+      session.semantic &&
+      session.semantic.notifications.unreadCount > 0 &&
+      !(compactHintValue && /\bunread\b/i.test(compactHintValue))
+        ? ` \x1b[36m${Math.min(session.semantic.notifications.unreadCount, 99)}\x1b[0m`
         : "";
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} ${numberBadge}${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${attentionBadge}${unseenBadge}${lastUsedHint}`;
+    return `${indent}${prefix}${icon} ${numberBadge}${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${notificationBadge}${lastUsedHint}`;
   };
 
   const renderService = (service: DashboardService, indent: string, quickDigit?: number): string => {
@@ -351,11 +344,21 @@ export function renderDashboardFrame(
       lines.push(...wrapKeyValue("Repo", `${selected.repoOwner ?? "?"}/${selected.repoName ?? "?"}`, width));
     if (selected.repoRemote) lines.push(...wrapKeyValue("Remote", selected.repoRemote, width));
     if (selected.previewLine) lines.push(...wrapKeyValue("Preview", selected.previewLine, width));
-    if (selected.activity) lines.push(...wrapKeyValue("Activity", selected.activity, width));
-    if (selected.attention && selected.attention !== "normal")
-      lines.push(...wrapKeyValue("Attention", selected.attention, width));
-    if (selected.unseenCount && selected.unseenCount > 0)
-      lines.push(...wrapKeyValue("Unseen", String(selected.unseenCount), width));
+    if (selected.semantic) {
+      lines.push(...wrapKeyValue("State", selected.semantic.presentation.statusLabel, width));
+      if (selected.semantic.user.attention !== "none") {
+        lines.push(...wrapKeyValue("Attention", selected.semantic.user.attention, width));
+      }
+      if (selected.semantic.notifications.unreadCount > 0) {
+        lines.push(...wrapKeyValue("Unread", String(selected.semantic.notifications.unreadCount), width));
+      }
+      if (selected.semantic.notifications.latestText) {
+        lines.push(...wrapKeyValue("Latest", selected.semantic.notifications.latestText, width));
+      }
+      if (selected.semantic.activityNewCount > 0) {
+        lines.push(...wrapKeyValue("New activity", String(selected.semantic.activityNewCount), width));
+      }
+    }
     if (selected.lastEvent?.message) lines.push(...wrapKeyValue("Last", selected.lastEvent.message, width));
     if (selected.threadName || selected.threadId)
       lines.push(...wrapKeyValue("Thread", selected.threadName ?? selected.threadId ?? "", width));

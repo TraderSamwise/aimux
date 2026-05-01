@@ -397,30 +397,23 @@ export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "
   const options: DashboardOrchestrationTarget[] = [];
   const focusedWorktreePath = host.mode === "dashboard" ? host.dashboardState.focusedWorktreePath : undefined;
   const metadataState = loadMetadataState().sessions;
-  const candidates = host.sessions.map((session: any) => ({
-    id: session.id,
-    tool: host.sessionToolKeys.get(session.id) ?? session.command,
-    role: host.sessionRoles.get(session.id),
-    worktreePath: host.sessionWorktreePaths.get(session.id),
-    status: metadataState[session.id]?.derived?.activity,
-    availability: host.deriveSessionSemanticState(
-      session.id,
-      metadataState[session.id]?.derived?.activity === "running"
-        ? "running"
-        : metadataState[session.id]?.derived?.activity === "waiting"
-          ? "waiting"
-          : session.status,
-    ).availability,
-    workflowPressure: host.orchestrationWorkflowPressure(
-      session.id,
-      metadataState[session.id]?.derived?.activity === "running"
-        ? "running"
-        : metadataState[session.id]?.derived?.activity === "waiting"
-          ? "waiting"
-          : session.status,
-    ),
-    exited: session.exited,
-  }));
+  const candidates = host.sessions.map((session: any) => {
+    const derivedActivity = metadataState[session.id]?.derived?.activity;
+    const semanticStatus =
+      derivedActivity === "running" ? "running" : derivedActivity === "waiting" ? "waiting" : session.status;
+    const semantic = host.deriveSessionSemanticState(session.id, semanticStatus);
+    return {
+      id: session.id,
+      tool: host.sessionToolKeys.get(session.id) ?? session.command,
+      role: host.sessionRoles.get(session.id),
+      worktreePath: host.sessionWorktreePaths.get(session.id),
+      status: semantic.user.label,
+      canReceiveInput: semantic.runtime.canReceiveInput,
+      isAlive: semantic.runtime.isAlive,
+      workflowPressure: host.orchestrationWorkflowPressure(session.id, semanticStatus),
+      exited: session.exited,
+    };
+  });
 
   if (selected && !selected.remoteInstancePid) {
     options.push({

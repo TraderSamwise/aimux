@@ -1311,6 +1311,43 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === "/event") {
         const body = (await readJson(req)) as { session: string; event: AgentEvent };
         this.tracker.emit(body.session, body.event);
+        if (body.event.kind === "needs_input") {
+          this.emitAlert({
+            kind: "needs_input",
+            sessionId: body.session,
+            title: `${body.session} needs input`,
+            message: body.event.message || "Agent is waiting for input.",
+            dedupeKey: `needs_input:${body.session}`,
+            cooldownMs: 15_000,
+          });
+        } else if (body.event.kind === "blocked") {
+          this.emitAlert({
+            kind: "blocked",
+            sessionId: body.session,
+            title: `${body.session} is blocked`,
+            message: body.event.message || "Agent reported a blocked state.",
+            dedupeKey: `blocked:${body.session}`,
+            cooldownMs: 15_000,
+          });
+        } else if (body.event.kind === "task_failed" || body.event.tone === "error") {
+          this.emitAlert({
+            kind: "task_failed",
+            sessionId: body.session,
+            title: `${body.session} errored`,
+            message: body.event.message || "Agent reported an error state.",
+            dedupeKey: `error:${body.session}`,
+            cooldownMs: 15_000,
+          });
+        } else if (body.event.kind === "notify") {
+          this.emitAlert({
+            kind: "notification",
+            sessionId: body.session,
+            title: body.event.source || body.session,
+            message: body.event.message || "Agent notification.",
+            dedupeKey: body.event.message ? `notify:${body.session}:${body.event.message}` : undefined,
+            cooldownMs: 15_000,
+          });
+        }
         this.options.onChange?.();
         send(res, 200, { ok: true });
         return;

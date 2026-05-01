@@ -3,12 +3,14 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths, getProjectStateDirFor } from "../paths.js";
+import { deriveSessionSemantics, type DeriveSessionSemanticsInput } from "../session-semantics.js";
 import { renderTmuxStatusline } from "./statusline.js";
 
 describe("renderTmuxStatusline", () => {
   const originalCwd = process.cwd();
   let repoRoot = "";
   const freshUpdatedAt = () => new Date().toISOString();
+  const semantic = (input: DeriveSessionSemanticsInput) => deriveSessionSemantics(input);
 
   beforeEach(async () => {
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-statusline-"));
@@ -45,6 +47,7 @@ describe("renderTmuxStatusline", () => {
             active: true,
             headline: "Fix auth flow",
             worktreePath: repoRoot,
+            semantic: semantic({ status: "running", activity: "running", attention: "needs_input", unseenCount: 2 }),
           },
           { id: "b", tool: "claude", status: "idle", windowName: "claude", worktreePath: repoRoot },
         ],
@@ -108,6 +111,7 @@ describe("renderTmuxStatusline", () => {
             status: "running",
             active: true,
             worktreePath: repoRoot,
+            semantic: semantic({ status: "running", attention: "needs_input" }),
           },
         ],
         metadata: {
@@ -166,8 +170,16 @@ describe("renderTmuxStatusline", () => {
             active: true,
             headline: "Fix auth flow",
             worktreePath: repoRoot,
+            semantic: semantic({ status: "running", attention: "needs_input", unseenCount: 3 }),
           },
-          { id: "b", tool: "claude", status: "idle", windowName: "claude", worktreePath: repoRoot },
+          {
+            id: "b",
+            tool: "claude",
+            status: "idle",
+            windowName: "claude",
+            worktreePath: repoRoot,
+            semantic: semantic({ status: "idle", activity: "done" }),
+          },
         ],
         metadata: {
           a: { derived: { attention: "needs_input", unseenCount: 3 } },
@@ -236,6 +248,88 @@ describe("renderTmuxStatusline", () => {
     expect(renderedBottom).toContain("80kb");
   });
 
+  it("renders raw unseen activity as new rather than unread for the active session", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "a",
+            tool: "codex",
+            label: "coder",
+            windowName: "coder",
+            tmuxWindowId: "@1",
+            role: "coder",
+            status: "idle",
+            active: true,
+            headline: "Fix auth flow",
+            worktreePath: repoRoot,
+            semantic: {
+              runtime: {
+                lifecycle: "idle",
+                isAlive: true,
+                canEnter: true,
+                canReceiveInput: true,
+                canInterrupt: true,
+              },
+              user: {
+                label: "idle",
+                attention: "none",
+                source: "runtime",
+              },
+              notifications: {
+                unreadCount: 0,
+              },
+              orchestration: {
+                pressure: "none",
+                assignedTask: false,
+                canBeAssignedWork: true,
+              },
+              presentation: {
+                statusLabel: "idle",
+                compactHint: "4 new",
+                attentionScore: 1,
+              },
+              attention: "normal",
+              activityNewCount: 4,
+              threadUnreadCount: 0,
+              pendingDeliveryCount: 0,
+              waitingOnMeCount: 0,
+              waitingOnThemCount: 0,
+              blockedCount: 0,
+              familyCount: 0,
+              hasActiveTask: false,
+            },
+          },
+        ],
+        metadata: {
+          a: {
+            derived: { unseenCount: 4 },
+          },
+        },
+      }),
+    );
+    const renderedTop = renderTmuxStatusline(repoRoot, "top", {
+      currentWindow: "coder",
+      currentWindowId: "@1",
+      currentPath: repoRoot,
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    const renderedBottom = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "coder",
+      currentWindowId: "@1",
+      currentPath: repoRoot,
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    expect(renderedTop).toContain("new 4");
+    expect(renderedBottom).toContain("coder(coder) 4 new");
+    expect(renderedBottom).not.toContain("4 unread");
+  });
+
   it("renders scoped services alongside agents in the bottom line", () => {
     const nestedPath = join(repoRoot, ".aimux", "worktrees", "tealstreet-pr5180");
     mkdirSync(nestedPath, { recursive: true });
@@ -255,6 +349,8 @@ describe("renderTmuxStatusline", () => {
             role: "coder",
             headline: "Needs review",
             worktreePath: nestedPath,
+            status: "running",
+            semantic: semantic({ status: "running", attention: "needs_input" }),
           },
           {
             id: "svc-1",
@@ -302,6 +398,7 @@ describe("renderTmuxStatusline", () => {
             role: "coder",
             status: "running",
             worktreePath: nestedPath,
+            semantic: semantic({ status: "running", attention: "needs_input" }),
           },
           {
             id: "offline-agent",
@@ -359,6 +456,8 @@ describe("renderTmuxStatusline", () => {
             role: "coder",
             headline: "Needs review",
             worktreePath: nestedPath,
+            status: "running",
+            semantic: semantic({ status: "running", attention: "needs_input" }),
           },
           {
             id: "b",
@@ -369,6 +468,8 @@ describe("renderTmuxStatusline", () => {
             role: "reviewer",
             headline: "Running tests",
             worktreePath: nestedPath,
+            status: "running",
+            semantic: semantic({ status: "running", activity: "running" }),
           },
         ],
         metadata: {
@@ -408,6 +509,7 @@ describe("renderTmuxStatusline", () => {
             status: "running",
             active: false,
             worktreePath: repoRoot,
+            semantic: semantic({ status: "running", attention: "needs_input" }),
           },
           {
             id: "b",
@@ -418,6 +520,7 @@ describe("renderTmuxStatusline", () => {
             status: "running",
             active: true,
             worktreePath: otherWorktree,
+            semantic: semantic({ status: "running", activity: "running" }),
           },
         ],
         metadata: {

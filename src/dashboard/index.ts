@@ -60,6 +60,8 @@ export interface DashboardSession {
   workflowFamilyCount?: number;
   workflowTopLabel?: string;
   workflowNextAction?: string;
+  notificationUnreadCount?: number;
+  latestNotificationText?: string;
   semantic?: SessionSemanticState;
   pendingAction?: "creating" | "forking" | "migrating" | "starting" | "stopping" | "graveyarding" | "renaming";
   optimistic?: boolean;
@@ -151,14 +153,6 @@ export function derivedStatusLabel(session: DashboardSession): string {
   if (session.semantic) {
     return sessionSemanticStatusLabel(session.semantic, session.status);
   }
-  if (session.attention === "error") return "error";
-  if (session.attention === "needs_input") return "needs input";
-  if (session.attention === "blocked") return "blocked";
-  if (session.activity === "done") return "done";
-  if (session.activity === "waiting") return "waiting";
-  if (session.activity === "running") return "working";
-  if (session.activity === "interrupted") return "interrupted";
-  if (session.activity === "error") return "error";
   return STATUS_LABELS[session.status];
 }
 

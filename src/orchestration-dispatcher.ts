@@ -1,5 +1,4 @@
 import { listThreads, markMessageDelivered, readMessages, type MessageKind } from "./threads.js";
-import type { SessionAvailability } from "./session-semantics.js";
 
 interface DispatchSession {
   id: string;
@@ -27,7 +26,7 @@ export class OrchestrationDispatcher {
 
   constructor(
     private readonly getSession: (id: string) => DispatchSession | undefined,
-    private readonly getSessionAvailability: (id: string) => SessionAvailability,
+    private readonly canSessionReceiveInput: (id: string) => boolean,
     // Production multiplexer wiring overrides this with writeAgentInput(..., submit: true).
     private readonly deliverPrompt: PromptDelivery = (session, prompt) => session.write(prompt + "\r"),
   ) {}
@@ -42,9 +41,7 @@ export class OrchestrationDispatcher {
           if (!localSessionIds.includes(recipient)) continue;
           const session = this.getSession(recipient);
           if (!session || session.exited) continue;
-          const availability = this.getSessionAvailability(recipient);
-          const canDeliver = availability === "available" || availability === "needs_input";
-          if (!canDeliver) continue;
+          if (!this.canSessionReceiveInput(recipient)) continue;
           const prompt =
             `Aimux: new ${message.kind} for you.\n\n` +
             `Thread: ${thread.id}\n` +

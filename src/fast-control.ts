@@ -10,6 +10,7 @@ import {
 } from "./tmux/runtime-manager.js";
 import { compactSessionTitle } from "./statusline-model.js";
 import { listWorktrees } from "./worktree.js";
+import { deriveSessionSemantics } from "./session-semantics.js";
 
 export interface FastControlContext {
   projectRoot: string;
@@ -31,25 +32,25 @@ export interface FastControlItem {
 }
 
 export function navigationUrgencyScore(input: {
-  semantic?: { attention?: string; unseenCount?: number; activity?: string } | null;
+  semantic?: {
+    user?: { attention?: string; label?: string };
+    notifications?: { unreadCount?: number };
+    activityNewCount?: number;
+  } | null;
   attention?: string;
   unseenCount?: number;
   activity?: string;
 }): number {
   if (input.semantic) {
-    const semanticAttention = input.semantic.attention;
+    const semanticAttention = input.semantic.user?.attention;
     if (semanticAttention === "error") return 5;
     if (semanticAttention === "needs_input") return 4;
     if (semanticAttention === "blocked") return 3;
-    if ((input.semantic.unseenCount ?? 0) > 0) return 2;
-    if (input.semantic.activity === "done") return 1;
+    if ((input.semantic.notifications?.unreadCount ?? 0) > 0) return 2;
+    if ((input.semantic.activityNewCount ?? 0) > 0 || input.semantic.user?.label === "done") return 1;
     return 0;
   }
-  if (input.attention === "error") return 5;
-  if (input.attention === "needs_input") return 4;
-  if (input.attention === "blocked") return 3;
-  if ((input.unseenCount ?? 0) > 0) return 2;
-  if (input.activity === "done") return 1;
+  void input;
   return 0;
 }
 
@@ -93,7 +94,13 @@ function resolveContextWorktreePath(
 function urgencyFor(projectRoot: string, sessionId?: string): number {
   if (!sessionId) return 0;
   const derived = loadMetadataState(projectRoot).sessions[sessionId]?.derived;
-  return navigationUrgencyScore(derived ?? {});
+  if (!derived) return 0;
+  return deriveSessionSemantics({
+    status: derived.activity === "running" ? "running" : derived.activity === "waiting" ? "waiting" : "idle",
+    activity: derived.activity,
+    attention: derived.attention,
+    unseenCount: derived.unseenCount,
+  }).presentation.attentionScore;
 }
 
 export function listSwitchableAgentItems(

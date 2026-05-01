@@ -136,3 +136,28 @@ export function clearNotifications(opts?: { id?: string; sessionId?: string }): 
 export function unreadNotificationCount(opts?: { sessionId?: string }): number {
   return listNotifications({ unreadOnly: true, sessionId: opts?.sessionId }).length;
 }
+
+export interface SessionNotificationSummary {
+  unreadCount: number;
+  latestUnread?: NotificationRecord;
+}
+
+export function summarizeUnreadNotificationsBySession(): Map<string, SessionNotificationSummary> {
+  const summaries = new Map<string, SessionNotificationSummary>();
+  for (const notification of listNotifications({ unreadOnly: true })) {
+    if (!notification.sessionId) continue;
+    const current = summaries.get(notification.sessionId);
+    if (!current) {
+      summaries.set(notification.sessionId, {
+        unreadCount: 1,
+        latestUnread: notification,
+      });
+      continue;
+    }
+    current.unreadCount += 1;
+    if (!current.latestUnread || Date.parse(notification.createdAt) > Date.parse(current.latestUnread.createdAt)) {
+      current.latestUnread = notification;
+    }
+  }
+  return summaries;
+}

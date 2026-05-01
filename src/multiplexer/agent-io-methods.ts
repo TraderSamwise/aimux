@@ -47,7 +47,7 @@ export const agentIoMethods = {
       semantic.waitingOnMeCount * 5 +
       semantic.blockedCount * 6 +
       semantic.pendingDeliveryCount * 3 +
-      semantic.unreadCount * 2 +
+      semantic.notifications.unreadCount * 2 +
       semantic.waitingOnThemCount
     );
   },
@@ -66,9 +66,8 @@ export const agentIoMethods = {
     for (const recipient of recipients) {
       const session = this.sessions.find((candidate: any) => candidate.id === recipient && !candidate.exited);
       if (!session) continue;
-      const availability = this.deriveSessionSemanticState(session.id, session.status).availability;
-      if (availability === "blocked" || availability === "offline" || availability === "needs_input") continue;
-      if (availability !== "available" && availability !== "busy") continue;
+      const runtime = this.deriveSessionSemanticState(session.id, session.status).runtime;
+      if (!runtime.canReceiveInput) continue;
       void this.writeAgentInput(
         recipient,
         this.composeOrchestrationPrompt(threadId, from, body, kind, title),
@@ -94,16 +93,20 @@ export const agentIoMethods = {
       input.threadId && !input.to?.length
         ? undefined
         : resolveOrchestrationRecipients({
-            candidates: this.sessions.map((session: any) => ({
-              id: session.id,
-              tool: this.sessionToolKeys.get(session.id),
-              role: this.sessionRoles.get(session.id),
-              worktreePath: this.sessionWorktreePaths.get(session.id),
-              status: session.status,
-              availability: this.deriveSessionSemanticState(session.id, session.status).availability,
-              workflowPressure: this.orchestrationWorkflowPressure(session.id, session.status),
-              exited: session.exited,
-            })),
+            candidates: this.sessions.map((session: any) => {
+              const semantic = this.deriveSessionSemanticState(session.id, session.status);
+              return {
+                id: session.id,
+                tool: this.sessionToolKeys.get(session.id),
+                role: this.sessionRoles.get(session.id),
+                worktreePath: this.sessionWorktreePaths.get(session.id),
+                status: semantic.user.label,
+                canReceiveInput: semantic.runtime.canReceiveInput,
+                isAlive: semantic.runtime.isAlive,
+                workflowPressure: this.orchestrationWorkflowPressure(session.id, session.status),
+                exited: session.exited,
+              };
+            }),
             to: input.to,
             assignee: input.assignee,
             tool: input.tool,
@@ -152,16 +155,20 @@ export const agentIoMethods = {
   ): { thread: unknown; message: unknown; deliveredTo: string[]; threadCreated: boolean } {
     const from = input.from?.trim() || "user";
     const resolvedRecipients = resolveOrchestrationRecipients({
-      candidates: this.sessions.map((session: any) => ({
-        id: session.id,
-        tool: this.sessionToolKeys.get(session.id),
-        role: this.sessionRoles.get(session.id),
-        worktreePath: this.sessionWorktreePaths.get(session.id),
-        status: session.status,
-        availability: this.deriveSessionSemanticState(session.id, session.status).availability,
-        workflowPressure: this.orchestrationWorkflowPressure(session.id, session.status),
-        exited: session.exited,
-      })),
+      candidates: this.sessions.map((session: any) => {
+        const semantic = this.deriveSessionSemanticState(session.id, session.status);
+        return {
+          id: session.id,
+          tool: this.sessionToolKeys.get(session.id),
+          role: this.sessionRoles.get(session.id),
+          worktreePath: this.sessionWorktreePaths.get(session.id),
+          status: semantic.user.label,
+          canReceiveInput: semantic.runtime.canReceiveInput,
+          isAlive: semantic.runtime.isAlive,
+          workflowPressure: this.orchestrationWorkflowPressure(session.id, session.status),
+          exited: session.exited,
+        };
+      }),
       to: input.to,
       assignee: input.assignee,
       tool: input.tool,

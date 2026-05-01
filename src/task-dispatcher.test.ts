@@ -60,9 +60,8 @@ function makeMockSession(id: string, status: string, exited = false) {
   };
 }
 
-function availabilityFor(session: ReturnType<typeof makeMockSession> | undefined) {
-  if (!session || session.exited) return "offline";
-  return session.status === "idle" ? "available" : "busy";
+function canReceiveInputFor(session: ReturnType<typeof makeMockSession> | undefined) {
+  return Boolean(session && !session.exited && session.status === "idle");
 }
 
 describe("TaskDispatcher", () => {
@@ -83,7 +82,7 @@ describe("TaskDispatcher", () => {
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
         () => undefined,
-        (id) => availabilityFor(id === "claude-worker" ? session : undefined),
+        (id) => canReceiveInputFor(id === "claude-worker" ? session : undefined),
         (target, prompt) => deliveries.push({ sessionId: target.id, prompt }),
       );
 
@@ -110,7 +109,7 @@ describe("TaskDispatcher", () => {
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
         () => undefined,
-        (id) => availabilityFor(id === "claude-worker" ? session : undefined),
+        (id) => canReceiveInputFor(id === "claude-worker" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1" }));
@@ -127,7 +126,7 @@ describe("TaskDispatcher", () => {
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
         () => undefined,
-        (id) => (id === "claude-worker" ? "needs_input" : "offline"),
+        (id) => id === "claude-worker",
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }));
@@ -145,7 +144,7 @@ describe("TaskDispatcher", () => {
         (id) => (id === "claude-leader" ? (session as any) : undefined),
         () => "claude",
         () => undefined,
-        (id) => availabilityFor(id === "claude-leader" ? session : undefined),
+        (id) => canReceiveInputFor(id === "claude-leader" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }));
@@ -166,7 +165,7 @@ describe("TaskDispatcher", () => {
         (id) => sessions.get(id) as any,
         () => "claude",
         () => undefined,
-        (id) => availabilityFor(sessions.get(id)),
+        (id) => canReceiveInputFor(sessions.get(id)),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "leader", assignedTo: "worker-2" }));
@@ -183,7 +182,7 @@ describe("TaskDispatcher", () => {
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
         () => undefined,
-        (id) => availabilityFor(id === "claude-worker" ? session : undefined),
+        (id) => canReceiveInputFor(id === "claude-worker" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "leader", status: "assigned", assignedTo: "claude-worker" }));
@@ -203,7 +202,7 @@ describe("TaskDispatcher", () => {
         (id) => (id === "claude-leader" ? (leader as any) : undefined),
         () => "claude",
         () => undefined,
-        (id) => availabilityFor(id === "claude-leader" ? leader : undefined),
+        (id) => canReceiveInputFor(id === "claude-leader" ? leader : undefined),
         (target, prompt) => deliveries.push({ sessionId: target.id, prompt }),
       );
 
@@ -235,7 +234,7 @@ describe("TaskDispatcher", () => {
         (id) => (id === "claude-leader" ? (leader as any) : undefined),
         () => "claude",
         () => undefined,
-        (id) => availabilityFor(id === "claude-leader" ? leader : undefined),
+        (id) => canReceiveInputFor(id === "claude-leader" ? leader : undefined),
       );
 
       await writeTask(
@@ -259,7 +258,7 @@ describe("TaskDispatcher", () => {
         (id) => (id === "codex-coder" ? (coder as any) : undefined),
         () => "codex",
         (id) => (id === "codex-coder" ? "coder" : undefined),
-        (id) => (id === "codex-coder" ? "needs_input" : "offline"),
+        (id) => id === "codex-coder",
       );
 
       await writeTask(
@@ -295,7 +294,7 @@ describe("TaskDispatcher", () => {
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
         () => undefined,
-        (id) => availabilityFor(id === "claude-worker" ? session : undefined),
+        (id) => canReceiveInputFor(id === "claude-worker" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "leader", status: "assigned", assignedTo: "claude-worker" }));
@@ -314,7 +313,7 @@ describe("TaskDispatcher", () => {
         () => undefined,
         () => "claude",
         () => undefined,
-        () => "offline",
+        () => false,
       );
 
       await writeTask(makeTask({ id: "t1", status: "pending" }));
@@ -337,7 +336,7 @@ describe("TaskDispatcher", () => {
         (id) => (id === "claude-worker" ? (session as any) : undefined),
         () => "claude",
         () => undefined,
-        (id) => availabilityFor(id === "claude-worker" ? session : undefined),
+        (id) => canReceiveInputFor(id === "claude-worker" ? session : undefined),
       );
 
       await writeTask(makeTask({ id: "t1", assignedBy: "leader" }));

@@ -42,14 +42,7 @@ export function attentionScore(host: SubscreenHost, entry: any): number {
 export function getActivityEntries(host: SubscreenHost): any[] {
   return host
     .getDashboardSessionsInVisualOrder()
-    .filter(
-      (entry: any) =>
-        attentionScore(host, entry) > 0 ||
-        !!entry.activity ||
-        entry.status === "running" ||
-        entry.status === "waiting" ||
-        (entry.unseenCount ?? 0) > 0,
-    )
+    .filter((entry: any) => attentionScore(host, entry) > 0 || entry.status === "running" || entry.status === "waiting")
     .sort((a: any, b: any) => {
       const scoreDiff = attentionScore(host, b) - attentionScore(host, a);
       if (scoreDiff !== 0) return scoreDiff;

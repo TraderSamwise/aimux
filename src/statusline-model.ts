@@ -138,14 +138,18 @@ export function sessionIdentity(session: Pick<StatuslineSession, "id" | "tool" |
 }
 
 export function renderDerivedBadge(derived: StatuslineMetadataEntry["derived"]): string | null {
-  if (!derived) return null;
-  if (derived.attention === "error") return "✗";
-  if (derived.attention === "needs_input") return "?";
-  if (derived.attention === "blocked") return "!";
-  if ((derived.unseenCount ?? 0) > 0) return String(Math.min(derived.unseenCount ?? 0, 9));
-  if (derived.activity === "done") return "✓";
-  if (derived.activity === "running") return "↻";
-  if (derived.activity === "waiting") return "…";
+  void derived;
+  return null;
+}
+
+export function renderSemanticBadge(semantic: SessionSemanticState | undefined): string | null {
+  if (!semantic) return null;
+  if (semantic.user.attention === "error") return "✗";
+  if (semantic.user.attention === "needs_input") return "?";
+  if (semantic.user.attention === "blocked") return "!";
+  if (semantic.user.label === "done") return "✓";
+  if (semantic.user.label === "working") return "↻";
+  if (semantic.user.label === "starting") return "…";
   return null;
 }
 
@@ -155,12 +159,6 @@ export function renderSessionCompactHint(session: {
 }): string | null {
   if (session.semantic) {
     return sessionSemanticCompactHint(session.semantic);
-  }
-  if (session.derived?.attention === "error") return "error";
-  if (session.derived?.attention === "needs_input") return "on you";
-  if (session.derived?.attention === "blocked") return "blocked";
-  if ((session.derived?.unseenCount ?? 0) > 0) {
-    return `${Math.min(session.derived?.unseenCount ?? 0, 99)} unread`;
   }
   return null;
 }

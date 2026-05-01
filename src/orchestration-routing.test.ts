@@ -9,7 +9,8 @@ describe("orchestration routing", () => {
       role: "ui",
       worktreePath: "/repo/ui",
       status: "idle",
-      availability: "available" as const,
+      canReceiveInput: true,
+      isAlive: true,
       workflowPressure: 0,
     },
     {
@@ -18,7 +19,8 @@ describe("orchestration routing", () => {
       role: "ui",
       worktreePath: "/repo/ui",
       status: "running",
-      availability: "busy" as const,
+      canReceiveInput: true,
+      isAlive: true,
       workflowPressure: 4,
     },
     {
@@ -27,7 +29,8 @@ describe("orchestration routing", () => {
       role: "coder",
       worktreePath: "/repo/api",
       status: "waiting",
-      availability: "busy" as const,
+      canReceiveInput: true,
+      isAlive: true,
       workflowPressure: 2,
     },
   ];
@@ -60,7 +63,7 @@ describe("orchestration routing", () => {
     ]);
   });
 
-  it("prefers semantically available recipients over merely busy ones", () => {
+  it("prefers idle recipients over running ones", () => {
     expect(resolveOrchestrationTarget({ candidates, assignee: "ui" })?.id).toBe("claude-ui");
   });
 
@@ -69,7 +72,7 @@ describe("orchestration routing", () => {
       resolveOrchestrationRecipients({
         candidates: [
           ...candidates,
-          { id: "blocked-ui", role: "ui", tool: "claude", status: "idle", availability: "blocked" as const },
+          { id: "blocked-ui", role: "ui", tool: "claude", status: "idle", canReceiveInput: false, isAlive: true },
         ],
         assignee: "ui",
       }),
@@ -85,7 +88,8 @@ describe("orchestration routing", () => {
             role: "ui",
             tool: "claude",
             status: "idle",
-            availability: "available" as const,
+            canReceiveInput: true,
+            isAlive: true,
             workflowPressure: 0,
           },
           {
@@ -93,7 +97,8 @@ describe("orchestration routing", () => {
             role: "ui",
             tool: "claude",
             status: "idle",
-            availability: "available" as const,
+            canReceiveInput: true,
+            isAlive: true,
             workflowPressure: 6,
           },
         ],

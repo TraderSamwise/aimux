@@ -123,14 +123,16 @@ export function renderActivityScreen(ctx: any): void {
       const wt = entry.worktreeName
         ? ` \x1b[2m· ${ctx.truncatePlain(entry.worktreeName, 18)}${entry.worktreeBranch ? `@${ctx.truncatePlain(entry.worktreeBranch, 18)}` : ""}\x1b[0m`
         : "";
-      const state =
-        entry.attention && entry.attention !== "normal" ? entry.attention : (entry.activity ?? entry.status);
-      const unseen = (entry.unseenCount ?? 0) > 0 ? ` \x1b[36m${entry.unseenCount}\x1b[0m` : "";
+      const state = entry.semantic?.presentation?.statusLabel ?? entry.status;
+      const unread =
+        (entry.semantic?.notifications?.unreadCount ?? 0) > 0
+          ? ` \x1b[36m${Math.min(entry.semantic.notifications.unreadCount, 99)}\x1b[0m`
+          : "";
       const service = entry.services?.[0]
         ? ` \x1b[2m· ${entry.services[0].port ? `:${entry.services[0].port}` : ctx.truncatePlain(entry.services[0].url ?? "", 16)}\x1b[0m`
         : "";
       listLines.push(
-        `${marker}[${i + 1}] ${identity}${roleTag} — ${state}${unseen}${wt}${service}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
+        `${marker}[${i + 1}] ${identity}${roleTag} — ${state}${unread}${wt}${service}${selected ? " \x1b[33m◀\x1b[0m" : ""}`,
       );
     }
   }

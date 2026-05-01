@@ -1,7 +1,6 @@
 import { type Task, readAllTasks, writeTask, cleanupTasks, hasActiveTask } from "./tasks.js";
 import { loadTeamConfig } from "./team.js";
 import { TaskWorkflow } from "./task-workflow.js";
-import type { SessionAvailability } from "./session-semantics.js";
 
 interface DispatchSession {
   id: string;
@@ -23,7 +22,7 @@ export class TaskDispatcher {
   private getSession: (id: string) => DispatchSession | undefined;
   private getSessionTool: (id: string) => string | undefined;
   private getSessionRole: (id: string) => string | undefined;
-  private getSessionAvailability: (id: string) => SessionAvailability;
+  private canSessionReceiveInput: (id: string) => boolean;
   private tickCount = 0;
   private lastCounts = { pending: 0, assigned: 0 };
   private workflow: TaskWorkflow;
@@ -36,13 +35,13 @@ export class TaskDispatcher {
     getSession: (id: string) => DispatchSession | undefined,
     getSessionTool: (id: string) => string | undefined,
     getSessionRole: (id: string) => string | undefined,
-    getSessionAvailability: (id: string) => SessionAvailability,
+    canSessionReceiveInput: (id: string) => boolean,
     deliverPrompt?: PromptDelivery,
   ) {
     this.getSession = getSession;
     this.getSessionTool = getSessionTool;
     this.getSessionRole = getSessionRole;
-    this.getSessionAvailability = getSessionAvailability;
+    this.canSessionReceiveInput = canSessionReceiveInput;
     this.workflow = new TaskWorkflow(deliverPrompt);
   }
 
@@ -174,8 +173,7 @@ export class TaskDispatcher {
 
   private canReceiveInjectedPrompt(session: DispatchSession): boolean {
     if (session.exited) return false;
-    const availability = this.getSessionAvailability(session.id);
-    return availability === "available" || availability === "needs_input";
+    return this.canSessionReceiveInput(session.id);
   }
 
   private inject(session: DispatchSession, task: Task): void {

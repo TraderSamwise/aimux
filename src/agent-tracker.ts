@@ -26,10 +26,11 @@ function deriveFromEvent(
     case "prompt":
     case "task_assigned":
       activity = "running";
-      if (attention === "normal") attention = "normal";
+      attention = "normal";
       break;
     case "response":
       activity = "idle";
+      attention = "normal";
       unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
       break;
     case "task_done":
@@ -54,6 +55,7 @@ function deriveFromEvent(
       break;
     case "interrupted":
       activity = "interrupted";
+      attention = "normal";
       unseenCount = suppressUnseen ? unseenCount : incrementUnseen(current);
       break;
     case "notify":
@@ -87,6 +89,7 @@ function deriveFromEvent(
       }
       if (/working|running|thinking|building|deploying|indexing|searching|editing/.test(message)) {
         activity = "running";
+        attention = "normal";
       }
       break;
   }

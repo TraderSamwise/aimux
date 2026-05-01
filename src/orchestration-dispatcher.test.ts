@@ -43,7 +43,7 @@ describe("OrchestrationDispatcher", () => {
     const deliveries: Array<{ sessionId: string; prompt: string }> = [];
     const dispatcher = new OrchestrationDispatcher(
       (id) => (id === "codex-1" ? session : undefined),
-      (id) => (id === "codex-1" ? "available" : "offline"),
+      (id) => id === "codex-1",
       (target, prompt) => deliveries.push({ sessionId: target.id, prompt }),
     );
     dispatcher.tick(["codex-1"]);
@@ -57,7 +57,7 @@ describe("OrchestrationDispatcher", () => {
     expect(dispatcher.drainEvents()).toHaveLength(1);
   });
 
-  it("uses semantic availability for tmux-backed sessions whose raw status stays running", () => {
+  it("uses semantic input capability for tmux-backed sessions whose raw status stays running", () => {
     const result = sendDirectMessage({
       from: "user",
       to: ["codex-1"],
@@ -66,7 +66,7 @@ describe("OrchestrationDispatcher", () => {
     const session = makeSession("codex-1", "running");
     const dispatcher = new OrchestrationDispatcher(
       (id) => (id === "codex-1" ? session : undefined),
-      (id) => (id === "codex-1" ? "available" : undefined),
+      (id) => id === "codex-1",
     );
     dispatcher.tick(["codex-1"]);
     expect(session.written).toHaveLength(1);
@@ -83,7 +83,7 @@ describe("OrchestrationDispatcher", () => {
     const session = makeSession("codex-1", "idle");
     const dispatcher = new OrchestrationDispatcher(
       (id) => (id === "codex-1" ? session : undefined),
-      (id) => (id === "codex-1" ? "available" : "offline"),
+      (id) => id === "codex-1",
     );
     dispatcher.tick(["codex-1"]);
     dispatcher.drainEvents();
