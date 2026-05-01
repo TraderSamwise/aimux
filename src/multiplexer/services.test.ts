@@ -121,4 +121,47 @@ describe("services", () => {
     expect(joined).toContain("Service command exited with status");
     expect(joined).toContain("interactive shell for debugging");
   });
+
+  it("seeds an optimistic service row during dashboard create", () => {
+    const createWindow = vi.fn(() => ({
+      sessionName: "aimux-repo",
+      windowId: "@9",
+      windowIndex: 9,
+      windowName: "dev",
+    }));
+    const host = {
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
+        createWindow,
+        setWindowMetadata: vi.fn(),
+        applyManagedAgentWindowPolicy: vi.fn(),
+      },
+      startedInDashboard: true,
+      mode: "dashboard",
+      setPendingDashboardSessionAction: vi.fn(),
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      updateWorktreeSessions: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      settleDashboardCreatePending: vi.fn(),
+    };
+
+    const result = createService(host, "yarn dev", repoRoot);
+
+    expect(result.serviceId).toMatch(/^service-/);
+    expect(host.setPendingDashboardSessionAction).toHaveBeenCalledWith(
+      result.serviceId,
+      "creating",
+      expect.objectContaining({
+        serviceSeed: expect.objectContaining({
+          id: result.serviceId,
+          label: "yarn",
+          status: "running",
+          worktreePath: repoRoot,
+          optimistic: true,
+        }),
+      }),
+    );
+  });
 });

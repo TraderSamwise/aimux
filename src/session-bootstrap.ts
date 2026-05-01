@@ -395,9 +395,10 @@ export class SessionBootstrapService {
           if (target) {
             const ready = await this.waitForDetachedCodexInputReady(targetSessionId, target);
             if (!ready) {
-              debug(`codex kickoff skipped: input prompt not ready for ${targetSessionId}`, "fork");
-              resolve();
-              return;
+              debug(
+                `codex kickoff input prompt not ready for ${targetSessionId}; attempting best-effort delivery`,
+                "fork",
+              );
             }
             await deliverTmuxPrompt({
               tmuxRuntimeManager: this.deps.tmuxRuntimeManager,

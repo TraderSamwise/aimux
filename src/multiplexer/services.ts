@@ -90,7 +90,19 @@ export function createService(host: ServiceHost, commandLine: string, worktreePa
   const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(process.cwd());
   const shouldRenderPending = host.startedInDashboard && host.mode === "dashboard";
   if (shouldRenderPending) {
-    host.setPendingDashboardSessionAction(serviceId, "creating");
+    host.setPendingDashboardSessionAction(serviceId, "creating", {
+      serviceSeed: {
+        id: serviceId,
+        command: trimmed ? shell : "shell",
+        args: trimmed ? ["-lc", trimmed] : ["-l"],
+        createdAt: new Date().toISOString(),
+        worktreePath,
+        status: "running",
+        active: false,
+        label,
+        optimistic: true,
+      },
+    });
   }
   try {
     const target = host.tmuxRuntimeManager.createWindow(tmuxSession.sessionName, label, cwd, command, args, {

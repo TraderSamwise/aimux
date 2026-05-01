@@ -14,6 +14,7 @@ interface PendingActionEntry {
   kind: PendingDashboardActionKind;
   timeoutId?: ReturnType<typeof setTimeout>;
   sessionSeed?: DashboardSession;
+  serviceSeed?: DashboardService;
 }
 
 export class DashboardPendingActions {
@@ -29,7 +30,12 @@ export class DashboardPendingActions {
   set(
     sessionId: string,
     kind: PendingDashboardActionKind | null,
-    opts?: { timeoutMs?: number; onTimeout?: () => void; sessionSeed?: DashboardSession },
+    opts?: {
+      timeoutMs?: number;
+      onTimeout?: () => void;
+      sessionSeed?: DashboardSession;
+      serviceSeed?: DashboardService;
+    },
   ): void {
     const existing = this.actions.get(sessionId);
     const previousKind = existing?.kind;
@@ -47,7 +53,7 @@ export class DashboardPendingActions {
           this.onChange();
         }, opts.timeoutMs);
       }
-      this.actions.set(sessionId, { kind, timeoutId, sessionSeed: opts?.sessionSeed });
+      this.actions.set(sessionId, { kind, timeoutId, sessionSeed: opts?.sessionSeed, serviceSeed: opts?.serviceSeed });
     } else {
       this.actions.delete(sessionId);
     }
@@ -91,12 +97,26 @@ export class DashboardPendingActions {
 
   applyToServices(services: DashboardService[]): DashboardService[] {
     if (this.actions.size === 0) return services;
-    return services.map((service) => {
+    const seen = new Set<string>();
+    const applied = services.map((service) => {
+      seen.add(service.id);
       const pendingAction = this.actions.get(service.id)?.kind;
       if (pendingAction === "removing") return service;
       if (!pendingAction) return service;
       return { ...service, pendingAction, optimistic: true };
     });
+    for (const [serviceId, entry] of this.actions.entries()) {
+      if (seen.has(serviceId)) continue;
+      if (!entry.serviceSeed) continue;
+      if (entry.kind !== "creating") continue;
+      applied.push({
+        ...entry.serviceSeed,
+        id: serviceId,
+        pendingAction: entry.kind,
+        optimistic: true,
+      });
+    }
+    return applied;
   }
 
   applyToWorktrees(worktrees: WorktreeGroup[]): WorktreeGroup[] {
