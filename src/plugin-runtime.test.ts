@@ -1,5 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { deriveAlertFromAgentEvent } from "./plugin-runtime.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, it } from "vitest";
+import { deriveAlertFromAgentEvent, ensureBundledDefaultPluginWrappers } from "./plugin-runtime.js";
+
+let tempDir = "";
+
+afterEach(() => {
+  if (tempDir) {
+    rmSync(tempDir, { recursive: true, force: true });
+    tempDir = "";
+  }
+});
 
 describe("deriveAlertFromAgentEvent", () => {
   it("maps direct-chat needs_input into a semantic alert", () => {
@@ -54,5 +66,36 @@ describe("deriveAlertFromAgentEvent", () => {
       title: "codex-1",
       message: "Build complete",
     });
+  });
+
+  it("seeds the bundled gh-pr-context wrapper once without overwriting user files", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aimux-plugin-runtime-"));
+
+    ensureBundledDefaultPluginWrappers(tempDir);
+
+    const wrapperPath = join(tempDir, "plugins", "gh-pr-context.js");
+    const manifestPath = join(tempDir, "plugins", ".bundled-default-plugins.json");
+    expect(readFileSync(wrapperPath, "utf-8")).toContain("createGithubPrContextPlugin");
+    expect(readFileSync(manifestPath, "utf-8")).toContain("gh-pr-context");
+
+    const custom = "export default function custom() {}\n";
+    writeFileSync(wrapperPath, custom);
+
+    ensureBundledDefaultPluginWrappers(tempDir);
+
+    expect(readFileSync(wrapperPath, "utf-8")).toBe(custom);
+  });
+
+  it("treats deletion after initial seed as intentional", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "aimux-plugin-runtime-delete-"));
+
+    ensureBundledDefaultPluginWrappers(tempDir);
+
+    const wrapperPath = join(tempDir, "plugins", "gh-pr-context.js");
+    rmSync(wrapperPath, { force: true });
+
+    ensureBundledDefaultPluginWrappers(tempDir);
+
+    expect(existsSync(wrapperPath)).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { getGlobalAimuxDir, getLocalAimuxDir, getProjectId, getRepoRoot } from "./paths.js";
 import {
   updateSessionMetadata,
@@ -59,6 +59,67 @@ function listPluginFiles(dir: string): string[] {
     .filter((entry) => entry.endsWith(".js") || entry.endsWith(".mjs"))
     .map((entry) => join(dir, entry))
     .filter((path) => statSync(path).isFile());
+}
+
+interface BundledPluginManifest {
+  installed?: Record<string, { installedAt: string }>;
+}
+
+interface BundledPluginSpec {
+  name: string;
+  moduleHref: string;
+}
+
+const DEFAULT_BUNDLED_PLUGINS: BundledPluginSpec[] = [
+  {
+    name: "gh-pr-context",
+    moduleHref: pathToFileURL(fileURLToPath(new URL("./default-plugins/gh-pr-context.js", import.meta.url))).href,
+  },
+];
+
+function bundledPluginWrapperPath(name: string, baseDir = getGlobalAimuxDir()): string {
+  return join(baseDir, "plugins", `${name}.js`);
+}
+
+function bundledPluginManifestPath(baseDir = getGlobalAimuxDir()): string {
+  return join(baseDir, "plugins", ".bundled-default-plugins.json");
+}
+
+function loadBundledPluginManifest(baseDir = getGlobalAimuxDir()): BundledPluginManifest {
+  try {
+    return JSON.parse(readFileSync(bundledPluginManifestPath(baseDir), "utf-8")) as BundledPluginManifest;
+  } catch {
+    return {};
+  }
+}
+
+function saveBundledPluginManifest(manifest: BundledPluginManifest, baseDir = getGlobalAimuxDir()): void {
+  mkdirSync(join(baseDir, "plugins"), { recursive: true });
+  writeFileSync(bundledPluginManifestPath(baseDir), JSON.stringify(manifest, null, 2) + "\n");
+}
+
+export function ensureBundledDefaultPluginWrappers(baseDir = getGlobalAimuxDir()): void {
+  const pluginsDir = join(baseDir, "plugins");
+  mkdirSync(pluginsDir, { recursive: true });
+
+  const manifest = loadBundledPluginManifest(baseDir);
+  const installed = manifest.installed ?? {};
+  for (const plugin of DEFAULT_BUNDLED_PLUGINS) {
+    if (installed[plugin.name]) {
+      continue;
+    }
+    const wrapperPath = bundledPluginWrapperPath(plugin.name, baseDir);
+    if (!existsSync(wrapperPath)) {
+      const exportedFactoryName = plugin.name === "gh-pr-context" ? "createGithubPrContextPlugin" : "default";
+      const wrapperSource =
+        `import { ${exportedFactoryName} } from ${JSON.stringify(plugin.moduleHref)};\n` +
+        `export default ${exportedFactoryName};\n`;
+      writeFileSync(wrapperPath, wrapperSource);
+    }
+    installed[plugin.name] = { installedAt: new Date().toISOString() };
+  }
+  manifest.installed = installed;
+  saveBundledPluginManifest(manifest, baseDir);
 }
 
 export class PluginRuntime {
@@ -217,6 +278,10 @@ export class PluginRuntime {
       await transcriptPlugin.start?.();
       this.instances.push(transcriptPlugin);
     }
+
+    // Keep the PR context implementation in userland: ship a default wrapper once,
+    // then let users edit or delete ~/.aimux/plugins/gh-pr-context.js however they want.
+    ensureBundledDefaultPluginWrappers();
 
     const pluginFiles = [
       ...listPluginFiles(join(getGlobalAimuxDir(), "plugins")),
