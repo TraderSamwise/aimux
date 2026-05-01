@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readHistory } from "../context/history.js";
+import { loadConfig } from "../config.js";
 import { getContextDir } from "../paths.js";
 import type { AimuxPluginAPI, AimuxPluginInstance } from "../plugin-runtime.js";
 
@@ -90,4 +91,13 @@ export function createTranscriptLengthPlugin(
       timer = null;
     },
   };
+}
+
+export default function createConfiguredTranscriptLengthPlugin(api: AimuxPluginAPI): AimuxPluginInstance | void {
+  const config = loadConfig();
+  const pluginConfig = config.statusline.defaultPlugins.transcriptLength;
+  if (!pluginConfig.enabled) return;
+  return createTranscriptLengthPlugin(api, {
+    line: pluginConfig.line ?? "top",
+  });
 }

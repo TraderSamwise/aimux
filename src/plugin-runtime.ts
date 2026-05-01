@@ -17,8 +17,6 @@ import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import { type AlertKind, type ProjectEventBus } from "./project-events.js";
-import { loadConfig } from "./config.js";
-import { createTranscriptLengthPlugin } from "./default-plugins/transcript-length.js";
 
 export interface AimuxMetadataAPI {
   setStatus(session: string, text: string, tone?: MetadataTone): void;
@@ -68,12 +66,18 @@ interface BundledPluginManifest {
 interface BundledPluginSpec {
   name: string;
   moduleHref: string;
+  exportName?: string;
 }
 
 const DEFAULT_BUNDLED_PLUGINS: BundledPluginSpec[] = [
   {
     name: "gh-pr-context",
     moduleHref: pathToFileURL(fileURLToPath(new URL("./default-plugins/gh-pr-context.js", import.meta.url))).href,
+    exportName: "createGithubPrContextPlugin",
+  },
+  {
+    name: "transcript-length",
+    moduleHref: pathToFileURL(fileURLToPath(new URL("./default-plugins/transcript-length.js", import.meta.url))).href,
   },
 ];
 
@@ -110,10 +114,10 @@ export function ensureBundledDefaultPluginWrappers(baseDir = getGlobalAimuxDir()
     }
     const wrapperPath = bundledPluginWrapperPath(plugin.name, baseDir);
     if (!existsSync(wrapperPath)) {
-      const exportedFactoryName = plugin.name === "gh-pr-context" ? "createGithubPrContextPlugin" : "default";
-      const wrapperSource =
-        `import { ${exportedFactoryName} } from ${JSON.stringify(plugin.moduleHref)};\n` +
-        `export default ${exportedFactoryName};\n`;
+      const wrapperSource = plugin.exportName
+        ? `import { ${plugin.exportName} } from ${JSON.stringify(plugin.moduleHref)};\n` +
+          `export default ${plugin.exportName};\n`
+        : `import pluginFactory from ${JSON.stringify(plugin.moduleHref)};\n` + `export default pluginFactory;\n`;
       writeFileSync(wrapperPath, wrapperSource);
     }
     installed[plugin.name] = { installedAt: new Date().toISOString() };
@@ -145,7 +149,6 @@ export class PluginRuntime {
 
   async start(): Promise<void> {
     const tracker = new AgentTracker();
-    const config = loadConfig();
     const api: AimuxPluginAPI = {
       projectRoot: getRepoRoot(),
       projectId: getProjectId(),
@@ -271,16 +274,8 @@ export class PluginRuntime {
       this.instances.push(watcher);
     }
 
-    if (config.statusline.defaultPlugins.transcriptLength.enabled) {
-      const transcriptPlugin = createTranscriptLengthPlugin(api, {
-        line: config.statusline.defaultPlugins.transcriptLength.line ?? "top",
-      });
-      await transcriptPlugin.start?.();
-      this.instances.push(transcriptPlugin);
-    }
-
     // Keep the PR context implementation in userland: ship a default wrapper once,
-    // then let users edit or delete ~/.aimux/plugins/gh-pr-context.js however they want.
+    // then let users edit or delete ~/.aimux/plugins/*.js however they want.
     ensureBundledDefaultPluginWrappers();
 
     const pluginFiles = [

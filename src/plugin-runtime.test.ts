@@ -74,9 +74,13 @@ describe("deriveAlertFromAgentEvent", () => {
     ensureBundledDefaultPluginWrappers(tempDir);
 
     const wrapperPath = join(tempDir, "plugins", "gh-pr-context.js");
+    const transcriptWrapperPath = join(tempDir, "plugins", "transcript-length.js");
     const manifestPath = join(tempDir, "plugins", ".bundled-default-plugins.json");
     expect(readFileSync(wrapperPath, "utf-8")).toContain("createGithubPrContextPlugin");
-    expect(readFileSync(manifestPath, "utf-8")).toContain("gh-pr-context");
+    expect(readFileSync(transcriptWrapperPath, "utf-8")).toContain("export default");
+    const manifest = readFileSync(manifestPath, "utf-8");
+    expect(manifest).toContain("gh-pr-context");
+    expect(manifest).toContain("transcript-length");
 
     const custom = "export default function custom() {}\n";
     writeFileSync(wrapperPath, custom);
@@ -92,10 +96,13 @@ describe("deriveAlertFromAgentEvent", () => {
     ensureBundledDefaultPluginWrappers(tempDir);
 
     const wrapperPath = join(tempDir, "plugins", "gh-pr-context.js");
+    const transcriptWrapperPath = join(tempDir, "plugins", "transcript-length.js");
     rmSync(wrapperPath, { force: true });
+    rmSync(transcriptWrapperPath, { force: true });
 
     ensureBundledDefaultPluginWrappers(tempDir);
 
     expect(existsSync(wrapperPath)).toBe(false);
+    expect(existsSync(transcriptWrapperPath)).toBe(false);
   });
 });
