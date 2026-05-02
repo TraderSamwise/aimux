@@ -331,12 +331,14 @@ export function computeDashboardServices(
 ): DashboardService[] {
   const hiddenWorktreePaths = listWorktreeGraveyardPaths();
   const lastUsedState = loadLastUsedState(process.cwd());
+  const offlineServiceIds = new Set(host.offlineServices.map((service: any) => service.id));
   const worktreeByPath = new Map<string, { name: string; path: string; branch: string; isBare: boolean }>(
     worktrees.map((wt: any) => [wt.path, wt] as const),
   );
   const liveServices = host.tmuxRuntimeManager
     .listProjectManagedWindows(process.cwd())
     .filter(({ target, metadata }: any) => !isDashboardWindowName(target.windowName) && metadata.kind === "service")
+    .filter(({ metadata }: any) => !offlineServiceIds.has(metadata.sessionId))
     .filter(({ metadata }: any) => !(metadata.worktreePath && hiddenWorktreePaths.has(metadata.worktreePath)))
     .map(({ target, metadata }: any) => {
       const worktree = metadata.worktreePath ? worktreeByPath.get(metadata.worktreePath) : undefined;
@@ -381,7 +383,7 @@ export function computeDashboardServices(
         status: "offline" as const,
         active: false,
         label,
-        cwd: service.worktreePath,
+        cwd: service.cwd ?? service.worktreePath,
         foregroundCommand: label,
         previewLine,
       };

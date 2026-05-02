@@ -81,8 +81,11 @@ export interface ServiceState {
   id: string;
   createdAt?: string;
   worktreePath?: string;
+  cwd?: string;
   label?: string;
   launchCommandLine?: string;
+  tmuxTarget?: TmuxTarget;
+  retained?: boolean;
 }
 
 export interface SavedState {

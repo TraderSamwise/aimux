@@ -183,7 +183,8 @@ export function loadOfflineServices(host: RuntimeStateHost, state = host.constru
         ({ target, metadata }: any) =>
           !isDashboardWindowName(target.windowName) &&
           metadata.kind === "service" &&
-          host.tmuxRuntimeManager.isWindowAlive(target),
+          host.tmuxRuntimeManager.isWindowAlive(target) &&
+          !savedServices.some((service: any) => service.id === metadata.sessionId && service.retained),
       )
       .map(({ metadata }: any) => metadata.sessionId),
   );
@@ -196,13 +197,13 @@ export function loadOfflineServices(host: RuntimeStateHost, state = host.constru
   const previousKey = host.offlineServices
     .map(
       (service: any) =>
-        `${service.id}:${service.label ?? ""}:${service.worktreePath ?? ""}:${service.launchCommandLine ?? ""}`,
+        `${service.id}:${service.label ?? ""}:${service.worktreePath ?? ""}:${service.cwd ?? ""}:${service.launchCommandLine ?? ""}:${service.tmuxTarget?.windowId ?? ""}:${service.retained ? "retained" : ""}`,
     )
     .join("|");
   const nextKey = nextOfflineServices
     .map(
       (service: any) =>
-        `${service.id}:${service.label ?? ""}:${service.worktreePath ?? ""}:${service.launchCommandLine ?? ""}`,
+        `${service.id}:${service.label ?? ""}:${service.worktreePath ?? ""}:${service.cwd ?? ""}:${service.launchCommandLine ?? ""}:${service.tmuxTarget?.windowId ?? ""}:${service.retained ? "retained" : ""}`,
     )
     .join("|");
   host.offlineServices = nextOfflineServices;
@@ -225,6 +226,8 @@ export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
       worktreePath: metadata.worktreePath,
       label: metadata.label,
       launchCommandLine,
+      cwd: host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath,
+      tmuxTarget: target,
     });
   }
   return liveServices;

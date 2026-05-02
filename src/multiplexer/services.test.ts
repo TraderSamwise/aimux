@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { createService, removeOfflineService, resumeOfflineService } from "./services.js";
+import { createService, removeOfflineService, resumeOfflineService, stopService } from "./services.js";
 
 describe("services", () => {
   let repoRoot = "";
@@ -52,6 +52,78 @@ describe("services", () => {
     });
     expect(host.offlineServices).toEqual([]);
     expect(host.saveState).toHaveBeenCalledOnce();
+  });
+
+  it("stops a running service by interrupting and retaining its tmux window", () => {
+    const killWindow = vi.fn();
+    const sendKey = vi.fn();
+    const target = { sessionName: "aimux-repo", windowId: "@7", windowIndex: 7, windowName: "shell" };
+    const host = {
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
+        findManagedWindow: vi.fn(() => ({
+          target,
+          metadata: {
+            kind: "service",
+            sessionId: "svc-1",
+            command: "shell",
+            args: ["-l"],
+            label: "shell",
+            worktreePath: repoRoot,
+            createdAt: "2026-05-02T00:00:00.000Z",
+          },
+        })),
+        displayMessage: vi.fn(() => join(repoRoot, "apps/web")),
+        sendKey,
+        setWindowMetadata: vi.fn(),
+        applyManagedAgentWindowPolicy: vi.fn(),
+        killWindow,
+      },
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      adjustAfterRemove: vi.fn(),
+      dashboardWorktreeGroupsCache: [],
+    };
+
+    const result = stopService(host, "svc-1");
+
+    expect(result).toEqual({ serviceId: "svc-1", status: "stopped" });
+    expect(killWindow).not.toHaveBeenCalled();
+    expect(sendKey).toHaveBeenCalledWith(target, "C-c");
+    expect(host.offlineServices).toMatchObject([
+      {
+        id: "svc-1",
+        cwd: join(repoRoot, "apps/web"),
+        tmuxTarget: target,
+        retained: true,
+      },
+    ]);
+  });
+
+  it("kills a retained service window when removing an offline service", () => {
+    const target = { sessionName: "aimux-repo", windowId: "@8", windowIndex: 8, windowName: "shell" };
+    const killWindow = vi.fn();
+    const host = {
+      offlineServices: [{ id: "svc-1", label: "shell", tmuxTarget: target, retained: true }],
+      tmuxRuntimeManager: {
+        getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
+        findManagedWindow: vi.fn(() => null),
+        hasWindow: vi.fn(() => true),
+        killWindow,
+      },
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      adjustAfterRemove: vi.fn(),
+      dashboardWorktreeGroupsCache: [],
+    };
+
+    removeOfflineService(host, "svc-1");
+
+    expect(killWindow).toHaveBeenCalledWith(target);
+    expect(host.offlineServices).toEqual([]);
   });
 
   it("wraps created service commands to drop into an interactive shell on failure", () => {
@@ -120,6 +192,99 @@ describe("services", () => {
     const joined = args.join(" ");
     expect(joined).toContain("Service command exited with status");
     expect(joined).toContain("interactive shell for debugging");
+  });
+
+  it("restarts a retained service command in its existing tmux window", () => {
+    const target = { sessionName: "aimux-repo", windowId: "@12", windowIndex: 12, windowName: "dev" };
+    const sendText = vi.fn();
+    const sendEnter = vi.fn();
+    const killWindow = vi.fn();
+    const createWindow = vi.fn();
+    const host = {
+      offlineServices: [
+        {
+          id: "svc-1",
+          label: "dev",
+          worktreePath: repoRoot,
+          cwd: join(repoRoot, "apps/web"),
+          launchCommandLine: "yarn dev",
+          createdAt: "2026-05-02T00:00:00.000Z",
+          tmuxTarget: target,
+          retained: true,
+        },
+      ],
+      tmuxRuntimeManager: {
+        getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
+        findManagedWindow: vi.fn(() => ({ target, metadata: { kind: "service", sessionId: "svc-1" } })),
+        hasWindow: vi.fn(() => true),
+        createWindow,
+        killWindow,
+        sendText,
+        sendEnter,
+        setWindowMetadata: vi.fn(),
+        applyManagedAgentWindowPolicy: vi.fn(),
+      },
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      updateWorktreeSessions: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+    };
+
+    resumeOfflineService(host, host.offlineServices[0]);
+
+    expect(createWindow).not.toHaveBeenCalled();
+    expect(killWindow).not.toHaveBeenCalled();
+    expect(sendText).toHaveBeenCalledWith(target, "yarn dev");
+    expect(sendEnter).toHaveBeenCalledWith(target);
+    expect(host.offlineServices).toEqual([]);
+  });
+
+  it("creates a new window when a retained service window is gone", () => {
+    const target = { sessionName: "aimux-repo", windowId: "@13", windowIndex: 13, windowName: "dev" };
+    const createWindow = vi.fn(() => target);
+    const respawnWindow = vi.fn();
+    const host = {
+      offlineServices: [
+        {
+          id: "svc-1",
+          label: "dev",
+          worktreePath: repoRoot,
+          cwd: join(repoRoot, "apps/web"),
+          launchCommandLine: "yarn dev",
+          tmuxTarget: { sessionName: "aimux-repo", windowId: "@12", windowIndex: 12, windowName: "dev" },
+          retained: true,
+        },
+      ],
+      tmuxRuntimeManager: {
+        getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-repo" })),
+        findManagedWindow: vi.fn(() => null),
+        hasWindow: vi.fn(() => false),
+        createWindow,
+        respawnWindow,
+        setWindowMetadata: vi.fn(),
+        applyManagedAgentWindowPolicy: vi.fn(),
+      },
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      updateWorktreeSessions: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+    };
+
+    resumeOfflineService(host, host.offlineServices[0]);
+
+    expect(respawnWindow).not.toHaveBeenCalled();
+    expect(createWindow).toHaveBeenCalledWith(
+      "aimux-repo",
+      "dev",
+      join(repoRoot, "apps/web"),
+      expect.any(String),
+      expect.any(Array),
+      { detached: true },
+    );
   });
 
   it("seeds an optimistic service row during dashboard create", () => {

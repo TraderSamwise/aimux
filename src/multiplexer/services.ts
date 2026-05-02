@@ -40,13 +40,17 @@ function buildServiceStateFromMetadata(
     worktreePath?: string;
     label?: string;
   },
+  opts: { cwd?: string; tmuxTarget?: ServiceState["tmuxTarget"]; retained?: boolean } = {},
 ): ServiceState {
   return {
     id: serviceId,
     createdAt: metadata.createdAt,
     worktreePath: metadata.worktreePath,
+    cwd: opts.cwd,
     label: metadata.label,
     launchCommandLine: getServiceLaunchCommandLine(metadata),
+    tmuxTarget: opts.tmuxTarget,
+    retained: opts.retained,
   };
 }
 
@@ -142,11 +146,23 @@ export function stopService(host: ServiceHost, serviceId: string): { serviceId: 
   if (!match || match.metadata.kind !== "service") {
     throw new Error(`Service "${serviceId}" not found`);
   }
+  const cwd =
+    host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", match.target.windowId) ??
+    match.metadata.worktreePath;
   host.offlineServices = [
     ...host.offlineServices.filter((service: ServiceState) => service.id !== serviceId),
-    buildServiceStateFromMetadata(serviceId, match.metadata),
+    buildServiceStateFromMetadata(serviceId, match.metadata, {
+      cwd,
+      tmuxTarget: match.target,
+      retained: true,
+    }),
   ];
-  host.tmuxRuntimeManager.killWindow(match.target);
+  host.tmuxRuntimeManager.sendKey(match.target, "C-c");
+  host.tmuxRuntimeManager.setWindowMetadata(match.target, {
+    ...match.metadata,
+    worktreePath: match.metadata.worktreePath,
+  });
+  host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(match.target, "service");
   host.saveState();
   host.invalidateDesktopStateSnapshot();
   host.refreshLocalDashboardModel();
@@ -155,6 +171,7 @@ export function stopService(host: ServiceHost, serviceId: string): { serviceId: 
 }
 
 export function removeOfflineService(host: ServiceHost, serviceId: string): { serviceId: string; status: "removed" } {
+  const offlineService = host.offlineServices.find((service: ServiceState) => service.id === serviceId);
   const existing = host.tmuxRuntimeManager.findManagedWindow(
     host.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
     {
@@ -164,6 +181,10 @@ export function removeOfflineService(host: ServiceHost, serviceId: string): { se
   if (existing && existing.metadata.kind === "service") {
     try {
       host.tmuxRuntimeManager.killWindow(existing.target);
+    } catch {}
+  } else if (offlineService?.tmuxTarget && host.tmuxRuntimeManager.hasWindow?.(offlineService.tmuxTarget)) {
+    try {
+      host.tmuxRuntimeManager.killWindow(offlineService.tmuxTarget);
     } catch {}
   }
   host.offlineServices = host.offlineServices.filter((service: ServiceState) => service.id !== serviceId);
@@ -193,18 +214,22 @@ export function resumeOfflineService(
     },
   );
   if (existing && existing.metadata.kind === "service") {
-    if (host.tmuxRuntimeManager.isWindowAlive(existing.target)) {
+    if (service.retained) {
+      service.tmuxTarget = existing.target;
+    } else if (host.tmuxRuntimeManager.isWindowAlive(existing.target)) {
       host.offlineServices = host.offlineServices.filter((entry: ServiceState) => entry.id !== service.id);
       host.saveState();
       host.invalidateDesktopStateSnapshot();
       host.refreshLocalDashboardModel();
       return { serviceId: service.id, status: "running" };
+    } else {
+      try {
+        host.tmuxRuntimeManager.killWindow(existing.target);
+      } catch {}
     }
-    try {
-      host.tmuxRuntimeManager.killWindow(existing.target);
-    } catch {}
   }
   const cwd = service.worktreePath ?? process.cwd();
+  const resumeCwd = service.cwd ?? cwd;
   const shell = process.env.SHELL || "zsh";
   const launchCommandLine = service.launchCommandLine?.trim() ?? "";
   const launchScript = buildServiceLaunchScript(launchCommandLine, shell);
@@ -233,9 +258,19 @@ export function resumeOfflineService(
   const args = wrapped.args;
   const label = service.label ?? serviceLabelForCommand(launchCommandLine);
   const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(process.cwd());
-  const target = host.tmuxRuntimeManager.createWindow(tmuxSession.sessionName, label, cwd, command, args, {
-    detached: true,
-  });
+  const retainedTarget =
+    service.tmuxTarget && host.tmuxRuntimeManager.hasWindow?.(service.tmuxTarget) ? service.tmuxTarget : undefined;
+  const target =
+    retainedTarget ??
+    host.tmuxRuntimeManager.createWindow(tmuxSession.sessionName, label, resumeCwd, command, args, {
+      detached: true,
+    });
+  if (retainedTarget) {
+    if (launchCommandLine) {
+      host.tmuxRuntimeManager.sendText(retainedTarget, launchCommandLine);
+      host.tmuxRuntimeManager.sendEnter(retainedTarget);
+    }
+  }
   host.tmuxRuntimeManager.setWindowMetadata(target, {
     kind: "service",
     sessionId: service.id,
