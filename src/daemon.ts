@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve as pathResolve } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
+import { writeJsonAtomic } from "./atomic-write.js";
 import { getDaemonInfoPath, getDaemonStatePath, getProjectIdFor } from "./paths.js";
 import { listDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
@@ -38,12 +39,8 @@ function ensureParent(path: string): void {
 }
 
 function saveJson(path: string, value: unknown): void {
-  ensureParent(path);
-  const tmpPath = `${path}.tmp`;
-  ensureParent(tmpPath);
-  writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`);
   try {
-    renameSync(tmpPath, path);
+    writeJsonAtomic(path, value);
   } catch {
     ensureParent(path);
     writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);

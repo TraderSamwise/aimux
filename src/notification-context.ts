@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { writeJsonAtomic } from "./atomic-write.js";
 import { getNotificationContextPath } from "./paths.js";
 import type { AlertEvent } from "./project-events.js";
 
@@ -24,10 +24,6 @@ interface NotificationContextState {
 // sessions to start accumulating "unread" as if they were backgrounded.
 const CONTEXT_FRESH_MS = 15 * 60_000;
 
-function ensureParent(path: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-}
-
 function loadState(): NotificationContextState {
   const path = getNotificationContextPath();
   if (!existsSync(path)) return { version: 1, contexts: {} };
@@ -44,11 +40,7 @@ function loadState(): NotificationContextState {
 }
 
 function saveState(state: NotificationContextState): void {
-  const path = getNotificationContextPath();
-  ensureParent(path);
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
-  renameSync(tmp, path);
+  writeJsonAtomic(getNotificationContextPath(), state);
 }
 
 function isFresh(entry: NotificationContextEntry | undefined): boolean {

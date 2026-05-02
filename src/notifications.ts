@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { writeJsonAtomic } from "./atomic-write.js";
 import { getNotificationsPath } from "./paths.js";
 
 export interface NotificationRecord {
@@ -22,10 +22,6 @@ interface NotificationState {
   notifications: NotificationRecord[];
 }
 
-function ensureParent(path: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-}
-
 function loadState(): NotificationState {
   const path = getNotificationsPath();
   if (!existsSync(path)) return { version: 1, notifications: [] };
@@ -42,11 +38,7 @@ function loadState(): NotificationState {
 }
 
 function saveState(state: NotificationState): void {
-  const path = getNotificationsPath();
-  ensureParent(path);
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
-  renameSync(tmp, path);
+  writeJsonAtomic(getNotificationsPath(), state);
 }
 
 export function addNotification(input: {
