@@ -1,13 +1,16 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { getProjectStateDirFor } from "../paths.js";
+import { writeJsonAtomic } from "../atomic-write.js";
 import type { AimuxPluginAPI, AimuxPluginInstance } from "../plugin-runtime.js";
 import type { SessionContextMetadata } from "../metadata-store.js";
 
-const POLL_INTERVAL_MS = 15_000;
-const PR_CACHE_TTL_MS = 30_000;
-const FILE_CACHE_TTL_MS = 2_000;
+const POLL_INTERVAL_MS = 60_000;
+const PR_CACHE_TTL_MS = 5 * 60_000;
+const PR_CACHE_PENDING_TTL_MS = 20_000;
+const COMMAND_TIMEOUT_MS = 5_000;
+const FILE_CACHE_TTL_MS = 5_000;
 
 interface SessionTarget {
   id: string;
@@ -17,6 +20,7 @@ interface SessionTarget {
 interface PrCacheEntry {
   value: SessionContextMetadata["pr"] | null;
   expiresAt: number;
+  pendingUntil?: number;
 }
 
 interface FileCacheEntry {
@@ -39,7 +43,7 @@ function execFileText(
   options: { cwd?: string } = {},
 ): Promise<{ ok: boolean; stdout: string }> {
   return new Promise((resolvePromise) => {
-    execFile(command, args, { encoding: "utf-8", ...options }, (error, stdout) => {
+    execFile(command, args, { encoding: "utf-8", timeout: COMMAND_TIMEOUT_MS, ...options }, (error, stdout) => {
       if (error) {
         resolvePromise({ ok: false, stdout: "" });
         return;
@@ -131,11 +135,45 @@ function stableSerialize(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
+export function collectGithubPrTargets(statusline: any, state: any, metadata: any): SessionTarget[] {
+  const targets = new Map<string, SessionTarget>();
+
+  for (const session of statusline?.sessions ?? []) {
+    const existingContext = metadata?.sessions?.[session.id]?.context ?? {};
+    targets.set(session.id, {
+      id: session.id,
+      worktreePath: session.worktreePath ?? existingContext.worktreePath ?? existingContext.cwd,
+    });
+  }
+
+  for (const session of state?.sessions ?? []) {
+    if (!targets.has(session.id)) {
+      const existingContext = metadata?.sessions?.[session.id]?.context ?? {};
+      targets.set(session.id, {
+        id: session.id,
+        worktreePath: session.worktreePath ?? existingContext.worktreePath ?? existingContext.cwd,
+      });
+    }
+  }
+
+  for (const service of state?.services ?? []) {
+    if (!targets.has(service.id)) {
+      targets.set(service.id, {
+        id: service.id,
+        worktreePath: service.worktreePath,
+      });
+    }
+  }
+
+  return [...targets.values()].filter((target) => Boolean(target.worktreePath));
+}
+
 export function createGithubPrContextPlugin(api: AimuxPluginAPI): AimuxPluginInstance {
   const projectStateDir = getProjectStateDirFor(api.projectRoot);
   const statuslinePath = join(projectStateDir, "statusline.json");
   const statePath = join(projectStateDir, "state.json");
   const metadataPath = join(projectStateDir, "metadata.json");
+  const prCachePath = join(projectStateDir, "plugin-cache", "gh-pr-context.json");
 
   const prCache = new Map<string, PrCacheEntry>();
   const contextCache = new Map<string, string>();
@@ -154,48 +192,25 @@ export function createGithubPrContextPlugin(api: AimuxPluginAPI): AimuxPluginIns
     return value;
   }
 
+  function loadDiskPrCache(): Record<string, PrCacheEntry> {
+    const raw = readJson(prCachePath);
+    return raw && typeof raw === "object" ? ((raw as any).entries ?? {}) : {};
+  }
+
+  function saveDiskPrCache(entries: Record<string, PrCacheEntry>): void {
+    mkdirSync(join(projectStateDir, "plugin-cache"), { recursive: true });
+    writeJsonAtomic(prCachePath, {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      entries,
+    });
+  }
+
   function collectTargets(): SessionTarget[] {
-    const targets = new Map<string, SessionTarget>();
     const statusline = loadCachedJson(statuslinePath);
     const state = loadCachedJson(statePath);
     const metadata = loadCachedJson(metadataPath);
-
-    for (const session of statusline?.sessions ?? []) {
-      const existingContext = metadata?.sessions?.[session.id]?.context ?? {};
-      targets.set(session.id, {
-        id: session.id,
-        worktreePath: session.worktreePath ?? existingContext.worktreePath ?? existingContext.cwd,
-      });
-    }
-
-    for (const session of state?.sessions ?? []) {
-      if (!targets.has(session.id)) {
-        targets.set(session.id, {
-          id: session.id,
-          worktreePath: session.worktreePath,
-        });
-      }
-    }
-
-    for (const service of state?.services ?? []) {
-      if (!targets.has(service.id)) {
-        targets.set(service.id, {
-          id: service.id,
-          worktreePath: service.worktreePath,
-        });
-      }
-    }
-
-    for (const [sessionId, sessionMetadata] of Object.entries(metadata?.sessions ?? {})) {
-      if (!targets.has(sessionId)) {
-        targets.set(sessionId, {
-          id: sessionId,
-          worktreePath: (sessionMetadata as any)?.context?.worktreePath ?? (sessionMetadata as any)?.context?.cwd,
-        });
-      }
-    }
-
-    return [...targets.values()].filter((target) => Boolean(target.worktreePath));
+    return collectGithubPrTargets(statusline, state, metadata);
   }
 
   async function resolveCachedPr(
@@ -210,16 +225,35 @@ export function createGithubPrContextPlugin(api: AimuxPluginAPI): AimuxPluginIns
     if (cached && cached.expiresAt > now) {
       return cached.value;
     }
+    const diskEntries = loadDiskPrCache();
+    const diskCached = diskEntries[cacheKey];
+    if (diskCached && diskCached.expiresAt > now) {
+      prCache.set(cacheKey, diskCached);
+      return diskCached.value;
+    }
+    if (diskCached?.pendingUntil && diskCached.pendingUntil > now) {
+      return diskCached.value ?? null;
+    }
+    diskEntries[cacheKey] = {
+      value: diskCached?.value ?? null,
+      expiresAt: diskCached?.expiresAt ?? 0,
+      pendingUntil: now + PR_CACHE_PENDING_TTL_MS,
+    };
+    saveDiskPrCache(diskEntries);
     const value = await resolveBranchPr(cwd, repo, branch);
-    prCache.set(cacheKey, { value, expiresAt: now + PR_CACHE_TTL_MS });
+    const next = { value, expiresAt: Date.now() + PR_CACHE_TTL_MS };
+    prCache.set(cacheKey, next);
+    saveDiskPrCache({
+      ...loadDiskPrCache(),
+      [cacheKey]: next,
+    });
     return value;
   }
 
-  async function refreshOne(target: SessionTarget): Promise<void> {
-    if (!target.worktreePath) return;
-    const gitContext = await resolveGitContext(target.worktreePath);
-    if (!gitContext) return;
-
+  async function refreshOneWithContext(
+    target: SessionTarget,
+    gitContext: SessionContextMetadata & { __repoRoot?: string },
+  ): Promise<void> {
     const repoRoot = (gitContext as any).__repoRoot as string;
     delete (gitContext as any).__repoRoot;
     gitContext.pr = (await resolveCachedPr(repoRoot, gitContext.cwd!, gitContext.repo, gitContext.branch)) ?? undefined;
@@ -234,8 +268,18 @@ export function createGithubPrContextPlugin(api: AimuxPluginAPI): AimuxPluginIns
     if (running) return;
     running = true;
     try {
-      for (const target of collectTargets()) {
-        await refreshOne(target);
+      const targets = collectTargets();
+      const worktreeContexts = new Map<string, SessionContextMetadata | null>();
+      for (const target of targets) {
+        const worktreePath = target.worktreePath;
+        if (!worktreePath || worktreeContexts.has(worktreePath)) continue;
+        worktreeContexts.set(worktreePath, await resolveGitContext(worktreePath));
+      }
+      for (const target of targets) {
+        if (!target.worktreePath) continue;
+        const gitContext = worktreeContexts.get(target.worktreePath);
+        if (!gitContext) continue;
+        await refreshOneWithContext(target, { ...gitContext });
       }
     } finally {
       running = false;
