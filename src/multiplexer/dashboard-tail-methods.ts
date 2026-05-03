@@ -46,6 +46,7 @@ import {
   clearDashboardSubscreens as clearDashboardSubscreensImpl,
   composeSplitScreen as composeSplitScreenImpl,
   composeTwoPaneLines as composeTwoPaneLinesImpl,
+  createDashboardServiceWithFeedback as createDashboardServiceWithFeedbackImpl,
   dashboardSessionActionDeps as dashboardSessionActionDepsImpl,
   graveyardSessionWithFeedback as graveyardSessionWithFeedbackImpl,
   migrateSessionWithFeedback as migrateSessionWithFeedbackImpl,
@@ -188,6 +189,7 @@ export type DashboardTailMethods = {
   listAllWorktrees(this: Multiplexer): Array<{ name: string; branch: string; path: string; isBare: boolean }>;
   graveyardSessionWithFeedback(this: Multiplexer, sessionId: string, hasWorktrees: boolean): Promise<void>;
   resumeOfflineServiceWithFeedback(this: Multiplexer, service: Pick<DashboardService, "id" | "label">): Promise<void>;
+  createDashboardServiceWithFeedback(this: Multiplexer, commandLine: string, worktreePath?: string): Promise<void>;
   stopDashboardServiceWithFeedback(this: Multiplexer, service: Pick<DashboardService, "id" | "label">): Promise<void>;
   removeDashboardServiceWithFeedback(this: Multiplexer, service: Pick<DashboardService, "id" | "label">): Promise<void>;
   resumeOfflineSessionWithFeedback(this: Multiplexer, session: SessionState): Promise<void>;
@@ -360,6 +362,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   async resumeOfflineServiceWithFeedback(service) {
     await resumeOfflineServiceWithFeedbackImpl(this, service);
+  },
+  async createDashboardServiceWithFeedback(commandLine, worktreePath) {
+    await createDashboardServiceWithFeedbackImpl(this, commandLine, worktreePath);
   },
   async stopDashboardServiceWithFeedback(service) {
     await stopDashboardServiceWithFeedbackImpl(this, service);

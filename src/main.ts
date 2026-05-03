@@ -104,6 +104,7 @@ import {
 } from "./dashboard/targets.js";
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.js";
+import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/service-state-snapshot.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -442,12 +443,30 @@ function stopProjectTmuxRuntime(tmux: TmuxRuntimeManager, projectRoot: string): 
   return killed;
 }
 
+async function waitForProcessExit(pid: number, timeoutMs = 2500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 async function stopProjectRuntime(
   projectRoot: string,
 ): Promise<{ projectServiceStopped: boolean; tmuxSessionsKilled: string[] }> {
-  const projectService = await stopProjectService(projectRoot);
-  removeMetadataEndpoint(projectRoot);
   const tmux = new TmuxRuntimeManager();
+  const projectService = await stopProjectService(projectRoot);
+  if (projectService?.pid) {
+    await waitForProcessExit(projectService.pid);
+  }
+  if (tmux.isAvailable()) {
+    persistProjectRuntimeSnapshotsBeforeTmuxStop(projectRoot, tmux);
+  }
+  removeMetadataEndpoint(projectRoot);
   const tmuxSessionsKilled = tmux.isAvailable() ? stopProjectTmuxRuntime(tmux, projectRoot) : [];
   return {
     projectServiceStopped: Boolean(projectService),

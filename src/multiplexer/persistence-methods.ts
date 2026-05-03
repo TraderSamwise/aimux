@@ -18,6 +18,7 @@ import {
 } from "./worktree-graveyard.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
+import { markLastUsed } from "../last-used.js";
 import {
   findMainRepo,
   getWorktreeBaseDir,
@@ -357,6 +358,7 @@ export const persistenceMethods = {
       throw new Error(`Worktree "${matching.name}" is already in the graveyard`);
     }
 
+    const attachedServices = collectWorktreeServices(this, path);
     detachWorktreeServices(this, path);
 
     const liveSessions = this.sessions.filter(
@@ -380,6 +382,7 @@ export const persistenceMethods = {
         createdAt: matching.createdAt,
         graveyardedAt: new Date().toISOString(),
         agents: attachedAgents,
+        services: attachedServices,
       },
     ];
     writeWorktreeGraveyardEntries(nextEntries);
@@ -408,11 +411,18 @@ export const persistenceMethods = {
     writeWorktreeGraveyardEntries(nextEntries);
     this.worktreeGraveyardEntries = nextEntries;
 
+    const flatAgents = takeFlatGraveyardAgentsForWorktree(path);
     const seen = new Set(this.offlineSessions.map((session: any) => session.id));
-    for (const agent of entry.agents) {
+    for (const agent of [...entry.agents, ...flatAgents]) {
       if (seen.has(agent.id)) continue;
       this.offlineSessions.push(agent);
       seen.add(agent.id);
+    }
+    const serviceSeen = new Set(this.offlineServices.map((service: any) => service.id));
+    for (const service of entry.services ?? []) {
+      if (serviceSeen.has(service.id)) continue;
+      this.offlineServices.push(service);
+      serviceSeen.add(service.id);
     }
     this.saveState();
     this.invalidateDesktopStateSnapshot();
@@ -476,6 +486,7 @@ export const persistenceMethods = {
     this.worktreeGraveyardEntries = nextEntries;
     this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
     this.offlineServices = this.offlineServices.filter((service: any) => service.worktreePath !== path);
+    removeFlatGraveyardAgentsForWorktree(path);
     this.saveState();
     this.invalidateDesktopStateSnapshot();
     this.refreshLocalDashboardModel();
@@ -718,6 +729,7 @@ export const persistenceMethods = {
 
         this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
         this.offlineServices = this.offlineServices.filter((service: any) => service.worktreePath !== path);
+        removeFlatGraveyardAgentsForWorktree(path);
         this.saveState();
         resolveRemoval({ path, status: "removed" });
       } catch (error) {
@@ -861,6 +873,23 @@ function collectWorktreeAgents(host: any, path: string): any[] {
   });
 }
 
+function collectWorktreeServices(host: any, path: string): any[] {
+  const byId = new Map<string, any>();
+  for (const service of host.offlineServices ?? []) {
+    if (service.worktreePath !== path) continue;
+    byId.set(service.id, service);
+  }
+  for (const service of host.buildLiveServiceStates?.() ?? []) {
+    if (service.worktreePath !== path) continue;
+    byId.set(service.id, service);
+  }
+  return [...byId.values()].sort((a, b) => {
+    const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
+    const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
+    return bTime - aTime || a.id.localeCompare(b.id);
+  });
+}
+
 async function waitForWorktreeSessionsToStop(host: any, path: string, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -888,6 +917,7 @@ async function removeOrphanedDesktopWorktree(host: any, mainRepo: string, path: 
 function detachWorktreeServices(host: any, path: string): void {
   for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
     if (metadata.kind !== "service" || metadata.worktreePath !== path) continue;
+    markLifecycleUsed(host, metadata.sessionId);
     try {
       host.tmuxRuntimeManager.killWindow(target);
     } catch {}
@@ -906,4 +936,40 @@ function removePersistedServicesForWorktree(path: string): void {
     if (nextServices.length === (state.services ?? []).length) return;
     writeFileSync(statePath, JSON.stringify({ ...state, services: nextServices }, null, 2) + "\n");
   } catch {}
+}
+
+function markLifecycleUsed(host: any, itemId: string): void {
+  try {
+    if (typeof host.noteLastUsedItem === "function") {
+      host.noteLastUsedItem(itemId);
+      return;
+    }
+    if (host.mode === "dashboard" || host.mode === "project-service") {
+      markLastUsed(process.cwd(), {
+        itemId,
+        clientSession: host.tmuxRuntimeManager?.currentClientSession?.() ?? undefined,
+      });
+    }
+  } catch {}
+}
+
+function takeFlatGraveyardAgentsForWorktree(path: string): any[] {
+  const graveyardPath = getGraveyardPath();
+  if (!existsSync(graveyardPath)) return [];
+  try {
+    const entries = JSON.parse(readFileSync(graveyardPath, "utf-8"));
+    if (!Array.isArray(entries)) return [];
+    const matching = entries.filter((entry) => entry?.worktreePath === path);
+    const remaining = entries.filter((entry) => entry?.worktreePath !== path);
+    if (matching.length > 0) {
+      writeFileSync(graveyardPath, JSON.stringify(remaining, null, 2) + "\n");
+    }
+    return matching;
+  } catch {
+    return [];
+  }
+}
+
+function removeFlatGraveyardAgentsForWorktree(path: string): void {
+  void takeFlatGraveyardAgentsForWorktree(path);
 }

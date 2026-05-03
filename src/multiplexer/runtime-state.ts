@@ -5,6 +5,7 @@ import { getGraveyardPath, getLocalAimuxDir, getStatePath } from "../paths.js";
 import { listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
+import { markLastUsed } from "../last-used.js";
 
 type RuntimeStateHost = any;
 
@@ -39,6 +40,21 @@ function removeRuntimeRegistration(host: RuntimeStateHost, runtime: any): void {
 function offlineSessionState(session: any): any {
   const { tmuxTarget: _tmuxTarget, ...rest } = session;
   return { ...rest, lifecycle: "offline" };
+}
+
+function markLifecycleUsed(host: RuntimeStateHost, itemId: string): void {
+  try {
+    if (typeof host.noteLastUsedItem === "function") {
+      host.noteLastUsedItem(itemId);
+      return;
+    }
+    if (host.mode === "dashboard" || host.mode === "project-service") {
+      markLastUsed(process.cwd(), {
+        itemId,
+        clientSession: host.tmuxRuntimeManager?.currentClientSession?.() ?? undefined,
+      });
+    }
+  } catch {}
 }
 
 function isIntentionalOfflineSession(session: any): boolean {
@@ -361,6 +377,7 @@ export function restoreTmuxSessionsFromState(
 
 export function stopSessionToOffline(host: RuntimeStateHost, session: any): void {
   if (host.stoppingSessionIds.has(session.id)) return;
+  markLifecycleUsed(host, session.id);
   const offlineEntry = {
     id: session.id,
     tool: session.command,
@@ -404,6 +421,7 @@ export function adjustAfterRemove(host: RuntimeStateHost, hasWorktrees: boolean)
 export function graveyardSession(host: RuntimeStateHost, sessionId: string): void {
   const session = host.offlineSessions.find((s: any) => s.id === sessionId);
   if (!session) return;
+  markLifecycleUsed(host, sessionId);
 
   host.offlineSessions = host.offlineSessions.filter((s: any) => s.id !== sessionId);
 

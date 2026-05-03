@@ -141,6 +141,7 @@ export class Multiplexer {
   private readonly projectRoot: string;
   private sessions: ManagedSession[] = [];
   private offlineServices: ServiceState[] = [];
+  private removedServiceIds = new Set<string>();
   private activeIndex = 0;
   private mode: MuxMode = "dashboard";
   private hotkeys: HotkeyHandler;

@@ -5,10 +5,15 @@ import { findMainRepo } from "../worktree.js";
 import { getStatePath } from "../paths.js";
 import type { ServiceState } from "./index.js";
 import { wrapCommandWithShellIntegration, wrapInteractiveShellWithIntegration } from "../shell-hooks.js";
+import { markLastUsed } from "../last-used.js";
 
 type ServiceHost = any;
 
-function getServiceLaunchCommandLine(metadata: { command?: string; args?: string[] }): string {
+export function generateServiceId(): string {
+  return `service-${randomUUID().slice(0, 8)}`;
+}
+
+export function getServiceLaunchCommandLine(metadata: { command?: string; args?: string[] }): string {
   return metadata.command === "shell" ? "" : metadata.args?.[0] === "-lc" ? (metadata.args[1] ?? "") : "";
 }
 
@@ -31,7 +36,7 @@ function buildServiceLaunchScript(commandLine: string, shellPath: string): strin
   ].join("; ");
 }
 
-function buildServiceStateFromMetadata(
+export function buildServiceStateFromMetadata(
   serviceId: string,
   metadata: {
     command?: string;
@@ -54,6 +59,21 @@ function buildServiceStateFromMetadata(
   };
 }
 
+function markServiceUsed(host: ServiceHost, serviceId: string): void {
+  try {
+    if (typeof host.noteLastUsedItem === "function") {
+      host.noteLastUsedItem(serviceId);
+      return;
+    }
+    if (host.mode === "dashboard" || host.mode === "project-service") {
+      markLastUsed(process.cwd(), {
+        itemId: serviceId,
+        clientSession: host.tmuxRuntimeManager?.currentClientSession?.() ?? undefined,
+      });
+    }
+  } catch {}
+}
+
 export function serviceLabelForCommand(commandLine: string): string {
   const trimmed = commandLine.trim();
   if (!trimmed) return "shell";
@@ -61,8 +81,13 @@ export function serviceLabelForCommand(commandLine: string): string {
   return first.split("/").pop() ?? first;
 }
 
-export function createService(host: ServiceHost, commandLine: string, worktreePath?: string): { serviceId: string } {
-  const serviceId = `service-${randomUUID().slice(0, 8)}`;
+export function createService(
+  host: ServiceHost,
+  commandLine: string,
+  worktreePath?: string,
+  opts?: { serviceId?: string },
+): { serviceId: string } {
+  const serviceId = opts?.serviceId ?? generateServiceId();
   const cwd = worktreePath ?? process.cwd();
   const shell = process.env.SHELL || "zsh";
   const trimmed = commandLine.trim();
@@ -146,6 +171,7 @@ export function stopService(host: ServiceHost, serviceId: string): { serviceId: 
   if (!match || match.metadata.kind !== "service") {
     throw new Error(`Service "${serviceId}" not found`);
   }
+  markServiceUsed(host, serviceId);
   const cwd =
     host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", match.target.windowId) ??
     match.metadata.worktreePath;
@@ -171,6 +197,7 @@ export function stopService(host: ServiceHost, serviceId: string): { serviceId: 
 }
 
 export function removeOfflineService(host: ServiceHost, serviceId: string): { serviceId: string; status: "removed" } {
+  host.removedServiceIds?.add?.(serviceId);
   const offlineService = host.offlineServices.find((service: ServiceState) => service.id === serviceId);
   const existing = host.tmuxRuntimeManager.findManagedWindow(
     host.tmuxRuntimeManager.getProjectSession(process.cwd()).sessionName,
@@ -283,6 +310,7 @@ export function resumeOfflineService(
   });
   host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
   host.offlineServices = host.offlineServices.filter((entry: ServiceState) => entry.id !== service.id);
+  markServiceUsed(host, service.id);
   host.saveState();
   host.invalidateDesktopStateSnapshot();
   host.refreshLocalDashboardModel();

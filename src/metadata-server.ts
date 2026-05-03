@@ -2090,7 +2090,7 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/services/create") {
-        const body = (await readJson(req)) as { command?: string; worktreePath?: string };
+        const body = (await readJson(req)) as { command?: string; worktreePath?: string; serviceId?: string };
         if (!this.options.desktop?.createService) {
           send(res, 501, { ok: false, error: "service create not supported by this service" });
           return;

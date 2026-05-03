@@ -92,6 +92,63 @@ describe("dashboardViewMethods.renderDashboard", () => {
   });
 });
 
+describe("dashboardViewMethods.settleDashboardCreatePending", () => {
+  it("settles a creating service when the rendered row has live runtime evidence", async () => {
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => [
+        {
+          id: "service-1",
+          status: "running",
+          pendingAction: "creating",
+          pid: 1234,
+          foregroundCommand: "zsh",
+        },
+      ]),
+      getDashboardSessions: vi.fn(() => []),
+    };
+
+    dashboardViewMethods.settleDashboardCreatePending.call(host, "service-1");
+
+    expect(host.dashboardPendingActions.settleCreatePending).toHaveBeenCalledOnce();
+    await expect(isSettled?.()).resolves.toBe(true);
+  });
+
+  it("does not settle a creating service that is only an optimistic placeholder", async () => {
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => [
+        {
+          id: "service-1",
+          status: "running",
+          pendingAction: "creating",
+        },
+      ]),
+      getDashboardSessions: vi.fn(() => []),
+    };
+
+    dashboardViewMethods.settleDashboardCreatePending.call(host, "service-1");
+
+    await expect(isSettled?.()).resolves.toBe(false);
+  });
+});
+
 describe("dashboardStateMethods.reconcileDashboardRenderState", () => {
   it("rebuilds nav order, repairs focus, and restores selection before render", () => {
     const host: any = {

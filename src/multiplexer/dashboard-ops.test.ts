@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createDashboardServiceWithFeedback,
   forkDashboardAgentWithFeedback,
   graveyardSessionWithFeedback,
   migrateSessionWithFeedback,
@@ -12,6 +13,49 @@ import {
 } from "./dashboard-ops.js";
 
 describe("dashboard-ops", () => {
+  it("creates a service through the project service and clears creating when a live row appears", async () => {
+    let createdServiceId = "";
+    const services = [[], () => [{ id: createdServiceId, status: "running", pid: 1234, foregroundCommand: "zsh" }]];
+    let serviceIndex = 0;
+    const host = {
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(serviceId: string, kind: string | null, opts?: any) {
+        this.dashboardPendingActions.set(serviceId, kind);
+        this.serviceSeed = opts?.serviceSeed;
+      },
+      serviceSeed: undefined as any,
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      preferDashboardEntrySelection: vi.fn(),
+      postToProjectService: vi.fn(async (_path: string, body: any) => {
+        createdServiceId = body.serviceId;
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        serviceIndex = Math.min(serviceIndex + 1, services.length - 1);
+        return true;
+      }),
+      getDashboardServices: vi.fn(() => {
+        const value = services[serviceIndex];
+        return typeof value === "function" ? value() : value;
+      }),
+      showDashboardError: vi.fn(),
+    };
+
+    await createDashboardServiceWithFeedback(host, "", "/repo");
+
+    const serviceId = host.postToProjectService.mock.calls[0][1].serviceId;
+    expect(serviceId).toMatch(/^service-/);
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/services/create",
+      { serviceId, command: "", worktreePath: "/repo" },
+      { timeoutMs: 10_000 },
+    );
+    expect(host.dashboardPendingActions.get(serviceId)).toBeNull();
+    expect(host.footerFlash).toBe("◆ Created service shell");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("shows optimistic starting state and clears it on successful service resume", async () => {
     const services = [[], [{ id: "svc-1", status: "running" }]];
     let serviceIndex = 0;
@@ -70,9 +114,8 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).toHaveBeenCalledWith("Failed to start service", ["boom"]);
   });
 
-  it("stops a service through the project service in dashboard mode and waits for offline render state", async () => {
-    const services = [[{ id: "svc-1", status: "running" }], [], [{ id: "svc-1", status: "offline" }]];
-    let serviceIndex = 0;
+  it("stops a service through the project service in dashboard mode without requiring rendered cache convergence", async () => {
+    const services = [[{ id: "svc-1", status: "running" }]];
     const host = {
       dashboardPendingActions: new Map<string, string | null>(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
@@ -82,11 +125,8 @@ describe("dashboard-ops", () => {
       footerFlashTicks: 0,
       renderDashboard: vi.fn(),
       postToProjectService: vi.fn(async () => undefined),
-      refreshDashboardModelFromService: vi.fn(async () => {
-        serviceIndex = Math.min(serviceIndex + 1, services.length - 1);
-        return true;
-      }),
-      getDashboardServices: vi.fn(() => services[serviceIndex]),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => services[0]),
       showDashboardError: vi.fn(),
     };
 
@@ -134,10 +174,9 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("stops an agent through the project service in dashboard mode and waits for offline render state", async () => {
+  it("stops an agent through the project service in dashboard mode without requiring rendered cache convergence", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
-    const sessions = [[{ ...session, status: "running" }], [], [{ ...session, status: "offline" }]];
-    let sessionIndex = 0;
+    const sessions = [[{ ...session, status: "running" }]];
     const host = {
       mode: "dashboard",
       dashboardPendingActions: new Map<string, string | null>(),
@@ -149,11 +188,8 @@ describe("dashboard-ops", () => {
       renderDashboard: vi.fn(),
       getSessionLabel: vi.fn(() => "claude"),
       postToProjectService: vi.fn(async () => undefined),
-      refreshDashboardModelFromService: vi.fn(async () => {
-        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
-        return true;
-      }),
-      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardSessions: vi.fn(() => sessions[0]),
       showDashboardError: vi.fn(),
     };
 
@@ -278,6 +314,7 @@ describe("dashboard-ops", () => {
       renderDashboard: vi.fn(),
       getSessionLabel: vi.fn(() => "codex"),
       migrateAgent: vi.fn(async () => undefined),
+      postToProjectService: vi.fn(async () => undefined),
       refreshDashboardModelFromService: vi.fn(async () => {
         sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
         return true;
@@ -289,7 +326,12 @@ describe("dashboard-ops", () => {
 
     await migrateSessionWithFeedback(host, session, "/repo/.aimux/worktrees/demo", "demo");
 
-    expect(host.migrateAgent).toHaveBeenCalledWith("sess-1", "/repo/.aimux/worktrees/demo");
+    expect(host.migrateAgent).not.toHaveBeenCalled();
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/migrate",
+      { sessionId: "sess-1", worktreePath: "/repo/.aimux/worktrees/demo" },
+      { timeoutMs: 10_000 },
+    );
     expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Migrated codex to demo");
     expect(host.showDashboardError).not.toHaveBeenCalled();

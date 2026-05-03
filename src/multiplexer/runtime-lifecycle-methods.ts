@@ -49,6 +49,7 @@ type RuntimeLifecycleHost = {
   sessionTmuxTargets: Map<string, unknown>;
   offlineSessions: SessionState[];
   offlineServices: ServiceState[];
+  removedServiceIds?: Set<string>;
   taskDispatcher: unknown;
   orchestrationDispatcher: unknown;
   instanceDirectory: { unregisterInstance(instanceId: string, cwd: string): Promise<void> };
@@ -253,7 +254,8 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       const key = sessionStateKey(session);
       return sessions.findIndex((entry) => sessionStateKey(entry) === key) === index;
     });
-    const liveServices = this.buildLiveServiceStates();
+    const removedServiceIds = mux.removedServiceIds ?? new Set<string>();
+    const liveServices = this.buildLiveServiceStates().filter((service) => !removedServiceIds.has(service.id));
     const myServices = [...mux.offlineServices, ...liveServices].filter(
       (service, index, services) => services.findIndex((entry) => entry.id === service.id) === index,
     );
@@ -281,6 +283,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
 
         const myServiceIds = new Set(myServices.map((service) => service.id));
         const otherServices = (existing.services ?? []).filter((service) => {
+          if (removedServiceIds.has(service.id)) return false;
           if (myServiceIds.has(service.id)) return false;
           return false;
         });
@@ -328,11 +331,11 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   },
   cleanup(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
+    this.teardown();
     for (const session of mux.sessions) {
       session.destroy();
     }
     void this.stopProjectServices().catch(() => {});
-    this.teardown();
   },
   cleanupTerminalOnly(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;

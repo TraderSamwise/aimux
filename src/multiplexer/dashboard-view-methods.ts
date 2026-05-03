@@ -25,6 +25,16 @@ import {
 } from "./services.js";
 import { derivedStatusLabel } from "../dashboard/index.js";
 
+function hasLiveRuntimeEvidence(entry: any): boolean {
+  if (!entry) return false;
+  return (
+    typeof entry.pid === "number" ||
+    Boolean(entry.foregroundCommand) ||
+    Boolean(entry.previewLine) ||
+    Boolean(entry.tmuxWindowId)
+  );
+}
+
 export const dashboardViewMethods = {
   serviceLabelForCommand(this: any, commandLine: string): string {
     return serviceLabelForCommandImpl(commandLine);
@@ -53,9 +63,9 @@ export const dashboardViewMethods = {
             return Boolean(group) && group.pendingAction !== "creating" && group.pending !== true;
           }
           const service = this.getDashboardServices?.().find((entry: any) => entry.id === itemId);
-          if (service) return service.pendingAction !== "creating";
+          if (service) return service.pendingAction !== "creating" || hasLiveRuntimeEvidence(service);
           const session = this.getDashboardSessions?.().find((entry: any) => entry.id === itemId);
-          return Boolean(session) && session.pendingAction !== "creating";
+          return Boolean(session) && (session.pendingAction !== "creating" || hasLiveRuntimeEvidence(session));
         },
       },
     );
@@ -66,8 +76,13 @@ export const dashboardViewMethods = {
     this.dashboardUiStateStore.preferEntrySelection(this.dashboardState, kind, id, worktreePath);
   },
 
-  createService(this: any, commandLine: string, worktreePath?: string): { serviceId: string } {
-    return createServiceImpl(this, commandLine, worktreePath);
+  createService(
+    this: any,
+    commandLine: string,
+    worktreePath?: string,
+    opts?: { serviceId?: string },
+  ): { serviceId: string } {
+    return createServiceImpl(this, commandLine, worktreePath, opts);
   },
 
   stopService(this: any, serviceId: string): { serviceId: string; status: "stopped" } {

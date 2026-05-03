@@ -9,6 +9,7 @@ import {
   loadOfflineSessions,
   restoreTmuxSessionsFromState,
   resumeOfflineSession,
+  stopSessionToOffline,
 } from "./runtime-state.js";
 
 describe("resumeOfflineSession", () => {
@@ -22,6 +23,33 @@ describe("resumeOfflineSession", () => {
 
   afterEach(() => {
     rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("marks an agent as last used when stopping it to offline", () => {
+    const session = {
+      id: "codex-1",
+      command: "codex",
+      startTime: Date.parse("2026-05-01T00:00:00.000Z"),
+      kill: vi.fn(),
+    };
+    const host: any = {
+      stoppingSessionIds: new Set(),
+      offlineSessions: [],
+      sessionToolKeys: new Map([["codex-1", "codex"]]),
+      sessionOriginalArgs: new Map([["codex-1", []]]),
+      sessionWorktreePaths: new Map([["codex-1", repoRoot]]),
+      getSessionLabel: vi.fn(() => "codex"),
+      deriveHeadline: vi.fn(() => "summary"),
+      noteLastUsedItem: vi.fn(),
+      saveState: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    stopSessionToOffline(host, session);
+
+    expect(host.noteLastUsedItem).toHaveBeenCalledWith("codex-1");
+    expect(host.offlineSessions).toMatchObject([{ id: "codex-1", lifecycle: "offline" }]);
+    expect(session.kill).toHaveBeenCalledOnce();
   });
 
   it("suppresses startup preamble for native offline session resume", () => {

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 import { getWorktreeGraveyardPath } from "../paths.js";
-import type { SessionState } from "./index.js";
+import type { ServiceState, SessionState } from "./index.js";
 
 export interface WorktreeGraveyardEntry {
   name: string;
@@ -10,6 +10,7 @@ export interface WorktreeGraveyardEntry {
   createdAt?: string;
   graveyardedAt: string;
   agents: SessionState[];
+  services?: ServiceState[];
 }
 
 export function listWorktreeGraveyardEntries(): WorktreeGraveyardEntry[] {

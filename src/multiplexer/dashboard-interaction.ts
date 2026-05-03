@@ -571,11 +571,15 @@ export const dashboardInteractionMethods = {
 
     if (key === "enter" || key === "return") {
       this.clearDashboardOverlay();
-      try {
-        this.createService(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
-      } catch (error) {
-        this.showDashboardError("Failed to create service", [error instanceof Error ? error.message : String(error)]);
-        return;
+      if (this.mode === "dashboard") {
+        void this.createDashboardServiceWithFeedback(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
+      } else {
+        try {
+          this.createService(this.serviceInputBuffer, this.dashboardState.focusedWorktreePath);
+        } catch (error) {
+          this.showDashboardError("Failed to create service", [error instanceof Error ? error.message : String(error)]);
+          return;
+        }
       }
       this.restoreDashboardAfterOverlayDismiss();
       return;

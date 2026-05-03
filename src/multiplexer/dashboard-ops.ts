@@ -9,6 +9,7 @@ import {
   waitForSessionStart,
 } from "../dashboard/session-actions.js";
 import type { DashboardSession } from "../dashboard/index.js";
+import { generateServiceId, serviceLabelForCommand } from "./services.js";
 
 type DashboardOpsHost = any;
 
@@ -47,7 +48,7 @@ interface DashboardSessionMutationOptions {
 
 interface DashboardServiceMutationOptions {
   serviceId: string;
-  pendingAction: "starting" | "stopping" | "removing";
+  pendingAction: "creating" | "starting" | "stopping" | "removing";
   serviceSeed?: any;
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
@@ -78,6 +79,16 @@ async function waitForRenderedDashboardSessionState(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return false;
+}
+
+async function refreshDashboardModelAfterAuthoritativeMutation(host: DashboardOpsHost): Promise<boolean> {
+  if (typeof host.refreshDashboardModelFromService === "function") {
+    await host.refreshDashboardModelFromService(true);
+  }
+  if (typeof host.refreshLocalDashboardModel === "function") {
+    host.refreshLocalDashboardModel();
+  }
+  return true;
 }
 
 async function waitForStableDashboardSessionAbsence(
@@ -395,7 +406,7 @@ export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, s
       request: async () => {
         await host.postToProjectService("/agents/stop", { sessionId: session.id }, { timeoutMs: 10_000 });
       },
-      settle: () => waitForRenderedDashboardSessionState(host, session.id, (entry) => entry?.status === "offline"),
+      settle: () => refreshDashboardModelAfterAuthoritativeMutation(host),
       successFlash: { message: `Stopped ${label}` },
       onError: () => host.refreshDashboardModelFromService(true),
       errorTitle: `Failed to stop "${label}"`,
@@ -653,6 +664,48 @@ export async function resumeOfflineServiceWithFeedback(
   }
 }
 
+export async function createDashboardServiceWithFeedback(
+  host: DashboardOpsHost,
+  commandLine: string,
+  worktreePath?: string,
+): Promise<void> {
+  const serviceId = generateServiceId();
+  const trimmed = commandLine.trim();
+  const label = serviceLabelForCommand(trimmed);
+  const serviceSeed = {
+    id: serviceId,
+    command: trimmed ? process.env.SHELL || "shell" : "shell",
+    args: trimmed ? ["-lc", trimmed] : ["-l"],
+    createdAt: new Date().toISOString(),
+    worktreePath,
+    status: "running",
+    active: false,
+    label,
+    optimistic: true,
+  };
+  await runDashboardServiceMutation(host, {
+    serviceId,
+    pendingAction: "creating",
+    serviceSeed,
+    onBeforeRequest: () => {
+      host.preferDashboardEntrySelection?.("service", serviceId, worktreePath);
+      host.footerFlash = `Creating service ${label}`;
+      host.footerFlashTicks = 3;
+    },
+    request: async () => {
+      await host.postToProjectService(
+        "/services/create",
+        { serviceId, command: commandLine, worktreePath },
+        { timeoutMs: 10_000 },
+      );
+    },
+    settle: () => waitForRenderedDashboardServiceState(host, serviceId, (entry) => isLiveDashboardServiceEntry(entry)),
+    successFlash: { message: `◆ Created service ${label}` },
+    onError: () => host.refreshDashboardModelFromService(true),
+    errorTitle: "Failed to create service",
+  });
+}
+
 export async function stopDashboardServiceWithFeedback(
   host: DashboardOpsHost,
   service: { id: string; label?: string },
@@ -676,7 +729,7 @@ export async function stopDashboardServiceWithFeedback(
     request: async () => {
       await host.postToProjectService("/services/stop", { serviceId: service.id }, { timeoutMs: 10_000 });
     },
-    settle: () => waitForRenderedDashboardServiceState(host, service.id, (entry) => entry?.status === "offline"),
+    settle: () => refreshDashboardModelAfterAuthoritativeMutation(host),
     successFlash: { message: `◆ Stopped service ${service.label ?? service.id}` },
     onError: () => host.refreshDashboardModelFromService(true),
     errorTitle: "Failed to stop service",
@@ -785,7 +838,11 @@ export async function migrateSessionWithFeedback(
     pendingAction: "migrating",
     sessionSeed,
     request: async () => {
-      await host.migrateAgent(session.id, targetPath);
+      await host.postToProjectService(
+        "/agents/migrate",
+        { sessionId: session.id, worktreePath: targetPath },
+        { timeoutMs: 10_000 },
+      );
     },
     settle: () => waitForDashboardSessionResumeSettle(host, session.id),
     successFlash: { message: `Migrated ${label} to ${targetName}` },

@@ -39,6 +39,7 @@ describe("services", () => {
       refreshLocalDashboardModel: vi.fn(),
       adjustAfterRemove: vi.fn(),
       dashboardWorktreeGroupsCache: [],
+      noteLastUsedItem: vi.fn(),
     };
 
     const result = removeOfflineService(host, "svc-1");
@@ -85,6 +86,7 @@ describe("services", () => {
       refreshLocalDashboardModel: vi.fn(),
       adjustAfterRemove: vi.fn(),
       dashboardWorktreeGroupsCache: [],
+      noteLastUsedItem: vi.fn(),
     };
 
     const result = stopService(host, "svc-1");
@@ -92,6 +94,7 @@ describe("services", () => {
     expect(result).toEqual({ serviceId: "svc-1", status: "stopped" });
     expect(killWindow).not.toHaveBeenCalled();
     expect(sendKey).toHaveBeenCalledWith(target, "C-c");
+    expect(host.noteLastUsedItem).toHaveBeenCalledWith("svc-1");
     expect(host.offlineServices).toMatchObject([
       {
         id: "svc-1",

@@ -353,34 +353,61 @@ export function renderGraveyardScreen(ctx: any): void {
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
   const listLines: string[] = [];
   const lineByItemIndex = new Map<number, number>();
-  let itemIndex = 0;
-  listLines.push("  Worktrees");
-  if (ctx.worktreeGraveyardEntries.length === 0) {
+  const view = ctx.graveyardViewModel ?? { rows: [], selectableRows: [] };
+  if (view.rows.length === 0) {
+    listLines.push("  Worktrees");
+    listLines.push("    (empty)");
+    listLines.push("");
+    listLines.push("  Agents");
     listLines.push("    (empty)");
   } else {
-    for (const entry of ctx.worktreeGraveyardEntries) {
-      const marker = itemIndex === ctx.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
-      const branch = entry.branch ? ` \x1b[2m${entry.branch}\x1b[0m` : "";
-      listLines.push(
-        `    ${marker}[${itemIndex + 1}] ${entry.name}${branch} · ${entry.agents.length} agent${entry.agents.length === 1 ? "" : "s"}`,
-      );
-      lineByItemIndex.set(itemIndex, listLines.length - 1);
-      itemIndex += 1;
-    }
-  }
-  listLines.push("");
-  listLines.push("  Agents");
-  if (ctx.graveyardEntries.length === 0) {
-    listLines.push("    (empty)");
-  } else {
-    for (const s of ctx.graveyardEntries) {
-      const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
-      const identity = s.label ? ` — ${s.label}` : "";
-      const headline = s.headline ? ` · ${s.headline}` : "";
-      const marker = itemIndex === ctx.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
-      listLines.push(`    ${marker}[${itemIndex + 1}] ${s.command}:${s.id}${bsid}${identity}${headline}`);
-      lineByItemIndex.set(itemIndex, listLines.length - 1);
-      itemIndex += 1;
+    for (const row of view.rows) {
+      if (row.kind === "section") {
+        if (listLines.length > 0) listLines.push("");
+        listLines.push(`  ${row.label}`);
+      } else if (row.kind === "worktree") {
+        const marker = row.actionIndex === ctx.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
+        const branch = row.entry.branch ? ` \x1b[2m${row.entry.branch}\x1b[0m` : "";
+        const agentCount = row.attachedAgents.length;
+        const serviceCount = row.attachedServices.length;
+        const serviceText = serviceCount > 0 ? ` · ${serviceCount} svc${serviceCount === 1 ? "" : "s"}` : "";
+        const recency = row.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(row.lastUsedAt)}\x1b[0m` : "";
+        listLines.push(
+          `    ${marker}[${row.actionNumber}] ${row.entry.name}${branch} · ${agentCount} agent${agentCount === 1 ? "" : "s"}${serviceText}${recency}`,
+        );
+        lineByItemIndex.set(row.actionIndex, listLines.length - 1);
+      } else if (row.kind === "attached-agent-display") {
+        const agent = row.agent.entry;
+        const bsid = agent.backendSessionId ? ` (${agent.backendSessionId.slice(0, 8)}…)` : "";
+        const identity = agent.label ? ` — ${agent.label}` : "";
+        const headline = agent.headline ? ` · ${agent.headline}` : "";
+        const recency = row.agent.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(row.agent.lastUsedAt)}\x1b[0m` : "";
+        listLines.push(`        ○ ${agent.command}:${agent.id}${bsid}${identity}${headline}${recency}`);
+      } else if (row.kind === "attached-more-display") {
+        listLines.push(
+          `        \x1b[2m… ${row.hiddenAgentCount} more agent${row.hiddenAgentCount === 1 ? "" : "s"}\x1b[0m`,
+        );
+      } else if (row.kind === "attached-service-display") {
+        const service = row.service.entry;
+        const identity = service.label ?? service.launchCommandLine ?? "shell";
+        const recency = row.service.lastUsedAt
+          ? ` \x1b[2m· ${formatRelativeRecency(row.service.lastUsedAt)}\x1b[0m`
+          : "";
+        listLines.push(`        ◇ ${identity} [service]${recency}`);
+      } else if (row.kind === "agent-worktree") {
+        listLines.push(`    ${row.name}`);
+      } else {
+        const s = row.entry;
+        const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
+        const identity = s.label ? ` — ${s.label}` : "";
+        const headline = s.headline ? ` · ${s.headline}` : "";
+        const recency = row.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(row.lastUsedAt)}\x1b[0m` : "";
+        const marker = row.actionIndex === ctx.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
+        listLines.push(
+          `    ${marker}[${row.actionNumber}] ${s.command}:${s.id}${bsid}${identity}${headline}${recency}`,
+        );
+        lineByItemIndex.set(row.actionIndex, listLines.length - 1);
+      }
     }
   }
   const focusLine = lineByItemIndex.get(ctx.graveyardIndex) ?? 1;
@@ -402,46 +429,63 @@ export function renderGraveyardScreen(ctx: any): void {
 }
 
 export function renderGraveyardDetails(ctx: any, width: number, height: number): string[] {
-  const selectedWorktreeCount = ctx.worktreeGraveyardEntries.length;
-  if (ctx.graveyardIndex < selectedWorktreeCount) {
-    const selected = ctx.worktreeGraveyardEntries[ctx.graveyardIndex];
-    if (!selected) return new Array(height).fill("");
+  const selected = ctx.graveyardViewModel?.selectableRows?.[ctx.graveyardIndex];
+  if (!selected) return new Array(height).fill("");
+  if (selected.kind === "worktree") {
     const lines: string[] = [];
     lines.push("\x1b[1mDetails\x1b[0m");
-    lines.push(...ctx.wrapKeyValue("Worktree", selected.name, width));
-    lines.push(...ctx.wrapKeyValue("Branch", selected.branch, width));
-    lines.push(...ctx.wrapKeyValue("Path", selected.path, width));
+    lines.push(...ctx.wrapKeyValue("Worktree", selected.entry.name, width));
+    lines.push(...ctx.wrapKeyValue("Branch", selected.entry.branch, width));
+    lines.push(...ctx.wrapKeyValue("Path", selected.entry.path, width));
     lines.push(...ctx.wrapKeyValue("Status", "graveyard", width));
-    lines.push(...ctx.wrapKeyValue("Agents", String(selected.agents.length), width));
-    lines.push(...ctx.wrapKeyValue("Graveyarded", selected.graveyardedAt, width));
+    lines.push(...ctx.wrapKeyValue("Agents", String(selected.attachedAgents.length), width));
+    lines.push(...ctx.wrapKeyValue("Services", String(selected.attachedServices.length), width));
+    if (selected.lastUsedAt)
+      lines.push(...ctx.wrapKeyValue("Last Used", formatRelativeRecency(selected.lastUsedAt), width));
     lines.push("");
     lines.push("\x1b[1mAttached Agents\x1b[0m");
-    if (selected.agents.length === 0) {
+    if (selected.attachedAgents.length === 0) {
       lines.push("(none)");
     } else {
-      for (const agent of selected.agents.slice(0, Math.max(1, height - lines.length))) {
-        lines.push(`- ${agent.label ?? agent.id}`);
+      for (const agent of selected.visibleAttachedAgents.slice(0, Math.max(1, height - lines.length))) {
+        const recency = agent.lastUsedAt ? ` · ${formatRelativeRecency(agent.lastUsedAt)}` : "";
+        lines.push(`- ${agent.entry.label ?? agent.entry.id}${recency}`);
+      }
+      if (selected.hiddenAttachedAgentCount > 0 && lines.length < height) {
+        lines.push(
+          `… ${selected.hiddenAttachedAgentCount} more agent${selected.hiddenAttachedAgentCount === 1 ? "" : "s"}`,
+        );
+      }
+    }
+    if (selected.attachedServices.length > 0 && lines.length < height) {
+      lines.push("");
+      lines.push("\x1b[1mAttached Services\x1b[0m");
+      for (const service of selected.attachedServices.slice(0, Math.max(1, height - lines.length))) {
+        const label = service.entry.label ?? service.entry.launchCommandLine ?? service.entry.id;
+        const recency = service.lastUsedAt ? ` · ${formatRelativeRecency(service.lastUsedAt)}` : "";
+        lines.push(`- ${label}${recency}`);
       }
     }
     while (lines.length < height) lines.push("");
     return lines.slice(0, height);
   }
-  const selected = ctx.graveyardEntries[ctx.graveyardIndex - selectedWorktreeCount];
-  if (!selected) return new Array(height).fill("");
   const lines: string[] = [];
-  const worktreeName = selected.worktreePath ? ctx.basename(selected.worktreePath) : undefined;
+  const worktreeName = selected.entry.worktreePath ? ctx.basename(selected.entry.worktreePath) : undefined;
   lines.push("\x1b[1mDetails\x1b[0m");
-  lines.push(...ctx.wrapKeyValue("Agent", selected.label ?? selected.id, width));
-  lines.push(...ctx.wrapKeyValue("Session", selected.id, width));
-  lines.push(...ctx.wrapKeyValue("Tool", selected.tool, width));
-  lines.push(...ctx.wrapKeyValue("Config", selected.toolConfigKey, width));
+  lines.push(...ctx.wrapKeyValue("Agent", selected.entry.label ?? selected.entry.id, width));
+  lines.push(...ctx.wrapKeyValue("Session", selected.entry.id, width));
+  lines.push(...ctx.wrapKeyValue("Tool", selected.entry.tool, width));
+  lines.push(...ctx.wrapKeyValue("Config", selected.entry.toolConfigKey, width));
   lines.push(...ctx.wrapKeyValue("Status", "offline", width));
+  if (selected.lastUsedAt)
+    lines.push(...ctx.wrapKeyValue("Last Used", formatRelativeRecency(selected.lastUsedAt), width));
   if (worktreeName) lines.push(...ctx.wrapKeyValue("Worktree", worktreeName, width));
-  if (selected.worktreePath) lines.push(...ctx.wrapKeyValue("Path", selected.worktreePath, width));
-  if (selected.backendSessionId) lines.push(...ctx.wrapKeyValue("Backend", selected.backendSessionId, width));
-  if (selected.headline) lines.push(...ctx.wrapKeyValue("Headline", selected.headline, width));
-  if (selected.command) lines.push(...ctx.wrapKeyValue("Command", selected.command, width));
-  if (selected.args?.length) lines.push(...ctx.wrapKeyValue("Args", selected.args.join(" "), width));
+  if (selected.entry.worktreePath) lines.push(...ctx.wrapKeyValue("Path", selected.entry.worktreePath, width));
+  if (selected.entry.backendSessionId)
+    lines.push(...ctx.wrapKeyValue("Backend", selected.entry.backendSessionId, width));
+  if (selected.entry.headline) lines.push(...ctx.wrapKeyValue("Headline", selected.entry.headline, width));
+  if (selected.entry.command) lines.push(...ctx.wrapKeyValue("Command", selected.entry.command, width));
+  if (selected.entry.args?.length) lines.push(...ctx.wrapKeyValue("Args", selected.entry.args.join(" "), width));
   while (lines.length < height) lines.push("");
   return lines.slice(0, height);
 }

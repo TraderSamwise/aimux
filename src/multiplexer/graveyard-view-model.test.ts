@@ -1,0 +1,149 @@
+import { describe, expect, it } from "vitest";
+import { buildGraveyardViewModel } from "./graveyard-view-model.js";
+
+describe("buildGraveyardViewModel", () => {
+  it("uses one selectable action model while displaying attached worktree agents and services", () => {
+    const view = buildGraveyardViewModel({
+      worktrees: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          branch: "demo",
+          graveyardedAt: "2026-05-01T00:00:00.000Z",
+          agents: [
+            {
+              id: "codex-1",
+              tool: "codex",
+              toolConfigKey: "codex",
+              command: "codex",
+              args: [],
+              worktreePath: "/repo/.aimux/worktrees/demo",
+            },
+          ],
+          services: [
+            {
+              id: "service-1",
+              label: "shell",
+              worktreePath: "/repo/.aimux/worktrees/demo",
+            },
+          ],
+        },
+      ],
+      agents: [
+        {
+          id: "claude-1",
+          tool: "claude",
+          toolConfigKey: "claude",
+          command: "claude",
+          args: [],
+          worktreePath: "/repo/.aimux/worktrees/demo",
+        },
+      ],
+      lastUsedById: {
+        "codex-1": { lastUsedAt: "2026-05-01T00:00:00.000Z" },
+        "claude-1": { lastUsedAt: "2026-05-02T00:00:00.000Z" },
+        "service-1": { lastUsedAt: "2026-05-03T00:00:00.000Z" },
+      },
+    });
+
+    expect(view.selectableRows).toHaveLength(1);
+    expect(view.selectableRows[0]).toMatchObject({
+      kind: "worktree",
+      actionIndex: 0,
+      actionNumber: 1,
+      lastUsedAt: "2026-05-03T00:00:00.000Z",
+    });
+    expect(view.rows.map((row) => row.kind)).toEqual([
+      "section",
+      "worktree",
+      "attached-agent-display",
+      "attached-agent-display",
+      "attached-service-display",
+    ]);
+  });
+
+  it("groups standalone graveyarded agents by worktree and leaves only missing-path agents orphaned", () => {
+    const view = buildGraveyardViewModel({
+      worktrees: [],
+      agents: [
+        {
+          id: "codex-1",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          worktreePath: "/repo/.aimux/worktrees/demo",
+        },
+        {
+          id: "claude-1",
+          tool: "claude",
+          toolConfigKey: "claude",
+          command: "claude",
+          args: [],
+        },
+      ],
+      lastUsedById: {
+        "codex-1": { lastUsedAt: "2026-05-02T00:00:00.000Z" },
+      },
+    });
+
+    expect(view.rows.map((row) => row.kind)).toEqual([
+      "section",
+      "agent-worktree",
+      "standalone-agent",
+      "section",
+      "orphan-agent",
+    ]);
+    expect(view.selectableRows.map((row) => [row.kind, row.actionNumber])).toEqual([
+      ["standalone-agent", 1],
+      ["orphan-agent", 2],
+    ]);
+  });
+
+  it("orders worktrees by most recent attached activity and caps visible attached agents", () => {
+    const olderPath = "/repo/.aimux/worktrees/older";
+    const newerPath = "/repo/.aimux/worktrees/newer";
+    const view = buildGraveyardViewModel({
+      worktrees: [
+        {
+          name: "older",
+          path: olderPath,
+          branch: "older",
+          graveyardedAt: "2026-05-01T00:00:00.000Z",
+          agents: [{ id: "older-agent", tool: "codex", toolConfigKey: "codex", command: "codex", args: [] }],
+        },
+        {
+          name: "newer",
+          path: newerPath,
+          branch: "newer",
+          graveyardedAt: "2026-05-01T00:00:00.000Z",
+          agents: Array.from({ length: 7 }, (_, index) => ({
+            id: `newer-agent-${index}`,
+            tool: "claude",
+            toolConfigKey: "claude",
+            command: "claude",
+            args: [],
+          })),
+        },
+      ],
+      agents: [],
+      lastUsedById: {
+        "older-agent": { lastUsedAt: "2026-05-02T00:00:00.000Z" },
+        "newer-agent-0": { lastUsedAt: "2026-05-03T00:00:00.000Z" },
+      },
+    });
+
+    expect(view.selectableRows.map((row) => row.kind === "worktree" && row.entry.name)).toEqual(["newer", "older"]);
+    const newerRow = view.selectableRows[0];
+    expect(newerRow).toMatchObject({
+      kind: "worktree",
+      attachedAgents: expect.any(Array),
+      visibleAttachedAgents: expect.any(Array),
+      hiddenAttachedAgentCount: 2,
+    });
+    if (newerRow.kind !== "worktree") throw new Error("expected worktree row");
+    expect(newerRow.attachedAgents).toHaveLength(7);
+    expect(newerRow.visibleAttachedAgents).toHaveLength(5);
+    expect(view.rows.map((row) => row.kind).filter((kind) => kind === "attached-more-display")).toHaveLength(1);
+  });
+});
