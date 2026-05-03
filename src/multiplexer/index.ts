@@ -69,6 +69,7 @@ export interface SessionState {
   toolConfigKey: string;
   command: string;
   args: string[];
+  lifecycle?: "live" | "offline";
   createdAt?: string;
   backendSessionId?: string;
   worktreePath?: string;

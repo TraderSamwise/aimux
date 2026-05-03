@@ -30,6 +30,7 @@ describe("runtime lifecycle state persistence", () => {
       buildLiveServiceStates: vi.fn(() => []),
       getRemoteInstancesSafe: vi.fn(() => []),
       invalidateDesktopStateSnapshot: vi.fn(),
+      isSessionRuntimeLive: vi.fn(() => true),
       ...overrides,
     };
   }
@@ -91,5 +92,80 @@ describe("runtime lifecycle state persistence", () => {
     };
     expect(saved.sessions.map((session) => session.id)).toEqual(["remote-agent"]);
     expect(saved.services).toEqual([]);
+  });
+
+  it("persists intentional offline sessions without stale tmux targets", () => {
+    runtimeLifecycleMethods.saveState.call(
+      host({
+        offlineSessions: [
+          {
+            id: "codex-offline",
+            tool: "codex",
+            toolConfigKey: "codex",
+            command: "codex",
+            args: [],
+            tmuxTarget: {
+              sessionName: "aimux-repo",
+              windowId: "@2",
+              windowIndex: 2,
+              windowName: "codex",
+            },
+          },
+        ],
+      }) as never,
+    );
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; lifecycle?: string; tmuxTarget?: unknown }>;
+    };
+    expect(saved.sessions).toEqual([
+      {
+        id: "codex-offline",
+        tool: "codex",
+        toolConfigKey: "codex",
+        command: "codex",
+        args: [],
+        lifecycle: "offline",
+      },
+    ]);
+  });
+
+  it("persists only live runtimes that still have matching tmux authority", () => {
+    const runtime = {
+      id: "codex-live",
+      command: "codex",
+      backendSessionId: "backend-1",
+      startTime: Date.parse("2026-04-21T00:00:00.000Z"),
+    };
+    const tmuxTarget = {
+      sessionName: "aimux-repo",
+      windowId: "@3",
+      windowIndex: 3,
+      windowName: "codex",
+    };
+
+    runtimeLifecycleMethods.saveState.call(
+      host({
+        sessions: [runtime],
+        sessionToolKeys: new Map([["codex-live", "codex"]]),
+        sessionOriginalArgs: new Map([["codex-live", ["--resume"]]]),
+        sessionWorktreePaths: new Map([["codex-live", repoRoot]]),
+        sessionTmuxTargets: new Map([["codex-live", tmuxTarget]]),
+        getSessionLabel: vi.fn(() => "coder"),
+        deriveHeadline: vi.fn(() => "working"),
+      }) as never,
+    );
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; lifecycle?: string; tmuxTarget?: unknown }>;
+    };
+    expect(saved.sessions).toEqual([
+      expect.objectContaining({
+        id: "codex-live",
+        lifecycle: "live",
+        backendSessionId: "backend-1",
+        tmuxTarget,
+      }),
+    ]);
   });
 });

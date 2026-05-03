@@ -549,7 +549,8 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   if (index < 0 || index >= host.sessions.length) return;
 
   host.activeIndex = index;
-  const sid = host.sessions[index].id;
+  const session = host.sessions[index];
+  const sid = session.id;
   host.sessionMRU = [sid, ...host.sessionMRU.filter((id: string) => id !== sid)];
   host.agentTracker.markSeen(sid);
   updateNotificationContext("tui", {
@@ -561,9 +562,16 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   markNotificationsRead({ sessionId: sid });
   host.syncTuiNotificationContext(false);
   const target = host.sessionTmuxTargets.get(sid);
-  if (target) {
+  if (target && host.isSessionRuntimeLive(session)) {
     host.saveState();
     host.selectLinkedOrOpenTarget(target);
+    return;
+  }
+  if (typeof host.openLiveTmuxWindowForEntry === "function") {
+    const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId: session.backendSessionId });
+    if (result === "opened") {
+      host.saveState();
+    }
   }
 }
 

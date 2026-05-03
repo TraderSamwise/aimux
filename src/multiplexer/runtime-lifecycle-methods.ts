@@ -31,6 +31,15 @@ import {
   syncSessionsFromState as syncSessionsFromStateImpl,
 } from "./runtime-state.js";
 
+function sanitizeOfflineSessionState(session: SessionState): SessionState {
+  const { tmuxTarget: _tmuxTarget, ...rest } = session;
+  return { ...rest, lifecycle: "offline" };
+}
+
+function sessionStateKey(session: SessionState): string {
+  return session.backendSessionId ? `backend:${session.backendSessionId}` : `id:${session.id}`;
+}
+
 type RuntimeLifecycleHost = {
   writtenInstructionFiles: Set<string>;
   sessions: SessionRuntime[];
@@ -219,20 +228,31 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   },
   saveState(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
-    const liveSessions = mux.sessions.map((s: SessionRuntime) => ({
-      id: s.id,
-      tool: s.command,
-      toolConfigKey: mux.sessionToolKeys.get(s.id) ?? s.command,
-      command: s.command,
-      args: mux.sessionOriginalArgs.get(s.id) ?? [],
-      createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
-      backendSessionId: s.backendSessionId,
-      worktreePath: mux.sessionWorktreePaths.get(s.id),
-      label: this.getSessionLabel(s.id),
-      headline: this.deriveHeadline(s.id),
-      tmuxTarget: mux.sessionTmuxTargets.get(s.id) as never,
-    }));
-    const mySessions = [...mux.offlineSessions, ...liveSessions];
+    const liveSessions = mux.sessions
+      .filter((s: SessionRuntime) => !("stoppingSessionIds" in mux) || !(mux as any).stoppingSessionIds?.has?.(s.id))
+      .filter((s: SessionRuntime) => this.isSessionRuntimeLive(s))
+      .map((s: SessionRuntime) => ({
+        id: s.id,
+        tool: s.command,
+        toolConfigKey: mux.sessionToolKeys.get(s.id) ?? s.command,
+        command: s.command,
+        args: mux.sessionOriginalArgs.get(s.id) ?? [],
+        lifecycle: "live" as const,
+        createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
+        backendSessionId: s.backendSessionId,
+        worktreePath: mux.sessionWorktreePaths.get(s.id),
+        label: this.getSessionLabel(s.id),
+        headline: this.deriveHeadline(s.id),
+        tmuxTarget: mux.sessionTmuxTargets.get(s.id) as never,
+      }));
+    const liveKeys = new Set(liveSessions.map(sessionStateKey));
+    const offlineSessions = mux.offlineSessions
+      .map(sanitizeOfflineSessionState)
+      .filter((session) => !liveKeys.has(sessionStateKey(session)));
+    const mySessions = [...liveSessions, ...offlineSessions].filter((session, index, sessions) => {
+      const key = sessionStateKey(session);
+      return sessions.findIndex((entry) => sessionStateKey(entry) === key) === index;
+    });
     const liveServices = this.buildLiveServiceStates();
     const myServices = [...mux.offlineServices, ...liveServices].filter(
       (service, index, services) => services.findIndex((entry) => entry.id === service.id) === index,

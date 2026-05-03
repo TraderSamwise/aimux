@@ -93,10 +93,13 @@ export async function updateSessionLabel(host: SessionRuntimeHost, sessionId: st
 
   const localSession = host.sessions.find((session: any) => session.id === sessionId)?.transport;
   if (localSession instanceof TmuxSessionTransport) {
-    localSession.renameWindow(localSession.command);
-    const target = localSession.tmuxTarget;
-    host.sessionTmuxTargets.set(sessionId, target);
-    host.syncTmuxWindowMetadata(sessionId);
+    const target = resolveLiveSessionTmuxTarget(host, sessionId, localSession.tmuxTarget);
+    if (target) {
+      localSession.retarget(target);
+      localSession.renameWindow(localSession.command);
+      host.sessionTmuxTargets.set(sessionId, localSession.tmuxTarget);
+      host.syncTmuxWindowMetadata(sessionId);
+    }
   }
 
   host.saveState();
@@ -140,13 +143,45 @@ export function resolveRunningSession(host: SessionRuntimeHost, sessionId: strin
   return session;
 }
 
+export function resolveLiveSessionTmuxTarget(host: SessionRuntimeHost, sessionId: string, fallback?: any): any {
+  const candidate = host.sessionTmuxTargets.get(sessionId) ?? fallback;
+  if (candidate) {
+    try {
+      if (!host.tmuxRuntimeManager.getTargetByWindowId || !host.tmuxRuntimeManager.getWindowMetadata) {
+        return candidate;
+      }
+      const resolved = host.tmuxRuntimeManager.getTargetByWindowId(candidate.sessionName, candidate.windowId);
+      const metadata = resolved ? host.tmuxRuntimeManager.getWindowMetadata(resolved) : null;
+      if (metadata?.kind === "agent" && metadata.sessionId === sessionId) {
+        host.sessionTmuxTargets.set(sessionId, resolved);
+        return resolved;
+      }
+    } catch {}
+  }
+
+  try {
+    for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+      if (metadata.kind !== "agent" || metadata.sessionId !== sessionId) continue;
+      if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) continue;
+      host.sessionTmuxTargets.set(sessionId, target);
+      return target;
+    }
+  } catch {}
+
+  return undefined;
+}
+
 export function writeTmuxAgentInput(
   host: SessionRuntimeHost,
   sessionId: string,
   transport: TmuxSessionTransport,
   data: string,
 ): void {
-  const target = host.sessionTmuxTargets.get(sessionId) ?? transport.tmuxTarget;
+  const target = resolveLiveSessionTmuxTarget(host, sessionId, transport.tmuxTarget);
+  if (!target) {
+    throw new Error(`Session "${sessionId}" does not have a live tmux target`);
+  }
+  transport.retarget(target);
   let textBuffer = "";
   const flushText = () => {
     if (!textBuffer) return;
@@ -187,7 +222,7 @@ export function paneStillContainsAgentDraft(host: SessionRuntimeHost, target: an
 
 export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: string, target: any, draft: string): void {
   const isTargetCurrent = () => {
-    const currentTarget = host.sessionTmuxTargets.get(sessionId);
+    const currentTarget = resolveLiveSessionTmuxTarget(host, sessionId);
     return Boolean(currentTarget && currentTarget.windowId === target.windowId);
   };
 
@@ -244,7 +279,8 @@ export async function writeAgentInput(
         state: submit ? "submitted" : "applied",
       });
       if (submit) {
-        const target = host.sessionTmuxTargets.get(sessionId) ?? session.transport.tmuxTarget;
+        const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
+        if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
         scheduleTmuxAgentSubmit(host, sessionId, target, normalizedData);
       }
     } else {
@@ -292,7 +328,9 @@ export async function readAgentHistory(
 export async function interruptAgent(host: SessionRuntimeHost, sessionId: string): Promise<{ sessionId: string }> {
   const session = resolveRunningSession(host, sessionId);
   if (session.transport instanceof TmuxSessionTransport) {
-    const target = host.sessionTmuxTargets.get(sessionId) ?? session.transport.tmuxTarget;
+    const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
+    if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
+    session.transport.retarget(target);
     host.tmuxRuntimeManager.sendEscape(target);
   } else {
     session.write("\x1b");
@@ -306,9 +344,9 @@ export async function readAgentOutput(
   startLine?: number,
 ): Promise<{ sessionId: string; output: string; startLine?: number; parsed: any }> {
   resolveRunningSession(host, sessionId);
-  const target = host.sessionTmuxTargets.get(sessionId);
+  const target = resolveLiveSessionTmuxTarget(host, sessionId);
   if (!target) {
-    throw new Error(`Session "${sessionId}" does not have a tmux target`);
+    throw new Error(`Session "${sessionId}" does not have a live tmux target`);
   }
   const output = host.tmuxRuntimeManager.captureTarget(target, {
     startLine: startLine ?? -120,
@@ -421,6 +459,24 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
   const idx = host.sessions.indexOf(runtime);
   if (idx === -1) return;
 
+  const explicitStop = host.stoppingSessionIds.has(runtime.id);
+  const shouldPreserveOffline = explicitStop || Boolean(runtime.backendSessionId) || uptime >= 10_000;
+  if (shouldPreserveOffline && !host.offlineSessions.some((entry: any) => entry.id === runtime.id)) {
+    host.offlineSessions.push({
+      id: runtime.id,
+      tool: runtime.command,
+      toolConfigKey: host.sessionToolKeys.get(runtime.id) ?? runtime.command,
+      command: runtime.command,
+      args: host.sessionOriginalArgs.get(runtime.id) ?? [],
+      lifecycle: "offline",
+      createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : undefined,
+      backendSessionId: runtime.backendSessionId as string | undefined,
+      worktreePath: host.sessionWorktreePaths.get(runtime.id),
+      label: host.getSessionLabel(runtime.id),
+      headline: host.deriveHeadline(runtime.id),
+    });
+  }
+
   host.sessions.splice(idx, 1);
   host.stoppingSessionIds.delete(runtime.id);
   host.writeSessionsFile();
@@ -470,7 +526,12 @@ export function buildTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: str
 export function syncTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: string): void {
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   if (!runtime || !(runtime.transport instanceof TmuxSessionTransport)) return;
-  const target = host.sessionTmuxTargets.get(sessionId) ?? runtime.transport.tmuxTarget;
+  let target = resolveLiveSessionTmuxTarget(host, sessionId, runtime.transport.tmuxTarget);
+  if (!target) {
+    target = runtime.transport.tmuxTarget;
+    const fallbackMetadata = host.tmuxRuntimeManager.getWindowMetadata(target);
+    if (fallbackMetadata && fallbackMetadata.sessionId !== sessionId) return;
+  }
   const existing = host.tmuxRuntimeManager.getWindowMetadata(target);
   const metadata = buildTmuxWindowMetadata(host, sessionId, runtime.command);
   metadata.createdAt =
@@ -491,7 +552,7 @@ export function updateContextWatcherSessions(host: SessionRuntimeHost): void {
         id: s.id,
         command: s.command,
         turnPatterns: tc?.turnPatterns?.map((p: string) => new RegExp(p)),
-        tmuxTarget: host.sessionTmuxTargets.get(s.id),
+        tmuxTarget: resolveLiveSessionTmuxTarget(host, s.id),
       };
     }),
   );

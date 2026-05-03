@@ -8,6 +8,46 @@ import { TmuxSessionTransport } from "../tmux/session-transport.js";
 
 type RuntimeStateHost = any;
 
+type ManagedAgentWindow = { target: any; metadata: any };
+
+function listLiveAgentWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
+  if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return [];
+  const windows: ManagedAgentWindow[] = [];
+  for (const entry of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+    const { target, metadata } = entry;
+    if (isDashboardWindowName(target.windowName)) continue;
+    if (metadata.kind !== "agent") continue;
+    if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) continue;
+    windows.push(entry);
+  }
+  return windows;
+}
+
+function removeRuntimeRegistration(host: RuntimeStateHost, runtime: any): void {
+  const idx = host.sessions.indexOf(runtime);
+  if (idx >= 0) {
+    host.sessions.splice(idx, 1);
+  }
+  host.stoppingSessionIds?.delete?.(runtime.id);
+  host.sessionTmuxTargets.delete(runtime.id);
+  host.sessionToolKeys?.delete?.(runtime.id);
+  host.sessionOriginalArgs?.delete?.(runtime.id);
+  host.sessionWorktreePaths?.delete?.(runtime.id);
+  host.sessionRoles?.delete?.(runtime.id);
+}
+
+function offlineSessionState(session: any): any {
+  const { tmuxTarget: _tmuxTarget, ...rest } = session;
+  return { ...rest, lifecycle: "offline" };
+}
+
+function isIntentionalOfflineSession(session: any): boolean {
+  if (session.lifecycle === "offline") return true;
+  if (session.lifecycle === "live") return false;
+  if (session.lifecycle) return false;
+  return !session.tmuxTarget;
+}
+
 export function renderCurrentDashboardView(host: RuntimeStateHost): void {
   host.reconcileDashboardRenderState();
   if (host.isDashboardScreen("activity")) {
@@ -122,19 +162,29 @@ export function stopStatusRefresh(host: RuntimeStateHost): void {
 }
 
 export function syncSessionsFromState(host: RuntimeStateHost, state = host.constructor.loadState()): void {
-  restoreTmuxSessionsFromState(host, state);
-  loadOfflineSessions(host, state);
+  const liveAgentWindows = restoreTmuxSessionsFromState(host, state);
+  loadOfflineSessions(host, state, liveAgentWindows);
   loadOfflineServices(host, state);
   host.invalidateDesktopStateSnapshot();
 }
 
-export function loadOfflineSessions(host: RuntimeStateHost, state = host.constructor.loadState()): boolean {
+export function loadOfflineSessions(
+  host: RuntimeStateHost,
+  state = host.constructor.loadState(),
+  liveAgentWindows = listLiveAgentWindows(host),
+): boolean {
   if (!state || state.sessions.length === 0) {
     const changed = host.offlineSessions.length > 0;
     host.offlineSessions = [];
     return changed;
   }
 
+  const liveIds = new Set(liveAgentWindows.map(({ metadata }) => metadata.sessionId));
+  const liveBackendIds = new Set(
+    liveAgentWindows
+      .map(({ metadata }) => metadata.backendSessionId)
+      .filter((value): value is string => Boolean(value)),
+  );
   const ownedIds = new Set<string>();
   for (const s of host.sessions) ownedIds.add(s.id);
   for (const inst of host.getRemoteInstancesSafe()) {
@@ -147,13 +197,18 @@ export function loadOfflineSessions(host: RuntimeStateHost, state = host.constru
       .filter((value: any): value is string => Boolean(value)),
   );
 
-  const nextOfflineSessions = state.sessions.filter((s: any) => {
-    if (ownedIds.has(s.id)) return false;
-    if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
-    if (host.dashboardPendingActions?.get?.(s.id) === "starting") return false;
-    if (s.worktreePath && !existsSync(s.worktreePath)) return false;
-    return true;
-  });
+  const nextOfflineSessions = state.sessions
+    .filter((s: any) => {
+      if (!isIntentionalOfflineSession(s)) return false;
+      if (liveIds.has(s.id)) return false;
+      if (s.backendSessionId && liveBackendIds.has(s.backendSessionId)) return false;
+      if (ownedIds.has(s.id)) return false;
+      if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
+      if (host.dashboardPendingActions?.get?.(s.id) === "starting") return false;
+      if (s.worktreePath && !existsSync(s.worktreePath)) return false;
+      return true;
+    })
+    .map(offlineSessionState);
   const previousKey = host.offlineSessions
     .map((session: any) => `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}`)
     .join("|");
@@ -233,15 +288,41 @@ export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
   return liveServices;
 }
 
-export function restoreTmuxSessionsFromState(host: RuntimeStateHost, state = host.constructor.loadState()): void {
+export function restoreTmuxSessionsFromState(
+  host: RuntimeStateHost,
+  state = host.constructor.loadState(),
+): ManagedAgentWindow[] {
   const savedById = new Map<string, any>((state?.sessions ?? []).map((session: any) => [session.id, session]));
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
+  const liveAgentWindows = listLiveAgentWindows(host);
+  const liveById = new Map<string, ManagedAgentWindow>(
+    liveAgentWindows.map((entry) => [entry.metadata.sessionId, entry]),
+  );
 
-  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
-    if (isDashboardWindowName(target.windowName)) continue;
-    if (metadata.kind === "service") continue;
-    if (host.sessions.some((session: any) => session.id === metadata.sessionId)) continue;
+  for (const runtime of [...host.sessions]) {
+    const live = liveById.get(runtime.id);
+    if (!live) {
+      host.debug?.(`evicting stale runtime ${runtime.id}: no live tmux metadata`, "session");
+      removeRuntimeRegistration(host, runtime);
+      continue;
+    }
+    const target = host.sessionTmuxTargets.get(runtime.id);
+    if (!target || target.windowId !== live.target.windowId) {
+      host.sessionTmuxTargets.set(runtime.id, live.target);
+      if (runtime.transport instanceof TmuxSessionTransport) {
+        runtime.transport.retarget(live.target);
+      }
+    }
+  }
+
+  if (host.sessions.length === 0) {
+    host.contextWatcher?.stop?.();
+  }
+
+  for (const { target, metadata } of liveAgentWindows) {
+    const existing = host.sessions.find((session: any) => session.id === metadata.sessionId);
+    if (existing) continue;
 
     const transport = new TmuxSessionTransport(
       metadata.sessionId,
@@ -272,6 +353,10 @@ export function restoreTmuxSessionsFromState(host: RuntimeStateHost, state = hos
     }
     host.syncTmuxWindowMetadata(metadata.sessionId);
   }
+
+  host.writeSessionsFile?.();
+  host.updateContextWatcherSessions?.();
+  return liveAgentWindows;
 }
 
 export function stopSessionToOffline(host: RuntimeStateHost, session: any): void {
@@ -282,6 +367,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
     toolConfigKey: host.sessionToolKeys.get(session.id) ?? session.command,
     command: session.command,
     args: host.sessionOriginalArgs.get(session.id) ?? [],
+    lifecycle: "offline",
     createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
     backendSessionId: session.backendSessionId as string | undefined,
     worktreePath: host.sessionWorktreePaths.get(session.id),
@@ -294,6 +380,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
   }
   host.stoppingSessionIds.add(session.id);
   host.startedInDashboard = true;
+  host.saveState();
   session.kill();
   host.debug?.(`stopped session ${session.id} → offline`, "session");
 }
@@ -349,7 +436,10 @@ export function isSessionRuntimeLive(host: RuntimeStateHost, runtime: any): bool
   const target = mappedTarget ?? runtimeTarget;
   if (!target) return false;
   try {
-    return Boolean(host.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId));
+    const resolved = host.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId);
+    if (!resolved) return false;
+    const metadata = host.tmuxRuntimeManager.getWindowMetadata?.(resolved);
+    return metadata?.kind === "agent" && metadata.sessionId === runtime.id;
   } catch {
     return false;
   }

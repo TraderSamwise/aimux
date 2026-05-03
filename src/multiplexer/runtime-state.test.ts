@@ -71,6 +71,9 @@ describe("resumeOfflineSession", () => {
       sessions: [],
       offlineSessions: [],
       getRemoteInstancesSafe: vi.fn(() => []),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
       dashboardPendingActions: {
         get: vi.fn((sessionId: string) => (sessionId === "codex-1" ? "starting" : undefined)),
       },
@@ -95,6 +98,86 @@ describe("resumeOfflineSession", () => {
 
     expect(changed).toBe(false);
     expect(host.offlineSessions).toEqual([]);
+  });
+
+  it("does not resurrect legacy live snapshots as offline sessions", () => {
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+      getRemoteInstancesSafe: vi.fn(() => []),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      debug: vi.fn(),
+    };
+
+    const changed = loadOfflineSessions(host, {
+      sessions: [
+        {
+          id: "claude-stale",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          tmuxTarget: {
+            sessionName: "aimux-test",
+            windowId: "@2",
+            windowIndex: 2,
+            windowName: "claude",
+          },
+        },
+      ],
+      services: [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(false);
+    expect(host.offlineSessions).toEqual([]);
+  });
+
+  it("loads explicit offline sessions without trusting stale tmux targets", () => {
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+      getRemoteInstancesSafe: vi.fn(() => []),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      debug: vi.fn(),
+    };
+
+    const changed = loadOfflineSessions(host, {
+      sessions: [
+        {
+          id: "codex-offline",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          tmuxTarget: {
+            sessionName: "aimux-test",
+            windowId: "@4",
+            windowIndex: 4,
+            windowName: "codex",
+          },
+        },
+      ],
+      services: [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(true);
+    expect(host.offlineSessions).toEqual([
+      {
+        id: "codex-offline",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "offline",
+      },
+    ]);
   });
 
   it("restores team role from tmux metadata", () => {
@@ -138,6 +221,41 @@ describe("resumeOfflineSession", () => {
       "reviewer",
       Date.parse("2026-04-21T00:00:00.000Z"),
     );
+  });
+
+  it("evicts in-memory runtimes that no longer have matching live tmux metadata", () => {
+    const host: any = {
+      sessions: [{ id: "codex-stale", command: "codex", transport: {} }],
+      sessionTmuxTargets: new Map([
+        [
+          "codex-stale",
+          {
+            sessionName: "aimux-test",
+            windowId: "@8",
+            windowIndex: 8,
+            windowName: "codex",
+          },
+        ],
+      ]),
+      sessionToolKeys: new Map([["codex-stale", "codex"]]),
+      sessionOriginalArgs: new Map([["codex-stale", []]]),
+      sessionWorktreePaths: new Map([["codex-stale", repoRoot]]),
+      sessionRoles: new Map(),
+      stoppingSessionIds: new Set(),
+      contextWatcher: { stop: vi.fn() },
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      writeSessionsFile: vi.fn(),
+      updateContextWatcherSessions: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    restoreTmuxSessionsFromState(host, { sessions: [] });
+
+    expect(host.sessions).toEqual([]);
+    expect(host.sessionTmuxTargets.has("codex-stale")).toBe(false);
+    expect(host.writeSessionsFile).toHaveBeenCalled();
   });
 
   it("does not treat dead service windows as live", () => {

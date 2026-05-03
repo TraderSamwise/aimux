@@ -74,6 +74,7 @@ export const persistenceMethods = {
     const managedWindows = this.tmuxRuntimeManager.listProjectManagedWindows(process.cwd());
     const liveTargets = new Map<string, any>();
     for (const { target, metadata } of managedWindows) {
+      if (metadata.kind !== "agent") continue;
       liveTargets.set(metadata.sessionId, target);
     }
     for (const session of this.sessions) {

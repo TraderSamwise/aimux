@@ -273,13 +273,14 @@ export function computeDashboardSessions(host: DashboardModelHost): DashboardSes
   const notificationsBySessionId = summarizeUnreadNotificationsBySession();
   for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
     if (metadata.kind !== "agent") continue;
+    if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) continue;
     metadataBySessionId.set(metadata.sessionId, { createdAt: metadata.createdAt, target });
   }
   return sessions.map((session) => {
     const stats = threadStats.get(session.id);
     const workflow = workflowStats.get(session.id);
-    const target = host.sessionTmuxTargets.get(session.id);
     const metadata = metadataBySessionId.get(session.id);
+    const target = host.sessionTmuxTargets.get(session.id) ?? metadata?.target;
     const notifications = notificationsBySessionId.get(session.id);
     const runtimeInfo = target ? readTmuxProcessInfo(host, target) : {};
     return {
