@@ -187,6 +187,44 @@ describe("dashboardInteractionMethods", () => {
     expect(host.graveyardSessionWithFeedback).not.toHaveBeenCalled();
   });
 
+  it("stops a live dashboard agent row even when this process has no local runtime", () => {
+    const entry = {
+      id: "claude-1",
+      kind: "session",
+      command: "claude",
+      status: "running",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const host: any = {
+      mode: "dashboard",
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeEntries: [{ kind: "session", id: "claude-1" }],
+        worktreeSessions: [entry],
+        sessionIndex: 0,
+      },
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      getSelectedDashboardServiceForActions: vi.fn(() => null),
+      getDashboardSessions: vi.fn(() => [entry]),
+      sessions: [],
+      dashboardWorktreeGroupsCache: [],
+      stopSessionToOfflineWithFeedback: vi.fn(),
+      graveyardSessionWithFeedback: vi.fn(),
+      isSessionRuntimeLive: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
+
+    expect(host.stopSessionToOfflineWithFeedback).toHaveBeenCalledOnce();
+    expect(host.stopSessionToOfflineWithFeedback).toHaveBeenCalledWith(entry);
+    expect(host.graveyardSessionWithFeedback).not.toHaveBeenCalled();
+    expect(host.isSessionRuntimeLive).not.toHaveBeenCalled();
+  });
+
   it("waits briefly for a live agent window to become enterable", async () => {
     const entry = {
       id: "codex-1",

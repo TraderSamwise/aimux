@@ -317,6 +317,10 @@ export const dashboardInteractionMethods = {
         }
 
         const runtime = this.sessions.find((s: any) => s.id === selEntry.id);
+        if (selEntry.status !== "offline" && selEntry.pendingAction !== "stopping" && this.mode === "dashboard") {
+          void this.stopSessionToOfflineWithFeedback(runtime ?? selEntry);
+          return;
+        }
         const effectivelyOffline =
           selEntry.status === "offline" ||
           selEntry.pendingAction === "stopping" ||
