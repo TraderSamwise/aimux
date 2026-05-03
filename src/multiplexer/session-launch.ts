@@ -5,7 +5,7 @@ import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
-import { injectClaudeHookArgs } from "../claude-hooks.js";
+import { injectClaudeHookArgs, shouldSkipClaudeSessionIdInjection } from "../claude-hooks.js";
 import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug } from "../debug.js";
@@ -306,11 +306,17 @@ export function createSession(
   if (host.sessions.some((session: any) => session.id === sessionId)) {
     throw new Error(`Session "${sessionId}" already exists`);
   }
-  const backendSessionId = backendSessionIdOverride ?? (sessionIdFlag ? randomUUID() : undefined);
   const config = loadConfig();
+  const toolCfg = toolConfigKey ? config.tools[toolConfigKey] : undefined;
+  const isClaudeResumeStyleLaunch =
+    Boolean(toolCfg && toolConfigKey === "claude" && toolCfg.command === command) &&
+    shouldSkipClaudeSessionIdInjection(args);
+  const effectiveSuppressStartupPreamble = suppressStartupPreamble || isClaudeResumeStyleLaunch;
+  const effectiveSessionIdFlag = isClaudeResumeStyleLaunch ? undefined : sessionIdFlag;
+  const backendSessionId = backendSessionIdOverride ?? (effectiveSessionIdFlag ? randomUUID() : undefined);
   const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;
 
-  const preamble = suppressStartupPreamble
+  const preamble = effectiveSuppressStartupPreamble
     ? ""
     : host.sessionBootstrap.buildSessionPreamble({
         sessionId,
@@ -319,19 +325,18 @@ export function createSession(
         extraPreamble,
         includeAimuxPreamble: automaticPreambleEnabled,
       });
-  const shouldInjectLaunchPreamble = Boolean(!suppressStartupPreamble && preambleFlag && preamble.trim());
+  const shouldInjectLaunchPreamble = Boolean(!effectiveSuppressStartupPreamble && preambleFlag && preamble.trim());
 
   host.sessionBootstrap.ensurePlanFile(sessionId, command, worktreePath);
 
   let finalArgs = shouldInjectLaunchPreamble ? [...args, ...preambleFlag!, preamble] : [...args];
   let launchCommand = command;
 
-  if (sessionIdFlag && backendSessionId) {
-    const expandedFlag = sessionIdFlag.map((a) => a.replace("{sessionId}", backendSessionId));
+  if (effectiveSessionIdFlag && backendSessionId) {
+    const expandedFlag = effectiveSessionIdFlag.map((a) => a.replace("{sessionId}", backendSessionId));
     finalArgs = [...finalArgs, ...expandedFlag];
   }
 
-  const toolCfg = toolConfigKey ? loadConfig().tools[toolConfigKey] : undefined;
   let projectRoot = process.cwd();
   try {
     projectRoot = findMainRepo(worktreePath ?? process.cwd());
@@ -417,7 +422,13 @@ export function createSession(
   }
 
   host.saveState();
-  if (!suppressStartupPreamble && !preambleFlag && !extraPreamble && automaticPreambleEnabled && preamble.trim()) {
+  if (
+    !effectiveSuppressStartupPreamble &&
+    !preambleFlag &&
+    !extraPreamble &&
+    automaticPreambleEnabled &&
+    preamble.trim()
+  ) {
     const kickoff = host.sessionBootstrap.buildInitialKickoffPrompt(sessionId, preamble);
     void host.sessionBootstrap.deliverDetachedCodexKickoffPrompt(sessionId, kickoff, 1800);
   }
@@ -562,10 +573,15 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   markNotificationsRead({ sessionId: sid });
   host.syncTuiNotificationContext(false);
   const target = host.sessionTmuxTargets.get(sid);
-  if (target && host.isSessionRuntimeLive(session)) {
-    host.saveState();
-    host.selectLinkedOrOpenTarget(target);
-    return;
+  if (target) {
+    try {
+      const resolved = host.tmuxRuntimeManager.getTargetByWindowId(target.sessionName, target.windowId);
+      if (resolved) {
+        host.saveState();
+        host.selectLinkedOrOpenTarget(resolved);
+        return;
+      }
+    } catch {}
   }
   if (typeof host.openLiveTmuxWindowForEntry === "function") {
     const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId: session.backendSessionId });

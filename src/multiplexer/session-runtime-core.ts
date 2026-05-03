@@ -152,7 +152,10 @@ export function resolveLiveSessionTmuxTarget(host: SessionRuntimeHost, sessionId
       }
       const resolved = host.tmuxRuntimeManager.getTargetByWindowId(candidate.sessionName, candidate.windowId);
       const metadata = resolved ? host.tmuxRuntimeManager.getWindowMetadata(resolved) : null;
-      if (metadata?.kind === "agent" && metadata.sessionId === sessionId) {
+      if (!resolved) {
+        return undefined;
+      }
+      if (!metadata || (metadata.kind === "agent" && metadata.sessionId === sessionId)) {
         host.sessionTmuxTargets.set(sessionId, resolved);
         return resolved;
       }

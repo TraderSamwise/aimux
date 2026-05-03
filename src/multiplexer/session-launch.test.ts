@@ -105,6 +105,58 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("does not append fresh-session preamble or session id args to claude resume launches", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-resume-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => "aimux preamble"),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(),
+        deliverDetachedCodexKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "claude" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "claude" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    createSession(
+      host,
+      "claude",
+      ["--dangerously-skip-permissions", "--resume"],
+      ["--append-system-prompt"],
+      "claude",
+      undefined,
+      ["--session-id", "{sessionId}"],
+      repoRoot,
+    );
+
+    const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
+    const launchedArgs = createWindowArgs[4] as string[];
+    expect(host.sessionBootstrap.buildSessionPreamble).not.toHaveBeenCalled();
+    expect(host.sessionBootstrap.finalizePreamble).not.toHaveBeenCalled();
+    expect(launchedArgs).toContain("--resume");
+    expect(launchedArgs).not.toContain("--append-system-prompt");
+    expect(launchedArgs).not.toContain("--session-id");
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("rejects duplicate session ids before launching a second runtime", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-dup-"));
     execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });

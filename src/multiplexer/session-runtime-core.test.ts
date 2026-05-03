@@ -1,6 +1,11 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 
-import { normalizeAgentInput, paneStillContainsAgentDraft, scheduleTmuxAgentSubmit } from "./session-runtime-core.js";
+import {
+  normalizeAgentInput,
+  paneStillContainsAgentDraft,
+  resolveLiveSessionTmuxTarget,
+  scheduleTmuxAgentSubmit,
+} from "./session-runtime-core.js";
 
 describe("session runtime prompt submission", () => {
   afterEach(() => {
@@ -70,5 +75,34 @@ describe("session runtime prompt submission", () => {
 
     expect(host.tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledWith(target);
     expect(host.tmuxRuntimeManager.sendEnter).not.toHaveBeenCalled();
+  });
+
+  it("allows a live just-created tmux target before metadata has been written", () => {
+    const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" };
+    const resolved = { ...target, windowIndex: 2 };
+    const host: any = {
+      sessionTmuxTargets: new Map([["claude-1", target]]),
+      tmuxRuntimeManager: {
+        getTargetByWindowId: vi.fn(() => resolved),
+        getWindowMetadata: vi.fn(() => null),
+      },
+    };
+
+    expect(resolveLiveSessionTmuxTarget(host, "claude-1")).toEqual(resolved);
+    expect(host.sessionTmuxTargets.get("claude-1")).toEqual(resolved);
+  });
+
+  it("rejects a cached tmux target when metadata belongs to another session", () => {
+    const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" };
+    const host: any = {
+      sessionTmuxTargets: new Map([["claude-1", target]]),
+      tmuxRuntimeManager: {
+        getTargetByWindowId: vi.fn(() => target),
+        getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "claude-other" })),
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+    };
+
+    expect(resolveLiveSessionTmuxTarget(host, "claude-1")).toBeUndefined();
   });
 });
