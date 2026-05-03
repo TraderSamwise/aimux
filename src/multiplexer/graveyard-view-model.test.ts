@@ -62,6 +62,34 @@ describe("buildGraveyardViewModel", () => {
     ]);
   });
 
+  it("does not render duplicate flat agents already embedded under a graveyarded worktree", () => {
+    const worktreePath = "/repo/.aimux/worktrees/demo";
+    const duplicateAgent = {
+      id: "codex-1",
+      tool: "codex",
+      toolConfigKey: "codex",
+      command: "codex",
+      args: [],
+      worktreePath,
+    };
+    const view = buildGraveyardViewModel({
+      worktrees: [
+        {
+          name: "demo",
+          path: worktreePath,
+          branch: "demo",
+          graveyardedAt: "2026-05-01T00:00:00.000Z",
+          agents: [duplicateAgent],
+        },
+      ],
+      agents: [duplicateAgent],
+    });
+
+    expect(view.rows.filter((row) => row.kind === "attached-agent-display")).toHaveLength(1);
+    expect(view.rows.some((row) => row.kind === "standalone-agent")).toBe(false);
+    expect(view.rows.some((row) => row.kind === "agent-worktree")).toBe(false);
+  });
+
   it("groups standalone graveyarded agents by worktree and leaves only missing-path agents orphaned", () => {
     const view = buildGraveyardViewModel({
       worktrees: [],

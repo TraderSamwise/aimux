@@ -6,18 +6,27 @@ import { listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { markLastUsed } from "../last-used.js";
+import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 
 type RuntimeStateHost = any;
 
 type ManagedAgentWindow = { target: any; metadata: any };
 
+function isAvailableWorktreePath(worktreePath?: string, graveyardPaths = listWorktreeGraveyardPaths()): boolean {
+  if (!worktreePath) return true;
+  if (graveyardPaths.has(worktreePath)) return false;
+  return existsSync(worktreePath);
+}
+
 function listLiveAgentWindows(host: RuntimeStateHost): ManagedAgentWindow[] {
   if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return [];
+  const graveyardPaths = listWorktreeGraveyardPaths();
   const windows: ManagedAgentWindow[] = [];
   for (const entry of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
     const { target, metadata } = entry;
     if (isDashboardWindowName(target.windowName)) continue;
     if (metadata.kind !== "agent") continue;
+    if (!isAvailableWorktreePath(metadata.worktreePath, graveyardPaths)) continue;
     if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) continue;
     windows.push(entry);
   }
@@ -221,7 +230,7 @@ export function loadOfflineSessions(
       if (ownedIds.has(s.id)) return false;
       if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
       if (host.dashboardPendingActions?.get?.(s.id) === "starting") return false;
-      if (s.worktreePath && !existsSync(s.worktreePath)) return false;
+      if (!isAvailableWorktreePath(s.worktreePath)) return false;
       return true;
     })
     .map(offlineSessionState);
@@ -262,7 +271,8 @@ export function loadOfflineServices(host: RuntimeStateHost, state = host.constru
 
   const nextOfflineServices = savedServices.filter((service: any) => {
     if (liveServiceIds.has(service.id)) return false;
-    if (service.worktreePath && !existsSync(service.worktreePath)) return false;
+    if (host.dashboardPendingActions?.get?.(service.id) === "starting") return false;
+    if (!isAvailableWorktreePath(service.worktreePath)) return false;
     return true;
   });
   const previousKey = host.offlineServices
@@ -283,10 +293,12 @@ export function loadOfflineServices(host: RuntimeStateHost, state = host.constru
 
 export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
   const seen = new Set<string>();
+  const graveyardPaths = listWorktreeGraveyardPaths();
   const liveServices: any[] = [];
   for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
     if (metadata.kind !== "service") continue;
     if (!host.tmuxRuntimeManager.isWindowAlive(target)) continue;
+    if (!isAvailableWorktreePath(metadata.worktreePath, graveyardPaths)) continue;
     if (seen.has(metadata.sessionId)) continue;
     seen.add(metadata.sessionId);
     const launchCommandLine =

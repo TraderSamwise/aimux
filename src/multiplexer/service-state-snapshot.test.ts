@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import type { SavedState } from "./index.js";
-import { mergeRuntimeSnapshots, mergeServiceSnapshots } from "./service-state-snapshot.js";
+import {
+  mergeRuntimeSnapshots,
+  mergeServiceSnapshots,
+  snapshotProjectAgentWindows,
+  snapshotProjectServiceWindows,
+} from "./service-state-snapshot.js";
+import { initPaths } from "../paths.js";
 
 describe("service-state-snapshot", () => {
   it("merges runtime-stop service snapshots as offline services without stale tmux retention", () => {
@@ -101,5 +110,44 @@ describe("service-state-snapshot", () => {
         backendSessionId: "backend-1",
       },
     ]);
+  });
+
+  it("does not snapshot managed windows for missing worktrees", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-service-snapshot-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+    try {
+      const tmux: any = {
+        listProjectManagedWindows: () => [
+          {
+            target: { windowId: "@1", windowName: "codex" },
+            metadata: {
+              kind: "agent",
+              sessionId: "codex-1",
+              command: "codex",
+              args: [],
+              worktreePath: join(repoRoot, ".aimux/worktrees/missing"),
+            },
+          },
+          {
+            target: { windowId: "@2", windowName: "shell" },
+            metadata: {
+              kind: "service",
+              sessionId: "service-1",
+              command: "shell",
+              args: [],
+              worktreePath: join(repoRoot, ".aimux/worktrees/missing"),
+            },
+          },
+        ],
+        isWindowAlive: () => true,
+        displayMessage: () => repoRoot,
+      };
+
+      expect(snapshotProjectAgentWindows(repoRoot, tmux)).toEqual([]);
+      expect(snapshotProjectServiceWindows(repoRoot, tmux)).toEqual([]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 });

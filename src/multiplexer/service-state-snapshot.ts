@@ -4,6 +4,7 @@ import { getStatePath } from "../paths.js";
 import type { TmuxRuntimeManager } from "../tmux/runtime-manager.js";
 import type { SavedState, ServiceState, SessionState } from "./index.js";
 import { buildServiceStateFromMetadata } from "./services.js";
+import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 
 function sessionStateKey(session: SessionState): string {
   return session.backendSessionId ? `backend:${session.backendSessionId}` : `id:${session.id}`;
@@ -12,6 +13,12 @@ function sessionStateKey(session: SessionState): string {
 function sanitizeSnapshotSession(session: SessionState): SessionState {
   const { tmuxTarget: _tmuxTarget, ...rest } = session;
   return { ...rest, lifecycle: "offline" };
+}
+
+function isAvailableSnapshotWorktree(worktreePath?: string, graveyardPaths = listWorktreeGraveyardPaths()): boolean {
+  if (!worktreePath) return true;
+  if (graveyardPaths.has(worktreePath)) return false;
+  return existsSync(worktreePath);
 }
 
 export function mergeRuntimeSnapshots(
@@ -59,10 +66,12 @@ export function mergeServiceSnapshots(
 
 export function snapshotProjectAgentWindows(projectRoot: string, tmux: TmuxRuntimeManager): SessionState[] {
   const seen = new Set<string>();
+  const graveyardPaths = listWorktreeGraveyardPaths();
   const snapshots: SessionState[] = [];
   for (const { target, metadata } of tmux.listProjectManagedWindows(projectRoot)) {
     if (metadata.kind !== "agent") continue;
     if (seen.has(metadata.sessionId)) continue;
+    if (!isAvailableSnapshotWorktree(metadata.worktreePath, graveyardPaths)) continue;
     if (tmux.isWindowAlive && !tmux.isWindowAlive(target)) continue;
     seen.add(metadata.sessionId);
     snapshots.push({
@@ -84,10 +93,12 @@ export function snapshotProjectAgentWindows(projectRoot: string, tmux: TmuxRunti
 
 export function snapshotProjectServiceWindows(projectRoot: string, tmux: TmuxRuntimeManager): ServiceState[] {
   const seen = new Set<string>();
+  const graveyardPaths = listWorktreeGraveyardPaths();
   const snapshots: ServiceState[] = [];
   for (const { target, metadata } of tmux.listProjectManagedWindows(projectRoot)) {
     if (metadata.kind !== "service") continue;
     if (seen.has(metadata.sessionId)) continue;
+    if (!isAvailableSnapshotWorktree(metadata.worktreePath, graveyardPaths)) continue;
     if (tmux.isWindowAlive && !tmux.isWindowAlive(target)) continue;
     seen.add(metadata.sessionId);
     snapshots.push(

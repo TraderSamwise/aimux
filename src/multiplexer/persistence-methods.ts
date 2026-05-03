@@ -519,9 +519,18 @@ export const persistenceMethods = {
       rejectCreate = reject;
     });
     pendingCreates.set(targetPath, createPromise);
+    const clearPendingCreate = () => {
+      if (pendingCreates.get(targetPath) === createPromise) {
+        pendingCreates.delete(targetPath);
+      }
+      if (this.worktreeCreateJob?.path === targetPath) {
+        this.worktreeCreateJob = null;
+      }
+    };
     this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), "creating", {
       timeoutMs: 180_000,
       onTimeout: () => {
+        clearPendingCreate();
         this.footerFlash = `Timed out creating ${name}`;
         this.footerFlashTicks = 5;
         this.invalidateDesktopStateSnapshot();
@@ -602,9 +611,8 @@ export const persistenceMethods = {
       });
 
     const finalizeCreate = () => {
-      pendingCreates.delete(targetPath);
+      clearPendingCreate();
       this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), null);
-      this.worktreeCreateJob = null;
       this.invalidateDesktopStateSnapshot();
       this.refreshLocalDashboardModel();
       this.metadataServer?.notifyChange?.();

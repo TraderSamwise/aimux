@@ -107,8 +107,11 @@ export function buildGraveyardViewModel(input: BuildGraveyardViewModelInput): Gr
     rows.push({ kind: "section", label: "Worktrees" });
     for (const worktree of sortWorktrees(input.worktrees, input.agents, input.lastUsedById ?? {})) {
       const attachedAgents = collectAttachedAgents(worktree, input.agents, input.lastUsedById ?? {});
-      for (const agent of attachedAgents) {
-        if (agent.source === "standalone") flatAgentsClaimedByWorktree.add(agent.entry.id);
+      const attachedAgentIds = new Set(attachedAgents.map((agent) => agent.entry.id));
+      for (const agent of input.agents) {
+        if (agent.worktreePath === worktree.path && attachedAgentIds.has(agent.id)) {
+          flatAgentsClaimedByWorktree.add(agent.id);
+        }
       }
       const attachedServices = collectAttachedServices(worktree, input.lastUsedById ?? {});
       const visibleAttachedAgents = attachedAgents.slice(0, MAX_VISIBLE_ATTACHED_AGENTS_PER_WORKTREE);

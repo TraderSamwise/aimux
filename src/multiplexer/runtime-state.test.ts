@@ -128,6 +128,33 @@ describe("resumeOfflineSession", () => {
     expect(host.offlineSessions).toEqual([]);
   });
 
+  it("does not reload a starting service as offline from stale saved state", () => {
+    const host: any = {
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      dashboardPendingActions: {
+        get: vi.fn((serviceId: string) => (serviceId === "service-1" ? "starting" : undefined)),
+      },
+    };
+
+    const changed = loadOfflineServices(host, {
+      sessions: [],
+      services: [
+        {
+          id: "service-1",
+          label: "shell",
+          worktreePath: repoRoot,
+        },
+      ],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(false);
+    expect(host.offlineServices).toEqual([]);
+  });
+
   it("does not resurrect legacy live snapshots as offline sessions", () => {
     const host: any = {
       sessions: [],

@@ -65,26 +65,26 @@ export function applyDashboardSessionLabel(host: SessionRuntimeHost, sessionId: 
 
 export async function updateSessionLabel(host: SessionRuntimeHost, sessionId: string, label?: string): Promise<void> {
   if (host.mode === "dashboard") {
-    applySessionLabel(host, sessionId, label);
-    applyDashboardSessionLabel(host, sessionId, label);
     host.setPendingDashboardSessionAction(sessionId, "renaming");
     host.writeStatuslineFile();
     host.renderCurrentDashboardView();
-    void host
-      .postToProjectService("/agents/rename", { sessionId, label })
-      .then(() => {
-        host.invalidateDesktopStateSnapshot();
-        host.setPendingDashboardSessionAction(sessionId, null);
-        host.writeStatuslineFile();
-        host.renderCurrentDashboardView();
-      })
-      .catch((err: unknown) => {
-        host.setPendingDashboardSessionAction(sessionId, null);
-        host.footerFlash = `Rename failed: ${err instanceof Error ? err.message : String(err)}`;
-        host.footerFlashTicks = 4;
-        host.writeStatuslineFile();
-        host.renderCurrentDashboardView();
-      });
+    try {
+      await host.postToProjectService("/agents/rename", { sessionId, label });
+      host.invalidateDesktopStateSnapshot();
+      if (typeof host.refreshDashboardModelFromService === "function") {
+        await host.refreshDashboardModelFromService(true);
+      }
+    } catch (err: unknown) {
+      host.footerFlash = `Rename failed: ${err instanceof Error ? err.message : String(err)}`;
+      host.footerFlashTicks = 4;
+      if (typeof host.refreshDashboardModelFromService === "function") {
+        await host.refreshDashboardModelFromService(true);
+      }
+    } finally {
+      host.setPendingDashboardSessionAction(sessionId, null);
+      host.writeStatuslineFile();
+      host.renderCurrentDashboardView();
+    }
     return;
   }
 

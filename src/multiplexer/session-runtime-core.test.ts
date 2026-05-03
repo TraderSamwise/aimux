@@ -5,6 +5,7 @@ import {
   paneStillContainsAgentDraft,
   resolveLiveSessionTmuxTarget,
   scheduleTmuxAgentSubmit,
+  updateSessionLabel,
 } from "./session-runtime-core.js";
 
 describe("session runtime prompt submission", () => {
@@ -26,6 +27,32 @@ describe("session runtime prompt submission", () => {
         "This is a long aimux task prompt that Codex will collapse into a pasted-content marker.",
       ),
     ).toBe(true);
+  });
+
+  it("does not apply dashboard rename locally when project-service rename fails", async () => {
+    const host: any = {
+      mode: "dashboard",
+      sessionLabels: new Map([["codex-1", "old"]]),
+      offlineSessions: [],
+      dashboardSessionsCache: [{ id: "codex-1", label: "old" }],
+      dashboardWorktreeGroupsCache: [{ sessions: [{ id: "codex-1", label: "old" }] }],
+      dashboardState: { worktreeSessions: [{ id: "codex-1", label: "old" }] },
+      setPendingDashboardSessionAction: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
+      postToProjectService: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+    };
+
+    await updateSessionLabel(host, "codex-1", "new");
+
+    expect(host.sessionLabels.get("codex-1")).toBe("old");
+    expect(host.dashboardSessionsCache[0].label).toBe("old");
+    expect(host.footerFlash).toBe("Rename failed: boom");
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.setPendingDashboardSessionAction).toHaveBeenLastCalledWith("codex-1", null);
   });
 
   it("compacts Codex submitted injections to the single-line shape used by startup kickoff", () => {
