@@ -60,6 +60,7 @@ import {
   showWorkflow as showWorkflowImpl,
 } from "./subscreens.js";
 import {
+  handleToolOptionsKey as handleToolOptionsKeyImpl,
   handleToolPickerKey as handleToolPickerKeyImpl,
   renderToolPicker as renderToolPickerImpl,
   runSelectedTool as runSelectedToolImpl,
@@ -258,6 +259,9 @@ export const dashboardActionMethods = {
   },
   handleToolPickerKey(this: any, data: Buffer): void {
     handleToolPickerKeyImpl(this, data);
+  },
+  handleToolOptionsKey(this: any, data: Buffer): void {
+    handleToolOptionsKeyImpl(this, data);
   },
 };
 

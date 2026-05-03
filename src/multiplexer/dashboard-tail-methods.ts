@@ -90,17 +90,21 @@ export type DashboardTailMethods = {
     opts: {
       sourceSessionId: string;
       targetToolConfigKey: string;
+      targetSessionId?: string;
       instruction?: string;
       targetWorktreePath?: string;
       open?: boolean;
+      extraArgs?: string[];
     },
   ): Promise<{ sessionId: string; threadId: string }>;
   spawnAgent(
     this: Multiplexer,
     opts: {
       toolConfigKey: string;
+      targetSessionId?: string;
       targetWorktreePath?: string;
       open?: boolean;
+      extraArgs?: string[];
     },
   ): Promise<{ sessionId: string }>;
   renameAgent(this: Multiplexer, sessionId: string, label?: string): Promise<{ sessionId: string; label?: string }>;

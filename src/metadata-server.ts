@@ -196,15 +196,19 @@ interface MetadataServerOptions {
   lifecycle?: {
     spawnAgent?: (input: {
       tool: string;
+      sessionId?: string;
       worktreePath?: string;
       open?: boolean;
+      extraArgs?: string[];
     }) => Promise<{ sessionId: string }> | { sessionId: string };
     forkAgent?: (input: {
       sourceSessionId: string;
       tool: string;
+      targetSessionId?: string;
       instruction?: string;
       worktreePath?: string;
       open?: boolean;
+      extraArgs?: string[];
     }) => Promise<{ sessionId: string; threadId: string }> | { sessionId: string; threadId: string };
     stopAgent?: (input: { sessionId: string }) =>
       | Promise<{ sessionId: string; status: "offline" }>
@@ -1780,6 +1784,7 @@ export class MetadataServer {
           sessionId?: string;
           worktreePath?: string;
           open?: boolean;
+          extraArgs?: string[];
         };
         if (!this.options.lifecycle?.spawnAgent) {
           send(res, 501, { ok: false, error: "agent spawn not supported by this service" });
@@ -1799,6 +1804,7 @@ export class MetadataServer {
           instruction?: string;
           worktreePath?: string;
           open?: boolean;
+          extraArgs?: string[];
         };
         if (!this.options.lifecycle?.forkAgent) {
           send(res, 501, { ok: false, error: "agent fork not supported by this service" });

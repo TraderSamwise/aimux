@@ -558,6 +558,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           targetSessionId: input.sessionId,
           targetWorktreePath: input.worktreePath,
           open: input.open ?? false,
+          extraArgs: input.extraArgs,
         }),
       forkAgent: (input: any) =>
         host.forkAgent({
@@ -567,6 +568,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           instruction: input.instruction,
           targetWorktreePath: input.worktreePath,
           open: input.open ?? false,
+          extraArgs: input.extraArgs,
         }),
       stopAgent: (input: any) => host.stopAgent(input.sessionId),
       interruptAgent: (input: any) => host.interruptAgent(input.sessionId),

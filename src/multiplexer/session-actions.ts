@@ -1,6 +1,5 @@
 import { waitForSessionExit } from "../dashboard/session-actions.js";
 import { loadConfig } from "../config.js";
-import { isToolAvailable } from "./tool-picker.js";
 
 type SessionActionsHost = any;
 
@@ -13,6 +12,7 @@ export async function forkAgent(
     instruction?: string;
     targetWorktreePath?: string;
     open?: boolean;
+    extraArgs?: string[];
   },
 ): Promise<{ sessionId: string; threadId: string }> {
   host.syncSessionsFromState();
@@ -22,6 +22,7 @@ export async function forkAgent(
     opts.targetSessionId,
     opts.instruction,
     opts.targetWorktreePath,
+    opts.extraArgs ?? [],
   );
   if (!result) {
     throw new Error(`Unable to fork session ${opts.sourceSessionId}`);
@@ -48,6 +49,7 @@ export async function spawnAgent(
     targetSessionId?: string;
     targetWorktreePath?: string;
     open?: boolean;
+    extraArgs?: string[];
   },
 ): Promise<{ sessionId: string }> {
   host.syncSessionsFromState();
@@ -60,14 +62,10 @@ export async function spawnAgent(
   if (!toolCfg.enabled) {
     throw new Error(`Tool "${opts.toolConfigKey}" is disabled`);
   }
-  if (!isToolAvailable(toolCfg.command)) {
-    throw new Error(`Tool "${toolCfg.command}" is not installed or not on PATH`);
-  }
-
   const targetWorktreePath = opts.targetWorktreePath === process.cwd() ? undefined : opts.targetWorktreePath;
   const transport = host.createSession(
     toolCfg.command,
-    toolCfg.args,
+    [...toolCfg.args, ...(opts.extraArgs ?? [])],
     toolCfg.preambleFlag,
     opts.toolConfigKey,
     undefined,

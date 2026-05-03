@@ -13,6 +13,7 @@ export type DashboardLevel = "worktrees" | "sessions";
 export type DashboardOverlayKind =
   | "none"
   | "tool-picker"
+  | "tool-options"
   | "worktree-input"
   | "service-input"
   | "label-input"

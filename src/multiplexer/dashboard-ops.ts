@@ -276,6 +276,7 @@ export async function spawnDashboardAgentWithFeedback(
     sessionId: string;
     tool: string;
     worktreePath?: string;
+    extraArgs?: string[];
   },
 ): Promise<void> {
   await runDashboardSessionMutation(host, {
@@ -299,6 +300,7 @@ export async function spawnDashboardAgentWithFeedback(
           tool: input.tool,
           sessionId: input.sessionId,
           worktreePath: input.worktreePath,
+          extraArgs: input.extraArgs,
           open: false,
         },
         { timeoutMs: 10_000 },
@@ -318,6 +320,7 @@ export async function forkDashboardAgentWithFeedback(
     tool: string;
     instruction?: string;
     worktreePath?: string;
+    extraArgs?: string[];
   },
 ): Promise<void> {
   await runDashboardSessionMutation(host, {
@@ -343,6 +346,7 @@ export async function forkDashboardAgentWithFeedback(
           tool: input.tool,
           instruction: input.instruction,
           worktreePath: input.worktreePath,
+          extraArgs: input.extraArgs,
           open: false,
         },
         { timeoutMs: 10_000 },

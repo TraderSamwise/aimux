@@ -154,6 +154,10 @@ export class Multiplexer {
   private dashboardOverlayState = new DashboardOverlayState();
   private pickerMode: "create" | "fork" = "create";
   private forkSourceSessionId: string | null = null;
+  private toolPickerIndex = 0;
+  private toolOptionsToolKey: string | null = null;
+  private toolOptionsBuffer = "";
+  private toolOptionsError: string | null = null;
   private worktreeInputBuffer = "";
   private serviceInputBuffer = "";
   private labelInputBuffer = "";
@@ -500,6 +504,7 @@ export class Multiplexer {
     requestedTargetSessionId?: string,
     instruction?: string,
     targetWorktreePath?: string,
+    extraArgs: string[] = [],
   ): Promise<{ sessionId: string; threadId: string; target?: TmuxTarget } | undefined> {
     const sourceSession = this.sessions.find((session) => session.id === sourceSessionId);
     if (!sourceSession) {
@@ -553,7 +558,7 @@ export class Multiplexer {
       .join("\n\n");
     const transport = this.createSession(
       toolCfg.command,
-      toolCfg.args,
+      [...toolCfg.args, ...extraArgs],
       toolCfg.preambleFlag,
       targetToolConfigKey,
       extraPreamble,
