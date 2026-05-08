@@ -38,6 +38,45 @@ describe("dashboardInteractionMethods", () => {
     expect(host.dashboardState.level).toBe("worktrees");
   });
 
+  it("explains instead of stepping into a creating worktree", () => {
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "worktrees",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeNavOrder: [undefined, "/repo/.aimux/worktrees/demo"],
+        worktreeEntries: [],
+      },
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          createdAt: new Date().toISOString(),
+          pending: true,
+          pendingAction: "creating",
+          sessions: [],
+          services: [],
+        },
+      ],
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      updateWorktreeSessions: vi.fn(),
+      renderDashboard: vi.fn(),
+      sessions: [],
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\r"));
+
+    expect(host.footerFlash).toMatch(/^Worktree demo is still creating/);
+    expect(host.footerFlashTicks).toBe(3);
+    expect(host.updateWorktreeSessions).not.toHaveBeenCalled();
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
+    expect(host.dashboardState.level).toBe("worktrees");
+  });
+
   it("blocks activating an entry inside a removing worktree", () => {
     const host: any = {
       dashboardState: {

@@ -53,12 +53,15 @@ export const dashboardViewMethods = {
         this.renderDashboard();
       },
       {
+        timeoutMs: itemId.startsWith("worktree:") ? 180_000 : undefined,
         isSettled: async () => {
           if (typeof this.refreshDashboardModelFromService === "function") {
             await this.refreshDashboardModelFromService(true);
           }
           if (itemId.startsWith("worktree:")) {
             const path = itemId.slice("worktree:".length);
+            const rawWorktree = this.listDesktopWorktrees?.().find((entry: any) => entry.path === path);
+            if (rawWorktree && rawWorktree.pending !== true && rawWorktree.pendingAction !== "creating") return true;
             const group = this.dashboardWorktreeGroupsCache?.find((entry: any) => entry.path === path);
             return Boolean(group) && group.pendingAction !== "creating" && group.pending !== true;
           }

@@ -29,9 +29,18 @@ function isRemovingDashboardWorktree(group: any | undefined): boolean {
   return Boolean(group?.removing || group?.pendingAction === "removing" || group?.pendingAction === "graveyarding");
 }
 
+function isCreatingDashboardWorktree(group: any | undefined): boolean {
+  return Boolean(group?.pendingAction === "creating");
+}
+
 function blockedRemovingWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
   const action = group?.pendingAction === "graveyarding" ? "graveyarding" : "removing";
   return `Worktree ${group?.name ?? worktreePath?.split("/").pop() ?? "worktree"} is ${action}`;
+}
+
+function creatingWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
+  const name = group?.name ?? worktreePath?.split("/").pop() ?? "worktree";
+  return `Worktree ${name} is still creating`;
 }
 
 export const dashboardInteractionMethods = {
@@ -428,9 +437,15 @@ export const dashboardInteractionMethods = {
         }
         case "enter":
         case "right":
-        case "l":
-          if (isRemovingDashboardWorktree(findDashboardWorktreeGroup(this, this.dashboardState.focusedWorktreePath))) {
-            const focusedGroup = findDashboardWorktreeGroup(this, this.dashboardState.focusedWorktreePath);
+        case "l": {
+          const focusedGroup = findDashboardWorktreeGroup(this, this.dashboardState.focusedWorktreePath);
+          if (isCreatingDashboardWorktree(focusedGroup)) {
+            this.footerFlash = creatingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
+            this.footerFlashTicks = 3;
+            this.renderDashboard();
+            break;
+          }
+          if (isRemovingDashboardWorktree(focusedGroup)) {
             this.footerFlash = blockedRemovingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
             this.footerFlashTicks = 3;
             this.renderDashboard();
@@ -443,6 +458,7 @@ export const dashboardInteractionMethods = {
             this.renderDashboard();
           }
           break;
+        }
         case "escape":
           if (this.sessions.length > 0) {
             this.focusSession(this.activeIndex);

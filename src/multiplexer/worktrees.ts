@@ -7,6 +7,7 @@ import {
 } from "../tui/screens/overlay-renderers.js";
 import { postToProjectService } from "./dashboard-control.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import { dashboardCreatedSortKey } from "../dashboard/sort.js";
 
 type WorktreeHost = any;
 
@@ -59,7 +60,11 @@ async function runDashboardWorktreeMutation(host: WorktreeHost, opts: DashboardW
 }
 
 function sortDashboardWorktrees(worktrees: Array<any>): void {
-  worktrees.sort((a, b) => a.name.localeCompare(b.name));
+  worktrees.sort((a, b) => {
+    if (a.path === undefined) return -1;
+    if (b.path === undefined) return 1;
+    return dashboardCreatedSortKey(b) - dashboardCreatedSortKey(a);
+  });
 }
 
 function showOptimisticDashboardWorktreeCreate(host: WorktreeHost, name: string): string {
@@ -72,6 +77,7 @@ function showOptimisticDashboardWorktreeCreate(host: WorktreeHost, name: string)
         name,
         branch: name,
         path: targetPath,
+        createdAt: new Date().toISOString(),
         status: "offline",
         pending: true,
         pendingAction: "creating",
@@ -160,29 +166,20 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
       if (host.mode === "dashboard") {
         const targetPath = showOptimisticDashboardWorktreeCreate(host, name);
         const pendingKey = DashboardPendingActions.worktreeKey(targetPath);
-        void runDashboardWorktreeMutation(host, {
-          pendingKey,
-          pendingAction: "creating",
-          request: async () => {
+        host.renderDashboard();
+        void (async () => {
+          try {
             await postToProjectService(host, "/worktrees/create", { name }, { timeoutMs: 10_000 });
-          },
-          settle: () =>
-            waitForRenderedDashboardWorktreeState(
-              host,
-              targetPath,
-              (group) => Boolean(group) && group.pendingAction !== "creating" && group.pending !== true,
-              15_000,
-            ),
-          onSuccess: () => {
+            await host.refreshDashboardModelFromService?.(true);
             debug(`worktree created from UI: ${name}`, "worktree");
             host.settleDashboardCreatePending?.(pendingKey);
-          },
-          onError: (err) => {
+          } catch (err) {
+            host.dashboardPendingActions.set(pendingKey, null);
             removeOptimisticDashboardWorktree(host, targetPath);
             debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
             host.showDashboardError(`Failed to create "${name}"`, [err instanceof Error ? err.message : String(err)]);
-          },
-        });
+          }
+        })();
         return;
       }
       try {

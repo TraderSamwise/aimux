@@ -26,7 +26,7 @@ function createPendingActionsStore() {
 }
 
 describe("worktrees dashboard mutation protocol", () => {
-  it("creates a worktree through the project service and settles pending state after the rendered group appears", async () => {
+  it("creates a worktree through the project service without installing dashboard-local pending state", async () => {
     postToProjectService.mockClear();
     const pending = createPendingActionsStore();
     const host: any = {
@@ -65,11 +65,13 @@ describe("worktrees dashboard mutation protocol", () => {
       { name: "demo" },
       { timeoutMs: 10_000 },
     );
-    expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeNull();
+    expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
+    expect(host.settleDashboardCreatePending).toHaveBeenCalledWith("worktree:/repo/.aimux/worktrees/demo");
+    expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeUndefined();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("shows an error when a created worktree never settles out of creating", async () => {
+  it("shows project-service worktree create pending after the async create is accepted", async () => {
     postToProjectService.mockClear();
     const pending = createPendingActionsStore();
     const host: any = {
@@ -100,15 +102,51 @@ describe("worktrees dashboard mutation protocol", () => {
       showDashboardError: vi.fn(),
     };
 
-    vi.useFakeTimers();
     handleWorktreeInputKey(host, Buffer.from("\r"));
-    await vi.advanceTimersByTimeAsync(15_100);
-    await Promise.resolve();
-    vi.useRealTimers();
+    await vi.waitFor(() => expect(host.settleDashboardCreatePending).toHaveBeenCalled());
 
-    expect(host.settleDashboardCreatePending).not.toHaveBeenCalled();
-    expect(host.showDashboardError).toHaveBeenCalledWith('Failed to create "demo"', [
-      "worktree creating did not settle before timing out",
+    expect(host.dashboardWorktreeGroupsCache[0]).toMatchObject({
+      name: "demo",
+      pending: true,
+      pendingAction: "creating",
+    });
+    expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeUndefined();
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("places an optimistic worktree using dashboard created-at ordering", () => {
+    postToProjectService.mockClear();
+    const pending = createPendingActionsStore();
+    const host: any = {
+      mode: "dashboard",
+      worktreeInputBuffer: "newer",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [
+        { name: "Main Checkout", branch: "master", path: undefined, sessions: [], services: [] },
+        {
+          name: "older",
+          branch: "older",
+          path: "/repo/.aimux/worktrees/older",
+          createdAt: "2026-05-01T00:00:00.000Z",
+          sessions: [],
+          services: [],
+        },
+      ],
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      renderDashboard: vi.fn(),
+      settleDashboardCreatePending: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    handleWorktreeInputKey(host, Buffer.from("\r"));
+
+    expect(host.dashboardWorktreeGroupsCache.map((group: any) => group.name)).toEqual([
+      "Main Checkout",
+      "newer",
+      "older",
     ]);
   });
 

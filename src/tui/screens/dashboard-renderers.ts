@@ -245,6 +245,13 @@ export function renderDashboardFrame(
       lines.push(...wrapKeyValue("Name", worktree.name, width));
       if (worktree.branch) lines.push(...wrapKeyValue("Branch", worktree.branch, width));
       lines.push(...wrapKeyValue("Path", worktree.path, width));
+      const focusedGroup =
+        focusedWorktreePath === undefined
+          ? undefined
+          : state.worktreeGroups.find((group) => group.path === focusedWorktreePath);
+      if (focusedGroup?.pendingAction === "creating") {
+        lines.push(...wrapKeyValue("Status", "creating", width));
+      }
       lines.push(...wrapKeyValue("Agents", String(focusedSessions.length), width));
       lines.push(...wrapKeyValue("Services", String(focusedServices.length), width));
       const activeWorktreeRemoval =
