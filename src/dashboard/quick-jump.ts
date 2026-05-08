@@ -1,4 +1,5 @@
 import type { DashboardService, DashboardSession, MainCheckoutInfo, WorktreeGroup } from "./index.js";
+import type { DashboardOperationFailure } from "./operation-failures.js";
 import { HOTKEY_TIMEOUT_MS } from "../hotkeys.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "./sort.js";
 
@@ -19,6 +20,7 @@ export interface DashboardQuickJumpWorktree {
   pending?: boolean;
   removing?: boolean;
   pendingAction?: "creating" | "removing" | "graveyarding";
+  operationFailure?: DashboardOperationFailure;
   sessions: DashboardSession[];
   services: DashboardService[];
   entries: DashboardQuickJumpEntry[];
@@ -104,6 +106,7 @@ export function buildDashboardQuickJumpWorktrees(input: {
       pending: mainGroup.pending,
       removing: mainGroup.removing,
       pendingAction: mainGroup.pendingAction,
+      operationFailure: mainGroup.operationFailure,
       sessions: sortDashboardEntriesByCreatedAt(mainSessions),
       services: sortDashboardEntriesByCreatedAt(mainServices),
     });
@@ -128,6 +131,7 @@ export function buildDashboardQuickJumpWorktrees(input: {
       pending: group.pending,
       removing: group.removing,
       pendingAction: group.pendingAction,
+      operationFailure: group.operationFailure,
       sessions: wtSessionMap.get(group.path) ?? [],
       services: wtServiceMap.get(group.path) ?? [],
     });

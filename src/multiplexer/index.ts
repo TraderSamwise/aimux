@@ -23,6 +23,7 @@ import { listNotifications, type NotificationRecord } from "../notifications.js"
 import { type ThreadEntry, type WorkflowEntry, type WorkflowFilter } from "../workflow.js";
 import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import type { DashboardOperationFailure } from "../dashboard/operation-failures.js";
 import type { WorktreeGraveyardEntry } from "./worktree-graveyard.js";
 import {
   DashboardFeedbackController,
@@ -261,6 +262,7 @@ export class Multiplexer {
   private dashboardSessionsCache: DashboardSession[] = [];
   private dashboardServicesCache: DashboardService[] = [];
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
+  private dashboardOperationFailuresCache: DashboardOperationFailure[] = [];
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
   private dashboardModelSnapshotKey: string | null = null;
   private dashboardModelRefreshedAt = 0;

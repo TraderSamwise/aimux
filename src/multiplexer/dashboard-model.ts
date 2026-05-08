@@ -18,6 +18,7 @@ import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
+import { listDashboardOperationFailures, type DashboardOperationFailure } from "../dashboard/operation-failures.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 
 type DashboardModelHost = any;
@@ -55,6 +56,7 @@ export function buildDashboardWorktreeGroups(
     pending?: boolean;
     removing?: boolean;
     pendingAction?: "creating";
+    operationFailure?: DashboardOperationFailure;
   }>,
   mainRepoPath?: string,
 ): WorktreeGroup[] {
@@ -86,6 +88,7 @@ export function buildDashboardWorktreeGroups(
           pending: wt.pending,
           removing: wt.removing,
           pendingAction: wt.pendingAction,
+          operationFailure: wt.operationFailure,
           status: (wtSessions.length > 0 || wtServices.length > 0 ? "active" : "offline") as "active" | "offline",
           sessions: wtSessions,
           services: wtServices,
@@ -129,12 +132,14 @@ export function applyDashboardModel(
   dashServices: DashboardService[],
   worktreeGroups: WorktreeGroup[],
   mainCheckoutInfo: { name: string; branch: string },
+  operationFailures: DashboardOperationFailure[] = [],
 ): boolean {
   const snapshotKey = JSON.stringify({
     sessions: dashSessions,
     services: dashServices,
     worktreeGroups,
     mainCheckoutInfo,
+    operationFailures,
   });
   if (snapshotKey === host.dashboardModelSnapshotKey) {
     host.dashboardModelRefreshedAt = Date.now();
@@ -148,6 +153,7 @@ export function applyDashboardModel(
     host.dashboardSessionsCache,
     host.dashboardServicesCache,
   );
+  host.dashboardOperationFailuresCache = operationFailures;
   host.dashboardMainCheckoutInfoCache = mainCheckoutInfo;
   host.dashboardModelVersion = (host.dashboardModelVersion ?? 0) + 1;
   host.dashboardModelRefreshedAt = Date.now();
@@ -417,6 +423,17 @@ export function readTmuxProcessInfo(
 export function buildDesktopStateSnapshot(host: DashboardModelHost) {
   host.syncSessionsFromState();
   const worktrees = host.listDesktopWorktrees();
+  const realizedWorktreePaths = new Set(
+    worktrees.filter((worktree: any) => !worktree.operationFailure).map((worktree: any) => worktree.path),
+  );
+  const operationFailures = listDashboardOperationFailures().filter(
+    (failure) =>
+      !(
+        failure.targetKind === "worktree" &&
+        failure.operation === "create" &&
+        Boolean(failure.worktreePath && realizedWorktreePaths.has(failure.worktreePath))
+      ),
+  );
   let mainCheckoutInfo = { name: "Main Checkout", branch: "" };
   let mainCheckoutPath: string | undefined;
   try {
@@ -431,6 +448,7 @@ export function buildDesktopStateSnapshot(host: DashboardModelHost) {
     sessions: computeDashboardSessions(host),
     services: computeDashboardServices(host, worktrees),
     worktrees,
+    operationFailures,
     mainCheckoutInfo,
     mainCheckoutPath,
   };
@@ -465,7 +483,9 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
                 pending?: boolean;
                 removing?: boolean;
                 pendingAction?: "creating";
+                operationFailure?: DashboardOperationFailure;
               }>;
+              operationFailures?: DashboardOperationFailure[];
               mainCheckoutInfo?: { name: string; branch: string };
               mainCheckoutPath?: string;
             };
@@ -485,6 +505,7 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
               dashServices,
               worktreeGroups,
               body.mainCheckoutInfo ?? { name: "Main Checkout", branch: "" },
+              body.operationFailures ?? [],
             );
           }
         } catch {
@@ -512,7 +533,14 @@ export function refreshLocalDashboardModel(host: DashboardModelHost): void {
     snapshot.worktrees,
     snapshot.mainCheckoutPath,
   );
-  applyDashboardModel(host, snapshot.sessions, snapshot.services, worktreeGroups, snapshot.mainCheckoutInfo);
+  applyDashboardModel(
+    host,
+    snapshot.sessions,
+    snapshot.services,
+    worktreeGroups,
+    snapshot.mainCheckoutInfo,
+    snapshot.operationFailures,
+  );
 }
 
 export async function startProjectServices(host: DashboardModelHost): Promise<void> {

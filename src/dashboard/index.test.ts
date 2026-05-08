@@ -33,6 +33,7 @@ describe("Dashboard", () => {
       runtimeLabel: "tmux",
       mainCheckout: { name: "Main Checkout", branch: "master" },
       worktreeRemoval: undefined,
+      operationFailures: [],
       derivedStatusLabel: (session) => session.status,
     });
 
@@ -42,5 +43,60 @@ describe("Dashboard", () => {
     expect(rendered).toContain("feat/mobile-auth");
     expect(rendered).toContain("PR #123: Fix mobile auth flow");
     expect(rendered).toContain("https://github.com/acme/mobile/pull/123");
+  });
+
+  it("renders persisted operation failures", () => {
+    const dashboard = new Dashboard();
+    dashboard.update({
+      sessions: [],
+      services: [],
+      worktreeGroups: [
+        {
+          name: "demo",
+          branch: "(failed)",
+          path: "/repo/.aimux/worktrees/demo",
+          status: "offline",
+          sessions: [],
+          services: [],
+          operationFailure: {
+            id: "failure-1",
+            targetKind: "worktree",
+            operation: "create",
+            title: 'Failed to create worktree "demo"',
+            message: "branch already exists",
+            worktreePath: "/repo/.aimux/worktrees/demo",
+            worktreeName: "demo",
+            createdAt: "2026-05-01T00:00:00.000Z",
+          },
+        },
+      ],
+      hasWorktrees: true,
+      focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+      navLevel: "worktrees",
+      selectedSessionId: undefined,
+      selectedServiceId: undefined,
+      runtimeLabel: "tmux",
+      mainCheckout: { name: "Main Checkout", branch: "master" },
+      worktreeRemoval: undefined,
+      operationFailures: [
+        {
+          id: "failure-1",
+          targetKind: "worktree",
+          operation: "create",
+          title: 'Failed to create worktree "demo"',
+          message: "branch already exists",
+          worktreePath: "/repo/.aimux/worktrees/demo",
+          worktreeName: "demo",
+          createdAt: "2026-05-01T00:00:00.000Z",
+        },
+      ],
+      derivedStatusLabel: (session) => session.status,
+    });
+
+    const rendered = dashboard.render(140, 40);
+    expect(rendered).toContain("Failed operations");
+    expect(rendered).toContain('Failed to create worktree "demo"');
+    expect(rendered).toContain("(failed)");
+    expect(rendered).toContain("Error: branch already exists");
   });
 });

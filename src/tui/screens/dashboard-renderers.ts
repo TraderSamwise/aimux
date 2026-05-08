@@ -127,8 +127,9 @@ export function renderDashboardFrame(
       const focused = isFocused(worktree.path);
       const prefix = focused && state.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
       const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
-      const pending =
-        worktree.pendingAction === "creating"
+      const pending = worktree.operationFailure
+        ? " \x1b[31m(failed)\x1b[0m"
+        : worktree.pendingAction === "creating"
           ? " \x1b[2;33m(creating...)\x1b[0m"
           : worktree.pendingAction === "graveyarding"
             ? " \x1b[2;33m(graveyarding...)\x1b[0m"
@@ -249,6 +250,18 @@ export function renderDashboardFrame(
         focusedWorktreePath === undefined
           ? undefined
           : state.worktreeGroups.find((group) => group.path === focusedWorktreePath);
+      if (focusedGroup?.operationFailure) {
+        lines.push(...wrapKeyValue("Status", "failed", width));
+        lines.push(...wrapKeyValue("Operation", focusedGroup.operationFailure.operation, width));
+        lines.push(...wrapKeyValue("Error", focusedGroup.operationFailure.message, width));
+        lines.push(
+          ...wrapKeyValue(
+            "Failed",
+            formatRelativeRecency(focusedGroup.operationFailure.createdAt) ?? focusedGroup.operationFailure.createdAt,
+            width,
+          ),
+        );
+      }
       if (focusedGroup?.pendingAction === "creating") {
         lines.push(...wrapKeyValue("Status", "creating", width));
       }
@@ -416,6 +429,20 @@ export function renderDashboardFrame(
     "",
   ];
   const content: string[] = [];
+  const operationFailures = state.operationFailures ?? [];
+  if (operationFailures.length > 0) {
+    content.push("  \x1b[31mFailed operations\x1b[0m");
+    for (const failure of operationFailures.slice(0, 3)) {
+      const recency = formatRelativeRecency(failure.createdAt) ?? failure.createdAt;
+      const target = failure.worktreeName ?? failure.targetId ?? failure.worktreePath;
+      const targetHint = target ? ` \x1b[2m· ${truncate(target, 24)}\x1b[0m` : "";
+      content.push(`    \x1b[31m!\x1b[0m ${truncate(failure.title, 48)}${targetHint} \x1b[2m· ${recency}\x1b[0m`);
+    }
+    if (operationFailures.length > 3) {
+      content.push(`    \x1b[2m${operationFailures.length - 3} more failures\x1b[0m`);
+    }
+    content.push("");
+  }
   if (state.sessions.length === 0 && state.worktreeGroups.length === 0) {
     content.push(centerInBlock("No sessions. Press [c] to create one."));
   } else if (state.hasWorktrees) {

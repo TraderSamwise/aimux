@@ -81,4 +81,33 @@ describe("buildDashboardWorktreeGroups", () => {
     expect(groups[1]?.sessions.map((session) => session.id)).toEqual(["claude-new"]);
     expect(groups[1]?.status).toBe("active");
   });
+
+  it("preserves worktree operation failure state in grouped rows", () => {
+    const groups = buildDashboardWorktreeGroups(
+      {},
+      [],
+      [],
+      [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          branch: "(failed)",
+          isBare: false,
+          operationFailure: {
+            id: "failure-1",
+            targetKind: "worktree",
+            operation: "create",
+            title: 'Failed to create worktree "demo"',
+            message: "branch already exists",
+            worktreePath: "/repo/.aimux/worktrees/demo",
+            worktreeName: "demo",
+            createdAt: "2026-05-01T00:00:00.000Z",
+          },
+        },
+      ],
+      "/repo",
+    );
+
+    expect(groups[1]?.operationFailure?.message).toBe("branch already exists");
+  });
 });

@@ -5,6 +5,7 @@ import {
   buildDashboardQuickJumpWorktrees,
   resolveDashboardQuickJumpTarget,
 } from "../dashboard/quick-jump.js";
+import { clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
 import { parseKeys } from "../key-parser.js";
 import { requestReview } from "../task-dispatcher.js";
 
@@ -31,6 +32,15 @@ function isRemovingDashboardWorktree(group: any | undefined): boolean {
 
 function isCreatingDashboardWorktree(group: any | undefined): boolean {
   return Boolean(group?.pendingAction === "creating");
+}
+
+function isFailedDashboardWorktree(group: any | undefined): boolean {
+  return Boolean(group?.operationFailure);
+}
+
+function failedWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
+  const name = group?.name ?? worktreePath?.split("/").pop() ?? "worktree";
+  return `Worktree ${name} failed: ${group?.operationFailure?.message ?? "operation failed"}`;
 }
 
 function blockedRemovingWorktreeMessage(group: any | undefined, worktreePath: string | undefined): string {
@@ -287,6 +297,19 @@ export const dashboardInteractionMethods = {
             this.renderDashboard();
             return;
           }
+          if (isFailedDashboardWorktree(focusedGroup)) {
+            clearDashboardOperationFailures({
+              targetKind: "worktree",
+              operation: focusedGroup.operationFailure.operation,
+              worktreePath: this.dashboardState.focusedWorktreePath,
+            });
+            this.footerFlash = `Dismissed failure for ${focusedGroup.name ?? "worktree"}`;
+            this.footerFlashTicks = 3;
+            this.invalidateDesktopStateSnapshot();
+            this.refreshLocalDashboardModel();
+            this.renderDashboard();
+            return;
+          }
           const wtName =
             this.dashboardState.focusedWorktreePath.split("/").pop() ?? this.dashboardState.focusedWorktreePath;
           this.worktreeRemoveConfirm = { path: this.dashboardState.focusedWorktreePath, name: wtName };
@@ -448,6 +471,12 @@ export const dashboardInteractionMethods = {
           if (isRemovingDashboardWorktree(focusedGroup)) {
             this.footerFlash = blockedRemovingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
             this.footerFlashTicks = 3;
+            this.renderDashboard();
+            break;
+          }
+          if (isFailedDashboardWorktree(focusedGroup)) {
+            this.footerFlash = failedWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
+            this.footerFlashTicks = 4;
             this.renderDashboard();
             break;
           }

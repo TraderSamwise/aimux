@@ -200,6 +200,10 @@ export function getDashboardUiStatePath(): string {
   return join(getProjectStateDir(), "dashboard-ui.json");
 }
 
+export function getDashboardOperationFailuresPath(): string {
+  return join(getProjectStateDir(), "dashboard-operation-failures.json");
+}
+
 export function getDashboardClientUiStatePath(clientKey: string): string {
   return join(getProjectStateDir(), `dashboard-ui-client-${clientKey}.json`);
 }

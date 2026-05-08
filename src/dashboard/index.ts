@@ -2,6 +2,7 @@ import type { SessionStatus } from "../status-detector.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "../agent-events.js";
 import type { SessionServiceMetadata } from "../metadata-store.js";
 import type { SessionSemanticState } from "../session-semantics.js";
+import type { DashboardOperationFailure } from "./operation-failures.js";
 import { sessionSemanticStatusLabel } from "../session-semantics.js";
 import { renderDashboardFrame } from "../tui/screens/dashboard-renderers.js";
 
@@ -108,6 +109,7 @@ export interface WorktreeGroup {
   pending?: boolean;
   removing?: boolean;
   pendingAction?: "removing" | "creating" | "graveyarding";
+  operationFailure?: DashboardOperationFailure;
   optimistic?: boolean;
   sessions: DashboardSession[];
   services: DashboardService[];
@@ -137,6 +139,7 @@ export interface DashboardViewModel {
   runtimeLabel?: string;
   mainCheckout: MainCheckoutInfo;
   worktreeRemoval?: DashboardWorktreeRemovalInfo;
+  operationFailures: DashboardOperationFailure[];
   detailsPaneVisible: boolean;
   scrollOffset: number;
   derivedStatusLabel: typeof derivedStatusLabel;
@@ -177,6 +180,7 @@ export class Dashboard {
     runtimeLabel: undefined,
     mainCheckout: { name: "Main Checkout", branch: "" },
     worktreeRemoval: undefined,
+    operationFailures: [],
     detailsPaneVisible: true,
     scrollOffset: 0,
     derivedStatusLabel,

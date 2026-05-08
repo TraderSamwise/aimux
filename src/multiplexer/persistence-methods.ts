@@ -3,6 +3,12 @@ import { execFileSync, spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "../debug.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import {
+  addDashboardOperationFailure,
+  clearDashboardOperationFailures,
+  listDashboardOperationFailures,
+  type DashboardOperationFailure,
+} from "../dashboard/operation-failures.js";
 import { composeDashboardWorktreeGroups } from "./dashboard-model.js";
 import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon.js";
@@ -25,6 +31,29 @@ import {
   getWorktreeCreatePath,
   listWorktrees as listAllWorktrees,
 } from "../worktree.js";
+
+function recordDashboardFailure(
+  host: any,
+  input: {
+    targetKind: "worktree" | "agent" | "service" | "dashboard";
+    operation: string;
+    title: string;
+    message: string;
+    targetId?: string;
+    worktreePath?: string;
+    worktreeName?: string;
+  },
+): DashboardOperationFailure {
+  const failure = addDashboardOperationFailure(input);
+  host.publishAlert?.({
+    kind: "task_failed",
+    title: input.title,
+    message: input.message,
+    worktreePath: input.worktreePath,
+    dedupeKey: `dashboard-operation-failed:${input.targetKind}:${input.operation}:${input.targetId ?? input.worktreePath ?? input.title}:${input.message}`,
+  });
+  return failure;
+}
 
 export const persistenceMethods = {
   writeSessionsFile(this: any): void {
@@ -235,6 +264,7 @@ export const persistenceMethods = {
     services: DashboardService[];
     statusline: ReturnType<any["buildStatuslineSnapshot"]>;
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
+    operationFailures: DashboardOperationFailure[];
     mainCheckoutInfo: { name: string; branch: string };
     mainCheckoutPath?: string;
   } {
@@ -247,6 +277,7 @@ export const persistenceMethods = {
       services: desktopState.services,
       statusline: this.buildStatuslineSnapshot(),
       worktrees: desktopState.worktrees,
+      operationFailures: desktopState.operationFailures,
       mainCheckoutInfo: desktopState.mainCheckoutInfo,
       mainCheckoutPath: desktopState.mainCheckoutPath,
     };
@@ -271,6 +302,7 @@ export const persistenceMethods = {
             optimistic: _optimistic,
             pending: _pending,
             removing: _removing,
+            operationFailure: _operationFailure,
             ...wt
           }: any) => wt,
         ),
@@ -289,6 +321,7 @@ export const persistenceMethods = {
     pending?: boolean;
     removing?: boolean;
     pendingAction?: "creating";
+    operationFailure?: DashboardOperationFailure;
   }> {
     const pendingCreates = this.pendingWorktreeCreates as
       | Map<string, Promise<{ path: string; status: "creating" | "created" }>>
@@ -306,6 +339,7 @@ export const persistenceMethods = {
       pending?: boolean;
       removing?: boolean;
       pendingAction?: "creating";
+      operationFailure?: DashboardOperationFailure;
     }> = listAllWorktrees()
       .filter((wt) => !wt.isBare && !hiddenPaths.has(wt.path))
       .map((wt) => ({
@@ -329,6 +363,20 @@ export const persistenceMethods = {
           pendingAction: "creating",
         });
       }
+    }
+    const worktreePaths = new Set(worktrees.map((worktree) => worktree.path));
+    for (const failure of listDashboardOperationFailures()) {
+      if (failure.targetKind !== "worktree" || failure.operation !== "create" || !failure.worktreePath) continue;
+      if (hiddenPaths.has(failure.worktreePath) || worktreePaths.has(failure.worktreePath)) continue;
+      worktrees.push({
+        name: failure.worktreeName ?? basename(failure.worktreePath),
+        path: failure.worktreePath,
+        branch: "(failed)",
+        isBare: false,
+        createdAt: failure.createdAt,
+        operationFailure: failure,
+      });
+      worktreePaths.add(failure.worktreePath);
     }
     sortDesktopWorktrees(worktrees);
     return worktrees;
@@ -508,9 +556,14 @@ export const persistenceMethods = {
     if (existingCreate) {
       return { path: targetPath, status: "creating" };
     }
-    if (this.listDesktopWorktrees().some((worktree: any) => worktree.path === targetPath && !worktree.pending)) {
+    if (
+      this.listDesktopWorktrees().some(
+        (worktree: any) => worktree.path === targetPath && !worktree.pending && !worktree.operationFailure,
+      )
+    ) {
       throw new Error(`Worktree "${name}" already exists`);
     }
+    clearDashboardOperationFailures({ targetKind: "worktree", operation: "create", worktreePath: targetPath });
 
     let resolveCreate!: (value: { path: string; status: "creating" | "created" }) => void;
     let rejectCreate!: (reason?: unknown) => void;
@@ -531,7 +584,16 @@ export const persistenceMethods = {
       timeoutMs: 180_000,
       onTimeout: () => {
         clearPendingCreate();
-        this.footerFlash = `Timed out creating ${name}`;
+        const message = `Timed out creating worktree "${name}"`;
+        recordDashboardFailure(this, {
+          targetKind: "worktree",
+          operation: "create",
+          title: `Failed to create worktree "${name}"`,
+          message,
+          worktreePath: targetPath,
+          worktreeName: name,
+        });
+        this.footerFlash = message;
         this.footerFlashTicks = 5;
         this.invalidateDesktopStateSnapshot();
         this.refreshLocalDashboardModel();
@@ -598,11 +660,20 @@ export const persistenceMethods = {
 
     void createPromise
       .then(() => {
+        clearDashboardOperationFailures({ targetKind: "worktree", operation: "create", worktreePath: targetPath });
         this.footerFlash = `Created: ${name}`;
         this.footerFlashTicks = 3;
       })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
+        recordDashboardFailure(this, {
+          targetKind: "worktree",
+          operation: "create",
+          title: `Failed to create worktree "${name}"`,
+          message,
+          worktreePath: targetPath,
+          worktreeName: name,
+        });
         this.footerFlash = `Failed: ${message}`;
         this.footerFlashTicks = 5;
         if (this.mode === "dashboard") {
@@ -645,7 +716,17 @@ export const persistenceMethods = {
     this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(path), "removing", {
       timeoutMs: 180_000,
       onTimeout: () => {
-        this.footerFlash = `Timed out removing ${path.split("/").pop() ?? path}`;
+        const name = path.split("/").pop() ?? path;
+        const message = `Timed out removing worktree "${name}"`;
+        recordDashboardFailure(this, {
+          targetKind: "worktree",
+          operation: "remove",
+          title: `Failed to remove worktree "${name}"`,
+          message,
+          worktreePath: path,
+          worktreeName: name,
+        });
+        this.footerFlash = message;
         this.footerFlashTicks = 5;
         this.invalidateDesktopStateSnapshot();
         this.refreshLocalDashboardModel();
@@ -671,6 +752,7 @@ export const persistenceMethods = {
 
         if (!existsSync(path)) {
           await removeOrphanedDesktopWorktree(this, mainRepo, path);
+          clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
           resolveRemoval({ path, status: "removed" });
           return;
         }
@@ -680,6 +762,7 @@ export const persistenceMethods = {
           const worktreeBaseDir = getWorktreeBaseDir();
           if (path.startsWith(`${worktreeBaseDir}/`) || path === worktreeBaseDir) {
             await removeOrphanedDesktopWorktree(this, mainRepo, path);
+            clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
             resolveRemoval({ path, status: "removed" });
             return;
           }
@@ -739,11 +822,27 @@ export const persistenceMethods = {
         this.offlineServices = this.offlineServices.filter((service: any) => service.worktreePath !== path);
         removeFlatGraveyardAgentsForWorktree(path);
         this.saveState();
+        clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
         resolveRemoval({ path, status: "removed" });
       } catch (error) {
         rejectRemoval(error);
       }
     })();
+
+    void removalPromise.catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const name = path.split("/").pop() ?? path;
+      recordDashboardFailure(this, {
+        targetKind: "worktree",
+        operation: "remove",
+        title: `Failed to remove worktree "${name}"`,
+        message,
+        worktreePath: path,
+        worktreeName: name,
+      });
+      this.footerFlash = `Failed: ${message}`;
+      this.footerFlashTicks = 5;
+    });
 
     const finalizeRemoval = () => {
       this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(path), null);

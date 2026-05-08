@@ -148,6 +148,7 @@ export const dashboardViewMethods = {
         selectedServiceId: selectedService,
         runtimeLabel: "tmux",
         mainCheckout: mainCheckoutInfo,
+        operationFailures: this.dashboardOperationFailuresCache ?? [],
         worktreeRemoval: this.worktreeRemovalJob
           ? {
               path: this.worktreeRemovalJob.path,
