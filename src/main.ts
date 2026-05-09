@@ -84,10 +84,10 @@ import {
 } from "./orchestration-actions.js";
 import { readAllTasks, readTask } from "./tasks.js";
 import {
-  addNotification,
   clearNotifications,
   listNotifications,
   markNotificationsRead,
+  upsertNotification,
   unreadNotificationCount,
 } from "./notifications.js";
 import { notifyAlert } from "./notify.js";
@@ -2583,7 +2583,7 @@ program
             | "handoff_waiting"
             | "task_assigned"
             | "review_waiting";
-          const notification = addNotification({
+          const notification = upsertNotification({
             title,
             subtitle: opts.subtitle?.trim() || undefined,
             body,
@@ -2663,54 +2663,12 @@ program
       case "notification":
       case "notify": {
         const summary = summarizeClaudeNotification(payload);
-        await postLiveProjectServiceJsonOrLocal(
-          projectRoot,
-          "/notify",
-          {
-            title: `${sessionId} needs input`,
-            subtitle: `Claude Code · ${summary.subtitle}`,
-            message: summary.body,
-            sessionId,
-            kind: "needs_input",
-          },
-          () => ({
-            ok: true,
-            notification: addNotification({
-              title: `${sessionId} needs input`,
-              subtitle: `Claude Code · ${summary.subtitle}`,
-              body: summary.body,
-              sessionId,
-              kind: "needs_input",
-            }),
-          }),
-        );
         await emitEvent("needs_input", summary.body, "warn");
         break;
       }
       case "stop":
       case "idle": {
         const summary = summarizeClaudeStop(payload);
-        await postLiveProjectServiceJsonOrLocal(
-          projectRoot,
-          "/notify",
-          {
-            title: `${sessionId} finished`,
-            subtitle: `Claude Code · ${summary.subtitle}`,
-            message: summary.body,
-            sessionId,
-            kind: "task_done",
-          },
-          () => ({
-            ok: true,
-            notification: addNotification({
-              title: `${sessionId} finished`,
-              subtitle: `Claude Code · ${summary.subtitle}`,
-              body: summary.body,
-              sessionId,
-              kind: "task_done",
-            }),
-          }),
-        );
         await emitEvent("task_done", summary.body, "success");
         break;
       }

@@ -1,5 +1,5 @@
 import { getProjectId } from "./paths.js";
-import { addNotification } from "./notifications.js";
+import { upsertNotification } from "./notifications.js";
 import { isSessionNotificationFocused } from "./notification-context.js";
 
 export type AlertKind =
@@ -102,7 +102,7 @@ export class ProjectEventBus {
       forceNotify: alert.forceNotify,
     } satisfies AlertEvent;
 
-    addNotification({
+    upsertNotification({
       title: event.title,
       body: event.message,
       sessionId: event.sessionId,

@@ -9,6 +9,8 @@ export interface NotificationRecord {
   subtitle?: string;
   body: string;
   sessionId?: string;
+  targetKey?: string;
+  targetKind?: "session" | "generic";
   kind?: string;
   unread: boolean;
   cleared: boolean;
@@ -46,6 +48,8 @@ export function addNotification(input: {
   subtitle?: string;
   body: string;
   sessionId?: string;
+  targetKey?: string;
+  targetKind?: "session" | "generic";
   kind?: string;
   dedupeKey?: string;
   createdAt?: string;
@@ -59,6 +63,8 @@ export function addNotification(input: {
     subtitle: input.subtitle?.trim() || undefined,
     body: input.body.trim() || input.title.trim() || "aimux",
     sessionId: input.sessionId?.trim() || undefined,
+    targetKey: normalizeTargetKey(input),
+    targetKind: normalizeTargetKind(input),
     kind: input.kind?.trim() || undefined,
     unread: input.unread ?? true,
     cleared: false,
@@ -67,6 +73,62 @@ export function addNotification(input: {
     dedupeKey: input.dedupeKey?.trim() || undefined,
   };
   state.notifications.unshift(record);
+  saveState(state);
+  return record;
+}
+
+function normalizeTargetKey(input: { targetKey?: string; sessionId?: string }): string | undefined {
+  const targetKey = input.targetKey?.trim();
+  if (targetKey) return targetKey;
+  const sessionId = input.sessionId?.trim();
+  return sessionId ? `session:${sessionId}` : undefined;
+}
+
+function normalizeTargetKind(input: {
+  targetKind?: "session" | "generic";
+  sessionId?: string;
+}): "session" | "generic" | undefined {
+  if (input.targetKind) return input.targetKind;
+  return input.sessionId?.trim() ? "session" : undefined;
+}
+
+function recordTargetKey(record: NotificationRecord): string | undefined {
+  return record.targetKey ?? (record.sessionId ? `session:${record.sessionId}` : undefined);
+}
+
+export function upsertNotification(input: {
+  title: string;
+  subtitle?: string;
+  body: string;
+  sessionId?: string;
+  targetKey?: string;
+  targetKind?: "session" | "generic";
+  kind?: string;
+  dedupeKey?: string;
+  createdAt?: string;
+  unread?: boolean;
+}): NotificationRecord {
+  const targetKey = normalizeTargetKey(input);
+  if (!targetKey) return addNotification(input);
+
+  const now = input.createdAt ?? new Date().toISOString();
+  const state = loadState();
+  const record: NotificationRecord = {
+    id: randomUUID(),
+    title: input.title.trim() || "aimux",
+    subtitle: input.subtitle?.trim() || undefined,
+    body: input.body.trim() || input.title.trim() || "aimux",
+    sessionId: input.sessionId?.trim() || undefined,
+    targetKey,
+    targetKind: normalizeTargetKind(input),
+    kind: input.kind?.trim() || undefined,
+    unread: input.unread ?? true,
+    cleared: false,
+    createdAt: now,
+    updatedAt: now,
+    dedupeKey: input.dedupeKey?.trim() || undefined,
+  };
+  state.notifications = [record, ...state.notifications.filter((existing) => recordTargetKey(existing) !== targetKey)];
   saveState(state);
   return record;
 }

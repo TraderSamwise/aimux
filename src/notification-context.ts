@@ -49,6 +49,10 @@ function isFresh(entry: NotificationContextEntry | undefined): boolean {
   return Number.isFinite(updated) && Date.now() - updated <= CONTEXT_FRESH_MS;
 }
 
+function isDirectSessionFocus(entry: NotificationContextEntry, sessionId: string): boolean {
+  return entry.sessionId === sessionId && entry.screen !== "dashboard" && !entry.panelOpen;
+}
+
 export function updateNotificationContext(
   source: NotificationContextSource,
   patch: Partial<Omit<NotificationContextEntry, "source" | "updatedAt">>,
@@ -76,7 +80,7 @@ export function isSessionNotificationFocused(sessionId: string): boolean {
   const { contexts } = loadState();
   for (const entry of Object.values(contexts)) {
     if (!entry || !isFresh(entry) || !entry.focused) continue;
-    if (entry.sessionId === sessionId) return true;
+    if (isDirectSessionFocus(entry, sessionId)) return true;
   }
   return false;
 }
@@ -86,9 +90,8 @@ export function shouldSuppressNotification(event: AlertEvent): boolean {
   const { contexts } = loadState();
   for (const entry of Object.values(contexts)) {
     if (!entry || !isFresh(entry) || !entry.focused) continue;
-    if (entry.panelOpen) return true;
-    if (event.sessionId && entry.sessionId && entry.sessionId === event.sessionId) return true;
-    if (!event.sessionId && entry.screen) return true;
+    if (event.sessionId && isDirectSessionFocus(entry, event.sessionId)) return true;
+    if (!event.sessionId && entry.screen && entry.screen !== "dashboard" && !entry.panelOpen) return true;
   }
   return false;
 }
