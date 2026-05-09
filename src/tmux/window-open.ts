@@ -64,13 +64,18 @@ export function selectLinkedOrOpenTarget(tmux: TmuxRuntimeManager, target: TmuxT
 export function openManagedSessionWindow(
   tmux: TmuxRuntimeManager,
   projectRoot: string,
-  entry: { id: string; backendSessionId?: string },
+  entry: { id: string; backendSessionId?: string; tmuxWindowId?: string },
 ): TmuxTarget | null {
-  const tmuxSession = tmux.getProjectSession(projectRoot);
-  const match = tmux.findManagedWindow(tmuxSession.sessionName, {
-    sessionId: entry.id,
-    backendSessionId: entry.backendSessionId,
-  });
+  const match =
+    tmux
+      .listProjectManagedWindows(projectRoot)
+      .find(
+        (candidate) =>
+          candidate.metadata.kind === "agent" &&
+          ((entry.tmuxWindowId && candidate.target.windowId === entry.tmuxWindowId) ||
+            candidate.metadata.sessionId === entry.id ||
+            (entry.backendSessionId && candidate.metadata.backendSessionId === entry.backendSessionId)),
+      ) ?? null;
   if (!match) return null;
   selectLinkedOrOpenTarget(tmux, match.target);
   return match.target;
@@ -81,11 +86,11 @@ export function openManagedServiceWindow(
   projectRoot: string,
   serviceId: string,
 ): TmuxTarget | null {
-  const tmuxSession = tmux.getProjectSession(projectRoot);
-  const match = tmux.findManagedWindow(tmuxSession.sessionName, {
-    sessionId: serviceId,
-  });
-  if (!match || match.metadata.kind !== "service") return null;
+  const match =
+    tmux
+      .listProjectManagedWindows(projectRoot)
+      .find((candidate) => candidate.metadata.kind === "service" && candidate.metadata.sessionId === serviceId) ?? null;
+  if (!match) return null;
   selectLinkedOrOpenTarget(tmux, match.target);
   return match.target;
 }

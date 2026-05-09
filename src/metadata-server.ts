@@ -74,6 +74,17 @@ import type { TmuxTarget } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 
+function sessionAlertTitle(kind: AlertKind, sessionId: string | undefined, fallback: string | undefined): string {
+  const title = fallback?.trim();
+  if (!sessionId) return title || "aimux";
+  if (kind === "needs_input") return `${sessionId} needs input`;
+  if (kind === "blocked") return `${sessionId} is blocked`;
+  if (kind === "task_failed") return `${sessionId} errored`;
+  if (kind === "task_done") return `${sessionId} finished`;
+  if (!title) return sessionId;
+  return title.includes(sessionId) ? title : `${sessionId}: ${title}`;
+}
+
 interface MetadataServerOptions {
   onChange?: () => void;
   events?: {
@@ -1346,7 +1357,7 @@ export class MetadataServer {
           this.emitAlert({
             kind: "notification",
             sessionId: body.session,
-            title: body.event.source || body.session,
+            title: sessionAlertTitle("notification", body.session, body.event.source),
             message: body.event.message || "Agent notification.",
             dedupeKey: body.event.message ? `notify:${body.session}:${body.event.message}` : undefined,
             cooldownMs: 15_000,
@@ -1445,14 +1456,26 @@ export class MetadataServer {
                         : requestedKind === "review_waiting"
                           ? "review_waiting"
                           : "needs_input";
+        const sessionId = body.sessionId?.trim() || undefined;
+        const dedupeKey = body.force
+          ? undefined
+          : kind === "needs_input" && sessionId
+            ? `needs_input:${sessionId}`
+            : kind === "blocked" && sessionId
+              ? `blocked:${sessionId}`
+              : kind === "task_failed" && sessionId
+                ? `error:${sessionId}`
+                : kind === "task_done"
+                  ? `notify:complete:${body.title ?? body.message ?? "aimux"}`
+                  : undefined;
         this.emitAlert({
           kind,
-          sessionId: body.sessionId?.trim() || undefined,
-          title: body.title?.trim() || "aimux",
+          sessionId,
+          title: sessionAlertTitle(kind, sessionId, body.title),
           message: [body.subtitle?.trim(), body.message?.trim() || body.title?.trim() || "aimux"]
             .filter(Boolean)
             .join(" — "),
-          dedupeKey: kind === "task_done" ? `notify:complete:${body.title ?? body.message ?? "aimux"}` : undefined,
+          dedupeKey,
           forceNotify: Boolean(body.force),
         });
         send(res, 200, { ok: true });

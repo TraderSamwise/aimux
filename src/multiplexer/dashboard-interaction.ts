@@ -53,6 +53,20 @@ function creatingWorktreeMessage(group: any | undefined, worktreePath: string | 
   return `Worktree ${name} is still creating`;
 }
 
+function refreshSelectedWorktreeEntry(host: any): { kind: "session" | "service"; id: string } | undefined {
+  const before = host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex];
+  host.updateWorktreeSessions?.();
+  if (before) {
+    const nextIndex = host.dashboardState.worktreeEntries.findIndex(
+      (entry: any) => entry.kind === before.kind && entry.id === before.id,
+    );
+    if (nextIndex >= 0) {
+      host.dashboardState.sessionIndex = nextIndex;
+    }
+  }
+  return host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex];
+}
+
 export const dashboardInteractionMethods = {
   clearDashboardQuickJump(this: any): void {
     if (this.dashboardQuickJumpTimeout) {
@@ -97,7 +111,7 @@ export const dashboardInteractionMethods = {
   },
 
   activateSelectedDashboardWorktreeEntry(this: any): void {
-    const selectedEntry = this.dashboardState.worktreeEntries[this.dashboardState.sessionIndex];
+    const selectedEntry = refreshSelectedWorktreeEntry(this);
     if (!selectedEntry) return;
     const focusedGroup = findDashboardWorktreeGroup(this, this.dashboardState.focusedWorktreePath);
     if (isRemovingDashboardWorktree(focusedGroup)) {

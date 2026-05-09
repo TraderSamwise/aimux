@@ -1227,7 +1227,7 @@ describe("MetadataServer threads API", () => {
     expect(listed.unreadCount).toBe(1);
     expect(listed.notifications[0]).toMatchObject({
       sessionId: "claude-1",
-      title: "Claude Code",
+      title: "claude-1 needs input",
       body: "Waiting — Agent needs input",
     });
 

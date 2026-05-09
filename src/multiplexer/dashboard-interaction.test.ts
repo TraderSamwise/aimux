@@ -372,6 +372,42 @@ describe("dashboardInteractionMethods", () => {
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(dashEntry);
   });
 
+  it("refreshes stale worktree entries before activating selected agent rows", () => {
+    const dashEntry = {
+      id: "codex-new",
+      status: "running",
+      worktreePath: "/repo",
+    };
+    const host: any = {
+      dashboardState: {
+        worktreeEntries: [{ kind: "session", id: "codex-new" }],
+        worktreeSessions: [],
+        sessionIndex: 0,
+        focusedWorktreePath: "/repo",
+      },
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "Main Checkout",
+          path: "/repo",
+          removing: false,
+          sessions: [],
+          services: [],
+        },
+      ],
+      updateWorktreeSessions: vi.fn(function (this: any) {
+        this.dashboardState.worktreeSessions = [dashEntry];
+        this.dashboardState.worktreeEntries = [{ kind: "session", id: "codex-new" }];
+      }),
+      activateDashboardEntry: vi.fn(),
+      getDashboardServices: vi.fn(() => []),
+    };
+
+    dashboardInteractionMethods.activateSelectedDashboardWorktreeEntry.call(host);
+
+    expect(host.updateWorktreeSessions).toHaveBeenCalledOnce();
+    expect(host.activateDashboardEntry).toHaveBeenCalledWith(dashEntry);
+  });
+
   it("routes selected worktree service activation through the unified service path", () => {
     const service = {
       id: "service-1",

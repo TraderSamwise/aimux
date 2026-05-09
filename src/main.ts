@@ -2667,8 +2667,8 @@ program
           projectRoot,
           "/notify",
           {
-            title: "Claude Code",
-            subtitle: summary.subtitle,
+            title: `${sessionId} needs input`,
+            subtitle: `Claude Code · ${summary.subtitle}`,
             message: summary.body,
             sessionId,
             kind: "needs_input",
@@ -2676,8 +2676,8 @@ program
           () => ({
             ok: true,
             notification: addNotification({
-              title: "Claude Code",
-              subtitle: summary.subtitle,
+              title: `${sessionId} needs input`,
+              subtitle: `Claude Code · ${summary.subtitle}`,
               body: summary.body,
               sessionId,
               kind: "needs_input",
@@ -2694,8 +2694,8 @@ program
           projectRoot,
           "/notify",
           {
-            title: "Claude Code",
-            subtitle: summary.subtitle,
+            title: `${sessionId} finished`,
+            subtitle: `Claude Code · ${summary.subtitle}`,
             message: summary.body,
             sessionId,
             kind: "task_done",
@@ -2703,8 +2703,8 @@ program
           () => ({
             ok: true,
             notification: addNotification({
-              title: "Claude Code",
-              subtitle: summary.subtitle,
+              title: `${sessionId} finished`,
+              subtitle: `Claude Code · ${summary.subtitle}`,
               body: summary.body,
               sessionId,
               kind: "task_done",

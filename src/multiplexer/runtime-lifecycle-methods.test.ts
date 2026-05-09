@@ -35,7 +35,7 @@ describe("runtime lifecycle state persistence", () => {
     };
   }
 
-  it("persists an empty state after the last local row is removed", () => {
+  it("persists an empty session list after the last local agent row is removed", () => {
     writeFileSync(
       getStatePath(),
       JSON.stringify(
@@ -54,6 +54,56 @@ describe("runtime lifecycle state persistence", () => {
 
     const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { sessions: unknown[]; services: unknown[] };
     expect(saved.sessions).toEqual([]);
+    expect(saved.services).toEqual([{ id: "stale-service", command: "shell", args: [] }]);
+  });
+
+  it("preserves service rows that were not loaded into the current process yet", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [],
+          services: [{ id: "existing-service", command: "shell", args: [], worktreePath: repoRoot }],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    runtimeLifecycleMethods.saveState.call(host() as never);
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      services: Array<{ id: string }>;
+    };
+    expect(saved.services.map((service) => service.id)).toEqual(["existing-service"]);
+  });
+
+  it("drops explicitly removed service rows when merging state", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [],
+          services: [{ id: "removed-service", command: "shell", args: [], worktreePath: repoRoot }],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    runtimeLifecycleMethods.saveState.call(
+      host({
+        removedServiceIds: new Set(["removed-service"]),
+      }) as never,
+    );
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      services: Array<{ id: string }>;
+    };
     expect(saved.services).toEqual([]);
   });
 
@@ -91,7 +141,7 @@ describe("runtime lifecycle state persistence", () => {
       services: Array<{ id: string }>;
     };
     expect(saved.sessions.map((session) => session.id)).toEqual(["remote-agent"]);
-    expect(saved.services).toEqual([]);
+    expect(saved.services.map((service) => service.id)).toEqual(["stale-service"]);
   });
 
   it("persists intentional offline sessions without stale tmux targets", () => {

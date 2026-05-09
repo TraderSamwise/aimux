@@ -294,7 +294,7 @@ export function handleDashboardSubscreenNavigationKey(
 
 export function openLiveTmuxWindowForEntry(
   host: DashboardControlHost,
-  entry: { id: string; backendSessionId?: string },
+  entry: { id: string; backendSessionId?: string; tmuxWindowId?: string },
 ): "opened" | "missing" | "error" {
   try {
     const target = openManagedSessionWindow(host.tmuxRuntimeManager, process.cwd(), entry);
@@ -320,7 +320,7 @@ export function openLiveTmuxWindowForEntry(
 
 export async function waitAndOpenLiveTmuxWindowForEntry(
   host: DashboardControlHost,
-  entry: { id: string; backendSessionId?: string },
+  entry: { id: string; backendSessionId?: string; tmuxWindowId?: string },
   timeoutMs = 3000,
 ): Promise<"opened" | "missing" | "error"> {
   const deadline = Date.now() + timeoutMs;

@@ -9,6 +9,10 @@ import {
   waitForSessionStart,
 } from "../dashboard/session-actions.js";
 import type { DashboardSession } from "../dashboard/index.js";
+import {
+  isAttachableDashboardSessionEntry,
+  isLiveDashboardServiceRuntimeEntry,
+} from "../dashboard/runtime-evidence.js";
 import { generateServiceId, serviceLabelForCommand } from "./services.js";
 
 type DashboardOpsHost = any;
@@ -114,16 +118,7 @@ async function waitForStableDashboardSessionAbsence(
 }
 
 function isLiveDashboardSessionEntry(entry: any | undefined): boolean {
-  if (!entry) return false;
-  if (entry.status !== "offline" && entry.pendingAction !== "starting") {
-    return true;
-  }
-  return (
-    typeof entry.pid === "number" ||
-    Boolean(entry.foregroundCommand) ||
-    Boolean(entry.previewLine) ||
-    Boolean(entry.tmuxWindowId)
-  );
+  return isAttachableDashboardSessionEntry(entry);
 }
 
 async function waitForDashboardSessionResumeSettle(
@@ -152,7 +147,8 @@ async function waitForDashboardSessionResumeSettle(
     ) {
       host.refreshLocalDashboardModel();
       host.renderDashboard();
-      return true;
+      const refreshedEntry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
+      if (isLiveDashboardSessionEntry(refreshedEntry)) return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -160,16 +156,7 @@ async function waitForDashboardSessionResumeSettle(
 }
 
 function isLiveDashboardServiceEntry(entry: any | undefined): boolean {
-  if (!entry) return false;
-  if (entry.status === "running" && entry.pendingAction !== "starting") {
-    return true;
-  }
-  return (
-    typeof entry.pid === "number" ||
-    Boolean(entry.foregroundCommand) ||
-    Boolean(entry.previewLine) ||
-    Boolean(entry.tmuxWindowId)
-  );
+  return isLiveDashboardServiceRuntimeEntry(entry);
 }
 
 async function waitForRenderedDashboardServiceState(
@@ -317,7 +304,7 @@ export async function spawnDashboardAgentWithFeedback(
         { timeoutMs: 10_000 },
       );
     },
-    settle: () => waitForRenderedDashboardSessionState(host, input.sessionId, (entry) => Boolean(entry)),
+    settle: () => waitForRenderedDashboardSessionState(host, input.sessionId, isAttachableDashboardSessionEntry),
     onError: () => host.refreshDashboardModelFromService(true),
     errorTitle: `Failed to create ${input.tool} agent`,
   });
@@ -363,7 +350,7 @@ export async function forkDashboardAgentWithFeedback(
         { timeoutMs: 10_000 },
       );
     },
-    settle: () => waitForRenderedDashboardSessionState(host, input.targetSessionId, (entry) => Boolean(entry)),
+    settle: () => waitForRenderedDashboardSessionState(host, input.targetSessionId, isAttachableDashboardSessionEntry),
     onError: () => host.refreshDashboardModelFromService(true),
     errorTitle: "Cannot fork session",
   });

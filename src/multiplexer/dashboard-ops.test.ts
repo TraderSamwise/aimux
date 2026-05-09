@@ -207,7 +207,7 @@ describe("dashboard-ops", () => {
 
   it("resumes an offline agent through the project service in dashboard mode and waits for the rendered row", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
-    const sessions = [[], [{ ...session, status: "waiting" }]];
+    const sessions = [[], [{ ...session, status: "waiting", tmuxWindowId: "@21" }]];
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
@@ -243,7 +243,16 @@ describe("dashboard-ops", () => {
   it("treats a live runtime as successful resume even if the rendered row stays stale", async () => {
     const session = { id: "sess-1", command: "codex", label: "codex" };
     const sessions = [
-      [{ ...session, status: "offline", pendingAction: "starting", pid: 77545, foregroundCommand: "volta-shim" }],
+      [
+        {
+          ...session,
+          status: "offline",
+          pendingAction: "starting",
+          pid: 77545,
+          foregroundCommand: "volta-shim",
+          tmuxWindowId: "@22",
+        },
+      ],
     ];
     const host = {
       mode: "dashboard",
@@ -301,7 +310,11 @@ describe("dashboard-ops", () => {
 
   it("keeps migrate pending until the migrated row is live", async () => {
     const session = { id: "sess-1", command: "codex", label: "codex", status: "running" };
-    const sessions = [[session], [], [{ ...session, status: "running", pid: 77545, foregroundCommand: "codex" }]];
+    const sessions = [
+      [session],
+      [],
+      [{ ...session, status: "running", pid: 77545, foregroundCommand: "codex", tmuxWindowId: "@23" }],
+    ];
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
@@ -377,7 +390,11 @@ describe("dashboard-ops", () => {
   });
 
   it("spawns an agent through the project service in dashboard mode and waits for the row to appear", async () => {
-    const sessions = [[], [{ id: "claude-abcd12", status: "running" }]];
+    const sessions = [
+      [],
+      [{ id: "claude-abcd12", status: "running" }],
+      [{ id: "claude-abcd12", status: "running", tmuxWindowId: "@42" }],
+    ];
     let sessionIndex = 0;
     const host = {
       dashboardPendingActions: new Map<string, string | null>(),
@@ -418,7 +435,7 @@ describe("dashboard-ops", () => {
   });
 
   it("forks an agent through the project service in dashboard mode and waits for the row to appear", async () => {
-    const sessions = [[], [{ id: "codex-fork12", status: "running" }]];
+    const sessions = [[], [{ id: "codex-fork12", status: "running", tmuxWindowId: "@43" }]];
     let sessionIndex = 0;
     const host = {
       dashboardPendingActions: new Map<string, string | null>(),

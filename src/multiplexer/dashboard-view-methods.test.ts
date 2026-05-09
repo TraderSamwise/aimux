@@ -148,6 +148,62 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
     await expect(isSettled?.()).resolves.toBe(false);
   });
 
+  it("does not settle a creating agent from process output before an attach target exists", async () => {
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => []),
+      getDashboardSessions: vi.fn(() => [
+        {
+          id: "codex-1",
+          status: "running",
+          pendingAction: "creating",
+          pid: 1234,
+          foregroundCommand: "codex",
+          previewLine: "OpenAI Codex update available",
+        },
+      ]),
+    };
+
+    dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1");
+
+    await expect(isSettled?.()).resolves.toBe(false);
+  });
+
+  it("settles a creating agent once an attach target exists", async () => {
+    let isSettled: (() => Promise<boolean> | boolean) | undefined;
+    const host: any = {
+      startedInDashboard: true,
+      mode: "dashboard",
+      dashboardPendingActions: {
+        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+          isSettled = opts.isSettled;
+        }),
+      },
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      getDashboardServices: vi.fn(() => []),
+      getDashboardSessions: vi.fn(() => [
+        {
+          id: "codex-1",
+          status: "running",
+          pendingAction: "creating",
+          tmuxWindowId: "@12",
+        },
+      ]),
+    };
+
+    dashboardViewMethods.settleDashboardCreatePending.call(host, "codex-1");
+
+    await expect(isSettled?.()).resolves.toBe(true);
+  });
+
   it("settles a creating worktree from the raw worktree list even when rendered pending is still applied", async () => {
     let isSettled: (() => Promise<boolean> | boolean) | undefined;
     const path = "/repo/.aimux/worktrees/demo";

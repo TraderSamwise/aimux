@@ -285,7 +285,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
         const otherServices = (existing.services ?? []).filter((service) => {
           if (removedServiceIds.has(service.id)) return false;
           if (myServiceIds.has(service.id)) return false;
-          return false;
+          return true;
         });
         mergedServices = [...otherServices, ...myServices];
       } catch {}
