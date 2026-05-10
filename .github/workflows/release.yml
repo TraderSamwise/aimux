@@ -1,0 +1,53 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-assets:
+    name: Build release assets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            arch: x64
+          - platform: linux
+            arch: arm64
+          - platform: darwin
+            arch: x64
+          - platform: darwin
+            arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - run: corepack enable
+
+      - run: yarn install --frozen-lockfile
+
+      - run: yarn verify
+
+      - name: Build release asset
+        run: yarn release:asset
+        env:
+          AIMUX_RELEASE_PLATFORM: ${{ matrix.platform }}
+          AIMUX_RELEASE_ARCH: ${{ matrix.arch }}
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
+            release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz.sha256

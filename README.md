@@ -32,6 +32,23 @@ aimux uses `tmux` as its terminal runtime substrate. Each project gets its own m
 
 ## Install
 
+Install from GitHub release assets without using npm/yarn as the installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/install.sh | sh
+```
+
+This installs the bundled release under `~/.aimux/native/` and links `aimux` into `~/.local/bin`.
+It still requires Node.js >= 18 and `tmux` in `PATH`; it does not require npm/yarn on the target machine.
+
+To install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/install.sh | AIMUX_VERSION=0.1.13 sh
+```
+
+Build from source:
+
 ```bash
 # Clone and build
 git clone https://github.com/TraderSamwise/aimux.git
