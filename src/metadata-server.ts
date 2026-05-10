@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 import { getDashboardClientUiStatePath, getProjectId, getProjectStateDir } from "./paths.js";
 import {
   type MetadataTone,
@@ -10,6 +11,7 @@ import {
   loadMetadataState,
   type SessionLogEntry,
   type SessionContextMetadata,
+  type SessionMetadata,
   type SessionServiceMetadata,
 } from "./metadata-store.js";
 import { notifyAlert } from "./notify.js";
@@ -74,15 +76,86 @@ import type { TmuxTarget } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 
-function sessionAlertTitle(kind: AlertKind, sessionId: string | undefined, fallback: string | undefined): string {
+interface SessionAlertDisplayContext {
+  label?: string;
+  command?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+}
+
+function compactSessionId(sessionId: string): string {
+  const compact = sessionId.replace(/-[a-z0-9]{4,}$/i, "");
+  return compact || sessionId;
+}
+
+function metadataDisplayContext(metadata?: SessionMetadata): SessionAlertDisplayContext {
+  return {
+    label: metadata?.label,
+    worktreePath: metadata?.context?.worktreePath,
+    worktreeName: metadata?.context?.worktreeName,
+    branch: metadata?.context?.branch,
+  };
+}
+
+function mergeDisplayContext(
+  base: SessionAlertDisplayContext,
+  override: SessionAlertDisplayContext,
+): SessionAlertDisplayContext {
+  return {
+    label: override.label ?? base.label,
+    command: override.command ?? base.command,
+    worktreePath: override.worktreePath ?? base.worktreePath,
+    worktreeName: override.worktreeName ?? base.worktreeName,
+    branch: override.branch ?? base.branch,
+  };
+}
+
+function displayWorktreeLabel(context: SessionAlertDisplayContext): string | undefined {
+  const worktreeName = context.worktreeName?.trim();
+  const branch = context.branch?.trim();
+  if (worktreeName) return worktreeName;
+  if (branch) return branch;
+  const path = context.worktreePath?.trim();
+  return path ? basename(path) : undefined;
+}
+
+function sessionAlertSubject(
+  sessionId: string | undefined,
+  context: SessionAlertDisplayContext | undefined,
+): string | undefined {
+  if (!sessionId) return undefined;
+  const label = context?.label?.trim() || context?.command?.trim() || compactSessionId(sessionId);
+  const worktree = context ? displayWorktreeLabel(context) : undefined;
+  return worktree ? `${label} @ ${worktree}` : label;
+}
+
+function sessionAlertTitle(
+  kind: AlertKind,
+  sessionId: string | undefined,
+  fallback: string | undefined,
+  context?: SessionAlertDisplayContext,
+): string {
   const title = fallback?.trim();
-  if (!sessionId) return title || "aimux";
-  if (kind === "needs_input") return `${sessionId} needs input`;
-  if (kind === "blocked") return `${sessionId} is blocked`;
-  if (kind === "task_failed") return `${sessionId} errored`;
-  if (kind === "task_done") return `${sessionId} finished`;
-  if (!title) return sessionId;
-  return title.includes(sessionId) ? title : `${sessionId}: ${title}`;
+  const subject = sessionAlertSubject(sessionId, context);
+  if (!subject) return title || "aimux";
+  if (kind === "needs_input") return `${subject} needs input`;
+  if (kind === "blocked") {
+    if (!title || (sessionId && title === `${sessionId} is blocked`)) return `${subject} is blocked`;
+    return title;
+  }
+  if (kind === "task_failed") {
+    if (!title || (sessionId && title === `${sessionId} errored`)) return `${subject} errored`;
+    return title;
+  }
+  if (kind === "task_done") {
+    if (!title || (sessionId && title === `${sessionId} finished`)) return `${subject} finished`;
+    return title;
+  }
+  if (!title) return subject;
+  if (title.includes(subject)) return title;
+  if (sessionId && title.includes(sessionId)) return title.replace(sessionId, subject);
+  return `${subject}: ${title}`;
 }
 
 interface MetadataServerOptions {
@@ -93,6 +166,7 @@ interface MetadataServerOptions {
   desktop?: {
     getState?: () => Record<string, unknown>;
     listWorktrees?: () => unknown[];
+    getSessionDisplayContext?: (sessionId: string) => SessionAlertDisplayContext | undefined;
     refreshStatusline?: (input?: { sessionId?: string; force?: boolean }) => Promise<{ ok: true }> | { ok: true };
     createWorktree?: (input: { name: string }) => Promise<{ path: string }> | { path: string };
     removeWorktree?: (input: { path: string }) => Promise<{ path: string }> | { path: string };
@@ -494,7 +568,27 @@ export class MetadataServer {
     cooldownMs?: number;
     forceNotify?: boolean;
   }): void {
-    this.eventBus.publishAlert(input);
+    const displayContext = this.resolveSessionAlertDisplayContext(input.sessionId, input.worktreePath);
+    this.eventBus.publishAlert({
+      ...input,
+      title: sessionAlertTitle(input.kind, input.sessionId, input.title, displayContext),
+      worktreePath: input.worktreePath ?? displayContext?.worktreePath,
+    });
+  }
+
+  private resolveSessionAlertDisplayContext(
+    sessionId: string | undefined,
+    worktreePath: string | undefined,
+  ): SessionAlertDisplayContext | undefined {
+    if (!sessionId) return worktreePath ? { worktreePath } : undefined;
+    let context: SessionAlertDisplayContext = {};
+    try {
+      context = metadataDisplayContext(loadMetadataState().sessions[sessionId]);
+    } catch {}
+    const liveContext = this.options.desktop?.getSessionDisplayContext?.(sessionId);
+    context = mergeDisplayContext(context, liveContext ?? {});
+    if (worktreePath) context.worktreePath = worktreePath;
+    return Object.values(context).some((value) => value !== undefined) ? context : undefined;
   }
 
   private emitThreadWaitingAlert(input: {
@@ -1882,6 +1976,10 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.renameAgent(body);
+        updateSessionMetadata(body.sessionId, (current) => ({
+          ...current,
+          label: body.label?.trim() || undefined,
+        }));
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;

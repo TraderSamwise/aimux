@@ -75,6 +75,7 @@ export interface SessionDerivedMetadata extends SessionDerivedState {
 }
 
 export interface SessionMetadata {
+  label?: string;
   status?: SessionStatusMetadata;
   progress?: SessionProgressMetadata;
   logs?: SessionLogEntry[];

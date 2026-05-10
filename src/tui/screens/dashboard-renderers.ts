@@ -17,6 +17,42 @@ const SERVICE_ICONS: Record<DashboardService["status"], string> = {
   offline: "\x1b[2m◇\x1b[0m",
 };
 
+function colorSessionIcon(session: DashboardSession): string {
+  const label = session.semantic?.user.label;
+  const attention = session.semantic?.user.attention;
+  if (attention === "error" || label === "error") return "\x1b[31m●\x1b[0m";
+  if (attention === "blocked" || label === "blocked") return "\x1b[35m●\x1b[0m";
+  if (attention === "needs_input" || label === "needs_input") return "\x1b[1;33m◉\x1b[0m";
+  if (label === "working") return "\x1b[36m●\x1b[0m";
+  if (label === "done") return "\x1b[32m●\x1b[0m";
+  if (label === "idle") return "\x1b[2;32m●\x1b[0m";
+  if (label === "offline") return "\x1b[2m○\x1b[0m";
+  return STATUS_ICONS[session.status];
+}
+
+function colorSessionStatus(session: DashboardSession, statusLabel: string): string {
+  const label = session.semantic?.user.label;
+  const attention = session.semantic?.user.attention;
+  if (attention === "error" || label === "error") return `\x1b[31m${statusLabel}\x1b[0m`;
+  if (attention === "blocked" || label === "blocked") return `\x1b[35m${statusLabel}\x1b[0m`;
+  if (attention === "needs_input" || label === "needs_input") return `\x1b[1;33m${statusLabel}\x1b[0m`;
+  if (label === "working") return `\x1b[36m${statusLabel}\x1b[0m`;
+  if (label === "done") return `\x1b[32m${statusLabel}\x1b[0m`;
+  if (label === "idle") return `\x1b[2;32m${statusLabel}\x1b[0m`;
+  if (label === "offline") return `\x1b[2m${statusLabel}\x1b[0m`;
+  if (session.pendingAction) return `\x1b[33m${statusLabel}\x1b[0m`;
+  return statusLabel;
+}
+
+function colorSessionHint(value: string): string {
+  if (/\bon you\b/i.test(value)) return `\x1b[1;33m${value}\x1b[0m`;
+  if (/\bunread\b/i.test(value)) return `\x1b[36m${value}\x1b[0m`;
+  if (/\bnew\b/i.test(value)) return `\x1b[34m${value}\x1b[0m`;
+  if (/\bblocked|error\b/i.test(value)) return `\x1b[31m${value}\x1b[0m`;
+  if (/\bon them|pending\b/i.test(value)) return `\x1b[35m${value}\x1b[0m`;
+  return `\x1b[2m${value}\x1b[0m`;
+}
+
 export function renderDashboardFrame(
   state: DashboardViewModel,
   cols: number,
@@ -82,11 +118,14 @@ export function renderDashboardFrame(
       return `${indent}${prefix}${icon} ${numberBadge}${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${notificationBadge}${lastUsedHint} — ${ownerTag}`;
     }
 
-    const icon = STATUS_ICONS[session.status];
+    const icon = colorSessionIcon(session);
     const statusLabel = state.derivedStatusLabel(session);
+    const coloredStatusLabel = colorSessionStatus(session, statusLabel);
     const compactHintValue = session.semantic?.presentation.compactHint ?? null;
     const compactHint =
-      compactHintValue && compactHintValue !== statusLabel ? ` \x1b[2m· ${compactHintValue}\x1b[0m` : "";
+      compactHintValue && compactHintValue !== statusLabel
+        ? ` \x1b[2m·\x1b[0m ${colorSessionHint(compactHintValue)}`
+        : "";
     const notificationBadge =
       session.semantic &&
       session.semantic.notifications.unreadCount > 0 &&
@@ -96,7 +135,7 @@ export function renderDashboardFrame(
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} ${numberBadge}${identity}${roleTag} — ${statusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${notificationBadge}${lastUsedHint}`;
+    return `${indent}${prefix}${icon} ${numberBadge}${identity}${roleTag} — ${coloredStatusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${notificationBadge}${lastUsedHint}`;
   };
 
   const renderService = (service: DashboardService, indent: string, quickDigit?: number): string => {

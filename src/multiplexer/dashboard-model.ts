@@ -552,6 +552,22 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
     desktop: {
       getState: () => host.buildDesktopState(),
       listWorktrees: () => host.listDesktopWorktrees(),
+      getSessionDisplayContext: (sessionId: string) => {
+        const session =
+          host.dashboardSessionsCache.find((entry: any) => entry.id === sessionId) ??
+          host.sessions.find((entry: any) => entry.id === sessionId);
+        const worktreePath = host.sessionWorktreePaths.get(sessionId) ?? session?.worktreePath;
+        const group = worktreePath
+          ? host.dashboardWorktreeGroupsCache.find((entry: any) => entry.path === worktreePath)
+          : host.dashboardWorktreeGroupsCache.find((entry: any) => !entry.path);
+        return {
+          label: host.getSessionLabel(sessionId) ?? session?.label ?? session?.command,
+          command: session?.command,
+          worktreePath,
+          worktreeName: session?.worktreeName ?? group?.name,
+          branch: session?.worktreeBranch ?? group?.branch,
+        };
+      },
       refreshStatusline: ({ sessionId, force }: any) => host.refreshProjectStatusline({ sessionId, force }),
       createWorktree: ({ name }: any) => host.createDesktopWorktree(name),
       removeWorktree: ({ path }: any) => host.removeDesktopWorktree(path),

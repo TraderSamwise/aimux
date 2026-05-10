@@ -1245,4 +1245,49 @@ describe("MetadataServer threads API", () => {
     expect(unreadJson.unreadCount).toBe(0);
     expect(unreadJson.notifications).toHaveLength(0);
   });
+
+  it("uses dashboard display context in session notification titles", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getSessionDisplayContext: (sessionId) =>
+          sessionId === "claude-hb01nv"
+            ? {
+                label: "bugs",
+                command: "claude",
+                worktreeName: "Main Checkout",
+                branch: "master",
+              }
+            : undefined,
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const notifyRes = await fetch(`${base}/notify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Claude Code",
+        message: "Claude is waiting for your input",
+        sessionId: "claude-hb01nv",
+        kind: "needs_input",
+      }),
+    });
+    expect(notifyRes.ok).toBe(true);
+
+    const listRes = await fetch(`${base}/notifications`);
+    const listed = (await listRes.json()) as {
+      ok: boolean;
+      notifications: Array<{ sessionId?: string; title: string; body: string }>;
+    };
+    expect(listRes.ok).toBe(true);
+    expect(listed.notifications[0]).toMatchObject({
+      sessionId: "claude-hb01nv",
+      title: "bugs @ Main Checkout needs input",
+      body: "Claude is waiting for your input",
+    });
+  });
 });
