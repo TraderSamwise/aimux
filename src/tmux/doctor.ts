@@ -55,6 +55,7 @@ export interface TmuxDoctorReport {
     windowName: string;
     tool: string;
     allowPassthrough: string | null;
+    aggressiveResize: string | null;
   }>;
   statusline: {
     scriptPath: string;
@@ -157,6 +158,10 @@ export function buildTmuxDoctorReport(
       MANAGED_TMUX_SESSION_OPTIONS.mouse,
       sessionExists ? tmux.getSessionOption(resolvedSessionName, "mouse") : null,
     ),
+    "window-size": buildCheck(
+      MANAGED_TMUX_SESSION_OPTIONS.windowSize,
+      sessionExists ? tmux.getSessionOption(resolvedSessionName, "window-size") : null,
+    ),
     "extended-keys": buildCheck(
       MANAGED_TMUX_SESSION_OPTIONS.extendedKeys,
       sessionExists ? tmux.getSessionOption(resolvedSessionName, "extended-keys") : null,
@@ -192,6 +197,10 @@ export function buildTmuxDoctorReport(
               MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allowPassthrough,
               tmux.getWindowOption(currentWindowId, "allow-passthrough"),
             ),
+            "aggressive-resize": buildCheck(
+              MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressiveResize,
+              tmux.getWindowOption(currentWindowId, "aggressive-resize"),
+            ),
           },
         }
       : null;
@@ -203,6 +212,7 @@ export function buildTmuxDoctorReport(
         windowName: target.windowName,
         tool: metadata.toolConfigKey,
         allowPassthrough: tmux.getWindowOption(target, "allow-passthrough"),
+        aggressiveResize: tmux.getWindowOption(target, "aggressive-resize"),
       }))
     : [];
 
@@ -296,7 +306,7 @@ export function renderTmuxDoctorReport(report: TmuxDoctorReport): string {
     lines.push("  managed windows:");
     for (const window of report.managedWindows) {
       lines.push(
-        `    ${window.windowId} ${window.windowName} tool=${window.tool} allow-passthrough=${window.allowPassthrough ?? "(unset)"}`,
+        `    ${window.windowId} ${window.windowName} tool=${window.tool} allow-passthrough=${window.allowPassthrough ?? "(unset)"} aggressive-resize=${window.aggressiveResize ?? "(unset)"}`,
       );
     }
   }

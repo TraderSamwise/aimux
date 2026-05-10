@@ -144,6 +144,200 @@ describe("runtime lifecycle state persistence", () => {
     expect(saved.services.map((service) => service.id)).toEqual(["stale-service"]);
   });
 
+  it("persists remote instance session refs even when state has no matching row yet", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [],
+          services: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    runtimeLifecycleMethods.saveState.call(
+      host({
+        getRemoteInstancesSafe: vi.fn(() => [
+          {
+            instanceId: "remote",
+            pid: 123,
+            cwd: repoRoot,
+            updatedAt: new Date().toISOString(),
+            sessions: [
+              {
+                id: "remote-agent",
+                tool: "claude",
+                backendSessionId: "native-session",
+                worktreePath: repoRoot,
+              },
+            ],
+          },
+        ]),
+      }) as never,
+    );
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; command: string; lifecycle?: string; backendSessionId?: string }>;
+    };
+    expect(saved.sessions).toEqual([
+      {
+        id: "remote-agent",
+        tool: "claude",
+        toolConfigKey: "claude",
+        command: "claude",
+        args: [],
+        lifecycle: "offline",
+        backendSessionId: "native-session",
+        worktreePath: repoRoot,
+      },
+    ]);
+  });
+
+  it("converts recoverable existing live sessions to offline instead of erasing them", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [
+            {
+              id: "local-agent",
+              command: "claude",
+              tool: "claude",
+              toolConfigKey: "claude",
+              args: ["--resume", "backend-1"],
+              lifecycle: "live",
+              backendSessionId: "backend-1",
+              worktreePath: repoRoot,
+              tmuxTarget: {
+                sessionName: "aimux-repo",
+                windowId: "@7",
+                windowIndex: 7,
+                windowName: "claude",
+              },
+            },
+          ],
+          services: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    runtimeLifecycleMethods.saveState.call(host() as never);
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; lifecycle?: string; tmuxTarget?: unknown; backendSessionId?: string }>;
+    };
+    expect(saved.sessions).toEqual([
+      {
+        id: "local-agent",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: ["--resume", "backend-1"],
+        lifecycle: "offline",
+        backendSessionId: "backend-1",
+        worktreePath: repoRoot,
+      },
+    ]);
+  });
+
+  it("preserves valid live session rows without backend ids during partial saves", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [
+            {
+              id: "local-agent",
+              command: "claude",
+              tool: "claude",
+              toolConfigKey: "claude",
+              args: [],
+              lifecycle: "live",
+              worktreePath: repoRoot,
+            },
+          ],
+          services: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    runtimeLifecycleMethods.saveState.call(host() as never);
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; lifecycle?: string; tmuxTarget?: unknown; backendSessionId?: string }>;
+    };
+    expect(saved.sessions).toEqual([
+      {
+        id: "local-agent",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "offline",
+        worktreePath: repoRoot,
+      },
+    ]);
+  });
+
+  it("deduplicates recovered existing sessions while preserving the latest row", () => {
+    const duplicate = {
+      id: "local-agent",
+      command: "claude",
+      tool: "claude",
+      toolConfigKey: "claude",
+      args: ["--resume", "backend-1"],
+      lifecycle: "live",
+      backendSessionId: "backend-1",
+      worktreePath: repoRoot,
+      tmuxTarget: {
+        sessionName: "aimux-repo",
+        windowId: "@7",
+        windowIndex: 7,
+        windowName: "claude",
+      },
+    };
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [
+            { ...duplicate, label: "old" },
+            { ...duplicate, label: "new" },
+          ],
+          services: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    runtimeLifecycleMethods.saveState.call(host() as never);
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; lifecycle?: string; label?: string }>;
+    };
+    expect(saved.sessions).toHaveLength(1);
+    expect(saved.sessions[0]).toMatchObject({
+      id: "local-agent",
+      lifecycle: "offline",
+      label: "new",
+    });
+  });
+
   it("persists intentional offline sessions without stale tmux targets", () => {
     runtimeLifecycleMethods.saveState.call(
       host({

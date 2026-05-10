@@ -13,6 +13,7 @@ import {
   isAttachableDashboardSessionEntry,
   isLiveDashboardServiceRuntimeEntry,
 } from "../dashboard/runtime-evidence.js";
+import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { generateServiceId, serviceLabelForCommand } from "./services.js";
 
 type DashboardOpsHost = any;
@@ -121,6 +122,20 @@ function isLiveDashboardSessionEntry(entry: any | undefined): boolean {
   return isAttachableDashboardSessionEntry(entry);
 }
 
+function hasLiveManagedAgentWindow(host: DashboardOpsHost, sessionId: string): boolean {
+  try {
+    if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return false;
+    return host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd()).some(({ target, metadata }: any) => {
+      if (isDashboardWindowName(target.windowName)) return false;
+      if (metadata.kind !== "agent" || metadata.sessionId !== sessionId) return false;
+      if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) return false;
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
+
 async function waitForDashboardSessionResumeSettle(
   host: DashboardOpsHost,
   sessionId: string,
@@ -149,6 +164,18 @@ async function waitForDashboardSessionResumeSettle(
       host.renderDashboard();
       const refreshedEntry = host.getDashboardSessions().find((candidate: any) => candidate.id === sessionId);
       if (isLiveDashboardSessionEntry(refreshedEntry)) return true;
+    }
+    if (hasLiveManagedAgentWindow(host, sessionId)) {
+      if (typeof host.refreshDashboardModelFromService === "function") {
+        await host.refreshDashboardModelFromService(true);
+      }
+      if (typeof host.refreshLocalDashboardModel === "function") {
+        host.refreshLocalDashboardModel();
+      }
+      if (typeof host.renderDashboard === "function") {
+        host.renderDashboard();
+      }
+      return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

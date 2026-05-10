@@ -190,6 +190,96 @@ describe("resumeOfflineSession", () => {
     expect(host.offlineSessions).toEqual([]);
   });
 
+  it("loads recoverable live sessions as offline when their tmux window is gone", () => {
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+      getRemoteInstancesSafe: vi.fn(() => []),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      debug: vi.fn(),
+    };
+
+    const changed = loadOfflineSessions(host, {
+      sessions: [
+        {
+          id: "claude-recoverable",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: ["--resume", "native-session"],
+          lifecycle: "live",
+          backendSessionId: "native-session",
+          worktreePath: repoRoot,
+          tmuxTarget: {
+            sessionName: "aimux-test",
+            windowId: "@2",
+            windowIndex: 2,
+            windowName: "claude",
+          },
+        },
+      ],
+      services: [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(true);
+    expect(host.offlineSessions).toEqual([
+      {
+        id: "claude-recoverable",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: ["--resume", "native-session"],
+        lifecycle: "offline",
+        backendSessionId: "native-session",
+        worktreePath: repoRoot,
+      },
+    ]);
+  });
+
+  it("loads valid live sessions without backend ids as offline when their tmux window is gone", () => {
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+      getRemoteInstancesSafe: vi.fn(() => []),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      debug: vi.fn(),
+    };
+
+    const changed = loadOfflineSessions(host, {
+      sessions: [
+        {
+          id: "claude-recoverable",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "live",
+          worktreePath: repoRoot,
+        },
+      ],
+      services: [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(true);
+    expect(host.offlineSessions).toEqual([
+      {
+        id: "claude-recoverable",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "offline",
+        worktreePath: repoRoot,
+      },
+    ]);
+  });
+
   it("loads explicit offline sessions without trusting stale tmux targets", () => {
     const host: any = {
       sessions: [],

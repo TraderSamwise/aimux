@@ -13,6 +13,7 @@ function createDoctorExec(): TmuxExec {
     if (joined === "show-options -v -t aimux-mobile-abc prefix") return "C-a";
     if (joined === "show-options -v -t aimux-mobile-abc prefix2") return "C-b";
     if (joined === "show-options -v -t aimux-mobile-abc mouse") return "on";
+    if (joined === "show-options -v -t aimux-mobile-abc window-size") return "latest";
     if (joined === "show-options -v -t aimux-mobile-abc extended-keys") return "always";
     if (joined === "show-options -v -t aimux-mobile-abc extended-keys-format") return "csi-u";
     if (joined === "show-options -v -t aimux-mobile-abc terminal-features") {
@@ -35,6 +36,7 @@ function createDoctorExec(): TmuxExec {
     }
     if (joined === "show-window-options -v -t @3 @aimux-tool") return "codex";
     if (joined === "show-window-options -v -t @3 allow-passthrough") return "on";
+    if (joined === "show-window-options -v -t @3 aggressive-resize") return "on";
     throw new Error(`Unhandled tmux call: ${joined}`);
   };
 }
@@ -54,9 +56,11 @@ describe("tmux doctor", () => {
 
     expect(report.managedSession.exists).toBe(true);
     expect(report.managedSession.options.mouse.ok).toBe(true);
+    expect(report.managedSession.options["window-size"]?.ok).toBe(true);
     expect(report.managedSession.terminalFeatures["xterm*:hyperlinks"]?.ok).toBe(true);
     expect(report.activeWindow?.tool).toBe("codex");
     expect(report.activeWindow?.options["allow-passthrough"]?.ok).toBe(true);
+    expect(report.activeWindow?.options["aggressive-resize"]?.ok).toBe(true);
     expect(report.statusline.scriptExists).toBe(true);
     expect(report.statusline.statuslineJsonExists).toBe(false);
     expect(report.statusline.sessionFormat).toBe("#(top)");
@@ -68,6 +72,7 @@ describe("tmux doctor", () => {
         windowName: "codex",
         tool: "codex",
         allowPassthrough: "on",
+        aggressiveResize: "on",
       },
     ]);
   });
@@ -88,6 +93,7 @@ describe("tmux doctor", () => {
     expect(text).toContain("Tmux Doctor");
     expect(text).toContain("managed session exists: yes");
     expect(text).toContain("allow-passthrough: on");
+    expect(text).toContain("aggressive-resize: on");
     expect(text).toContain("xterm*:hyperlinks: present");
     expect(text).toContain("statusline:");
     expect(text).toContain("status-format[1]: #(bottom)");

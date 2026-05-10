@@ -459,12 +459,12 @@ async function stopProjectRuntime(
   projectRoot: string,
 ): Promise<{ projectServiceStopped: boolean; tmuxSessionsKilled: string[] }> {
   const tmux = new TmuxRuntimeManager();
+  if (tmux.isAvailable()) {
+    persistProjectRuntimeSnapshotsBeforeTmuxStop(projectRoot, tmux);
+  }
   const projectService = await stopProjectService(projectRoot);
   if (projectService?.pid) {
     await waitForProcessExit(projectService.pid);
-  }
-  if (tmux.isAvailable()) {
-    persistProjectRuntimeSnapshotsBeforeTmuxStop(projectRoot, tmux);
   }
   removeMetadataEndpoint(projectRoot);
   const tmuxSessionsKilled = tmux.isAvailable() ? stopProjectTmuxRuntime(tmux, projectRoot) : [];

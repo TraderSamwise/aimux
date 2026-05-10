@@ -68,7 +68,8 @@ function markLifecycleUsed(host: RuntimeStateHost, itemId: string): void {
 
 function isIntentionalOfflineSession(session: any): boolean {
   if (session.lifecycle === "offline") return true;
-  if (session.lifecycle === "live") return false;
+  if (session.lifecycle === "live")
+    return Boolean(session.id && (session.command || session.tool || session.toolConfigKey));
   if (session.lifecycle) return false;
   return !session.tmuxTarget;
 }

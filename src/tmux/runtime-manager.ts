@@ -86,6 +86,7 @@ export const MANAGED_TMUX_SESSION_OPTIONS = Object.freeze({
   prefix: "C-a",
   prefix2: "C-b",
   mouse: "on",
+  windowSize: "latest",
   extendedKeys: "always",
   extendedKeysFormat: "csi-u",
 });
@@ -94,6 +95,7 @@ export const MANAGED_TMUX_TERMINAL_FEATURES = Object.freeze(["xterm*:extkeys", "
 
 export const MANAGED_TMUX_AGENT_WINDOW_OPTIONS = Object.freeze({
   allowPassthrough: "on",
+  aggressiveResize: "on",
 });
 
 const MODIFIED_ENTER_HEX = "1b 5b 31 33 3b 32 75";
@@ -600,6 +602,7 @@ export class TmuxRuntimeManager {
   applyManagedAgentWindowPolicy(target: TmuxTarget | string, toolConfigKey: string): void {
     this.setWindowOption(target, "@aimux-tool", toolConfigKey);
     this.setWindowOption(target, "allow-passthrough", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allowPassthrough);
+    this.setWindowOption(target, "aggressive-resize", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressiveResize);
   }
 
   getWindowOption(target: TmuxTarget | string, key: string): string | null {
@@ -786,6 +789,7 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
     this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);
+    this.exec(["set-option", "-t", sessionName, "window-size", MANAGED_TMUX_SESSION_OPTIONS.windowSize]);
     this.exec(["set-option", "-t", sessionName, "set-clipboard", "external"]);
     this.exec(["set-option", "-t", sessionName, "copy-command", "pbcopy"]);
     this.exec(["set-option", "-t", sessionName, "repeat-time", "300"]);
@@ -799,6 +803,13 @@ export class TmuxRuntimeManager {
     ]);
     this.exec(["set-option", "-t", sessionName, "bell-action", "none"]);
     this.exec(["set-window-option", "-t", sessionName, "monitor-bell", "off"]);
+    this.exec([
+      "set-window-option",
+      "-t",
+      sessionName,
+      "aggressive-resize",
+      MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressiveResize,
+    ]);
     this.exec(["set-option", "-t", sessionName, "extended-keys", MANAGED_TMUX_SESSION_OPTIONS.extendedKeys]);
     this.exec([
       "set-option",

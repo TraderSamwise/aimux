@@ -90,6 +90,7 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "prefix2")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "mouse")).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "window-size")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "set-clipboard")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "copy-command")).toBe(true);
     expect(exec.calls.some((call) => call.args[0] === "set-option" && call.args[3] === "repeat-time")).toBe(true);
@@ -102,6 +103,9 @@ describe("TmuxRuntimeManager", () => {
     expect(exec.calls.some((call) => call.args[0] === "set-window-option" && call.args[3] === "monitor-bell")).toBe(
       true,
     );
+    expect(
+      exec.calls.some((call) => call.args[0] === "set-window-option" && call.args[3] === "aggressive-resize"),
+    ).toBe(true);
     expect(
       exec.calls.some((call) => call.args[0] === "source-file" && call.args[1]?.includes("mouse-bindings.conf")),
     ).toBe(true);
@@ -601,9 +605,10 @@ describe("TmuxRuntimeManager", () => {
 
     manager.applyManagedAgentWindowPolicy(target, "codex");
 
-    expect(exec.calls.slice(-2).map((call) => call.args)).toEqual([
+    expect(exec.calls.slice(-3).map((call) => call.args)).toEqual([
       ["set-window-option", "-q", "-t", "@3", "@aimux-tool", "codex"],
       ["set-window-option", "-q", "-t", "@3", "allow-passthrough", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allowPassthrough],
+      ["set-window-option", "-q", "-t", "@3", "aggressive-resize", MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressiveResize],
     ]);
   });
 

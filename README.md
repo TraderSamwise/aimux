@@ -290,6 +290,8 @@ Managed session policy today:
 - `prefix = C-a`
 - `prefix2 = C-b`
 - `mouse = on` so tmux can own wheel events and enter pane scrollback reliably
+- `window-size = latest`
+- `aggressive-resize = on` so linked agent windows follow the active terminal client width instead of preserving stale wrap widths from another client
 - `extended-keys = always`
 - `extended-keys-format = csi-u`
 - `terminal-features` includes `xterm*:extkeys`

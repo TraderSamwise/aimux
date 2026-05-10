@@ -280,6 +280,53 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("treats a live tmux agent window as successful resume when the dashboard model lags", async () => {
+    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const sessions = [[{ ...session, status: "offline", pendingAction: "starting" }]];
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: new Map<string, string | null>(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        this.dashboardPendingActions.set(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      waitForSessionStart: vi.fn(async () => false),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: {
+              sessionName: "aimux-repo",
+              windowId: "@3",
+              windowIndex: 3,
+              windowName: "claude",
+            },
+            metadata: {
+              kind: "agent",
+              sessionId: "sess-1",
+              command: "claude",
+            },
+          },
+        ]),
+        isWindowAlive: vi.fn(() => true),
+      },
+      getDashboardSessions: vi.fn(() => sessions[0]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.tmuxRuntimeManager.listProjectManagedWindows).toHaveBeenCalled();
+    expect(host.refreshLocalDashboardModel).toHaveBeenCalled();
+    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restored claude");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
   it("treats a live service entry as successful resume even if the rendered row stays stale", async () => {
     const service = { id: "svc-1", label: "shell" };
     const services = [
