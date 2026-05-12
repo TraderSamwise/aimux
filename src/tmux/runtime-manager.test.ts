@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MANAGED_TMUX_AGENT_WINDOW_OPTIONS,
   TmuxRuntimeManager,
+  buildDefaultRootMouseBindingsConfig,
   type TmuxExec,
   type TmuxInteractiveExec,
 } from "./runtime-manager.js";
@@ -239,6 +240,16 @@ describe("TmuxRuntimeManager", () => {
           call.args[4]?.includes("scripts/tmux-statusline.sh"),
       ),
     ).toBe(true);
+  });
+
+  it("routes wheel-up to tmux copy-mode for managed agent windows", () => {
+    const config = buildDefaultRootMouseBindingsConfig({
+      openPaneLinkCommand: "open-pane-link",
+      openStatusPrCommand: "open-status-pr",
+    });
+
+    expect(config).toContain('bind-key -T root WheelUpPane if-shell -F "#{@aimux-tool}" { copy-mode -e }');
+    expect(config).toContain('if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { copy-mode -e }');
   });
 
   it("creates a dashboard window when missing", () => {

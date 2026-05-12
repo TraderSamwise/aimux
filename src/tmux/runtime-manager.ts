@@ -116,6 +116,31 @@ const DEFAULT_INTERACTIVE_EXEC: TmuxInteractiveExec = (args, options) => {
   }
 };
 
+export function buildDefaultRootMouseBindingsConfig(input: {
+  openPaneLinkCommand: string;
+  openStatusPrCommand: string;
+}): string {
+  const { openPaneLinkCommand, openStatusPrCommand } = input;
+  return [
+    `bind-key -T root MouseDown1Pane if-shell "${openPaneLinkCommand}" "" "select-pane -t = \\; send-keys -M"`,
+    'bind-key -T root MouseDrag1Pane if-shell -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -M }',
+    'bind-key -T root WheelUpPane if-shell -F "#{@aimux-tool}" { copy-mode -e } { if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { copy-mode -e } }',
+    'bind-key -T root WheelDownPane if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { send-keys -M }',
+    `bind-key -T root DoubleClick1Pane if-shell "${openPaneLinkCommand}" "" "send-keys -M"`,
+    `bind-key -T root MouseDown1Status if-shell "${openStatusPrCommand}" "" ""`,
+    `bind-key -T root DoubleClick1Status if-shell "${openStatusPrCommand}" "" ""`,
+    `bind-key -T root MouseDown1StatusDefault if-shell "${openStatusPrCommand}" "" ""`,
+    `bind-key -T root DoubleClick1StatusDefault if-shell "${openStatusPrCommand}" "" ""`,
+    "bind-key -T copy-mode WheelUpPane send-keys -X -N 1 scroll-up",
+    "bind-key -T copy-mode WheelDownPane send-keys -X -N 1 scroll-down",
+    "bind-key -T copy-mode-vi WheelUpPane send-keys -X -N 1 scroll-up",
+    "bind-key -T copy-mode-vi WheelDownPane send-keys -X -N 1 scroll-down",
+    "bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel",
+    "bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel",
+    "",
+  ].join("\n");
+}
+
 export class TmuxRuntimeManager {
   constructor(
     private readonly exec: TmuxExec = DEFAULT_EXEC,
@@ -980,28 +1005,7 @@ export class TmuxRuntimeManager {
     try {
       const openPaneLinkCommand = `AIMUX_HYPERLINK=#{q:mouse_hyperlink} AIMUX_MOUSE_WORD=#{q:mouse_word} AIMUX_MOUSE_LINE=#{q:mouse_line} sh ${shellQuote(openHyperlinkScript)} >/dev/null 2>&1`;
       const openStatusPrCommand = `AIMUX_STATUS_LINE=#{q:mouse_status_line} AIMUX_PROJECT_STATE_DIR=${shellQuote(projectStateDir)} AIMUX_CURRENT_WINDOW_ID=#{q:window_id} sh ${shellQuote(openHyperlinkScript)} >/dev/null 2>&1`;
-      writeFileSync(
-        file,
-        [
-          `bind-key -T root MouseDown1Pane if-shell "${openPaneLinkCommand}" "" "select-pane -t = \\; send-keys -M"`,
-          'bind-key -T root MouseDrag1Pane if-shell -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -M }',
-          'bind-key -T root WheelUpPane if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { copy-mode -e }',
-          'bind-key -T root WheelDownPane if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { send-keys -M }',
-          `bind-key -T root DoubleClick1Pane if-shell "${openPaneLinkCommand}" "" "send-keys -M"`,
-          `bind-key -T root MouseDown1Status if-shell "${openStatusPrCommand}" "" ""`,
-          `bind-key -T root DoubleClick1Status if-shell "${openStatusPrCommand}" "" ""`,
-          `bind-key -T root MouseDown1StatusDefault if-shell "${openStatusPrCommand}" "" ""`,
-          `bind-key -T root DoubleClick1StatusDefault if-shell "${openStatusPrCommand}" "" ""`,
-          "bind-key -T copy-mode WheelUpPane send-keys -X -N 1 scroll-up",
-          "bind-key -T copy-mode WheelDownPane send-keys -X -N 1 scroll-down",
-          "bind-key -T copy-mode-vi WheelUpPane send-keys -X -N 1 scroll-up",
-          "bind-key -T copy-mode-vi WheelDownPane send-keys -X -N 1 scroll-down",
-          "bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel",
-          "bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel",
-          "",
-        ].join("\n"),
-        "utf8",
-      );
+      writeFileSync(file, buildDefaultRootMouseBindingsConfig({ openPaneLinkCommand, openStatusPrCommand }), "utf8");
       this.exec(["source-file", file]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
