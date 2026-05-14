@@ -24,6 +24,8 @@ function makeTmpRepo(): string {
   // realpathSync to resolve macOS /tmp -> /private/tmp symlink
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "aimux-test-")));
   execSync("git init", { cwd: dir, stdio: "pipe" });
+  execSync("git config user.email test@example.com", { cwd: dir, stdio: "pipe" });
+  execSync("git config user.name test", { cwd: dir, stdio: "pipe" });
   execSync("git commit --allow-empty -m init", { cwd: dir, stdio: "pipe" });
   mkdirSync(join(dir, ".aimux"), { recursive: true });
   writeFileSync(join(dir, "instances.json"), "[]");
