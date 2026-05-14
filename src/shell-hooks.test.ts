@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -63,7 +63,7 @@ describe("shell hooks", () => {
     expect(readFileSync(prepared.rcPath, "utf8")).toContain('source "$HOME/.zshrc"');
   });
 
-  it("executes zsh shells with both zshenv and zshrc from the user's HOME", () => {
+  it.skipIf(!existsSync("/bin/zsh"))("executes zsh shells with both zshenv and zshrc from the user's HOME", () => {
     const homeDir = mkdtempSync(join(tmpdir(), "aimux-shell-hooks-home-"));
     try {
       writeFileSync(join(homeDir, ".zshenv"), 'export AIMUX_TEST_ZSHENV="from-zshenv"\n');
