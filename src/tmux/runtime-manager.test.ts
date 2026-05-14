@@ -248,8 +248,9 @@ describe("TmuxRuntimeManager", () => {
       openStatusPrCommand: "open-status-pr",
     });
 
-    expect(config).toContain('bind-key -T root WheelUpPane if-shell -F "#{@aimux-tool}" { copy-mode -e }');
-    expect(config).toContain('if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { copy-mode -e }');
+    expect(config).toContain(
+      'bind-key -T root WheelUpPane if-shell -F "#{||:#{@aimux-tool},#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}}" "copy-mode -e \\; send-keys -X -N 1 scroll-up" "send-keys -M"',
+    );
   });
 
   it("creates a dashboard window when missing", () => {

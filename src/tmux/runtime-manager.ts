@@ -124,7 +124,7 @@ export function buildDefaultRootMouseBindingsConfig(input: {
   return [
     `bind-key -T root MouseDown1Pane if-shell "${openPaneLinkCommand}" "" "select-pane -t = \\; send-keys -M"`,
     'bind-key -T root MouseDrag1Pane if-shell -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -M }',
-    'bind-key -T root WheelUpPane if-shell -F "#{@aimux-tool}" { copy-mode -e } { if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { copy-mode -e } }',
+    'bind-key -T root WheelUpPane if-shell -F "#{||:#{@aimux-tool},#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}}" "copy-mode -e \\; send-keys -X -N 1 scroll-up" "send-keys -M"',
     'bind-key -T root WheelDownPane if-shell -F "#{||:#{alternate_on},#{mouse_any_flag}}" { send-keys -M } { send-keys -M }',
     `bind-key -T root DoubleClick1Pane if-shell "${openPaneLinkCommand}" "" "send-keys -M"`,
     `bind-key -T root MouseDown1Status if-shell "${openStatusPrCommand}" "" ""`,
