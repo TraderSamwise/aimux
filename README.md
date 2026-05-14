@@ -32,6 +32,17 @@ aimux uses `tmux` as its terminal runtime substrate. Each project gets its own m
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
+```bash
+brew tap TraderSamwise/aimux
+brew install aimux
+```
+
+Brew will pull `node` and `tmux` in as dependencies. The formula auto-updates on every release.
+
+### Standalone installer
+
 Install from GitHub release assets without using npm/yarn as the installer:
 
 ```bash
@@ -47,7 +58,7 @@ To install a specific version:
 curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/install.sh | AIMUX_VERSION=0.1.13 sh
 ```
 
-Build from source:
+### Build from source
 
 ```bash
 # Clone and build
