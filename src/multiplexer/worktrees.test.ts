@@ -4,13 +4,27 @@ const { postToProjectService } = vi.hoisted(() => ({
   postToProjectService: vi.fn(async () => undefined),
 }));
 
+const { addDashboardOperationFailure } = vi.hoisted(() => ({
+  addDashboardOperationFailure: vi.fn((input: any) => ({
+    id: "failure-1",
+    createdAt: "2026-05-01T00:00:00.000Z",
+    ...input,
+  })),
+}));
+
 vi.mock("./dashboard-control.js", () => ({
   postToProjectService,
 }));
 
 vi.mock("../worktree.js", () => ({
   getWorktreeCreatePath: (name: string) => `/repo/.aimux/worktrees/${name}`,
+  isToolInternalWorktree: (worktree: any) =>
+    worktree.name?.startsWith("agent-") && worktree.branch?.startsWith("worktree-agent-"),
   listWorktrees: () => [],
+}));
+
+vi.mock("../dashboard/operation-failures.js", () => ({
+  addDashboardOperationFailure,
 }));
 
 import { beginWorktreeRemoval, handleWorktreeInputKey, handleWorktreeRemoveConfirmKey } from "./worktrees.js";
@@ -63,12 +77,53 @@ describe("worktrees dashboard mutation protocol", () => {
       host,
       "/worktrees/create",
       { name: "demo" },
-      { timeoutMs: 10_000 },
+      { timeoutMs: 180_000 },
     );
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
     expect(host.settleDashboardCreatePending).toHaveBeenCalledWith("worktree:/repo/.aimux/worktrees/demo");
     expect(pending.state.get("worktree:/repo/.aimux/worktrees/demo")).toBeUndefined();
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed worktree creates visible as durable dashboard failures", async () => {
+    postToProjectService.mockRejectedValueOnce(new Error("branch already exists"));
+    addDashboardOperationFailure.mockClear();
+    const pending = createPendingActionsStore();
+    const host: any = {
+      mode: "dashboard",
+      worktreeInputBuffer: "demo",
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      dashboardPendingActions: pending,
+      dashboardWorktreeGroupsCache: [],
+      dashboardOperationFailuresCache: [],
+      dashboardState: { worktreeNavOrder: [], focusedWorktreePath: undefined },
+      dashboardUiStateStore: { markSelectionDirty: vi.fn() },
+      renderDashboard: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(),
+      settleDashboardCreatePending: vi.fn(),
+      showDashboardError: vi.fn(),
+    };
+
+    handleWorktreeInputKey(host, Buffer.from("\r"));
+
+    await vi.waitFor(() => expect(host.showDashboardError).toHaveBeenCalled());
+
+    expect(addDashboardOperationFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetKind: "worktree",
+        operation: "create",
+        worktreePath: "/repo/.aimux/worktrees/demo",
+        message: "branch already exists",
+      }),
+    );
+    expect(host.dashboardWorktreeGroupsCache[0]).toMatchObject({
+      name: "demo",
+      branch: "(failed)",
+      path: "/repo/.aimux/worktrees/demo",
+      operationFailure: expect.objectContaining({ message: "branch already exists" }),
+    });
+    expect(host.dashboardState.focusedWorktreePath).toBe("/repo/.aimux/worktrees/demo");
   });
 
   it("shows project-service worktree create pending after the async create is accepted", async () => {

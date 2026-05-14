@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "../debug.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
@@ -28,7 +28,9 @@ import { markLastUsed } from "../last-used.js";
 import {
   findMainRepo,
   getWorktreeBaseDir,
+  getWorktreeAddArgs,
   getWorktreeCreatePath,
+  isToolInternalWorktree,
   listWorktrees as listAllWorktrees,
 } from "../worktree.js";
 
@@ -341,7 +343,7 @@ export const persistenceMethods = {
       pendingAction?: "creating";
       operationFailure?: DashboardOperationFailure;
     }> = listAllWorktrees()
-      .filter((wt) => !wt.isBare && !hiddenPaths.has(wt.path))
+      .filter((wt) => !wt.isBare && !hiddenPaths.has(wt.path) && !isToolInternalWorktree(wt))
       .map((wt) => ({
         ...wt,
         pending: pendingRemovals?.has(wt.path) ?? false,
@@ -616,19 +618,14 @@ export const persistenceMethods = {
     void (async () => {
       try {
         const mainRepo = findMainRepo();
-        const branchExists = branchExistsInRepo(mainRepo, name);
         await new Promise<void>((resolve, reject) => {
           let stderr = "";
           let child;
           try {
-            child = spawn(
-              "git",
-              branchExists ? ["worktree", "add", targetPath, name] : ["worktree", "add", targetPath, "-b", name],
-              {
-                cwd: mainRepo,
-                stdio: ["ignore", "ignore", "pipe"],
-              },
-            );
+            child = spawn("git", getWorktreeAddArgs(name, targetPath, mainRepo), {
+              cwd: mainRepo,
+              stdio: ["ignore", "ignore", "pipe"],
+            });
           } catch (error) {
             reject(error);
             return;
@@ -927,18 +924,6 @@ async function pruneGitWorktrees(mainRepo: string): Promise<void> {
       child.on("close", () => resolve());
     });
   } catch {}
-}
-
-function branchExistsInRepo(mainRepo: string, branch: string): boolean {
-  try {
-    execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
-      cwd: mainRepo,
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function sortDesktopWorktrees(

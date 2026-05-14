@@ -1,6 +1,7 @@
-import { getWorktreeCreatePath, listWorktrees as listAllWorktrees } from "../worktree.js";
+import { getWorktreeCreatePath, isToolInternalWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { debug } from "../debug.js";
 import { parseKeys } from "../key-parser.js";
+import { addDashboardOperationFailure } from "../dashboard/operation-failures.js";
 import {
   buildWorktreeListOverlayOutput,
   buildWorktreeRemoveConfirmOverlayOutput,
@@ -107,6 +108,47 @@ function removeOptimisticDashboardWorktree(host: WorktreeHost, path: string): vo
   host.dashboardUiStateStore.markSelectionDirty();
 }
 
+function showDashboardWorktreeCreateFailure(host: WorktreeHost, name: string, path: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  const failure = addDashboardOperationFailure({
+    targetKind: "worktree",
+    operation: "create",
+    title: `Failed to create worktree "${name}"`,
+    message,
+    worktreePath: path,
+    worktreeName: name,
+  });
+  removeOptimisticDashboardWorktree(host, path);
+  host.dashboardWorktreeGroupsCache = [
+    ...host.dashboardWorktreeGroupsCache,
+    {
+      name,
+      branch: "(failed)",
+      path,
+      status: "offline",
+      sessions: [],
+      services: [],
+      operationFailure: failure,
+    },
+  ];
+  sortDashboardWorktrees(host.dashboardWorktreeGroupsCache);
+  host.dashboardState.focusedWorktreePath = path;
+  host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path);
+  host.dashboardOperationFailuresCache = [
+    failure,
+    ...(host.dashboardOperationFailuresCache ?? []).filter(
+      (existing: any) =>
+        !(
+          existing.targetKind === failure.targetKind &&
+          existing.operation === failure.operation &&
+          existing.worktreePath === failure.worktreePath
+        ),
+    ),
+  ];
+  host.dashboardUiStateStore.markSelectionDirty();
+  host.showDashboardError(`Failed to create "${name}"`, [`Path: ${path}`, `Error: ${message}`]);
+}
+
 export function showWorktreeCreatePrompt(host: WorktreeHost): void {
   host.openDashboardOverlay("worktree-input");
   host.worktreeInputBuffer = "";
@@ -169,15 +211,14 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
         host.renderDashboard();
         void (async () => {
           try {
-            await postToProjectService(host, "/worktrees/create", { name }, { timeoutMs: 10_000 });
+            await postToProjectService(host, "/worktrees/create", { name }, { timeoutMs: 180_000 });
             await host.refreshDashboardModelFromService?.(true);
             debug(`worktree created from UI: ${name}`, "worktree");
             host.settleDashboardCreatePending?.(pendingKey);
           } catch (err) {
             host.dashboardPendingActions.set(pendingKey, null);
-            removeOptimisticDashboardWorktree(host, targetPath);
             debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
-            host.showDashboardError(`Failed to create "${name}"`, [err instanceof Error ? err.message : String(err)]);
+            showDashboardWorktreeCreateFailure(host, name, targetPath, err);
           }
         })();
         return;
@@ -310,7 +351,7 @@ export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
     host.footerFlashTicks = 3;
     debug(`graveyarded worktree: ${job.name}`, "worktree");
 
-    const newWorktrees = listAllWorktrees().filter((wt: any) => !wt.isBare);
+    const newWorktrees = listAllWorktrees().filter((wt: any) => !wt.isBare && !isToolInternalWorktree(wt));
     host.dashboardState.worktreeNavOrder = newWorktrees.map((wt: any) => wt.path);
     if (job.oldIdx >= 0 && job.oldIdx < host.dashboardState.worktreeNavOrder.length) {
       host.dashboardState.focusedWorktreePath = host.dashboardState.worktreeNavOrder[job.oldIdx];

@@ -1,4 +1,4 @@
-import { execFile, execSync, type ExecFileException } from "node:child_process";
+import { execFile, execFileSync, execSync, type ExecFileException } from "node:child_process";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { loadConfig } from "./config.js";
@@ -9,6 +9,14 @@ export interface WorktreeInfo {
   branch: string;
   isBare: boolean;
   createdAt?: string;
+}
+
+export function isToolInternalWorktree(worktree: Pick<WorktreeInfo, "name" | "path" | "branch">): boolean {
+  const normalizedPath = worktree.path.replace(/\\/g, "/");
+  return (
+    (worktree.name.startsWith("agent-") && worktree.branch.startsWith("worktree-agent-")) ||
+    /\/\.claude\/worktrees\/agent-[^/]+$/.test(normalizedPath)
+  );
 }
 
 function execFileText(command: string, args: string[], cwd: string): Promise<string | null> {
@@ -148,11 +156,30 @@ export function getWorktreeCreatePath(name: string, cwd?: string): string {
   return join(getWorktreeBaseDir(cwd), name);
 }
 
+export function branchExistsInRepo(cwd: string, branch: string): boolean {
+  try {
+    execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+      cwd,
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function getWorktreeAddArgs(name: string, targetPath: string, cwd?: string): string[] {
+  const mainRepo = findMainRepo(cwd);
+  return branchExistsInRepo(mainRepo, name)
+    ? ["worktree", "add", targetPath, name]
+    : ["worktree", "add", targetPath, "-b", name];
+}
+
 export function createWorktree(name: string, cwd?: string): string {
   const mainRepo = findMainRepo(cwd);
   const targetPath = getWorktreeCreatePath(name, cwd);
   mkdirSync(dirname(targetPath), { recursive: true });
-  execSync(`git worktree add "${targetPath}" -b "${name}"`, {
+  execFileSync("git", getWorktreeAddArgs(name, targetPath, mainRepo), {
     cwd: mainRepo,
     encoding: "utf-8",
     stdio: "pipe",

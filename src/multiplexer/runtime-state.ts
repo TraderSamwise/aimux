@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { loadConfig } from "../config.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { getGraveyardPath, getLocalAimuxDir, getStatePath } from "../paths.js";
-import { listWorktrees as listAllWorktrees } from "../worktree.js";
+import { isToolInternalWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { markLastUsed } from "../last-used.js";
@@ -636,5 +636,5 @@ export function removeSessionsFile(): void {
 export function listDesktopWorktrees(
   _host: RuntimeStateHost,
 ): Array<{ name: string; path: string; branch: string; isBare: boolean }> {
-  return listAllWorktrees().filter((wt: { isBare: boolean }) => !wt.isBare);
+  return listAllWorktrees().filter((wt) => !wt.isBare && !isToolInternalWorktree(wt));
 }
