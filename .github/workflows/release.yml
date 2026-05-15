@@ -52,6 +52,45 @@ jobs:
             release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
             release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz.sha256
 
+  publish-npm:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs: release-assets
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+          registry-url: https://registry.npmjs.org
+
+      - run: corepack enable
+
+      - name: Upgrade npm CLI for Trusted Publishing
+        run: npm install -g npm@latest
+
+      - run: yarn install --frozen-lockfile
+
+      - name: Verify package.json version matches tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          EXPECTED="${TAG#v}"
+          if [ "$PKG_VERSION" != "$EXPECTED" ]; then
+            echo "package.json version ($PKG_VERSION) does not match tag ($EXPECTED)" >&2
+            exit 1
+          fi
+
+      - run: yarn build
+
+      - run: npm publish --access public --provenance
+
   update-homebrew-tap:
     name: Update Homebrew tap
     runs-on: ubuntu-latest

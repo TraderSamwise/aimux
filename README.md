@@ -781,6 +781,18 @@ Relative `baseDir` values are resolved from the main repo root. Absolute paths a
 - At least one supported AI tool installed: `claude`, `codex`, or `aider`
 - Notifications work out of the box on macOS, Linux, and Windows
 
+## Releasing
+
+Releases publish to npm, GitHub Releases, and the Homebrew tap from a single tag push.
+
+```bash
+yarn release:patch   # 0.1.13 → 0.1.14
+yarn release:minor   # 0.1.13 → 0.2.0
+yarn release:major   # 0.1.13 → 1.0.0
+```
+
+Each script bumps `package.json`, creates a `vX.Y.Z` commit + tag, and pushes both. The `release` workflow then builds four platform tarballs, uploads them to a GitHub release, publishes the npm package, and bumps the Homebrew formula.
+
 ## License
 
 MIT
