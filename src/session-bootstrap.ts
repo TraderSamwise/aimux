@@ -16,6 +16,40 @@ export interface ForkSourceSnapshot {
   statusText?: string;
 }
 
+export function buildAimuxAgentInstructions(opts: { sessionId?: string } = {}): string {
+  const sessionLine = opts.sessionId ? `Your aimux session ID is ${opts.sessionId}.\n` : "";
+  const sessionPath = opts.sessionId ?? "{session-id}";
+
+  return (
+    "You are running inside aimux, an agent multiplexer for this repository. " +
+    "Aimux keeps long-lived Claude, Codex, and shell sessions in the main checkout and git worktrees so the user can switch between them, stop/restart them, and coordinate work.\n" +
+    sessionLine +
+    "\n" +
+    "## Aimux Model\n" +
+    "- The user controls aimux from the dashboard and tmux status/footer UI.\n" +
+    "- Agents are normal tool processes running inside aimux-managed tmux windows.\n" +
+    "- Cross-agent coordination is file-based: use `.aimux/tasks/*.json` when explicitly asked to delegate or hand off work.\n" +
+    "- Do not assume you can directly invoke another live agent unless the user gives a specific aimux CLI command or asks you to create an aimux task.\n" +
+    "\n" +
+    "## Shared Context Files\n" +
+    `- .aimux/context/${sessionPath}/live.md — recent conversation for this session\n` +
+    `- .aimux/context/${sessionPath}/summary.md — compacted history for this session\n` +
+    `- .aimux/plans/${sessionPath}.md — optional shared plan for long-running or delegated work\n` +
+    `- .aimux/status/${sessionPath}.md — optional brief status note for long-running or delegated work\n` +
+    "- .aimux/sessions.json — currently known aimux sessions\n" +
+    "- .aimux/context/{other-session-id}/ — other agents' context when needed\n" +
+    "- .aimux/history/ — full raw conversation history (JSONL)\n" +
+    "\n" +
+    "Do not proactively create or edit `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only inspections, or one-shot tasks. " +
+    "Only update those files when the user asks for coordination/delegation, when the task is explicitly long-running, or when state would materially help another agent continue the work.\n" +
+    "\n" +
+    "## Delegation Protocol\n" +
+    'When asked to delegate, hand off, or assign work to another aimux agent, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. ' +
+    "Optional fields are `assignedTo` for a specific session ID and `tool` for a preferred tool type. Aimux dispatches pending tasks to idle agents and injects the prompt.\n" +
+    "When you receive `[AIMUX TASK ...]`, complete it and mark the task `done` with `result`, or `failed` with `error`."
+  );
+}
+
 interface SessionBootstrapDependencies {
   tmuxRuntimeManager: TmuxRuntimeManager;
   getSessionLabel(sessionId: string): string | undefined;
@@ -38,17 +72,7 @@ export class SessionBootstrapService {
     let preamble = "";
 
     if (includeAimuxPreamble) {
-      preamble =
-        "You are running inside aimux, an agent multiplexer. " +
-        "Other agents may be working on this codebase simultaneously.\n" +
-        `Your session ID is ${sessionId}.\n` +
-        `- .aimux/context/${sessionId}/live.md — your recent conversation history\n` +
-        `- .aimux/context/${sessionId}/summary.md — your compacted history\n` +
-        `- .aimux/plans/${sessionId}.md — your shared working plan\n` +
-        "- .aimux/sessions.json — all running agents\n" +
-        "- Other agent contexts are in .aimux/context/{their-session-id}/. Check sessions.json for the list.\n" +
-        "- Other agent plans are in .aimux/plans/{their-session-id}.md.\n" +
-        "- .aimux/history/ — full raw conversation history (JSONL)";
+      preamble = buildAimuxAgentInstructions({ sessionId });
     }
 
     if (includeAimuxPreamble) {
@@ -84,60 +108,6 @@ export class SessionBootstrapService {
       } catch {
         preamble += `\n\nYou are working in a git worktree at ${worktreePath}. Stay in this directory.`;
       }
-    }
-
-    if (includeAimuxPreamble) {
-      preamble +=
-        "\n\n## Planning\n" +
-        "Maintain a plan file at .aimux/plans/" +
-        sessionId +
-        ".md.\n" +
-        "Keep it current enough that other agents can audit, annotate, or continue your work.\n" +
-        "Use this structure:\n" +
-        "- Goal\n" +
-        "- Current Status\n" +
-        "- Steps\n" +
-        "- Notes\n" +
-        "Update it when your plan materially changes or when you complete a step.";
-
-      preamble +=
-        "\n\n## Status\n" +
-        "Maintain a status file at .aimux/status/" +
-        sessionId +
-        ".md (3-5 lines max).\n" +
-        "Update it whenever your focus changes. Include:\n" +
-        "- What you're currently working on\n" +
-        "- Key files involved\n" +
-        "- Current state (investigating, implementing, testing, blocked, etc.)";
-
-      preamble +=
-        "\n\n## Aimux Cross-Agent Delegation\n" +
-        "IMPORTANT: This is the aimux delegation system for coordinating work across agents in this multiplexer. " +
-        "It is separate from any built-in task/todo features in your own tool.\n\n" +
-        "### Delegating work to another agent\n" +
-        "When asked to delegate, hand off, or assign work to another agent, create a JSON file:\n" +
-        "```\n" +
-        ".aimux/tasks/{short-descriptive-name}.json\n" +
-        "```\n" +
-        "Contents:\n" +
-        "```json\n" +
-        '{\n  "id": "{same as filename without .json}",\n  "status": "pending",\n' +
-        '  "assignedBy": "' +
-        sessionId +
-        '",\n' +
-        '  "description": "Brief summary of the task",\n' +
-        '  "prompt": "Detailed instructions for the other agent",\n' +
-        '  "createdAt": "{ISO timestamp}",\n  "updatedAt": "{ISO timestamp}"\n}\n' +
-        "```\n" +
-        "Optional fields: `assignedTo` (target session ID), `tool` (preferred tool type).\n" +
-        "Aimux will automatically dispatch pending tasks to idle agents and inject the prompt.\n" +
-        "Check .aimux/sessions.json for available agents and their session IDs.\n\n" +
-        "### Receiving a delegated task\n" +
-        "When you see `[AIMUX TASK ...]` in your input, another agent delegated work to you.\n" +
-        "Complete the work, then update the task file:\n" +
-        '- Success: set `status` to `"done"` and add a `result` field with a summary\n' +
-        '- Failure: set `status` to `"failed"` and add an `error` field\n' +
-        "The delegating agent will be notified automatically.";
     }
 
     if (extraPreamble) {

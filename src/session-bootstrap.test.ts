@@ -5,7 +5,29 @@ vi.mock("./agent-prompt-delivery.js", () => ({
 }));
 
 import { deliverTmuxPrompt } from "./agent-prompt-delivery.js";
-import { SessionBootstrapService } from "./session-bootstrap.js";
+import { buildAimuxAgentInstructions, SessionBootstrapService } from "./session-bootstrap.js";
+
+const deps: ConstructorParameters<typeof SessionBootstrapService>[0] = {
+  tmuxRuntimeManager: {} as any,
+  getSessionLabel: () => undefined,
+  getSessionRole: () => undefined,
+  getSessionWorktreePath: () => undefined,
+  getSessionTmuxTarget: () => undefined,
+};
+
+describe("buildAimuxAgentInstructions", () => {
+  it("explains aimux without requiring eager bookkeeping writes", () => {
+    const instructions = buildAimuxAgentInstructions({ sessionId: "codex-123" });
+
+    expect(instructions).toContain("agent multiplexer");
+    expect(instructions).toContain("Claude, Codex, and shell sessions");
+    expect(instructions).toContain("Your aimux session ID is codex-123");
+    expect(instructions).toContain(".aimux/tasks/*.json");
+    expect(instructions).toContain("Do not proactively create or edit `.aimux/plans/*` or `.aimux/status/*`");
+    expect(instructions).not.toContain("Maintain a plan file");
+    expect(instructions).not.toContain("Maintain a status file");
+  });
+});
 
 describe("SessionBootstrapService", () => {
   beforeEach(() => {
@@ -15,6 +37,19 @@ describe("SessionBootstrapService", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("uses the shared aimux instructions in session preambles", () => {
+    const service = new SessionBootstrapService(deps);
+    const preamble = service.buildSessionPreamble({
+      sessionId: "claude-123",
+      command: "claude",
+      includeAimuxPreamble: true,
+    });
+
+    expect(preamble).toContain("Your aimux session ID is claude-123");
+    expect(preamble).toContain("Do not proactively create or edit `.aimux/plans/*` or `.aimux/status/*`");
+    expect(preamble).not.toContain("Maintain a plan file");
   });
 
   it("attempts detached Codex kickoff delivery even if readiness probing times out", async () => {

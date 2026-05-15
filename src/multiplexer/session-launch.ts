@@ -311,7 +311,7 @@ export function createSession(
   const isClaudeResumeStyleLaunch =
     Boolean(toolCfg && toolConfigKey === "claude" && toolCfg.command === command) &&
     shouldSkipClaudeSessionIdInjection(args);
-  const effectiveSuppressStartupPreamble = suppressStartupPreamble || isClaudeResumeStyleLaunch;
+  const effectiveSuppressStartupPreamble = suppressStartupPreamble;
   const effectiveSessionIdFlag = isClaudeResumeStyleLaunch ? undefined : sessionIdFlag;
   const backendSessionId = backendSessionIdOverride ?? (effectiveSessionIdFlag ? randomUUID() : undefined);
   const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;

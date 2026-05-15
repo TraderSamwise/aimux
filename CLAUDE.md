@@ -1,5 +1,11 @@
 # Aimux Development Notes
 
+## Product Context
+
+Aimux is an agent multiplexer. It runs long-lived Claude, Codex, and shell sessions in tmux windows scoped to a project checkout or one of that project's git worktrees. The dashboard is the user-facing control plane for creating, entering, stopping, reviving, and coordinating those sessions.
+
+Agents inside aimux coordinate through `.aimux/` files, not by directly spawning each other unless the user gives an explicit CLI command. Use `.aimux/tasks/*.json` only when the user explicitly asks for delegation or handoff. Do not proactively write `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only inspections, or one-shot tasks.
+
 ## Desktop App (Tauri + Svelte)
 
 ### Development with HMR

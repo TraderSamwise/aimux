@@ -105,7 +105,7 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
-  it("does not append fresh-session preamble or session id args to claude resume launches", async () => {
+  it("adds aimux preamble but not session id args to claude resume launches", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-resume-"));
     execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
     await initPaths(repoRoot);
@@ -148,10 +148,10 @@ describe("createSession", () => {
 
     const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
     const launchedArgs = createWindowArgs[4] as string[];
-    expect(host.sessionBootstrap.buildSessionPreamble).not.toHaveBeenCalled();
-    expect(host.sessionBootstrap.finalizePreamble).not.toHaveBeenCalled();
+    expect(host.sessionBootstrap.buildSessionPreamble).toHaveBeenCalled();
+    expect(host.sessionBootstrap.finalizePreamble).toHaveBeenCalled();
     expect(launchedArgs).toContain("--resume");
-    expect(launchedArgs).not.toContain("--append-system-prompt");
+    expect(launchedArgs).toContain("--append-system-prompt");
     expect(launchedArgs).not.toContain("--session-id");
 
     rmSync(repoRoot, { recursive: true, force: true });
