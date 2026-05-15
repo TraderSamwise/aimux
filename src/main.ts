@@ -510,10 +510,13 @@ function ensureTmuxAvailable(tmux: TmuxRuntimeManager): void {
   }
 }
 
+const pkgJsonPath = pathJoin(pathDirname(fileURLToPath(import.meta.url)), "..", "package.json");
+const pkgVersion = (JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string }).version;
+
 program
   .name("aimux")
   .description("Native CLI agent multiplexer")
-  .version("0.1.0")
+  .version(pkgVersion)
   .argument("[tool]", "Tool to run (e.g. claude, codex, aider)")
   .argument("[args...]", "Arguments to pass to the tool")
   .option("--resume", "Resume previous sessions using native tool resume")
