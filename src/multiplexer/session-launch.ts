@@ -14,6 +14,56 @@ import { markNotificationsRead } from "../notifications.js";
 
 type SessionLaunchHost = any;
 
+const CODEX_OPTIONS_WITH_VALUE = new Set([
+  "-a",
+  "--add-dir",
+  "--ask-for-approval",
+  "-c",
+  "--cd",
+  "--config",
+  "-i",
+  "--image",
+  "--local-provider",
+  "-m",
+  "--model",
+  "-p",
+  "--profile",
+  "--remote",
+  "--remote-auth-token-env",
+  "-s",
+  "--sandbox",
+]);
+
+function firstCodexPositionalArg(args: string[]): string | undefined {
+  let skipNext = false;
+  for (const arg of args) {
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    if (arg === "--") return undefined;
+    if (arg.startsWith("--")) {
+      const [name, value] = arg.split("=", 2);
+      if (CODEX_OPTIONS_WITH_VALUE.has(name) && value === undefined) {
+        skipNext = true;
+      }
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      if (CODEX_OPTIONS_WITH_VALUE.has(arg)) {
+        skipNext = true;
+      }
+      continue;
+    }
+    return arg;
+  }
+  return undefined;
+}
+
+function canUseCodexInitialPrompt(args: string[], command: string, toolConfigKey?: string): boolean {
+  return toolConfigKey === "codex" && command === "codex" && !firstCodexPositionalArg(args);
+}
+
 export async function run(host: SessionLaunchHost, opts: { command: string; args: string[] }): Promise<number> {
   initProject();
   await host.instanceDirectory.registerInstance(host.instanceId, process.cwd());
@@ -326,10 +376,24 @@ export function createSession(
         includeAimuxPreamble: automaticPreambleEnabled,
       });
   const shouldInjectLaunchPreamble = Boolean(!effectiveSuppressStartupPreamble && preambleFlag && preamble.trim());
+  const shouldUseCodexInitialPrompt = Boolean(
+    !effectiveSuppressStartupPreamble &&
+    !preambleFlag &&
+    !extraPreamble &&
+    automaticPreambleEnabled &&
+    preamble.trim() &&
+    canUseCodexInitialPrompt(args, command, toolConfigKey),
+  );
 
   host.sessionBootstrap.ensurePlanFile(sessionId, command, worktreePath);
 
   let finalArgs = shouldInjectLaunchPreamble ? [...args, ...preambleFlag!, preamble] : [...args];
+  const codexInitialPrompt = shouldUseCodexInitialPrompt
+    ? host.sessionBootstrap.buildInitialKickoffPrompt(sessionId, preamble)
+    : undefined;
+  if (codexInitialPrompt) {
+    finalArgs.push(codexInitialPrompt);
+  }
   let launchCommand = command;
 
   if (effectiveSessionIdFlag && backendSessionId) {
@@ -426,6 +490,8 @@ export function createSession(
     !effectiveSuppressStartupPreamble &&
     !preambleFlag &&
     !extraPreamble &&
+    !shouldUseCodexInitialPrompt &&
+    (toolConfigKey !== "codex" || !firstCodexPositionalArg(args)) &&
     automaticPreambleEnabled &&
     preamble.trim()
   ) {

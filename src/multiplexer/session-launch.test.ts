@@ -105,6 +105,105 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("passes fresh Codex aimux instructions as the initial prompt", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-prompt-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => "aimux preamble"),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(() => "codex startup instructions"),
+        deliverDetachedCodexKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    createSession(
+      host,
+      "codex",
+      ["--dangerously-bypass-approvals-and-sandbox"],
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+    );
+
+    const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
+    const launched = (createWindowArgs[4] as string[]).join(" ");
+    expect(launched).toContain("codex startup instructions");
+    expect(host.sessionBootstrap.deliverDetachedCodexKickoffPrompt).not.toHaveBeenCalled();
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("does not append initial Codex instructions to explicit Codex subcommands", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-subcommand-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => "aimux preamble"),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(() => "codex startup instructions"),
+        deliverDetachedCodexKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    createSession(
+      host,
+      "codex",
+      ["--dangerously-bypass-approvals-and-sandbox", "resume", "abc"],
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+    );
+
+    const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
+    const launched = (createWindowArgs[4] as string[]).join(" ");
+    expect(launched).toContain("resume");
+    expect(launched).not.toContain("codex startup instructions");
+    expect(host.sessionBootstrap.deliverDetachedCodexKickoffPrompt).not.toHaveBeenCalled();
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("adds aimux preamble but not session id args to claude resume launches", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-resume-"));
     execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
