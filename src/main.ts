@@ -2649,6 +2649,25 @@ program
         ok: true,
         cleared: clearNotifications({ sessionId }),
       }));
+    const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path.trim() : "";
+    if (transcriptPath) {
+      const context: SessionContextMetadata = { transcriptPath };
+      await postLiveProjectServiceJsonOrLocal(projectRoot, "/set-context", { session: sessionId, context }, () => {
+        updateSessionMetadata(
+          sessionId,
+          (current) => ({
+            ...current,
+            context: {
+              ...(current.context ?? {}),
+              ...context,
+            },
+          }),
+          projectRoot,
+        );
+        return { ok: true };
+      });
+      result.transcriptPath = transcriptPath;
+    }
 
     switch (action) {
       case "session-start":

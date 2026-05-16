@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "n
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths, getContextDir, getHistoryDir } from "../paths.js";
+import { updateSessionMetadata } from "../metadata-store.js";
 import { createTranscriptLengthPlugin } from "./transcript-length.js";
 
 describe("createTranscriptLengthPlugin", () => {
@@ -109,6 +110,52 @@ describe("createTranscriptLengthPlugin", () => {
 
     plugin.start?.();
     expect(writes.at(-1)).toEqual({ session: "codex-empty", line: "top", text: "0b" });
+    plugin.stop?.();
+  });
+
+  it("uses Claude transcript files when hook metadata provides a transcript path", () => {
+    const writes: Array<{ session: string; line: "top" | "bottom"; text: string }> = [];
+    const transcriptPath = join(repoRoot, "claude-transcript.jsonl");
+    writeFileSync(transcriptPath, "x".repeat(2048));
+    updateSessionMetadata("claude-1", (current) => ({
+      ...current,
+      context: {
+        ...(current.context ?? {}),
+        transcriptPath,
+      },
+    }));
+
+    const plugin = createTranscriptLengthPlugin(
+      {
+        projectRoot: repoRoot,
+        projectId: "test",
+        serverHost: "127.0.0.1",
+        serverPort: 9999,
+        metadata: {
+          setStatus: () => {},
+          setProgress: () => {},
+          log: () => {},
+          clearLog: () => {},
+          setContext: () => {},
+          setStatuslineSegment: (_session, line, segment) => {
+            writes.push({ session: _session, line, text: segment.text });
+          },
+          clearStatuslineSegment: () => {},
+          setServices: () => {},
+          emitEvent: () => {},
+          markSeen: () => {},
+          setActivity: () => {},
+          setAttention: () => {},
+        },
+        sessions: {
+          list: () => [{ id: "claude-1" }],
+        },
+      },
+      { line: "top" },
+    );
+
+    plugin.start?.();
+    expect(writes.at(-1)).toEqual({ session: "claude-1", line: "top", text: "2kb" });
     plugin.stop?.();
   });
 });

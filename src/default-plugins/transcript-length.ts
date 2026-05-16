@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { readHistory } from "../context/history.js";
 import { loadConfig } from "../config.js";
 import { getContextDir } from "../paths.js";
+import { loadMetadataState } from "../metadata-store.js";
 import type { AimuxPluginAPI, AimuxPluginInstance } from "../plugin-runtime.js";
 
 interface TranscriptLengthPluginOptions {
@@ -40,8 +41,19 @@ function transcriptBytesSinceCheckpoint(sessionId: string): number {
   return turns.reduce((total, turn) => total + Buffer.byteLength(`${JSON.stringify(turn)}\n`), 0);
 }
 
+function externalTranscriptBytes(sessionId: string): number | undefined {
+  const transcriptPath = loadMetadataState().sessions[sessionId]?.context?.transcriptPath;
+  if (!transcriptPath) return undefined;
+  try {
+    const stat = statSync(transcriptPath);
+    return stat.isFile() ? stat.size : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function buildSegmentText(sessionId: string): string | null {
-  const bytes = transcriptBytesSinceCheckpoint(sessionId);
+  const bytes = externalTranscriptBytes(sessionId) ?? transcriptBytesSinceCheckpoint(sessionId);
   return formatBytes(bytes);
 }
 

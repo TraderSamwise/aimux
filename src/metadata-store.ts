@@ -43,6 +43,7 @@ export interface SessionContextMetadata {
   worktreePath?: string;
   worktreeName?: string;
   branch?: string;
+  transcriptPath?: string;
   pr?: SessionPrMetadata;
   repo?: SessionRepoMetadata;
 }
