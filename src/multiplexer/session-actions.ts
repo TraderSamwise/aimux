@@ -3,6 +3,35 @@ import { loadConfig } from "../config.js";
 
 type SessionActionsHost = any;
 
+function sessionStateFromActionSeed(seed: any): any | undefined {
+  if (!seed?.id || !seed?.command) return undefined;
+  const config = loadConfig();
+  const toolConfigKey =
+    typeof seed.toolConfigKey === "string"
+      ? seed.toolConfigKey
+      : (Object.entries(config.tools).find(([, tool]: any) => tool.command === seed.command)?.[0] ?? seed.command);
+  const toolCfg = config.tools[toolConfigKey];
+  if (!toolCfg) return undefined;
+  return {
+    id: seed.id,
+    command: toolCfg.command ?? seed.command,
+    tool: seed.command,
+    toolConfigKey,
+    args: Array.isArray(seed.args) ? seed.args : [...(toolCfg.args ?? [])],
+    lifecycle: "offline",
+    createdAt: seed.createdAt,
+    backendSessionId:
+      typeof seed.backendSessionId === "string"
+        ? seed.backendSessionId
+        : typeof seed.remoteBackendSessionId === "string"
+          ? seed.remoteBackendSessionId
+          : undefined,
+    worktreePath: typeof seed.worktreePath === "string" ? seed.worktreePath : undefined,
+    label: typeof seed.label === "string" ? seed.label : undefined,
+    headline: typeof seed.headline === "string" ? seed.headline : undefined,
+  };
+}
+
 export async function forkAgent(
   host: SessionActionsHost,
   opts: {
@@ -133,6 +162,7 @@ export async function stopAgent(
 export async function sendAgentToGraveyard(
   host: SessionActionsHost,
   sessionId: string,
+  sessionSeed?: any,
 ): Promise<{
   sessionId: string;
   status: "graveyard";
@@ -151,9 +181,13 @@ export async function sendAgentToGraveyard(
     await waitForSessionExit(runningSession);
     host.saveState();
   } else {
-    const offlineSession = host.offlineSessions.find((session: any) => session.id === sessionId);
+    const offlineSession =
+      host.offlineSessions.find((session: any) => session.id === sessionId) ?? sessionStateFromActionSeed(sessionSeed);
     if (!offlineSession) {
       throw new Error(`Session "${sessionId}" not found`);
+    }
+    if (!host.offlineSessions.some((session: any) => session.id === sessionId)) {
+      host.offlineSessions.push(offlineSession);
     }
     previousStatus = "offline";
   }

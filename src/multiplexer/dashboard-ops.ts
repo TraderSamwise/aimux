@@ -331,7 +331,7 @@ export async function spawnDashboardAgentWithFeedback(
         { timeoutMs: 10_000 },
       );
     },
-    settle: () => waitForRenderedDashboardSessionState(host, input.sessionId, isAttachableDashboardSessionEntry),
+    settle: () => waitForDashboardSessionResumeSettle(host, input.sessionId),
     onError: () => host.refreshDashboardModelFromService(true),
     errorTitle: `Failed to create ${input.tool} agent`,
   });
@@ -377,7 +377,7 @@ export async function forkDashboardAgentWithFeedback(
         { timeoutMs: 10_000 },
       );
     },
-    settle: () => waitForRenderedDashboardSessionState(host, input.targetSessionId, isAttachableDashboardSessionEntry),
+    settle: () => waitForDashboardSessionResumeSettle(host, input.targetSessionId),
     onError: () => host.refreshDashboardModelFromService(true),
     errorTitle: "Cannot fork session",
   });
@@ -566,16 +566,21 @@ export async function graveyardSessionWithFeedback(
   sessionId: string,
   hasWorktrees: boolean,
 ): Promise<void> {
+  const dashboardEntry = host.getDashboardSessions?.().find((entry: any) => entry.id === sessionId);
   const session =
-    host.offlineSessions.find((s: any) => s.id === sessionId) ?? host.sessions.find((s: any) => s.id === sessionId);
+    host.offlineSessions.find((s: any) => s.id === sessionId) ??
+    host.sessions.find((s: any) => s.id === sessionId) ??
+    dashboardEntry;
   if (host.mode === "dashboard") {
     if (!session) return;
     const label = host.getSessionLabel(sessionId) ?? session.label ?? session.command;
+    const sessionSeed = dashboardEntry ?? session;
     await runDashboardSessionMutation(host, {
       sessionId,
       pendingAction: "graveyarding",
+      sessionSeed,
       request: async () => {
-        await host.postToProjectService("/agents/kill", { sessionId }, { timeoutMs: 10_000 });
+        await host.postToProjectService("/agents/kill", { sessionId, session: sessionSeed }, { timeoutMs: 10_000 });
       },
       settle: () => waitForStableDashboardSessionAbsence(host, sessionId),
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),
@@ -614,7 +619,11 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService("/agents/resume", { sessionId: session.id }, { timeoutMs: 10_000 });
+        await host.postToProjectService(
+          "/agents/resume",
+          { sessionId: session.id, session: sessionSeed },
+          { timeoutMs: 10_000 },
+        );
       },
       settle: () => waitForDashboardSessionResumeSettle(host, session.id),
       successFlash: { message: `Restored ${label}` },

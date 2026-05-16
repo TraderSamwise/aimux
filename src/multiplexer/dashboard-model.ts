@@ -14,6 +14,7 @@ import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { requestJson } from "../http-client.js";
+import { loadConfig } from "../config.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
@@ -22,6 +23,43 @@ import { listDashboardOperationFailures, type DashboardOperationFailure } from "
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 
 type DashboardModelHost = any;
+
+function sessionStateFromDashboardSeed(seed: any): any | undefined {
+  if (!seed?.id || !seed?.command) return undefined;
+  const config = loadConfig();
+  const toolConfigKey =
+    typeof seed.toolConfigKey === "string"
+      ? seed.toolConfigKey
+      : (Object.entries(config.tools).find(([, tool]: any) => tool.command === seed.command)?.[0] ?? seed.command);
+  const toolCfg = config.tools[toolConfigKey];
+  if (!toolCfg) return undefined;
+  return {
+    id: seed.id,
+    tool: seed.command,
+    toolConfigKey,
+    command: toolCfg.command ?? seed.command,
+    args: Array.isArray(seed.args) ? seed.args : [...(toolCfg.args ?? [])],
+    lifecycle: "offline",
+    createdAt: seed.createdAt,
+    backendSessionId:
+      typeof seed.backendSessionId === "string"
+        ? seed.backendSessionId
+        : typeof seed.remoteBackendSessionId === "string"
+          ? seed.remoteBackendSessionId
+          : undefined,
+    worktreePath: typeof seed.worktreePath === "string" ? seed.worktreePath : undefined,
+    label: typeof seed.label === "string" ? seed.label : undefined,
+    headline: typeof seed.headline === "string" ? seed.headline : undefined,
+  };
+}
+
+function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: string, seed?: any): any | undefined {
+  return (
+    host.offlineSessions.find((session: any) => session.id === sessionId) ??
+    sessionStateFromDashboardSeed(seed) ??
+    sessionStateFromDashboardSeed(host.dashboardSessionsCache.find((entry: any) => entry.id === sessionId))
+  );
+}
 
 function runProjectServiceUiRefresh(host: DashboardModelHost): void {
   host.writeStatuslineFile();
@@ -580,8 +618,8 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       stopService: ({ serviceId }: any) => host.stopService(serviceId),
       resumeService: ({ serviceId }: any) => host.resumeOfflineServiceById(serviceId),
       removeService: ({ serviceId }: any) => host.removeOfflineService(serviceId),
-      resumeAgent: ({ sessionId }: any) => {
-        const offline = host.offlineSessions.find((session: any) => session.id === sessionId);
+      resumeAgent: ({ sessionId, session }: any) => {
+        const offline = resolveOfflineSessionForAction(host, sessionId, session);
         if (!offline) {
           throw new Error(`Agent "${sessionId}" not found`);
         }
@@ -620,7 +658,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       interruptAgent: (input: any) => host.interruptAgent(input.sessionId),
       renameAgent: (input: any) => host.renameAgent(input.sessionId, input.label),
       migrateAgent: (input: any) => host.migrateAgent(input.sessionId, input.worktreePath),
-      killAgent: (input: any) => host.sendAgentToGraveyard(input.sessionId),
+      killAgent: (input: any) => host.sendAgentToGraveyard(input.sessionId, input.session),
       writeAgentInput: (input: any) =>
         host.writeAgentInput(input.sessionId, input.data, input.parts, input.clientMessageId, input.submit),
       readAgentOutput: (input: any) => host.readAgentOutput(input.sessionId, input.startLine),

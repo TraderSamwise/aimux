@@ -602,9 +602,7 @@ export const dashboardInteractionMethods = {
 
     if (entry.status === "offline") {
       const offline = this.offlineSessions.find((session: any) => session.id === entry.id);
-      if (offline) {
-        await this.resumeOfflineSessionWithFeedback(offline);
-      }
+      await this.resumeOfflineSessionWithFeedback(offline ?? entry);
       return;
     }
 

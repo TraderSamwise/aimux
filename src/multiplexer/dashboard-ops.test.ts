@@ -232,7 +232,7 @@ describe("dashboard-ops", () => {
 
     expect(host.postToProjectService).toHaveBeenCalledWith(
       "/agents/resume",
-      { sessionId: "sess-1" },
+      { sessionId: "sess-1", session: expect.objectContaining({ id: "sess-1", command: "claude" }) },
       { timeoutMs: 10_000 },
     );
     expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
@@ -427,7 +427,7 @@ describe("dashboard-ops", () => {
 
     expect(host.postToProjectService).toHaveBeenCalledWith(
       "/agents/kill",
-      { sessionId: "sess-1" },
+      { sessionId: "sess-1", session: expect.objectContaining({ id: "sess-1", command: "claude" }) },
       { timeoutMs: 10_000 },
     );
     expect(host.dashboardPendingActions.get("sess-1")).toBeNull();

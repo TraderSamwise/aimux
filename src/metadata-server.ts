@@ -195,6 +195,7 @@ interface MetadataServerOptions {
     }) => Promise<{ serviceId: string; status: "removed" }> | { serviceId: string; status: "removed" };
     resumeAgent?: (input: {
       sessionId: string;
+      session?: Record<string, unknown>;
     }) =>
       | Promise<{ sessionId: string; status: "running" | "offline" }>
       | { sessionId: string; status: "running" | "offline" };
@@ -316,7 +317,7 @@ interface MetadataServerOptions {
       sessionId: string;
       worktreePath: string;
     }) => Promise<{ sessionId: string; worktreePath?: string }> | { sessionId: string; worktreePath?: string };
-    killAgent?: (input: { sessionId: string }) =>
+    killAgent?: (input: { sessionId: string; session?: Record<string, unknown> }) =>
       | Promise<{
           sessionId: string;
           status: "graveyard";
@@ -1946,7 +1947,7 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/agents/resume") {
-        const body = (await readJson(req)) as { sessionId: string };
+        const body = (await readJson(req)) as { sessionId: string; session?: Record<string, unknown> };
         if (!this.options.desktop?.resumeAgent) {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
           return;
@@ -1998,7 +1999,7 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/agents/kill") {
-        const body = (await readJson(req)) as { sessionId: string };
+        const body = (await readJson(req)) as { sessionId: string; session?: Record<string, unknown> };
         if (!this.options.lifecycle?.killAgent) {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
           return;

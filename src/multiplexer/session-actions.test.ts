@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
-import { forkAgent, spawnAgent } from "./session-actions.js";
+import { forkAgent, sendAgentToGraveyard, spawnAgent } from "./session-actions.js";
 
 vi.mock("../config.js", () => ({
   loadConfig: () => ({
@@ -129,5 +129,30 @@ describe("session actions", () => {
     expect(host.forkSessionFromSource).toHaveBeenCalledWith("claude-1", "codex", undefined, undefined, undefined, [
       "--dangerously-bypass-approvals-and-sandbox",
     ]);
+  });
+
+  it("graveyards a visible dashboard seed when offline state is missing", async () => {
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [],
+      offlineSessions: [],
+      graveyardAfterStopSessionIds: new Set(),
+      stoppingSessionIds: new Set(),
+      graveyardSession: vi.fn((sessionId: string) => {
+        host.offlineSessions = host.offlineSessions.filter((session: any) => session.id !== sessionId);
+      }),
+      saveState: vi.fn(),
+    };
+
+    const result = await sendAgentToGraveyard(host, "claude-stale", {
+      id: "claude-stale",
+      command: "claude",
+      label: "claude",
+      worktreePath: repoRoot,
+    });
+
+    expect(result).toEqual({ sessionId: "claude-stale", status: "graveyard", previousStatus: "offline" });
+    expect(host.graveyardSession).toHaveBeenCalledWith("claude-stale");
+    expect(host.offlineSessions).toEqual([]);
   });
 });

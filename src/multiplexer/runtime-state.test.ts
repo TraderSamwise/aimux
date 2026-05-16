@@ -94,6 +94,47 @@ describe("resumeOfflineSession", () => {
     ]);
   });
 
+  it("does not use non-specific resume fallbacks for targeted offline restore", () => {
+    const createSession = vi.fn();
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-1" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: {
+        canResumeWithBackendSessionId: vi.fn(() => false),
+      },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      saveState: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession,
+    };
+
+    resumeOfflineSession(host, {
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      worktreePath: repoRoot,
+    });
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession.mock.calls[0]).toMatchObject([
+      "codex",
+      ["--dangerously-bypass-approvals-and-sandbox"],
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      undefined,
+      "codex-1",
+      true,
+      false,
+    ]);
+  });
+
   it("does not reload a starting session as offline from stale saved state", () => {
     const host: any = {
       sessions: [],

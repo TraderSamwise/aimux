@@ -515,7 +515,10 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   } else if (relaunchFresh) {
     actionArgs = [];
   } else {
-    actionArgs = [...(toolCfg.resumeFallback ?? [])];
+    // Targeted dashboard restore must never use "latest session" style fallbacks
+    // such as Claude --continue or Codex resume --last; those can resurrect the
+    // wrong agent after a crash or stale-state mismatch.
+    actionArgs = [];
   }
   const args = [...(toolCfg.args ?? []), ...actionArgs];
 
@@ -553,7 +556,7 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     useBackendResume ? session.backendSessionId : undefined,
     session.id,
     true,
-    !relaunchFresh,
+    useBackendResume,
   );
 }
 
