@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
 import { createSession, runDashboard, runProjectService } from "./session-launch.js";
+import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 
 describe("createSession", () => {
   it("does not inject startup preamble when explicitly suppressed", async () => {
@@ -252,6 +253,70 @@ describe("createSession", () => {
     expect(launchedArgs).toContain("--resume");
     expect(launchedArgs).toContain("--append-system-prompt");
     expect(launchedArgs).not.toContain("--session-id");
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("clears stale native transcript paths when launching a new process for a session", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-transcript-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+
+    updateSessionMetadata(
+      "claude-restore",
+      (current) => ({
+        ...current,
+        context: {
+          cwd: repoRoot,
+          transcriptPath: "/tmp/old-claude-transcript.jsonl",
+        },
+      }),
+      repoRoot,
+    );
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(),
+        deliverDetachedCodexKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "claude" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "claude" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    createSession(
+      host,
+      "claude",
+      ["--dangerously-skip-permissions", "--resume"],
+      ["--append-system-prompt"],
+      "claude",
+      undefined,
+      ["--session-id", "{sessionId}"],
+      repoRoot,
+      "backend-session",
+      "claude-restore",
+      false,
+      true,
+    );
+
+    const context = loadMetadataState(repoRoot).sessions["claude-restore"]?.context;
+    expect(context?.cwd).toBe(repoRoot);
+    expect(context?.transcriptPath).toBeUndefined();
 
     rmSync(repoRoot, { recursive: true, force: true });
   });

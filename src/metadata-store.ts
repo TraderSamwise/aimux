@@ -162,6 +162,21 @@ export function clearSessionLogs(sessionId: string, projectRoot?: string): Metad
   );
 }
 
+export function clearSessionTranscriptPath(sessionId: string, projectRoot?: string): MetadataState {
+  const state = loadMetadataState(projectRoot);
+  const current = state.sessions[sessionId];
+  if (!current?.context?.transcriptPath) return state;
+  const context = { ...current.context };
+  delete context.transcriptPath;
+  state.sessions[sessionId] = {
+    ...current,
+    context,
+    updatedAt: new Date().toISOString(),
+  };
+  saveMetadataState(state, projectRoot);
+  return state;
+}
+
 export function loadMetadataEndpoint(projectRoot?: string): MetadataApiEndpoint | null {
   return loadJson<MetadataApiEndpoint | null>(endpointPathFor(projectRoot), null);
 }

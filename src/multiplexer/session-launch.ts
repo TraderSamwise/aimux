@@ -11,6 +11,7 @@ import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
+import { clearSessionTranscriptPath } from "../metadata-store.js";
 
 type SessionLaunchHost = any;
 
@@ -407,6 +408,8 @@ export function createSession(
   } catch {
     projectRoot = process.cwd();
   }
+  clearSessionTranscriptPath(sessionId);
+  clearSessionTranscriptPath(sessionId, projectRoot);
 
   if (toolCfg && toolConfigKey === "claude" && toolCfg.command === command && toolCfg.wrapperEnabled !== false) {
     finalArgs = injectClaudeHookArgs(finalArgs, {
