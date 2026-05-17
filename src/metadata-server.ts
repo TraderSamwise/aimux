@@ -150,6 +150,14 @@ function sessionAlertTitle(
   }
   if (kind === "task_done") {
     if (!title || (sessionId && title === `${sessionId} finished`)) return `${subject} finished`;
+    const genericTitles = new Set([
+      context?.label?.trim(),
+      context?.command?.trim(),
+      compactSessionId(sessionId ?? ""),
+      "service",
+      "shell",
+    ]);
+    if (genericTitles.has(title)) return `${subject} finished`;
     return title;
   }
   if (!title) return subject;
@@ -1452,7 +1460,7 @@ export class MetadataServer {
           this.emitAlert({
             kind: "notification",
             sessionId: body.session,
-            title: sessionAlertTitle("notification", body.session, body.event.source),
+            title: body.event.source ?? "notification",
             message: body.event.message || "Agent notification.",
             dedupeKey: body.event.message ? `notify:${body.session}:${body.event.message}` : undefined,
             cooldownMs: 15_000,
@@ -1566,7 +1574,7 @@ export class MetadataServer {
         this.emitAlert({
           kind,
           sessionId,
-          title: sessionAlertTitle(kind, sessionId, body.title),
+          title: body.title ?? "",
           message: [body.subtitle?.trim(), body.message?.trim() || body.title?.trim() || "aimux"]
             .filter(Boolean)
             .join(" — "),

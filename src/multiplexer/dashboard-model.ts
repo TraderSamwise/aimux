@@ -594,16 +594,25 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
         const session =
           host.dashboardSessionsCache.find((entry: any) => entry.id === sessionId) ??
           host.sessions.find((entry: any) => entry.id === sessionId);
-        const worktreePath = host.sessionWorktreePaths.get(sessionId) ?? session?.worktreePath;
+        const service =
+          host.dashboardServicesCache.find((entry: any) => entry.id === sessionId) ??
+          host.services?.find?.((entry: any) => entry.id === sessionId) ??
+          host.offlineServices?.find?.((entry: any) => entry.id === sessionId);
+        const worktreePath = host.sessionWorktreePaths.get(sessionId) ?? session?.worktreePath ?? service?.worktreePath;
         const group = worktreePath
           ? host.dashboardWorktreeGroupsCache.find((entry: any) => entry.path === worktreePath)
           : host.dashboardWorktreeGroupsCache.find((entry: any) => !entry.path);
         return {
-          label: host.getSessionLabel(sessionId) ?? session?.label ?? session?.command,
-          command: session?.command,
+          label:
+            host.getSessionLabel(sessionId) ??
+            session?.label ??
+            service?.label ??
+            (service ? host.serviceLabelForCommand?.(service.launchCommandLine ?? service.command ?? "") : undefined) ??
+            session?.command,
+          command: session?.command ?? service?.command ?? service?.launchCommandLine,
           worktreePath,
-          worktreeName: session?.worktreeName ?? group?.name,
-          branch: session?.worktreeBranch ?? group?.branch,
+          worktreeName: session?.worktreeName ?? service?.worktreeName ?? group?.name,
+          branch: session?.worktreeBranch ?? service?.worktreeBranch ?? group?.branch,
         };
       },
       refreshStatusline: ({ sessionId, force }: any) => host.refreshProjectStatusline({ sessionId, force }),

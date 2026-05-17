@@ -1290,4 +1290,51 @@ describe("MetadataServer threads API", () => {
       body: "Claude is waiting for your input",
     });
   });
+
+  it("uses dashboard display context in service completion notifications", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getSessionDisplayContext: (sessionId) =>
+          sessionId === "service-1"
+            ? {
+                label: "shell",
+                command: "shell",
+                worktreeName: "Main Checkout",
+                branch: "master",
+              }
+            : undefined,
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const runningRes = await fetch(`${base}/shell-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "service-1", tool: "service", state: "running" }),
+    });
+    expect(runningRes.ok).toBe(true);
+
+    const promptRes = await fetch(`${base}/shell-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "service-1", tool: "service", state: "prompt" }),
+    });
+    expect(promptRes.ok).toBe(true);
+
+    const listRes = await fetch(`${base}/notifications`);
+    const listed = (await listRes.json()) as {
+      ok: boolean;
+      notifications: Array<{ sessionId?: string; title: string; body: string }>;
+    };
+    expect(listRes.ok).toBe(true);
+    expect(listed.notifications[0]).toMatchObject({
+      sessionId: "service-1",
+      title: "shell @ Main Checkout finished",
+      body: "Shell returned to a prompt.",
+    });
+  });
 });
