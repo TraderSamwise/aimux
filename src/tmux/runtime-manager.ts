@@ -986,7 +986,7 @@ export class TmuxRuntimeManager {
       "-t",
       sessionName,
       "status-format[0]",
-      `#[bg=colour238,fg=colour255,bold] #(${top}) #[default]`,
+      `#[bg=colour238,fg=colour255,bold] #(${top})#[default]#{?pane_in_mode, #[fg=colour214,bold]scroll#[default],}`,
     ]);
     this.exec([
       "set-option",

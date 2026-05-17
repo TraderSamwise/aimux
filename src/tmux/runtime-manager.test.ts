@@ -240,6 +240,15 @@ describe("TmuxRuntimeManager", () => {
           call.args[4]?.includes("scripts/tmux-statusline.sh"),
       ),
     ).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "set-option" &&
+          call.args[3] === "status-format[0]" &&
+          call.args[4]?.includes("#{?pane_in_mode") &&
+          call.args[4]?.includes("scroll"),
+      ),
+    ).toBe(true);
   });
 
   it("routes wheel-up to tmux copy-mode for managed agent windows", () => {
