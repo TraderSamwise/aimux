@@ -296,21 +296,23 @@ export const persistenceMethods = {
         ({ pendingAction: _pendingAction, optimistic: _optimistic, ...service }: any) => service,
       ),
     );
-    this.dashboardWorktreeGroupsCache = composeDashboardWorktreeGroups(
-      this.dashboardPendingActions.applyToWorktrees(
-        this.dashboardWorktreeGroupsCache.map(
-          ({
-            pendingAction: _pendingAction,
-            optimistic: _optimistic,
-            pending: _pending,
-            removing: _removing,
-            operationFailure: _operationFailure,
-            ...wt
-          }: any) => wt,
+    this.dashboardWorktreeGroupsCache = this.dashboardUiStateStore.orderWorktreeGroups(
+      composeDashboardWorktreeGroups(
+        this.dashboardPendingActions.applyToWorktrees(
+          this.dashboardWorktreeGroupsCache.map(
+            ({
+              pendingAction: _pendingAction,
+              optimistic: _optimistic,
+              pending: _pending,
+              removing: _removing,
+              operationFailure: _operationFailure,
+              ...wt
+            }: any) => wt,
+          ),
         ),
+        this.dashboardSessionsCache,
+        this.dashboardServicesCache,
       ),
-      this.dashboardSessionsCache,
-      this.dashboardServicesCache,
     );
   },
 

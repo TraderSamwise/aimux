@@ -67,6 +67,41 @@ function refreshSelectedWorktreeEntry(host: any): { kind: "session" | "service";
   return host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex];
 }
 
+function moveSelectedDashboardWorktreeEntry(host: any, direction: "up" | "down"): boolean {
+  if (host.dashboardState.level !== "sessions") return false;
+  const selectedEntry = host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex];
+  if (!selectedEntry) return false;
+
+  const peerEntries = host.dashboardState.worktreeEntries.filter((entry: any) => entry.kind === selectedEntry.kind);
+  const moved = host.dashboardUiStateStore.moveEntryWithinWorktree({
+    kind: selectedEntry.kind,
+    worktreePath: host.dashboardState.focusedWorktreePath,
+    selectedId: selectedEntry.id,
+    direction,
+    sessions: peerEntries.filter((entry: any) => entry.kind === "session").map((entry: any) => ({ id: entry.id })),
+    services: peerEntries.filter((entry: any) => entry.kind === "service").map((entry: any) => ({ id: entry.id })),
+  });
+  if (!moved) {
+    host.footerFlash = "Already at edge";
+    host.footerFlashTicks = 2;
+    host.renderDashboard();
+    return true;
+  }
+
+  host.dashboardWorktreeGroupsCache = host.dashboardUiStateStore.orderWorktreeGroups(host.dashboardWorktreeGroupsCache);
+  host.updateWorktreeSessions();
+  const nextIndex = host.dashboardState.worktreeEntries.findIndex(
+    (entry: any) => entry.kind === selectedEntry.kind && entry.id === selectedEntry.id,
+  );
+  if (nextIndex >= 0) host.dashboardState.sessionIndex = nextIndex;
+  host.preferDashboardEntrySelection(selectedEntry.kind, selectedEntry.id, host.dashboardState.focusedWorktreePath);
+  host.persistDashboardUiState();
+  host.footerFlash = `Moved ${selectedEntry.kind === "session" ? "agent" : "service"} ${direction}`;
+  host.footerFlashTicks = 2;
+  host.renderDashboard();
+  return true;
+}
+
 export const dashboardInteractionMethods = {
   clearDashboardQuickJump(this: any): void {
     if (this.dashboardQuickJumpTimeout) {
@@ -212,6 +247,12 @@ export const dashboardInteractionMethods = {
       this.dashboard.toggleDetailsPane();
       this.renderCurrentDashboardView();
       return;
+    }
+
+    if (hasWorktrees && this.isDashboardScreen("dashboard") && event.shift && (key === "up" || key === "down")) {
+      if (moveSelectedDashboardWorktreeEntry(this, key)) {
+        return;
+      }
     }
 
     switch (key) {

@@ -116,4 +116,29 @@ describe("DashboardUiStateStore", () => {
     store.consumeSelectionRestore(state, [], true, 0, () => undefined);
     expect(state.sessionIndex).toBe(1);
   });
+
+  it("persists and reloads shared dashboard item order", () => {
+    const store = new DashboardUiStateStore();
+    const state = new DashboardState();
+
+    expect(
+      store.moveEntryWithinWorktree({
+        kind: "session",
+        worktreePath: "/repo/wt",
+        selectedId: "agent-a",
+        direction: "down",
+        sessions: [{ id: "agent-a" }, { id: "agent-b" }] as any,
+        services: [],
+      }),
+    ).toBe(true);
+    store.persist("dashboard", "client-a", state, 0, []);
+
+    const next = new DashboardUiStateStore();
+    next.loadInto(new DashboardState(), "client-a");
+
+    expect(next.orderSessionsForWorktree([{ id: "agent-a" }, { id: "agent-b" }] as any, "/repo/wt")).toEqual([
+      { id: "agent-b" },
+      { id: "agent-a" },
+    ]);
+  });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { DashboardUiStateStore } from "../dashboard/ui-state-store.js";
 import { dashboardInteractionMethods } from "./dashboard-interaction.js";
 
 describe("dashboardInteractionMethods", () => {
@@ -454,6 +455,84 @@ describe("dashboardInteractionMethods", () => {
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\r"));
 
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(entry);
+  });
+
+  it("reorders selected agents within their worktree without mixing services", () => {
+    const store = new DashboardUiStateStore();
+    const sessions = [
+      { id: "agent-a", worktreePath: "/repo/.aimux/worktrees/demo" },
+      { id: "agent-b", worktreePath: "/repo/.aimux/worktrees/demo" },
+    ];
+    const services = [
+      { id: "service-a", worktreePath: "/repo/.aimux/worktrees/demo" },
+      { id: "service-b", worktreePath: "/repo/.aimux/worktrees/demo" },
+    ];
+    const host: any = {
+      dashboardUiStateStore: store,
+      dashboardState: {
+        hasWorktrees: () => true,
+        quickJumpDigits: "",
+        level: "sessions",
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+        worktreeSessions: sessions,
+        worktreeEntries: [
+          { kind: "session", id: "agent-a" },
+          { kind: "session", id: "agent-b" },
+          { kind: "service", id: "service-a" },
+          { kind: "service", id: "service-b" },
+        ],
+        sessionIndex: 0,
+      },
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          sessions,
+          services,
+        },
+      ],
+      updateWorktreeSessions: vi.fn(function (this: any) {
+        const orderedSessions = store.orderSessionsForWorktree(sessions as any, "/repo/.aimux/worktrees/demo");
+        const orderedServices = store.orderServicesForWorktree(services as any, "/repo/.aimux/worktrees/demo");
+        this.dashboardState.worktreeSessions = orderedSessions;
+        this.dashboardState.worktreeEntries = [
+          ...orderedSessions.map((session: any) => ({ kind: "session", id: session.id }) as const),
+          ...orderedServices.map((service: any) => ({ kind: "service", id: service.id }) as const),
+        ];
+      }),
+      isDashboardScreen: vi.fn((screen: string) => screen === "dashboard"),
+      handleDashboardQuickJumpDigit: vi.fn(() => false),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+      renderDashboard: vi.fn(),
+      footerFlash: "",
+      footerFlashTicks: 0,
+    };
+
+    dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("\x1b[1;2B"));
+
+    expect(host.dashboardState.worktreeEntries).toEqual([
+      { kind: "session", id: "agent-b" },
+      { kind: "session", id: "agent-a" },
+      { kind: "service", id: "service-a" },
+      { kind: "service", id: "service-b" },
+    ]);
+    expect(host.dashboardState.sessionIndex).toBe(1);
+    expect(host.dashboardWorktreeGroupsCache[0]?.sessions.map((session: any) => session.id)).toEqual([
+      "agent-b",
+      "agent-a",
+    ]);
+    expect(host.dashboardWorktreeGroupsCache[0]?.services.map((service: any) => service.id)).toEqual([
+      "service-a",
+      "service-b",
+    ]);
+    expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith(
+      "session",
+      "agent-a",
+      "/repo/.aimux/worktrees/demo",
+    );
+    expect(host.persistDashboardUiState).toHaveBeenCalledOnce();
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 });
 

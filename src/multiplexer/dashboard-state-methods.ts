@@ -58,6 +58,9 @@ export const dashboardStateMethods = {
 
   loadDashboardUiState(this: any): void {
     this.dashboardUiStateStore.loadInto(this.dashboardState, this.getDashboardUiClientKey());
+    this.dashboardWorktreeGroupsCache = this.dashboardUiStateStore.orderWorktreeGroups(
+      this.dashboardWorktreeGroupsCache,
+    );
   },
 
   hydrateDashboardScreenState(this: any): void {

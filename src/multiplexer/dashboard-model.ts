@@ -186,10 +186,12 @@ export function applyDashboardModel(
   host.dashboardModelSnapshotKey = snapshotKey;
   host.dashboardSessionsCache = host.dashboardPendingActions.applyToSessions(dashSessions);
   host.dashboardServicesCache = host.dashboardPendingActions.applyToServices(dashServices);
-  host.dashboardWorktreeGroupsCache = composeDashboardWorktreeGroups(
-    host.dashboardPendingActions.applyToWorktrees(worktreeGroups),
-    host.dashboardSessionsCache,
-    host.dashboardServicesCache,
+  host.dashboardWorktreeGroupsCache = host.dashboardUiStateStore.orderWorktreeGroups(
+    composeDashboardWorktreeGroups(
+      host.dashboardPendingActions.applyToWorktrees(worktreeGroups),
+      host.dashboardSessionsCache,
+      host.dashboardServicesCache,
+    ),
   );
   host.dashboardOperationFailuresCache = operationFailures;
   host.dashboardMainCheckoutInfoCache = mainCheckoutInfo;

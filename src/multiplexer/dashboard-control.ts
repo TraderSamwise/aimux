@@ -72,15 +72,21 @@ function primeLiveTmuxFooter(host: DashboardControlHost, target: { windowId: str
 
 export function updateWorktreeSessions(host: DashboardControlHost): void {
   const allDash = host.getDashboardSessions();
-  host.dashboardState.worktreeSessions = sortDashboardEntriesByCreatedAt(
-    allDash.filter((s: DashboardSession) => {
-      return (s.worktreePath ?? undefined) === host.dashboardState.focusedWorktreePath;
-    }),
+  host.dashboardState.worktreeSessions = host.dashboardUiStateStore.orderSessionsForWorktree(
+    sortDashboardEntriesByCreatedAt(
+      allDash.filter((s: DashboardSession) => {
+        return (s.worktreePath ?? undefined) === host.dashboardState.focusedWorktreePath;
+      }),
+    ),
+    host.dashboardState.focusedWorktreePath,
   );
   const filteredServices: DashboardService[] = host.getDashboardServices().filter((service: DashboardService) => {
     return (service.worktreePath ?? undefined) === host.dashboardState.focusedWorktreePath;
   });
-  const worktreeServices = sortDashboardEntriesByCreatedAt(filteredServices);
+  const worktreeServices = host.dashboardUiStateStore.orderServicesForWorktree(
+    sortDashboardEntriesByCreatedAt(filteredServices),
+    host.dashboardState.focusedWorktreePath,
+  );
   host.dashboardState.worktreeEntries = [
     ...host.dashboardState.worktreeSessions.map(
       (session: DashboardSession) => ({ kind: "session", id: session.id }) as const,
