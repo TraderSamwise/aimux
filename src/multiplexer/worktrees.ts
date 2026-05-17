@@ -149,6 +149,48 @@ function showDashboardWorktreeCreateFailure(host: WorktreeHost, name: string, pa
   host.showDashboardError(`Failed to create "${name}"`, [`Path: ${path}`, `Error: ${message}`]);
 }
 
+function findDashboardWorktreeCreateFailure(host: WorktreeHost, path: string): any | undefined {
+  const groupFailure = host.dashboardWorktreeGroupsCache?.find((group: any) => group.path === path)?.operationFailure;
+  if (groupFailure) return groupFailure;
+  return (host.dashboardOperationFailuresCache ?? []).find(
+    (failure: any) =>
+      failure.targetKind === "worktree" && failure.operation === "create" && failure.worktreePath === path,
+  );
+}
+
+function isDashboardWorktreeCreateSettled(group: any | undefined): boolean {
+  if (!group) return false;
+  if (group.operationFailure) return false;
+  return group.pending !== true && group.pendingAction !== "creating";
+}
+
+async function waitForRenderedDashboardWorktreeCreate(
+  host: WorktreeHost,
+  name: string,
+  path: string,
+  timeoutMs = 180_000,
+): Promise<{ ok: true } | { ok: false; error: Error }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (typeof host.refreshDashboardModelFromService === "function") {
+      await host.refreshDashboardModelFromService(true);
+    }
+    const failure = findDashboardWorktreeCreateFailure(host, path);
+    if (failure) {
+      const message = typeof failure.message === "string" ? failure.message : "worktree create failed";
+      return { ok: false, error: new Error(message) };
+    }
+    const group = host.dashboardWorktreeGroupsCache.find((entry: any) => entry.path === path);
+    if (isDashboardWorktreeCreateSettled(group)) {
+      return { ok: true };
+    }
+    showOptimisticDashboardWorktreeCreate(host, name);
+    host.renderDashboard?.();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return { ok: false, error: new Error("worktree creating did not settle before timing out") };
+}
+
 export function showWorktreeCreatePrompt(host: WorktreeHost): void {
   host.openDashboardOverlay("worktree-input");
   host.worktreeInputBuffer = "";
@@ -212,9 +254,16 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
         void (async () => {
           try {
             await postToProjectService(host, "/worktrees/create", { name }, { timeoutMs: 180_000 });
-            await host.refreshDashboardModelFromService?.(true);
+            const result = await waitForRenderedDashboardWorktreeCreate(host, name, targetPath);
+            if (!result.ok) {
+              throw result.error;
+            }
             debug(`worktree created from UI: ${name}`, "worktree");
-            host.settleDashboardCreatePending?.(pendingKey);
+            host.dashboardPendingActions.set(pendingKey, null);
+            await host.refreshDashboardModelFromService?.(true);
+            host.dashboardState.focusedWorktreePath = targetPath;
+            host.dashboardUiStateStore.markSelectionDirty();
+            host.renderDashboard();
           } catch (err) {
             host.dashboardPendingActions.set(pendingKey, null);
             debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
