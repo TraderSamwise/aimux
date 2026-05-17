@@ -17,6 +17,7 @@ import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import { type AlertKind, type ProjectEventBus } from "./project-events.js";
+import { contextualizeAlertInput, metadataDisplayContext } from "./alert-display.js";
 
 export interface AimuxMetadataAPI {
   setStatus(session: string, text: string, tone?: MetadataTone): void;
@@ -182,7 +183,11 @@ export class PluginRuntime {
     if (!this.eventBus) return;
     const alert = deriveAlertFromAgentEvent(sessionId, event);
     if (!alert) return;
-    this.eventBus.publishAlert(alert);
+    let context;
+    try {
+      context = metadataDisplayContext(loadMetadataState().sessions[sessionId]);
+    } catch {}
+    this.eventBus.publishAlert(contextualizeAlertInput(alert, context));
   }
 
   async start(): Promise<void> {

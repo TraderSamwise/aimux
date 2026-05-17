@@ -18,6 +18,12 @@ import { SessionBootstrapService } from "../session-bootstrap.js";
 import { createThread, appendMessage, updateThread } from "../threads.js";
 import { OrchestrationDispatcher } from "../orchestration-dispatcher.js";
 import { ProjectEventBus, type AlertKind } from "../project-events.js";
+import {
+  contextualizeAlertInput,
+  mergeDisplayContext,
+  metadataDisplayContext,
+  type SessionAlertDisplayContext,
+} from "../alert-display.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { listNotifications, type NotificationRecord } from "../notifications.js";
 import { type ThreadEntry, type WorkflowEntry, type WorkflowFilter } from "../workflow.js";
@@ -343,7 +349,49 @@ export class Multiplexer {
     dedupeKey?: string;
     cooldownMs?: number;
   }): void {
-    this.eventBus.publishAlert(input);
+    const displayContext = this.resolveSessionAlertDisplayContext(input.sessionId, input.worktreePath);
+    this.eventBus.publishAlert(contextualizeAlertInput(input, displayContext));
+  }
+
+  private resolveSessionAlertDisplayContext(
+    sessionId: string | undefined,
+    worktreePath: string | undefined,
+  ): SessionAlertDisplayContext | undefined {
+    if (!sessionId) return worktreePath ? { worktreePath } : undefined;
+    let context: SessionAlertDisplayContext = {};
+    try {
+      context = metadataDisplayContext(loadMetadataState().sessions[sessionId]);
+    } catch {}
+
+    const session =
+      this.dashboardSessionsCache.find((entry: any) => entry.id === sessionId) ??
+      this.sessions.find((entry: any) => entry.id === sessionId) ??
+      this.offlineSessions.find((entry: any) => entry.id === sessionId);
+    const service =
+      this.dashboardServicesCache.find((entry: any) => entry.id === sessionId) ??
+      this.offlineServices?.find?.((entry: any) => entry.id === sessionId);
+    const sessionAny = session as any;
+    const serviceAny = service as any;
+    const resolvedWorktreePath =
+      worktreePath ?? this.sessionWorktreePaths.get(sessionId) ?? sessionAny?.worktreePath ?? serviceAny?.worktreePath;
+    const group = resolvedWorktreePath
+      ? this.dashboardWorktreeGroupsCache.find((entry: any) => entry.path === resolvedWorktreePath)
+      : this.dashboardWorktreeGroupsCache.find((entry: any) => !entry.path);
+    const serviceCommand = serviceAny?.launchCommandLine ?? serviceAny?.command ?? "";
+    const liveContext: SessionAlertDisplayContext = {
+      label:
+        this.getSessionLabel(sessionId) ??
+        sessionAny?.label ??
+        serviceAny?.label ??
+        (serviceCommand ? (this as any).serviceLabelForCommand?.(serviceCommand) : undefined) ??
+        sessionAny?.command,
+      command: sessionAny?.command ?? serviceAny?.command ?? serviceAny?.launchCommandLine,
+      worktreePath: resolvedWorktreePath,
+      worktreeName: sessionAny?.worktreeName ?? serviceAny?.worktreeName ?? group?.name,
+      branch: sessionAny?.worktreeBranch ?? serviceAny?.worktreeBranch ?? group?.branch,
+    };
+    context = mergeDisplayContext(context, liveContext);
+    return Object.values(context).some((value) => value !== undefined) ? context : undefined;
   }
 
   private deriveSessionSemanticState(sessionId: string, status?: DashboardSession["status"]) {

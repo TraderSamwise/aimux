@@ -38,11 +38,13 @@ import {
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   updateSessionMetadata,
   clearSessionLogs,
+  loadMetadataState,
   type MetadataTone,
   type SessionContextMetadata,
   type SessionServiceMetadata,
   removeMetadataEndpoint,
 } from "./metadata-store.js";
+import { contextualizeAlertInput, metadataDisplayContext } from "./alert-display.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEventKind } from "./agent-events.js";
 import { listDesktopProjects } from "./project-scanner.js";
@@ -2586,20 +2588,32 @@ program
             | "handoff_waiting"
             | "task_assigned"
             | "review_waiting";
+          const sessionId = opts.session?.trim() || undefined;
+          const context = sessionId ? metadataDisplayContext(loadMetadataState().sessions[sessionId]) : undefined;
+          const alert = contextualizeAlertInput(
+            {
+              kind,
+              sessionId,
+              title,
+              message: [opts.subtitle?.trim(), body].filter(Boolean).join(" — "),
+              forceNotify: true,
+            },
+            context,
+          );
           const notification = upsertNotification({
-            title,
+            title: alert.title,
             subtitle: opts.subtitle?.trim() || undefined,
             body,
-            sessionId: opts.session?.trim() || undefined,
+            sessionId,
             kind,
           });
           notifyAlert({
             type: "alert",
             kind,
             projectId: getProjectId(),
-            sessionId: opts.session?.trim() || undefined,
-            title,
-            message: [opts.subtitle?.trim(), body].filter(Boolean).join(" — "),
+            sessionId,
+            title: alert.title,
+            message: alert.message,
             ts: notification.createdAt,
             forceNotify: true,
           });

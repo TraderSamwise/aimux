@@ -70,22 +70,6 @@ function assertDashboardMutationSettled(settled: boolean, action: string): void 
   }
 }
 
-async function waitForRenderedDashboardSessionState(
-  host: DashboardOpsHost,
-  sessionId: string,
-  predicate: (session: any | undefined) => boolean,
-  timeoutMs = 10_000,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await host.refreshDashboardModelFromService(true);
-    const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
-    if (predicate(session)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return false;
-}
-
 async function refreshDashboardModelAfterAuthoritativeMutation(host: DashboardOpsHost): Promise<boolean> {
   if (typeof host.refreshDashboardModelFromService === "function") {
     await host.refreshDashboardModelFromService(true);

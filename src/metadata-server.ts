@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { basename } from "node:path";
 import { getDashboardClientUiStatePath, getProjectId, getProjectStateDir } from "./paths.js";
 import {
   type MetadataTone,
@@ -11,9 +10,14 @@ import {
   loadMetadataState,
   type SessionLogEntry,
   type SessionContextMetadata,
-  type SessionMetadata,
   type SessionServiceMetadata,
 } from "./metadata-store.js";
+import {
+  contextualizeAlertInput,
+  mergeDisplayContext,
+  metadataDisplayContext,
+  type SessionAlertDisplayContext,
+} from "./alert-display.js";
 import { notifyAlert } from "./notify.js";
 import {
   clearNotifications,
@@ -75,96 +79,6 @@ import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { TmuxTarget } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
-
-interface SessionAlertDisplayContext {
-  label?: string;
-  command?: string;
-  worktreePath?: string;
-  worktreeName?: string;
-  branch?: string;
-}
-
-function compactSessionId(sessionId: string): string {
-  const compact = sessionId.replace(/-[a-z0-9]{4,}$/i, "");
-  return compact || sessionId;
-}
-
-function metadataDisplayContext(metadata?: SessionMetadata): SessionAlertDisplayContext {
-  return {
-    label: metadata?.label,
-    worktreePath: metadata?.context?.worktreePath,
-    worktreeName: metadata?.context?.worktreeName,
-    branch: metadata?.context?.branch,
-  };
-}
-
-function mergeDisplayContext(
-  base: SessionAlertDisplayContext,
-  override: SessionAlertDisplayContext,
-): SessionAlertDisplayContext {
-  return {
-    label: override.label ?? base.label,
-    command: override.command ?? base.command,
-    worktreePath: override.worktreePath ?? base.worktreePath,
-    worktreeName: override.worktreeName ?? base.worktreeName,
-    branch: override.branch ?? base.branch,
-  };
-}
-
-function displayWorktreeLabel(context: SessionAlertDisplayContext): string | undefined {
-  const worktreeName = context.worktreeName?.trim();
-  const branch = context.branch?.trim();
-  if (worktreeName) return worktreeName;
-  if (branch) return branch;
-  const path = context.worktreePath?.trim();
-  return path ? basename(path) : undefined;
-}
-
-function sessionAlertSubject(
-  sessionId: string | undefined,
-  context: SessionAlertDisplayContext | undefined,
-): string | undefined {
-  if (!sessionId) return undefined;
-  const label = context?.label?.trim() || context?.command?.trim() || compactSessionId(sessionId);
-  const worktree = context ? displayWorktreeLabel(context) : undefined;
-  return worktree ? `${label} @ ${worktree}` : label;
-}
-
-function sessionAlertTitle(
-  kind: AlertKind,
-  sessionId: string | undefined,
-  fallback: string | undefined,
-  context?: SessionAlertDisplayContext,
-): string {
-  const title = fallback?.trim();
-  const subject = sessionAlertSubject(sessionId, context);
-  if (!subject) return title || "aimux";
-  if (kind === "needs_input") return `${subject} needs input`;
-  if (kind === "blocked") {
-    if (!title || (sessionId && title === `${sessionId} is blocked`)) return `${subject} is blocked`;
-    return title;
-  }
-  if (kind === "task_failed") {
-    if (!title || (sessionId && title === `${sessionId} errored`)) return `${subject} errored`;
-    return title;
-  }
-  if (kind === "task_done") {
-    if (!title || (sessionId && title === `${sessionId} finished`)) return `${subject} finished`;
-    const genericTitles = new Set([
-      context?.label?.trim(),
-      context?.command?.trim(),
-      compactSessionId(sessionId ?? ""),
-      "service",
-      "shell",
-    ]);
-    if (genericTitles.has(title)) return `${subject} finished`;
-    return title;
-  }
-  if (!title) return subject;
-  if (title.includes(subject)) return title;
-  if (sessionId && title.includes(sessionId)) return title.replace(sessionId, subject);
-  return `${subject}: ${title}`;
-}
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -578,11 +492,7 @@ export class MetadataServer {
     forceNotify?: boolean;
   }): void {
     const displayContext = this.resolveSessionAlertDisplayContext(input.sessionId, input.worktreePath);
-    this.eventBus.publishAlert({
-      ...input,
-      title: sessionAlertTitle(input.kind, input.sessionId, input.title, displayContext),
-      worktreePath: input.worktreePath ?? displayContext?.worktreePath,
-    });
+    this.eventBus.publishAlert(contextualizeAlertInput(input, displayContext));
   }
 
   private resolveSessionAlertDisplayContext(
