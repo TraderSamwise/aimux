@@ -84,6 +84,8 @@ export interface DashboardService {
   label?: string;
   cwd?: string;
   foregroundCommand?: string;
+  shellCommand?: string;
+  shellCommandState?: "running" | "prompt";
   pid?: number;
   previewLine?: string;
   pendingAction?:

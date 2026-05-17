@@ -145,7 +145,11 @@ export function renderDashboardFrame(
     const numberBadge = quickDigit ? `[${quickDigit}] ` : "";
     const identity = service.label ?? service.command;
     const statusLabel = service.pendingAction ?? service.status;
-    const commandHint = service.foregroundCommand ? ` \x1b[2m· ${truncate(service.foregroundCommand, 22)}\x1b[0m` : "";
+    const commandHint = service.shellCommand
+      ? ` \x1b[2m· ${truncate(service.shellCommand, 36)}\x1b[0m`
+      : service.foregroundCommand
+        ? ` \x1b[2m· ${truncate(service.foregroundCommand, 22)}\x1b[0m`
+        : "";
     const pidHint = service.pid ? ` \x1b[2m(pid ${service.pid})\x1b[0m` : "";
     const previewHint = service.previewLine ? ` \x1b[2m· ${truncate(service.previewLine, 40)}\x1b[0m` : "";
     const lastUsedHint = service.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(service.lastUsedAt)}\x1b[0m` : "";
@@ -359,6 +363,15 @@ export function renderDashboardFrame(
         ),
       );
       lines.push(...wrapKeyValue("Command", selectedService.command, width));
+      if (selectedService.shellCommand) {
+        lines.push(
+          ...wrapKeyValue(
+            selectedService.shellCommandState === "running" ? "Running" : "Last command",
+            selectedService.shellCommand,
+            width,
+          ),
+        );
+      }
       if (selectedService.foregroundCommand)
         lines.push(...wrapKeyValue("Foreground", selectedService.foregroundCommand, width));
       if (selectedService.pid) lines.push(...wrapKeyValue("PID", String(selectedService.pid), width));

@@ -378,6 +378,7 @@ export function computeDashboardServices(
 ): DashboardService[] {
   const hiddenWorktreePaths = listWorktreeGraveyardPaths();
   const lastUsedState = loadLastUsedState(process.cwd());
+  const sessionMetadata = loadMetadataState().sessions;
   const offlineServiceIds = new Set(host.offlineServices.map((service: any) => service.id));
   const worktreeByPath = new Map<string, { name: string; path: string; branch: string; isBare: boolean }>(
     worktrees.map((wt: any) => [wt.path, wt] as const),
@@ -390,6 +391,7 @@ export function computeDashboardServices(
     .map(({ target, metadata }: any) => {
       const worktree = metadata.worktreePath ? worktreeByPath.get(metadata.worktreePath) : undefined;
       const info = readTmuxProcessInfo(host, target);
+      const shellMetadata = sessionMetadata[metadata.sessionId]?.derived;
       return {
         id: metadata.sessionId,
         command: metadata.command,
@@ -406,6 +408,8 @@ export function computeDashboardServices(
         label: metadata.label,
         cwd: host.tmuxRuntimeManager.displayMessage("#{pane_current_path}", target.windowId) ?? metadata.worktreePath,
         foregroundCommand: info.command,
+        shellCommand: shellMetadata?.shellCommand,
+        shellCommandState: shellMetadata?.shellCommandState,
         pid: info.pid,
         previewLine: info.previewLine,
       };
@@ -418,6 +422,7 @@ export function computeDashboardServices(
       const worktree = service.worktreePath ? worktreeByPath.get(service.worktreePath) : undefined;
       const label = service.label ?? host.serviceLabelForCommand(service.launchCommandLine ?? "");
       const previewLine = service.launchCommandLine?.trim() || "Interactive shell";
+      const shellMetadata = sessionMetadata[service.id]?.derived;
       return {
         id: service.id,
         command: service.launchCommandLine?.trim() ?? "",
@@ -432,6 +437,8 @@ export function computeDashboardServices(
         label,
         cwd: service.cwd ?? service.worktreePath,
         foregroundCommand: label,
+        shellCommand: shellMetadata?.shellCommand,
+        shellCommandState: shellMetadata?.shellCommandState,
         previewLine,
       };
     });

@@ -564,6 +564,7 @@ describe("MetadataServer threads API", () => {
         state: "running",
         sessionId: "shell-1",
         tool: "shell",
+        command: "yarn devp",
       }),
     });
     expect(runningRes.ok).toBe(true);
@@ -572,6 +573,8 @@ describe("MetadataServer threads API", () => {
     expect(derived?.activity).toBe("running");
     expect(derived?.attention).toBe("normal");
     expect(derived?.unseenCount).toBe(0);
+    expect(derived?.shellCommand).toBe("yarn devp");
+    expect(derived?.shellCommandState).toBe("running");
 
     const promptRes = await fetch(`${base}/shell-state`, {
       method: "POST",
@@ -587,6 +590,8 @@ describe("MetadataServer threads API", () => {
     derived = loadMetadataState(repoRoot).sessions["shell-1"]?.derived;
     expect(derived?.activity).toBe("idle");
     expect(derived?.attention).toBe("normal");
+    expect(derived?.shellCommand).toBe("yarn devp");
+    expect(derived?.shellCommandState).toBe("prompt");
   });
 
   it("streams session chat events over SSE", async () => {

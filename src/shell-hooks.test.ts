@@ -63,6 +63,16 @@ describe("shell hooks", () => {
     expect(readFileSync(prepared.rcPath, "utf8")).toContain('source "$HOME/.zshrc"');
   });
 
+  it("reports the command line from shell preexec hooks", () => {
+    const zsh = prepareShellIntegration("/repo/project-zsh-command", "/bin/zsh");
+    const bash = prepareShellIntegration("/repo/project-bash-command", "/bin/bash");
+
+    expect(readFileSync(zsh.integrationScriptPath, "utf8")).toContain('_aimux_report_shell_state running "$1"');
+    expect(readFileSync(bash.integrationScriptPath, "utf8")).toContain(
+      '_aimux_report_shell_state running "$BASH_COMMAND"',
+    );
+  });
+
   it.skipIf(!existsSync("/bin/zsh"))("executes zsh shells with both zshenv and zshrc from the user's HOME", () => {
     const homeDir = mkdtempSync(join(tmpdir(), "aimux-shell-hooks-home-"));
     try {

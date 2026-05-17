@@ -73,6 +73,8 @@ export interface SessionDerivedMetadata extends SessionDerivedState {
   lastEvent?: AgentEvent;
   events?: AgentEvent[];
   services?: SessionServiceMetadata[];
+  shellCommand?: string;
+  shellCommandState?: "running" | "prompt";
 }
 
 export interface SessionMetadata {

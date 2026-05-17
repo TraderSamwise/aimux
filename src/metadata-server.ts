@@ -1535,11 +1535,12 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/shell-state") {
-        const body = (await readJson(req)) as { state: string; sessionId: string; tool?: string };
+        const body = (await readJson(req)) as { state: string; sessionId: string; tool?: string; command?: string };
         const result = applyShellStateTransition({
           state: body.state,
           sessionId: body.sessionId,
           tool: body.tool,
+          command: body.command,
           tracker: this.tracker,
           emitAlert: (input) => this.emitAlert(input),
         });
