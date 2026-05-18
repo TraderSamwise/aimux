@@ -4,7 +4,14 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { createSession, migrateAgent, resumeSessions, runDashboard, runProjectService } from "./session-launch.js";
+import {
+  createSession,
+  focusSession,
+  migrateAgent,
+  resumeSessions,
+  runDashboard,
+  runProjectService,
+} from "./session-launch.js";
 import { loadMetadataState, recordSessionBackendSessionIdMetadata, updateSessionMetadata } from "../metadata-store.js";
 
 describe("createSession", () => {
@@ -546,6 +553,38 @@ describe("migrateAgent", () => {
 
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(targetRoot, { recursive: true, force: true });
+  });
+});
+
+describe("focusSession", () => {
+  it("uses durable backend metadata when opening a session that missed its backend id", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-focus-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+    recordSessionBackendSessionIdMetadata("claude-1", "backend-1", repoRoot);
+
+    const host: any = {
+      sessions: [{ id: "claude-1" }],
+      activeIndex: 0,
+      sessionMRU: [],
+      agentTracker: { markSeen: vi.fn() },
+      noteLastUsedItem: vi.fn(),
+      syncTuiNotificationContext: vi.fn(),
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager: { getTargetByWindowId: vi.fn() },
+      openLiveTmuxWindowForEntry: vi.fn(() => "opened"),
+      saveState: vi.fn(),
+    };
+
+    focusSession(host, 0);
+
+    expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({
+      id: "claude-1",
+      backendSessionId: "backend-1",
+    });
+    expect(host.saveState).toHaveBeenCalledOnce();
+
+    rmSync(repoRoot, { recursive: true, force: true });
   });
 });
 

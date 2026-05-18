@@ -669,7 +669,9 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
     } catch {}
   }
   if (typeof host.openLiveTmuxWindowForEntry === "function") {
-    const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId: session.backendSessionId });
+    const sessionMetadata = loadMetadataState().sessions[sid];
+    const backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
+    const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId });
     if (result === "opened") {
       host.saveState();
     }
