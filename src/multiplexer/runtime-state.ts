@@ -561,14 +561,16 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   const toolCfg = config.tools[session.toolConfigKey];
   if (!toolCfg) return;
 
-  const derived = loadMetadataState().sessions[session.id]?.derived;
+  const sessionMetadata = loadMetadataState().sessions[session.id];
+  const derived = sessionMetadata?.derived;
   const relaunchFresh = derived?.activity === "error" || derived?.attention === "error";
+  const backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
   const useBackendResume =
-    !relaunchFresh && host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, session.backendSessionId);
+    !relaunchFresh && host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId);
 
   let actionArgs: string[];
   if (useBackendResume) {
-    actionArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", session.backendSessionId!));
+    actionArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", backendSessionId!));
   } else if (relaunchFresh) {
     actionArgs = [];
   } else {
@@ -601,7 +603,7 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   }
 
   host.debug?.(
-    `resuming offline session ${session.id} (${relaunchFresh ? "fresh" : useBackendResume ? `backend=${session.backendSessionId ?? "none"}` : "fallback"})`,
+    `resuming offline session ${session.id} (${relaunchFresh ? "fresh" : useBackendResume ? `backend=${backendSessionId ?? "none"}` : "fallback"})`,
     "session",
   );
   host.createSession(
@@ -612,7 +614,7 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     undefined,
     undefined,
     session.worktreePath,
-    useBackendResume ? session.backendSessionId : undefined,
+    useBackendResume ? backendSessionId : undefined,
     session.id,
     true,
     useBackendResume,

@@ -14,7 +14,7 @@ function sessionStateFromRuntime(host: SessionActionsHost, runtime: any): any | 
     args: host.sessionOriginalArgs?.get?.(runtime.id) ?? runtime.args ?? [],
     lifecycle: "offline",
     createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : runtime.createdAt,
-    backendSessionId: runtime.backendSessionId,
+    backendSessionId: runtime.backendSessionId ?? getSessionBackendSessionId(runtime.id),
     worktreePath: host.sessionWorktreePaths?.get?.(runtime.id) ?? runtime.worktreePath,
     label: host.getSessionLabel?.(runtime.id) ?? runtime.label,
     headline: host.deriveHeadline?.(runtime.id) ?? runtime.headline,

@@ -15,7 +15,7 @@ import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
-import { clearSessionTranscriptPath } from "../metadata-store.js";
+import { clearSessionTranscriptPath, loadMetadataState } from "../metadata-store.js";
 
 type SessionLaunchHost = any;
 
@@ -248,9 +248,11 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
   }
 
   const ownedByOthers = host.getRemoteOwnedSessionKeys();
+  const metadata = loadMetadataState().sessions;
 
   for (const saved of sessionsToResume) {
-    if (ownedByOthers.has(saved.id) || (saved.backendSessionId && ownedByOthers.has(saved.backendSessionId))) {
+    const backendSessionId = saved.backendSessionId ?? metadata[saved.id]?.backendSessionId;
+    if (ownedByOthers.has(saved.id) || (backendSessionId && ownedByOthers.has(backendSessionId))) {
       debug(`skipping resume of ${saved.id} — owned by another instance`, "session");
       continue;
     }
@@ -258,16 +260,15 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
     const toolCfg = config.tools[saved.toolConfigKey];
     if (!toolCfg) continue;
 
-    const bsid = saved.backendSessionId;
-    if (!host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, bsid)) {
+    if (!host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId)) {
       console.error(
         `Skipping saved session "${saved.id}" because "${saved.toolConfigKey}" has no exact resumable backend session id.`,
       );
       continue;
     }
-    const resumeArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", bsid!));
+    const resumeArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", backendSessionId!));
     const args = host.sessionBootstrap.composeToolArgs(toolCfg, resumeArgs, saved.args);
-    debug(`resuming ${saved.command} with backendSessionId=${bsid}`, "session");
+    debug(`resuming ${saved.command} with backendSessionId=${backendSessionId}`, "session");
     host.createSession(
       saved.command,
       args,
@@ -276,7 +277,7 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
       undefined,
       undefined,
       saved.worktreePath,
-      saved.backendSessionId,
+      backendSessionId,
       undefined,
       false,
       true,

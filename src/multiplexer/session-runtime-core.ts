@@ -463,7 +463,9 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
   if (idx === -1) return;
 
   const explicitStop = host.stoppingSessionIds.has(runtime.id);
-  const shouldPreserveOffline = explicitStop || Boolean(runtime.backendSessionId) || uptime >= 10_000;
+  const sessionMetadata = loadMetadataState().sessions[runtime.id];
+  const backendSessionId = runtime.backendSessionId ?? sessionMetadata?.backendSessionId;
+  const shouldPreserveOffline = explicitStop || Boolean(backendSessionId) || uptime >= 10_000;
   if (shouldPreserveOffline && !host.offlineSessions.some((entry: any) => entry.id === runtime.id)) {
     host.offlineSessions.push({
       id: runtime.id,
@@ -473,7 +475,7 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
       args: host.sessionOriginalArgs.get(runtime.id) ?? [],
       lifecycle: "offline",
       createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : undefined,
-      backendSessionId: runtime.backendSessionId as string | undefined,
+      backendSessionId,
       worktreePath: host.sessionWorktreePaths.get(runtime.id),
       label: host.getSessionLabel(runtime.id),
       headline: host.deriveHeadline(runtime.id),
@@ -509,13 +511,14 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
 
 export function buildTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: string, command: string): any {
   const sessionMetadata = loadMetadataState().sessions[sessionId];
+  const runtime = host.sessions.find((session: any) => session.id === sessionId);
   return {
     kind: "agent",
     sessionId,
     command,
     args: host.sessionOriginalArgs.get(sessionId) ?? [],
     toolConfigKey: host.sessionToolKeys.get(sessionId) ?? command,
-    backendSessionId: host.sessions.find((session: any) => session.id === sessionId)?.backendSessionId,
+    backendSessionId: runtime?.backendSessionId ?? sessionMetadata?.backendSessionId,
     worktreePath: host.sessionWorktreePaths.get(sessionId),
     label: getSessionLabel(host, sessionId),
     role: host.sessionRoles.get(sessionId),

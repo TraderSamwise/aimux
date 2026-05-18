@@ -98,6 +98,99 @@ describe("resumeOfflineSession", () => {
     ]);
   });
 
+  it("uses durable backend metadata when resuming an incomplete offline row", () => {
+    recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
+    const createSession = vi.fn();
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-1" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: {
+        canResumeWithBackendSessionId: vi.fn(() => true),
+      },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      saveState: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession,
+    };
+
+    resumeOfflineSession(host, {
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      worktreePath: repoRoot,
+    });
+
+    expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex" }),
+      "native-session",
+    );
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession.mock.calls[0]).toMatchObject([
+      "codex",
+      expect.arrayContaining(["resume", "native-session"]),
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      "native-session",
+      "codex-1",
+      true,
+      true,
+    ]);
+  });
+
+  it("keeps the offline row backend id over stale metadata when resuming", () => {
+    recordSessionBackendSessionIdMetadata("codex-1", "backend-stale", repoRoot);
+    const createSession = vi.fn();
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-1", backendSessionId: "backend-current" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: {
+        canResumeWithBackendSessionId: vi.fn(() => true),
+      },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      saveState: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession,
+    };
+
+    resumeOfflineSession(host, {
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      backendSessionId: "backend-current",
+      args: [],
+      worktreePath: repoRoot,
+    });
+
+    expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex" }),
+      "backend-current",
+    );
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession.mock.calls[0]).toMatchObject([
+      "codex",
+      expect.arrayContaining(["resume", "backend-current"]),
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      "backend-current",
+      "codex-1",
+      true,
+      true,
+    ]);
+  });
+
   it("refuses targeted offline restore without exact backend resume", () => {
     const createSession = vi.fn();
     const host: any = {

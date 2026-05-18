@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
 import { createSession, resumeSessions, runDashboard, runProjectService } from "./session-launch.js";
-import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
+import { loadMetadataState, recordSessionBackendSessionIdMetadata, updateSessionMetadata } from "../metadata-store.js";
 
 describe("createSession", () => {
   it("does not inject startup preamble when explicitly suppressed", async () => {
@@ -472,6 +472,69 @@ describe("createSession", () => {
 });
 
 describe("resumeSessions", () => {
+  it("uses durable backend metadata when saved resume state is incomplete", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-metadata-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+    recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
+
+    class Host {
+      static loadState() {
+        return {
+          sessions: [
+            {
+              id: "codex-1",
+              command: "codex",
+              toolConfigKey: "codex",
+              args: ["--dangerously-bypass-approvals-and-sandbox"],
+              worktreePath: repoRoot,
+            },
+          ],
+        };
+      }
+
+      instanceId = "inst-1";
+      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
+      startHeartbeat = vi.fn();
+      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
+      sessionBootstrap = {
+        canResumeWithBackendSessionId: vi.fn(() => true),
+        composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
+          ...originalArgs,
+          ...resumeArgs,
+        ]),
+      };
+      createSession = vi.fn();
+      openTmuxDashboardTarget = vi.fn();
+      runDashboard = vi.fn();
+    }
+
+    const host = new Host();
+
+    await expect(resumeSessions(host as any)).resolves.toBe(0);
+
+    expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex" }),
+      "native-session",
+    );
+    expect(host.createSession).toHaveBeenCalledWith(
+      "codex",
+      expect.arrayContaining(["resume", "native-session"]),
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      "native-session",
+      undefined,
+      false,
+      true,
+    );
+    expect(host.openTmuxDashboardTarget).toHaveBeenCalledOnce();
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("skips saved sessions without exact backend resume args instead of using broad fallback args", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-"));
     execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });

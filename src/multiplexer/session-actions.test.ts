@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
+import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
 import { forkAgent, sendAgentToGraveyard, spawnAgent, stopAgent } from "./session-actions.js";
 
 vi.mock("../config.js", () => ({
@@ -203,6 +204,42 @@ describe("session actions", () => {
     ]);
   });
 
+  it("stops a stale runtime with a durable metadata backend id when runtime missed it", async () => {
+    recordSessionBackendSessionIdMetadata("claude-racy-zombie", "backend-racy", repoRoot);
+    const runtime = {
+      id: "claude-racy-zombie",
+      command: "claude",
+      startTime: Date.parse("2026-05-01T00:00:00.000Z"),
+    };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [runtime],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      sessionToolKeys: new Map([["claude-racy-zombie", "claude"]]),
+      sessionOriginalArgs: new Map([["claude-racy-zombie", []]]),
+      sessionWorktreePaths: new Map([["claude-racy-zombie", repoRoot]]),
+      getSessionLabel: vi.fn(() => undefined),
+      deriveHeadline: vi.fn(() => undefined),
+      isSessionRuntimeLive: vi.fn(() => false),
+      evictZombieSession: vi.fn((session: any) => {
+        host.sessions = host.sessions.filter((entry: any) => entry.id !== session.id);
+      }),
+      stopSessionToOffline: vi.fn(),
+      saveState: vi.fn(),
+    };
+
+    await stopAgent(host, "claude-racy-zombie");
+
+    expect(host.offlineSessions).toMatchObject([
+      {
+        id: "claude-racy-zombie",
+        lifecycle: "offline",
+        backendSessionId: "backend-racy",
+      },
+    ]);
+  });
+
   it("graveyards a stale runtime without waiting on a dead tmux window", async () => {
     const runtime = {
       id: "codex-zombie",
@@ -242,6 +279,44 @@ describe("session actions", () => {
       expect.objectContaining({ id: "codex-zombie", backendSessionId: "backend-2", lifecycle: "offline" }),
     );
     expect(host.graveyardAfterStopSessionIds.has("codex-zombie")).toBe(false);
+    expect(host.offlineSessions).toEqual([]);
+  });
+
+  it("graveyards a stale runtime with a durable metadata backend id when runtime missed it", async () => {
+    recordSessionBackendSessionIdMetadata("codex-racy-zombie", "backend-racy", repoRoot);
+    const runtime = {
+      id: "codex-racy-zombie",
+      command: "codex",
+      startTime: Date.parse("2026-05-01T00:00:00.000Z"),
+    };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [runtime],
+      offlineSessions: [],
+      graveyardAfterStopSessionIds: new Set(),
+      stoppingSessionIds: new Set(),
+      sessionToolKeys: new Map([["codex-racy-zombie", "codex"]]),
+      sessionOriginalArgs: new Map([["codex-racy-zombie", []]]),
+      sessionWorktreePaths: new Map([["codex-racy-zombie", repoRoot]]),
+      getSessionLabel: vi.fn(() => undefined),
+      deriveHeadline: vi.fn(() => undefined),
+      isSessionRuntimeLive: vi.fn(() => false),
+      evictZombieSession: vi.fn((session: any) => {
+        host.sessions = host.sessions.filter((entry: any) => entry.id !== session.id);
+      }),
+      stopSessionToOffline: vi.fn(),
+      graveyardSession: vi.fn((sessionId: string) => {
+        host.offlineSessions = host.offlineSessions.filter((session: any) => session.id !== sessionId);
+      }),
+      saveState: vi.fn(),
+    };
+
+    await sendAgentToGraveyard(host, "codex-racy-zombie");
+
+    expect(host.graveyardSession).toHaveBeenCalledWith(
+      "codex-racy-zombie",
+      expect.objectContaining({ id: "codex-racy-zombie", backendSessionId: "backend-racy", lifecycle: "offline" }),
+    );
     expect(host.offlineSessions).toEqual([]);
   });
 });

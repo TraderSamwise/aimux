@@ -299,7 +299,7 @@ export function computeDashboardSessions(host: DashboardModelHost): DashboardSes
     sessions: host.sessions.map((session: any) => ({
       id: session.id,
       command: session.command,
-      backendSessionId: session.backendSessionId,
+      backendSessionId: session.backendSessionId ?? metadata[session.id]?.backendSessionId,
       createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
       status: session.status,
       worktreePath: host.sessionWorktreePaths.get(session.id),
