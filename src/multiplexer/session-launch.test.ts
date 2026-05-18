@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { createSession, runDashboard, runProjectService } from "./session-launch.js";
+import { createSession, resumeSessions, runDashboard, runProjectService } from "./session-launch.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 
 describe("createSession", () => {
@@ -255,6 +255,56 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("does not append initial Codex instructions after an explicit -- prompt delimiter", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-delimiter-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => "aimux preamble"),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(() => "codex startup instructions"),
+        deliverDetachedCodexKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    createSession(
+      host,
+      "codex",
+      ["--dangerously-bypass-approvals-and-sandbox", "--", "Explain this codebase"],
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+    );
+
+    const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
+    const launched = (createWindowArgs[4] as string[]).join(" ");
+    expect(launched).toContain("Explain this codebase");
+    expect(launched).not.toContain("codex startup instructions");
+    expect(host.sessionBootstrap.deliverDetachedCodexKickoffPrompt).not.toHaveBeenCalled();
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("adds aimux preamble but not session id args to claude resume launches", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-resume-"));
     execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
@@ -417,6 +467,57 @@ describe("createSession", () => {
     ).toThrow('Session "claude-dup123" already exists');
 
     expect(host.tmuxRuntimeManager.createWindow).not.toHaveBeenCalled();
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+});
+
+describe("resumeSessions", () => {
+  it("skips saved sessions without exact backend resume args instead of using broad fallback args", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+
+    class Host {
+      static loadState() {
+        return {
+          sessions: [
+            {
+              id: "codex-1",
+              command: "codex",
+              toolConfigKey: "codex",
+              args: ["--dangerously-bypass-approvals-and-sandbox"],
+              worktreePath: repoRoot,
+            },
+          ],
+        };
+      }
+
+      instanceId = "inst-1";
+      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
+      startHeartbeat = vi.fn();
+      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
+      sessionBootstrap = {
+        canResumeWithBackendSessionId: vi.fn(() => false),
+        composeToolArgs: vi.fn(),
+      };
+      createSession = vi.fn();
+      openTmuxDashboardTarget = vi.fn();
+      runDashboard = vi.fn();
+    }
+
+    const host = new Host();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(resumeSessions(host as any)).resolves.toBe(0);
+
+    expect(host.createSession).not.toHaveBeenCalled();
+    expect(host.sessionBootstrap.composeToolArgs).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      'Skipping saved session "codex-1" because "codex" has no exact resumable backend session id.',
+    );
+    expect(host.openTmuxDashboardTarget).toHaveBeenCalledOnce();
+
+    error.mockRestore();
     rmSync(repoRoot, { recursive: true, force: true });
   });
 });

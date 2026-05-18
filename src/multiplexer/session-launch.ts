@@ -41,12 +41,15 @@ const CODEX_OPTIONS_WITH_VALUE = new Set([
 
 function firstCodexPositionalArg(args: string[]): string | undefined {
   let skipNext = false;
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
     if (skipNext) {
       skipNext = false;
       continue;
     }
-    if (arg === "--") return undefined;
+    if (arg === "--") {
+      return args.slice(i + 1).find((candidate) => candidate.trim().length > 0);
+    }
     if (arg.startsWith("--")) {
       const [name, value] = arg.split("=", 2);
       if (CODEX_OPTIONS_WITH_VALUE.has(name) && value === undefined) {
@@ -256,14 +259,15 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
     if (!toolCfg) continue;
 
     const bsid = saved.backendSessionId;
-    let resumeArgs: string[];
-    if (host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, bsid)) {
-      resumeArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", bsid!));
-    } else {
-      resumeArgs = toolCfg.resumeFallback ?? [];
+    if (!host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, bsid)) {
+      console.error(
+        `Skipping saved session "${saved.id}" because "${saved.toolConfigKey}" has no exact resumable backend session id.`,
+      );
+      continue;
     }
+    const resumeArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", bsid!));
     const args = host.sessionBootstrap.composeToolArgs(toolCfg, resumeArgs, saved.args);
-    debug(`resuming ${saved.command} with backendSessionId=${bsid ?? "none (fallback)"}`, "session");
+    debug(`resuming ${saved.command} with backendSessionId=${bsid}`, "session");
     host.createSession(
       saved.command,
       args,

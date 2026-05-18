@@ -22,6 +22,25 @@ function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | n
   );
 }
 
+function pendingDashboardItemMessage(
+  entry: { pendingAction?: string; label?: string; command?: string; id?: string },
+  fallbackKind: "agent" | "service",
+): string {
+  const action = entry.pendingAction ?? "pending";
+  const name = entry.label ?? entry.command ?? entry.id ?? fallbackKind;
+  return `${fallbackKind === "agent" ? "Agent" : "Service"} ${name} is ${action}`;
+}
+
+function flashPendingDashboardItem(
+  host: any,
+  entry: { pendingAction?: string; label?: string; command?: string; id?: string },
+  fallbackKind: "agent" | "service",
+): void {
+  host.footerFlash = pendingDashboardItemMessage(entry, fallbackKind);
+  host.footerFlashTicks = 3;
+  host.renderDashboard();
+}
+
 function findDashboardWorktreeGroup(host: any, worktreePath: string | undefined): any | undefined {
   return host.dashboardWorktreeGroupsCache.find((group: any) => group.path === worktreePath);
 }
@@ -376,6 +395,7 @@ export const dashboardInteractionMethods = {
         const selectedService = this.getSelectedDashboardServiceForActions();
         if (selectedService) {
           if (hasBlockingPendingDashboardAction(selectedService)) {
+            flashPendingDashboardItem(this, selectedService, "service");
             return;
           }
           if (selectedService.status === "offline") {
@@ -400,6 +420,7 @@ export const dashboardInteractionMethods = {
             : undefined;
         if (!selEntry) return;
         if (hasBlockingPendingDashboardAction(selEntry)) {
+          flashPendingDashboardItem(this, selEntry, "agent");
           return;
         }
 
@@ -599,6 +620,7 @@ export const dashboardInteractionMethods = {
       return;
     }
     if (hasBlockingPendingDashboardAction(service)) {
+      flashPendingDashboardItem(this, service, "service");
       return;
     }
 
@@ -621,6 +643,7 @@ export const dashboardInteractionMethods = {
       return;
     }
     if (hasBlockingPendingDashboardAction(entry)) {
+      flashPendingDashboardItem(this, entry, "agent");
       return;
     }
 

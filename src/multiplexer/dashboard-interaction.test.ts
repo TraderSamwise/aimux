@@ -157,12 +157,15 @@ describe("dashboardInteractionMethods", () => {
       waitAndOpenLiveTmuxWindowForEntry: vi.fn(),
       preferDashboardEntrySelection: vi.fn(),
       persistDashboardUiState: vi.fn(),
+      renderDashboard: vi.fn(),
     };
 
     await dashboardInteractionMethods.activateDashboardEntry.call(host, entry);
 
     expect(host.preferDashboardEntrySelection).not.toHaveBeenCalled();
     expect(host.waitAndOpenLiveTmuxWindowForEntry).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Agent codex-1 is stopping");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
   it("blocks activating services with terminal pending actions", async () => {
@@ -184,12 +187,15 @@ describe("dashboardInteractionMethods", () => {
       waitAndOpenLiveTmuxWindowForService: vi.fn(),
       preferDashboardEntrySelection: vi.fn(),
       persistDashboardUiState: vi.fn(),
+      renderDashboard: vi.fn(),
     };
 
     await dashboardInteractionMethods.activateDashboardService.call(host, service);
 
     expect(host.preferDashboardEntrySelection).not.toHaveBeenCalled();
     expect(host.waitAndOpenLiveTmuxWindowForService).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Service service-1 is stopping");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
   it("does not stop or remove entries that are already pending", () => {
@@ -219,12 +225,15 @@ describe("dashboardInteractionMethods", () => {
       stopSessionToOfflineWithFeedback: vi.fn(),
       graveyardSessionWithFeedback: vi.fn(),
       isSessionRuntimeLive: vi.fn(() => true),
+      renderDashboard: vi.fn(),
     };
 
     dashboardInteractionMethods.handleDashboardKey.call(host, Buffer.from("x"));
 
     expect(host.stopSessionToOfflineWithFeedback).not.toHaveBeenCalled();
     expect(host.graveyardSessionWithFeedback).not.toHaveBeenCalled();
+    expect(host.footerFlash).toBe("Agent codex-1 is stopping");
+    expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 
   it("stops a live dashboard agent row even when this process has no local runtime", () => {

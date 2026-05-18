@@ -481,7 +481,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       undefined,
       claimed.worktreePath,
       target.backendSessionId,
-      undefined,
+      target.id,
       false,
       true,
     );
