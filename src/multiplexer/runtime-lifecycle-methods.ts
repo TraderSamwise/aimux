@@ -5,6 +5,7 @@ import { closeDebug, debug } from "../debug.js";
 import { loadConfig } from "../config.js";
 import { getStatePath } from "../paths.js";
 import { buildAimuxAgentInstructions } from "../session-bootstrap.js";
+import { loadMetadataState } from "../metadata-store.js";
 import type { InstanceInfo, InstanceSessionRef } from "../instance-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
@@ -33,9 +34,13 @@ import {
   syncSessionsFromState as syncSessionsFromStateImpl,
 } from "./runtime-state.js";
 
-function sanitizeOfflineSessionState(session: SessionState): SessionState {
+function sanitizeOfflineSessionState(session: SessionState, metadataState = loadMetadataState()): SessionState {
   const { tmuxTarget: _tmuxTarget, ...rest } = session;
-  return { ...rest, lifecycle: "offline" };
+  return {
+    ...rest,
+    backendSessionId: rest.backendSessionId ?? metadataState.sessions[rest.id]?.backendSessionId,
+    lifecycle: "offline",
+  };
 }
 
 function sessionStateKey(session: SessionState): string {
@@ -117,7 +122,7 @@ export type RuntimeLifecycleMethods = {
   restoreTmuxSessionsFromState(this: Multiplexer, state?: SavedState | null): void;
   stopSessionToOffline(this: Multiplexer, session: SessionRuntime): void;
   adjustAfterRemove(this: Multiplexer, hasWorktrees: boolean): void;
-  graveyardSession(this: Multiplexer, sessionId: string): void;
+  graveyardSession(this: Multiplexer, sessionId: string, sessionSeed?: any): void;
   isSessionRuntimeLive(this: Multiplexer, runtime: SessionRuntime): boolean;
   evictZombieSession(this: Multiplexer, runtime: SessionRuntime): void;
   resumeOfflineSession(this: Multiplexer, session: SessionState): void;
@@ -225,8 +230,8 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   adjustAfterRemove(this: Multiplexer, hasWorktrees) {
     adjustAfterRemoveImpl(this, hasWorktrees);
   },
-  graveyardSession(this: Multiplexer, sessionId) {
-    graveyardSessionImpl(this, sessionId);
+  graveyardSession(this: Multiplexer, sessionId, sessionSeed) {
+    graveyardSessionImpl(this, sessionId, sessionSeed);
   },
   isSessionRuntimeLive(this: Multiplexer, runtime) {
     return isSessionRuntimeLiveImpl(this, runtime);
@@ -266,6 +271,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   },
   saveState(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
+    const metadataState = loadMetadataState();
     const liveSessions = mux.sessions
       .filter((s: SessionRuntime) => !("stoppingSessionIds" in mux) || !(mux as any).stoppingSessionIds?.has?.(s.id))
       .filter((s: SessionRuntime) => this.isSessionRuntimeLive(s))
@@ -277,7 +283,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
         args: mux.sessionOriginalArgs.get(s.id) ?? [],
         lifecycle: "live" as const,
         createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
-        backendSessionId: s.backendSessionId,
+        backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
         worktreePath: mux.sessionWorktreePaths.get(s.id),
         label: this.getSessionLabel(s.id),
         headline: this.deriveHeadline(s.id),
@@ -285,7 +291,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       }));
     const liveKeys = new Set(liveSessions.map(sessionStateKey));
     const offlineSessions = mux.offlineSessions
-      .map(sanitizeOfflineSessionState)
+      .map((session) => sanitizeOfflineSessionState(session, metadataState))
       .filter((session) => !liveKeys.has(sessionStateKey(session)));
     const mySessions = dedupeSessionStates([...liveSessions, ...offlineSessions]);
     const remoteRefs = this.getRemoteInstancesSafe().flatMap((instance: InstanceInfo) => instance.sessions);
@@ -318,7 +324,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
           if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return [];
           if (myIds.has(s.id)) return [];
           if (!isRecoverableExistingSession(s)) return [];
-          return [sanitizeOfflineSessionState(s)];
+          return [sanitizeOfflineSessionState(s, metadataState)];
         });
         mergedSessions = dedupeSessionStates([...remoteSessions, ...otherSessions, ...mySessions]);
 

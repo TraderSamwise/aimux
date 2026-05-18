@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getStatePath, initPaths } from "../paths.js";
+import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
 import { runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
 
 describe("runtime lifecycle state persistence", () => {
@@ -31,6 +32,8 @@ describe("runtime lifecycle state persistence", () => {
       getRemoteInstancesSafe: vi.fn(() => []),
       invalidateDesktopStateSnapshot: vi.fn(),
       isSessionRuntimeLive: vi.fn(() => true),
+      getSessionLabel: vi.fn(() => undefined),
+      deriveHeadline: vi.fn(() => undefined),
       ...overrides,
     };
   }
@@ -409,6 +412,77 @@ describe("runtime lifecycle state persistence", () => {
         lifecycle: "live",
         backendSessionId: "backend-1",
         tmuxTarget,
+      }),
+    ]);
+  });
+
+  it("fills missing live backend ids from metadata while saving state", () => {
+    recordSessionBackendSessionIdMetadata("claude-live", "backend-from-metadata", repoRoot);
+    const runtime = {
+      id: "claude-live",
+      command: "claude",
+      startTime: Date.parse("2026-04-21T00:00:00.000Z"),
+    };
+    const tmuxTarget = {
+      sessionName: "aimux-repo",
+      windowId: "@4",
+      windowIndex: 4,
+      windowName: "claude",
+    };
+
+    runtimeLifecycleMethods.saveState.call(
+      host({
+        sessions: [runtime],
+        sessionToolKeys: new Map([["claude-live", "claude"]]),
+        sessionOriginalArgs: new Map([["claude-live", ["--resume"]]]),
+        sessionWorktreePaths: new Map([["claude-live", repoRoot]]),
+        sessionTmuxTargets: new Map([["claude-live", tmuxTarget]]),
+      }) as never,
+    );
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; backendSessionId?: string }>;
+    };
+    expect(saved.sessions).toEqual([
+      expect.objectContaining({
+        id: "claude-live",
+        backendSessionId: "backend-from-metadata",
+      }),
+    ]);
+  });
+
+  it("does not replace a known runtime backend id with conflicting metadata", () => {
+    recordSessionBackendSessionIdMetadata("claude-live", "backend-stale", repoRoot);
+    const runtime = {
+      id: "claude-live",
+      command: "claude",
+      backendSessionId: "backend-current",
+      startTime: Date.parse("2026-04-21T00:00:00.000Z"),
+    };
+    const tmuxTarget = {
+      sessionName: "aimux-repo",
+      windowId: "@5",
+      windowIndex: 5,
+      windowName: "claude",
+    };
+
+    runtimeLifecycleMethods.saveState.call(
+      host({
+        sessions: [runtime],
+        sessionToolKeys: new Map([["claude-live", "claude"]]),
+        sessionOriginalArgs: new Map([["claude-live", ["--resume", "backend-current"]]]),
+        sessionWorktreePaths: new Map([["claude-live", repoRoot]]),
+        sessionTmuxTargets: new Map([["claude-live", tmuxTarget]]),
+      }) as never,
+    );
+
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; backendSessionId?: string }>;
+    };
+    expect(saved.sessions).toEqual([
+      expect.objectContaining({
+        id: "claude-live",
+        backendSessionId: "backend-current",
       }),
     ]);
   });

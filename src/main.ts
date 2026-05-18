@@ -37,6 +37,7 @@ import {
   loadMetadataEndpoint,
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   updateSessionMetadata,
+  recordSessionBackendSessionIdMetadata,
   clearSessionLogs,
   loadMetadataState,
   type MetadataTone,
@@ -370,6 +371,7 @@ async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSess
 function recordBackendSessionIdInState(
   sessionId: string,
   backendSessionId: string,
+  projectRoot: string,
 ): {
   sessionId: string;
   backendSessionId: string;
@@ -378,11 +380,14 @@ function recordBackendSessionIdInState(
   const state = Multiplexer.loadState();
   const session = state?.sessions.find((entry) => entry.id === sessionId);
   if (!state || !session || !normalizedBackendSessionId) {
+    recordSessionBackendSessionIdMetadata(sessionId, normalizedBackendSessionId, projectRoot);
     return { sessionId, backendSessionId: normalizedBackendSessionId };
   }
   if (session.backendSessionId && session.backendSessionId !== normalizedBackendSessionId) {
+    recordSessionBackendSessionIdMetadata(sessionId, session.backendSessionId, projectRoot);
     return { sessionId, backendSessionId: session.backendSessionId };
   }
+  recordSessionBackendSessionIdMetadata(sessionId, normalizedBackendSessionId, projectRoot);
   session.backendSessionId = normalizedBackendSessionId;
   state.savedAt = new Date().toISOString();
   writeJsonAtomic(getStatePath(), state);
@@ -391,7 +396,7 @@ function recordBackendSessionIdInState(
 
 async function recordBackendSessionId(projectRoot: string, sessionId: string, backendSessionId: string): Promise<void> {
   await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/backend-session", { sessionId, backendSessionId }, () =>
-    recordBackendSessionIdInState(sessionId, backendSessionId),
+    recordBackendSessionIdInState(sessionId, backendSessionId, projectRoot),
   );
 }
 

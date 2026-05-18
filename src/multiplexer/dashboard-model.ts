@@ -2,6 +2,7 @@ import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashb
 import { buildDashboardSessions } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
 import {
+  getSessionBackendSessionId,
   loadMetadataEndpoint,
   loadMetadataState,
   removeMetadataEndpoint,
@@ -46,7 +47,7 @@ function sessionStateFromDashboardSeed(seed: any): any | undefined {
         ? seed.backendSessionId
         : typeof seed.remoteBackendSessionId === "string"
           ? seed.remoteBackendSessionId
-          : undefined,
+          : getSessionBackendSessionId(seed.id),
     worktreePath: typeof seed.worktreePath === "string" ? seed.worktreePath : undefined,
     label: typeof seed.label === "string" ? seed.label : undefined,
     headline: typeof seed.headline === "string" ? seed.headline : undefined,
@@ -178,6 +179,7 @@ export function applyDashboardModel(
     worktreeGroups,
     mainCheckoutInfo,
     operationFailures,
+    pendingActionsVersion: host.dashboardPendingActions.getVersion?.() ?? 0,
   });
   if (snapshotKey === host.dashboardModelSnapshotKey) {
     host.dashboardModelRefreshedAt = Date.now();

@@ -62,11 +62,12 @@ export const persistenceMethods = {
     const dir = getLocalAimuxDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
+    const metadataState = loadMetadataState();
     const localSessions = this.sessions.map((s: any) => ({
       id: s.id,
       tool: s.command,
       createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
-      backendSessionId: s.backendSessionId,
+      backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
       worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
     const data = this.instanceDirectory.buildSessionsFileEntries(

@@ -1,6 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../config.js";
-import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
+import {
+  getSessionBackendSessionId,
+  loadMetadataState,
+  recordSessionBackendSessionIdMetadata,
+  updateSessionMetadata,
+} from "../metadata-store.js";
 import { getGraveyardPath, getLocalAimuxDir, getStatePath } from "../paths.js";
 import { isToolInternalWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
@@ -12,6 +17,8 @@ import { getServiceLaunchCommandLine } from "./services.js";
 type RuntimeStateHost = any;
 
 type ManagedAgentWindow = { target: any; metadata: any };
+
+const DASHBOARD_BACKGROUND_REFRESH_MS = 2000;
 
 function isAvailableWorktreePath(worktreePath?: string, graveyardPaths = listWorktreeGraveyardPaths()): boolean {
   if (!worktreePath) return true;
@@ -50,6 +57,40 @@ function removeRuntimeRegistration(host: RuntimeStateHost, runtime: any): void {
 function offlineSessionState(session: any): any {
   const { tmuxTarget: _tmuxTarget, ...rest } = session;
   return { ...rest, lifecycle: "offline" };
+}
+
+function fillMissingBackendSessionIdFromMetadata(session: any, metadataState = loadMetadataState()): any {
+  if (session.backendSessionId) return session;
+  const backendSessionId = metadataState.sessions[session.id]?.backendSessionId;
+  return backendSessionId ? { ...session, backendSessionId } : session;
+}
+
+function writeBackendSessionIdToSavedState(sessionId: string, backendSessionId: string): void {
+  const statePath = getStatePath();
+  if (!existsSync(statePath)) return;
+  try {
+    const state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
+    const session = state.sessions?.find?.((entry: any) => entry.id === sessionId);
+    if (!session) return;
+    if (session.backendSessionId && session.backendSessionId !== backendSessionId) return;
+    session.backendSessionId = backendSessionId;
+    state.savedAt = new Date().toISOString();
+    writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  } catch {}
+}
+
+function getSavedBackendSessionId(sessionId: string): string | undefined {
+  const statePath = getStatePath();
+  if (!existsSync(statePath)) return undefined;
+  try {
+    const state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
+    const session = state.sessions?.find?.((entry: any) => entry.id === sessionId);
+    return typeof session?.backendSessionId === "string" && session.backendSessionId
+      ? session.backendSessionId
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function markLifecycleUsed(host: RuntimeStateHost, itemId: string): void {
@@ -168,7 +209,7 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
     if (host.mode === "dashboard") {
       const now = Date.now();
       if (now >= host.dashboardNextBackgroundRefreshAt) {
-        host.dashboardNextBackgroundRefreshAt = now + 5000;
+        host.dashboardNextBackgroundRefreshAt = now + DASHBOARD_BACKGROUND_REFRESH_MS;
         void host.refreshDashboardModelFromService().then((refreshed: boolean) => {
           if (refreshed || dashboardNeedsRender) {
             host.renderCurrentDashboardView();
@@ -224,7 +265,9 @@ export function loadOfflineSessions(
       .filter((value: any): value is string => Boolean(value)),
   );
 
+  const metadataState = loadMetadataState();
   const nextOfflineSessions = state.sessions
+    .map((s: any) => fillMissingBackendSessionIdFromMetadata(s, metadataState))
     .filter((s: any) => {
       if (!isIntentionalOfflineSession(s)) return false;
       if (liveIds.has(s.id)) return false;
@@ -237,10 +280,16 @@ export function loadOfflineSessions(
     })
     .map(offlineSessionState);
   const previousKey = host.offlineSessions
-    .map((session: any) => `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}`)
+    .map(
+      (session: any) =>
+        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}`,
+    )
     .join("|");
   const nextKey = nextOfflineSessions
-    .map((session: any) => `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}`)
+    .map(
+      (session: any) =>
+        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}`,
+    )
     .join("|");
   host.offlineSessions = nextOfflineSessions;
 
@@ -391,6 +440,7 @@ export function restoreTmuxSessionsFromState(
 export function stopSessionToOffline(host: RuntimeStateHost, session: any): void {
   if (host.stoppingSessionIds.has(session.id)) return;
   markLifecycleUsed(host, session.id);
+  const backendSessionId = session.backendSessionId ?? getSessionBackendSessionId(session.id);
   const offlineEntry = {
     id: session.id,
     tool: session.command,
@@ -399,13 +449,16 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
     args: host.sessionOriginalArgs.get(session.id) ?? [],
     lifecycle: "offline",
     createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
-    backendSessionId: session.backendSessionId as string | undefined,
+    backendSessionId,
     worktreePath: host.sessionWorktreePaths.get(session.id),
     label: host.getSessionLabel(session.id),
     headline: host.deriveHeadline(session.id),
   };
 
-  if (!host.offlineSessions.some((entry: any) => entry.id === session.id)) {
+  const existingIndex = host.offlineSessions.findIndex((entry: any) => entry.id === session.id);
+  if (existingIndex >= 0) {
+    host.offlineSessions[existingIndex] = { ...host.offlineSessions[existingIndex], ...offlineEntry };
+  } else {
     host.offlineSessions.push(offlineEntry);
   }
   host.stoppingSessionIds.add(session.id);
@@ -431,8 +484,12 @@ export function adjustAfterRemove(host: RuntimeStateHost, hasWorktrees: boolean)
   }
 }
 
-export function graveyardSession(host: RuntimeStateHost, sessionId: string): void {
-  const session = host.offlineSessions.find((s: any) => s.id === sessionId);
+export function graveyardSession(host: RuntimeStateHost, sessionId: string, sessionSeed?: any): void {
+  const session =
+    host.offlineSessions.find((s: any) => s.id === sessionId) ??
+    (sessionSeed?.id === sessionId
+      ? offlineSessionState(fillMissingBackendSessionIdFromMetadata(sessionSeed))
+      : undefined);
   if (!session) return;
   markLifecycleUsed(host, sessionId);
 
@@ -578,7 +635,15 @@ export function recordSessionBackendSessionId(
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   const offline = host.offlineSessions.find((session: any) => session.id === sessionId);
   if (!runtime && !offline) {
-    throw new Error(`Agent "${sessionId}" not found`);
+    const savedBackendSessionId = getSavedBackendSessionId(sessionId);
+    if (savedBackendSessionId && savedBackendSessionId !== normalizedBackendSessionId) {
+      recordSessionBackendSessionIdMetadata(sessionId, savedBackendSessionId);
+      return { sessionId, backendSessionId: savedBackendSessionId };
+    }
+    const selectedBackendSessionId = savedBackendSessionId ?? normalizedBackendSessionId;
+    recordSessionBackendSessionIdMetadata(sessionId, selectedBackendSessionId);
+    writeBackendSessionIdToSavedState(sessionId, selectedBackendSessionId);
+    return { sessionId, backendSessionId: selectedBackendSessionId };
   }
 
   const existing = runtime?.backendSessionId ?? offline?.backendSessionId;
@@ -587,20 +652,23 @@ export function recordSessionBackendSessionId(
       `Agent "${sessionId}" already has backend session "${existing}", cannot replace with "${normalizedBackendSessionId}"`,
     );
   }
+  const selectedBackendSessionId = existing ?? normalizedBackendSessionId;
+  recordSessionBackendSessionIdMetadata(sessionId, selectedBackendSessionId);
 
   if (runtime) {
-    runtime.backendSessionId = normalizedBackendSessionId;
+    runtime.backendSessionId = selectedBackendSessionId;
     host.syncTmuxWindowMetadata?.(sessionId);
   }
   if (offline) {
-    offline.backendSessionId = normalizedBackendSessionId;
+    offline.backendSessionId = selectedBackendSessionId;
   }
+  writeBackendSessionIdToSavedState(sessionId, selectedBackendSessionId);
 
   host.writeSessionsFile?.();
   host.saveState?.();
   host.invalidateDesktopStateSnapshot?.();
   host.writeStatuslineFile?.();
-  return { sessionId, backendSessionId: normalizedBackendSessionId };
+  return { sessionId, backendSessionId: selectedBackendSessionId };
 }
 
 export function startHeartbeat(host: RuntimeStateHost): void {
@@ -647,10 +715,11 @@ export function getRemoteOwnedSessionKeys(host: RuntimeStateHost): Set<string> {
 }
 
 export function getInstanceSessionRefs(host: RuntimeStateHost): any[] {
+  const metadataState = loadMetadataState();
   return host.sessions.map((s: any) => ({
     id: s.id,
     tool: s.command,
-    backendSessionId: s.backendSessionId,
+    backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
     worktreePath: host.sessionWorktreePaths.get(s.id),
   }));
 }
@@ -659,10 +728,11 @@ export function writeSessionsFile(host: RuntimeStateHost): void {
   const dir = getLocalAimuxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
+  const metadataState = loadMetadataState();
   const localSessions = host.sessions.map((s: any) => ({
     id: s.id,
     tool: s.command,
-    backendSessionId: s.backendSessionId,
+    backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
     worktreePath: host.sessionWorktreePaths.get(s.id),
   }));
   const data = host.instanceDirectory.buildSessionsFileEntries(

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildDashboardWorktreeGroups, composeDashboardWorktreeGroups } from "./dashboard-model.js";
+import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import {
+  applyDashboardModel,
+  buildDashboardWorktreeGroups,
+  composeDashboardWorktreeGroups,
+} from "./dashboard-model.js";
 
 describe("buildDashboardWorktreeGroups", () => {
   it("always includes main checkout as the first group", () => {
@@ -109,5 +114,50 @@ describe("buildDashboardWorktreeGroups", () => {
     );
 
     expect(groups[1]?.operationFailure?.message).toBe("branch already exists");
+  });
+});
+
+describe("applyDashboardModel", () => {
+  it("rebuilds derived caches when only pending actions change", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      dashboardUiStateStore: {
+        orderWorktreeGroups: (groups: unknown) => groups,
+        markSelectionDirty: () => {},
+      },
+    };
+    const mainCheckoutInfo = { name: "Main Checkout", branch: "master" };
+    const worktreeGroups = [
+      {
+        name: "Main Checkout",
+        branch: "master",
+        path: undefined,
+        status: "offline" as const,
+        sessions: [],
+        services: [],
+      },
+    ];
+
+    pending.set("service-new", "creating", {
+      serviceSeed: {
+        id: "service-new",
+        command: "shell",
+        args: [],
+        label: "shell",
+        status: "running",
+        active: false,
+      },
+    });
+
+    expect(applyDashboardModel(host, [], [], worktreeGroups, mainCheckoutInfo)).toBe(true);
+    expect(host.dashboardServicesCache).toEqual([
+      expect.objectContaining({ id: "service-new", pendingAction: "creating", optimistic: true }),
+    ]);
+
+    pending.set("service-new", null);
+
+    expect(applyDashboardModel(host, [], [], worktreeGroups, mainCheckoutInfo)).toBe(true);
+    expect(host.dashboardServicesCache).toEqual([]);
   });
 });

@@ -204,6 +204,11 @@ export class Multiplexer {
   private notificationPanelState: NotificationPanelState | null = null;
   private dashboardPendingActions = new DashboardPendingActions(() => {
     if (this.mode === "dashboard") {
+      void this.refreshDashboardModelFromService(true).then(() => {
+        if (this.mode === "dashboard") {
+          this.renderCurrentDashboardView();
+        }
+      });
       this.renderCurrentDashboardView();
     }
   });

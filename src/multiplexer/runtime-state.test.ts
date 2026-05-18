@@ -1,10 +1,13 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initPaths } from "../paths.js";
+import { getGraveyardPath, getStatePath, initPaths } from "../paths.js";
+import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
 import {
   buildLiveServiceStates,
+  getInstanceSessionRefs,
+  graveyardSession,
   loadOfflineServices,
   loadOfflineSessions,
   recordSessionBackendSessionId,
@@ -162,6 +165,127 @@ describe("resumeOfflineSession", () => {
     expect(host.saveState).toHaveBeenCalledTimes(2);
   });
 
+  it("persists hook-discovered backend ids even when the runtime row is not loaded yet", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [
+            {
+              id: "claude-racy",
+              command: "claude",
+              tool: "claude",
+              toolConfigKey: "claude",
+              args: ["--resume"],
+              lifecycle: "live",
+              worktreePath: repoRoot,
+            },
+          ],
+          services: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+    };
+
+    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-racy")).toEqual({
+      sessionId: "claude-racy",
+      backendSessionId: "backend-racy",
+    });
+
+    const state = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; backendSessionId?: string }>;
+    };
+    expect(state.sessions.find((session) => session.id === "claude-racy")?.backendSessionId).toBe("backend-racy");
+  });
+
+  it("does not replace saved backend ids from a hook fallback without a loaded row", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [
+            {
+              id: "claude-racy",
+              command: "claude",
+              tool: "claude",
+              toolConfigKey: "claude",
+              backendSessionId: "backend-saved",
+              lifecycle: "offline",
+              worktreePath: repoRoot,
+            },
+          ],
+          services: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+    };
+
+    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-new")).toEqual({
+      sessionId: "claude-racy",
+      backendSessionId: "backend-saved",
+    });
+
+    const state = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; backendSessionId?: string }>;
+    };
+    expect(state.sessions.find((session) => session.id === "claude-racy")?.backendSessionId).toBe("backend-saved");
+  });
+
+  it("does not let stale metadata override saved state in hook fallback", () => {
+    recordSessionBackendSessionIdMetadata("claude-racy", "backend-stale", repoRoot);
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [
+            {
+              id: "claude-racy",
+              command: "claude",
+              tool: "claude",
+              toolConfigKey: "claude",
+              backendSessionId: "backend-saved",
+              lifecycle: "offline",
+              worktreePath: repoRoot,
+            },
+          ],
+          services: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+    };
+
+    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-saved")).toEqual({
+      sessionId: "claude-racy",
+      backendSessionId: "backend-saved",
+    });
+
+    const state = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
+      sessions: Array<{ id: string; backendSessionId?: string }>;
+    };
+    expect(state.sessions.find((session) => session.id === "claude-racy")?.backendSessionId).toBe("backend-saved");
+  });
+
   it("does not replace an existing backend session id", () => {
     const host: any = {
       sessions: [{ id: "claude-1", command: "claude", backendSessionId: "backend-original" }],
@@ -171,6 +295,43 @@ describe("resumeOfflineSession", () => {
     expect(() => recordSessionBackendSessionId(host, "claude-1", "backend-new")).toThrow(
       'Agent "claude-1" already has backend session "backend-original"',
     );
+  });
+
+  it("does not let stale metadata override a known runtime backend id", () => {
+    recordSessionBackendSessionIdMetadata("claude-1", "backend-stale", repoRoot);
+    const runtime = { id: "claude-1", command: "claude", backendSessionId: "backend-current" };
+    const host: any = {
+      sessions: [runtime],
+      offlineSessions: [],
+      syncTmuxWindowMetadata: vi.fn(),
+      writeSessionsFile: vi.fn(),
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+    };
+
+    expect(recordSessionBackendSessionId(host, "claude-1", "backend-current")).toEqual({
+      sessionId: "claude-1",
+      backendSessionId: "backend-current",
+    });
+    expect(runtime.backendSessionId).toBe("backend-current");
+  });
+
+  it("fills instance heartbeat refs from backend metadata", () => {
+    recordSessionBackendSessionIdMetadata("claude-racy", "backend-racy", repoRoot);
+    const host: any = {
+      sessions: [{ id: "claude-racy", command: "claude" }],
+      sessionWorktreePaths: new Map([["claude-racy", repoRoot]]),
+    };
+
+    expect(getInstanceSessionRefs(host)).toEqual([
+      {
+        id: "claude-racy",
+        tool: "claude",
+        backendSessionId: "backend-racy",
+        worktreePath: repoRoot,
+      },
+    ]);
   });
 
   it("does not reload a starting session as offline from stale saved state", () => {
@@ -318,6 +479,86 @@ describe("resumeOfflineSession", () => {
     ]);
   });
 
+  it("fills missing offline backend ids from metadata without synthesizing new rows", () => {
+    recordSessionBackendSessionIdMetadata("claude-recoverable", "backend-from-metadata", repoRoot);
+    recordSessionBackendSessionIdMetadata("metadata-only", "backend-metadata-only", repoRoot);
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+      getRemoteInstancesSafe: vi.fn(() => []),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      debug: vi.fn(),
+    };
+
+    const changed = loadOfflineSessions(host, {
+      sessions: [
+        {
+          id: "claude-recoverable",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: ["--resume"],
+          lifecycle: "live",
+          worktreePath: repoRoot,
+        },
+      ],
+      services: [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(true);
+    expect(host.offlineSessions).toEqual([
+      expect.objectContaining({
+        id: "claude-recoverable",
+        backendSessionId: "backend-from-metadata",
+      }),
+    ]);
+  });
+
+  it("detects offline session changes when metadata fills a backend id", () => {
+    const host: any = {
+      sessions: [],
+      offlineSessions: [
+        {
+          id: "claude-recoverable",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+      getRemoteInstancesSafe: vi.fn(() => []),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      debug: vi.fn(),
+    };
+    recordSessionBackendSessionIdMetadata("claude-recoverable", "backend-from-metadata", repoRoot);
+
+    const changed = loadOfflineSessions(host, {
+      sessions: [
+        {
+          id: "claude-recoverable",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+      services: [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(true);
+    expect(host.offlineSessions[0].backendSessionId).toBe("backend-from-metadata");
+  });
+
   it("loads valid live sessions without backend ids as offline when their tmux window is gone", () => {
     const host: any = {
       sessions: [],
@@ -402,6 +643,52 @@ describe("resumeOfflineSession", () => {
         lifecycle: "offline",
       },
     ]);
+  });
+
+  it("graveyards stale visible seed rows even when they are not loaded as offline", () => {
+    const host: any = {
+      offlineSessions: [],
+      noteLastUsedItem: vi.fn(),
+      debug: vi.fn(),
+    };
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          cwd: repoRoot,
+          sessions: [
+            {
+              id: "codex-stale",
+              command: "codex",
+              tool: "codex",
+              toolConfigKey: "codex",
+              lifecycle: "offline",
+              worktreePath: repoRoot,
+            },
+          ],
+          services: [],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    graveyardSession(host, "codex-stale", {
+      id: "codex-stale",
+      command: "codex",
+      tool: "codex",
+      toolConfigKey: "codex",
+      lifecycle: "offline",
+      worktreePath: repoRoot,
+    });
+
+    const state = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { sessions: Array<{ id: string }> };
+    const graveyard = existsSync(getGraveyardPath())
+      ? (JSON.parse(readFileSync(getGraveyardPath(), "utf-8")) as Array<{ id: string }>)
+      : [];
+    expect(state.sessions).toEqual([]);
+    expect(graveyard.map((entry) => entry.id)).toContain("codex-stale");
   });
 
   it("restores team role from tmux metadata", () => {

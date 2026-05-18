@@ -1,5 +1,6 @@
 import { waitForSessionExit } from "../dashboard/session-actions.js";
 import { loadConfig } from "../config.js";
+import { getSessionBackendSessionId } from "../metadata-store.js";
 
 type SessionActionsHost = any;
 
@@ -42,7 +43,7 @@ function sessionStateFromActionSeed(seed: any): any | undefined {
         ? seed.backendSessionId
         : typeof seed.remoteBackendSessionId === "string"
           ? seed.remoteBackendSessionId
-          : undefined,
+          : getSessionBackendSessionId(seed.id),
     worktreePath: typeof seed.worktreePath === "string" ? seed.worktreePath : undefined,
     label: typeof seed.label === "string" ? seed.label : undefined,
     headline: typeof seed.headline === "string" ? seed.headline : undefined,
@@ -223,10 +224,12 @@ export async function sendAgentToGraveyard(
   host.syncSessionsFromState();
 
   let previousStatus: "running" | "offline";
+  let graveyardSeed: any | undefined;
   const runningSession = host.sessions.find((session: any) => session.id === sessionId);
   if (runningSession) {
     if (!isRuntimeLive(host, runningSession)) {
       const offlineSession = sessionStateFromRuntime(host, runningSession);
+      graveyardSeed = offlineSession;
       evictStaleRuntime(host, runningSession);
       ensureOfflineSession(host, offlineSession);
       host.saveState();
@@ -250,12 +253,13 @@ export async function sendAgentToGraveyard(
     if (!offlineSession) {
       throw new Error(`Session "${sessionId}" not found`);
     }
+    graveyardSeed = offlineSession;
     ensureOfflineSession(host, offlineSession);
     previousStatus = "offline";
   }
 
   host.graveyardAfterStopSessionIds.delete(sessionId);
-  host.graveyardSession(sessionId);
+  host.graveyardSession(sessionId, graveyardSeed);
   return { sessionId, status: "graveyard", previousStatus };
 }
 

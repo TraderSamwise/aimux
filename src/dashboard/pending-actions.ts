@@ -17,6 +17,15 @@ interface PendingActionEntry {
   serviceSeed?: DashboardService;
 }
 
+function visibleEntryKey(entry?: PendingActionEntry): string {
+  if (!entry) return "";
+  return JSON.stringify({
+    kind: entry.kind,
+    sessionSeed: entry.sessionSeed,
+    serviceSeed: entry.serviceSeed,
+  });
+}
+
 function canSynthesizeMissingSession(
   kind: PendingDashboardActionKind,
 ): kind is "creating" | "forking" | "migrating" | "starting" | "stopping" {
@@ -50,7 +59,7 @@ export class DashboardPendingActions {
     },
   ): void {
     const existing = this.actions.get(sessionId);
-    const previousKind = existing?.kind;
+    const previousVisibleKey = visibleEntryKey(existing);
     if (existing?.timeoutId) {
       clearTimeout(existing.timeoutId);
     }
@@ -61,18 +70,23 @@ export class DashboardPendingActions {
           const current = this.actions.get(sessionId);
           if (current?.kind !== kind) return;
           this.actions.delete(sessionId);
-          opts.onTimeout?.();
-          this.onChange();
+          this.version += 1;
+          try {
+            opts.onTimeout?.();
+          } finally {
+            this.onChange();
+          }
         }, opts.timeoutMs);
       }
       this.actions.set(sessionId, { kind, timeoutId, sessionSeed: opts?.sessionSeed, serviceSeed: opts?.serviceSeed });
     } else {
       this.actions.delete(sessionId);
     }
-    if (previousKind !== kind) {
+    const changed = previousVisibleKey !== visibleEntryKey(this.actions.get(sessionId));
+    if (changed) {
       this.version += 1;
+      this.onChange();
     }
-    this.onChange();
   }
 
   get(sessionId: string): PendingDashboardActionKind | undefined {

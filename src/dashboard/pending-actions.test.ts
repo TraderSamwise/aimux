@@ -151,4 +151,53 @@ describe("DashboardPendingActions", () => {
       vi.useRealTimers();
     }
   });
+
+  it("increments version when a timed out action is removed", async () => {
+    vi.useFakeTimers();
+    try {
+      const onChange = vi.fn();
+      const pending = new DashboardPendingActions(onChange);
+      pending.set("service-1", "creating", {
+        timeoutMs: 1_000,
+        serviceSeed: {
+          id: "service-1",
+          command: "shell",
+          args: [],
+          label: "shell",
+          status: "running",
+          active: false,
+        },
+      });
+      const initialVersion = pending.getVersion();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(pending.get("service-1")).toBeUndefined();
+      expect(pending.getVersion()).toBe(initialVersion + 1);
+      expect(onChange).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not notify or increment version for unchanged visible pending state", () => {
+    const onChange = vi.fn();
+    const pending = new DashboardPendingActions(onChange);
+    const serviceSeed = {
+      id: "service-1",
+      command: "shell",
+      args: [],
+      label: "shell",
+      status: "running",
+      active: false,
+    };
+    pending.set("service-1", "creating", { serviceSeed });
+    const version = pending.getVersion();
+    onChange.mockClear();
+
+    pending.set("service-1", "creating", { serviceSeed });
+
+    expect(pending.getVersion()).toBe(version);
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });

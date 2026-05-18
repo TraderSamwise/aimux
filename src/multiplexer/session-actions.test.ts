@@ -152,7 +152,10 @@ describe("session actions", () => {
     });
 
     expect(result).toEqual({ sessionId: "claude-stale", status: "graveyard", previousStatus: "offline" });
-    expect(host.graveyardSession).toHaveBeenCalledWith("claude-stale");
+    expect(host.graveyardSession).toHaveBeenCalledWith(
+      "claude-stale",
+      expect.objectContaining({ id: "claude-stale", lifecycle: "offline" }),
+    );
     expect(host.offlineSessions).toEqual([]);
   });
 
@@ -234,7 +237,10 @@ describe("session actions", () => {
     expect(result).toEqual({ sessionId: "codex-zombie", status: "graveyard", previousStatus: "offline" });
     expect(host.stopSessionToOffline).not.toHaveBeenCalled();
     expect(host.evictZombieSession).toHaveBeenCalledWith(runtime);
-    expect(host.graveyardSession).toHaveBeenCalledWith("codex-zombie");
+    expect(host.graveyardSession).toHaveBeenCalledWith(
+      "codex-zombie",
+      expect.objectContaining({ id: "codex-zombie", backendSessionId: "backend-2", lifecycle: "offline" }),
+    );
     expect(host.graveyardAfterStopSessionIds.has("codex-zombie")).toBe(false);
     expect(host.offlineSessions).toEqual([]);
   });

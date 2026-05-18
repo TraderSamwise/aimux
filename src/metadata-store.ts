@@ -79,6 +79,7 @@ export interface SessionDerivedMetadata extends SessionDerivedState {
 
 export interface SessionMetadata {
   label?: string;
+  backendSessionId?: string;
   status?: SessionStatusMetadata;
   progress?: SessionProgressMetadata;
   logs?: SessionLogEntry[];
@@ -150,6 +151,33 @@ export function updateSessionMetadata(
   };
   saveMetadataState(state, projectRoot);
   return state;
+}
+
+export function getSessionBackendSessionId(sessionId: string, projectRoot?: string): string | undefined {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) return undefined;
+  return loadMetadataState(projectRoot).sessions[normalizedSessionId]?.backendSessionId;
+}
+
+export function recordSessionBackendSessionIdMetadata(
+  sessionId: string,
+  backendSessionId: string,
+  projectRoot?: string,
+): void {
+  const normalizedSessionId = sessionId.trim();
+  const normalizedBackendSessionId = backendSessionId.trim();
+  if (!normalizedSessionId || !normalizedBackendSessionId) return;
+
+  updateSessionMetadata(
+    normalizedSessionId,
+    (current) => {
+      if (current.backendSessionId && current.backendSessionId !== normalizedBackendSessionId) {
+        return current;
+      }
+      return { ...current, backendSessionId: normalizedBackendSessionId };
+    },
+    projectRoot,
+  );
 }
 
 export function clearSessionLogs(sessionId: string, projectRoot?: string): MetadataState {
