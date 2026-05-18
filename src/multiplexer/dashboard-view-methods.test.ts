@@ -99,7 +99,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       startedInDashboard: true,
       mode: "dashboard",
       dashboardPendingActions: {
-        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
           isSettled = opts.isSettled;
         }),
       },
@@ -128,7 +128,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       startedInDashboard: true,
       mode: "dashboard",
       dashboardPendingActions: {
-        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
           isSettled = opts.isSettled;
         }),
       },
@@ -154,7 +154,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       startedInDashboard: true,
       mode: "dashboard",
       dashboardPendingActions: {
-        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
           isSettled = opts.isSettled;
         }),
       },
@@ -183,7 +183,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       startedInDashboard: true,
       mode: "dashboard",
       dashboardPendingActions: {
-        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
           isSettled = opts.isSettled;
         }),
       },
@@ -211,7 +211,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       startedInDashboard: true,
       mode: "dashboard",
       dashboardPendingActions: {
-        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
           isSettled = opts.isSettled;
         }),
       },

@@ -35,29 +35,40 @@ export const dashboardViewMethods = {
     return `${command}-${Math.random().toString(36).slice(2, 8)}`;
   },
 
-  settleDashboardCreatePending(this: any, itemId: string): void {
+  settleDashboardCreatePending(this: any, itemId: string, target?: "session" | "service" | "worktree"): void {
     if (!(this.startedInDashboard && this.mode === "dashboard")) return;
+    const pendingTarget =
+      target ??
+      (itemId.startsWith("worktree:")
+        ? "worktree"
+        : this.getDashboardSessions?.().some((entry: any) => entry.id === itemId)
+          ? "session"
+          : "service");
     this.dashboardPendingActions.settleCreatePending(
+      pendingTarget,
       itemId,
       () => {
         this.refreshLocalDashboardModel();
         this.renderDashboard();
       },
       {
-        timeoutMs: itemId.startsWith("worktree:") ? 180_000 : undefined,
+        timeoutMs: pendingTarget === "worktree" ? 180_000 : undefined,
         isSettled: async () => {
           if (typeof this.refreshDashboardModelFromService === "function") {
             await this.refreshDashboardModelFromService(true);
           }
-          if (itemId.startsWith("worktree:")) {
-            const path = itemId.slice("worktree:".length);
+          if (pendingTarget === "worktree") {
+            const path = itemId.startsWith("worktree:") ? itemId.slice("worktree:".length) : itemId;
             const rawWorktree = this.listDesktopWorktrees?.().find((entry: any) => entry.path === path);
             if (rawWorktree && rawWorktree.pending !== true && rawWorktree.pendingAction !== "creating") return true;
             const group = this.dashboardWorktreeGroupsCache?.find((entry: any) => entry.path === path);
             return Boolean(group) && group.pendingAction !== "creating" && group.pending !== true;
           }
-          const service = this.getDashboardServices?.().find((entry: any) => entry.id === itemId);
-          if (service) return service.pendingAction !== "creating" || hasRuntimeEvidence(service);
+          if (pendingTarget === "service") {
+            const service = this.getDashboardServices?.().find((entry: any) => entry.id === itemId);
+            if (service) return service.pendingAction !== "creating" || hasRuntimeEvidence(service);
+            return false;
+          }
           const session = this.getDashboardSessions?.().find((entry: any) => entry.id === itemId);
           return isAttachableDashboardSessionEntry(session);
         },

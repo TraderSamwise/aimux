@@ -603,7 +603,7 @@ export async function graveyardSessionWithFeedback(
 export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
   if (host.mode === "dashboard") {
     const label = session.label ?? session.command;
-    if (host.dashboardPendingActions.get(session.id) === "starting") {
+    if (host.dashboardPendingActions.getSessionAction(session.id) === "starting") {
       return;
     }
     const sessionSeed =
@@ -646,7 +646,7 @@ export async function resumeOfflineServiceWithFeedback(
   host: DashboardOpsHost,
   service: { id: string; label?: string },
 ): Promise<void> {
-  if (host.dashboardPendingActions.get(service.id) === "starting") {
+  if (host.dashboardPendingActions.getServiceAction(service.id) === "starting") {
     return;
   }
   if (host.mode === "dashboard") {
@@ -794,7 +794,7 @@ export async function waitForSessionStartForHost(
 export function dashboardSessionActionDeps(host: DashboardOpsHost) {
   return {
     getSessionLabel: (sessionId: string) => host.getSessionLabel(sessionId),
-    getPendingAction: (sessionId: string) => host.dashboardPendingActions.get(sessionId),
+    getPendingAction: (sessionId: string) => host.dashboardPendingActions.getSessionAction(sessionId),
     setPendingAction: (sessionId: string, kind: PendingSessionActionKind | null) =>
       setPendingDashboardSessionAction(host, sessionId, kind),
     stopSessionToOffline: (session: any) => host.stopSessionToOffline(session),

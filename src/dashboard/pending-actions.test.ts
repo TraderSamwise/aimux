@@ -143,6 +143,7 @@ describe("DashboardPendingActions", () => {
       });
 
       pending.settleCreatePending(
+        "service",
         "service-1",
         () => {
           settled = true;
@@ -154,13 +155,13 @@ describe("DashboardPendingActions", () => {
       );
 
       await vi.advanceTimersByTimeAsync(250);
-      expect(pending.get("service-1")).toBe("creating");
+      expect(pending.getServiceAction("service-1")).toBe("creating");
       expect(settled).toBe(false);
 
       rendered = true;
       await vi.advanceTimersByTimeAsync(100);
 
-      expect(pending.get("service-1")).toBeUndefined();
+      expect(pending.getServiceAction("service-1")).toBeUndefined();
       expect(settled).toBe(true);
     } finally {
       vi.useRealTimers();
@@ -215,7 +216,7 @@ describe("DashboardPendingActions", () => {
 
       await vi.advanceTimersByTimeAsync(1_000);
 
-      expect(pending.get("service-1")).toBeUndefined();
+      expect(pending.getServiceAction("service-1")).toBeUndefined();
       expect(pending.getVersion()).toBe(initialVersion + 1);
       expect(onChange).toHaveBeenCalled();
     } finally {
@@ -242,5 +243,163 @@ describe("DashboardPendingActions", () => {
 
     expect(pending.getVersion()).toBe(version);
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps session and service pending actions isolated for the same raw id", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const sharedId = "shared-id";
+
+    pending.setSessionAction(sharedId, "starting", {
+      sessionSeed: {
+        index: -1,
+        id: sharedId,
+        command: "claude",
+        label: "claude",
+        status: "offline",
+        active: false,
+      },
+    });
+    pending.setServiceAction(sharedId, "stopping", {
+      serviceSeed: {
+        id: sharedId,
+        command: "shell",
+        args: [],
+        label: "shell",
+        status: "running",
+        active: false,
+      },
+    });
+
+    expect(pending.getSessionAction(sharedId)).toBe("starting");
+    expect(pending.getServiceAction(sharedId)).toBe("stopping");
+    expect(pending.applyToSessions([])).toEqual([
+      expect.objectContaining({
+        id: sharedId,
+        pendingAction: "starting",
+        optimistic: true,
+      }),
+    ]);
+    expect(pending.applyToServices([])).toEqual([
+      expect.objectContaining({
+        id: sharedId,
+        pendingAction: "stopping",
+        optimistic: true,
+      }),
+    ]);
+  });
+
+  it("does not let a session timeout clear a service action with the same raw id", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = new DashboardPendingActions(() => {});
+      const sharedId = "shared-id";
+      pending.setSessionAction(sharedId, "starting", { timeoutMs: 1_000 });
+      pending.setServiceAction(sharedId, "starting");
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(pending.getSessionAction(sharedId)).toBeUndefined();
+      expect(pending.getServiceAction(sharedId)).toBe("starting");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let an older same-kind timeout clear a replaced action", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = new DashboardPendingActions(() => {});
+      pending.setServiceAction("service-1", "starting", { timeoutMs: 1_000 });
+
+      await vi.advanceTimersByTimeAsync(500);
+      pending.setServiceAction("service-1", "starting", { timeoutMs: 1_000 });
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(pending.getServiceAction("service-1")).toBe("starting");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("settles only the requested pending target for matching raw ids", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = new DashboardPendingActions(() => {});
+      const sharedId = "shared-id";
+      pending.setSessionAction(sharedId, "creating");
+      pending.setServiceAction(sharedId, "creating");
+
+      pending.settleCreatePending("service", sharedId, () => {}, {
+        isSettled: () => true,
+      });
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(pending.getSessionAction(sharedId)).toBe("creating");
+      expect(pending.getServiceAction(sharedId)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps worktree pending actions isolated from matching session and service ids", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const id = "/repo/.aimux/worktrees/demo";
+    const worktree = {
+      name: "demo",
+      branch: "demo",
+      path: id,
+      status: "offline" as const,
+      sessions: [],
+      services: [],
+    };
+
+    pending.setWorktreeAction(id, "removing");
+    pending.setSessionAction(id, "starting");
+    pending.setServiceAction(id, "starting");
+
+    expect(pending.getWorktreeAction(id)).toBe("removing");
+    expect(pending.getSessionAction(id)).toBe("starting");
+    expect(pending.getServiceAction(id)).toBe("starting");
+    expect(pending.applyToWorktrees([worktree])).toEqual([
+      expect.objectContaining({
+        path: id,
+        pendingAction: "removing",
+        removing: true,
+        optimistic: true,
+      }),
+    ]);
+  });
+
+  it("applies main worktree pending actions only to the main checkout", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const main = {
+      name: "Main Checkout",
+      branch: "master",
+      path: undefined,
+      status: "offline" as const,
+      sessions: [],
+      services: [],
+    };
+    const worktree = {
+      name: "worktree:__main__",
+      branch: "worktree:__main__",
+      path: "worktree:__main__",
+      status: "offline" as const,
+      sessions: [],
+      services: [],
+    };
+
+    pending.setWorktreeAction(undefined, "creating");
+
+    expect(pending.getWorktreeAction(undefined)).toBe("creating");
+    expect(pending.getWorktreeAction(worktree.path)).toBeUndefined();
+    expect(pending.applyToWorktrees([main, worktree])).toEqual([
+      expect.objectContaining({
+        path: undefined,
+        pendingAction: "creating",
+        optimistic: true,
+      }),
+      worktree,
+    ]);
   });
 });

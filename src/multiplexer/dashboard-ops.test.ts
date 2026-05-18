@@ -15,20 +15,23 @@ import {
 function makePendingActionsFake() {
   const actions = new Map<string, string | null>();
   return {
-    get(id: string) {
-      return actions.get(id);
+    getSessionAction(sessionId: string) {
+      return actions.get(`session:${sessionId}`);
+    },
+    getServiceAction(serviceId: string) {
+      return actions.get(`service:${serviceId}`);
     },
     setSessionAction(sessionId: string, kind: string) {
-      actions.set(sessionId, kind);
+      actions.set(`session:${sessionId}`, kind);
     },
     clearSessionAction(sessionId: string) {
-      actions.set(sessionId, null);
+      actions.set(`session:${sessionId}`, null);
     },
     setServiceAction(serviceId: string, kind: string) {
-      actions.set(serviceId, kind);
+      actions.set(`service:${serviceId}`, kind);
     },
     clearServiceAction(serviceId: string) {
-      actions.set(serviceId, null);
+      actions.set(`service:${serviceId}`, null);
     },
   };
 }
@@ -73,7 +76,7 @@ describe("dashboard-ops", () => {
       { serviceId, command: "", worktreePath: "/repo" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get(serviceId)).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction(serviceId)).toBeNull();
     expect(host.footerFlash).toBe("◆ Created service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -107,7 +110,7 @@ describe("dashboard-ops", () => {
       { serviceId: "svc-1" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Started service shell");
     expect(host.footerFlashTicks).toBe(3);
     expect(host.renderDashboard).toHaveBeenCalledTimes(2);
@@ -133,7 +136,7 @@ describe("dashboard-ops", () => {
 
     await resumeOfflineServiceWithFeedback(host, { id: "svc-1", label: "shell" });
 
-    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.refreshLocalDashboardModel).toHaveBeenCalledOnce();
     expect(host.showDashboardError).toHaveBeenCalledWith("Failed to start service", ["boom"]);
   });
@@ -162,7 +165,7 @@ describe("dashboard-ops", () => {
       { serviceId: "svc-1" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Stopped service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -195,7 +198,7 @@ describe("dashboard-ops", () => {
       { serviceId: "svc-1" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Deleted service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -227,7 +230,7 @@ describe("dashboard-ops", () => {
       { sessionId: "sess-1" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Stopped claude");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -263,7 +266,7 @@ describe("dashboard-ops", () => {
       { sessionId: "sess-1", session: expect.objectContaining({ id: "sess-1", command: "claude" }) },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored claude");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -304,7 +307,7 @@ describe("dashboard-ops", () => {
 
     expect(host.waitForSessionStart).not.toHaveBeenCalled();
     expect(host.refreshLocalDashboardModel).toHaveBeenCalled();
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored codex");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -352,7 +355,7 @@ describe("dashboard-ops", () => {
 
     expect(host.tmuxRuntimeManager.listProjectManagedWindows).toHaveBeenCalled();
     expect(host.refreshLocalDashboardModel).toHaveBeenCalled();
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored claude");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -381,7 +384,7 @@ describe("dashboard-ops", () => {
 
     await resumeOfflineServiceWithFeedback(host, service);
 
-    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Started service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -424,7 +427,7 @@ describe("dashboard-ops", () => {
       { sessionId: "sess-1", worktreePath: "/repo/.aimux/worktrees/demo" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Migrated codex to demo");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -463,7 +466,7 @@ describe("dashboard-ops", () => {
       { sessionId: "sess-1", session: expect.objectContaining({ id: "sess-1", command: "claude" }) },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.adjustAfterRemove).toHaveBeenCalledWith(true);
     expect(host.footerFlash).toBe("Sent claude to graveyard");
     expect(host.showDashboardError).not.toHaveBeenCalled();
@@ -511,7 +514,7 @@ describe("dashboard-ops", () => {
       { timeoutMs: 10_000 },
     );
     expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "claude-abcd12", "/repo");
-    expect(host.dashboardPendingActions.get("claude-abcd12")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("claude-abcd12")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
@@ -556,7 +559,7 @@ describe("dashboard-ops", () => {
       { timeoutMs: 10_000 },
     );
     expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "codex-fork12", "/repo");
-    expect(host.dashboardPendingActions.get("codex-fork12")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("codex-fork12")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 });

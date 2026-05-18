@@ -156,7 +156,7 @@ export function createService(
     host.refreshLocalDashboardModel();
     host.updateWorktreeSessions();
     host.preferDashboardEntrySelection("service", serviceId, worktreePath);
-    host.settleDashboardCreatePending(serviceId);
+    host.settleDashboardCreatePending(serviceId, "service");
     return { serviceId };
   } catch (error) {
     if (shouldRenderPending) {

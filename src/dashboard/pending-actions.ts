@@ -6,8 +6,12 @@ import type {
   PendingWorktreeActionKind,
 } from "../pending-actions.js";
 
+type PendingActionTarget = "session" | "service" | "worktree";
+
 interface PendingActionEntry {
+  target: PendingActionTarget;
   kind: PendingDashboardActionKind;
+  token: number;
   timeoutId?: ReturnType<typeof setTimeout>;
   sessionSeed?: DashboardSession;
   serviceSeed?: DashboardService;
@@ -29,6 +33,7 @@ interface PendingServiceActionOptions extends PendingActionOptions {
 function visibleEntryKey(entry?: PendingActionEntry): string {
   if (!entry) return "";
   return JSON.stringify({
+    target: entry.target,
     kind: entry.kind,
     sessionSeed: entry.sessionSeed,
     serviceSeed: entry.serviceSeed,
@@ -52,6 +57,7 @@ function canSynthesizeMissingService(
 export class DashboardPendingActions {
   private actions = new Map<string, PendingActionEntry>();
   private version = 0;
+  private nextEntryToken = 0;
 
   constructor(private readonly onChange: () => void) {}
 
@@ -59,33 +65,55 @@ export class DashboardPendingActions {
     return `worktree:${path ?? "__main__"}`;
   }
 
+  private static actionKey(target: PendingActionTarget, id: string): string {
+    return `${target}:${id}`;
+  }
+
   setSessionAction(sessionId: string, kind: PendingSessionActionKind, opts?: PendingSessionActionOptions): void {
-    this.setEntry(sessionId, kind, opts);
+    this.setEntry("session", sessionId, kind, opts);
   }
 
   clearSessionAction(sessionId: string): void {
-    this.setEntry(sessionId, null);
+    this.clearEntry("session", sessionId);
   }
 
   setServiceAction(serviceId: string, kind: PendingServiceActionKind, opts?: PendingServiceActionOptions): void {
-    this.setEntry(serviceId, kind, opts);
+    this.setEntry("service", serviceId, kind, opts);
   }
 
   clearServiceAction(serviceId: string): void {
-    this.setEntry(serviceId, null);
+    this.clearEntry("service", serviceId);
   }
 
   setWorktreeAction(path: string | undefined, kind: PendingWorktreeActionKind, opts?: PendingActionOptions): void {
-    this.setEntry(DashboardPendingActions.worktreeKey(path), kind, opts);
+    this.setEntry("worktree", DashboardPendingActions.worktreeKey(path), kind, opts);
   }
 
   clearWorktreeAction(path: string | undefined): void {
-    this.setEntry(DashboardPendingActions.worktreeKey(path), null);
+    this.clearEntry("worktree", DashboardPendingActions.worktreeKey(path));
+  }
+
+  getSessionAction(sessionId: string): PendingSessionActionKind | undefined {
+    const entry = this.actions.get(DashboardPendingActions.actionKey("session", sessionId));
+    return entry?.target === "session" ? (entry.kind as PendingSessionActionKind) : undefined;
+  }
+
+  getServiceAction(serviceId: string): PendingServiceActionKind | undefined {
+    const entry = this.actions.get(DashboardPendingActions.actionKey("service", serviceId));
+    return entry?.target === "service" ? (entry.kind as PendingServiceActionKind) : undefined;
+  }
+
+  getWorktreeAction(path: string | undefined): PendingWorktreeActionKind | undefined {
+    const entry = this.actions.get(
+      DashboardPendingActions.actionKey("worktree", DashboardPendingActions.worktreeKey(path)),
+    );
+    return entry?.target === "worktree" ? (entry.kind as PendingWorktreeActionKind) : undefined;
   }
 
   private setEntry(
-    sessionId: string,
-    kind: PendingDashboardActionKind | null,
+    target: PendingActionTarget,
+    id: string,
+    kind: PendingDashboardActionKind,
     opts?: {
       timeoutMs?: number;
       onTimeout?: () => void;
@@ -93,39 +121,55 @@ export class DashboardPendingActions {
       serviceSeed?: DashboardService;
     },
   ): void {
-    const existing = this.actions.get(sessionId);
+    const key = DashboardPendingActions.actionKey(target, id);
+    const existing = this.actions.get(key);
     const previousVisibleKey = visibleEntryKey(existing);
     if (existing?.timeoutId) {
       clearTimeout(existing.timeoutId);
     }
-    if (kind) {
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      if (opts?.timeoutMs && opts.timeoutMs > 0) {
-        timeoutId = setTimeout(() => {
-          const current = this.actions.get(sessionId);
-          if (current?.kind !== kind) return;
-          this.actions.delete(sessionId);
-          this.version += 1;
-          try {
-            opts.onTimeout?.();
-          } finally {
-            this.onChange();
-          }
-        }, opts.timeoutMs);
-      }
-      this.actions.set(sessionId, { kind, timeoutId, sessionSeed: opts?.sessionSeed, serviceSeed: opts?.serviceSeed });
-    } else {
-      this.actions.delete(sessionId);
+    const token = ++this.nextEntryToken;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (opts?.timeoutMs && opts.timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        const current = this.actions.get(key);
+        if (current?.target !== target || current.kind !== kind || current.token !== token) return;
+        this.actions.delete(key);
+        this.version += 1;
+        try {
+          opts.onTimeout?.();
+        } finally {
+          this.onChange();
+        }
+      }, opts.timeoutMs);
     }
-    const changed = previousVisibleKey !== visibleEntryKey(this.actions.get(sessionId));
+    this.actions.set(key, {
+      target,
+      kind,
+      token,
+      timeoutId,
+      sessionSeed: opts?.sessionSeed,
+      serviceSeed: opts?.serviceSeed,
+    });
+    const changed = previousVisibleKey !== visibleEntryKey(this.actions.get(key));
     if (changed) {
       this.version += 1;
       this.onChange();
     }
   }
 
-  get(sessionId: string): PendingDashboardActionKind | undefined {
-    return this.actions.get(sessionId)?.kind;
+  private clearEntry(target: PendingActionTarget, id: string): void {
+    const key = DashboardPendingActions.actionKey(target, id);
+    const existing = this.actions.get(key);
+    const previousVisibleKey = visibleEntryKey(existing);
+    if (existing?.timeoutId) {
+      clearTimeout(existing.timeoutId);
+    }
+    this.actions.delete(key);
+    const changed = previousVisibleKey !== visibleEntryKey(this.actions.get(key));
+    if (changed) {
+      this.version += 1;
+      this.onChange();
+    }
   }
 
   getVersion(): number {
@@ -137,12 +181,13 @@ export class DashboardPendingActions {
     const seen = new Set<string>();
     const applied = sessions.map((session) => {
       seen.add(session.id);
-      const pendingAction = this.actions.get(session.id)?.kind;
-      if (pendingAction === "removing") return session;
+      const pendingAction = this.getSessionAction(session.id);
       if (!pendingAction) return session;
       return { ...session, pendingAction, optimistic: true };
     });
-    for (const [sessionId, entry] of this.actions.entries()) {
+    for (const [entryKey, entry] of this.actions.entries()) {
+      if (entry.target !== "session") continue;
+      const sessionId = entryKey.slice("session:".length);
       if (seen.has(sessionId)) continue;
       if (!entry.sessionSeed) continue;
       if (!canSynthesizeMissingSession(entry.kind)) continue;
@@ -161,12 +206,14 @@ export class DashboardPendingActions {
     const seen = new Set<string>();
     const applied = services.map((service) => {
       seen.add(service.id);
-      const pendingAction = this.actions.get(service.id)?.kind;
+      const pendingAction = this.getServiceAction(service.id);
       if (pendingAction === "removing") return service;
       if (!pendingAction) return service;
       return { ...service, pendingAction, optimistic: true };
     });
-    for (const [serviceId, entry] of this.actions.entries()) {
+    for (const [entryKey, entry] of this.actions.entries()) {
+      if (entry.target !== "service") continue;
+      const serviceId = entryKey.slice("service:".length);
       if (seen.has(serviceId)) continue;
       if (!entry.serviceSeed) continue;
       if (!canSynthesizeMissingService(entry.kind)) continue;
@@ -183,7 +230,7 @@ export class DashboardPendingActions {
   applyToWorktrees(worktrees: WorktreeGroup[]): WorktreeGroup[] {
     if (this.actions.size === 0) return worktrees;
     return worktrees.map((worktree) => {
-      const pendingAction = this.actions.get(DashboardPendingActions.worktreeKey(worktree.path))?.kind;
+      const pendingAction = this.getWorktreeAction(worktree.path);
       if (!pendingAction) return worktree;
       return {
         ...worktree,
@@ -199,6 +246,7 @@ export class DashboardPendingActions {
   }
 
   settleCreatePending(
+    target: PendingActionTarget,
     itemId: string,
     onSettled: () => void,
     opts?: { isSettled?: () => boolean | Promise<boolean>; timeoutMs?: number },
@@ -218,7 +266,7 @@ export class DashboardPendingActions {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
       }
-      this.setEntry(itemId, null);
+      this.clearEntry(target, itemId);
       onSettled();
     })();
   }
