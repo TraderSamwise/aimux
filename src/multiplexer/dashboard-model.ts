@@ -677,6 +677,8 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       renameAgent: (input: any) => host.renameAgent(input.sessionId, input.label),
       migrateAgent: (input: any) => host.migrateAgent(input.sessionId, input.worktreePath),
       killAgent: (input: any) => host.sendAgentToGraveyard(input.sessionId, input.session),
+      recordBackendSessionId: (input: any) =>
+        host.recordSessionBackendSessionId(input.sessionId, input.backendSessionId),
       writeAgentInput: (input: any) =>
         host.writeAgentInput(input.sessionId, input.data, input.parts, input.clientMessageId, input.submit),
       readAgentOutput: (input: any) => host.readAgentOutput(input.sessionId, input.startLine),

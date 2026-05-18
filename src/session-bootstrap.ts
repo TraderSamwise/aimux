@@ -176,7 +176,11 @@ export class SessionBootstrapService {
     toolCfg: { resumeArgs?: string[]; resumeByBackendSessionId?: boolean } | undefined,
     backendSessionId: string | undefined,
   ): boolean {
-    return Boolean(backendSessionId && toolCfg?.resumeArgs && toolCfg.resumeByBackendSessionId !== false);
+    return Boolean(
+      backendSessionId &&
+      toolCfg?.resumeArgs?.some((arg) => arg.includes("{sessionId}")) &&
+      toolCfg.resumeByBackendSessionId !== false,
+    );
   }
 
   readForkSourceSnapshot(sourceSessionId: string): ForkSourceSnapshot {
@@ -525,7 +529,11 @@ export function getToolResumeArgs(
   toolCfg: ToolConfig | undefined,
   backendSessionId: string | undefined,
 ): string[] | undefined {
-  if (!backendSessionId || !toolCfg?.resumeArgs || toolCfg.resumeByBackendSessionId === false) {
+  if (
+    !backendSessionId ||
+    !toolCfg?.resumeArgs?.some((arg) => arg.includes("{sessionId}")) ||
+    toolCfg.resumeByBackendSessionId === false
+  ) {
     return undefined;
   }
   return toolCfg.resumeArgs.map((arg) => arg.replace("{sessionId}", backendSessionId));

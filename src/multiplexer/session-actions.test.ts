@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
-import { forkAgent, sendAgentToGraveyard, spawnAgent } from "./session-actions.js";
+import { forkAgent, sendAgentToGraveyard, spawnAgent, stopAgent } from "./session-actions.js";
 
 vi.mock("../config.js", () => ({
   loadConfig: () => ({
@@ -153,6 +153,89 @@ describe("session actions", () => {
 
     expect(result).toEqual({ sessionId: "claude-stale", status: "graveyard", previousStatus: "offline" });
     expect(host.graveyardSession).toHaveBeenCalledWith("claude-stale");
+    expect(host.offlineSessions).toEqual([]);
+  });
+
+  it("stops a stale runtime by preserving offline state without waiting for exit", async () => {
+    const runtime = {
+      id: "claude-zombie",
+      command: "claude",
+      startTime: Date.parse("2026-05-01T00:00:00.000Z"),
+      backendSessionId: "backend-1",
+    };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [runtime],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      sessionToolKeys: new Map([["claude-zombie", "claude"]]),
+      sessionOriginalArgs: new Map([["claude-zombie", ["--dangerously-skip-permissions"]]]),
+      sessionWorktreePaths: new Map([["claude-zombie", repoRoot]]),
+      getSessionLabel: vi.fn(() => "worker"),
+      deriveHeadline: vi.fn(() => "previous work"),
+      isSessionRuntimeLive: vi.fn(() => false),
+      evictZombieSession: vi.fn((session: any) => {
+        host.sessions = host.sessions.filter((entry: any) => entry.id !== session.id);
+      }),
+      stopSessionToOffline: vi.fn(),
+      saveState: vi.fn(),
+    };
+
+    const result = await stopAgent(host, "claude-zombie");
+
+    expect(result).toEqual({ sessionId: "claude-zombie", status: "offline" });
+    expect(host.stopSessionToOffline).not.toHaveBeenCalled();
+    expect(host.evictZombieSession).toHaveBeenCalledWith(runtime);
+    expect(host.offlineSessions).toMatchObject([
+      {
+        id: "claude-zombie",
+        command: "claude",
+        toolConfigKey: "claude",
+        lifecycle: "offline",
+        backendSessionId: "backend-1",
+        label: "worker",
+        headline: "previous work",
+        worktreePath: repoRoot,
+      },
+    ]);
+  });
+
+  it("graveyards a stale runtime without waiting on a dead tmux window", async () => {
+    const runtime = {
+      id: "codex-zombie",
+      command: "codex",
+      startTime: Date.parse("2026-05-01T00:00:00.000Z"),
+      backendSessionId: "backend-2",
+    };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [runtime],
+      offlineSessions: [],
+      graveyardAfterStopSessionIds: new Set(),
+      stoppingSessionIds: new Set(),
+      sessionToolKeys: new Map([["codex-zombie", "codex"]]),
+      sessionOriginalArgs: new Map([["codex-zombie", []]]),
+      sessionWorktreePaths: new Map([["codex-zombie", repoRoot]]),
+      getSessionLabel: vi.fn(() => "codex"),
+      deriveHeadline: vi.fn(() => "summary"),
+      isSessionRuntimeLive: vi.fn(() => false),
+      evictZombieSession: vi.fn((session: any) => {
+        host.sessions = host.sessions.filter((entry: any) => entry.id !== session.id);
+      }),
+      stopSessionToOffline: vi.fn(),
+      graveyardSession: vi.fn((sessionId: string) => {
+        host.offlineSessions = host.offlineSessions.filter((session: any) => session.id !== sessionId);
+      }),
+      saveState: vi.fn(),
+    };
+
+    const result = await sendAgentToGraveyard(host, "codex-zombie");
+
+    expect(result).toEqual({ sessionId: "codex-zombie", status: "graveyard", previousStatus: "offline" });
+    expect(host.stopSessionToOffline).not.toHaveBeenCalled();
+    expect(host.evictZombieSession).toHaveBeenCalledWith(runtime);
+    expect(host.graveyardSession).toHaveBeenCalledWith("codex-zombie");
+    expect(host.graveyardAfterStopSessionIds.has("codex-zombie")).toBe(false);
     expect(host.offlineSessions).toEqual([]);
   });
 });

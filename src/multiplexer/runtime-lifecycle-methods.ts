@@ -21,6 +21,7 @@ import {
   loadOfflineServices as loadOfflineServicesImpl,
   loadOfflineSessions as loadOfflineSessionsImpl,
   restoreTmuxSessionsFromState as restoreTmuxSessionsFromStateImpl,
+  recordSessionBackendSessionId as recordSessionBackendSessionIdImpl,
   resumeOfflineSession as resumeOfflineSessionImpl,
   startHeartbeat as startHeartbeatImpl,
   startProjectServiceRefresh as startProjectServiceRefreshImpl,
@@ -120,6 +121,11 @@ export type RuntimeLifecycleMethods = {
   isSessionRuntimeLive(this: Multiplexer, runtime: SessionRuntime): boolean;
   evictZombieSession(this: Multiplexer, runtime: SessionRuntime): void;
   resumeOfflineSession(this: Multiplexer, session: SessionState): void;
+  recordSessionBackendSessionId(
+    this: Multiplexer,
+    sessionId: string,
+    backendSessionId: string,
+  ): { sessionId: string; backendSessionId: string };
   startHeartbeat(this: Multiplexer): void;
   handleSessionClaimed(this: Multiplexer, sessionId: string): void;
   stopHeartbeat(this: Multiplexer): void;
@@ -230,6 +236,9 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   },
   resumeOfflineSession(this: Multiplexer, session) {
     resumeOfflineSessionImpl(this, session);
+  },
+  recordSessionBackendSessionId(this: Multiplexer, sessionId, backendSessionId) {
+    return recordSessionBackendSessionIdImpl(this, sessionId, backendSessionId);
   },
   startHeartbeat(this: Multiplexer) {
     startHeartbeatImpl(this);

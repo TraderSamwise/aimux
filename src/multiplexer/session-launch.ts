@@ -5,7 +5,11 @@ import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
-import { injectClaudeHookArgs, shouldSkipClaudeSessionIdInjection } from "../claude-hooks.js";
+import {
+  extractClaudeBackendSessionIdFromArgs,
+  injectClaudeHookArgs,
+  shouldSkipClaudeSessionIdInjection,
+} from "../claude-hooks.js";
 import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug } from "../debug.js";
@@ -362,9 +366,14 @@ export function createSession(
   const isClaudeResumeStyleLaunch =
     Boolean(toolCfg && toolConfigKey === "claude" && toolCfg.command === command) &&
     shouldSkipClaudeSessionIdInjection(args);
+  const explicitClaudeBackendSessionId =
+    toolCfg && toolConfigKey === "claude" && toolCfg.command === command
+      ? extractClaudeBackendSessionIdFromArgs(args)
+      : undefined;
   const effectiveSuppressStartupPreamble = suppressStartupPreamble;
   const effectiveSessionIdFlag = isClaudeResumeStyleLaunch ? undefined : sessionIdFlag;
-  const backendSessionId = backendSessionIdOverride ?? (effectiveSessionIdFlag ? randomUUID() : undefined);
+  const backendSessionId =
+    backendSessionIdOverride ?? explicitClaudeBackendSessionId ?? (effectiveSessionIdFlag ? randomUUID() : undefined);
   const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;
 
   const preamble = effectiveSuppressStartupPreamble

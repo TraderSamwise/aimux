@@ -30,6 +30,31 @@ export function shouldSkipClaudeSessionIdInjection(args: string[]): boolean {
   );
 }
 
+function isUsableSessionIdArg(value: string | undefined): value is string {
+  return Boolean(value?.trim() && !value.trim().startsWith("-"));
+}
+
+export function extractClaudeBackendSessionIdFromArgs(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--session-id" && isUsableSessionIdArg(args[i + 1])) {
+      return args[i + 1].trim();
+    }
+    if (arg.startsWith("--session-id=")) {
+      const value = arg.slice("--session-id=".length);
+      if (isUsableSessionIdArg(value)) return value.trim();
+    }
+    if (arg === "--resume" && isUsableSessionIdArg(args[i + 1])) {
+      return args[i + 1].trim();
+    }
+    if (arg.startsWith("--resume=")) {
+      const value = arg.slice("--resume=".length);
+      if (isUsableSessionIdArg(value)) return value.trim();
+    }
+  }
+  return undefined;
+}
+
 function buildClaudeHookCommand(action: string, sessionId: string, projectRoot: string): string {
   return [
     shellQuote(process.execPath),

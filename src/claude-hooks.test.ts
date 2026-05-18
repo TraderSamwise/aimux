@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildClaudeHookSettings, injectClaudeHookArgs, shouldSkipClaudeSessionIdInjection } from "./claude-hooks.js";
+import {
+  buildClaudeHookSettings,
+  extractClaudeBackendSessionIdFromArgs,
+  injectClaudeHookArgs,
+  shouldSkipClaudeSessionIdInjection,
+} from "./claude-hooks.js";
 
 describe("claude-hooks", () => {
   it("builds the supported cmux-style hook set", () => {
@@ -36,5 +41,13 @@ describe("claude-hooks", () => {
     expect(shouldSkipClaudeSessionIdInjection(["--resume"])).toBe(true);
     expect(shouldSkipClaudeSessionIdInjection(["--continue"])).toBe(true);
     expect(shouldSkipClaudeSessionIdInjection(["hello"])).toBe(false);
+  });
+
+  it("extracts explicit backend ids from Claude resume args", () => {
+    expect(extractClaudeBackendSessionIdFromArgs(["--resume", "backend-123"])).toBe("backend-123");
+    expect(extractClaudeBackendSessionIdFromArgs(["--resume=backend-456"])).toBe("backend-456");
+    expect(extractClaudeBackendSessionIdFromArgs(["--session-id", "backend-789"])).toBe("backend-789");
+    expect(extractClaudeBackendSessionIdFromArgs(["--resume", "--dangerously-skip-permissions"])).toBeUndefined();
+    expect(extractClaudeBackendSessionIdFromArgs(["--resume"])).toBeUndefined();
   });
 });

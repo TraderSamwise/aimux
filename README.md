@@ -547,8 +547,8 @@ Tool behavior differs:
 
 - `Claude`
   - supports clean preamble injection
-  - does **not** support backend-session-id resume in the way aimux originally assumed
-  - so `fork` and fallback `migrate` rely on aimux-owned continuity artifacts
+  - supports exact backend-session-id resume when aimux starts it with `--session-id {id}` and restores it with `--resume {id}`
+  - targeted dashboard restore must use that exact id or fail loudly; it must not fall back to `--continue`
 - `Codex`
   - supports backend-session-id resume, so `migrate` usually takes the native resume path
   - does **not** currently have a clean startup handoff flag, so `fork` uses seeded files plus an auto-submitted first-turn kickoff
@@ -701,7 +701,8 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
 |---|---|
 | `preambleFlag` | Flag to inject system prompt (e.g. `["--append-system-prompt"]`) |
 | `resumeArgs` | Args to resume a session, with `{sessionId}` placeholder |
-| `resumeFallback` | Fallback resume args when session ID is unavailable |
+| `resumeByBackendSessionId` | Whether aimux's stored backend id is safe to pass to `resumeArgs` |
+| `resumeFallback` | Non-specific fallback resume args for explicit latest-session flows; targeted dashboard restore must not use these |
 | `sessionIdFlag` | Flag to set session ID at spawn time |
 | `sessionCapture` | Filesystem-based session ID capture (dir, regex pattern, delay) |
 | `promptPatterns` | Regex patterns for idle/prompt detection in status bar |

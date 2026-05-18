@@ -134,7 +134,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
       preambleFlag: ["--append-system-prompt"],
       sessionIdFlag: ["--session-id", "{sessionId}"],
       resumeArgs: ["--resume", "{sessionId}"],
-      resumeByBackendSessionId: false,
+      resumeByBackendSessionId: true,
       resumeFallback: ["--continue"],
       promptPatterns: ["^> $", "\\$ $"],
       turnPatterns: ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
@@ -171,6 +171,25 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function hasSessionPlaceholder(args?: string[]): boolean {
+  return Boolean(args?.some((arg) => arg.includes("{sessionId}")));
+}
+
+function normalizeConfig(config: AimuxConfig): AimuxConfig {
+  const claude = config.tools.claude;
+  if (
+    claude?.command === "claude" &&
+    hasSessionPlaceholder(claude.sessionIdFlag) &&
+    hasSessionPlaceholder(claude.resumeArgs)
+  ) {
+    // Current Claude Code supports pairing --session-id with --resume <id>.
+    // Treat older generated configs that set this false as stale rather than
+    // silently launching a fresh Claude under an existing aimux row.
+    claude.resumeByBackendSessionId = true;
+  }
+  return config;
+}
+
 /**
  * Load config with hierarchy: defaults → global (~/.aimux/config.json) → project (.aimux/config.json)
  * Project settings override global, global overrides defaults.
@@ -196,7 +215,7 @@ export function loadConfig(): AimuxConfig {
     } catch {}
   }
 
-  return config;
+  return normalizeConfig(config);
 }
 
 /** Save config to project-level .aimux/config.json */

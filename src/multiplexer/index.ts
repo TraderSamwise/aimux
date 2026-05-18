@@ -519,6 +519,13 @@ export class Multiplexer {
     );
   }
 
+  recordSessionBackendSessionId(
+    sessionId: string,
+    backendSessionId: string,
+  ): { sessionId: string; backendSessionId: string } {
+    return runtimeLifecycleMethods.recordSessionBackendSessionId.call(this, sessionId, backendSessionId);
+  }
+
   /**
    * Migrate an agent from its current worktree to a target worktree.
    * Copies history and context, kills the old session, starts a new one

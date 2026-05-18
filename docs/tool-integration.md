@@ -26,20 +26,9 @@ Example:
 
 `resumeByBackendSessionId` must only be `true` if the backend session id tracked by aimux is actually resumable by the tool later.
 
-This is currently true for Codex.
+This is currently true for Codex and for current Claude Code when aimux starts Claude with `--session-id {id}` and restores it with `--resume {id}`.
 
-This is currently false for Claude:
-
-- Claude accepts `--session-id`
-- but the same stored id is not a valid `--resume` target in our observed flows
-
-So Claude is configured with:
-
-- `sessionIdFlag`
-- `resumeArgs`
-- `resumeByBackendSessionId: false`
-
-That forces aimux to use native fallback behavior instead of a broken backend-id resume path.
+Targeted dashboard restore must never use non-specific fallbacks such as `--continue` or "resume last". If aimux cannot build an exact backend-id resume command, restore must fail loudly instead of launching a fresh session under an existing aimux id.
 
 ## Aimux-Owned Continuity
 
@@ -55,7 +44,7 @@ Aimux now maintains continuity from tmux pane state:
   2. `live.md`
   3. direct tmux pane capture from the source session
 
-This matters for tools like Claude where native backend resume is not reliable.
+This remains useful for fork, migration, and tools where native backend resume is not available.
 
 ## Fork vs Migrate
 
@@ -198,14 +187,15 @@ Raw `session.write(prompt + "\r")` should only remain in non-tmux fallbacks or t
 
 ### Claude
 
-- native backend resume by stored backend id: no
+- native backend resume by stored backend id: yes, when started with aimux-owned `--session-id`
 - prompt detection: partly heuristic
 - tmux snapshot continuity: yes
-- aimux fallback continuity: required
+- aimux fallback continuity: useful for fork/migration context
 - clean startup handoff flag: yes
 - audit note:
   - raw terminal recordings are not reliable enough to reconstruct turns on their own
-  - migration continuity depends on tmux pane snapshots and live-context fallback instead of backend-id resume
+  - targeted restore must use exact `--resume <backendSessionId>` and must not use `--continue`
+  - migration/fork continuity still depends on tmux pane snapshots and live-context fallback for cross-worktree/tool context
   - `fork` is cleaner than Codex because the carried-over handoff can be injected through the tool preamble path
 
 ## Integration Checklist
@@ -223,7 +213,7 @@ When wiring a future tool:
 - offline resume
 - dashboard activity/attention state
 
-If backend resume is not real, set `resumeByBackendSessionId: false` and rely on aimux-owned continuity instead of pretending the tool can resume natively.
+If backend resume is not real, set `resumeByBackendSessionId: false` and rely on aimux-owned continuity instead of pretending the tool can resume natively. For targeted dashboard restore, no exact backend resume means no restore; do not fall back to latest-session behavior.
 
 ## Contributor Notes
 
@@ -238,7 +228,7 @@ Do not assume that fixing one path fixes the others:
 - Claude fork uses preamble injection
 - Codex fork uses a startup kickoff flow
 - Codex migrate usually uses native backend resume
-- Claude migrate uses aimux-owned continuity fallback
+- Claude targeted restore uses native backend resume; fork/migrate still use aimux-owned continuity for handoff context
 
 When changing prompt injection code, verify injected prompts are actually submitted, not merely pasted into the input buffer. For Codex, the failure mode is a visible `[Pasted Content ...]` draft or expanded prompt text that never starts running.
 

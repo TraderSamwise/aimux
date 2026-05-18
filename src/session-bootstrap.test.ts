@@ -5,7 +5,7 @@ vi.mock("./agent-prompt-delivery.js", () => ({
 }));
 
 import { deliverTmuxPrompt } from "./agent-prompt-delivery.js";
-import { buildAimuxAgentInstructions, SessionBootstrapService } from "./session-bootstrap.js";
+import { buildAimuxAgentInstructions, getToolResumeArgs, SessionBootstrapService } from "./session-bootstrap.js";
 
 const deps: ConstructorParameters<typeof SessionBootstrapService>[0] = {
   tmuxRuntimeManager: {} as any,
@@ -75,5 +75,24 @@ describe("SessionBootstrapService", () => {
         submit: true,
       }),
     );
+  });
+
+  it("requires an explicit session placeholder for backend-id resume", () => {
+    const bootstrap = new SessionBootstrapService(deps);
+
+    expect(bootstrap.canResumeWithBackendSessionId({ resumeArgs: ["--resume", "{sessionId}"] }, "backend-1")).toBe(
+      true,
+    );
+    expect(bootstrap.canResumeWithBackendSessionId({ resumeArgs: ["--continue"] }, "backend-1")).toBe(false);
+  });
+});
+
+describe("getToolResumeArgs", () => {
+  it("does not build non-specific resume args for targeted restore", () => {
+    expect(getToolResumeArgs({ resumeArgs: ["--resume", "{sessionId}"] } as any, "backend-1")).toEqual([
+      "--resume",
+      "backend-1",
+    ]);
+    expect(getToolResumeArgs({ resumeArgs: ["--continue"] } as any, "backend-1")).toBeUndefined();
   });
 });

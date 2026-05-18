@@ -106,6 +106,56 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("stores explicit Claude resume backend ids without adding a competing session id", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-resume-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(),
+        deliverDetachedCodexKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "claude" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "claude" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    const session = createSession(
+      host,
+      "claude",
+      ["--dangerously-skip-permissions", "--resume", "backend-123"],
+      undefined,
+      "claude",
+      undefined,
+      undefined,
+      repoRoot,
+    );
+
+    const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
+    expect(session.backendSessionId).toBe("backend-123");
+    expect(createWindowArgs[4]).toContain("--resume");
+    expect(createWindowArgs[4]).toContain("backend-123");
+    expect(createWindowArgs[4]).not.toContain("--session-id");
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("passes fresh Codex aimux instructions as the initial prompt", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-prompt-"));
     execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });

@@ -95,6 +95,7 @@ import {
 import { notifyAlert } from "./notify.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
+import { writeJsonAtomic } from "./atomic-write.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
 import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
@@ -364,6 +365,34 @@ async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSess
   const state = Multiplexer.loadState();
   const match = state?.sessions.find((session) => session.backendSessionId === payloadSessionId);
   return match?.id ?? explicitSessionId;
+}
+
+function recordBackendSessionIdInState(
+  sessionId: string,
+  backendSessionId: string,
+): {
+  sessionId: string;
+  backendSessionId: string;
+} {
+  const normalizedBackendSessionId = backendSessionId.trim();
+  const state = Multiplexer.loadState();
+  const session = state?.sessions.find((entry) => entry.id === sessionId);
+  if (!state || !session || !normalizedBackendSessionId) {
+    return { sessionId, backendSessionId: normalizedBackendSessionId };
+  }
+  if (session.backendSessionId && session.backendSessionId !== normalizedBackendSessionId) {
+    return { sessionId, backendSessionId: session.backendSessionId };
+  }
+  session.backendSessionId = normalizedBackendSessionId;
+  state.savedAt = new Date().toISOString();
+  writeJsonAtomic(getStatePath(), state);
+  return { sessionId, backendSessionId: normalizedBackendSessionId };
+}
+
+async function recordBackendSessionId(projectRoot: string, sessionId: string, backendSessionId: string): Promise<void> {
+  await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/backend-session", { sessionId, backendSessionId }, () =>
+    recordBackendSessionIdInState(sessionId, backendSessionId),
+  );
 }
 
 async function resolveProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
@@ -2642,6 +2671,10 @@ program
     const payload = parseClaudeHookPayload(rawInput);
     const sessionId = await resolveClaudeHookSessionId(opts.session, payload.session_id);
     const result: Record<string, unknown> = { ok: true, action, sessionId };
+    if (payload.session_id) {
+      await recordBackendSessionId(projectRoot, sessionId, payload.session_id);
+      result.backendSessionId = payload.session_id;
+    }
 
     const setActivity = async (activity: AgentActivityState) =>
       postLiveProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>

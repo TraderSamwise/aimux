@@ -518,7 +518,9 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     // Targeted dashboard restore must never use "latest session" style fallbacks
     // such as Claude --continue or Codex resume --last; those can resurrect the
     // wrong agent after a crash or stale-state mismatch.
-    actionArgs = [];
+    throw new Error(
+      `Cannot restore session "${session.id}" without an exact resumable backend session id for "${session.toolConfigKey}"`,
+    );
   }
   const args = [...(toolCfg.args ?? []), ...actionArgs];
 
@@ -558,6 +560,47 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     true,
     useBackendResume,
   );
+}
+
+export function recordSessionBackendSessionId(
+  host: RuntimeStateHost,
+  sessionId: string,
+  backendSessionId: string,
+): { sessionId: string; backendSessionId: string } {
+  const normalizedBackendSessionId = backendSessionId.trim();
+  if (!sessionId.trim()) {
+    throw new Error("sessionId is required");
+  }
+  if (!normalizedBackendSessionId) {
+    throw new Error("backendSessionId is required");
+  }
+
+  const runtime = host.sessions.find((session: any) => session.id === sessionId);
+  const offline = host.offlineSessions.find((session: any) => session.id === sessionId);
+  if (!runtime && !offline) {
+    throw new Error(`Agent "${sessionId}" not found`);
+  }
+
+  const existing = runtime?.backendSessionId ?? offline?.backendSessionId;
+  if (existing && existing !== normalizedBackendSessionId) {
+    throw new Error(
+      `Agent "${sessionId}" already has backend session "${existing}", cannot replace with "${normalizedBackendSessionId}"`,
+    );
+  }
+
+  if (runtime) {
+    runtime.backendSessionId = normalizedBackendSessionId;
+    host.syncTmuxWindowMetadata?.(sessionId);
+  }
+  if (offline) {
+    offline.backendSessionId = normalizedBackendSessionId;
+  }
+
+  host.writeSessionsFile?.();
+  host.saveState?.();
+  host.invalidateDesktopStateSnapshot?.();
+  host.writeStatuslineFile?.();
+  return { sessionId, backendSessionId: normalizedBackendSessionId };
 }
 
 export function startHeartbeat(host: RuntimeStateHost): void {

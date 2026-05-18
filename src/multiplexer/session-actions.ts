@@ -3,6 +3,23 @@ import { loadConfig } from "../config.js";
 
 type SessionActionsHost = any;
 
+function sessionStateFromRuntime(host: SessionActionsHost, runtime: any): any | undefined {
+  if (!runtime?.id || !runtime?.command) return undefined;
+  return {
+    id: runtime.id,
+    command: runtime.command,
+    tool: runtime.command,
+    toolConfigKey: host.sessionToolKeys?.get?.(runtime.id) ?? runtime.toolConfigKey ?? runtime.command,
+    args: host.sessionOriginalArgs?.get?.(runtime.id) ?? runtime.args ?? [],
+    lifecycle: "offline",
+    createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : runtime.createdAt,
+    backendSessionId: runtime.backendSessionId,
+    worktreePath: host.sessionWorktreePaths?.get?.(runtime.id) ?? runtime.worktreePath,
+    label: host.getSessionLabel?.(runtime.id) ?? runtime.label,
+    headline: host.deriveHeadline?.(runtime.id) ?? runtime.headline,
+  };
+}
+
 function sessionStateFromActionSeed(seed: any): any | undefined {
   if (!seed?.id || !seed?.command) return undefined;
   const config = loadConfig();
@@ -30,6 +47,33 @@ function sessionStateFromActionSeed(seed: any): any | undefined {
     label: typeof seed.label === "string" ? seed.label : undefined,
     headline: typeof seed.headline === "string" ? seed.headline : undefined,
   };
+}
+
+function ensureOfflineSession(host: SessionActionsHost, session: any): void {
+  if (!session?.id) return;
+  const existingIndex = host.offlineSessions.findIndex((entry: any) => entry.id === session.id);
+  if (existingIndex >= 0) {
+    host.offlineSessions[existingIndex] = { ...host.offlineSessions[existingIndex], ...session, lifecycle: "offline" };
+  } else {
+    host.offlineSessions.push({ ...session, lifecycle: "offline" });
+  }
+}
+
+function isRuntimeLive(host: SessionActionsHost, runtime: any): boolean {
+  return typeof host.isSessionRuntimeLive === "function" ? host.isSessionRuntimeLive(runtime) : !runtime.exited;
+}
+
+function evictStaleRuntime(host: SessionActionsHost, runtime: any): void {
+  if (typeof host.evictZombieSession === "function") {
+    host.evictZombieSession(runtime);
+    return;
+  }
+  const idx = host.sessions.indexOf(runtime);
+  if (idx >= 0) {
+    host.sessions.splice(idx, 1);
+  }
+  host.stoppingSessionIds?.delete?.(runtime.id);
+  host.sessionTmuxTargets?.delete?.(runtime.id);
 }
 
 export async function forkAgent(
@@ -150,6 +194,14 @@ export async function stopAgent(
     throw new Error(`Session "${sessionId}" not found`);
   }
 
+  if (!isRuntimeLive(host, runningSession)) {
+    const offlineSession = sessionStateFromRuntime(host, runningSession);
+    evictStaleRuntime(host, runningSession);
+    ensureOfflineSession(host, offlineSession);
+    host.saveState();
+    return { sessionId, status: "offline" };
+  }
+
   if (!host.stoppingSessionIds.has(sessionId)) {
     host.stopSessionToOffline(runningSession);
   }
@@ -173,22 +225,32 @@ export async function sendAgentToGraveyard(
   let previousStatus: "running" | "offline";
   const runningSession = host.sessions.find((session: any) => session.id === sessionId);
   if (runningSession) {
-    previousStatus = "running";
-    host.graveyardAfterStopSessionIds.add(sessionId);
-    if (!host.stoppingSessionIds.has(sessionId)) {
-      host.stopSessionToOffline(runningSession);
+    if (!isRuntimeLive(host, runningSession)) {
+      const offlineSession = sessionStateFromRuntime(host, runningSession);
+      evictStaleRuntime(host, runningSession);
+      ensureOfflineSession(host, offlineSession);
+      host.saveState();
+      previousStatus = "offline";
+    } else {
+      previousStatus = "running";
+      host.graveyardAfterStopSessionIds.add(sessionId);
+      try {
+        if (!host.stoppingSessionIds.has(sessionId)) {
+          host.stopSessionToOffline(runningSession);
+        }
+        await waitForSessionExit(runningSession);
+        host.saveState();
+      } finally {
+        host.graveyardAfterStopSessionIds.delete(sessionId);
+      }
     }
-    await waitForSessionExit(runningSession);
-    host.saveState();
   } else {
     const offlineSession =
       host.offlineSessions.find((session: any) => session.id === sessionId) ?? sessionStateFromActionSeed(sessionSeed);
     if (!offlineSession) {
       throw new Error(`Session "${sessionId}" not found`);
     }
-    if (!host.offlineSessions.some((session: any) => session.id === sessionId)) {
-      host.offlineSessions.push(offlineSession);
-    }
+    ensureOfflineSession(host, offlineSession);
     previousStatus = "offline";
   }
 

@@ -7,6 +7,7 @@ import {
   buildLiveServiceStates,
   loadOfflineServices,
   loadOfflineSessions,
+  recordSessionBackendSessionId,
   restoreTmuxSessionsFromState,
   resumeOfflineSession,
   stopSessionToOffline,
@@ -94,7 +95,7 @@ describe("resumeOfflineSession", () => {
     ]);
   });
 
-  it("does not use non-specific resume fallbacks for targeted offline restore", () => {
+  it("refuses targeted offline restore without exact backend resume", () => {
     const createSession = vi.fn();
     const host: any = {
       sessions: [],
@@ -111,28 +112,65 @@ describe("resumeOfflineSession", () => {
       createSession,
     };
 
-    resumeOfflineSession(host, {
-      id: "codex-1",
-      command: "codex",
-      toolConfigKey: "codex",
-      args: [],
-      worktreePath: repoRoot,
+    expect(() =>
+      resumeOfflineSession(host, {
+        id: "codex-1",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        worktreePath: repoRoot,
+      }),
+    ).toThrow('Cannot restore session "codex-1" without an exact resumable backend session id for "codex"');
+
+    expect(createSession).not.toHaveBeenCalled();
+    expect(host.offlineSessions).toEqual([{ id: "codex-1" }]);
+  });
+
+  it("records backend session ids on live and offline sessions", () => {
+    const runtime = {
+      id: "claude-1",
+      command: "claude",
+      backendSessionId: undefined,
+    };
+    const offline = {
+      id: "claude-2",
+      command: "claude",
+      backendSessionId: undefined,
+    };
+    const host: any = {
+      sessions: [runtime],
+      offlineSessions: [offline],
+      syncTmuxWindowMetadata: vi.fn(),
+      writeSessionsFile: vi.fn(),
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+    };
+
+    expect(recordSessionBackendSessionId(host, "claude-1", " backend-live ")).toEqual({
+      sessionId: "claude-1",
+      backendSessionId: "backend-live",
+    });
+    expect(recordSessionBackendSessionId(host, "claude-2", "backend-offline")).toEqual({
+      sessionId: "claude-2",
+      backendSessionId: "backend-offline",
     });
 
-    expect(createSession).toHaveBeenCalledTimes(1);
-    expect(createSession.mock.calls[0]).toMatchObject([
-      "codex",
-      ["--dangerously-bypass-approvals-and-sandbox"],
-      undefined,
-      "codex",
-      undefined,
-      undefined,
-      repoRoot,
-      undefined,
-      "codex-1",
-      true,
-      false,
-    ]);
+    expect(runtime.backendSessionId).toBe("backend-live");
+    expect(offline.backendSessionId).toBe("backend-offline");
+    expect(host.syncTmuxWindowMetadata).toHaveBeenCalledWith("claude-1");
+    expect(host.saveState).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not replace an existing backend session id", () => {
+    const host: any = {
+      sessions: [{ id: "claude-1", command: "claude", backendSessionId: "backend-original" }],
+      offlineSessions: [],
+    };
+
+    expect(() => recordSessionBackendSessionId(host, "claude-1", "backend-new")).toThrow(
+      'Agent "claude-1" already has backend session "backend-original"',
+    );
   });
 
   it("does not reload a starting session as offline from stale saved state", () => {
