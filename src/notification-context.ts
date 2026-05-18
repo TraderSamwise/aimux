@@ -58,12 +58,16 @@ export function updateNotificationContext(
   patch: Partial<Omit<NotificationContextEntry, "source" | "updatedAt">>,
 ): NotificationContextEntry {
   const state = loadState();
+  const previous = state.contexts[source];
+  const has = (key: keyof typeof patch) => Object.prototype.hasOwnProperty.call(patch, key);
+  const nextSessionId = has("sessionId") ? patch.sessionId : previous?.sessionId;
+  const nextScreen = has("screen") ? patch.screen : has("sessionId") && nextSessionId ? "session" : previous?.screen;
   const next: NotificationContextEntry = {
     source,
-    focused: patch.focused ?? state.contexts[source]?.focused ?? false,
-    screen: patch.screen ?? state.contexts[source]?.screen,
-    sessionId: patch.sessionId ?? state.contexts[source]?.sessionId,
-    panelOpen: patch.panelOpen ?? state.contexts[source]?.panelOpen ?? false,
+    focused: has("focused") ? (patch.focused ?? false) : (previous?.focused ?? false),
+    screen: nextScreen,
+    sessionId: nextSessionId,
+    panelOpen: has("panelOpen") ? (patch.panelOpen ?? false) : (previous?.panelOpen ?? false),
     updatedAt: new Date().toISOString(),
   };
   state.contexts[source] = next;

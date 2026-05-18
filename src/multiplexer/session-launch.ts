@@ -580,13 +580,13 @@ export async function migrateAgent(
     createSession(
       host,
       session.command,
-      originalArgs,
+      migrateArgs,
       undefined,
       toolConfigKey,
       undefined,
       undefined,
       effectiveTarget,
-      backendSessionId,
+      useBackendResume ? backendSessionId : undefined,
       sessionId,
       true,
       true,
@@ -610,7 +610,7 @@ export async function migrateAgent(
     historyContext.trim() || undefined,
     useBackendResume ? undefined : toolCfg?.sessionIdFlag,
     effectiveTarget,
-    backendSessionId,
+    useBackendResume ? backendSessionId : undefined,
     sessionId,
   );
 }
@@ -644,6 +644,7 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   host.agentTracker.markSeen(sid);
   updateNotificationContext("tui", {
     focused: true,
+    screen: "agent",
     sessionId: sid,
     panelOpen: false,
   });

@@ -113,6 +113,31 @@ describe("notifications store", () => {
     expect(unreadNotificationCount({ sessionId: "codex-1" })).toBe(1);
   });
 
+  it("clears stale dashboard context when focus moves directly into a session", () => {
+    updateNotificationContext("tui", {
+      focused: true,
+      sessionId: "codex-1",
+      screen: "dashboard",
+    });
+    updateNotificationContext("tui", {
+      focused: true,
+      sessionId: "codex-1",
+      panelOpen: false,
+    });
+    const bus = new ProjectEventBus();
+
+    expect(
+      bus.publishAlert({
+        kind: "needs_input",
+        sessionId: "codex-1",
+        title: "codex needs input",
+        message: "ready",
+      }),
+    ).toBe(true);
+
+    expect(unreadNotificationCount({ sessionId: "codex-1" })).toBe(0);
+  });
+
   it("coalesces duplicate alert sources into one session notification", () => {
     const bus = new ProjectEventBus();
 

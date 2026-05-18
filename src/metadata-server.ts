@@ -349,6 +349,7 @@ function markActiveWindowFocused(
   if (!match) return false;
   updateNotificationContext("tui", {
     focused: true,
+    screen: match.metadata.kind === "service" ? "service" : "agent",
     sessionId: match.metadata.sessionId,
     panelOpen: false,
   });

@@ -7,6 +7,7 @@ import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { markLastUsed } from "../last-used.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
+import { getServiceLaunchCommandLine } from "./services.js";
 
 type RuntimeStateHost = any;
 
@@ -302,8 +303,7 @@ export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
     if (!isAvailableWorktreePath(metadata.worktreePath, graveyardPaths)) continue;
     if (seen.has(metadata.sessionId)) continue;
     seen.add(metadata.sessionId);
-    const launchCommandLine =
-      metadata.command === "shell" ? "" : metadata.args?.[0] === "-lc" ? (metadata.args[1] ?? "") : "";
+    const launchCommandLine = metadata.launchCommandLine?.trim() || getServiceLaunchCommandLine(metadata);
     liveServices.push({
       id: metadata.sessionId,
       createdAt: metadata.createdAt,

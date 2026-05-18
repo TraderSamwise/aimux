@@ -3,7 +3,13 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { createService, removeOfflineService, resumeOfflineService, stopService } from "./services.js";
+import {
+  createService,
+  getServiceLaunchCommandLine,
+  removeOfflineService,
+  resumeOfflineService,
+  stopService,
+} from "./services.js";
 
 describe("services", () => {
   let repoRoot = "";
@@ -20,6 +26,11 @@ describe("services", () => {
   afterEach(() => {
     process.chdir(originalCwd);
     rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("recovers service launch commands from shell -lc metadata", () => {
+    expect(getServiceLaunchCommandLine({ command: "shell", args: ["-lc", "yarn devpp"] })).toBe("yarn devpp");
+    expect(getServiceLaunchCommandLine({ command: "shell", args: ["-l"] })).toBe("");
   });
 
   it("kills lingering managed tmux windows when removing an offline service", () => {
@@ -195,6 +206,10 @@ describe("services", () => {
     const joined = args.join(" ");
     expect(joined).toContain("Service command exited with status");
     expect(joined).toContain("interactive shell for debugging");
+    expect(host.tmuxRuntimeManager.setWindowMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({ windowId: "@11" }),
+      expect.objectContaining({ launchCommandLine: "yarn dev" }),
+    );
   });
 
   it("restarts a retained service command in its existing tmux window", () => {

@@ -71,6 +71,7 @@ export interface TmuxWindowMetadata {
   backendSessionId?: string;
   worktreePath?: string;
   label?: string;
+  launchCommandLine?: string;
   role?: string;
   activity?: string;
   attention?: string;

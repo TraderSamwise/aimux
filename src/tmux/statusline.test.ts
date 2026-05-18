@@ -362,6 +362,19 @@ describe("renderTmuxStatusline", () => {
             headline: "zsh",
             worktreePath: nestedPath,
           },
+          {
+            id: "svc-2",
+            kind: "service",
+            tool: "shell",
+            label: "yarn",
+            launchCommandLine: "yarn devpp",
+            windowName: "yarn",
+            tmuxWindowId: "@10",
+            tmuxWindowIndex: 10,
+            headline: "next dev",
+            worktreePath: nestedPath,
+            status: "running",
+          },
         ],
         metadata: {
           a: { derived: { attention: "needs_input" } },
@@ -377,6 +390,7 @@ describe("renderTmuxStatusline", () => {
     });
     expect(rendered).toContain("#[fg=black,bg=yellow] claude(coder) on you ? #[default]");
     expect(rendered).toContain("shell[svc]");
+    expect(rendered).toContain("yarn devpp");
   });
 
   it("omits offline and exited sessions from scoped footer chips", () => {

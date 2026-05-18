@@ -206,6 +206,7 @@ export const persistenceMethods = {
       role?: string;
       active: boolean;
       worktreePath?: string;
+      launchCommandLine?: string;
     }>;
     tasks: { pending: number; assigned: number };
     controlPlane: {
@@ -248,6 +249,7 @@ export const persistenceMethods = {
           status: service.status,
           active: service.active,
           worktreePath: service.worktreePath,
+          launchCommandLine: service.launchCommandLine,
         })),
       ],
       tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
@@ -305,7 +307,6 @@ export const persistenceMethods = {
               optimistic: _optimistic,
               pending: _pending,
               removing: _removing,
-              operationFailure: _operationFailure,
               ...wt
             }: any) => wt,
           ),
@@ -769,7 +770,7 @@ export const persistenceMethods = {
         }
 
         const attachedSession = this.sessions.find(
-          (session: any) => session.worktreePath === path && this.isSessionRuntimeLive(session),
+          (session: any) => this.sessionWorktreePaths?.get(session.id) === path && this.isSessionRuntimeLive(session),
         );
         if (attachedSession) {
           throw new Error(

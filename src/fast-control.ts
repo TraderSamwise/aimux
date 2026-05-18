@@ -130,6 +130,7 @@ export function listSwitchableAgentItems(
         kind: entry.metadata.kind === "service" ? "service" : "agent",
         tool: entry.metadata.command || entry.target.windowName,
         label: entry.metadata.label,
+        launchCommandLine: entry.metadata.launchCommandLine,
         role: entry.metadata.role,
         id: entry.metadata.sessionId,
       }),

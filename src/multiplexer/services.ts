@@ -14,7 +14,7 @@ export function generateServiceId(): string {
 }
 
 export function getServiceLaunchCommandLine(metadata: { command?: string; args?: string[] }): string {
-  return metadata.command === "shell" ? "" : metadata.args?.[0] === "-lc" ? (metadata.args[1] ?? "") : "";
+  return metadata.args?.[0] === "-lc" ? (metadata.args[1] ?? "") : "";
 }
 
 function shellQuote(value: string): string {
@@ -44,16 +44,18 @@ export function buildServiceStateFromMetadata(
     createdAt?: string;
     worktreePath?: string;
     label?: string;
+    launchCommandLine?: string;
   },
   opts: { cwd?: string; tmuxTarget?: ServiceState["tmuxTarget"]; retained?: boolean } = {},
 ): ServiceState {
+  const launchCommandLine = metadata.launchCommandLine?.trim() || getServiceLaunchCommandLine(metadata);
   return {
     id: serviceId,
     createdAt: metadata.createdAt,
     worktreePath: metadata.worktreePath,
     cwd: opts.cwd,
     label: metadata.label,
-    launchCommandLine: getServiceLaunchCommandLine(metadata),
+    launchCommandLine,
     tmuxTarget: opts.tmuxTarget,
     retained: opts.retained,
   };
@@ -146,6 +148,7 @@ export function createService(
       createdAt: new Date().toISOString(),
       worktreePath,
       label,
+      launchCommandLine: trimmed,
     });
     host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
     host.saveState();
@@ -303,6 +306,7 @@ export function resumeOfflineService(
     sessionId: service.id,
     command: launchCommandLine ? shell : "shell",
     args: launchCommandLine ? ["-lc", launchCommandLine] : ["-l"],
+    launchCommandLine,
     toolConfigKey: "service",
     createdAt: service.createdAt ?? new Date().toISOString(),
     worktreePath: service.worktreePath,
