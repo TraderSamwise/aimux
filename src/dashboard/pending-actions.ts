@@ -42,6 +42,19 @@ interface PendingActionEntry {
   serviceSeed?: DashboardService;
 }
 
+interface PendingActionOptions {
+  timeoutMs?: number;
+  onTimeout?: () => void;
+}
+
+interface PendingSessionActionOptions extends PendingActionOptions {
+  sessionSeed?: DashboardSession;
+}
+
+interface PendingServiceActionOptions extends PendingActionOptions {
+  serviceSeed?: DashboardService;
+}
+
 function visibleEntryKey(entry?: PendingActionEntry): string {
   if (!entry) return "";
   return JSON.stringify({
@@ -75,7 +88,31 @@ export class DashboardPendingActions {
     return `worktree:${path ?? "__main__"}`;
   }
 
-  set(
+  setSessionAction(sessionId: string, kind: PendingSessionActionKind, opts?: PendingSessionActionOptions): void {
+    this.setEntry(sessionId, kind, opts);
+  }
+
+  clearSessionAction(sessionId: string): void {
+    this.setEntry(sessionId, null);
+  }
+
+  setServiceAction(serviceId: string, kind: PendingServiceActionKind, opts?: PendingServiceActionOptions): void {
+    this.setEntry(serviceId, kind, opts);
+  }
+
+  clearServiceAction(serviceId: string): void {
+    this.setEntry(serviceId, null);
+  }
+
+  setWorktreeAction(path: string | undefined, kind: PendingWorktreeActionKind, opts?: PendingActionOptions): void {
+    this.setEntry(DashboardPendingActions.worktreeKey(path), kind, opts);
+  }
+
+  clearWorktreeAction(path: string | undefined): void {
+    this.setEntry(DashboardPendingActions.worktreeKey(path), null);
+  }
+
+  private setEntry(
     sessionId: string,
     kind: PendingDashboardActionKind | null,
     opts?: {
@@ -210,7 +247,7 @@ export class DashboardPendingActions {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
       }
-      this.set(itemId, null);
+      this.setEntry(itemId, null);
       onSettled();
     })();
   }

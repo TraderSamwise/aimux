@@ -7,14 +7,13 @@ import {
   buildWorktreeRemoveConfirmOverlayOutput,
 } from "../tui/screens/overlay-renderers.js";
 import { postToProjectService } from "./dashboard-control.js";
-import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import type { PendingWorktreeActionKind } from "../dashboard/pending-actions.js";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
 
 type WorktreeHost = any;
 
 interface DashboardWorktreeMutationOptions {
-  pendingKey: string;
+  pendingPath: string | undefined;
   pendingAction: PendingWorktreeActionKind;
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
@@ -45,15 +44,15 @@ async function waitForRenderedDashboardWorktreeState(
 }
 
 async function runDashboardWorktreeMutation(host: WorktreeHost, opts: DashboardWorktreeMutationOptions): Promise<void> {
-  host.dashboardPendingActions.set(opts.pendingKey, opts.pendingAction);
+  host.dashboardPendingActions.setWorktreeAction(opts.pendingPath, opts.pendingAction);
   host.renderDashboard();
   try {
     await opts.request();
     assertDashboardWorktreeMutationSettled(await opts.settle(), opts.pendingAction);
-    host.dashboardPendingActions.set(opts.pendingKey, null);
+    host.dashboardPendingActions.clearWorktreeAction(opts.pendingPath);
     opts.onSuccess?.();
   } catch (error) {
-    host.dashboardPendingActions.set(opts.pendingKey, null);
+    host.dashboardPendingActions.clearWorktreeAction(opts.pendingPath);
     opts.onError?.(error);
   }
 }
@@ -247,7 +246,6 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
     if (name) {
       if (host.mode === "dashboard") {
         const targetPath = showOptimisticDashboardWorktreeCreate(host, name);
-        const pendingKey = DashboardPendingActions.worktreeKey(targetPath);
         host.renderDashboard();
         void (async () => {
           try {
@@ -257,13 +255,13 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
               throw result.error;
             }
             debug(`worktree created from UI: ${name}`, "worktree");
-            host.dashboardPendingActions.set(pendingKey, null);
+            host.dashboardPendingActions.clearWorktreeAction(targetPath);
             await host.refreshDashboardModelFromService?.(true);
             host.dashboardState.focusedWorktreePath = targetPath;
             host.dashboardUiStateStore.markSelectionDirty();
             host.renderDashboard();
           } catch (err) {
-            host.dashboardPendingActions.set(pendingKey, null);
+            host.dashboardPendingActions.clearWorktreeAction(targetPath);
             debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
             showDashboardWorktreeCreateFailure(host, name, targetPath, err);
           }
@@ -340,9 +338,8 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
   host.refreshLocalDashboardModel();
   host.renderDashboard();
   if (host.mode === "dashboard") {
-    const pendingKey = DashboardPendingActions.worktreeKey(path);
     void runDashboardWorktreeMutation(host, {
-      pendingKey,
+      pendingPath: path,
       pendingAction: "graveyarding",
       request: async () => {
         await postToProjectService(host, "/worktrees/graveyard", { path }, { timeoutMs: 10_000 });

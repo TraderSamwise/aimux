@@ -8,7 +8,7 @@ import {
   waitForSessionExit,
   waitForSessionStart,
 } from "../dashboard/session-actions.js";
-import type { DashboardSession } from "../dashboard/index.js";
+import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { PendingServiceActionKind, PendingSessionActionKind } from "../dashboard/pending-actions.js";
 import {
   isAttachableDashboardSessionEntry,
@@ -252,13 +252,13 @@ async function runDashboardServiceMutation(
   host: DashboardOpsHost,
   opts: DashboardServiceMutationOptions,
 ): Promise<void> {
-  host.setPendingDashboardSessionAction(opts.serviceId, opts.pendingAction, { serviceSeed: opts.serviceSeed });
+  host.setPendingDashboardServiceAction(opts.serviceId, opts.pendingAction, { serviceSeed: opts.serviceSeed });
   opts.onBeforeRequest?.();
   host.renderDashboard();
   try {
     await opts.request();
     assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
-    host.setPendingDashboardSessionAction(opts.serviceId, null);
+    host.setPendingDashboardServiceAction(opts.serviceId, null);
     opts.onAfterSettle?.();
     if (opts.successFlash) {
       host.footerFlash = opts.successFlash.message;
@@ -266,7 +266,7 @@ async function runDashboardServiceMutation(
     }
     host.renderDashboard();
   } catch (error) {
-    host.setPendingDashboardSessionAction(opts.serviceId, null);
+    host.setPendingDashboardServiceAction(opts.serviceId, null);
     await opts.onError?.();
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
   }
@@ -373,10 +373,30 @@ export async function forkDashboardAgentWithFeedback(
 export function setPendingDashboardSessionAction(
   host: DashboardOpsHost,
   sessionId: string,
-  kind: any,
-  opts?: { sessionSeed?: DashboardSession; serviceSeed?: any },
+  kind: PendingSessionActionKind | null,
+  opts?: { sessionSeed?: DashboardSession },
 ): void {
-  host.dashboardPendingActions.set(sessionId, kind, opts);
+  if (kind) {
+    host.dashboardPendingActions.setSessionAction(sessionId, kind, opts);
+  } else {
+    host.dashboardPendingActions.clearSessionAction(sessionId);
+  }
+  if (typeof host.reapplyDashboardPendingActions === "function") {
+    host.reapplyDashboardPendingActions();
+  }
+}
+
+export function setPendingDashboardServiceAction(
+  host: DashboardOpsHost,
+  serviceId: string,
+  kind: PendingServiceActionKind | null,
+  opts?: { serviceSeed?: DashboardService },
+): void {
+  if (kind) {
+    host.dashboardPendingActions.setServiceAction(serviceId, kind, opts);
+  } else {
+    host.dashboardPendingActions.clearServiceAction(serviceId);
+  }
   if (typeof host.reapplyDashboardPendingActions === "function") {
     host.reapplyDashboardPendingActions();
   }
@@ -657,18 +677,18 @@ export async function resumeOfflineServiceWithFeedback(
     });
     return;
   }
-  host.setPendingDashboardSessionAction(service.id, "starting");
+  host.setPendingDashboardServiceAction(service.id, "starting");
   host.footerFlash = `Restoring ${service.label ?? service.id}`;
   host.footerFlashTicks = 3;
   host.renderDashboard();
   try {
     host.resumeOfflineServiceById(service.id);
-    host.setPendingDashboardSessionAction(service.id, null);
+    host.setPendingDashboardServiceAction(service.id, null);
     host.footerFlash = `◆ Started service ${service.label ?? service.id}`;
     host.footerFlashTicks = 3;
     host.renderDashboard();
   } catch (error) {
-    host.setPendingDashboardSessionAction(service.id, null);
+    host.setPendingDashboardServiceAction(service.id, null);
     host.refreshLocalDashboardModel();
     host.showDashboardError("Failed to start service", [error instanceof Error ? error.message : String(error)]);
   }
@@ -775,7 +795,8 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
   return {
     getSessionLabel: (sessionId: string) => host.getSessionLabel(sessionId),
     getPendingAction: (sessionId: string) => host.dashboardPendingActions.get(sessionId),
-    setPendingAction: (sessionId: string, kind: any) => setPendingDashboardSessionAction(host, sessionId, kind),
+    setPendingAction: (sessionId: string, kind: PendingSessionActionKind | null) =>
+      setPendingDashboardSessionAction(host, sessionId, kind),
     stopSessionToOffline: (session: any) => host.stopSessionToOffline(session),
     isGraveyardAfterStop: (sessionId: string) => host.graveyardAfterStopSessionIds.has(sessionId),
     sendAgentToGraveyard: (sessionId: string) => host.sendAgentToGraveyard(sessionId).then(() => undefined),

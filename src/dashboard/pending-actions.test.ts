@@ -19,7 +19,7 @@ describe("DashboardPendingActions", () => {
 
   it("synthesizes optimistic session rows for creating sessions that do not exist yet", () => {
     const pending = new DashboardPendingActions(() => {});
-    pending.set("claude-new", "creating", {
+    pending.setSessionAction("claude-new", "creating", {
       sessionSeed: {
         index: -1,
         id: "claude-new",
@@ -48,7 +48,7 @@ describe("DashboardPendingActions", () => {
 
   it("keeps stopping session rows visible while waiting for offline state", () => {
     const pending = new DashboardPendingActions(() => {});
-    pending.set("claude-1", "stopping", {
+    pending.setSessionAction("claude-1", "stopping", {
       sessionSeed: {
         index: -1,
         id: "claude-1",
@@ -74,7 +74,7 @@ describe("DashboardPendingActions", () => {
 
   it("keeps migrating session rows visible while waiting for the new runtime", () => {
     const pending = new DashboardPendingActions(() => {});
-    pending.set("claude-1", "migrating", {
+    pending.setSessionAction("claude-1", "migrating", {
       sessionSeed: {
         index: -1,
         id: "claude-1",
@@ -100,7 +100,7 @@ describe("DashboardPendingActions", () => {
 
   it("keeps stopping service rows visible while waiting for offline state", () => {
     const pending = new DashboardPendingActions(() => {});
-    pending.set("service-1", "stopping", {
+    pending.setServiceAction("service-1", "stopping", {
       serviceSeed: {
         id: "service-1",
         command: "shell",
@@ -130,7 +130,7 @@ describe("DashboardPendingActions", () => {
       const pending = new DashboardPendingActions(() => {});
       let rendered = false;
       let settled = false;
-      pending.set("service-1", "creating", {
+      pending.setServiceAction("service-1", "creating", {
         serviceSeed: {
           id: "service-1",
           command: "shell",
@@ -166,12 +166,40 @@ describe("DashboardPendingActions", () => {
     }
   });
 
+  it("applies worktree pending actions from raw worktree paths", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const worktree = {
+      name: "demo",
+      branch: "demo",
+      path: "/repo/.aimux/worktrees/demo",
+      status: "offline" as const,
+      sessions: [],
+      services: [],
+    };
+
+    pending.setWorktreeAction(worktree.path, "graveyarding");
+
+    expect(pending.applyToWorktrees([worktree])).toEqual([
+      expect.objectContaining({
+        path: worktree.path,
+        pending: true,
+        pendingAction: "graveyarding",
+        removing: true,
+        optimistic: true,
+      }),
+    ]);
+
+    pending.clearWorktreeAction(worktree.path);
+
+    expect(pending.applyToWorktrees([worktree])).toEqual([worktree]);
+  });
+
   it("increments version when a timed out action is removed", async () => {
     vi.useFakeTimers();
     try {
       const onChange = vi.fn();
       const pending = new DashboardPendingActions(onChange);
-      pending.set("service-1", "creating", {
+      pending.setServiceAction("service-1", "creating", {
         timeoutMs: 1_000,
         serviceSeed: {
           id: "service-1",
@@ -205,11 +233,11 @@ describe("DashboardPendingActions", () => {
       status: "running",
       active: false,
     };
-    pending.set("service-1", "creating", { serviceSeed });
+    pending.setServiceAction("service-1", "creating", { serviceSeed });
     const version = pending.getVersion();
     onChange.mockClear();
 
-    pending.set("service-1", "creating", { serviceSeed });
+    pending.setServiceAction("service-1", "creating", { serviceSeed });
 
     expect(pending.getVersion()).toBe(version);
     expect(onChange).not.toHaveBeenCalled();

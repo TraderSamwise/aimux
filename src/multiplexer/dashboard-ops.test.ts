@@ -12,15 +12,37 @@ import {
   stopSessionToOfflineWithFeedback,
 } from "./dashboard-ops.js";
 
+function makePendingActionsFake() {
+  const actions = new Map<string, string | null>();
+  return {
+    get(id: string) {
+      return actions.get(id);
+    },
+    setSessionAction(sessionId: string, kind: string) {
+      actions.set(sessionId, kind);
+    },
+    clearSessionAction(sessionId: string) {
+      actions.set(sessionId, null);
+    },
+    setServiceAction(serviceId: string, kind: string) {
+      actions.set(serviceId, kind);
+    },
+    clearServiceAction(serviceId: string) {
+      actions.set(serviceId, null);
+    },
+  };
+}
+
 describe("dashboard-ops", () => {
   it("creates a service through the project service and clears creating when a live row appears", async () => {
     let createdServiceId = "";
     const services = [[], () => [{ id: createdServiceId, status: "running", pid: 1234, foregroundCommand: "zsh" }]];
     let serviceIndex = 0;
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(serviceId: string, kind: string | null, opts?: any) {
-        this.dashboardPendingActions.set(serviceId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null, opts?: any) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
         this.serviceSeed = opts?.serviceSeed;
       },
       serviceSeed: undefined as any,
@@ -61,9 +83,10 @@ describe("dashboard-ops", () => {
     let serviceIndex = 0;
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -93,9 +116,10 @@ describe("dashboard-ops", () => {
 
   it("refreshes local state and shows a dashboard error when service resume fails", async () => {
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -117,9 +141,10 @@ describe("dashboard-ops", () => {
   it("stops a service through the project service in dashboard mode without requiring rendered cache convergence", async () => {
     const services = [[{ id: "svc-1", status: "running" }]];
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -146,9 +171,10 @@ describe("dashboard-ops", () => {
     const services = [[{ id: "svc-1", status: "offline" }], []];
     let serviceIndex = 0;
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -179,9 +205,10 @@ describe("dashboard-ops", () => {
     const sessions = [[{ ...session, status: "running" }]];
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -211,9 +238,10 @@ describe("dashboard-ops", () => {
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -256,9 +284,10 @@ describe("dashboard-ops", () => {
     ];
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -285,9 +314,10 @@ describe("dashboard-ops", () => {
     const sessions = [[{ ...session, status: "offline", pendingAction: "starting" }]];
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -334,9 +364,10 @@ describe("dashboard-ops", () => {
     ];
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(serviceId: string, kind: string | null) {
-        this.dashboardPendingActions.set(serviceId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -365,9 +396,10 @@ describe("dashboard-ops", () => {
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -405,9 +437,10 @@ describe("dashboard-ops", () => {
       mode: "dashboard",
       offlineSessions: [] as any[],
       sessions: [session],
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       getSessionLabel: vi.fn(() => "claude"),
       renderDashboard: vi.fn(),
@@ -444,9 +477,10 @@ describe("dashboard-ops", () => {
     ];
     let sessionIndex = 0;
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       preferDashboardEntrySelection: vi.fn(),
       renderDashboard: vi.fn(),
@@ -485,9 +519,10 @@ describe("dashboard-ops", () => {
     const sessions = [[], [{ id: "codex-fork12", status: "running", tmuxWindowId: "@43" }]];
     let sessionIndex = 0;
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       preferDashboardEntrySelection: vi.fn(),
       renderDashboard: vi.fn(),

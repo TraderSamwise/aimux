@@ -1,4 +1,4 @@
-import type { PendingDashboardActionKind } from "./pending-actions.js";
+import type { PendingSessionActionKind } from "./pending-actions.js";
 import type { SessionRuntime } from "../session-runtime.js";
 
 export interface DashboardOfflineEntryLike {
@@ -9,8 +9,8 @@ export interface DashboardOfflineEntryLike {
 
 interface DashboardActionDeps {
   getSessionLabel(sessionId: string): string | undefined;
-  getPendingAction(sessionId: string): PendingDashboardActionKind | undefined;
-  setPendingAction(sessionId: string, kind: PendingDashboardActionKind | null): void;
+  getPendingAction(sessionId: string): PendingSessionActionKind | undefined;
+  setPendingAction(sessionId: string, kind: PendingSessionActionKind | null): void;
   stopSessionToOffline(session: SessionRuntime): void;
   isGraveyardAfterStop(sessionId: string): boolean;
   sendAgentToGraveyard(sessionId: string): Promise<void>;

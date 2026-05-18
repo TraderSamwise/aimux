@@ -139,7 +139,7 @@ describe("applyDashboardModel", () => {
       },
     ];
 
-    pending.set("service-new", "creating", {
+    pending.setServiceAction("service-new", "creating", {
       serviceSeed: {
         id: "service-new",
         command: "shell",
@@ -155,7 +155,7 @@ describe("applyDashboardModel", () => {
       expect.objectContaining({ id: "service-new", pendingAction: "creating", optimistic: true }),
     ]);
 
-    pending.set("service-new", null);
+    pending.clearServiceAction("service-new");
 
     expect(applyDashboardModel(host, [], [], worktreeGroups, mainCheckoutInfo)).toBe(true);
     expect(host.dashboardServicesCache).toEqual([]);

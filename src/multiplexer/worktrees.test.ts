@@ -33,8 +33,11 @@ function createPendingActionsStore() {
   const state = new Map<string, string | null>();
   return {
     state,
-    set(key: string, value: string | null) {
-      state.set(key, value);
+    setWorktreeAction(path: string | undefined, value: string) {
+      state.set(`worktree:${path ?? "__main__"}`, value);
+    },
+    clearWorktreeAction(path: string | undefined) {
+      state.set(`worktree:${path ?? "__main__"}`, null);
     },
   };
 }

@@ -55,6 +55,7 @@ import {
   resumeOfflineServiceWithFeedback as resumeOfflineServiceWithFeedbackImpl,
   resumeOfflineSessionWithFeedback as resumeOfflineSessionWithFeedbackImpl,
   runDashboardOperation as runDashboardOperationImpl,
+  setPendingDashboardServiceAction as setPendingDashboardServiceActionImpl,
   setPendingDashboardSessionAction as setPendingDashboardSessionActionImpl,
   stopDashboardServiceWithFeedback as stopDashboardServiceWithFeedbackImpl,
   stopSessionToOfflineWithFeedback as stopSessionToOfflineWithFeedbackImpl,
@@ -65,7 +66,7 @@ import {
   wrapKeyValueForHost,
   wrapTextForHost,
 } from "./dashboard-ops.js";
-import type { PendingDashboardActionKind } from "../dashboard/pending-actions.js";
+import type { PendingServiceActionKind, PendingSessionActionKind } from "../dashboard/pending-actions.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
 import { loadConfig } from "../config.js";
@@ -161,8 +162,14 @@ export type DashboardTailMethods = {
   setPendingDashboardSessionAction(
     this: Multiplexer,
     sessionId: string,
-    kind: PendingDashboardActionKind | null,
+    kind: PendingSessionActionKind | null,
     opts?: { sessionSeed?: DashboardSession },
+  ): void;
+  setPendingDashboardServiceAction(
+    this: Multiplexer,
+    serviceId: string,
+    kind: PendingServiceActionKind | null,
+    opts?: { serviceSeed?: DashboardService },
   ): void;
   stopSessionToOfflineWithFeedback(this: Multiplexer, session: SessionRuntime): Promise<void>;
   clearDashboardSubscreens(this: Multiplexer): void;
@@ -324,6 +331,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   setPendingDashboardSessionAction(sessionId, kind, opts) {
     setPendingDashboardSessionActionImpl(this, sessionId, kind, opts);
+  },
+  setPendingDashboardServiceAction(serviceId, kind, opts) {
+    setPendingDashboardServiceActionImpl(this, serviceId, kind, opts);
   },
   async stopSessionToOfflineWithFeedback(session) {
     await stopSessionToOfflineWithFeedbackImpl(this, session);

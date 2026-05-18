@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, wr
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "../debug.js";
-import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import type { PendingWorktreeActionKind } from "../dashboard/pending-actions.js";
 import {
   addDashboardOperationFailure,
@@ -587,7 +586,7 @@ export const persistenceMethods = {
         this.worktreeCreateJob = null;
       }
     };
-    this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), "creating", {
+    this.dashboardPendingActions.setWorktreeAction(targetPath, "creating", {
       timeoutMs: 180_000,
       onTimeout: () => {
         clearPendingCreate();
@@ -685,7 +684,7 @@ export const persistenceMethods = {
 
     const finalizeCreate = () => {
       clearPendingCreate();
-      this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), null);
+      this.dashboardPendingActions.clearWorktreeAction(targetPath);
       this.invalidateDesktopStateSnapshot();
       this.refreshLocalDashboardModel();
       this.metadataServer?.notifyChange?.();
@@ -715,7 +714,7 @@ export const persistenceMethods = {
       rejectRemoval = reject;
     });
     pendingRemovals.set(path, removalPromise);
-    this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(path), "removing", {
+    this.dashboardPendingActions.setWorktreeAction(path, "removing", {
       timeoutMs: 180_000,
       onTimeout: () => {
         const name = path.split("/").pop() ?? path;
@@ -847,7 +846,7 @@ export const persistenceMethods = {
     });
 
     const finalizeRemoval = () => {
-      this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(path), null);
+      this.dashboardPendingActions.clearWorktreeAction(path);
       pendingRemovals.delete(path);
       this.invalidateDesktopStateSnapshot();
       this.refreshLocalDashboardModel();
