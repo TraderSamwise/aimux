@@ -535,7 +535,8 @@ export async function migrateAgent(
   const toolCfg = config.tools[toolConfigKey];
   const originalArgs = host.sessionOriginalArgs.get(sessionId) ?? [];
 
-  const backendSessionId = session.backendSessionId as string | undefined;
+  const sessionMetadata = loadMetadataState().sessions[sessionId];
+  const backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
   let migrateArgs = originalArgs;
   let historyContext = "";
   const useBackendResume = host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId);

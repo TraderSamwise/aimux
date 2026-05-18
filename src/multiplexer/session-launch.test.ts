@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { createSession, resumeSessions, runDashboard, runProjectService } from "./session-launch.js";
+import { createSession, migrateAgent, resumeSessions, runDashboard, runProjectService } from "./session-launch.js";
 import { loadMetadataState, recordSessionBackendSessionIdMetadata, updateSessionMetadata } from "../metadata-store.js";
 
 describe("createSession", () => {
@@ -468,6 +468,84 @@ describe("createSession", () => {
 
     expect(host.tmuxRuntimeManager.createWindow).not.toHaveBeenCalled();
     rmSync(repoRoot, { recursive: true, force: true });
+  });
+});
+
+describe("migrateAgent", () => {
+  it("uses durable backend metadata when migrating a runtime that missed its backend id", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-migrate-"));
+    const targetRoot = mkdtempSync(join(tmpdir(), "aimux-session-migrate-target-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    execFileSync("git", ["init"], { cwd: targetRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+    recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
+
+    const sessions: any[] = [];
+    const sourceSession: any = {
+      id: "codex-1",
+      command: "codex",
+      exited: false,
+      kill: vi.fn(() => {
+        sourceSession.exited = true;
+        const index = sessions.indexOf(sourceSession);
+        if (index >= 0) sessions.splice(index, 1);
+      }),
+      onExit: vi.fn(),
+    };
+    sessions.push(sourceSession);
+
+    const host: any = {
+      sessions,
+      sessionToolKeys: new Map([["codex-1", "codex"]]),
+      sessionOriginalArgs: new Map([["codex-1", ["--dangerously-bypass-approvals-and-sandbox"]]]),
+      sessionWorktreePaths: new Map([["codex-1", repoRoot]]),
+      sessionTmuxTargets: new Map(),
+      contextWatcher: { syncNow: vi.fn(async () => undefined) },
+      sessionBootstrap: {
+        canResumeWithBackendSessionId: vi.fn(() => true),
+        composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
+          ...originalArgs,
+          ...resumeArgs,
+        ]),
+        readForkSourceSnapshot: vi.fn(() => ({ historyText: "", liveText: "" })),
+        buildCodexMigrationKickoffPrompt: vi.fn(() => "kickoff"),
+        deliverDetachedCodexKickoffPrompt: vi.fn(async () => undefined),
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn((session: any) => sessions.push(session)),
+      getSessionLabel: vi.fn(() => "codex"),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    await migrateAgent(host, "codex-1", targetRoot);
+
+    expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex" }),
+      "native-session",
+    );
+    expect(host.sessionBootstrap.composeToolArgs).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex" }),
+      expect.arrayContaining(["resume", "native-session"]),
+      ["--dangerously-bypass-approvals-and-sandbox"],
+    );
+    expect(sessions.find((session) => session.id === "codex-1")?.backendSessionId).toBe("native-session");
+    expect(host.tmuxRuntimeManager.createWindow.mock.calls[0][2]).toBe(targetRoot);
+
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(targetRoot, { recursive: true, force: true });
   });
 });
 
