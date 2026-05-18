@@ -1,14 +1,39 @@
 import type { DashboardService, DashboardSession, WorktreeGroup } from "./index.js";
 
 export type PendingDashboardActionKind =
+  | PendingSessionActionKind
+  | PendingServiceActionKind
+  | PendingWorktreeActionKind;
+
+export type PendingSessionActionKind =
   | "creating"
   | "forking"
   | "migrating"
   | "starting"
   | "stopping"
   | "graveyarding"
-  | "renaming"
-  | "removing";
+  | "renaming";
+
+export type PendingServiceActionKind = "creating" | "starting" | "stopping" | "removing";
+
+export type PendingWorktreeActionKind = "creating" | "removing" | "graveyarding";
+
+const BLOCKING_PENDING_DASHBOARD_ACTIONS = new Set<string>([
+  "creating",
+  "forking",
+  "migrating",
+  "starting",
+  "stopping",
+  "graveyarding",
+  "renaming",
+  "removing",
+]);
+
+export function isBlockingPendingDashboardActionKind(
+  kind: string | null | undefined,
+): kind is PendingDashboardActionKind {
+  return Boolean(kind && BLOCKING_PENDING_DASHBOARD_ACTIONS.has(kind));
+}
 
 interface PendingActionEntry {
   kind: PendingDashboardActionKind;
@@ -28,13 +53,15 @@ function visibleEntryKey(entry?: PendingActionEntry): string {
 
 function canSynthesizeMissingSession(
   kind: PendingDashboardActionKind,
-): kind is "creating" | "forking" | "migrating" | "starting" | "stopping" {
+): kind is Extract<PendingSessionActionKind, "creating" | "forking" | "migrating" | "starting" | "stopping"> {
   return (
     kind === "creating" || kind === "forking" || kind === "migrating" || kind === "starting" || kind === "stopping"
   );
 }
 
-function canSynthesizeMissingService(kind: PendingDashboardActionKind): kind is "creating" | "starting" | "stopping" {
+function canSynthesizeMissingService(
+  kind: PendingDashboardActionKind,
+): kind is Extract<PendingServiceActionKind, "creating" | "starting" | "stopping"> {
   return kind === "creating" || kind === "starting" || kind === "stopping";
 }
 

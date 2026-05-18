@@ -1,6 +1,7 @@
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "../agent-events.js";
 import type { SessionServiceMetadata } from "../metadata-store.js";
 import type { SessionPendingAction, SessionRawStatus, SessionSemanticState } from "../session-semantics.js";
+import type { PendingDashboardActionKind, PendingWorktreeActionKind } from "./pending-actions.js";
 import type { DashboardOperationFailure } from "./operation-failures.js";
 import { sessionDisplayStatusLabel } from "../session-semantics.js";
 import { renderDashboardFrame } from "../tui/screens/dashboard-renderers.js";
@@ -87,15 +88,7 @@ export interface DashboardService {
   shellCommandState?: "running" | "prompt";
   pid?: number;
   previewLine?: string;
-  pendingAction?:
-    | "creating"
-    | "forking"
-    | "migrating"
-    | "starting"
-    | "stopping"
-    | "graveyarding"
-    | "renaming"
-    | "removing";
+  pendingAction?: PendingDashboardActionKind;
   optimistic?: boolean;
 }
 
@@ -109,7 +102,7 @@ export interface WorktreeGroup {
   status: "active" | "offline";
   pending?: boolean;
   removing?: boolean;
-  pendingAction?: "removing" | "creating" | "graveyarding";
+  pendingAction?: PendingWorktreeActionKind;
   operationFailure?: DashboardOperationFailure;
   optimistic?: boolean;
   sessions: DashboardSession[];

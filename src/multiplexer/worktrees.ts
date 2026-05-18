@@ -8,23 +8,21 @@ import {
 } from "../tui/screens/overlay-renderers.js";
 import { postToProjectService } from "./dashboard-control.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import type { PendingWorktreeActionKind } from "../dashboard/pending-actions.js";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
 
 type WorktreeHost = any;
 
 interface DashboardWorktreeMutationOptions {
   pendingKey: string;
-  pendingAction: "creating" | "removing" | "graveyarding";
+  pendingAction: PendingWorktreeActionKind;
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
 }
 
-function assertDashboardWorktreeMutationSettled(
-  settled: boolean,
-  action: "creating" | "removing" | "graveyarding",
-): void {
+function assertDashboardWorktreeMutationSettled(settled: boolean, action: PendingWorktreeActionKind): void {
   if (!settled) {
     throw new Error(`worktree ${action} did not settle before timing out`);
   }

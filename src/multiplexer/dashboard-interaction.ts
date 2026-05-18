@@ -6,20 +6,12 @@ import {
   resolveDashboardQuickJumpTarget,
 } from "../dashboard/quick-jump.js";
 import { clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
+import { isBlockingPendingDashboardActionKind } from "../dashboard/pending-actions.js";
 import { parseKeys } from "../key-parser.js";
 import { requestReview } from "../task-dispatcher.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
-  return (
-    entry?.pendingAction === "creating" ||
-    entry?.pendingAction === "forking" ||
-    entry?.pendingAction === "migrating" ||
-    entry?.pendingAction === "starting" ||
-    entry?.pendingAction === "stopping" ||
-    entry?.pendingAction === "graveyarding" ||
-    entry?.pendingAction === "renaming" ||
-    entry?.pendingAction === "removing"
-  );
+  return isBlockingPendingDashboardActionKind(entry?.pendingAction);
 }
 
 function pendingDashboardItemMessage(

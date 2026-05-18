@@ -1,16 +1,10 @@
 import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
+import type { PendingSessionActionKind } from "./dashboard/pending-actions.js";
 import type { NotificationRecord } from "./notifications.js";
 import type { SessionStatus } from "./status-detector.js";
 
 export type SessionRawStatus = SessionStatus;
-export type SessionPendingAction =
-  | "creating"
-  | "forking"
-  | "migrating"
-  | "starting"
-  | "stopping"
-  | "graveyarding"
-  | "renaming";
+export type SessionPendingAction = PendingSessionActionKind;
 export type SessionLifecycleState =
   | "creating"
   | "starting"

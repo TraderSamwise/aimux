@@ -1,8 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { DashboardPendingActions } from "./pending-actions.js";
+import { DashboardPendingActions, isBlockingPendingDashboardActionKind } from "./pending-actions.js";
 
 describe("DashboardPendingActions", () => {
+  it("recognizes every pending dashboard action as blocking", () => {
+    expect(
+      ["creating", "forking", "migrating", "starting", "stopping", "graveyarding", "renaming", "removing"].every(
+        (kind) => isBlockingPendingDashboardActionKind(kind),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat missing or unknown pending actions as blocking", () => {
+    expect(isBlockingPendingDashboardActionKind(undefined)).toBe(false);
+    expect(isBlockingPendingDashboardActionKind(null)).toBe(false);
+    expect(isBlockingPendingDashboardActionKind("done")).toBe(false);
+  });
+
   it("synthesizes optimistic session rows for creating sessions that do not exist yet", () => {
     const pending = new DashboardPendingActions(() => {});
     pending.set("claude-new", "creating", {

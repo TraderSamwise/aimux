@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "../debug.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import type { PendingWorktreeActionKind } from "../dashboard/pending-actions.js";
 import {
   addDashboardOperationFailure,
   clearDashboardOperationFailures,
@@ -326,7 +327,7 @@ export const persistenceMethods = {
     createdAt?: string;
     pending?: boolean;
     removing?: boolean;
-    pendingAction?: "creating";
+    pendingAction?: Extract<PendingWorktreeActionKind, "creating">;
     operationFailure?: DashboardOperationFailure;
   }> {
     const pendingCreates = this.pendingWorktreeCreates as
@@ -344,7 +345,7 @@ export const persistenceMethods = {
       createdAt?: string;
       pending?: boolean;
       removing?: boolean;
-      pendingAction?: "creating";
+      pendingAction?: Extract<PendingWorktreeActionKind, "creating">;
       operationFailure?: DashboardOperationFailure;
     }> = listAllWorktrees()
       .filter((wt) => !wt.isBare && !hiddenPaths.has(wt.path) && !isToolInternalWorktree(wt))

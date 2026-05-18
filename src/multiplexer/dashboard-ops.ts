@@ -9,6 +9,7 @@ import {
   waitForSessionStart,
 } from "../dashboard/session-actions.js";
 import type { DashboardSession } from "../dashboard/index.js";
+import type { PendingServiceActionKind, PendingSessionActionKind } from "../dashboard/pending-actions.js";
 import {
   isAttachableDashboardSessionEntry,
   isLiveDashboardServiceRuntimeEntry,
@@ -17,12 +18,14 @@ import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { generateServiceId, serviceLabelForCommand } from "./services.js";
 
 type DashboardOpsHost = any;
+type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
+type DashboardSessionMutationPendingAction = Exclude<PendingSessionActionKind, "renaming">;
 
 function buildPendingSessionSeed(input: {
   sessionId: string;
   tool: string;
   worktreePath?: string;
-  pendingAction: "creating" | "forking";
+  pendingAction: PendingSessionCreateAction;
 }): DashboardSession {
   return {
     index: -1,
@@ -40,7 +43,7 @@ function buildPendingSessionSeed(input: {
 
 interface DashboardSessionMutationOptions {
   sessionId: string;
-  pendingAction: "creating" | "forking" | "migrating" | "starting" | "stopping" | "graveyarding";
+  pendingAction: DashboardSessionMutationPendingAction;
   sessionSeed?: DashboardSession;
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
@@ -53,7 +56,7 @@ interface DashboardSessionMutationOptions {
 
 interface DashboardServiceMutationOptions {
   serviceId: string;
-  pendingAction: "creating" | "starting" | "stopping" | "removing";
+  pendingAction: PendingServiceActionKind;
   serviceSeed?: any;
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
