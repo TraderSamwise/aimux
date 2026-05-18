@@ -1,7 +1,16 @@
 import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
-import type { DashboardSessionStatus } from "./dashboard/index.js";
 import type { NotificationRecord } from "./notifications.js";
+import type { SessionStatus } from "./status-detector.js";
 
+export type SessionRawStatus = SessionStatus;
+export type SessionPendingAction =
+  | "creating"
+  | "forking"
+  | "migrating"
+  | "starting"
+  | "stopping"
+  | "graveyarding"
+  | "renaming";
 export type SessionLifecycleState =
   | "creating"
   | "starting"
@@ -77,8 +86,8 @@ export interface SessionSemanticState {
 }
 
 export interface DeriveSessionSemanticsInput {
-  status: DashboardSessionStatus;
-  pendingAction?: "creating" | "forking" | "migrating" | "starting" | "stopping" | "graveyarding" | "renaming";
+  status: SessionRawStatus;
+  pendingAction?: SessionPendingAction;
   activity?: AgentActivityState;
   attention?: AgentAttentionState;
   unseenCount?: number;
@@ -287,11 +296,26 @@ function sessionSemanticCompactHintFromParts(input: {
   return null;
 }
 
-export function sessionSemanticStatusLabel(
-  semantic: SessionSemanticState,
-  _fallbackStatus: DashboardSessionStatus,
-): string {
+export function sessionSemanticStatusLabel(semantic: SessionSemanticState, _fallbackStatus: SessionRawStatus): string {
   return semantic.presentation.statusLabel;
+}
+
+const RAW_STATUS_LABELS: Record<SessionRawStatus, string> = {
+  running: "running",
+  idle: "idle",
+  waiting: "thinking",
+  exited: "exited",
+  offline: "offline",
+};
+
+export function sessionDisplayStatusLabel(input: {
+  status: SessionRawStatus;
+  pendingAction?: SessionPendingAction;
+  semantic?: SessionSemanticState;
+}): string {
+  if (input.pendingAction) return input.pendingAction;
+  if (input.semantic) return sessionSemanticStatusLabel(input.semantic, input.status);
+  return RAW_STATUS_LABELS[input.status];
 }
 
 export function sessionSemanticAttentionScore(semantic: SessionSemanticState): number {

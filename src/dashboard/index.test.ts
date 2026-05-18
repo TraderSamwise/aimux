@@ -1,7 +1,46 @@
 import { describe, expect, it } from "vitest";
-import { Dashboard } from "./index.js";
+import { deriveSessionSemantics } from "../session-semantics.js";
+import { Dashboard, derivedStatusLabel } from "./index.js";
 
 describe("Dashboard", () => {
+  it("uses semantic display labels with pending actions taking precedence", () => {
+    const semantic = deriveSessionSemantics({
+      status: "running",
+      attention: "needs_input",
+    });
+
+    expect(
+      derivedStatusLabel({
+        index: 0,
+        id: "claude-1",
+        command: "claude",
+        status: "running",
+        active: true,
+        semantic,
+      }),
+    ).toBe("needs input");
+    expect(
+      derivedStatusLabel({
+        index: 0,
+        id: "claude-1",
+        command: "claude",
+        status: "running",
+        active: true,
+        semantic,
+        pendingAction: "starting",
+      }),
+    ).toBe("starting");
+    expect(
+      derivedStatusLabel({
+        index: 0,
+        id: "claude-1",
+        command: "claude",
+        status: "waiting",
+        active: true,
+      }),
+    ).toBe("thinking");
+  });
+
   it("renders selected session context details", () => {
     const dashboard = new Dashboard();
     dashboard.update({

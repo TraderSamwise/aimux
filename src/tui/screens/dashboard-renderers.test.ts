@@ -106,4 +106,41 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(frame).toContain("\x1b[1;33mon you\x1b[0m");
     expect(frame).toContain("\x1b[36mworking\x1b[0m");
   });
+
+  it("renders pending session labels even when semantic state is stale", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedSessionId: "claude-1",
+        sessions: [
+          {
+            index: 0,
+            id: "claude-1",
+            command: "claude",
+            status: "running",
+            active: true,
+            pendingAction: "starting",
+            optimistic: true,
+            semantic: deriveSessionSemantics({
+              status: "running",
+              attention: "needs_input",
+            }),
+          },
+        ],
+        worktreeGroups: [
+          {
+            name: "Main Checkout",
+            branch: "master",
+            status: "active",
+            sessions: [],
+            services: [],
+          },
+        ],
+      }),
+      120,
+      40,
+    );
+
+    expect(frame).toContain("claude — \x1b[1;33mstarting\x1b[0m");
+  });
 });

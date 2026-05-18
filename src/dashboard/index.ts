@@ -1,12 +1,11 @@
-import type { SessionStatus } from "../status-detector.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "../agent-events.js";
 import type { SessionServiceMetadata } from "../metadata-store.js";
-import type { SessionSemanticState } from "../session-semantics.js";
+import type { SessionPendingAction, SessionRawStatus, SessionSemanticState } from "../session-semantics.js";
 import type { DashboardOperationFailure } from "./operation-failures.js";
-import { sessionSemanticStatusLabel } from "../session-semantics.js";
+import { sessionDisplayStatusLabel } from "../session-semantics.js";
 import { renderDashboardFrame } from "../tui/screens/dashboard-renderers.js";
 
-export type DashboardSessionStatus = SessionStatus;
+export type DashboardSessionStatus = SessionRawStatus;
 
 export interface DashboardSession {
   index: number;
@@ -64,7 +63,7 @@ export interface DashboardSession {
   notificationUnreadCount?: number;
   latestNotificationText?: string;
   semantic?: SessionSemanticState;
-  pendingAction?: "creating" | "forking" | "migrating" | "starting" | "stopping" | "graveyarding" | "renaming";
+  pendingAction?: SessionPendingAction;
   optimistic?: boolean;
 }
 
@@ -147,26 +146,8 @@ export interface DashboardViewModel {
   derivedStatusLabel: typeof derivedStatusLabel;
 }
 
-const STATUS_LABELS: Record<DashboardSessionStatus, string> = {
-  running: "running",
-  idle: "idle",
-  waiting: "thinking",
-  exited: "exited",
-  offline: "offline",
-};
-
 export function derivedStatusLabel(session: DashboardSession): string {
-  if (session.pendingAction === "creating") return "creating";
-  if (session.pendingAction === "forking") return "forking";
-  if (session.pendingAction === "migrating") return "migrating";
-  if (session.pendingAction === "starting") return "starting";
-  if (session.pendingAction === "stopping") return "stopping";
-  if (session.pendingAction === "graveyarding") return "graveyarding";
-  if (session.pendingAction === "renaming") return "renaming";
-  if (session.semantic) {
-    return sessionSemanticStatusLabel(session.semantic, session.status);
-  }
-  return STATUS_LABELS[session.status];
+  return sessionDisplayStatusLabel(session);
 }
 
 export class Dashboard {
