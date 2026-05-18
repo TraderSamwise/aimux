@@ -1,7 +1,7 @@
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "../agent-events.js";
 import type { SessionServiceMetadata } from "../metadata-store.js";
+import type { PendingDashboardActionKind, PendingWorktreeActionKind } from "../pending-actions.js";
 import type { SessionPendingAction, SessionRawStatus, SessionSemanticState } from "../session-semantics.js";
-import type { PendingDashboardActionKind, PendingWorktreeActionKind } from "./pending-actions.js";
 import type { DashboardOperationFailure } from "./operation-failures.js";
 import { sessionDisplayStatusLabel } from "../session-semantics.js";
 import { renderDashboardFrame } from "../tui/screens/dashboard-renderers.js";

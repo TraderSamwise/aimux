@@ -6,8 +6,8 @@ import {
   resolveDashboardQuickJumpTarget,
 } from "../dashboard/quick-jump.js";
 import { clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
-import { isBlockingPendingDashboardActionKind } from "../dashboard/pending-actions.js";
 import { parseKeys } from "../key-parser.js";
+import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { requestReview } from "../task-dispatcher.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {

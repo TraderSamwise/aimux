@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { DashboardPendingActions, isBlockingPendingDashboardActionKind } from "./pending-actions.js";
+import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
+import { DashboardPendingActions } from "./pending-actions.js";
 
 describe("DashboardPendingActions", () => {
   it("recognizes every pending dashboard action as blocking", () => {

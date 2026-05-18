@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, wr
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "../debug.js";
-import type { PendingWorktreeActionKind } from "../dashboard/pending-actions.js";
+import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import {
   addDashboardOperationFailure,
   clearDashboardOperationFailures,

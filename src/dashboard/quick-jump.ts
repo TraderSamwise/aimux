@@ -1,6 +1,6 @@
 import type { DashboardService, DashboardSession, MainCheckoutInfo, WorktreeGroup } from "./index.js";
 import type { DashboardOperationFailure } from "./operation-failures.js";
-import type { PendingWorktreeActionKind } from "./pending-actions.js";
+import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import { HOTKEY_TIMEOUT_MS } from "../hotkeys.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "./sort.js";
 

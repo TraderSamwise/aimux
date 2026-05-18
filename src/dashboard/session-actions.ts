@@ -1,4 +1,4 @@
-import type { PendingSessionActionKind } from "./pending-actions.js";
+import type { PendingSessionActionKind } from "../pending-actions.js";
 import type { SessionRuntime } from "../session-runtime.js";
 
 export interface DashboardOfflineEntryLike {

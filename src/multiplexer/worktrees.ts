@@ -7,7 +7,7 @@ import {
   buildWorktreeRemoveConfirmOverlayOutput,
 } from "../tui/screens/overlay-renderers.js";
 import { postToProjectService } from "./dashboard-control.js";
-import type { PendingWorktreeActionKind } from "../dashboard/pending-actions.js";
+import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
 
 type WorktreeHost = any;

@@ -1,6 +1,6 @@
 import type { AgentActivityState, AgentAttentionState } from "./agent-events.js";
-import type { PendingSessionActionKind } from "./dashboard/pending-actions.js";
 import type { NotificationRecord } from "./notifications.js";
+import type { PendingSessionActionKind } from "./pending-actions.js";
 import type { SessionStatus } from "./status-detector.js";
 
 export type SessionRawStatus = SessionStatus;

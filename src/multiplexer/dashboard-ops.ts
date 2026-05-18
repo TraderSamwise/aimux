@@ -9,7 +9,7 @@ import {
   waitForSessionStart,
 } from "../dashboard/session-actions.js";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
-import type { PendingServiceActionKind, PendingSessionActionKind } from "../dashboard/pending-actions.js";
+import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
 import {
   isAttachableDashboardSessionEntry,
   isLiveDashboardServiceRuntimeEntry,

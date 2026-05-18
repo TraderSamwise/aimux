@@ -66,7 +66,7 @@ import {
   wrapKeyValueForHost,
   wrapTextForHost,
 } from "./dashboard-ops.js";
-import type { PendingServiceActionKind, PendingSessionActionKind } from "../dashboard/pending-actions.js";
+import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
 import { loadConfig } from "../config.js";

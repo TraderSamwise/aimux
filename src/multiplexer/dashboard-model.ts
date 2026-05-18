@@ -21,7 +21,7 @@ import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import { listDashboardOperationFailures, type DashboardOperationFailure } from "../dashboard/operation-failures.js";
-import type { PendingWorktreeActionKind } from "../dashboard/pending-actions.js";
+import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 
 type DashboardModelHost = any;
