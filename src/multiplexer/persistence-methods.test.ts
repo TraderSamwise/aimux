@@ -295,6 +295,48 @@ describe("persistenceMethods", () => {
     ]);
   });
 
+  it("does not retain stale session or service pending flags when reapplying pending actions", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host = {
+      dashboardPendingActions: pending,
+      dashboardSessionsCache: [
+        {
+          index: 1,
+          id: "claude-1",
+          command: "claude",
+          status: "offline",
+          active: false,
+          pending: true,
+          pendingAction: "stopping",
+          optimistic: true,
+        },
+      ],
+      dashboardServicesCache: [
+        {
+          id: "service-1",
+          command: "shell",
+          args: [],
+          status: "offline",
+          active: false,
+          pending: true,
+          pendingAction: "removing",
+          optimistic: true,
+        },
+      ],
+      dashboardWorktreeGroupsCache: [],
+      dashboardUiStateStore: { orderWorktreeGroups: vi.fn((groups) => groups) },
+    };
+
+    persistenceMethods.reapplyDashboardPendingActions.call(host);
+
+    expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pending");
+    expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pendingAction");
+    expect(host.dashboardSessionsCache[0]).not.toHaveProperty("optimistic");
+    expect(host.dashboardServicesCache[0]).not.toHaveProperty("pending");
+    expect(host.dashboardServicesCache[0]).not.toHaveProperty("pendingAction");
+    expect(host.dashboardServicesCache[0]).not.toHaveProperty("optimistic");
+  });
+
   it("keeps raw worktree lists free of pending removal projection", () => {
     const pending = new DashboardPendingActions(() => {});
     const worktreePath = "/repo/.aimux/worktrees/demo";

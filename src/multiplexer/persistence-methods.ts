@@ -300,12 +300,12 @@ export const persistenceMethods = {
   reapplyDashboardPendingActions(this: any): void {
     this.dashboardSessionsCache = this.dashboardPendingActions.applyToSessions(
       this.dashboardSessionsCache.map(
-        ({ pendingAction: _pendingAction, optimistic: _optimistic, ...session }: any) => session,
+        ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...session }: any) => session,
       ),
     );
     this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(
       this.dashboardServicesCache.map(
-        ({ pendingAction: _pendingAction, optimistic: _optimistic, ...service }: any) => service,
+        ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...service }: any) => service,
       ),
     );
     this.dashboardWorktreeGroupsCache = this.dashboardUiStateStore.orderWorktreeGroups(
