@@ -390,7 +390,9 @@ export function registerManagedSession(
   if (worktreePath) {
     host.sessionWorktreePaths.set(runtime.id, worktreePath);
   }
-  if (role) {
+  if (team) {
+    host.sessionRoles.delete(runtime.id);
+  } else if (role) {
     host.sessionRoles.set(runtime.id, role);
   } else if (!host.sessionRoles.has(runtime.id)) {
     try {

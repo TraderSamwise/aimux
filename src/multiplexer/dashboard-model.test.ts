@@ -1,10 +1,15 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import { initPaths } from "../paths.js";
 import {
   applyDashboardModel,
   buildDashboardWorktreeGroups,
   composeDashboardWorktreeGroups,
+  startProjectServices,
   withMetadataServicePending,
   withMetadataSessionPending,
 } from "./dashboard-model.js";
@@ -183,6 +188,103 @@ describe("applyDashboardModel", () => {
 });
 
 describe("metadata pending actions", () => {
+  it("tags teammate lifecycle pending seeds without tagging normal spawns", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-model-"));
+    const pending = new DashboardPendingActions(() => {});
+    const setSessionAction = vi.spyOn(pending, "setSessionAction");
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      eventBus: undefined,
+      buildDesktopState: vi.fn(),
+      listProjectedDesktopWorktrees: vi.fn(),
+      dashboardSessionsCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      sessions: [],
+      services: [],
+      offlineServices: [],
+      sessionWorktreePaths: new Map(),
+      sessionTmuxTargets: new Map(),
+      getSessionLabel: vi.fn(),
+      serviceLabelForCommand: vi.fn(),
+      refreshProjectStatusline: vi.fn(),
+      createDesktopWorktree: vi.fn(),
+      removeDesktopWorktree: vi.fn(),
+      graveyardDesktopWorktree: vi.fn(),
+      listWorktreeGraveyardEntries: vi.fn(),
+      resurrectGraveyardWorktree: vi.fn(),
+      deleteGraveyardWorktree: vi.fn(),
+      createService: vi.fn(),
+      stopService: vi.fn(),
+      resumeOfflineServiceById: vi.fn(),
+      removeOfflineService: vi.fn(),
+      resumeOfflineSession: vi.fn(),
+      listGraveyardEntries: vi.fn(),
+      resurrectGraveyardSession: vi.fn(),
+      sendOrchestrationMessage: vi.fn(),
+      sendHandoffMessage: vi.fn(),
+      spawnAgent: vi.fn(() => {
+        throw new Error("spawn sentinel");
+      }),
+      createTeammateAgent: vi.fn(() => {
+        throw new Error("teammate sentinel");
+      }),
+      forkAgent: vi.fn(),
+      stopAgent: vi.fn(),
+      interruptAgent: vi.fn(),
+      renameAgent: vi.fn(),
+      migrateAgent: vi.fn(),
+      killAgent: vi.fn(),
+      recordBackendSessionId: vi.fn(),
+      writeAgentInput: vi.fn(),
+      readAgentOutput: vi.fn(),
+      readAgentHistory: vi.fn(),
+    };
+
+    try {
+      await initPaths(repoRoot);
+      await startProjectServices(host);
+      const lifecycle = (host.metadataServer as any).options.lifecycle;
+
+      await expect(lifecycle.spawnAgent({ sessionId: "codex-1", tool: "codex" })).rejects.toThrow("spawn sentinel");
+      expect(setSessionAction).toHaveBeenLastCalledWith(
+        "codex-1",
+        "creating",
+        expect.objectContaining({
+          sessionSeed: expect.not.objectContaining({ team: expect.anything() }),
+        }),
+      );
+
+      await expect(
+        lifecycle.createTeammateAgent({
+          sessionId: "codex-reviewer",
+          parentSessionId: "claude-parent",
+          role: "reviewer",
+          label: "review",
+          tool: "codex",
+        }),
+      ).rejects.toThrow("teammate sentinel");
+      expect(setSessionAction).toHaveBeenLastCalledWith(
+        "codex-reviewer",
+        "creating",
+        expect.objectContaining({
+          sessionSeed: expect.objectContaining({
+            team: expect.objectContaining({
+              teamId: "team-claude-parent",
+              parentSessionId: "claude-parent",
+              role: "reviewer",
+              label: "review",
+            }),
+          }),
+        }),
+      );
+    } finally {
+      host.metadataServer?.stop?.();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("keeps session pending until the settle callback resolves", async () => {
     const pending = new DashboardPendingActions(() => {});
     const host: any = {

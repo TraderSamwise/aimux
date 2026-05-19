@@ -5,10 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
 import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
-import { forkAgent, sendAgentToGraveyard, spawnAgent, stopAgent } from "./session-actions.js";
+import { createTeammateAgent, forkAgent, sendAgentToGraveyard, spawnAgent, stopAgent } from "./session-actions.js";
 
 vi.mock("../config.js", () => ({
   loadConfig: () => ({
+    defaultTool: "codex",
     tools: {
       codex: { command: "codex", enabled: true, args: [], preambleFlag: undefined, sessionIdFlag: undefined },
       claude: { command: "claude", enabled: true, args: [], preambleFlag: undefined, sessionIdFlag: undefined },
@@ -75,6 +76,117 @@ describe("session actions", () => {
       undefined,
       undefined,
     );
+  });
+
+  it("creates teammate agents with inherited tool, worktree, and team metadata", async () => {
+    const parent = { id: "claude-parent", command: "claude", exited: false };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent],
+      offlineSessions: [],
+      sessionToolKeys: new Map([["claude-parent", "claude"]]),
+      sessionWorktreePaths: new Map([["claude-parent", join(repoRoot, ".aimux/worktrees/feature")]]),
+      createSession: vi.fn(() => ({ id: "claude-reviewer" })),
+      sessionTmuxTargets: new Map(),
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(),
+      openLiveTmuxWindowForEntry: vi.fn(),
+      tmuxRuntimeManager: {
+        openTarget: vi.fn(),
+        isInsideTmux: vi.fn(() => true),
+      },
+      updateSessionLabel: vi.fn(async () => {}),
+    };
+
+    const result = await createTeammateAgent(host, {
+      parentSessionId: "claude-parent",
+      role: "reviewer",
+      label: "reviewer",
+      targetSessionId: "claude-reviewer",
+      open: false,
+    });
+
+    expect(result).toEqual({
+      sessionId: "claude-reviewer",
+      parentSessionId: "claude-parent",
+      teamId: "team-claude-parent",
+      role: "reviewer",
+      label: "reviewer",
+    });
+    expect(host.createSession).toHaveBeenCalledWith(
+      "claude",
+      [],
+      undefined,
+      "claude",
+      expect.stringContaining('You are assigned the "reviewer" role'),
+      undefined,
+      join(repoRoot, ".aimux/worktrees/feature"),
+      undefined,
+      "claude-reviewer",
+      false,
+      false,
+      {
+        teamId: "team-claude-parent",
+        parentSessionId: "claude-parent",
+        role: "reviewer",
+        label: "reviewer",
+        order: 0,
+      },
+    );
+    expect(host.updateSessionLabel).toHaveBeenCalledWith("claude-reviewer", "reviewer");
+  });
+
+  it("sends teammate initial prompts through normal agent input", async () => {
+    const parent = { id: "codex-parent", command: "codex", exited: false };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent],
+      offlineSessions: [],
+      sessionToolKeys: new Map([["codex-parent", "codex"]]),
+      sessionWorktreePaths: new Map(),
+      createSession: vi.fn(() => ({ id: "codex-worker" })),
+      sessionTmuxTargets: new Map(),
+      writeAgentInput: vi.fn(async () => ({ sessionId: "codex-worker" })),
+    };
+
+    await createTeammateAgent(host, {
+      parentSessionId: "codex-parent",
+      role: "coder",
+      initialPrompt: "Investigate the failing test.",
+      open: false,
+    });
+
+    expect(host.writeAgentInput).toHaveBeenCalledWith(
+      "codex-worker",
+      "Investigate the failing test.",
+      undefined,
+      undefined,
+      true,
+    );
+  });
+
+  it("rejects teammate creation for missing or nested parents", async () => {
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [
+        {
+          id: "nested",
+          command: "codex",
+          exited: false,
+          team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+        },
+      ],
+      offlineSessions: [],
+      sessionToolKeys: new Map(),
+      createSession: vi.fn(),
+    };
+
+    await expect(createTeammateAgent(host, { parentSessionId: "missing" })).rejects.toThrow(
+      'Parent agent "missing" is not running locally',
+    );
+    await expect(createTeammateAgent(host, { parentSessionId: "nested" })).rejects.toThrow(
+      'Parent agent "nested" is already a teammate',
+    );
+    expect(host.createSession).not.toHaveBeenCalled();
   });
 
   it("falls back to direct target open after readiness wait misses on fork", async () => {

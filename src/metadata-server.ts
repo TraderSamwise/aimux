@@ -209,6 +209,20 @@ interface MetadataServerOptions {
       open?: boolean;
       extraArgs?: string[];
     }) => Promise<{ sessionId: string }> | { sessionId: string };
+    createTeammateAgent?: (input: {
+      parentSessionId: string;
+      role?: string;
+      label?: string;
+      tool?: string;
+      sessionId?: string;
+      worktreePath?: string;
+      open?: boolean;
+      extraArgs?: string[];
+      initialPrompt?: string;
+      order?: number;
+    }) =>
+      | Promise<{ sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string }>
+      | { sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string };
     forkAgent?: (input: {
       sourceSessionId: string;
       tool: string;
@@ -1833,6 +1847,29 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.spawnAgent(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/teammates/create") {
+        const body = (await readJson(req)) as {
+          parentSessionId: string;
+          role?: string;
+          label?: string;
+          tool?: string;
+          sessionId?: string;
+          worktreePath?: string;
+          open?: boolean;
+          extraArgs?: string[];
+          initialPrompt?: string;
+          order?: number;
+        };
+        if (!this.options.lifecycle?.createTeammateAgent) {
+          send(res, 501, { ok: false, error: "teammate creation not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.createTeammateAgent(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;

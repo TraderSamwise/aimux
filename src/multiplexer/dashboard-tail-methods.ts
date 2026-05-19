@@ -2,6 +2,7 @@ import { debug } from "../debug.js";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { Multiplexer, SessionState } from "./index.js";
 import {
+  createTeammateAgent as createTeammateAgentImpl,
   forkAgent as forkAgentImpl,
   migrateAgentSession as migrateAgentSessionImpl,
   renameAgent as renameAgentImpl,
@@ -110,6 +111,21 @@ export type DashboardTailMethods = {
       extraArgs?: string[];
     },
   ): Promise<{ sessionId: string }>;
+  createTeammateAgent(
+    this: Multiplexer,
+    opts: {
+      parentSessionId: string;
+      role?: string;
+      label?: string;
+      toolConfigKey?: string;
+      targetSessionId?: string;
+      targetWorktreePath?: string;
+      open?: boolean;
+      extraArgs?: string[];
+      initialPrompt?: string;
+      order?: number;
+    },
+  ): Promise<{ sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string }>;
   renameAgent(this: Multiplexer, sessionId: string, label?: string): Promise<{ sessionId: string; label?: string }>;
   stopAgent(this: Multiplexer, sessionId: string): Promise<{ sessionId: string; status: "offline" }>;
   sendAgentToGraveyard(
@@ -233,6 +249,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   async spawnAgent(opts) {
     return spawnAgentImpl(this, opts);
+  },
+  async createTeammateAgent(opts) {
+    return createTeammateAgentImpl(this, opts);
   },
   async renameAgent(sessionId, label) {
     return renameAgentImpl(this, sessionId, label);

@@ -247,6 +247,7 @@ describe("session runtime prompt submission", () => {
     const runtime = registerManagedSession(host, transport, [], "codex", undefined, "coder", undefined, team);
 
     expect(runtime.team).toEqual(team);
+    expect(host.sessionRoles.get("codex-1")).toBeUndefined();
   });
 
   it("preserves quick exited sessions when durable metadata has the backend id", async () => {

@@ -1,6 +1,7 @@
 import { waitForSessionExit } from "../dashboard/session-actions.js";
 import { loadConfig } from "../config.js";
 import { getSessionBackendSessionId } from "../metadata-store.js";
+import { buildRolePreamble, isTeammateSession, loadTeamConfig, type SessionTeamMetadata } from "../team.js";
 
 type SessionActionsHost = any;
 
@@ -163,6 +164,116 @@ export async function spawnAgent(
   }
 
   return { sessionId: transport.id };
+}
+
+export async function createTeammateAgent(
+  host: SessionActionsHost,
+  opts: {
+    parentSessionId: string;
+    role?: string;
+    label?: string;
+    toolConfigKey?: string;
+    targetSessionId?: string;
+    targetWorktreePath?: string;
+    open?: boolean;
+    extraArgs?: string[];
+    initialPrompt?: string;
+    order?: number;
+  },
+): Promise<{ sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string }> {
+  host.syncSessionsFromState();
+
+  const parent = host.sessions.find((session: any) => session.id === opts.parentSessionId && !session.exited);
+  if (!parent) {
+    throw new Error(`Parent agent "${opts.parentSessionId}" is not running locally`);
+  }
+  if (isTeammateSession(parent)) {
+    throw new Error(`Parent agent "${opts.parentSessionId}" is already a teammate`);
+  }
+
+  const config = loadConfig();
+  const parentToolConfigKey = host.sessionToolKeys?.get?.(parent.id) ?? parent.toolConfigKey ?? parent.command;
+  const toolConfigKey = opts.toolConfigKey ?? parentToolConfigKey ?? config.defaultTool;
+  const toolCfg = config.tools[toolConfigKey];
+  if (!toolCfg) {
+    throw new Error(`Unknown tool config: ${toolConfigKey}`);
+  }
+  if (!toolCfg.enabled) {
+    throw new Error(`Tool "${toolConfigKey}" is disabled`);
+  }
+
+  const role = opts.role?.trim() || loadTeamConfig().defaultRole;
+  const teamId = `team-${parent.id}`;
+  const siblings = [...(host.sessions ?? []), ...(host.offlineSessions ?? [])].filter(
+    (session: any) => session.team?.teamId === teamId && session.team?.parentSessionId === parent.id,
+  );
+  const nextOrder =
+    opts.order ??
+    siblings.reduce((max: number, session: any) => Math.max(max, Number(session.team?.order ?? -1)), -1) + 1;
+  const team: SessionTeamMetadata = {
+    teamId,
+    parentSessionId: parent.id,
+    role,
+    label: opts.label?.trim() || undefined,
+    order: nextOrder,
+  };
+
+  const inheritedWorktreePath = host.sessionWorktreePaths?.get?.(parent.id) ?? parent.worktreePath;
+  const targetWorktreePath = opts.targetWorktreePath ?? inheritedWorktreePath;
+  const normalizedWorktreePath = targetWorktreePath === process.cwd() ? undefined : targetWorktreePath;
+  const rolePreamble = buildRolePreamble(role, loadTeamConfig());
+  const teammatePreamble = [
+    `You are a teammate for aimux parent agent "${parent.id}".`,
+    "Stay focused on delegated work and report findings back to the parent agent.",
+    rolePreamble,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const transport = host.createSession(
+    toolCfg.command,
+    [...toolCfg.args, ...(opts.extraArgs ?? [])],
+    toolCfg.preambleFlag,
+    toolConfigKey,
+    teammatePreamble,
+    toolCfg.sessionIdFlag,
+    normalizedWorktreePath,
+    undefined,
+    opts.targetSessionId,
+    false,
+    false,
+    team,
+  );
+
+  if (team.label && typeof host.updateSessionLabel === "function") {
+    await host.updateSessionLabel(transport.id, team.label);
+  }
+
+  const target = host.sessionTmuxTargets.get(transport.id);
+  if (opts.open !== false && target) {
+    const openResult =
+      typeof host.waitAndOpenLiveTmuxWindowForEntry === "function"
+        ? await host.waitAndOpenLiveTmuxWindowForEntry({ id: transport.id })
+        : host.openLiveTmuxWindowForEntry({ id: transport.id });
+    if (openResult === "missing") {
+      host.tmuxRuntimeManager.openTarget(target, { insideTmux: host.tmuxRuntimeManager.isInsideTmux() });
+    }
+  }
+
+  if (opts.initialPrompt?.trim()) {
+    if (typeof host.writeAgentInput !== "function") {
+      throw new Error("Initial teammate prompt requires agent input support");
+    }
+    await host.writeAgentInput(transport.id, opts.initialPrompt.trim(), undefined, undefined, true);
+  }
+
+  return {
+    sessionId: transport.id,
+    parentSessionId: parent.id,
+    teamId,
+    role,
+    label: team.label,
+  };
 }
 
 export async function renameAgent(

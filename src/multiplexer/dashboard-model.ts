@@ -16,6 +16,7 @@ import { deriveSessionSemantics } from "../session-semantics.js";
 import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { requestJson } from "../http-client.js";
 import { loadConfig } from "../config.js";
+import type { SessionTeamMetadata } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
@@ -135,6 +136,7 @@ function buildMetadataPendingSessionSeed(input: {
   tool: string;
   worktreePath?: string;
   pendingAction: Extract<PendingSessionActionKind, "creating" | "forking">;
+  team?: SessionTeamMetadata;
 }): DashboardSession {
   return {
     index: -1,
@@ -147,6 +149,7 @@ function buildMetadataPendingSessionSeed(input: {
     worktreePath: input.worktreePath,
     pendingAction: input.pendingAction,
     optimistic: true,
+    team: input.team,
   };
 }
 
@@ -981,6 +984,41 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
                 tool: input.tool,
                 worktreePath: input.worktreePath,
                 pendingAction: "creating",
+              })
+            : undefined,
+          (result) => waitForMetadataSessionRunning(host, result.sessionId),
+        ),
+      createTeammateAgent: (input: any) =>
+        withMetadataSessionPending(
+          host,
+          input.sessionId,
+          "creating",
+          () =>
+            host.createTeammateAgent({
+              parentSessionId: input.parentSessionId,
+              role: input.role,
+              label: input.label,
+              toolConfigKey: input.tool,
+              targetSessionId: input.sessionId,
+              targetWorktreePath: input.worktreePath,
+              open: input.open ?? false,
+              extraArgs: input.extraArgs,
+              initialPrompt: input.initialPrompt,
+              order: input.order,
+            }),
+          input.sessionId
+            ? buildMetadataPendingSessionSeed({
+                sessionId: input.sessionId,
+                tool: input.tool,
+                worktreePath: input.worktreePath,
+                pendingAction: "creating",
+                team: {
+                  teamId: `team-${input.parentSessionId}`,
+                  parentSessionId: input.parentSessionId,
+                  role: typeof input.role === "string" && input.role.trim() ? input.role.trim() : undefined,
+                  label: typeof input.label === "string" && input.label.trim() ? input.label.trim() : undefined,
+                  order: typeof input.order === "number" ? input.order : undefined,
+                },
               })
             : undefined,
           (result) => waitForMetadataSessionRunning(host, result.sessionId),

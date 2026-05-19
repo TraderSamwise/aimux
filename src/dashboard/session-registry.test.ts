@@ -87,6 +87,14 @@ describe("buildDashboardSessions", () => {
           status: "running",
           team: { teamId: "team-1", parentSessionId: "claude-parent", role: "reviewer" },
         },
+        {
+          id: "codex-teammate-pending",
+          command: "codex",
+          status: "waiting",
+          pendingAction: "creating",
+          optimistic: true,
+          team: { teamId: "team-1", parentSessionId: "claude-parent", role: "coder" },
+        },
       ],
       activeIndex: 0,
       offlineSessions: [
