@@ -1,0 +1,40 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": true
+      }
+    },
+    "testflight": {
+      "ios": {
+        "buildConfiguration": "Release",
+        "image": "latest"
+      },
+      "distribution": "store",
+      "autoIncrement": false,
+      "channel": "testflight"
+    },
+    "production": {
+      "ios": {
+        "buildConfiguration": "Release",
+        "image": "latest"
+      },
+      "android": {
+        "image": "latest"
+      },
+      "distribution": "store",
+      "autoIncrement": false,
+      "channel": "production"
+    }
+  },
+  "submit": {
+    "testflight": {},
+    "production": {}
+  }
+}
