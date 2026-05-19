@@ -513,6 +513,7 @@ describe("dashboardInteractionMethods", () => {
       handleDashboardQuickJumpDigit: vi.fn(() => false),
       preferDashboardEntrySelection: vi.fn(),
       persistDashboardUiState: vi.fn(),
+      postToProjectService: vi.fn(async () => ({})),
       renderDashboard: vi.fn(),
       footerFlash: "",
       footerFlashTicks: 0,
@@ -541,6 +542,7 @@ describe("dashboardInteractionMethods", () => {
       "/repo/.aimux/worktrees/demo",
     );
     expect(host.persistDashboardUiState).toHaveBeenCalledOnce();
+    expect(host.postToProjectService).toHaveBeenCalledWith("/statusline/refresh", { force: true });
     expect(host.renderDashboard).toHaveBeenCalledOnce();
   });
 });

@@ -107,6 +107,7 @@ function moveSelectedDashboardWorktreeEntry(host: any, direction: "up" | "down")
   if (nextIndex >= 0) host.dashboardState.sessionIndex = nextIndex;
   host.preferDashboardEntrySelection(selectedEntry.kind, selectedEntry.id, host.dashboardState.focusedWorktreePath);
   host.persistDashboardUiState();
+  void host.postToProjectService?.("/statusline/refresh", { force: true }).catch(() => {});
   host.footerFlash = `Moved ${selectedEntry.kind === "session" ? "agent" : "service"} ${direction}`;
   host.footerFlashTicks = 2;
   host.renderDashboard();

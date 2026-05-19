@@ -393,6 +393,58 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("yarn devpp");
   });
 
+  it("preserves statusline session order for footer chips instead of tmux window order", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "codex",
+            kind: "agent",
+            tool: "codex",
+            windowName: "codex",
+            tmuxWindowId: "@9",
+            tmuxWindowIndex: 9,
+            worktreePath: repoRoot,
+            status: "running",
+          },
+          {
+            id: "claude",
+            kind: "agent",
+            tool: "claude",
+            windowName: "claude",
+            tmuxWindowId: "@1",
+            tmuxWindowIndex: 1,
+            worktreePath: repoRoot,
+            status: "running",
+          },
+          {
+            id: "service",
+            kind: "service",
+            tool: "shell",
+            windowName: "shell",
+            tmuxWindowId: "@0",
+            tmuxWindowIndex: 0,
+            worktreePath: repoRoot,
+            status: "running",
+          },
+        ],
+      }),
+    );
+
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "codex",
+      currentWindowId: "@9",
+      currentPath: repoRoot,
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    expect(rendered.indexOf("codex")).toBeLessThan(rendered.indexOf("claude"));
+    expect(rendered.indexOf("claude")).toBeLessThan(rendered.indexOf("shell[svc]"));
+  });
+
   it("omits offline and exited sessions from scoped footer chips", () => {
     const nestedPath = join(repoRoot, ".aimux", "worktrees", "tealstreet-pr5180");
     mkdirSync(nestedPath, { recursive: true });

@@ -66,6 +66,20 @@ function refreshDashboardWorktreeProjection(host: any): void {
   }
 }
 
+function orderStatuslineItemsByWorktree<T extends { id: string; worktreePath?: string }>(
+  items: T[],
+  orderForWorktree: (items: T[], worktreePath: string | undefined) => T[],
+): T[] {
+  const grouped = new Map<string, { worktreePath: string | undefined; items: T[] }>();
+  for (const item of items) {
+    const key = item.worktreePath ?? "__main__";
+    const group = grouped.get(key) ?? { worktreePath: item.worktreePath, items: [] };
+    group.items.push(item);
+    grouped.set(key, group);
+  }
+  return [...grouped.values()].flatMap((group) => orderForWorktree(group.items, group.worktreePath));
+}
+
 export const persistenceMethods = {
   writeSessionsFile(this: any): void {
     const dir = getLocalAimuxDir();
@@ -94,6 +108,7 @@ export const persistenceMethods = {
       for (const session of this.sessions) {
         this.syncTmuxWindowMetadata(session.id);
       }
+      this.dashboardUiStateStore.loadSharedState(this.dashboardState);
       this.refreshDesktopStateSnapshot();
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
@@ -228,11 +243,17 @@ export const persistenceMethods = {
     updatedAt: string;
   } {
     const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
+    const orderedSessions = orderStatuslineItemsByWorktree(desktopState.sessions, (sessions, worktreePath) =>
+      this.dashboardUiStateStore.orderSessionsForWorktree(sessions, worktreePath),
+    );
+    const orderedServices = orderStatuslineItemsByWorktree(desktopState.services, (services, worktreePath) =>
+      this.dashboardUiStateStore.orderServicesForWorktree(services, worktreePath),
+    );
     return {
       project: basename(process.cwd()),
       dashboardScreen: this.dashboardState.screen,
       sessions: [
-        ...desktopState.sessions.map((session: any) => ({
+        ...orderedSessions.map((session: any) => ({
           id: session.id,
           kind: "agent" as const,
           tool: session.command,
@@ -247,7 +268,7 @@ export const persistenceMethods = {
           worktreePath: session.worktreePath,
           semantic: session.semantic,
         })),
-        ...desktopState.services.map((service: any) => ({
+        ...orderedServices.map((service: any) => ({
           id: service.id,
           kind: "service" as const,
           tool: service.command,

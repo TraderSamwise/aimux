@@ -239,18 +239,13 @@ export function resolveScopedSessions(
   currentPath?: string,
 ): ResolvedStatuslineSession[] {
   const scopedWorktreePath = resolveScopedWorktreePath(data, projectRoot, currentPath);
-  return (data.sessions ?? [])
+  const scopedSessions = (data.sessions ?? [])
     .filter((session) => session.status !== "offline" && session.status !== "exited")
-    .filter((session) => normalizePath(session.worktreePath, projectRoot) === scopedWorktreePath)
-    .sort((left, right) => {
-      const leftKind = left.kind === "service" ? 1 : 0;
-      const rightKind = right.kind === "service" ? 1 : 0;
-      if (leftKind !== rightKind) return leftKind - rightKind;
-      const leftIndex = left.tmuxWindowIndex ?? Number.MAX_SAFE_INTEGER;
-      const rightIndex = right.tmuxWindowIndex ?? Number.MAX_SAFE_INTEGER;
-      if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-      return compactSessionTitle(left).localeCompare(compactSessionTitle(right));
-    })
+    .filter((session) => normalizePath(session.worktreePath, projectRoot) === scopedWorktreePath);
+  return [
+    ...scopedSessions.filter((session) => session.kind !== "service"),
+    ...scopedSessions.filter((session) => session.kind === "service"),
+  ]
     .slice(0, 5)
     .map((session) => {
       const resolvedMetadata = data.metadata?.[session.id];
