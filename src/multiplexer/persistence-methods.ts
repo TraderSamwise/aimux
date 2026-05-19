@@ -281,7 +281,7 @@ export const persistenceMethods = {
       sessions: desktopState.sessions,
       services: desktopState.services,
       statusline: this.buildStatuslineSnapshot(),
-      worktrees: desktopState.worktrees,
+      worktrees: this.dashboardPendingActions.applyToWorktreeCreates(desktopState.worktrees),
       operationFailures: desktopState.operationFailures,
       mainCheckoutInfo: desktopState.mainCheckoutInfo,
       mainCheckoutPath: desktopState.mainCheckoutPath,
@@ -329,9 +329,6 @@ export const persistenceMethods = {
     pendingAction?: Extract<PendingWorktreeActionKind, "creating">;
     operationFailure?: DashboardOperationFailure;
   }> {
-    const pendingCreates = this.pendingWorktreeCreates as
-      | Map<string, Promise<{ path: string; status: "creating" | "created" }>>
-      | undefined;
     const pendingRemovals = this.pendingWorktreeRemovals as
       | Map<string, Promise<{ path: string; status: "removing" | "removed" }>>
       | undefined;
@@ -353,23 +350,6 @@ export const persistenceMethods = {
         pending: pendingRemovals?.has(wt.path) ?? false,
         removing: pendingRemovals?.has(wt.path) ?? false,
       }));
-    if (pendingCreates?.size) {
-      for (const path of pendingCreates.keys()) {
-        if (worktrees.some((wt) => wt.path === path)) continue;
-        worktrees.push({
-          name: basename(path),
-          path,
-          branch: "(creating)",
-          isBare: false,
-          createdAt:
-            this.worktreeCreateJob?.path === path
-              ? new Date(this.worktreeCreateJob.startedAt).toISOString()
-              : undefined,
-          pending: true,
-          pendingAction: "creating",
-        });
-      }
-    }
     const worktreePaths = new Set(worktrees.map((worktree) => worktree.path));
     for (const failure of listDashboardOperationFailures()) {
       if (failure.targetKind !== "worktree" || failure.operation !== "create" || !failure.worktreePath) continue;
@@ -385,7 +365,7 @@ export const persistenceMethods = {
       worktreePaths.add(failure.worktreePath);
     }
     sortDesktopWorktrees(worktrees);
-    return worktrees;
+    return this.dashboardPendingActions.applyToWorktreeCreates(worktrees as any);
   },
 
   listWorktreeGraveyardEntries(this: any): any[] {
@@ -578,6 +558,12 @@ export const persistenceMethods = {
       rejectCreate = reject;
     });
     pendingCreates.set(targetPath, createPromise);
+    const createStartedAt = Date.now();
+    this.worktreeCreateJob = {
+      path: targetPath,
+      name,
+      startedAt: createStartedAt,
+    };
     const clearPendingCreate = () => {
       if (pendingCreates.get(targetPath) === createPromise) {
         pendingCreates.delete(targetPath);
@@ -587,6 +573,16 @@ export const persistenceMethods = {
       }
     };
     this.dashboardPendingActions.setWorktreeAction(targetPath, "creating", {
+      worktreeSeed: {
+        name,
+        branch: name,
+        path: targetPath,
+        createdAt: new Date(createStartedAt).toISOString(),
+        status: "offline",
+        isBare: false,
+        sessions: [],
+        services: [],
+      },
       timeoutMs: 180_000,
       onTimeout: () => {
         clearPendingCreate();
@@ -608,11 +604,6 @@ export const persistenceMethods = {
         }
       },
     });
-    this.worktreeCreateJob = {
-      path: targetPath,
-      name,
-      startedAt: Date.now(),
-    };
     this.invalidateDesktopStateSnapshot();
     this.refreshLocalDashboardModel();
     if (this.mode === "dashboard") {

@@ -15,6 +15,7 @@ interface PendingActionEntry {
   timeoutId?: ReturnType<typeof setTimeout>;
   sessionSeed?: DashboardSession;
   serviceSeed?: DashboardService;
+  worktreeSeed?: WorktreeGroup;
 }
 
 interface PendingActionOptions {
@@ -30,6 +31,10 @@ interface PendingServiceActionOptions extends PendingActionOptions {
   serviceSeed?: DashboardService;
 }
 
+interface PendingWorktreeActionOptions extends PendingActionOptions {
+  worktreeSeed?: WorktreeGroup;
+}
+
 function visibleEntryKey(entry?: PendingActionEntry): string {
   if (!entry) return "";
   return JSON.stringify({
@@ -37,6 +42,7 @@ function visibleEntryKey(entry?: PendingActionEntry): string {
     kind: entry.kind,
     sessionSeed: entry.sessionSeed,
     serviceSeed: entry.serviceSeed,
+    worktreeSeed: entry.worktreeSeed,
   });
 }
 
@@ -52,6 +58,12 @@ function canSynthesizeMissingService(
   kind: PendingDashboardActionKind,
 ): kind is Extract<PendingServiceActionKind, "creating" | "starting" | "stopping"> {
   return kind === "creating" || kind === "starting" || kind === "stopping";
+}
+
+function canSynthesizeMissingWorktree(
+  kind: PendingDashboardActionKind,
+): kind is Extract<PendingWorktreeActionKind, "creating"> {
+  return kind === "creating";
 }
 
 export class DashboardPendingActions {
@@ -85,7 +97,11 @@ export class DashboardPendingActions {
     this.clearEntry("service", serviceId);
   }
 
-  setWorktreeAction(path: string | undefined, kind: PendingWorktreeActionKind, opts?: PendingActionOptions): void {
+  setWorktreeAction(
+    path: string | undefined,
+    kind: PendingWorktreeActionKind,
+    opts?: PendingWorktreeActionOptions,
+  ): void {
     this.setEntry("worktree", DashboardPendingActions.worktreeKey(path), kind, opts);
   }
 
@@ -119,6 +135,7 @@ export class DashboardPendingActions {
       onTimeout?: () => void;
       sessionSeed?: DashboardSession;
       serviceSeed?: DashboardService;
+      worktreeSeed?: WorktreeGroup;
     },
   ): void {
     const key = DashboardPendingActions.actionKey(target, id);
@@ -149,6 +166,7 @@ export class DashboardPendingActions {
       timeoutId,
       sessionSeed: opts?.sessionSeed,
       serviceSeed: opts?.serviceSeed,
+      worktreeSeed: opts?.worktreeSeed,
     });
     const changed = previousVisibleKey !== visibleEntryKey(this.actions.get(key));
     if (changed) {
@@ -229,7 +247,9 @@ export class DashboardPendingActions {
 
   applyToWorktrees(worktrees: WorktreeGroup[]): WorktreeGroup[] {
     if (this.actions.size === 0) return worktrees;
-    return worktrees.map((worktree) => {
+    const seen = new Set<string>();
+    const applied = worktrees.map((worktree) => {
+      seen.add(DashboardPendingActions.worktreeKey(worktree.path));
       const pendingAction = this.getWorktreeAction(worktree.path);
       if (!pendingAction) return worktree;
       return {
@@ -243,6 +263,50 @@ export class DashboardPendingActions {
         optimistic: true,
       };
     });
+    for (const [entryKey, entry] of this.actions.entries()) {
+      if (entry.target !== "worktree") continue;
+      const worktreeKey = entryKey.slice("worktree:".length);
+      if (seen.has(worktreeKey)) continue;
+      if (!entry.worktreeSeed) continue;
+      if (!canSynthesizeMissingWorktree(entry.kind)) continue;
+      applied.push({
+        ...entry.worktreeSeed,
+        pending: true,
+        pendingAction: entry.kind,
+        optimistic: true,
+      });
+    }
+    return applied;
+  }
+
+  applyToWorktreeCreates(worktrees: WorktreeGroup[]): WorktreeGroup[] {
+    if (this.actions.size === 0) return worktrees;
+    const seen = new Set<string>();
+    const applied = worktrees.map((worktree) => {
+      seen.add(DashboardPendingActions.worktreeKey(worktree.path));
+      const pendingAction = this.getWorktreeAction(worktree.path);
+      if (pendingAction !== "creating") return worktree;
+      return {
+        ...worktree,
+        pending: true,
+        pendingAction,
+        optimistic: true,
+      };
+    });
+    for (const [entryKey, entry] of this.actions.entries()) {
+      if (entry.target !== "worktree") continue;
+      const worktreeKey = entryKey.slice("worktree:".length);
+      if (seen.has(worktreeKey)) continue;
+      if (!entry.worktreeSeed) continue;
+      if (entry.kind !== "creating") continue;
+      applied.push({
+        ...entry.worktreeSeed,
+        pending: true,
+        pendingAction: entry.kind,
+        optimistic: true,
+      });
+    }
+    return applied;
   }
 
   settleCreatePending(

@@ -196,6 +196,94 @@ describe("DashboardPendingActions", () => {
     expect(pending.applyToWorktrees([worktree])).toEqual([worktree]);
   });
 
+  it("synthesizes optimistic worktree rows for creating worktrees that do not exist yet", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const worktreeSeed = {
+      name: "demo",
+      branch: "demo",
+      path: "/repo/.aimux/worktrees/demo",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      status: "offline" as const,
+      isBare: false,
+      sessions: [],
+      services: [],
+    };
+
+    pending.setWorktreeAction(worktreeSeed.path, "creating", { worktreeSeed });
+
+    expect(pending.applyToWorktrees([])).toEqual([
+      expect.objectContaining({
+        path: worktreeSeed.path,
+        pending: true,
+        pendingAction: "creating",
+        optimistic: true,
+      }),
+    ]);
+  });
+
+  it("can project only optimistic worktree creates for remote desktop state", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const removingWorktree = {
+      name: "old",
+      branch: "old",
+      path: "/repo/.aimux/worktrees/old",
+      status: "offline" as const,
+      isBare: false,
+      sessions: [],
+      services: [],
+    };
+    const creatingWorktree = {
+      name: "new",
+      branch: "new",
+      path: "/repo/.aimux/worktrees/new",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      status: "offline" as const,
+      isBare: false,
+      sessions: [],
+      services: [],
+    };
+
+    pending.setWorktreeAction(removingWorktree.path, "removing");
+    pending.setWorktreeAction(creatingWorktree.path, "creating", { worktreeSeed: creatingWorktree });
+
+    expect(pending.applyToWorktreeCreates([removingWorktree])).toEqual([
+      removingWorktree,
+      expect.objectContaining({
+        path: creatingWorktree.path,
+        pending: true,
+        pendingAction: "creating",
+        optimistic: true,
+      }),
+    ]);
+  });
+
+  it("does not synthesize duplicate worktree rows when the real row exists", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const worktreeSeed = {
+      name: "demo",
+      branch: "demo",
+      path: "/repo/.aimux/worktrees/demo",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      status: "offline" as const,
+      isBare: false,
+      sessions: [],
+      services: [],
+    };
+
+    pending.setWorktreeAction(worktreeSeed.path, "creating", { worktreeSeed });
+
+    const worktrees = pending.applyToWorktrees([{ ...worktreeSeed, branch: "real-branch" }]);
+
+    expect(worktrees).toHaveLength(1);
+    expect(worktrees[0]).toMatchObject({
+      path: worktreeSeed.path,
+      branch: "real-branch",
+      pending: true,
+      pendingAction: "creating",
+      optimistic: true,
+    });
+  });
+
   it("increments version when a timed out action is removed", async () => {
     vi.useFakeTimers();
     try {
@@ -349,6 +437,7 @@ describe("DashboardPendingActions", () => {
       branch: "demo",
       path: id,
       status: "offline" as const,
+      isBare: false,
       sessions: [],
       services: [],
     };

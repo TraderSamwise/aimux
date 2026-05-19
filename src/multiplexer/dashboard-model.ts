@@ -187,6 +187,7 @@ export function applyDashboardModel(
     return false;
   }
   host.dashboardModelSnapshotKey = snapshotKey;
+  host.dashboardRawWorktreeGroupsCache = worktreeGroups;
   host.dashboardSessionsCache = host.dashboardPendingActions.applyToSessions(dashSessions);
   host.dashboardServicesCache = host.dashboardPendingActions.applyToServices(dashServices);
   host.dashboardWorktreeGroupsCache = host.dashboardUiStateStore.orderWorktreeGroups(

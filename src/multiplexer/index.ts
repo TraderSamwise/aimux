@@ -272,6 +272,7 @@ export class Multiplexer {
   private desktopStateSnapshot: ReturnType<Multiplexer["buildDesktopStateSnapshot"]> | null = null;
   private dashboardSessionsCache: DashboardSession[] = [];
   private dashboardServicesCache: DashboardService[] = [];
+  private dashboardRawWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardOperationFailuresCache: DashboardOperationFailure[] = [];
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };

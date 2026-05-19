@@ -27,6 +27,14 @@ function assertDashboardWorktreeMutationSettled(settled: boolean, action: Pendin
   }
 }
 
+function findRenderedWorktreeForSettlement(host: WorktreeHost, path: string): any | undefined {
+  const raw = Array.isArray(host.dashboardRawWorktreeGroupsCache)
+    ? host.dashboardRawWorktreeGroupsCache.find((entry: any) => entry.path === path)
+    : undefined;
+  if (raw) return raw;
+  return host.dashboardWorktreeGroupsCache.find((entry: any) => entry.path === path);
+}
+
 async function waitForRenderedDashboardWorktreeState(
   host: WorktreeHost,
   path: string,
@@ -36,7 +44,7 @@ async function waitForRenderedDashboardWorktreeState(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await host.refreshDashboardModelFromService(true);
-    const group = host.dashboardWorktreeGroupsCache.find((entry: any) => entry.path === path);
+    const group = findRenderedWorktreeForSettlement(host, path);
     if (predicate(group)) return true;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -65,31 +73,33 @@ function sortDashboardWorktrees(worktrees: Array<any>): void {
   });
 }
 
+function getOptimisticWorktreeCreatedAt(host: WorktreeHost, path: string): string {
+  const existing = (host.dashboardWorktreeGroupsCache as Array<any>).find((group: any) => group.path === path);
+  if (typeof existing?.createdAt === "string") return existing.createdAt;
+  host.dashboardOptimisticWorktreeCreatedAt ??= new Map<string, string>();
+  const cached = host.dashboardOptimisticWorktreeCreatedAt.get(path);
+  if (cached) return cached;
+  const createdAt = new Date().toISOString();
+  host.dashboardOptimisticWorktreeCreatedAt.set(path, createdAt);
+  return createdAt;
+}
+
 function showOptimisticDashboardWorktreeCreate(host: WorktreeHost, name: string): string {
   const targetPath = getWorktreeCreatePath(name);
-  const existing = (host.dashboardWorktreeGroupsCache as Array<any>).find((group: any) => group.path === targetPath);
-  if (!existing) {
-    host.dashboardWorktreeGroupsCache = [
-      ...host.dashboardWorktreeGroupsCache,
-      {
-        name,
-        branch: name,
-        path: targetPath,
-        createdAt: new Date().toISOString(),
-        status: "offline",
-        pending: true,
-        pendingAction: "creating",
-        optimistic: true,
-        sessions: [],
-        services: [],
-      },
-    ];
-    sortDashboardWorktrees(host.dashboardWorktreeGroupsCache);
-  } else {
-    existing.pending = true;
-    existing.pendingAction = "creating";
-    existing.optimistic = true;
-  }
+  host.dashboardPendingActions.setWorktreeAction(targetPath, "creating", {
+    worktreeSeed: {
+      name,
+      branch: name,
+      path: targetPath,
+      createdAt: getOptimisticWorktreeCreatedAt(host, targetPath),
+      status: "offline",
+      isBare: false,
+      sessions: [],
+      services: [],
+    },
+  });
+  host.reapplyDashboardPendingActions?.();
+  sortDashboardWorktrees(host.dashboardWorktreeGroupsCache);
   host.dashboardState.focusedWorktreePath = targetPath;
   host.dashboardUiStateStore.markSelectionDirty();
   host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((wt: any) => wt.path);
@@ -115,6 +125,8 @@ function showDashboardWorktreeCreateFailure(host: WorktreeHost, name: string, pa
     worktreePath: path,
     worktreeName: name,
   });
+  host.dashboardPendingActions.clearWorktreeAction(path);
+  host.dashboardOptimisticWorktreeCreatedAt?.delete?.(path);
   removeOptimisticDashboardWorktree(host, path);
   host.dashboardWorktreeGroupsCache = [
     ...host.dashboardWorktreeGroupsCache,
@@ -177,7 +189,7 @@ async function waitForRenderedDashboardWorktreeCreate(
       const message = typeof failure.message === "string" ? failure.message : "worktree create failed";
       return { ok: false, error: new Error(message) };
     }
-    const group = host.dashboardWorktreeGroupsCache.find((entry: any) => entry.path === path);
+    const group = findRenderedWorktreeForSettlement(host, path);
     if (isDashboardWorktreeCreateSettled(group)) {
       return { ok: true };
     }
@@ -256,12 +268,16 @@ export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
             }
             debug(`worktree created from UI: ${name}`, "worktree");
             host.dashboardPendingActions.clearWorktreeAction(targetPath);
+            host.reapplyDashboardPendingActions?.();
+            host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
             await host.refreshDashboardModelFromService?.(true);
             host.dashboardState.focusedWorktreePath = targetPath;
             host.dashboardUiStateStore.markSelectionDirty();
             host.renderDashboard();
           } catch (err) {
             host.dashboardPendingActions.clearWorktreeAction(targetPath);
+            host.reapplyDashboardPendingActions?.();
+            host.dashboardOptimisticWorktreeCreatedAt?.delete?.(targetPath);
             debug(`worktree create failed: ${err instanceof Error ? err.message : String(err)}`, "worktree");
             showDashboardWorktreeCreateFailure(host, name, targetPath, err);
           }
