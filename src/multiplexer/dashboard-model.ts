@@ -17,6 +17,7 @@ import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { requestJson } from "../http-client.js";
 import { loadConfig } from "../config.js";
 import type { SessionTeamMetadata } from "../team.js";
+import { isTeammateSession } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
@@ -446,6 +447,7 @@ export function composeDashboardWorktreeGroups(
 export function applyDashboardModel(
   host: DashboardModelHost,
   dashSessions: DashboardSession[],
+  dashTeammates: DashboardSession[],
   dashServices: DashboardService[],
   worktreeGroups: WorktreeGroup[],
   mainCheckoutInfo: { name: string; branch: string },
@@ -453,6 +455,7 @@ export function applyDashboardModel(
 ): boolean {
   const snapshotKey = JSON.stringify({
     sessions: dashSessions,
+    teammates: dashTeammates,
     services: dashServices,
     worktreeGroups,
     mainCheckoutInfo,
@@ -466,6 +469,9 @@ export function applyDashboardModel(
   host.dashboardModelSnapshotKey = snapshotKey;
   host.dashboardRawWorktreeGroupsCache = worktreeGroups;
   host.dashboardSessionsCache = host.dashboardPendingActions.applyToSessions(dashSessions);
+  host.dashboardTeammatesCache = host.dashboardPendingActions
+    .applyToSessions(dashTeammates)
+    .filter((session: DashboardSession) => isTeammateSession(session));
   host.dashboardServicesCache = host.dashboardPendingActions.applyToServices(dashServices);
   host.dashboardWorktreeGroupsCache = host.dashboardUiStateStore.orderWorktreeGroups(
     composeDashboardWorktreeGroups(
@@ -490,7 +496,10 @@ export function refreshDesktopStateSnapshot(host: DashboardModelHost): void {
   host.desktopStateSnapshot = buildDesktopStateSnapshot(host);
 }
 
-export function computeDashboardSessions(host: DashboardModelHost): DashboardSession[] {
+export function computeDashboardSessions(
+  host: DashboardModelHost,
+  options: { includeTeammates?: boolean } = {},
+): DashboardSession[] {
   const lastUsedState = loadLastUsedState(process.cwd());
   const metadata = loadMetadataState().sessions;
   const threadSummaries = listThreadSummaries();
@@ -590,6 +599,7 @@ export function computeDashboardSessions(host: DashboardModelHost): DashboardSes
     remoteInstances: [],
     hiddenWorktreePaths: listWorktreeGraveyardPaths(),
     mainRepoPath,
+    includeTeammates: options.includeTeammates,
     getSessionLabel: (sessionId: string) => host.getSessionLabel(sessionId),
     getSessionHeadline: (sessionId: string) => host.deriveHeadline(sessionId),
     getSessionTaskDescription: (sessionId: string) => host.taskDispatcher?.getSessionTask(sessionId),
@@ -775,6 +785,9 @@ export function buildDesktopStateSnapshot(host: DashboardModelHost) {
   }
   return {
     sessions: computeDashboardSessions(host),
+    teammates: computeDashboardSessions(host, { includeTeammates: true }).filter((session) =>
+      isTeammateSession(session),
+    ),
     services: computeDashboardServices(host, worktrees),
     worktrees,
     operationFailures,
@@ -803,6 +816,7 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
             const body = json as {
               ok?: boolean;
               sessions?: DashboardSession[];
+              teammates?: DashboardSession[];
               services?: DashboardService[];
               worktrees?: Array<{
                 name: string;
@@ -819,6 +833,7 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
               mainCheckoutPath?: string;
             };
             const dashSessions = body.sessions ?? [];
+            const dashTeammates = body.teammates ?? [];
             const dashServices = body.services ?? [];
             const worktrees = body.worktrees ?? [];
             const worktreeGroups = buildDashboardWorktreeGroups(
@@ -831,6 +846,7 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
             return applyDashboardModel(
               host,
               dashSessions,
+              dashTeammates,
               dashServices,
               worktreeGroups,
               body.mainCheckoutInfo ?? { name: "Main Checkout", branch: "" },
@@ -865,6 +881,7 @@ export function refreshLocalDashboardModel(host: DashboardModelHost): void {
   applyDashboardModel(
     host,
     snapshot.sessions,
+    snapshot.teammates,
     snapshot.services,
     worktreeGroups,
     snapshot.mainCheckoutInfo,

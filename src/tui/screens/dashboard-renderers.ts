@@ -53,6 +53,19 @@ function colorSessionHint(value: string): string {
   return `\x1b[2m${value}\x1b[0m`;
 }
 
+function summarizeTeammate(
+  session: DashboardSession,
+  derivedStatusLabel: DashboardViewModel["derivedStatusLabel"],
+): string {
+  const identity = session.team?.label ?? session.label ?? session.command;
+  const role = session.team?.role ?? session.role;
+  const status = session.semantic?.presentation.statusLabel ?? derivedStatusLabel(session);
+  const hint = session.semantic?.presentation.compactHint;
+  return [role ? `${identity}(${role})` : identity, status, hint && hint !== status ? hint : undefined]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export function renderDashboardFrame(
   state: DashboardViewModel,
   cols: number,
@@ -467,6 +480,16 @@ export function renderDashboardFrame(
     }
     if ((selected.services?.length ?? 0) > 0) {
       lines.push(...wrapKeyValue("Services", selected.services!.map((s) => s.url ?? `:${s.port}`).join(", "), width));
+    }
+    if (state.selectedTeammates.length > 0) {
+      lines.push("");
+      lines.push("\x1b[1mTeam\x1b[0m");
+      for (const teammate of state.selectedTeammates.slice(0, 5)) {
+        lines.push(...wrapKeyValue("-", summarizeTeammate(teammate, state.derivedStatusLabel), width));
+      }
+      if (state.selectedTeammates.length > 5) {
+        lines.push(...wrapKeyValue("-", `${state.selectedTeammates.length - 5} more`, width));
+      }
     }
     while (lines.length < height) lines.push("");
     return lines.slice(0, height);

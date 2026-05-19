@@ -51,6 +51,14 @@ vi.mock("./worktree-graveyard.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../metadata-store.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../metadata-store.js")>();
+  return {
+    ...actual,
+    loadMetadataState: vi.fn(() => ({ sessions: {} })),
+  };
+});
+
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { persistenceMethods } from "./persistence-methods.js";
 import { writeWorktreeGraveyardEntries } from "./worktree-graveyard.js";
@@ -297,8 +305,115 @@ describe("persistenceMethods", () => {
     ]);
   });
 
+  it("keeps normal pending sessions out of teammate desktop-state payloads", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("codex-normal", "creating", {
+      sessionSeed: {
+        index: 0,
+        id: "codex-normal",
+        command: "codex",
+        status: "running",
+        active: false,
+      },
+    });
+    pending.setSessionAction("codex-teammate", "creating", {
+      sessionSeed: {
+        index: 1,
+        id: "codex-teammate",
+        command: "codex",
+        status: "running",
+        active: false,
+        team: { teamId: "team-1", parentSessionId: "claude-parent", role: "reviewer" },
+      },
+    });
+    const host = {
+      desktopStateSnapshot: {
+        sessions: [],
+        teammates: [],
+        services: [],
+        worktrees: [],
+        operationFailures: [],
+        mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
+        mainCheckoutPath: "/repo",
+      },
+      dashboardPendingActions: pending,
+      refreshDesktopStateSnapshot: vi.fn(),
+      buildDesktopStateSnapshot: vi.fn(),
+      buildStatuslineSnapshot: vi.fn(() => ({})),
+    };
+
+    const state = persistenceMethods.buildDesktopState.call(host);
+
+    expect(state.sessions.map((session) => session.id)).toEqual(["codex-normal", "codex-teammate"]);
+    expect(state.teammates.map((session) => session.id)).toEqual(["codex-teammate"]);
+  });
+
+  it("projects pending teammates into the statusline teammate payload only", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("codex-normal", "creating", {
+      sessionSeed: {
+        index: 0,
+        id: "codex-normal",
+        command: "codex",
+        status: "running",
+        active: false,
+      },
+    });
+    pending.setSessionAction("codex-teammate", "creating", {
+      sessionSeed: {
+        index: 1,
+        id: "codex-teammate",
+        command: "codex",
+        status: "running",
+        active: false,
+        team: { teamId: "team-1", parentSessionId: "claude-parent", role: "reviewer", label: "review" },
+      },
+    });
+    const host = {
+      desktopStateSnapshot: {
+        sessions: [],
+        teammates: [],
+        services: [],
+        worktrees: [],
+        operationFailures: [],
+        mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
+        mainCheckoutPath: "/repo",
+      },
+      dashboardPendingActions: pending,
+      dashboardUiStateStore: {
+        orderSessionsForWorktree: vi.fn((sessions) => sessions),
+        orderServicesForWorktree: vi.fn((services) => services),
+      },
+      dashboardState: { screen: "dashboard" },
+      taskDispatcher: undefined,
+      footerFlash: null,
+      refreshDesktopStateSnapshot: vi.fn(),
+      buildDesktopStateSnapshot: vi.fn(),
+    };
+
+    const statusline = persistenceMethods.buildStatuslineSnapshot.call(host);
+
+    expect(statusline.sessions.map((session) => session.id)).toEqual([]);
+    expect(statusline.teammates.map((session) => session.id)).toEqual(["codex-teammate"]);
+    expect(statusline.teammates[0]).toEqual(
+      expect.objectContaining({
+        id: "codex-teammate",
+        team: expect.objectContaining({ parentSessionId: "claude-parent" }),
+      }),
+    );
+  });
+
   it("does not retain stale session or service pending flags when reapplying pending actions", () => {
     const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("codex-normal", "creating", {
+      sessionSeed: {
+        index: 9,
+        id: "codex-normal",
+        command: "codex",
+        status: "running",
+        active: false,
+      },
+    });
     const host = {
       dashboardPendingActions: pending,
       dashboardSessionsCache: [
@@ -308,6 +423,19 @@ describe("persistenceMethods", () => {
           command: "claude",
           status: "offline",
           active: false,
+          pending: true,
+          pendingAction: "stopping",
+          optimistic: true,
+        },
+      ],
+      dashboardTeammatesCache: [
+        {
+          index: 2,
+          id: "teammate-1",
+          command: "codex",
+          status: "offline",
+          active: false,
+          team: { teamId: "team-1", parentSessionId: "claude-1", role: "reviewer" },
           pending: true,
           pendingAction: "stopping",
           optimistic: true,
@@ -334,6 +462,10 @@ describe("persistenceMethods", () => {
     expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pending");
     expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pendingAction");
     expect(host.dashboardSessionsCache[0]).not.toHaveProperty("optimistic");
+    expect(host.dashboardTeammatesCache.map((session: any) => session.id)).toEqual(["teammate-1"]);
+    expect(host.dashboardTeammatesCache[0]).not.toHaveProperty("pending");
+    expect(host.dashboardTeammatesCache[0]).not.toHaveProperty("pendingAction");
+    expect(host.dashboardTeammatesCache[0]).not.toHaveProperty("optimistic");
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("pending");
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("pendingAction");
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("optimistic");

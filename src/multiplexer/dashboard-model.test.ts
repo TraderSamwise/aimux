@@ -175,14 +175,14 @@ describe("applyDashboardModel", () => {
       },
     });
 
-    expect(applyDashboardModel(host, [], [], worktreeGroups, mainCheckoutInfo)).toBe(true);
+    expect(applyDashboardModel(host, [], [], [], worktreeGroups, mainCheckoutInfo)).toBe(true);
     expect(host.dashboardServicesCache).toEqual([
       expect.objectContaining({ id: "service-new", pendingAction: "creating", optimistic: true }),
     ]);
 
     pending.clearServiceAction("service-new");
 
-    expect(applyDashboardModel(host, [], [], worktreeGroups, mainCheckoutInfo)).toBe(true);
+    expect(applyDashboardModel(host, [], [], [], worktreeGroups, mainCheckoutInfo)).toBe(true);
     expect(host.dashboardServicesCache).toEqual([]);
   });
 });

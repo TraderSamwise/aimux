@@ -33,6 +33,7 @@ import {
   isToolInternalWorktree,
   listWorktrees as listAllWorktrees,
 } from "../worktree.js";
+import { isTeammateSession } from "../team.js";
 
 function recordDashboardFailure(
   host: any,
@@ -180,7 +181,7 @@ export const persistenceMethods = {
     this.writeStatuslineTextFile("top-dashboard.txt", dashboardTop);
     this.writeStatuslineTextFile("bottom-dashboard.txt", dashboardBottom);
 
-    for (const entry of data.sessions) {
+    for (const entry of [...data.sessions, ...(data.teammates ?? [])]) {
       if (!entry.tmuxWindowId) continue;
       const renderOptions = {
         currentWindow: entry.windowName,
@@ -234,6 +235,21 @@ export const persistenceMethods = {
       worktreePath?: string;
       launchCommandLine?: string;
     }>;
+    teammates: Array<{
+      id: string;
+      kind?: "agent" | "service";
+      tool: string;
+      label?: string;
+      tmuxWindowId?: string;
+      tmuxWindowIndex?: number;
+      windowName: string;
+      headline?: string;
+      status: string;
+      role?: string;
+      active: boolean;
+      worktreePath?: string;
+      team?: DashboardSession["team"];
+    }>;
     tasks: { pending: number; assigned: number };
     controlPlane: {
       daemonAlive: boolean;
@@ -245,6 +261,12 @@ export const persistenceMethods = {
   } {
     const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     const orderedSessions = orderStatuslineItemsByWorktree(desktopState.sessions, (sessions, worktreePath) =>
+      this.dashboardUiStateStore.orderSessionsForWorktree(sessions, worktreePath),
+    );
+    const teammateSessions = this.dashboardPendingActions
+      .applyToSessions(desktopState.teammates ?? [])
+      .filter((session: DashboardSession) => isTeammateSession(session));
+    const orderedTeammates = orderStatuslineItemsByWorktree(teammateSessions, (sessions, worktreePath) =>
       this.dashboardUiStateStore.orderSessionsForWorktree(sessions, worktreePath),
     );
     const orderedServices = orderStatuslineItemsByWorktree(desktopState.services, (services, worktreePath) =>
@@ -284,6 +306,22 @@ export const persistenceMethods = {
           launchCommandLine: service.launchCommandLine,
         })),
       ],
+      teammates: orderedTeammates.map((session: any) => ({
+        id: session.id,
+        kind: "agent" as const,
+        tool: session.command,
+        label: session.label,
+        tmuxWindowId: session.tmuxWindowId,
+        tmuxWindowIndex: session.tmuxWindowIndex,
+        windowName: session.command,
+        headline: session.headline,
+        status: session.status,
+        role: session.role,
+        active: false,
+        worktreePath: session.worktreePath,
+        semantic: session.semantic,
+        team: session.team,
+      })),
       tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
       controlPlane: {
         daemonAlive: Boolean(loadDaemonInfo()),
@@ -297,6 +335,7 @@ export const persistenceMethods = {
 
   buildDesktopState(this: any): {
     sessions: DashboardSession[];
+    teammates: DashboardSession[];
     services: DashboardService[];
     statusline: ReturnType<any["buildStatuslineSnapshot"]>;
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
@@ -310,6 +349,9 @@ export const persistenceMethods = {
     const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     return {
       sessions: this.dashboardPendingActions.applyToSessions(desktopState.sessions),
+      teammates: this.dashboardPendingActions
+        .applyToSessions(desktopState.teammates ?? [])
+        .filter((session: DashboardSession) => isTeammateSession(session)),
       services: this.dashboardPendingActions.applyToServices(desktopState.services),
       statusline: this.buildStatuslineSnapshot(),
       worktrees: this.dashboardPendingActions.applyToWorktrees(desktopState.worktrees),
@@ -325,6 +367,13 @@ export const persistenceMethods = {
         ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...session }: any) => session,
       ),
     );
+    this.dashboardTeammatesCache = this.dashboardPendingActions
+      .applyToSessions(
+        (this.dashboardTeammatesCache ?? []).map(
+          ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...session }: any) => session,
+        ),
+      )
+      .filter((session: DashboardSession) => isTeammateSession(session));
     this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(
       this.dashboardServicesCache.map(
         ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...service }: any) => service,

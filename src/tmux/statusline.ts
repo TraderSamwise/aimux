@@ -8,6 +8,7 @@ import {
   renderDashboardScreens,
   renderSemanticBadge,
   renderSessionCompactHint,
+  resolveCurrentTeammates,
   resolveExactCurrentSessionId,
   resolveExactSessionMetadata,
   resolveScopedSessions,
@@ -239,6 +240,17 @@ function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[num
   return session.isCurrent ? `#[fg=black,bg=yellow] ${label} #[default]` : label;
 }
 
+function renderTeammateSegment(teammates: ReturnType<typeof resolveCurrentTeammates>): string | null {
+  if (teammates.length === 0) return null;
+  const labels = teammates.slice(0, 3).map((teammate) => {
+    const identity = compactSessionTitle(teammate);
+    const hint = renderSessionCompactHint(teammate) ?? teammate.semantic?.presentation.statusLabel ?? teammate.status;
+    return trim(`${identity}${hint ? ` ${hint}` : ""}`, 24);
+  });
+  const more = teammates.length > labels.length ? ` +${teammates.length - labels.length}` : "";
+  return `team: ${labels.join(", ")}${more}`;
+}
+
 function visibleSegmentLength(segment: string): number {
   return segment.replace(/#\[[^\]]*]/g, "").length;
 }
@@ -276,6 +288,9 @@ function renderBottomLine(
     currentPath,
   ).map(renderSessionChip);
   const headline = renderExactHeadline(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
+  const teammateSegment = renderTeammateSegment(
+    resolveCurrentTeammates(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath),
+  );
   const pluginSegments = renderPluginSegments(
     data,
     projectRoot,
@@ -297,7 +312,9 @@ function renderBottomLine(
     used += next;
   }
 
-  const detailParts = [headline, ...pluginSegments].filter((segment): segment is string => Boolean(segment));
+  const detailParts = [headline, teammateSegment, ...pluginSegments].filter((segment): segment is string =>
+    Boolean(segment),
+  );
   const detail = detailParts.join("  ·  ");
 
   if (detail) {

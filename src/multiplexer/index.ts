@@ -273,6 +273,7 @@ export class Multiplexer {
   private lastStatuslineSnapshotKey: string | null = null;
   private desktopStateSnapshot: ReturnType<Multiplexer["buildDesktopStateSnapshot"]> | null = null;
   private dashboardSessionsCache: DashboardSession[] = [];
+  private dashboardTeammatesCache: DashboardSession[] = [];
   private dashboardServicesCache: DashboardService[] = [];
   private dashboardRawWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];

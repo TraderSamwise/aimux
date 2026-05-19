@@ -13,9 +13,11 @@ function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): Dashboa
     navLevel: "worktrees",
     selectedSessionId: undefined,
     selectedServiceId: undefined,
+    selectedTeammates: [],
     runtimeLabel: "tmux",
     mainCheckout: { name: "Main Checkout", branch: "master" },
     worktreeRemoval: undefined,
+    operationFailures: [],
     detailsPaneVisible: true,
     scrollOffset: 0,
     derivedStatusLabel,
@@ -142,5 +144,60 @@ describe("renderDashboardFrame worktree progress", () => {
     );
 
     expect(frame).toContain("claude — \x1b[1;33mstarting\x1b[0m");
+  });
+
+  it("renders selected parent teammates in the details pane only", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedSessionId: "parent",
+        sessions: [
+          {
+            index: 0,
+            id: "parent",
+            command: "claude",
+            status: "running",
+            active: true,
+            role: "coder",
+          },
+        ],
+        selectedTeammates: [
+          {
+            index: 0,
+            id: "reviewer",
+            command: "codex",
+            status: "running",
+            active: false,
+            role: "reviewer",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", label: "review" },
+            semantic: deriveSessionSemantics({ status: "running", activity: "running" }),
+          },
+          {
+            index: 1,
+            id: "explorer",
+            command: "claude",
+            status: "offline",
+            active: false,
+            team: { teamId: "team-1", parentSessionId: "parent", role: "explorer", label: "scan" },
+          },
+        ],
+        worktreeGroups: [
+          {
+            name: "Main Checkout",
+            branch: "master",
+            status: "active",
+            sessions: [],
+            services: [],
+          },
+        ],
+      }),
+      140,
+      40,
+    );
+
+    expect(frame).toContain("Team");
+    expect(frame).toContain("review(reviewer)");
+    expect(frame).toContain("working");
+    expect(frame).toContain("scan(explorer)");
   });
 });

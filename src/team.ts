@@ -26,6 +26,23 @@ export function isTeammateSession(session: { team?: SessionTeamMetadata } | unde
   return Boolean(session?.team?.parentSessionId);
 }
 
+export function compareTeammateSessions(
+  left: { id: string; createdAt?: string; team?: SessionTeamMetadata },
+  right: { id: string; createdAt?: string; team?: SessionTeamMetadata },
+): number {
+  const leftOrder = typeof left.team?.order === "number" ? left.team.order : Number.POSITIVE_INFINITY;
+  const rightOrder = typeof right.team?.order === "number" ? right.team.order : Number.POSITIVE_INFINITY;
+  if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+
+  const leftCreated = left.createdAt ? Date.parse(left.createdAt) : Number.POSITIVE_INFINITY;
+  const rightCreated = right.createdAt ? Date.parse(right.createdAt) : Number.POSITIVE_INFINITY;
+  const normalizedLeftCreated = Number.isFinite(leftCreated) ? leftCreated : Number.POSITIVE_INFINITY;
+  const normalizedRightCreated = Number.isFinite(rightCreated) ? rightCreated : Number.POSITIVE_INFINITY;
+  if (normalizedLeftCreated !== normalizedRightCreated) return normalizedLeftCreated - normalizedRightCreated;
+
+  return left.id.localeCompare(right.id);
+}
+
 const DEFAULT_TEAM_CONFIG: TeamConfig = {
   roles: {
     coder: {

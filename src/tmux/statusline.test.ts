@@ -445,6 +445,76 @@ describe("renderTmuxStatusline", () => {
     expect(rendered.indexOf("claude")).toBeLessThan(rendered.indexOf("shell[svc]"));
   });
 
+  it("renders current parent teammates separately from scoped footer chips", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "parent",
+            kind: "agent",
+            tool: "claude",
+            role: "coder",
+            windowName: "claude",
+            tmuxWindowId: "@1",
+            worktreePath: repoRoot,
+            status: "running",
+          },
+          {
+            id: "service",
+            kind: "service",
+            tool: "shell",
+            windowName: "shell",
+            tmuxWindowId: "@2",
+            worktreePath: repoRoot,
+            status: "running",
+          },
+        ],
+        teammates: [
+          {
+            id: "reviewer",
+            kind: "agent",
+            tool: "codex",
+            role: "reviewer",
+            label: "review",
+            windowName: "codex",
+            tmuxWindowId: "@9",
+            worktreePath: repoRoot,
+            status: "running",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", label: "review", order: 1 },
+          },
+          {
+            id: "other",
+            kind: "agent",
+            tool: "claude",
+            windowName: "claude",
+            tmuxWindowId: "@10",
+            worktreePath: repoRoot,
+            status: "running",
+            team: { teamId: "team-2", parentSessionId: "other-parent", role: "coder", label: "other" },
+          },
+        ],
+      }),
+    );
+
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "claude",
+      currentWindowId: "@1",
+      currentPath: repoRoot,
+      currentSession: "aimux-main",
+      width: 220,
+    });
+
+    expect(rendered).toContain("#[fg=black,bg=yellow] claude(coder)");
+    expect(rendered).toContain("shell[svc]");
+    expect(rendered).toContain("team: review(reviewer) running");
+    expect(rendered).not.toContain("other");
+    expect(rendered.indexOf("claude(coder)")).toBeLessThan(rendered.indexOf("shell[svc]"));
+    expect(rendered.indexOf("shell[svc]")).toBeLessThan(rendered.indexOf("team:"));
+  });
+
   it("omits offline and exited sessions from scoped footer chips", () => {
     const nestedPath = join(repoRoot, ".aimux", "worktrees", "tealstreet-pr5180");
     mkdirSync(nestedPath, { recursive: true });

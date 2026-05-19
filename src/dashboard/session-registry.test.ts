@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildDashboardSessions } from "./session-registry.js";
+import { buildDashboardSessions, selectDashboardTeammates } from "./session-registry.js";
 
 describe("buildDashboardSessions", () => {
   it("dedupes duplicate local sessions by session id and backend session id", () => {
@@ -163,5 +163,88 @@ describe("buildDashboardSessions", () => {
       role: "reviewer",
       order: 2,
     });
+  });
+});
+
+describe("selectDashboardTeammates", () => {
+  it("returns only the selected parent teammates in stable team order", () => {
+    const sessions = [
+      {
+        index: 0,
+        id: "parent-a",
+        command: "claude",
+        status: "running" as const,
+        active: true,
+      },
+      {
+        index: 1,
+        id: "child-late",
+        command: "codex",
+        status: "running" as const,
+        active: false,
+        createdAt: "2026-05-01T00:00:10.000Z",
+        team: { teamId: "team-a", parentSessionId: "parent-a", role: "reviewer" },
+      },
+      {
+        index: 2,
+        id: "child-first",
+        command: "claude",
+        status: "offline" as const,
+        active: false,
+        createdAt: "2026-05-01T00:00:20.000Z",
+        team: { teamId: "team-a", parentSessionId: "parent-a", role: "coder", order: 1 },
+      },
+      {
+        index: 3,
+        id: "child-early",
+        command: "claude",
+        status: "running" as const,
+        active: false,
+        createdAt: "2026-05-01T00:00:01.000Z",
+        team: { teamId: "team-a", parentSessionId: "parent-a", role: "explorer" },
+      },
+      {
+        index: 4,
+        id: "other-child",
+        command: "codex",
+        status: "running" as const,
+        active: false,
+        team: { teamId: "team-b", parentSessionId: "parent-b", role: "coder" },
+      },
+    ];
+
+    const teammates = selectDashboardTeammates(sessions, sessions[0]);
+
+    expect(teammates.map((session) => session.id)).toEqual(["child-first", "child-early", "child-late"]);
+    expect(sessions[2]?.index).toBe(2);
+    expect(teammates[0]?.index).toBe(0);
+  });
+
+  it("does not expose nested teammate teams", () => {
+    const teammateParent = {
+      index: 0,
+      id: "teammate-parent",
+      command: "claude",
+      status: "running" as const,
+      active: true,
+      team: { teamId: "team-a", parentSessionId: "root", role: "coder" },
+    };
+
+    expect(
+      selectDashboardTeammates(
+        [
+          teammateParent,
+          {
+            index: 1,
+            id: "nested-child",
+            command: "codex",
+            status: "running",
+            active: false,
+            team: { teamId: "team-b", parentSessionId: "teammate-parent", role: "reviewer" },
+          },
+        ],
+        teammateParent,
+      ),
+    ).toEqual([]);
   });
 });

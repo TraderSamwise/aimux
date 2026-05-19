@@ -3,7 +3,7 @@ import type { DashboardSession } from "./index.js";
 import type { SessionState } from "../multiplexer/index.js";
 import type { InstanceInfo } from "../instance-registry.js";
 import type { SessionTeamMetadata } from "../team.js";
-import { isTeammateSession } from "../team.js";
+import { compareTeammateSessions, isTeammateSession } from "../team.js";
 import { listWorktrees as listAllWorktrees } from "../worktree.js";
 
 export interface DashboardLocalSession {
@@ -223,6 +223,17 @@ export function orderDashboardSessionsByVisualWorktree(
   }
 
   return ordered;
+}
+
+export function selectDashboardTeammates(
+  sessions: DashboardSession[],
+  parentSession: Pick<DashboardSession, "id" | "team"> | undefined,
+): DashboardSession[] {
+  if (!parentSession || isTeammateSession(parentSession)) return [];
+  return sessions
+    .filter((session) => session.team?.parentSessionId === parentSession.id)
+    .sort(compareTeammateSessions)
+    .map((session, index) => ({ ...session, index }));
 }
 
 function normalizeWorktreePathFactory(mainRepoPath?: string) {

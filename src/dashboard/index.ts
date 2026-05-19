@@ -134,6 +134,7 @@ export interface DashboardViewModel {
   navLevel: "worktrees" | "sessions";
   selectedSessionId?: string;
   selectedServiceId?: string;
+  selectedTeammates: DashboardSession[];
   runtimeLabel?: string;
   mainCheckout: MainCheckoutInfo;
   worktreeRemoval?: DashboardWorktreeRemovalInfo;
@@ -157,6 +158,7 @@ export class Dashboard {
     navLevel: "sessions",
     selectedSessionId: undefined,
     selectedServiceId: undefined,
+    selectedTeammates: [],
     runtimeLabel: undefined,
     mainCheckout: { name: "Main Checkout", branch: "" },
     worktreeRemoval: undefined,

@@ -24,6 +24,7 @@ import {
   stopService as stopServiceImpl,
 } from "./services.js";
 import { derivedStatusLabel } from "../dashboard/index.js";
+import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
 
 export const dashboardViewMethods = {
@@ -122,6 +123,7 @@ export const dashboardViewMethods = {
           }
         : this.getViewportSize();
       const dashSessions = this.dashboardSessionsCache;
+      const dashTeammates = this.dashboardTeammatesCache ?? [];
       const dashServices = this.dashboardServicesCache;
       const worktreeGroups = this.dashboardWorktreeGroupsCache;
       const mainCheckoutInfo = this.dashboardMainCheckoutInfoCache;
@@ -138,6 +140,9 @@ export const dashboardViewMethods = {
       } else if (!hasWorktrees && dashSessions.length > 0) {
         selectedSession = dashSessions[this.activeIndex]?.id;
       }
+      const selectedSessionEntry = selectedSession
+        ? dashSessions.find((session: any) => session.id === selectedSession)
+        : undefined;
 
       this.dashboard.update({
         sessions: dashSessions,
@@ -148,6 +153,7 @@ export const dashboardViewMethods = {
         navLevel: hasWorktrees ? this.dashboardState.level : "sessions",
         selectedSessionId: selectedSession,
         selectedServiceId: selectedService,
+        selectedTeammates: selectDashboardTeammates(dashTeammates, selectedSessionEntry),
         runtimeLabel: "tmux",
         mainCheckout: mainCheckoutInfo,
         operationFailures: this.dashboardOperationFailuresCache ?? [],
