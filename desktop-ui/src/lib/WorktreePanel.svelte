@@ -698,28 +698,8 @@
     });
   }
 
-  function isStopServicePending(serviceId) {
-    return isActionPending({
-      projectPath: appState.selectedProject?.path,
-      kind: "stop-service",
-      serviceId,
-    });
-  }
-
-  function isResumeServicePending(serviceId) {
-    return isActionPending({
-      projectPath: appState.selectedProject?.path,
-      kind: "resume-service",
-      serviceId,
-    });
-  }
-
-  function isRemoveServicePending(serviceId) {
-    return isActionPending({
-      projectPath: appState.selectedProject?.path,
-      kind: "remove-service",
-      serviceId,
-    });
+  function isServiceBlocked(serviceId) {
+    return isServiceActionBlocked(appState.selectedProject?.path, serviceId);
   }
 
   function handleWorktreeKeydown(e) {
@@ -1031,9 +1011,9 @@
                         class="agent-action"
                         title={service.status === "offline" || service.status === "exited" ? "Remove service" : "Stop service"}
                         onclick={(e) => stopService(e, service)}
-                        disabled={isStopServicePending(service.id) || isResumeServicePending(service.id) || isRemoveServicePending(service.id)}
+                        disabled={isServiceBlocked(service.id)}
                       >
-                        {isStopServicePending(service.id) || isResumeServicePending(service.id) || isRemoveServicePending(service.id)
+                        {isServiceBlocked(service.id)
                           ? "..."
                           : service.status === "offline" || service.status === "exited"
                             ? "×"
