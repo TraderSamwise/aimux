@@ -780,20 +780,6 @@ function applyActionOverlays(project) {
       }
     }
 
-    if (action.kind === "create-worktree") {
-      const pendingPath = action.worktreePath || `pending-worktree:${action.key}`;
-      const pendingWorktree = {
-        name: action.worktreeName,
-        path: pendingPath,
-        branch: "creating",
-        pending: true,
-        pendingAction: "creating",
-      };
-      if (!next.worktrees.some((worktree) => worktree.path === pendingPath)) {
-        next.worktrees = [...next.worktrees, pendingWorktree];
-      }
-    }
-
     if (action.kind === "create-service") {
       const pendingId = `pending-service:${action.key}`;
       const pendingService = {
@@ -904,18 +890,6 @@ function applyActionOverlays(project) {
       if (next.statusline && !next.statusline.sessions.some((session) => session.id === action.sessionId)) {
         next.statusline.sessions = [pendingSession, ...next.statusline.sessions];
       }
-    }
-
-    if (action.kind === "remove-worktree" && action.worktreePath) {
-      next.worktrees = next.worktrees.map((worktree) =>
-        worktree.path === action.worktreePath
-          ? {
-              ...worktree,
-              pending: true,
-              removing: true,
-            }
-          : worktree
-      );
     }
 
     if (action.kind === "stop-service" && action.serviceId) {
