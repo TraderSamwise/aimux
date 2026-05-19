@@ -1,11 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import {
   applyDashboardModel,
   buildDashboardWorktreeGroups,
   composeDashboardWorktreeGroups,
+  withMetadataServicePending,
+  withMetadataSessionPending,
 } from "./dashboard-model.js";
+
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function nextTick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 describe("buildDashboardWorktreeGroups", () => {
   it("always includes main checkout as the first group", () => {
@@ -159,5 +179,83 @@ describe("applyDashboardModel", () => {
 
     expect(applyDashboardModel(host, [], [], worktreeGroups, mainCheckoutInfo)).toBe(true);
     expect(host.dashboardServicesCache).toEqual([]);
+  });
+});
+
+describe("metadata pending actions", () => {
+  it("keeps session pending until the settle callback resolves", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+    };
+    const settled = deferred<boolean>();
+
+    const resultPromise = withMetadataSessionPending(
+      host,
+      "codex-1",
+      "starting",
+      () => ({ sessionId: "codex-1" }),
+      undefined,
+      () => settled.promise,
+    );
+
+    await Promise.resolve();
+    await expect(resultPromise).resolves.toEqual({ sessionId: "codex-1" });
+    expect(pending.getSessionAction("codex-1")).toBe("starting");
+
+    settled.resolve(true);
+    await nextTick();
+    expect(pending.getSessionAction("codex-1")).toBeUndefined();
+  });
+
+  it("clears service pending and preserves the original work error", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+    };
+    const settle = vi.fn();
+
+    await expect(
+      withMetadataServicePending(
+        host,
+        "service-1",
+        "removing",
+        () => {
+          throw new Error("boom");
+        },
+        settle,
+      ),
+    ).rejects.toThrow("boom");
+
+    expect(settle).not.toHaveBeenCalled();
+    expect(pending.getServiceAction("service-1")).toBeUndefined();
+  });
+
+  it("clears pending even when a best-effort settle callback fails", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    await expect(
+      withMetadataSessionPending(
+        host,
+        "claude-1",
+        "creating",
+        () => ({ sessionId: "claude-1" }),
+        undefined,
+        async () => {
+          throw new Error("settle failed");
+        },
+      ),
+    ).resolves.toEqual({ sessionId: "claude-1" });
+
+    await nextTick();
+    expect(pending.getSessionAction("claude-1")).toBeUndefined();
+    expect(host.debug).toHaveBeenCalledWith(expect.stringContaining("settle failed"), "dashboard");
   });
 });

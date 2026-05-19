@@ -30,6 +30,14 @@ import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { setPendingDashboardServiceAction, setPendingDashboardSessionAction } from "./dashboard-ops.js";
 
 type DashboardModelHost = any;
+type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
+
+const METADATA_PENDING_SETTLE_TIMEOUT_MS = 10_000;
+const METADATA_PENDING_SETTLE_INTERVAL_MS = 100;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function sessionStateFromDashboardSeed(seed: any): any | undefined {
   if (!seed?.id || !seed?.command) return undefined;
@@ -142,38 +150,175 @@ function buildMetadataPendingSessionSeed(input: {
   };
 }
 
-async function withMetadataSessionPending<T>(
+async function waitForMetadataCondition(
+  host: DashboardModelHost,
+  predicate: () => boolean,
+  timeoutMs = METADATA_PENDING_SETTLE_TIMEOUT_MS,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      host.invalidateDesktopStateSnapshot?.();
+      host.refreshLocalDashboardModel?.();
+    } catch {}
+    if (predicate()) return true;
+    await sleep(METADATA_PENDING_SETTLE_INTERVAL_MS);
+  }
+  try {
+    host.invalidateDesktopStateSnapshot?.();
+    host.refreshLocalDashboardModel?.();
+  } catch {}
+  return predicate();
+}
+
+function hasLiveManagedAgentWindow(host: DashboardModelHost, sessionId: string): boolean {
+  try {
+    if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return false;
+    return host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd()).some(({ target, metadata }: any) => {
+      if (isDashboardWindowName(target.windowName)) return false;
+      if (metadata.kind !== "agent" || metadata.sessionId !== sessionId) return false;
+      if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) return false;
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
+
+function hasLiveManagedServiceWindow(host: DashboardModelHost, serviceId: string): boolean {
+  try {
+    if (!host.tmuxRuntimeManager?.listProjectManagedWindows) return false;
+    return host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd()).some(({ target, metadata }: any) => {
+      if (isDashboardWindowName(target.windowName)) return false;
+      if (metadata.kind !== "service" || metadata.sessionId !== serviceId) return false;
+      if (host.tmuxRuntimeManager.isWindowAlive && !host.tmuxRuntimeManager.isWindowAlive(target)) return false;
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
+
+function isMetadataSessionRunning(host: DashboardModelHost, sessionId: string): boolean {
+  if (host.sessions?.some?.((session: any) => session.id === sessionId && !session.exited)) return true;
+  if (host.sessionTmuxTargets?.has?.(sessionId)) return true;
+  return hasLiveManagedAgentWindow(host, sessionId);
+}
+
+async function waitForMetadataSessionRunning(host: DashboardModelHost, sessionId: string): Promise<boolean> {
+  if (typeof host.waitForSessionStart === "function") {
+    try {
+      if (await host.waitForSessionStart(sessionId, METADATA_PENDING_SETTLE_TIMEOUT_MS)) return true;
+    } catch {}
+  }
+  return waitForMetadataCondition(host, () => isMetadataSessionRunning(host, sessionId));
+}
+
+function isMetadataServiceRunning(host: DashboardModelHost, serviceId: string): boolean {
+  const offline = host.offlineServices?.some?.((service: any) => service.id === serviceId);
+  if (offline) return false;
+  if (host.services?.some?.((service: any) => service.id === serviceId && service.status !== "offline")) return true;
+  return hasLiveManagedServiceWindow(host, serviceId);
+}
+
+function isMetadataServiceOffline(host: DashboardModelHost, serviceId: string): boolean {
+  return Boolean(host.offlineServices?.some?.((service: any) => service.id === serviceId));
+}
+
+function isMetadataServiceRemoved(host: DashboardModelHost, serviceId: string): boolean {
+  const offline = host.offlineServices?.some?.((service: any) => service.id === serviceId);
+  if (offline) return false;
+  return !hasLiveManagedServiceWindow(host, serviceId);
+}
+
+async function settleMetadataPending<T>(
+  host: DashboardModelHost,
+  description: string,
+  settle: MetadataPendingSettle<T> | undefined,
+  result: T,
+): Promise<void> {
+  if (!settle) return;
+  try {
+    const settled = await settle(result);
+    if (!settled) {
+      host.debug?.(`metadata pending action did not settle: ${description}`, "dashboard");
+    }
+  } catch (error) {
+    host.debug?.(
+      `metadata pending action settle failed: ${description}: ${error instanceof Error ? error.message : String(error)}`,
+      "dashboard",
+    );
+  }
+}
+
+function clearMetadataSessionPendingAfterSettle<T>(
+  host: DashboardModelHost,
+  sessionId: string,
+  kind: PendingSessionActionKind,
+  settle: MetadataPendingSettle<T> | undefined,
+  result: T,
+): void {
+  void (async () => {
+    await settleMetadataPending(host, `session ${kind} ${sessionId}`, settle, result);
+    setPendingDashboardSessionAction(host, sessionId, null);
+  })();
+}
+
+function clearMetadataServicePendingAfterSettle<T>(
+  host: DashboardModelHost,
+  serviceId: string,
+  kind: PendingServiceActionKind,
+  settle: MetadataPendingSettle<T> | undefined,
+  result: T,
+): void {
+  void (async () => {
+    await settleMetadataPending(host, `service ${kind} ${serviceId}`, settle, result);
+    setPendingDashboardServiceAction(host, serviceId, null);
+  })();
+}
+
+export async function withMetadataSessionPending<T>(
   host: DashboardModelHost,
   sessionId: string | undefined,
   kind: PendingSessionActionKind,
   work: () => Promise<T> | T,
   sessionSeed?: DashboardSession,
+  settle?: MetadataPendingSettle<T>,
 ): Promise<T> {
   if (sessionId) {
     setPendingDashboardSessionAction(host, sessionId, kind, { sessionSeed });
   }
   try {
-    return await work();
-  } finally {
+    const result = await work();
+    if (sessionId) {
+      clearMetadataSessionPendingAfterSettle(host, sessionId, kind, settle, result);
+    }
+    return result;
+  } catch (error) {
     if (sessionId) {
       setPendingDashboardSessionAction(host, sessionId, null);
     }
+    throw error;
   }
 }
 
-async function withMetadataServicePending<T>(
+export async function withMetadataServicePending<T>(
   host: DashboardModelHost,
   serviceId: string,
   kind: PendingServiceActionKind,
   work: () => Promise<T> | T,
+  settle?: MetadataPendingSettle<T>,
 ): Promise<T> {
   setPendingDashboardServiceAction(host, serviceId, kind, {
     serviceSeed: findDashboardServiceSeed(host, serviceId),
   });
   try {
-    return await work();
-  } finally {
+    const result = await work();
+    clearMetadataServicePendingAfterSettle(host, serviceId, kind, settle, result);
+    return result;
+  } catch (error) {
     setPendingDashboardServiceAction(host, serviceId, null);
+    throw error;
   }
 }
 
@@ -752,11 +897,29 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       createService: ({ command, worktreePath, serviceId }: any) =>
         host.createService(command ?? "", worktreePath, { serviceId }),
       stopService: ({ serviceId }: any) =>
-        withMetadataServicePending(host, serviceId, "stopping", () => host.stopService(serviceId)),
+        withMetadataServicePending(
+          host,
+          serviceId,
+          "stopping",
+          () => host.stopService(serviceId),
+          () => waitForMetadataCondition(host, () => isMetadataServiceOffline(host, serviceId)),
+        ),
       resumeService: ({ serviceId }: any) =>
-        withMetadataServicePending(host, serviceId, "starting", () => host.resumeOfflineServiceById(serviceId)),
+        withMetadataServicePending(
+          host,
+          serviceId,
+          "starting",
+          () => host.resumeOfflineServiceById(serviceId),
+          () => waitForMetadataCondition(host, () => isMetadataServiceRunning(host, serviceId)),
+        ),
       removeService: ({ serviceId }: any) =>
-        withMetadataServicePending(host, serviceId, "removing", () => host.removeOfflineService(serviceId)),
+        withMetadataServicePending(
+          host,
+          serviceId,
+          "removing",
+          () => host.removeOfflineService(serviceId),
+          () => waitForMetadataCondition(host, () => isMetadataServiceRemoved(host, serviceId)),
+        ),
       resumeAgent: ({ sessionId, session }: any) =>
         withMetadataSessionPending(
           host,
@@ -771,6 +934,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
             return { sessionId, status: "running" as const };
           },
           findDashboardSessionSeed(host, sessionId, session),
+          () => waitForMetadataSessionRunning(host, sessionId),
         ),
       listGraveyard: () => host.listGraveyardEntries(),
       resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
@@ -803,6 +967,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
                 pendingAction: "creating",
               })
             : undefined,
+          (result) => waitForMetadataSessionRunning(host, result.sessionId),
         ),
       forkAgent: (input: any) =>
         withMetadataSessionPending(
@@ -827,6 +992,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
                 pendingAction: "forking",
               })
             : undefined,
+          (result) => waitForMetadataSessionRunning(host, result.sessionId),
         ),
       stopAgent: (input: any) =>
         withMetadataSessionPending(
