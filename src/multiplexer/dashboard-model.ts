@@ -21,8 +21,13 @@ import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "../dashboard/sort.js";
 import { listDashboardOperationFailures, type DashboardOperationFailure } from "../dashboard/operation-failures.js";
-import type { PendingWorktreeActionKind } from "../pending-actions.js";
+import type {
+  PendingServiceActionKind,
+  PendingSessionActionKind,
+  PendingWorktreeActionKind,
+} from "../pending-actions.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
+import { setPendingDashboardServiceAction, setPendingDashboardSessionAction } from "./dashboard-ops.js";
 
 type DashboardModelHost = any;
 
@@ -61,6 +66,115 @@ function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: str
     sessionStateFromDashboardSeed(seed) ??
     sessionStateFromDashboardSeed(host.dashboardSessionsCache.find((entry: any) => entry.id === sessionId))
   );
+}
+
+function findDashboardSessionSeed(
+  host: DashboardModelHost,
+  sessionId: string,
+  fallback?: any,
+): DashboardSession | undefined {
+  const cached = host.dashboardSessionsCache?.find?.((entry: any) => entry.id === sessionId);
+  if (cached) return cached;
+  return toDashboardSessionSeed(
+    host.sessions?.find?.((entry: any) => entry.id === sessionId) ??
+      host.offlineSessions?.find?.((entry: any) => entry.id === sessionId) ??
+      (fallback?.id ? fallback : undefined),
+  );
+}
+
+function findDashboardServiceSeed(host: DashboardModelHost, serviceId: string): DashboardService | undefined {
+  const cached = host.dashboardServicesCache?.find?.((entry: any) => entry.id === serviceId);
+  if (cached) return cached;
+  return toDashboardServiceSeed(
+    host.services?.find?.((entry: any) => entry.id === serviceId) ??
+      host.offlineServices?.find?.((entry: any) => entry.id === serviceId),
+  );
+}
+
+function toDashboardSessionSeed(seed: any): DashboardSession | undefined {
+  if (!seed?.id || !seed.command) return undefined;
+  return {
+    index: typeof seed.index === "number" ? seed.index : -1,
+    id: seed.id,
+    command: seed.command,
+    label: seed.label,
+    status: seed.status ?? (seed.lifecycle === "offline" ? "offline" : "running"),
+    active: Boolean(seed.active),
+    worktreePath: seed.worktreePath,
+    createdAt: seed.createdAt,
+    backendSessionId: seed.backendSessionId,
+    remoteBackendSessionId: seed.remoteBackendSessionId,
+    headline: seed.headline,
+  };
+}
+
+function toDashboardServiceSeed(seed: any): DashboardService | undefined {
+  if (!seed?.id) return undefined;
+  return {
+    id: seed.id,
+    command: seed.command ?? seed.launchCommandLine ?? seed.label ?? "service",
+    args: Array.isArray(seed.args) ? seed.args : [],
+    label: seed.label,
+    status: seed.status ?? (seed.lifecycle === "offline" ? "offline" : "running"),
+    active: Boolean(seed.active),
+    worktreePath: seed.worktreePath,
+    createdAt: seed.createdAt,
+  };
+}
+
+function buildMetadataPendingSessionSeed(input: {
+  sessionId: string;
+  tool: string;
+  worktreePath?: string;
+  pendingAction: Extract<PendingSessionActionKind, "creating" | "forking">;
+}): DashboardSession {
+  return {
+    index: -1,
+    id: input.sessionId,
+    command: input.tool,
+    label: input.tool,
+    createdAt: new Date().toISOString(),
+    status: "waiting",
+    active: false,
+    worktreePath: input.worktreePath,
+    pendingAction: input.pendingAction,
+    optimistic: true,
+  };
+}
+
+async function withMetadataSessionPending<T>(
+  host: DashboardModelHost,
+  sessionId: string | undefined,
+  kind: PendingSessionActionKind,
+  work: () => Promise<T> | T,
+  sessionSeed?: DashboardSession,
+): Promise<T> {
+  if (sessionId) {
+    setPendingDashboardSessionAction(host, sessionId, kind, { sessionSeed });
+  }
+  try {
+    return await work();
+  } finally {
+    if (sessionId) {
+      setPendingDashboardSessionAction(host, sessionId, null);
+    }
+  }
+}
+
+async function withMetadataServicePending<T>(
+  host: DashboardModelHost,
+  serviceId: string,
+  kind: PendingServiceActionKind,
+  work: () => Promise<T> | T,
+): Promise<T> {
+  setPendingDashboardServiceAction(host, serviceId, kind, {
+    serviceSeed: findDashboardServiceSeed(host, serviceId),
+  });
+  try {
+    return await work();
+  } finally {
+    setPendingDashboardServiceAction(host, serviceId, null);
+  }
 }
 
 function runProjectServiceUiRefresh(host: DashboardModelHost): void {
@@ -637,17 +751,27 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       deleteGraveyardWorktree: ({ path }: any) => host.deleteGraveyardWorktree(path),
       createService: ({ command, worktreePath, serviceId }: any) =>
         host.createService(command ?? "", worktreePath, { serviceId }),
-      stopService: ({ serviceId }: any) => host.stopService(serviceId),
-      resumeService: ({ serviceId }: any) => host.resumeOfflineServiceById(serviceId),
-      removeService: ({ serviceId }: any) => host.removeOfflineService(serviceId),
-      resumeAgent: ({ sessionId, session }: any) => {
-        const offline = resolveOfflineSessionForAction(host, sessionId, session);
-        if (!offline) {
-          throw new Error(`Agent "${sessionId}" not found`);
-        }
-        host.resumeOfflineSession(offline);
-        return { sessionId, status: "running" as const };
-      },
+      stopService: ({ serviceId }: any) =>
+        withMetadataServicePending(host, serviceId, "stopping", () => host.stopService(serviceId)),
+      resumeService: ({ serviceId }: any) =>
+        withMetadataServicePending(host, serviceId, "starting", () => host.resumeOfflineServiceById(serviceId)),
+      removeService: ({ serviceId }: any) =>
+        withMetadataServicePending(host, serviceId, "removing", () => host.removeOfflineService(serviceId)),
+      resumeAgent: ({ sessionId, session }: any) =>
+        withMetadataSessionPending(
+          host,
+          sessionId,
+          "starting",
+          () => {
+            const offline = resolveOfflineSessionForAction(host, sessionId, session);
+            if (!offline) {
+              throw new Error(`Agent "${sessionId}" not found`);
+            }
+            host.resumeOfflineSession(offline);
+            return { sessionId, status: "running" as const };
+          },
+          findDashboardSessionSeed(host, sessionId, session),
+        ),
       listGraveyard: () => host.listGraveyardEntries(),
       resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
     },
@@ -659,28 +783,77 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
     },
     lifecycle: {
       spawnAgent: (input: any) =>
-        host.spawnAgent({
-          toolConfigKey: input.tool,
-          targetSessionId: input.sessionId,
-          targetWorktreePath: input.worktreePath,
-          open: input.open ?? false,
-          extraArgs: input.extraArgs,
-        }),
+        withMetadataSessionPending(
+          host,
+          input.sessionId,
+          "creating",
+          () =>
+            host.spawnAgent({
+              toolConfigKey: input.tool,
+              targetSessionId: input.sessionId,
+              targetWorktreePath: input.worktreePath,
+              open: input.open ?? false,
+              extraArgs: input.extraArgs,
+            }),
+          input.sessionId
+            ? buildMetadataPendingSessionSeed({
+                sessionId: input.sessionId,
+                tool: input.tool,
+                worktreePath: input.worktreePath,
+                pendingAction: "creating",
+              })
+            : undefined,
+        ),
       forkAgent: (input: any) =>
-        host.forkAgent({
-          sourceSessionId: input.sourceSessionId,
-          targetToolConfigKey: input.tool,
-          targetSessionId: input.targetSessionId,
-          instruction: input.instruction,
-          targetWorktreePath: input.worktreePath,
-          open: input.open ?? false,
-          extraArgs: input.extraArgs,
-        }),
-      stopAgent: (input: any) => host.stopAgent(input.sessionId),
+        withMetadataSessionPending(
+          host,
+          input.targetSessionId,
+          "forking",
+          () =>
+            host.forkAgent({
+              sourceSessionId: input.sourceSessionId,
+              targetToolConfigKey: input.tool,
+              targetSessionId: input.targetSessionId,
+              instruction: input.instruction,
+              targetWorktreePath: input.worktreePath,
+              open: input.open ?? false,
+              extraArgs: input.extraArgs,
+            }),
+          input.targetSessionId
+            ? buildMetadataPendingSessionSeed({
+                sessionId: input.targetSessionId,
+                tool: input.tool,
+                worktreePath: input.worktreePath,
+                pendingAction: "forking",
+              })
+            : undefined,
+        ),
+      stopAgent: (input: any) =>
+        withMetadataSessionPending(
+          host,
+          input.sessionId,
+          "stopping",
+          () => host.stopAgent(input.sessionId),
+          findDashboardSessionSeed(host, input.sessionId),
+        ),
       interruptAgent: (input: any) => host.interruptAgent(input.sessionId),
       renameAgent: (input: any) => host.renameAgent(input.sessionId, input.label),
-      migrateAgent: (input: any) => host.migrateAgent(input.sessionId, input.worktreePath),
-      killAgent: (input: any) => host.sendAgentToGraveyard(input.sessionId, input.session),
+      migrateAgent: (input: any) =>
+        withMetadataSessionPending(
+          host,
+          input.sessionId,
+          "migrating",
+          () => host.migrateAgent(input.sessionId, input.worktreePath),
+          findDashboardSessionSeed(host, input.sessionId),
+        ),
+      killAgent: (input: any) =>
+        withMetadataSessionPending(
+          host,
+          input.sessionId,
+          "graveyarding",
+          () => host.sendAgentToGraveyard(input.sessionId, input.session),
+          findDashboardSessionSeed(host, input.sessionId, input.session),
+        ),
       recordBackendSessionId: (input: any) =>
         host.recordSessionBackendSessionId(input.sessionId, input.backendSessionId),
       writeAgentInput: (input: any) =>
