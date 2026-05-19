@@ -8,12 +8,14 @@ import {
   type InstanceSessionRef,
 } from "./instance-registry.js";
 import { getRemoteOwnedSessionKeys } from "./dashboard/session-registry.js";
+import type { SessionTeamMetadata } from "./team.js";
 
 export interface SessionsFileEntry {
   id: string;
   tool: string;
   status: string;
   backendSessionId?: string;
+  team?: SessionTeamMetadata;
   worktreePath?: string;
   instance?: string;
 }
@@ -97,6 +99,7 @@ export class InstanceDirectory {
       tool: session.tool,
       status: "running",
       backendSessionId: session.backendSessionId,
+      team: session.team,
       worktreePath: session.worktreePath,
     }));
 
@@ -108,6 +111,7 @@ export class InstanceDirectory {
           tool: session.tool,
           status: "running",
           backendSessionId: session.backendSessionId,
+          team: session.team,
           worktreePath: session.worktreePath,
           instance: `PID ${inst.pid}`,
         });

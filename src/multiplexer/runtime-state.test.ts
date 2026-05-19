@@ -58,6 +58,11 @@ describe("resumeOfflineSession", () => {
   });
 
   it("suppresses startup preamble for native offline session resume", () => {
+    const team = {
+      teamId: "team-1",
+      parentSessionId: "parent-1",
+      role: "reviewer",
+    };
     const createSession = vi.fn();
     const host: any = {
       sessions: [],
@@ -80,6 +85,7 @@ describe("resumeOfflineSession", () => {
       toolConfigKey: "codex",
       backendSessionId: "native-session",
       args: [],
+      team,
       worktreePath: repoRoot,
     });
 
@@ -96,6 +102,7 @@ describe("resumeOfflineSession", () => {
       "codex-1",
       true,
       true,
+      team,
     ]);
   });
 
@@ -142,6 +149,7 @@ describe("resumeOfflineSession", () => {
       "codex-1",
       true,
       true,
+      undefined,
     ]);
   });
 
@@ -189,6 +197,7 @@ describe("resumeOfflineSession", () => {
       "codex-1",
       true,
       true,
+      undefined,
     ]);
   });
 
@@ -847,6 +856,11 @@ describe("resumeOfflineSession", () => {
   });
 
   it("restores team role from tmux metadata", () => {
+    const team = {
+      teamId: "team-1",
+      parentSessionId: "parent-1",
+      role: "reviewer",
+    };
     const host: any = {
       sessions: [],
       sessionTmuxTargets: new Map(),
@@ -867,6 +881,7 @@ describe("resumeOfflineSession", () => {
               toolConfigKey: "codex",
               worktreePath: repoRoot,
               role: "reviewer",
+              team,
               createdAt: "2026-04-21T00:00:00.000Z",
             },
           },
@@ -886,6 +901,7 @@ describe("resumeOfflineSession", () => {
       repoRoot,
       "reviewer",
       Date.parse("2026-04-21T00:00:00.000Z"),
+      team,
     );
   });
 

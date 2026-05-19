@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
 import { debug } from "../debug.js";
 import { getProjectStateDirFor } from "../paths.js";
+import type { SessionTeamMetadata } from "../team.js";
 
 export interface TmuxExecOptions {
   cwd?: string;
@@ -69,6 +70,7 @@ export interface TmuxWindowMetadata {
   toolConfigKey: string;
   createdAt?: string;
   backendSessionId?: string;
+  team?: SessionTeamMetadata;
   worktreePath?: string;
   label?: string;
   launchCommandLine?: string;

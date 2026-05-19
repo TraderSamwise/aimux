@@ -428,6 +428,70 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("passes teammate metadata into managed session registration", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-team-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+    const team = {
+      teamId: "team-1",
+      parentSessionId: "parent-1",
+      role: "reviewer",
+    };
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(),
+        deliverDetachedCodexKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    createSession(
+      host,
+      "codex",
+      [],
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      undefined,
+      "codex-team",
+      false,
+      true,
+      team,
+    );
+
+    expect(host.registerManagedSession).toHaveBeenCalledWith(
+      expect.anything(),
+      [],
+      "codex",
+      repoRoot,
+      undefined,
+      expect.any(Number),
+      team,
+    );
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("rejects duplicate session ids before launching a second runtime", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-dup-"));
     execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
@@ -492,6 +556,7 @@ describe("migrateAgent", () => {
       id: "codex-1",
       command: "codex",
       exited: false,
+      team: { teamId: "team-1", parentSessionId: "parent-1", role: "reviewer" },
       kill: vi.fn(() => {
         sourceSession.exited = true;
         const index = sessions.indexOf(sourceSession);
@@ -550,6 +615,15 @@ describe("migrateAgent", () => {
     );
     expect(sessions.find((session) => session.id === "codex-1")?.backendSessionId).toBe("native-session");
     expect(host.tmuxRuntimeManager.createWindow.mock.calls[0][2]).toBe(targetRoot);
+    expect(host.registerManagedSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Array),
+      "codex",
+      targetRoot,
+      undefined,
+      expect.any(Number),
+      sourceSession.team,
+    );
 
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(targetRoot, { recursive: true, force: true });
@@ -643,11 +717,73 @@ describe("resumeSessions", () => {
       undefined,
       repoRoot,
       "native-session",
-      undefined,
+      "codex-1",
       false,
       true,
+      undefined,
     );
     expect(host.openTmuxDashboardTarget).toHaveBeenCalledOnce();
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("preserves teammate metadata and session id when resuming saved teammate sessions", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-team-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+    const team = { teamId: "team-1", parentSessionId: "claude-parent", role: "reviewer" };
+
+    class Host {
+      static loadState() {
+        return {
+          sessions: [
+            {
+              id: "codex-team",
+              command: "codex",
+              toolConfigKey: "codex",
+              args: [],
+              backendSessionId: "backend-team",
+              team,
+              worktreePath: repoRoot,
+            },
+          ],
+        };
+      }
+
+      instanceId = "inst-1";
+      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
+      startHeartbeat = vi.fn();
+      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
+      sessionBootstrap = {
+        canResumeWithBackendSessionId: vi.fn(() => true),
+        composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
+          ...originalArgs,
+          ...resumeArgs,
+        ]),
+      };
+      createSession = vi.fn();
+      openTmuxDashboardTarget = vi.fn();
+      runDashboard = vi.fn();
+    }
+
+    const host = new Host();
+
+    await expect(resumeSessions(host as any)).resolves.toBe(0);
+
+    expect(host.createSession).toHaveBeenCalledWith(
+      "codex",
+      expect.arrayContaining(["resume", "backend-team"]),
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      "backend-team",
+      "codex-team",
+      false,
+      true,
+      team,
+    );
 
     rmSync(repoRoot, { recursive: true, force: true });
   });

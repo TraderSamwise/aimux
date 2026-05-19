@@ -2,6 +2,7 @@ import type { AgentActivityState, AgentAttentionState, AgentEvent } from "../age
 import type { SessionServiceMetadata } from "../metadata-store.js";
 import type { PendingDashboardActionKind, PendingWorktreeActionKind } from "../pending-actions.js";
 import type { SessionPendingAction, SessionRawStatus, SessionSemanticState } from "../session-semantics.js";
+import type { SessionTeamMetadata } from "../team.js";
 import type { DashboardOperationFailure } from "./operation-failures.js";
 import { sessionDisplayStatusLabel } from "../session-semantics.js";
 import { renderDashboardFrame } from "../tui/screens/dashboard-renderers.js";
@@ -17,6 +18,7 @@ export interface DashboardSession {
   lastUsedAt?: string;
   createdAt?: string;
   backendSessionId?: string;
+  team?: SessionTeamMetadata;
   status: DashboardSessionStatus;
   active: boolean;
   worktreePath?: string;

@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import type { DashboardSession } from "./index.js";
 import type { SessionState } from "../multiplexer/index.js";
 import type { InstanceInfo } from "../instance-registry.js";
+import type { SessionTeamMetadata } from "../team.js";
+import { isTeammateSession } from "../team.js";
 import { listWorktrees as listAllWorktrees } from "../worktree.js";
 
 export interface DashboardLocalSession {
@@ -9,6 +11,7 @@ export interface DashboardLocalSession {
   command: string;
   tmuxWindowId?: string;
   backendSessionId?: string;
+  team?: SessionTeamMetadata;
   createdAt?: string;
   status: DashboardSession["status"];
   worktreePath?: string;
@@ -21,6 +24,7 @@ export interface DashboardSessionRegistryOptions {
   remoteInstances: InstanceInfo[];
   hiddenWorktreePaths?: Set<string>;
   mainRepoPath?: string;
+  includeTeammates?: boolean;
   getSessionLabel: (sessionId: string) => string | undefined;
   getSessionHeadline: (sessionId: string) => string | undefined;
   getSessionTaskDescription: (sessionId: string) => string | undefined;
@@ -60,9 +64,11 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
   const normalizeWtPath = normalizeWorktreePathFactory(options.mainRepoPath);
   const hiddenWorktreePaths = options.hiddenWorktreePaths ?? new Set<string>();
   const seenLocalSessionKeys = new Set<string>();
+  const includeTeammates = options.includeTeammates ?? false;
 
   const dashSessions: DashboardSession[] = [];
   for (const [index, session] of options.sessions.entries()) {
+    if (!includeTeammates && isTeammateSession(session)) continue;
     const normalizedWorktreePath = normalizeWtPath(session.worktreePath);
     if (normalizedWorktreePath && hiddenWorktreePaths.has(normalizedWorktreePath)) continue;
     const dedupeKey = `${session.id}::${session.backendSessionId ?? ""}`;
@@ -74,6 +80,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       command: session.command,
       tmuxWindowId: session.tmuxWindowId,
       backendSessionId: session.backendSessionId,
+      team: session.team,
       createdAt: session.createdAt,
       status: session.status,
       active: index === options.activeIndex,
@@ -101,6 +108,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
 
   for (const inst of options.remoteInstances) {
     for (const session of inst.sessions) {
+      if (!includeTeammates && isTeammateSession(session)) continue;
       const normalizedWorktreePath = normalizeWtPath(session.worktreePath);
       if (normalizedWorktreePath && hiddenWorktreePaths.has(normalizedWorktreePath)) continue;
       if (dashSessions.some((existing) => existing.id === session.id)) continue;
@@ -109,6 +117,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
         id: session.id,
         command: session.tool,
         backendSessionId: session.backendSessionId,
+        team: session.team,
         createdAt: session.createdAt,
         status: "running",
         active: false,
@@ -137,6 +146,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
   }
 
   for (const offline of options.offlineSessions) {
+    if (!includeTeammates && isTeammateSession(offline)) continue;
     const alreadyShown = dashSessions.some(
       (session) =>
         session.id === offline.id ||
@@ -153,6 +163,7 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       id: offline.id,
       command: offline.command,
       backendSessionId: offline.backendSessionId,
+      team: offline.team,
       createdAt: offline.createdAt,
       status: "offline",
       active: false,

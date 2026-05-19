@@ -71,6 +71,7 @@ import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js"
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
 import { loadConfig } from "../config.js";
 import type { SessionRuntime } from "../session-runtime.js";
+import type { InstanceSessionRef } from "../instance-registry.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";
@@ -78,7 +79,7 @@ type DashboardTailHost = {
   dashboardServicesCache: DashboardService[];
   dashboardWorktreeGroupsCache: Array<{ sessions: DashboardSession[] }>;
   instanceDirectory: {
-    claimSession(sessionId: string, fromInstanceId: string, cwd: string): Promise<{ worktreePath?: string } | null>;
+    claimSession(sessionId: string, fromInstanceId: string, cwd: string): Promise<InstanceSessionRef | null>;
   };
   sessionBootstrap: {
     canResumeWithBackendSessionId(toolCfg: { resumeArgs?: string[] }, backendSessionId?: string): boolean;
@@ -494,6 +495,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       target.id,
       false,
       true,
+      claimed.team,
     );
 
     this.renderDashboard();

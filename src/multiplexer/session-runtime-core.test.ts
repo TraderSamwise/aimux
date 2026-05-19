@@ -10,6 +10,7 @@ import {
   handleSessionRuntimeEvent,
   normalizeAgentInput,
   paneStillContainsAgentDraft,
+  registerManagedSession,
   resolveLiveSessionTmuxTarget,
   scheduleTmuxAgentSubmit,
   updateSessionLabel,
@@ -188,6 +189,66 @@ describe("session runtime prompt submission", () => {
     }
   });
 
+  it("preserves teammate metadata when tmux metadata sync runs before runtime hydration catches up", async () => {
+    const team = {
+      teamId: "team-1",
+      parentSessionId: "parent-1",
+      role: "reviewer",
+    };
+    const host: any = {
+      sessions: [{ id: "codex-1", command: "codex" }],
+      sessionOriginalArgs: new Map([["codex-1", []]]),
+      sessionToolKeys: new Map([["codex-1", "codex"]]),
+      sessionWorktreePaths: new Map(),
+      sessionLabels: new Map(),
+      sessionRoles: new Map(),
+      offlineSessions: [],
+    };
+
+    expect(buildTmuxWindowMetadata(host, "codex-1", "codex", { team })).toMatchObject({
+      sessionId: "codex-1",
+      team,
+    });
+  });
+
+  it("attaches teammate metadata when registering recovered tmux runtimes", () => {
+    const team = {
+      teamId: "team-1",
+      parentSessionId: "parent-1",
+      role: "implementer",
+    };
+    const transport = {
+      id: "codex-1",
+      command: "codex",
+      exited: false,
+      exitCode: undefined,
+      status: { status: "running" },
+      write: vi.fn(),
+      resize: vi.fn(),
+      onData: vi.fn(),
+      onExit: vi.fn(),
+      kill: vi.fn(),
+      destroy: vi.fn(),
+    };
+    const host: any = {
+      sessions: [],
+      sessionToolKeys: new Map(),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      sessionRoles: new Map(),
+      sessionLabels: new Map(),
+      offlineSessions: [],
+      handleSessionRuntimeEvent: vi.fn(),
+      writeSessionsFile: vi.fn(),
+      updateContextWatcherSessions: vi.fn(),
+      contextWatcher: { start: vi.fn() },
+    };
+
+    const runtime = registerManagedSession(host, transport, [], "codex", undefined, "coder", undefined, team);
+
+    expect(runtime.team).toEqual(team);
+  });
+
   it("preserves quick exited sessions when durable metadata has the backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
@@ -292,6 +353,50 @@ describe("session runtime prompt submission", () => {
       handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
 
       expect(host.offlineSessions).toEqual([]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves teammate metadata when an exited runtime becomes offline", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const team = {
+        teamId: "team-1",
+        parentSessionId: "parent-1",
+        role: "reviewer",
+      };
+      const runtime = {
+        id: "claude-team-exit",
+        command: "claude",
+        startTime: Date.now() - 20_000,
+        team,
+      };
+      const host: any = {
+        sessions: [runtime],
+        offlineSessions: [],
+        stoppingSessionIds: new Set(),
+        sessionOriginalArgs: new Map([["claude-team-exit", []]]),
+        sessionToolKeys: new Map([["claude-team-exit", "claude"]]),
+        sessionWorktreePaths: new Map([["claude-team-exit", repoRoot]]),
+        sessionTmuxTargets: new Map(),
+        startedInDashboard: true,
+        getSessionLabel: vi.fn(() => undefined),
+        deriveHeadline: vi.fn(() => undefined),
+        writeSessionsFile: vi.fn(),
+        updateContextWatcherSessions: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        saveState: vi.fn(),
+        renderDashboard: vi.fn(),
+      };
+
+      handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
+
+      expect(host.offlineSessions[0]).toMatchObject({
+        id: "claude-team-exit",
+        team,
+      });
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

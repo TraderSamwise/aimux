@@ -16,6 +16,7 @@ import { debug } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
 import { clearSessionTranscriptPath, loadMetadataState } from "../metadata-store.js";
+import type { SessionTeamMetadata } from "../team.js";
 
 type SessionLaunchHost = any;
 
@@ -278,9 +279,10 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
       undefined,
       saved.worktreePath,
       backendSessionId,
-      undefined,
+      saved.id,
       false,
       true,
+      saved.team,
     );
   }
 
@@ -340,6 +342,11 @@ export async function restoreSessions(host: SessionLaunchHost, toolFilter?: stri
       extraPreamble.trim() || undefined,
       undefined,
       saved.worktreePath,
+      undefined,
+      saved.id,
+      false,
+      false,
+      saved.team,
     );
   }
 
@@ -360,6 +367,7 @@ export function createSession(
   sessionIdOverride?: string,
   detachedInTmux = false,
   suppressStartupPreamble = false,
+  team?: SessionTeamMetadata,
 ): any {
   const cols = process.stdout.columns ?? 80;
   const sessionId = sessionIdOverride ?? `${command}-${Math.random().toString(36).slice(2, 8)}`;
@@ -486,7 +494,7 @@ export function createSession(
   );
   host.sessionTmuxTargets.set(sessionId, target);
   const session = tmuxTransport;
-  host.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
+  host.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime, team);
 
   session.backendSessionId = backendSessionId;
   if (session instanceof TmuxSessionTransport) {
@@ -596,6 +604,7 @@ export async function migrateAgent(
       sessionId,
       true,
       true,
+      session.team,
     );
     const kickoff = host.sessionBootstrap.buildCodexMigrationKickoffPrompt(
       sessionId,
@@ -618,6 +627,9 @@ export async function migrateAgent(
     effectiveTarget,
     useBackendResume ? backendSessionId : undefined,
     sessionId,
+    false,
+    false,
+    session.team,
   );
 }
 

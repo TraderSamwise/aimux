@@ -15,6 +15,7 @@ function sessionStateFromRuntime(host: SessionActionsHost, runtime: any): any | 
     lifecycle: "offline",
     createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : runtime.createdAt,
     backendSessionId: runtime.backendSessionId ?? getSessionBackendSessionId(runtime.id),
+    team: runtime.team,
     worktreePath: host.sessionWorktreePaths?.get?.(runtime.id) ?? runtime.worktreePath,
     label: host.getSessionLabel?.(runtime.id) ?? runtime.label,
     headline: host.deriveHeadline?.(runtime.id) ?? runtime.headline,
@@ -44,6 +45,7 @@ function sessionStateFromActionSeed(seed: any): any | undefined {
         : typeof seed.remoteBackendSessionId === "string"
           ? seed.remoteBackendSessionId
           : getSessionBackendSessionId(seed.id),
+    team: seed.team,
     worktreePath: typeof seed.worktreePath === "string" ? seed.worktreePath : undefined,
     label: typeof seed.label === "string" ? seed.label : undefined,
     headline: typeof seed.headline === "string" ? seed.headline : undefined,

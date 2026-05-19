@@ -91,6 +91,7 @@ export const persistenceMethods = {
       tool: s.command,
       createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
       backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
+      team: s.team,
       worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
     const data = this.instanceDirectory.buildSessionsFileEntries(

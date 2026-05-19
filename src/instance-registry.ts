@@ -4,12 +4,14 @@ import * as lockfile from "proper-lockfile";
 import { getInstancesPath, getAimuxDirFor } from "./paths.js";
 import { findMainRepo } from "./worktree.js";
 import { debug } from "./debug.js";
+import type { SessionTeamMetadata } from "./team.js";
 
 export interface InstanceSessionRef {
   id: string;
   tool: string;
   createdAt?: string;
   backendSessionId?: string;
+  team?: SessionTeamMetadata;
   worktreePath?: string;
 }
 

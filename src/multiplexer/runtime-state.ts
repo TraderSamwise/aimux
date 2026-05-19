@@ -282,13 +282,13 @@ export function loadOfflineSessions(
   const previousKey = host.offlineSessions
     .map(
       (session: any) =>
-        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}`,
+        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}:${JSON.stringify(session.team ?? null)}`,
     )
     .join("|");
   const nextKey = nextOfflineSessions
     .map(
       (session: any) =>
-        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}`,
+        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}:${JSON.stringify(session.team ?? null)}`,
     )
     .join("|");
   host.offlineSessions = nextOfflineSessions;
@@ -419,6 +419,7 @@ export function restoreTmuxSessionsFromState(
       metadata.worktreePath,
       metadata.role,
       metadata.createdAt ? Date.parse(metadata.createdAt) : undefined,
+      metadata.team,
     );
 
     const saved = savedById.get(metadata.sessionId);
@@ -450,6 +451,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
     lifecycle: "offline",
     createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
     backendSessionId,
+    team: session.team,
     worktreePath: host.sessionWorktreePaths.get(session.id),
     label: host.getSessionLabel(session.id),
     headline: host.deriveHeadline(session.id),
@@ -618,6 +620,7 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     session.id,
     true,
     useBackendResume,
+    session.team,
   );
 }
 
@@ -722,6 +725,7 @@ export function getInstanceSessionRefs(host: RuntimeStateHost): any[] {
     id: s.id,
     tool: s.command,
     backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
+    team: s.team,
     worktreePath: host.sessionWorktreePaths.get(s.id),
   }));
 }
@@ -735,6 +739,7 @@ export function writeSessionsFile(host: RuntimeStateHost): void {
     id: s.id,
     tool: s.command,
     backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
+    team: s.team,
     worktreePath: host.sessionWorktreePaths.get(s.id),
   }));
   const data = host.instanceDirectory.buildSessionsFileEntries(

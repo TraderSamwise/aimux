@@ -14,6 +14,18 @@ export interface TeamConfig {
   defaultRole: string;
 }
 
+export interface SessionTeamMetadata {
+  teamId: string;
+  parentSessionId: string;
+  role?: string;
+  label?: string;
+  order?: number;
+}
+
+export function isTeammateSession(session: { team?: SessionTeamMetadata } | undefined): boolean {
+  return Boolean(session?.team?.parentSessionId);
+}
+
 const DEFAULT_TEAM_CONFIG: TeamConfig = {
   roles: {
     coder: {

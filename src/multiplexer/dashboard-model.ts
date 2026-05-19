@@ -576,6 +576,7 @@ export function computeDashboardSessions(host: DashboardModelHost): DashboardSes
       id: session.id,
       command: session.command,
       backendSessionId: session.backendSessionId ?? metadata[session.id]?.backendSessionId,
+      team: session.team,
       createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
       status: session.status,
       worktreePath: host.sessionWorktreePaths.get(session.id),
