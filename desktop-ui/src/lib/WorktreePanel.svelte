@@ -907,7 +907,7 @@
                             {isAgentActionPending(agent.id, "stop") ? "..." : "■"}
                           </button>
                         {/if}
-                        {#if !agent.pending || agent.pendingAction === "stop"}
+                        {#if !agent.pending || agent.pendingAction === "stopping"}
                           <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id, "kill")}>
                             {isAgentActionPending(agent.id, "kill") ? "..." : "×"}
                           </button>

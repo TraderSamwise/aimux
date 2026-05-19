@@ -715,6 +715,22 @@ function overlayActionSignature(project) {
   );
 }
 
+function pendingActionForOverlay(action) {
+  if (!action) return null;
+  if (action.kind === "spawn") return "creating";
+  if (action.kind === "fork") return "forking";
+  if (action.kind === "stop") return "stopping";
+  if (action.kind === "kill") return "graveyarding";
+  if (action.kind === "rename") return "renaming";
+  if (action.kind === "migrate") return "migrating";
+  if (action.kind === "resurrect") return "starting";
+  if (action.kind === "create-service") return "creating";
+  if (action.kind === "stop-service") return "stopping";
+  if (action.kind === "resume-service") return "starting";
+  if (action.kind === "remove-service") return "removing";
+  return action.kind;
+}
+
 function applyActionOverlays(project) {
   if (!project) return null;
   const signature = overlayActionSignature(project);
@@ -752,6 +768,7 @@ function applyActionOverlays(project) {
         label: action.tool,
         status: "starting",
         pending: true,
+        pendingAction: pendingActionForOverlay(action),
         worktreePath: action.worktreePath || null,
       };
       if (!next.sessions.some((session) => session.id === pendingId)) {
@@ -770,6 +787,7 @@ function applyActionOverlays(project) {
         label: action.tool,
         status: "starting",
         pending: true,
+        pendingAction: pendingActionForOverlay(action),
         worktreePath: action.worktreePath || null,
       };
       if (!next.sessions.some((session) => session.id === pendingId)) {
@@ -790,6 +808,7 @@ function applyActionOverlays(project) {
         previewLine: action.command?.trim() || "Interactive shell",
         status: "running",
         pending: true,
+        pendingAction: pendingActionForOverlay(action),
         worktreePath: action.worktreePath || null,
       };
       if (!next.services.some((service) => service.id === pendingId)) {
@@ -798,13 +817,14 @@ function applyActionOverlays(project) {
     }
 
     if (action.kind === "stop" || action.kind === "kill") {
+      const pendingAction = pendingActionForOverlay(action);
       next.sessions = next.sessions.map((session) =>
         session.id === action.sessionId
           ? {
               ...session,
               pending: true,
-              pendingAction: action.kind,
-              status: action.kind === "stop" ? "stopping" : "killing",
+              pendingAction,
+              status: pendingAction,
             }
           : session
       );
@@ -814,8 +834,8 @@ function applyActionOverlays(project) {
             ? {
                 ...session,
                 pending: true,
-                pendingAction: action.kind,
-                status: action.kind === "stop" ? "stopping" : "killing",
+                pendingAction,
+                status: pendingAction,
               }
             : session
         );
@@ -829,7 +849,7 @@ function applyActionOverlays(project) {
               ...session,
               label: action.label,
               pending: true,
-              pendingAction: action.kind,
+              pendingAction: pendingActionForOverlay(action),
             }
           : session
       );
@@ -840,7 +860,7 @@ function applyActionOverlays(project) {
                 ...session,
                 label: action.label,
                 pending: true,
-                pendingAction: action.kind,
+                pendingAction: pendingActionForOverlay(action),
               }
             : session
         );
@@ -853,7 +873,7 @@ function applyActionOverlays(project) {
           ? {
               ...session,
               pending: true,
-              pendingAction: action.kind,
+              pendingAction: pendingActionForOverlay(action),
               status: "migrating",
               worktreePath: action.worktreePath || session.worktreePath || null,
             }
@@ -865,7 +885,7 @@ function applyActionOverlays(project) {
             ? {
                 ...session,
                 pending: true,
-                pendingAction: action.kind,
+                pendingAction: pendingActionForOverlay(action),
                 status: "migrating",
                 worktreePath: action.worktreePath || session.worktreePath || null,
               }
@@ -882,6 +902,7 @@ function applyActionOverlays(project) {
         role: action.role,
         status: "offline",
         pending: true,
+        pendingAction: pendingActionForOverlay(action),
         worktreePath: action.worktreePath || null,
       };
       if (!next.sessions.some((session) => session.id === action.sessionId)) {
@@ -898,7 +919,7 @@ function applyActionOverlays(project) {
           ? {
               ...service,
               pending: true,
-              pendingAction: "stopping",
+              pendingAction: pendingActionForOverlay(action),
               status: "stopping",
             }
           : service
@@ -926,7 +947,7 @@ function applyActionOverlays(project) {
             previewLine: action.command?.trim() || "Interactive shell",
             status: "offline",
             pending: true,
-            pendingAction: "starting",
+            pendingAction: pendingActionForOverlay(action),
             worktreePath: action.worktreePath || null,
           },
           ...next.services,
@@ -940,7 +961,7 @@ function applyActionOverlays(project) {
           ? {
               ...service,
               pending: true,
-              pendingAction: "graveyarding",
+              pendingAction: pendingActionForOverlay(action),
             }
           : service
       );
