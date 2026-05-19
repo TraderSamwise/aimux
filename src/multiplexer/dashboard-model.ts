@@ -255,12 +255,19 @@ function clearMetadataSessionPendingAfterSettle<T>(
   host: DashboardModelHost,
   sessionId: string,
   kind: PendingSessionActionKind,
+  token: number | undefined,
   settle: MetadataPendingSettle<T> | undefined,
   result: T,
 ): void {
   void (async () => {
     await settleMetadataPending(host, `session ${kind} ${sessionId}`, settle, result);
-    setPendingDashboardSessionAction(host, sessionId, null);
+    if (typeof token === "number") {
+      if (host.dashboardPendingActions?.clearSessionActionIfToken?.(sessionId, token)) {
+        host.reapplyDashboardPendingActions?.();
+      }
+    } else if (host.dashboardPendingActions?.getSessionAction?.(sessionId) === kind) {
+      setPendingDashboardSessionAction(host, sessionId, null);
+    }
   })();
 }
 
@@ -268,12 +275,19 @@ function clearMetadataServicePendingAfterSettle<T>(
   host: DashboardModelHost,
   serviceId: string,
   kind: PendingServiceActionKind,
+  token: number | undefined,
   settle: MetadataPendingSettle<T> | undefined,
   result: T,
 ): void {
   void (async () => {
     await settleMetadataPending(host, `service ${kind} ${serviceId}`, settle, result);
-    setPendingDashboardServiceAction(host, serviceId, null);
+    if (typeof token === "number") {
+      if (host.dashboardPendingActions?.clearServiceActionIfToken?.(serviceId, token)) {
+        host.reapplyDashboardPendingActions?.();
+      }
+    } else if (host.dashboardPendingActions?.getServiceAction?.(serviceId) === kind) {
+      setPendingDashboardServiceAction(host, serviceId, null);
+    }
   })();
 }
 
@@ -285,13 +299,14 @@ export async function withMetadataSessionPending<T>(
   sessionSeed?: DashboardSession,
   settle?: MetadataPendingSettle<T>,
 ): Promise<T> {
+  let token: number | undefined;
   if (sessionId) {
-    setPendingDashboardSessionAction(host, sessionId, kind, { sessionSeed });
+    token = setPendingDashboardSessionAction(host, sessionId, kind, { sessionSeed });
   }
   try {
     const result = await work();
     if (sessionId) {
-      clearMetadataSessionPendingAfterSettle(host, sessionId, kind, settle, result);
+      clearMetadataSessionPendingAfterSettle(host, sessionId, kind, token, settle, result);
     }
     return result;
   } catch (error) {
@@ -309,12 +324,12 @@ export async function withMetadataServicePending<T>(
   work: () => Promise<T> | T,
   settle?: MetadataPendingSettle<T>,
 ): Promise<T> {
-  setPendingDashboardServiceAction(host, serviceId, kind, {
+  const token = setPendingDashboardServiceAction(host, serviceId, kind, {
     serviceSeed: findDashboardServiceSeed(host, serviceId),
   });
   try {
     const result = await work();
-    clearMetadataServicePendingAfterSettle(host, serviceId, kind, settle, result);
+    clearMetadataServicePendingAfterSettle(host, serviceId, kind, token, settle, result);
     return result;
   } catch (error) {
     setPendingDashboardServiceAction(host, serviceId, null);

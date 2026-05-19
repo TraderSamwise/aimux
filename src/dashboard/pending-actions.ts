@@ -81,28 +81,36 @@ export class DashboardPendingActions {
     return `${target}:${id}`;
   }
 
-  setSessionAction(sessionId: string, kind: PendingSessionActionKind, opts?: PendingSessionActionOptions): void {
-    this.setEntry("session", sessionId, kind, opts);
+  setSessionAction(sessionId: string, kind: PendingSessionActionKind, opts?: PendingSessionActionOptions): number {
+    return this.setEntry("session", sessionId, kind, opts);
   }
 
   clearSessionAction(sessionId: string): void {
     this.clearEntry("session", sessionId);
   }
 
-  setServiceAction(serviceId: string, kind: PendingServiceActionKind, opts?: PendingServiceActionOptions): void {
-    this.setEntry("service", serviceId, kind, opts);
+  clearSessionActionIfToken(sessionId: string, token: number): boolean {
+    return this.clearEntryIfToken("session", sessionId, token);
+  }
+
+  setServiceAction(serviceId: string, kind: PendingServiceActionKind, opts?: PendingServiceActionOptions): number {
+    return this.setEntry("service", serviceId, kind, opts);
   }
 
   clearServiceAction(serviceId: string): void {
     this.clearEntry("service", serviceId);
   }
 
+  clearServiceActionIfToken(serviceId: string, token: number): boolean {
+    return this.clearEntryIfToken("service", serviceId, token);
+  }
+
   setWorktreeAction(
     path: string | undefined,
     kind: PendingWorktreeActionKind,
     opts?: PendingWorktreeActionOptions,
-  ): void {
-    this.setEntry("worktree", DashboardPendingActions.worktreeKey(path), kind, opts);
+  ): number {
+    return this.setEntry("worktree", DashboardPendingActions.worktreeKey(path), kind, opts);
   }
 
   clearWorktreeAction(path: string | undefined): void {
@@ -137,7 +145,7 @@ export class DashboardPendingActions {
       serviceSeed?: DashboardService;
       worktreeSeed?: WorktreeGroup;
     },
-  ): void {
+  ): number {
     const key = DashboardPendingActions.actionKey(target, id);
     const existing = this.actions.get(key);
     const previousVisibleKey = visibleEntryKey(existing);
@@ -173,6 +181,7 @@ export class DashboardPendingActions {
       this.version += 1;
       this.onChange();
     }
+    return token;
   }
 
   private clearEntry(target: PendingActionTarget, id: string): void {
@@ -188,6 +197,14 @@ export class DashboardPendingActions {
       this.version += 1;
       this.onChange();
     }
+  }
+
+  private clearEntryIfToken(target: PendingActionTarget, id: string, token: number): boolean {
+    const key = DashboardPendingActions.actionKey(target, id);
+    const existing = this.actions.get(key);
+    if (!existing || existing.target !== target || existing.token !== token) return false;
+    this.clearEntry(target, id);
+    return true;
   }
 
   getVersion(): number {

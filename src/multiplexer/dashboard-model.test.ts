@@ -258,4 +258,85 @@ describe("metadata pending actions", () => {
     expect(pending.getSessionAction("claude-1")).toBeUndefined();
     expect(host.debug).toHaveBeenCalledWith(expect.stringContaining("settle failed"), "dashboard");
   });
+
+  it("does not let an older session settle clear a newer pending action", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+    };
+    const firstSettle = deferred<boolean>();
+    const secondSettle = deferred<boolean>();
+
+    await expect(
+      withMetadataSessionPending(
+        host,
+        "codex-1",
+        "starting",
+        () => ({ sessionId: "codex-1", attempt: 1 }),
+        undefined,
+        () => firstSettle.promise,
+      ),
+    ).resolves.toEqual({ sessionId: "codex-1", attempt: 1 });
+
+    await expect(
+      withMetadataSessionPending(
+        host,
+        "codex-1",
+        "starting",
+        () => ({ sessionId: "codex-1", attempt: 2 }),
+        undefined,
+        () => secondSettle.promise,
+      ),
+    ).resolves.toEqual({ sessionId: "codex-1", attempt: 2 });
+
+    firstSettle.resolve(true);
+    await nextTick();
+    expect(pending.getSessionAction("codex-1")).toBe("starting");
+
+    secondSettle.resolve(true);
+    await nextTick();
+    expect(pending.getSessionAction("codex-1")).toBeUndefined();
+  });
+
+  it("does not let an older service settle clear a newer pending action", async () => {
+    const pending = new DashboardPendingActions(() => {});
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      dashboardServicesCache: [],
+      services: [],
+      offlineServices: [],
+    };
+    const firstSettle = deferred<boolean>();
+    const secondSettle = deferred<boolean>();
+
+    await expect(
+      withMetadataServicePending(
+        host,
+        "service-1",
+        "starting",
+        () => ({ serviceId: "service-1", attempt: 1 }),
+        () => firstSettle.promise,
+      ),
+    ).resolves.toEqual({ serviceId: "service-1", attempt: 1 });
+
+    await expect(
+      withMetadataServicePending(
+        host,
+        "service-1",
+        "starting",
+        () => ({ serviceId: "service-1", attempt: 2 }),
+        () => secondSettle.promise,
+      ),
+    ).resolves.toEqual({ serviceId: "service-1", attempt: 2 });
+
+    firstSettle.resolve(true);
+    await nextTick();
+    expect(pending.getServiceAction("service-1")).toBe("starting");
+
+    secondSettle.resolve(true);
+    await nextTick();
+    expect(pending.getServiceAction("service-1")).toBeUndefined();
+  });
 });

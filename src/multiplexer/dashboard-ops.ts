@@ -375,15 +375,17 @@ export function setPendingDashboardSessionAction(
   sessionId: string,
   kind: PendingSessionActionKind | null,
   opts?: { sessionSeed?: DashboardSession },
-): void {
+): number | undefined {
+  let token: number | undefined;
   if (kind) {
-    host.dashboardPendingActions.setSessionAction(sessionId, kind, opts);
+    token = host.dashboardPendingActions.setSessionAction(sessionId, kind, opts);
   } else {
     host.dashboardPendingActions.clearSessionAction(sessionId);
   }
   if (typeof host.reapplyDashboardPendingActions === "function") {
     host.reapplyDashboardPendingActions();
   }
+  return token;
 }
 
 export function setPendingDashboardServiceAction(
@@ -391,15 +393,17 @@ export function setPendingDashboardServiceAction(
   serviceId: string,
   kind: PendingServiceActionKind | null,
   opts?: { serviceSeed?: DashboardService },
-): void {
+): number | undefined {
+  let token: number | undefined;
   if (kind) {
-    host.dashboardPendingActions.setServiceAction(serviceId, kind, opts);
+    token = host.dashboardPendingActions.setServiceAction(serviceId, kind, opts);
   } else {
     host.dashboardPendingActions.clearServiceAction(serviceId);
   }
   if (typeof host.reapplyDashboardPendingActions === "function") {
     host.reapplyDashboardPendingActions();
   }
+  return token;
 }
 
 export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
