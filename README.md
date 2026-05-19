@@ -121,12 +121,12 @@ Each active project may have one daemon-managed project service. That project se
 
 There is no per-project host election anymore. Dashboard processes are clients, not control-plane owners.
 
-Desktop/Tauri now talks to the live control plane directly:
+The user-facing client (browser + mobile) at `app/` talks to the live control plane directly:
 
 - daemon HTTP is used for project discovery / service discovery
 - project-service HTTP is used for live project state and awaited lifecycle actions
-- `statusline.json` remains a derived artifact for tmux/status/debugging, not the desktop's primary transport
-- desktop loading state should clear on heartbeat reconciliation of the expected state change, not on HTTP return alone
+- `statusline.json` remains a derived artifact for tmux/status/debugging, not the client's primary transport
+- client loading state should clear on heartbeat reconciliation of the expected state change, not on HTTP return alone
 
 Terminal clients are isolated from each other:
 
@@ -239,7 +239,6 @@ Example:
 
 Runtime health:
 
-- The desktop UI now surfaces project-runtime health and exposes a repair/restart control path.
 - The tmux statusline shows `ctl ok`, `ctl daemon↓`, or `ctl stale`.
 - `ctl stale` means the project-service `statusline.json` snapshot has stopped updating, which usually means the project service died.
 - Manual recovery is now:
@@ -277,7 +276,7 @@ Navigation ownership rule:
   - [src/tmux/control-script.test.ts](src/tmux/control-script.test.ts)
 - Do not clone “similar” ordering logic in the Node runtime for live-pane shortcuts. If the user is pointing at the visible live footer chips and references `n/p`, the shortcut belongs to the tmux layer unless there is a strong reason otherwise.
 
-The desktop app now exposes these flows directly over daemon/project-service HTTP:
+The browser/mobile client at `app/` exposes these flows directly over daemon (port 43190) and per-project metadata-server HTTP:
 
 - dashboard worktree/agent management
 - spawn, fork, rename, migrate, stop, kill
@@ -289,8 +288,36 @@ The desktop app now exposes these flows directly over daemon/project-service HTT
 
 For the lifecycle model, see [docs/runtime-lifecycle.md](docs/runtime-lifecycle.md).
 For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
-For desktop UI integration details, see [docs/desktop-ui-contract.md](docs/desktop-ui-contract.md).
+For the original Tauri/Svelte client contract (historical, superseded by `app/`), see [docs/desktop-ui-contract.md](docs/desktop-ui-contract.md).
 For the migration rationale, see [docs/global-control-plane-rfc.md](docs/global-control-plane-rfc.md).
+
+## Web / Mobile Client (`app/`)
+
+The user-facing browser and native clients live in `app/` as a single Expo Router + React Native project. The same code targets web (browser), iOS, and Android.
+
+```bash
+cd app
+yarn install
+yarn web                  # open browser client (Metro serves it on http://localhost:8081)
+yarn ios                  # iOS simulator
+yarn android              # Android emulator
+```
+
+The app talks to two HTTP surfaces:
+
+- the global aimux daemon at `http://localhost:43190` for project discovery
+- per-project metadata servers (port supplied via `/projects` response) for state, agent I/O, plans, and the `/events` SSE stream
+
+For mobile use against a remote machine, set `EXPO_PUBLIC_AIMUX_DAEMON_URL=http://<machine>:43190` in `app/.env`.
+
+Release pipeline (uses EAS):
+
+```bash
+cd app
+yarn version:bump-build   # new native build
+yarn build:testflight     # EAS build → TestFlight
+yarn update               # OTA JS-only update (testflight channel)
+```
 
 ## Tmux Compatibility
 

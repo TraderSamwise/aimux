@@ -6,24 +6,37 @@ Aimux is an agent multiplexer. It runs long-lived Claude, Codex, and shell sessi
 
 Agents inside aimux coordinate through `.aimux/` files, not by directly spawning each other unless the user gives an explicit CLI command. Use `.aimux/tasks/*.json` only when the user explicitly asks for delegation or handoff. Do not proactively write `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only inspections, or one-shot tasks.
 
-## Desktop App (Tauri + Svelte)
+## App (`app/`) — Expo Router + RN + Web
+
+The browser and native clients live in `app/`. Single Expo codebase targeting web, iOS, and Android.
 
 ### Development with HMR
 
-**Always use the dev servers for iterating on the desktop UI.** Do NOT rebuild the `.app` bundle on every change.
-
 ```bash
-# Terminal 1: Start Vite dev server (Svelte HMR on :1420)
-cd desktop-ui && npx vite dev --port 1420
-
-# Terminal 2: Start Tauri dev mode (compiles Rust, opens app pointing at Vite)
-cd src-tauri && cargo tauri dev
+cd app
+yarn web      # web client served by Metro on http://localhost:8081, HMR
+yarn ios      # iOS simulator (Expo Go or dev client)
+yarn android  # Android emulator
 ```
 
 **What triggers what:**
-- `desktop-ui/` Svelte changes → HMR picks up instantly (no restart)
-- `src-tauri/src/main.rs` Rust changes → `cargo tauri dev` auto-recompiles + restarts app
-- `src/*.ts` Node CLI changes → need `yarn build` so the desktop app sees updated `dist/` code
+- `app/app/`, `app/components/`, `app/lib/`, `app/stores/` changes → Metro HMR (no restart)
+- `src/*.ts` Node CLI changes → need `yarn build` at the repo root so the daemon and metadata server see updated `dist/` code
+- The app is a pure HTTP+SSE client of the aimux daemon; it does NOT bundle the CLI
+
+### App Architecture
+
+- `app/app/` — Expo Router screens (file-based routing). `(main)` group is the authed app shell with project sidebar + chat/plans/threads screens.
+- `app/lib/api.ts` — typed HTTP client. Daemon routes target `localhost:43190` by default; per-project metadata-server routes target the `serviceEndpoint` returned by `/projects`.
+- `app/lib/heartbeat.ts` — `event-source-polyfill` wrapper for the per-project `/events` SSE stream. The polyfill auto-reconnects on transient failures.
+- `app/stores/` — Zustand stores: `projects` (list + selection), `chat` (per-session history, pending, output, streaming), `ui` (sidebar).
+- `app/lib/image-picker.{web,native}.ts` — platform-split. Web uses `<input type=file>`; native uses `expo-image-picker`.
+
+### What the app is NOT
+
+- NOT a daemon owner. The app is a client; it cannot start, restart, or repair the daemon. The daemon is a separate service the user runs.
+- NOT a tmux replacement. Users still interact with their actual tmux session for terminal-mode work. The app provides chat-style and plan-editor surfaces only.
+- NOT a Tauri/desktop bundle anymore. The previous `desktop-ui/` (Svelte) + `src-tauri/` (Rust/Tauri) implementation has been replaced.
 
 ### Runtime Verification Rule
 
@@ -55,31 +68,29 @@ If a requested shortcut is described as behaving like an existing live-pane pref
 
 Do not re-implement “similar logic” in `src/hotkeys.ts` or `src/multiplexer/session-launch.ts` unless the feature is explicitly meant to be owned by the in-process Node runtime. For live-pane, latency-sensitive navigation, prefer tmux-local metadata and tmux bindings over Node-side session lists.
 
-### Building the .app bundle
+### Building the native bundle
 
-Only build the bundle for final testing or distribution:
+For distribution, EAS produces native bundles via the `app/scripts/build.sh` pipeline:
 
 ```bash
-cd desktop-ui && npx vite build
-cd src-tauri && cargo tauri build --debug
-open target/debug/bundle/macos/Aimux\ Desktop.app
+cd app
+yarn build:testflight   # TestFlight (iOS, default channel)
+yarn build:production   # production (App Store / Play)
 ```
 
-### Architecture
+OTA-only updates skip the native rebuild:
 
-- `desktop-ui/` — Svelte 5 frontend (Vite build)
-- `src-tauri/` — Rust backend (Tauri v2, PTY management, daemon CLI bridge)
-- Frontend talks to backend via Tauri `invoke()` commands
-- Single `heartbeat` command calls `aimux daemon ensure` + `aimux daemon projects --json` every 2s
-- Per-project statusline read from `~/.aimux/projects/<id>/statusline.json`
-- Global daemon manages per-project services (MetadataServer, PluginRuntime, statusline writing)
-- Desktop app is a daemon client — does not manage project host ownership
+```bash
+cd app
+yarn update             # testflight channel
+yarn update:production
+```
 
-### GUI CLI Commands
+### GUI CLI Commands (the daemon HTTP surface)
 
-All commands support `--project <path>` and relevant ones support `--json`:
+The browser/mobile client calls daemon and project-service HTTP directly. The same operations are also available as CLI commands; flags `--project <path>` and `--json` apply where relevant:
 
-- `aimux spawn --tool <tool> --project <path> [--worktree <path>]` — create new agent
+- `aimux spawn --tool <tool> [--worktree <path>] --project <path>` — create new agent
 - `aimux stop <sessionId> --project <path>` — stop agent (running → offline)
 - `aimux kill <sessionId> --project <path>` — kill agent (send to graveyard)
 - `aimux fork <sourceSessionId> --tool <tool> [--worktree <path>] --project <path>` — fork agent
@@ -87,4 +98,3 @@ All commands support `--project <path>` and relevant ones support `--json`:
 - `aimux worktree list --project <path> --json` — list worktrees
 - `aimux graveyard list --project <path> --json` — list dead agents
 - `aimux graveyard resurrect <id> --project <path>` — revive agent
-- `aimux desktop focus --project <path> --session <id>` — focus agent in terminal

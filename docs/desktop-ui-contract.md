@@ -1,5 +1,7 @@
 # Desktop UI Contract
 
+> **Superseded.** The Tauri/Svelte desktop client this document describes has been replaced by the Expo Router + React Native client at `app/`. The daemon and project-service HTTP surfaces described below are still accurate and now power the new client. Kept as historical context.
+
 This document describes how the Tauri desktop should consume aimux state and actions today.
 
 ## Status
