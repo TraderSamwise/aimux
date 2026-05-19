@@ -435,9 +435,6 @@ export const persistenceMethods = {
 
     setGraveyardPending();
     try {
-      const attachedServices = collectWorktreeServices(this, path);
-      detachWorktreeServices(this, path);
-
       const liveSessions = this.sessions.filter(
         (session: any) =>
           this.sessionWorktreePaths.get(session.id) === path && this.isSessionRuntimeLive(session) && !session.exited,
@@ -447,6 +444,9 @@ export const persistenceMethods = {
       }
 
       await waitForWorktreeSessionsToStop(this, path);
+
+      const attachedServices = collectWorktreeServices(this, path);
+      detachWorktreeServices(this, path);
 
       const attachedAgents = collectWorktreeAgents(this, path);
 

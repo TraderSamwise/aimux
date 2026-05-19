@@ -53,12 +53,14 @@ vi.mock("./worktree-graveyard.js", async (importOriginal) => {
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { persistenceMethods } from "./persistence-methods.js";
+import { writeWorktreeGraveyardEntries } from "./worktree-graveyard.js";
 
 describe("persistenceMethods", () => {
   beforeEach(() => {
     listWorktreesMock.mockReset();
     listWorktreesMock.mockReturnValue([]);
     spawnMock.mockReset();
+    vi.mocked(writeWorktreeGraveyardEntries).mockReset();
   });
 
   it("seeds desktop-state projection when creating a worktree", () => {
@@ -398,5 +400,87 @@ describe("persistenceMethods", () => {
         optimistic: true,
       }),
     ]);
+  });
+
+  it("does not detach worktree services when graveyarding fails while waiting for agents to stop", async () => {
+    vi.useFakeTimers();
+    const pending = new DashboardPendingActions(() => {});
+    const worktreePath = "/repo/.aimux/worktrees/demo";
+    const service = {
+      id: "service-1",
+      command: "shell",
+      label: "shell",
+      worktreePath,
+    };
+    const serviceTarget = { sessionName: "aimux", windowName: "service" };
+    const killWindow = vi.fn();
+    listWorktreesMock.mockReturnValue([
+      {
+        name: "demo",
+        branch: "demo",
+        path: worktreePath,
+        isBare: false,
+      },
+    ]);
+    const liveSession = {
+      id: "claude-1",
+      command: "claude",
+      backendSessionId: "backend-claude-1",
+      startTime: Date.parse("2026-05-01T00:00:00.000Z"),
+      exited: false,
+      kill: vi.fn(),
+    };
+    const host = {
+      dashboardPendingActions: pending,
+      footerFlash: "",
+      footerFlashTicks: 0,
+      syncSessionsFromState: vi.fn(),
+      listWorktreeGraveyardEntries: vi.fn(() => []),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      mode: "project-service",
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: serviceTarget,
+            metadata: {
+              kind: "service",
+              sessionId: service.id,
+              worktreePath,
+            },
+          },
+        ]),
+        killWindow,
+      },
+      offlineServices: [service],
+      buildLiveServiceStates: vi.fn(() => [service]),
+      offlineSessions: [],
+      sessions: [liveSession],
+      sessionWorktreePaths: new Map([["claude-1", worktreePath]]),
+      sessionToolKeys: new Map([["claude-1", "claude"]]),
+      sessionOriginalArgs: new Map([["claude-1", []]]),
+      stoppingSessionIds: new Set(),
+      getSessionLabel: vi.fn(() => "claude"),
+      deriveHeadline: vi.fn(() => "working"),
+      noteLastUsedItem: vi.fn(),
+      isSessionRuntimeLive: vi.fn(() => true),
+      saveState: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    try {
+      const result = persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath);
+      const assertion = expect(result).rejects.toThrow('Timed out offlining agents for worktree "demo"');
+      await vi.advanceTimersByTimeAsync(10_100);
+      await assertion;
+
+      expect(liveSession.kill).toHaveBeenCalledOnce();
+      expect(host.offlineServices).toEqual([service]);
+      expect(killWindow).not.toHaveBeenCalled();
+      expect(writeWorktreeGraveyardEntries).not.toHaveBeenCalled();
+      expect(pending.getWorktreeAction(worktreePath)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

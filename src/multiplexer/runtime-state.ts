@@ -274,7 +274,7 @@ export function loadOfflineSessions(
       if (s.backendSessionId && liveBackendIds.has(s.backendSessionId)) return false;
       if (ownedIds.has(s.id)) return false;
       if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
-      if (host.dashboardPendingActions?.get?.(s.id) === "starting") return false;
+      if (host.dashboardPendingActions?.getSessionAction?.(s.id) === "starting") return false;
       if (!isAvailableWorktreePath(s.worktreePath)) return false;
       return true;
     })
@@ -322,7 +322,7 @@ export function loadOfflineServices(host: RuntimeStateHost, state = host.constru
 
   const nextOfflineServices = savedServices.filter((service: any) => {
     if (liveServiceIds.has(service.id)) return false;
-    if (host.dashboardPendingActions?.get?.(service.id) === "starting") return false;
+    if (host.dashboardPendingActions?.getServiceAction?.(service.id) === "starting") return false;
     if (!isAvailableWorktreePath(service.worktreePath)) return false;
     return true;
   });

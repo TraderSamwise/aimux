@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getGraveyardPath, getStatePath, initPaths } from "../paths.js";
 import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
+import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import {
   buildLiveServiceStates,
   getInstanceSessionRefs,
@@ -428,6 +429,8 @@ describe("resumeOfflineSession", () => {
   });
 
   it("does not reload a starting session as offline from stale saved state", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("codex-1", "starting");
     const host: any = {
       sessions: [],
       offlineSessions: [],
@@ -435,9 +438,7 @@ describe("resumeOfflineSession", () => {
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
-      dashboardPendingActions: {
-        get: vi.fn((sessionId: string) => (sessionId === "codex-1" ? "starting" : undefined)),
-      },
+      dashboardPendingActions: pending,
       debug: vi.fn(),
     };
 
@@ -461,15 +462,49 @@ describe("resumeOfflineSession", () => {
     expect(host.offlineSessions).toEqual([]);
   });
 
+  it("does not hide an offline session when only a service with the same id is starting", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setServiceAction("codex-1", "starting");
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+      getRemoteInstancesSafe: vi.fn(() => []),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      dashboardPendingActions: pending,
+      debug: vi.fn(),
+    };
+
+    const changed = loadOfflineSessions(host, {
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          backendSessionId: "native-session",
+          worktreePath: repoRoot,
+        },
+      ],
+      services: [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(true);
+    expect(host.offlineSessions).toMatchObject([{ id: "codex-1" }]);
+  });
+
   it("does not reload a starting service as offline from stale saved state", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setServiceAction("service-1", "starting");
     const host: any = {
       offlineServices: [],
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
-      dashboardPendingActions: {
-        get: vi.fn((serviceId: string) => (serviceId === "service-1" ? "starting" : undefined)),
-      },
+      dashboardPendingActions: pending,
     };
 
     const changed = loadOfflineServices(host, {
@@ -486,6 +521,33 @@ describe("resumeOfflineSession", () => {
 
     expect(changed).toBe(false);
     expect(host.offlineServices).toEqual([]);
+  });
+
+  it("does not hide an offline service when only a session with the same id is starting", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("service-1", "starting");
+    const host: any = {
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      dashboardPendingActions: pending,
+    };
+
+    const changed = loadOfflineServices(host, {
+      sessions: [],
+      services: [
+        {
+          id: "service-1",
+          label: "shell",
+          worktreePath: repoRoot,
+        },
+      ],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(true);
+    expect(host.offlineServices).toMatchObject([{ id: "service-1" }]);
   });
 
   it("does not resurrect legacy live snapshots as offline sessions", () => {
