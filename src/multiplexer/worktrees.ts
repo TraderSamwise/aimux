@@ -53,14 +53,17 @@ async function waitForRenderedDashboardWorktreeState(
 
 async function runDashboardWorktreeMutation(host: WorktreeHost, opts: DashboardWorktreeMutationOptions): Promise<void> {
   host.dashboardPendingActions.setWorktreeAction(opts.pendingPath, opts.pendingAction);
+  host.reapplyDashboardPendingActions?.();
   host.renderDashboard();
   try {
     await opts.request();
     assertDashboardWorktreeMutationSettled(await opts.settle(), opts.pendingAction);
     host.dashboardPendingActions.clearWorktreeAction(opts.pendingPath);
+    host.reapplyDashboardPendingActions?.();
     opts.onSuccess?.();
   } catch (error) {
     host.dashboardPendingActions.clearWorktreeAction(opts.pendingPath);
+    host.reapplyDashboardPendingActions?.();
     opts.onError?.(error);
   }
 }
@@ -341,8 +344,6 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     host.renderDashboard();
     return;
   }
-  if (host.pendingWorktreeRemovals?.has?.(path)) return;
-
   debug(`begin worktree graveyard: name=${name} path=${path}`, "worktree");
   host.worktreeRemovalJob = {
     path,
@@ -351,14 +352,12 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     oldIdx,
     stderr: "",
   };
-  host.refreshLocalDashboardModel();
-  host.renderDashboard();
   if (host.mode === "dashboard") {
     void runDashboardWorktreeMutation(host, {
       pendingPath: path,
       pendingAction: "graveyarding",
       request: async () => {
-        await postToProjectService(host, "/worktrees/graveyard", { path }, { timeoutMs: 10_000 });
+        await postToProjectService(host, "/worktrees/graveyard", { path }, { timeoutMs: 180_000 });
       },
       settle: () => waitForRenderedDashboardWorktreeState(host, path, (group) => !group),
       onSuccess: () => {
@@ -378,6 +377,8 @@ export function beginWorktreeRemoval(host: WorktreeHost, path: string, name: str
     });
     return;
   }
+  host.refreshLocalDashboardModel();
+  host.renderDashboard();
   void (async () => {
     try {
       await host.graveyardDesktopWorktree(path);
@@ -430,6 +431,7 @@ export function finishWorktreeRemoval(host: WorktreeHost, code: number): void {
       `Error: ${message}`,
       ...details,
     ]);
+    host.renderDashboard();
     return;
   }
 

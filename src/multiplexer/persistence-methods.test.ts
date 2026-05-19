@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { spawnMock } = vi.hoisted(() => ({
+const { listWorktreesMock, spawnMock } = vi.hoisted(() => ({
+  listWorktreesMock: vi.fn(() => []),
   spawnMock: vi.fn(),
 }));
 
@@ -22,7 +23,7 @@ vi.mock("../worktree.js", async (importOriginal) => {
     getWorktreeCreatePath: vi.fn((name: string) => `/repo/.aimux/worktrees/${name}`),
     getWorktreeAddArgs: vi.fn((name: string, targetPath: string) => ["worktree", "add", "-b", name, targetPath]),
     isToolInternalWorktree: vi.fn(() => false),
-    listWorktrees: vi.fn(() => []),
+    listWorktrees: listWorktreesMock,
   };
 });
 
@@ -54,6 +55,12 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { persistenceMethods } from "./persistence-methods.js";
 
 describe("persistenceMethods", () => {
+  beforeEach(() => {
+    listWorktreesMock.mockReset();
+    listWorktreesMock.mockReturnValue([]);
+    spawnMock.mockReset();
+  });
+
   it("seeds desktop-state projection when creating a worktree", () => {
     const child = new EventEmitter() as EventEmitter & {
       stderr: EventEmitter;
@@ -154,7 +161,7 @@ describe("persistenceMethods", () => {
     expect(host.refreshDesktopStateSnapshot).not.toHaveBeenCalled();
   });
 
-  it("projects in-flight worktree creates into worktree lists", () => {
+  it("projects in-flight worktree creates into projected worktree lists", () => {
     const pending = new DashboardPendingActions(() => {});
     const worktreePath = "/repo/.aimux/worktrees/demo";
     pending.setWorktreeAction(worktreePath, "creating", {
@@ -174,7 +181,9 @@ describe("persistenceMethods", () => {
       pendingWorktreeRemovals: new Map(),
     };
 
-    const worktrees = persistenceMethods.listDesktopWorktrees.call(host);
+    host.listDesktopWorktrees = vi.fn(() => []);
+
+    const worktrees = persistenceMethods.listProjectedDesktopWorktrees.call(host);
 
     expect(worktrees).toEqual([
       expect.objectContaining({
@@ -189,7 +198,7 @@ describe("persistenceMethods", () => {
     ]);
   });
 
-  it("does not project non-create worktree pending actions into desktop-state snapshots", () => {
+  it("projects remove worktree pending actions into desktop-state snapshots", () => {
     const pending = new DashboardPendingActions(() => {});
     const worktree = {
       name: "demo",
@@ -218,6 +227,77 @@ describe("persistenceMethods", () => {
 
     const state = persistenceMethods.buildDesktopState.call(host);
 
-    expect(state.worktrees).toEqual([worktree]);
+    expect(state.worktrees).toEqual([
+      expect.objectContaining({
+        path: worktree.path,
+        pending: true,
+        pendingAction: "removing",
+        removing: true,
+        optimistic: true,
+      }),
+    ]);
+  });
+
+  it("keeps raw worktree lists free of pending removal projection", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const worktreePath = "/repo/.aimux/worktrees/demo";
+    listWorktreesMock.mockReturnValue([
+      {
+        name: "demo",
+        branch: "demo",
+        path: worktreePath,
+        isBare: false,
+      },
+    ]);
+    pending.setWorktreeAction(worktreePath, "removing");
+    const host = {
+      dashboardPendingActions: pending,
+      pendingWorktreeRemovals: new Map([[worktreePath, Promise.resolve({ path: worktreePath, status: "removed" })]]),
+    };
+
+    const worktrees = persistenceMethods.listDesktopWorktrees.call(host);
+
+    expect(worktrees).toEqual([
+      expect.objectContaining({
+        name: "demo",
+        path: worktreePath,
+      }),
+    ]);
+    expect(worktrees[0]).not.toHaveProperty("pending");
+    expect(worktrees[0]).not.toHaveProperty("pendingAction");
+    expect(worktrees[0]).not.toHaveProperty("removing");
+  });
+
+  it("projects raw worktree removal state only through projected worktree lists", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const worktreePath = "/repo/.aimux/worktrees/demo";
+    listWorktreesMock.mockReturnValue([
+      {
+        name: "demo",
+        branch: "demo",
+        path: worktreePath,
+        isBare: false,
+      },
+    ]);
+    pending.setWorktreeAction(worktreePath, "removing");
+    const host = {
+      dashboardPendingActions: pending,
+      listDesktopWorktrees: vi.fn(() =>
+        persistenceMethods.listDesktopWorktrees.call({ dashboardPendingActions: pending }),
+      ),
+    };
+
+    const worktrees = persistenceMethods.listProjectedDesktopWorktrees.call(host);
+
+    expect(worktrees).toEqual([
+      expect.objectContaining({
+        name: "demo",
+        path: worktreePath,
+        pending: true,
+        pendingAction: "removing",
+        removing: true,
+        optimistic: true,
+      }),
+    ]);
   });
 });

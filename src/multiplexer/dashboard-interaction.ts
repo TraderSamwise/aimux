@@ -351,7 +351,7 @@ export const dashboardInteractionMethods = {
           const focusedGroup = this.dashboardWorktreeGroupsCache.find(
             (group: any) => group.path === this.dashboardState.focusedWorktreePath,
           );
-          if (isRemovingDashboardWorktree(focusedGroup) || this.pendingWorktreeRemovals?.has?.(focusedGroup?.path)) {
+          if (isRemovingDashboardWorktree(focusedGroup)) {
             this.footerFlash = blockedRemovingWorktreeMessage(focusedGroup, this.dashboardState.focusedWorktreePath);
             this.footerFlashTicks = 2;
             this.renderDashboard();

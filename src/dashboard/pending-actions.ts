@@ -279,36 +279,6 @@ export class DashboardPendingActions {
     return applied;
   }
 
-  applyToWorktreeCreates(worktrees: WorktreeGroup[]): WorktreeGroup[] {
-    if (this.actions.size === 0) return worktrees;
-    const seen = new Set<string>();
-    const applied = worktrees.map((worktree) => {
-      seen.add(DashboardPendingActions.worktreeKey(worktree.path));
-      const pendingAction = this.getWorktreeAction(worktree.path);
-      if (pendingAction !== "creating") return worktree;
-      return {
-        ...worktree,
-        pending: true,
-        pendingAction,
-        optimistic: true,
-      };
-    });
-    for (const [entryKey, entry] of this.actions.entries()) {
-      if (entry.target !== "worktree") continue;
-      const worktreeKey = entryKey.slice("worktree:".length);
-      if (seen.has(worktreeKey)) continue;
-      if (!entry.worktreeSeed) continue;
-      if (entry.kind !== "creating") continue;
-      applied.push({
-        ...entry.worktreeSeed,
-        pending: true,
-        pendingAction: entry.kind,
-        optimistic: true,
-      });
-    }
-    return applied;
-  }
-
   settleCreatePending(
     target: PendingActionTarget,
     itemId: string,

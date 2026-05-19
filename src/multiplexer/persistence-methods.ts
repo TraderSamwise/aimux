@@ -57,6 +57,15 @@ function recordDashboardFailure(
   return failure;
 }
 
+function refreshDashboardWorktreeProjection(host: any): void {
+  host.invalidateDesktopStateSnapshot();
+  host.refreshLocalDashboardModel();
+  host.metadataServer?.notifyChange?.();
+  if (host.mode === "dashboard") {
+    host.renderDashboard();
+  }
+}
+
 export const persistenceMethods = {
   writeSessionsFile(this: any): void {
     const dir = getLocalAimuxDir();
@@ -281,7 +290,7 @@ export const persistenceMethods = {
       sessions: desktopState.sessions,
       services: desktopState.services,
       statusline: this.buildStatuslineSnapshot(),
-      worktrees: this.dashboardPendingActions.applyToWorktreeCreates(desktopState.worktrees),
+      worktrees: this.dashboardPendingActions.applyToWorktrees(desktopState.worktrees),
       operationFailures: desktopState.operationFailures,
       mainCheckoutInfo: desktopState.mainCheckoutInfo,
       mainCheckoutPath: desktopState.mainCheckoutPath,
@@ -329,9 +338,6 @@ export const persistenceMethods = {
     pendingAction?: Extract<PendingWorktreeActionKind, "creating">;
     operationFailure?: DashboardOperationFailure;
   }> {
-    const pendingRemovals = this.pendingWorktreeRemovals as
-      | Map<string, Promise<{ path: string; status: "removing" | "removed" }>>
-      | undefined;
     const hiddenPaths = listWorktreeGraveyardPaths();
     const worktrees: Array<{
       name: string;
@@ -347,8 +353,6 @@ export const persistenceMethods = {
       .filter((wt) => !wt.isBare && !hiddenPaths.has(wt.path) && !isToolInternalWorktree(wt))
       .map((wt) => ({
         ...wt,
-        pending: pendingRemovals?.has(wt.path) ?? false,
-        removing: pendingRemovals?.has(wt.path) ?? false,
       }));
     const worktreePaths = new Set(worktrees.map((worktree) => worktree.path));
     for (const failure of listDashboardOperationFailures()) {
@@ -365,7 +369,21 @@ export const persistenceMethods = {
       worktreePaths.add(failure.worktreePath);
     }
     sortDesktopWorktrees(worktrees);
-    return this.dashboardPendingActions.applyToWorktreeCreates(worktrees as any);
+    return worktrees;
+  },
+
+  listProjectedDesktopWorktrees(this: any): Array<{
+    name: string;
+    path: string;
+    branch: string;
+    isBare: boolean;
+    createdAt?: string;
+    pending?: boolean;
+    removing?: boolean;
+    pendingAction?: Extract<PendingWorktreeActionKind, "creating" | "removing" | "graveyarding">;
+    operationFailure?: DashboardOperationFailure;
+  }> {
+    return this.dashboardPendingActions.applyToWorktrees(this.listDesktopWorktrees() as any);
   },
 
   listWorktreeGraveyardEntries(this: any): any[] {
@@ -392,46 +410,70 @@ export const persistenceMethods = {
       throw new Error(`Worktree "${matching.name}" is already in the graveyard`);
     }
 
-    const attachedServices = collectWorktreeServices(this, path);
-    detachWorktreeServices(this, path);
+    let pendingSet = false;
+    const setGraveyardPending = () => {
+      this.dashboardPendingActions.setWorktreeAction(path, "graveyarding", {
+        timeoutMs: 180_000,
+        onTimeout: () => {
+          const message = `Timed out graveyarding worktree "${matching.name}"`;
+          recordDashboardFailure(this, {
+            targetKind: "worktree",
+            operation: "graveyard",
+            title: `Failed to graveyard worktree "${matching.name}"`,
+            message,
+            worktreePath: path,
+            worktreeName: matching.name,
+          });
+          this.footerFlash = message;
+          this.footerFlashTicks = 5;
+          refreshDashboardWorktreeProjection(this);
+        },
+      });
+      pendingSet = true;
+      refreshDashboardWorktreeProjection(this);
+    };
 
-    const liveSessions = this.sessions.filter(
-      (session: any) =>
-        this.sessionWorktreePaths.get(session.id) === path && this.isSessionRuntimeLive(session) && !session.exited,
-    );
-    for (const session of liveSessions) {
-      stopSessionToOffline(this, session);
+    setGraveyardPending();
+    try {
+      const attachedServices = collectWorktreeServices(this, path);
+      detachWorktreeServices(this, path);
+
+      const liveSessions = this.sessions.filter(
+        (session: any) =>
+          this.sessionWorktreePaths.get(session.id) === path && this.isSessionRuntimeLive(session) && !session.exited,
+      );
+      for (const session of liveSessions) {
+        stopSessionToOffline(this, session);
+      }
+
+      await waitForWorktreeSessionsToStop(this, path);
+
+      const attachedAgents = collectWorktreeAgents(this, path);
+
+      const nextEntries = [
+        ...worktreeGraveyardEntries.filter((entry: WorktreeGraveyardEntry) => entry.path !== path),
+        {
+          name: matching.name,
+          path: matching.path,
+          branch: matching.branch,
+          createdAt: matching.createdAt,
+          graveyardedAt: new Date().toISOString(),
+          agents: attachedAgents,
+          services: attachedServices,
+        },
+      ];
+      writeWorktreeGraveyardEntries(nextEntries);
+      this.worktreeGraveyardEntries = nextEntries;
+
+      this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
+      this.saveState();
+      return { path, status: "graveyarded" };
+    } finally {
+      if (pendingSet) {
+        this.dashboardPendingActions.clearWorktreeAction(path);
+        refreshDashboardWorktreeProjection(this);
+      }
     }
-
-    await waitForWorktreeSessionsToStop(this, path);
-
-    const attachedAgents = collectWorktreeAgents(this, path);
-
-    const nextEntries = [
-      ...worktreeGraveyardEntries.filter((entry: WorktreeGraveyardEntry) => entry.path !== path),
-      {
-        name: matching.name,
-        path: matching.path,
-        branch: matching.branch,
-        createdAt: matching.createdAt,
-        graveyardedAt: new Date().toISOString(),
-        agents: attachedAgents,
-        services: attachedServices,
-      },
-    ];
-    writeWorktreeGraveyardEntries(nextEntries);
-    this.worktreeGraveyardEntries = nextEntries;
-
-    this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
-    this.saveState();
-    this.invalidateDesktopStateSnapshot();
-    this.refreshLocalDashboardModel();
-    this.metadataServer?.notifyChange?.();
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    }
-
-    return { path, status: "graveyarded" };
   },
 
   async resurrectGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "offline" }> {
@@ -693,8 +735,30 @@ export const persistenceMethods = {
       string,
       Promise<{ path: string; status: "removing" | "removed" }>
     >;
+    const setRemovePending = () => {
+      this.dashboardPendingActions.setWorktreeAction(path, "removing", {
+        timeoutMs: 180_000,
+        onTimeout: () => {
+          const name = path.split("/").pop() ?? path;
+          const message = `Timed out removing worktree "${name}"`;
+          recordDashboardFailure(this, {
+            targetKind: "worktree",
+            operation: "remove",
+            title: `Failed to remove worktree "${name}"`,
+            message,
+            worktreePath: path,
+            worktreeName: name,
+          });
+          this.footerFlash = message;
+          this.footerFlashTicks = 5;
+          refreshDashboardWorktreeProjection(this);
+        },
+      });
+      refreshDashboardWorktreeProjection(this);
+    };
     const existingRemoval = pendingRemovals.get(path);
     if (existingRemoval) {
+      setRemovePending();
       return existingRemoval;
     }
 
@@ -705,33 +769,7 @@ export const persistenceMethods = {
       rejectRemoval = reject;
     });
     pendingRemovals.set(path, removalPromise);
-    this.dashboardPendingActions.setWorktreeAction(path, "removing", {
-      timeoutMs: 180_000,
-      onTimeout: () => {
-        const name = path.split("/").pop() ?? path;
-        const message = `Timed out removing worktree "${name}"`;
-        recordDashboardFailure(this, {
-          targetKind: "worktree",
-          operation: "remove",
-          title: `Failed to remove worktree "${name}"`,
-          message,
-          worktreePath: path,
-          worktreeName: name,
-        });
-        this.footerFlash = message;
-        this.footerFlashTicks = 5;
-        this.invalidateDesktopStateSnapshot();
-        this.refreshLocalDashboardModel();
-        if (this.mode === "dashboard") {
-          this.renderDashboard();
-        }
-      },
-    });
-    this.invalidateDesktopStateSnapshot();
-    this.refreshLocalDashboardModel();
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    }
+    setRemovePending();
 
     void (async () => {
       try {
@@ -839,12 +877,7 @@ export const persistenceMethods = {
     const finalizeRemoval = () => {
       this.dashboardPendingActions.clearWorktreeAction(path);
       pendingRemovals.delete(path);
-      this.invalidateDesktopStateSnapshot();
-      this.refreshLocalDashboardModel();
-      this.metadataServer?.notifyChange?.();
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      }
+      refreshDashboardWorktreeProjection(this);
     };
     void removalPromise.then(finalizeRemoval, finalizeRemoval);
 

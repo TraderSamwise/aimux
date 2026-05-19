@@ -330,7 +330,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const host: any = {
       mode: "dashboard",
       worktreeRemovalJob: null,
-      pendingWorktreeRemovals: undefined,
+      pendingWorktreeRemovals: new Map([[path, Promise.resolve({ path, status: "removed" })]]),
       dashboardPendingActions: pending,
       dashboardWorktreeGroupsCache: [{ name: "demo", branch: "demo", path, sessions: [], services: [] }],
       dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
@@ -344,12 +344,14 @@ describe("worktrees dashboard mutation protocol", () => {
       footerFlashTicks: 0,
       showDashboardError: vi.fn(),
     };
+    attachPendingReapply(host, pending);
 
     beginWorktreeRemoval(host, path, "demo", 0);
 
     await vi.waitFor(() => expect(host.footerFlash).toBe("Graveyarded: demo"));
 
-    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 10_000 });
+    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 180_000 });
+    expect(host.reapplyDashboardPendingActions).toHaveBeenCalled();
     expect(pending.state.get(`worktree:${path}`)).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -378,11 +380,12 @@ describe("worktrees dashboard mutation protocol", () => {
       clearDashboardOverlay: vi.fn(),
       restoreDashboardAfterOverlayDismiss: vi.fn(),
     };
+    attachPendingReapply(host, pending);
 
     handleWorktreeRemoveConfirmKey(host, Buffer.from("\r"));
 
     expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
     expect(host.restoreDashboardAfterOverlayDismiss).not.toHaveBeenCalled();
-    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 10_000 });
+    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 180_000 });
   });
 });

@@ -221,7 +221,7 @@ describe("DashboardPendingActions", () => {
     ]);
   });
 
-  it("can project only optimistic worktree creates for remote desktop state", () => {
+  it("projects existing worktree removals while synthesizing only missing creates", () => {
     const pending = new DashboardPendingActions(() => {});
     const removingWorktree = {
       name: "old",
@@ -246,8 +246,14 @@ describe("DashboardPendingActions", () => {
     pending.setWorktreeAction(removingWorktree.path, "removing");
     pending.setWorktreeAction(creatingWorktree.path, "creating", { worktreeSeed: creatingWorktree });
 
-    expect(pending.applyToWorktreeCreates([removingWorktree])).toEqual([
-      removingWorktree,
+    expect(pending.applyToWorktrees([removingWorktree])).toEqual([
+      expect.objectContaining({
+        path: removingWorktree.path,
+        pending: true,
+        pendingAction: "removing",
+        removing: true,
+        optimistic: true,
+      }),
       expect.objectContaining({
         path: creatingWorktree.path,
         pending: true,

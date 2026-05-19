@@ -95,7 +95,7 @@ export function buildDashboardWorktreeGroups(
     createdAt?: string;
     pending?: boolean;
     removing?: boolean;
-    pendingAction?: Extract<PendingWorktreeActionKind, "creating">;
+    pendingAction?: Extract<PendingWorktreeActionKind, "creating" | "removing" | "graveyarding">;
     operationFailure?: DashboardOperationFailure;
   }>,
   mainRepoPath?: string,
@@ -533,7 +533,7 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
                 isBare: boolean;
                 pending?: boolean;
                 removing?: boolean;
-                pendingAction?: Extract<PendingWorktreeActionKind, "creating">;
+                pendingAction?: Extract<PendingWorktreeActionKind, "creating" | "removing" | "graveyarding">;
                 operationFailure?: DashboardOperationFailure;
               }>;
               operationFailures?: DashboardOperationFailure[];
@@ -602,7 +602,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
     events: { bus: host.eventBus },
     desktop: {
       getState: () => host.buildDesktopState(),
-      listWorktrees: () => host.listDesktopWorktrees(),
+      listWorktrees: () => host.listProjectedDesktopWorktrees(),
       getSessionDisplayContext: (sessionId: string) => {
         const session =
           host.dashboardSessionsCache.find((entry: any) => entry.id === sessionId) ??
