@@ -175,6 +175,10 @@
 
   function agentStatusLabel(agent) {
     if (agent.status === "offline" && !agent.pending) return "offline";
+    if (agent.pending && ["creating", "forking", "starting"].includes(agent.pendingAction)) return "starting";
+    if (agent.pending && agent.pendingAction === "stopping") return "stopping";
+    if (agent.pending && agent.pendingAction === "graveyarding") return "killing";
+    if (agent.pending && agent.pendingAction === "migrating") return "migrating";
     if (agent.pending && agent.status === "starting") return "starting";
     if (agent.pending && agent.status === "stopping") return "stopping";
     if (agent.pending && agent.status === "killing") return "killing";
@@ -237,9 +241,9 @@
   }
 
   function serviceStatusLabel(service) {
-    if (service.pendingAction === "starting" || service.pending) return "starting";
     if (service.pendingAction === "stopping") return "stopping";
-    if (service.pendingAction === "graveyarding") return "removing";
+    if (service.pendingAction === "removing" || service.pendingAction === "graveyarding") return "removing";
+    if (service.pendingAction === "creating" || service.pendingAction === "starting" || service.pending) return "starting";
     if (service.status === "offline") return "offline";
     if (service.status === "exited") return "exited";
     return "running";

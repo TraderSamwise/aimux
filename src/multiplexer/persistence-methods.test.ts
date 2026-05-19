@@ -238,6 +238,63 @@ describe("persistenceMethods", () => {
     ]);
   });
 
+  it("projects session and service pending actions into desktop-state snapshots", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const session = {
+      index: 1,
+      id: "claude-1",
+      command: "claude",
+      label: "claude",
+      status: "running" as const,
+      active: false,
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    const service = {
+      id: "service-1",
+      command: "shell",
+      args: [],
+      label: "shell",
+      status: "offline" as const,
+      active: false,
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+    pending.setSessionAction(session.id, "stopping", { sessionSeed: session });
+    pending.setServiceAction(service.id, "removing", { serviceSeed: service });
+    const host = {
+      desktopStateSnapshot: {
+        sessions: [session],
+        services: [service],
+        worktrees: [],
+        operationFailures: [],
+        mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
+        mainCheckoutPath: "/repo",
+      },
+      dashboardPendingActions: pending,
+      refreshDesktopStateSnapshot: vi.fn(),
+      buildDesktopStateSnapshot: vi.fn(),
+      buildStatuslineSnapshot: vi.fn(() => ({})),
+    };
+
+    const state = persistenceMethods.buildDesktopState.call(host);
+
+    expect(state.sessions).toEqual([
+      expect.objectContaining({
+        id: session.id,
+        pending: true,
+        pendingAction: "stopping",
+        optimistic: true,
+      }),
+    ]);
+    expect(state.services).toEqual([
+      expect.objectContaining({
+        id: service.id,
+        pending: true,
+        pendingAction: "removing",
+        optimistic: true,
+      }),
+    ]);
+  });
+
   it("keeps raw worktree lists free of pending removal projection", () => {
     const pending = new DashboardPendingActions(() => {});
     const worktreePath = "/repo/.aimux/worktrees/demo";

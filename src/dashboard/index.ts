@@ -65,6 +65,7 @@ export interface DashboardSession {
   latestNotificationText?: string;
   semantic?: SessionSemanticState;
   pendingAction?: SessionPendingAction;
+  pending?: boolean;
   optimistic?: boolean;
 }
 
@@ -89,6 +90,7 @@ export interface DashboardService {
   pid?: number;
   previewLine?: string;
   pendingAction?: PendingDashboardActionKind;
+  pending?: boolean;
   optimistic?: boolean;
 }
 

@@ -201,7 +201,12 @@ export class DashboardPendingActions {
       seen.add(session.id);
       const pendingAction = this.getSessionAction(session.id);
       if (!pendingAction) return session;
-      return { ...session, pendingAction, optimistic: true };
+      return {
+        ...session,
+        pending: true,
+        pendingAction,
+        optimistic: true,
+      };
     });
     for (const [entryKey, entry] of this.actions.entries()) {
       if (entry.target !== "session") continue;
@@ -212,6 +217,7 @@ export class DashboardPendingActions {
       applied.push({
         ...entry.sessionSeed,
         id: sessionId,
+        pending: true,
         pendingAction: entry.kind,
         optimistic: true,
       });
@@ -225,9 +231,8 @@ export class DashboardPendingActions {
     const applied = services.map((service) => {
       seen.add(service.id);
       const pendingAction = this.getServiceAction(service.id);
-      if (pendingAction === "removing") return service;
       if (!pendingAction) return service;
-      return { ...service, pendingAction, optimistic: true };
+      return { ...service, pending: true, pendingAction, optimistic: true };
     });
     for (const [entryKey, entry] of this.actions.entries()) {
       if (entry.target !== "service") continue;
@@ -238,6 +243,7 @@ export class DashboardPendingActions {
       applied.push({
         ...entry.serviceSeed,
         id: serviceId,
+        pending: true,
         pendingAction: entry.kind,
         optimistic: true,
       });

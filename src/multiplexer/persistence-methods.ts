@@ -287,8 +287,8 @@ export const persistenceMethods = {
     }
     const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     return {
-      sessions: desktopState.sessions,
-      services: desktopState.services,
+      sessions: this.dashboardPendingActions.applyToSessions(desktopState.sessions),
+      services: this.dashboardPendingActions.applyToServices(desktopState.services),
       statusline: this.buildStatuslineSnapshot(),
       worktrees: this.dashboardPendingActions.applyToWorktrees(desktopState.worktrees),
       operationFailures: desktopState.operationFailures,

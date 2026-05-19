@@ -41,6 +41,7 @@ describe("DashboardPendingActions", () => {
         label: "claude",
         status: "waiting",
         worktreePath: "/repo/.aimux/worktrees/demo",
+        pending: true,
         pendingAction: "creating",
         optimistic: true,
       }),
@@ -67,6 +68,7 @@ describe("DashboardPendingActions", () => {
       expect.objectContaining({
         id: "claude-1",
         status: "running",
+        pending: true,
         pendingAction: "stopping",
         optimistic: true,
       }),
@@ -93,6 +95,7 @@ describe("DashboardPendingActions", () => {
       expect.objectContaining({
         id: "claude-1",
         status: "running",
+        pending: true,
         pendingAction: "migrating",
         optimistic: true,
       }),
@@ -119,7 +122,32 @@ describe("DashboardPendingActions", () => {
       expect.objectContaining({
         id: "service-1",
         status: "running",
+        pending: true,
         pendingAction: "stopping",
+        optimistic: true,
+      }),
+    ]);
+  });
+
+  it("projects existing service removals as pending", () => {
+    const pending = new DashboardPendingActions(() => {});
+    const service = {
+      id: "service-1",
+      command: "shell",
+      args: [],
+      label: "shell",
+      status: "offline" as const,
+      active: false,
+      worktreePath: "/repo/.aimux/worktrees/demo",
+    };
+
+    pending.setServiceAction("service-1", "removing", { serviceSeed: service });
+
+    expect(pending.applyToServices([service])).toEqual([
+      expect.objectContaining({
+        id: "service-1",
+        pending: true,
+        pendingAction: "removing",
         optimistic: true,
       }),
     ]);
