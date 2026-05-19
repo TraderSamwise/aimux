@@ -1,5 +1,7 @@
 # Desktop Shell Phase 1 Spec
 
+> **Superseded.** The Tauri/Svelte desktop shell this document specifies has been replaced by the Expo Router + React Native client at `app/`. Kept as historical context.
+
 ## Status
 
 Historical / superseded
