@@ -641,7 +641,8 @@
   }
 
   function isForkPending(sessionId) {
-    return isActionPending({
+    const projectPath = appState.selectedProject?.path;
+    return isSessionActionBlocked(projectPath, sessionId, "fork") || isActionPending({
       projectPath: appState.selectedProject?.path,
       kind: "fork",
       sourceSessionId: sessionId,
@@ -649,19 +650,13 @@
   }
 
   function isRenamePending(sessionId) {
-    return isActionPending({
-      projectPath: appState.selectedProject?.path,
-      kind: "rename",
-      sessionId,
-    });
+    const projectPath = appState.selectedProject?.path;
+    return isSessionActionBlocked(projectPath, sessionId, "rename");
   }
 
   function isMigratePending(sessionId) {
-    return isActionPending({
-      projectPath: appState.selectedProject?.path,
-      kind: "migrate",
-      sessionId,
-    });
+    const projectPath = appState.selectedProject?.path;
+    return isSessionActionBlocked(projectPath, sessionId, "migrate");
   }
 
   function isSpawnPending(tool, worktreePath) {

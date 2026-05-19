@@ -384,17 +384,45 @@ export function isActionPending(match = {}) {
   );
 }
 
-export function isSessionActionBlocked(projectPath, sessionId, requestedKind = null) {
-  const actions = inFlightActions.filter((action) => action.projectPath === projectPath && action.sessionId === sessionId);
-  if (actions.length === 0) return false;
-  if (requestedKind === "kill") {
-    return actions.some((action) => action.kind !== "stop");
-  }
+function findRawProject(projectPath) {
+  if (!projectPath) return null;
+  return projects.find((project) => project.path === projectPath) || null;
+}
+
+function findRawSession(projectPath, sessionId) {
+  if (!sessionId) return null;
+  return (findRawProject(projectPath)?.sessions || []).find((session) => session.id === sessionId) || null;
+}
+
+function findRawService(projectPath, serviceId) {
+  if (!serviceId) return null;
+  return (findRawProject(projectPath)?.services || []).find((service) => service.id === serviceId) || null;
+}
+
+function isRawSessionPendingBlocked(session, requestedKind = null) {
+  if (!session?.pending && !session?.pendingAction) return false;
+  if (requestedKind === "kill" && session.pendingAction === "stopping") return false;
   return true;
 }
 
+export function isSessionActionBlocked(projectPath, sessionId, requestedKind = null) {
+  const actions = inFlightActions.filter((action) => action.projectPath === projectPath && action.sessionId === sessionId);
+  if (actions.length > 0) {
+    if (requestedKind === "kill") {
+      if (actions.some((action) => action.kind !== "stop")) return true;
+      return isRawSessionPendingBlocked(findRawSession(projectPath, sessionId), requestedKind);
+    }
+    return true;
+  }
+  return isRawSessionPendingBlocked(findRawSession(projectPath, sessionId), requestedKind);
+}
+
 export function isServiceActionBlocked(projectPath, serviceId) {
-  return inFlightActions.some((action) => action.projectPath === projectPath && action.serviceId === serviceId);
+  if (inFlightActions.some((action) => action.projectPath === projectPath && action.serviceId === serviceId)) {
+    return true;
+  }
+  const service = findRawService(projectPath, serviceId);
+  return Boolean(service?.pending || service?.pendingAction);
 }
 
 function reconcileActions(incomingProjects) {
