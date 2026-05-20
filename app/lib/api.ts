@@ -10,8 +10,14 @@
 // hosted/Clerk-enabled deployments.
 
 import { getDaemonUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
+import type { RelayTransport } from "@/lib/relay-transport";
 import type { DesktopState } from "@/lib/desktop-state";
 import type { AgentInputPart, ChatMessage, ParsedAgentOutput } from "@/lib/events";
+
+let _relay: RelayTransport | null = null;
+export function setApiRelay(relay: RelayTransport | null): void {
+  _relay = relay;
+}
 
 export interface ApiOpts {
   token?: string | null;
@@ -47,7 +53,26 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
   return (await res.json()) as T;
 }
 
-// ── Daemon (port 9876) ────────────────────────────────────────────────────
+async function callDaemonViaRelay<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const result = await _relay!.request(method, path, body);
+  if (result.status >= 400) {
+    const b = result.body as { error?: string } | null;
+    throw new ApiError(result.status, result.body, b?.error ?? `HTTP ${result.status}`);
+  }
+  return result.body as T;
+}
+
+async function callServiceViaRelay<T>(
+  endpoint: ServiceEndpoint,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const proxyPath = `/proxy/${endpoint.host}/${endpoint.port}${path}`;
+  return callDaemonViaRelay<T>(method, proxyPath, body);
+}
+
+// ── Daemon (port 43190) ───────────────────────────────────────────────────
 
 export interface DaemonHealth {
   ok: boolean;
@@ -79,10 +104,15 @@ export interface DaemonProject {
 }
 
 export async function getDaemonHealth(opts?: ApiOpts): Promise<DaemonHealth> {
+  if (_relay?.isConnected) return callDaemonViaRelay<DaemonHealth>("GET", "/health");
   return callJson<DaemonHealth>(`${getDaemonUrl()}/health`, { method: "GET" }, opts);
 }
 
 export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
+  if (_relay?.isConnected) {
+    const data = await callDaemonViaRelay<{ ok: boolean; projects: DaemonProject[] }>("GET", "/projects");
+    return data.projects;
+  }
   const data = await callJson<{ ok: boolean; projects: DaemonProject[] }>(
     `${getDaemonUrl()}/projects`,
     { method: "GET" },
@@ -92,6 +122,7 @@ export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
 }
 
 export async function ensureProject(projectRoot: string, opts?: ApiOpts): Promise<unknown> {
+  if (_relay?.isConnected) return callDaemonViaRelay("POST", "/projects/ensure", { projectRoot });
   return callJson(
     `${getDaemonUrl()}/projects/ensure`,
     { method: "POST", body: JSON.stringify({ projectRoot }) },
@@ -245,6 +276,7 @@ export async function getDesktopState(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<DesktopState> {
+  if (_relay?.isConnected) return callServiceViaRelay<DesktopState>(endpoint, "GET", "/desktop-state");
   return callJson<DesktopState>(
     `${getServiceUrl(endpoint)}/desktop-state`,
     { method: "GET" },
@@ -377,6 +409,7 @@ export async function stopService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "stopped" }> {
+  if (_relay?.isConnected) return callServiceViaRelay(endpoint, "POST", "/services/stop", { serviceId });
   return callJson(
     `${getServiceUrl(endpoint)}/services/stop`,
     { method: "POST", body: JSON.stringify({ serviceId }) },
@@ -389,6 +422,7 @@ export async function resumeService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "running" }> {
+  if (_relay?.isConnected) return callServiceViaRelay(endpoint, "POST", "/services/resume", { serviceId });
   return callJson(
     `${getServiceUrl(endpoint)}/services/resume`,
     { method: "POST", body: JSON.stringify({ serviceId }) },
@@ -401,6 +435,7 @@ export async function removeService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "removed" }> {
+  if (_relay?.isConnected) return callServiceViaRelay(endpoint, "POST", "/services/remove", { serviceId });
   return callJson(
     `${getServiceUrl(endpoint)}/services/remove`,
     { method: "POST", body: JSON.stringify({ serviceId }) },
