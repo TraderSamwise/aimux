@@ -13,7 +13,7 @@ export interface AuthState {
 }
 
 /** true when no Clerk key is configured — app runs fully local */
-const LOCAL_MODE = !env.CLERK_PUBLISHABLE_KEY;
+export const LOCAL_MODE = !env.CLERK_PUBLISHABLE_KEY;
 
 const noop = async () => {};
 const noopToken = async () => null;
