@@ -382,6 +382,46 @@ describe("MetadataServer threads API", () => {
     expect(writes).toEqual([]);
   });
 
+  it("passes reused teammate creation responses over HTTP", async () => {
+    server?.stop();
+    const calls: unknown[] = [];
+    server = new MetadataServer({
+      lifecycle: {
+        createTeammateAgent: (input) => {
+          calls.push(input);
+          return {
+            sessionId: "reviewer-1",
+            parentSessionId: input.parentSessionId,
+            teamId: `team-${input.parentSessionId}`,
+            role: input.role,
+            label: input.label,
+            reused: true,
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        parentSessionId: "parent",
+        role: "reviewer",
+        label: "reviewer",
+      }),
+    });
+    const body = (await res.json()) as { ok: boolean; reused?: boolean; sessionId: string };
+
+    expect(res.ok).toBe(true);
+    expect(body).toMatchObject({ ok: true, reused: true, sessionId: "reviewer-1" });
+    expect(calls).toEqual([{ parentSessionId: "parent", role: "reviewer", label: "reviewer" }]);
+  });
+
   it("passes agent resume over HTTP", async () => {
     server?.stop();
     server = new MetadataServer({

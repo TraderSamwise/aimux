@@ -1083,7 +1083,10 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
                 },
               })
             : undefined,
-          (result) => waitForMetadataSessionRunning(host, result.sessionId),
+          (result) =>
+            result?.reused && result.sessionId !== input.sessionId
+              ? true
+              : waitForMetadataSessionRunning(host, result.sessionId),
         ),
       forkAgent: (input: any) =>
         withMetadataSessionPending(

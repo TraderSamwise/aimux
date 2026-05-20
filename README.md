@@ -438,6 +438,8 @@ Use `aimux metadata endpoint` to get the local base URL for the current project 
 
 Teammate agents are first-party aimux agents attached to a parent agent. They stay hidden from the normal dashboard unless the parent agent is focused, but can still be inspected, entered, stopped, restarted, and graveyarded through the parent/team UI.
 
+Direct teammate teams are capped at 3 agents. Creating a teammate is idempotent by normalized `role` + `label` for the same parent: if that direct teammate already exists, aimux returns it instead of creating a duplicate.
+
 List direct teammates for a parent:
 
 ```bash

@@ -222,8 +222,15 @@ interface MetadataServerOptions {
       initialPrompt?: string;
       order?: number;
     }) =>
-      | Promise<{ sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string }>
-      | { sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string };
+      | Promise<{
+          sessionId: string;
+          parentSessionId: string;
+          teamId: string;
+          role?: string;
+          label?: string;
+          reused?: true;
+        }>
+      | { sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string; reused?: true };
     forkAgent?: (input: {
       sourceSessionId: string;
       tool: string;

@@ -113,6 +113,12 @@ const TEAMMATE_INHERITABLE_ARG_FLAGS = new Set([
   "--effort",
   "--service-tier",
 ]);
+const MAX_DIRECT_TEAMMATES_PER_PARENT = 3;
+
+function normalizeOptionalString(value?: string): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
 
 function stripBaseArgs(args: string[], baseArgs: string[]): string[] {
   if (baseArgs.length === 0) return [...args];
@@ -254,7 +260,14 @@ export async function createTeammateAgent(
     initialPrompt?: string;
     order?: number;
   },
-): Promise<{ sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string }> {
+): Promise<{
+  sessionId: string;
+  parentSessionId: string;
+  teamId: string;
+  role?: string;
+  label?: string;
+  reused?: true;
+}> {
   host.syncSessionsFromState();
 
   const parent = host.sessions.find((session: any) => session.id === opts.parentSessionId && !session.exited);
@@ -276,11 +289,31 @@ export async function createTeammateAgent(
     throw new Error(`Tool "${toolConfigKey}" is disabled`);
   }
 
-  const role = opts.role?.trim() || loadTeamConfig().defaultRole;
+  const teamConfig = loadTeamConfig();
+  const role = normalizeOptionalString(opts.role) || teamConfig.defaultRole;
+  const label = normalizeOptionalString(opts.label);
   const teamId = `team-${parent.id}`;
-  const siblings = [...(host.sessions ?? []), ...(host.offlineSessions ?? [])].filter(
-    (session: any) => session.team?.teamId === teamId && session.team?.parentSessionId === parent.id,
+  const siblings = directTeammatesForParent(host, parent.id);
+  const existing = siblings.find(
+    (session: any) =>
+      (normalizeOptionalString(session.team?.role) || teamConfig.defaultRole) === role &&
+      normalizeOptionalString(session.team?.label) === label,
   );
+  if (existing) {
+    return {
+      sessionId: existing.id,
+      parentSessionId: parent.id,
+      teamId: existing.team?.teamId ?? teamId,
+      role: normalizeOptionalString(existing.team?.role) || role,
+      label: normalizeOptionalString(existing.team?.label),
+      reused: true,
+    };
+  }
+  if (siblings.length >= MAX_DIRECT_TEAMMATES_PER_PARENT) {
+    throw new Error(
+      `Parent agent "${parent.id}" already has ${siblings.length} teammates; reuse, stop, or graveyard an existing teammate before creating another`,
+    );
+  }
   const nextOrder =
     opts.order ??
     siblings.reduce((max: number, session: any) => Math.max(max, Number(session.team?.order ?? -1)), -1) + 1;
@@ -288,7 +321,7 @@ export async function createTeammateAgent(
     teamId,
     parentSessionId: parent.id,
     role,
-    label: opts.label?.trim() || undefined,
+    label,
     order: nextOrder,
   };
 
@@ -303,7 +336,7 @@ export async function createTeammateAgent(
     sameToolConfig: toolConfigKey === parentToolConfigKey,
     explicitExtraArgs: opts.extraArgs,
   });
-  const rolePreamble = buildRolePreamble(role, loadTeamConfig());
+  const rolePreamble = buildRolePreamble(role, teamConfig);
   const teammatePreamble = [
     `You are a teammate for aimux parent agent "${parent.id}".`,
     "You are a first-party aimux agent: the user can inspect, enter, stop, and restart you like any other agent.",

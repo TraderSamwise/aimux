@@ -160,6 +160,169 @@ describe("session actions", () => {
     expect(host.updateSessionLabel).toHaveBeenCalledWith("claude-reviewer", "reviewer");
   });
 
+  it("reuses an existing direct teammate with the same role and label", async () => {
+    const parent = { id: "claude-parent", command: "claude", exited: false };
+    const existing = {
+      id: "claude-reviewer",
+      command: "claude",
+      exited: false,
+      team: { teamId: "stale-team-id", parentSessionId: "claude-parent", role: " reviewer ", label: "reviewer" },
+    };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent, existing],
+      offlineSessions: [],
+      sessionToolKeys: new Map([["claude-parent", "claude"]]),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      createSession: vi.fn(() => ({ id: "new-reviewer" })),
+      sessionTmuxTargets: new Map(),
+    };
+
+    const result = await createTeammateAgent(host, {
+      parentSessionId: "claude-parent",
+      role: " reviewer ",
+      label: " reviewer ",
+      open: false,
+    });
+
+    expect(result).toEqual({
+      sessionId: "claude-reviewer",
+      parentSessionId: "claude-parent",
+      teamId: "stale-team-id",
+      role: "reviewer",
+      label: "reviewer",
+      reused: true,
+    });
+    expect(host.createSession).not.toHaveBeenCalled();
+  });
+
+  it("reuses an existing offline default-role teammate with an absent label", async () => {
+    const parent = { id: "codex-parent", command: "codex", exited: false };
+    const existing = {
+      id: "codex-coder",
+      command: "codex",
+      lifecycle: "offline",
+      team: { teamId: "team-codex-parent", parentSessionId: "codex-parent", role: "coder" },
+    };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent],
+      offlineSessions: [existing],
+      sessionToolKeys: new Map([["codex-parent", "codex"]]),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      createSession: vi.fn(() => ({ id: "new-coder" })),
+      sessionTmuxTargets: new Map(),
+    };
+
+    const result = await createTeammateAgent(host, {
+      parentSessionId: "codex-parent",
+      label: "   ",
+      open: false,
+    });
+
+    expect(result).toMatchObject({
+      sessionId: "codex-coder",
+      parentSessionId: "codex-parent",
+      role: "coder",
+      reused: true,
+    });
+    expect(result.label).toBeUndefined();
+    expect(host.createSession).not.toHaveBeenCalled();
+  });
+
+  it("allows distinct teammate labels up to the direct teammate cap", async () => {
+    const parent = { id: "claude-parent", command: "claude", exited: false };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [
+        parent,
+        {
+          id: "reviewer-1",
+          command: "claude",
+          team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer", label: "one" },
+        },
+        {
+          id: "reviewer-2",
+          command: "claude",
+          team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer", label: "two" },
+        },
+        {
+          id: "other-parent-reviewer",
+          command: "claude",
+          team: { teamId: "team-other-parent", parentSessionId: "other-parent", role: "reviewer", label: "three" },
+        },
+      ],
+      offlineSessions: [],
+      sessionToolKeys: new Map([["claude-parent", "claude"]]),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      createSession: vi.fn(() => ({ id: "reviewer-3" })),
+      sessionTmuxTargets: new Map(),
+    };
+
+    const result = await createTeammateAgent(host, {
+      parentSessionId: "claude-parent",
+      role: "reviewer",
+      label: "three",
+      open: false,
+    });
+
+    expect(result).toMatchObject({
+      sessionId: "reviewer-3",
+      parentSessionId: "claude-parent",
+      teamId: "team-claude-parent",
+      role: "reviewer",
+      label: "three",
+    });
+    expect(host.createSession).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a fourth distinct direct teammate but still reuses duplicates", async () => {
+    const parent = { id: "claude-parent", command: "claude", exited: false };
+    const teammates = ["one", "two", "three"].map((label, index) => ({
+      id: `reviewer-${index + 1}`,
+      command: "claude",
+      team: {
+        teamId: "team-claude-parent",
+        parentSessionId: "claude-parent",
+        role: "reviewer",
+        label,
+        order: index,
+      },
+    }));
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent, ...teammates],
+      offlineSessions: [],
+      sessionToolKeys: new Map([["claude-parent", "claude"]]),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      createSession: vi.fn(() => ({ id: "reviewer-4" })),
+      sessionTmuxTargets: new Map(),
+    };
+
+    await expect(
+      createTeammateAgent(host, {
+        parentSessionId: "claude-parent",
+        role: "reviewer",
+        label: "four",
+        open: false,
+      }),
+    ).rejects.toThrow("already has 3 teammates");
+
+    const reused = await createTeammateAgent(host, {
+      parentSessionId: "claude-parent",
+      role: "reviewer",
+      label: "two",
+      open: false,
+    });
+
+    expect(reused).toMatchObject({ sessionId: "reviewer-2", reused: true });
+    expect(host.createSession).not.toHaveBeenCalled();
+  });
+
   it("inherits safe parent model/runtime args for same-tool teammates", async () => {
     const parent = { id: "claude-parent", command: "claude", exited: false };
     const host: any = {
