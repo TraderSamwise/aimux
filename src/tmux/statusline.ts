@@ -5,12 +5,14 @@ import { isDashboardWindowName } from "./runtime-manager.js";
 import {
   compactSessionTitle,
   currentPathContext,
+  findStatuslineSession,
   renderDashboardScreens,
   renderSemanticBadge,
   renderSessionCompactHint,
   resolveCurrentTeammates,
   resolveExactCurrentSessionId,
   resolveExactSessionMetadata,
+  resolveFocusedTeammate,
   resolveScopedSessions,
   trim,
   type StatuslineData,
@@ -150,7 +152,7 @@ function renderExactHeadline(
     projectRoot,
   );
   if (!activeSessionId) return null;
-  const session = (data.sessions ?? []).find((entry) => entry.id === activeSessionId);
+  const session = findStatuslineSession(data, activeSessionId);
   const headline = session?.headline?.trim();
   if (!headline) return null;
   return trim(headline, 42);
@@ -173,9 +175,7 @@ function renderActiveMetadata(
     currentPath,
     projectRoot,
   );
-  const activeSession = activeSessionId
-    ? (data.sessions ?? []).find((entry) => entry.id === activeSessionId)
-    : undefined;
+  const activeSession = findStatuslineSession(data, activeSessionId);
   const metadata = resolveExactSessionMetadata(
     data,
     projectRoot,
@@ -279,14 +279,19 @@ function renderBottomLine(
     return chosen.join(separator);
   }
 
-  const chips = resolveScopedSessions(
+  const chips = resolveScopedSessions(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
+  const focusedTeammate = resolveFocusedTeammate(
     data,
     projectRoot,
     currentSession,
     currentWindow,
     currentWindowId,
     currentPath,
-  ).map(renderSessionChip);
+  );
+  const chipSessions =
+    focusedTeammate && !chips.some((session) => session.id === focusedTeammate.id)
+      ? [focusedTeammate, ...chips]
+      : chips;
   const headline = renderExactHeadline(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
   const teammateSegment = renderTeammateSegment(
     resolveCurrentTeammates(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath),
@@ -305,7 +310,7 @@ function renderBottomLine(
 
   const chosenChips: string[] = [];
   let used = 0;
-  for (const chip of chips) {
+  for (const chip of chipSessions.map(renderSessionChip)) {
     const next = visibleSegmentLength(chip) + (chosenChips.length > 0 ? chipSeparator.length : 0);
     if (used + next > maxWidth) break;
     chosenChips.push(chip);

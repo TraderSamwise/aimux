@@ -268,7 +268,7 @@ function rewriteLocalStatuslineArtifacts(
     writeStatusFile(`bottom-dashboard-${dashboardSessionName}.txt`, dashboardBottom);
   }
 
-  for (const entry of data.sessions ?? []) {
+  for (const entry of [...(data.sessions ?? []), ...(data.teammates ?? [])]) {
     if (!entry.tmuxWindowId) continue;
     const renderOptions = {
       currentWindow: entry.windowName,

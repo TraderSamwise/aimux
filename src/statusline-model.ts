@@ -135,11 +135,35 @@ function isWithinPath(path: string, root: string): boolean {
 
 function resolveScopedWorktreePath(data: StatuslineData, projectRoot: string, currentPath?: string): string {
   const normalizedCurrentPath = normalizePath(currentPath, projectRoot);
-  const candidates = (data.sessions ?? [])
+  const candidates = [...(data.sessions ?? []), ...(data.teammates ?? [])]
     .map((session) => normalizePath(session.worktreePath, projectRoot))
     .filter((worktreePath) => isWithinPath(normalizedCurrentPath, worktreePath))
     .sort((left, right) => right.length - left.length);
   return candidates[0] ?? normalizedCurrentPath;
+}
+
+function allStatuslineSessions(data: StatuslineData): StatuslineSession[] {
+  return [...(data.sessions ?? []), ...(data.teammates ?? [])];
+}
+
+export function findStatuslineSession(
+  data: StatuslineData,
+  sessionId: string | undefined,
+): StatuslineSession | undefined {
+  if (!sessionId) return undefined;
+  return allStatuslineSessions(data).find((session) => session.id === sessionId);
+}
+
+function sessionsMatchingScopedWindow(
+  sessions: StatuslineSession[],
+  scopedWorktreePath: string,
+  currentWindow: string,
+  projectRoot: string,
+): StatuslineSession[] {
+  return sessions.filter((session) => {
+    if (normalizePath(session.worktreePath, projectRoot) !== scopedWorktreePath) return false;
+    return session.windowName === currentWindow || session.label === currentWindow || session.tool === currentWindow;
+  });
 }
 
 export function sessionIdentity(
@@ -192,18 +216,27 @@ export function resolveCurrentSessionId(
   currentPath?: string,
   projectRoot?: string,
 ): string | undefined {
-  const sessions = data.sessions ?? [];
+  const sessions = allStatuslineSessions(data);
   if (currentWindowId) {
     const byWindow = sessions.find((session) => session.tmuxWindowId === currentWindowId);
     if (byWindow?.id) return byWindow.id;
   }
   if (currentWindow && projectRoot) {
     const scopedWorktreePath = resolveScopedWorktreePath(data, projectRoot, currentPath);
-    const byScopedWindow = sessions.find((session) => {
-      if (normalizePath(session.worktreePath, projectRoot) !== scopedWorktreePath) return false;
-      return session.windowName === currentWindow || session.label === currentWindow || session.tool === currentWindow;
-    });
-    if (byScopedWindow?.id) return byScopedWindow.id;
+    const visibleMatch = sessionsMatchingScopedWindow(
+      data.sessions ?? [],
+      scopedWorktreePath,
+      currentWindow,
+      projectRoot,
+    )[0];
+    if (visibleMatch?.id) return visibleMatch.id;
+    const teammateMatch = sessionsMatchingScopedWindow(
+      data.teammates ?? [],
+      scopedWorktreePath,
+      currentWindow,
+      projectRoot,
+    )[0];
+    if (teammateMatch?.id) return teammateMatch.id;
   }
   return data.sessions?.find((session) => session.active)?.id;
 }
@@ -216,19 +249,33 @@ export function resolveExactCurrentSessionId(
   currentPath?: string,
   projectRoot?: string,
 ): string | undefined {
-  const sessions = data.sessions ?? [];
+  const sessions = allStatuslineSessions(data);
   if (currentWindowId) {
     const byWindow = sessions.find((session) => session.tmuxWindowId === currentWindowId);
     if (byWindow?.id) return byWindow.id;
   }
   if (currentWindow && projectRoot) {
     const scopedWorktreePath = resolveScopedWorktreePath(data, projectRoot, currentPath);
-    const matches = sessions.filter((session) => {
-      if (normalizePath(session.worktreePath, projectRoot) !== scopedWorktreePath) return false;
-      return session.windowName === currentWindow || session.label === currentWindow || session.tool === currentWindow;
-    });
-    if (matches.length === 1) {
-      return matches[0]?.id;
+    const visibleMatches = sessionsMatchingScopedWindow(
+      data.sessions ?? [],
+      scopedWorktreePath,
+      currentWindow,
+      projectRoot,
+    );
+    if (visibleMatches.length === 1) {
+      return visibleMatches[0]?.id;
+    }
+    if (visibleMatches.length > 1) {
+      return undefined;
+    }
+    const teammateMatches = sessionsMatchingScopedWindow(
+      data.teammates ?? [],
+      scopedWorktreePath,
+      currentWindow,
+      projectRoot,
+    );
+    if (teammateMatches.length === 1) {
+      return teammateMatches[0]?.id;
     }
   }
   return undefined;
@@ -261,6 +308,35 @@ export function resolveScopedSessions(
         isCurrent: currentWindowId ? session.tmuxWindowId === currentWindowId : Boolean(session.active),
       };
     });
+}
+
+export function resolveFocusedTeammate(
+  data: StatuslineData,
+  projectRoot: string,
+  currentSession?: string,
+  currentWindow?: string,
+  currentWindowId?: string,
+  currentPath?: string,
+): ResolvedStatuslineSession | null {
+  const exactCurrentSessionId = resolveExactCurrentSessionId(
+    data,
+    currentSession,
+    currentWindow,
+    currentWindowId,
+    currentPath,
+    projectRoot,
+  );
+  if (!exactCurrentSessionId) return null;
+  const teammate = (data.teammates ?? []).find((session) => session.id === exactCurrentSessionId);
+  if (!teammate || teammate.status === "offline" || teammate.status === "exited") return null;
+  const resolvedMetadata = data.metadata?.[teammate.id];
+  return {
+    ...teammate,
+    derived: resolvedMetadata?.derived,
+    semantic: teammate.semantic,
+    metadata: resolvedMetadata,
+    isCurrent: true,
+  };
 }
 
 export function resolveCurrentTeammates(
