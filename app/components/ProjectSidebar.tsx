@@ -1,8 +1,15 @@
 import React from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useRouter } from "expo-router";
+import { useAtomValue, useSetAtom } from "jotai";
+import { Settings } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
-import { useProjectsStore } from "@/stores/projects";
+import {
+  projectsAtom,
+  selectedProjectAtom,
+  selectedSessionIdAtom,
+  selectProjectAtom,
+} from "@/stores/projects";
 import { cn } from "@/lib/utils";
 
 const STATUS_TONE: Record<string, string> = {
@@ -13,14 +20,13 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 export function ProjectSidebar() {
-  const projects = useProjectsStore((s) => s.projects);
-  const selectedProjectPath = useProjectsStore((s) => s.selectedProjectPath);
-  const selectedSessionId = useProjectsStore((s) => s.selectedSessionId);
-  const selectProject = useProjectsStore((s) => s.selectProject);
-  const selectSession = useProjectsStore((s) => s.selectSession);
+  const projects = useAtomValue(projectsAtom);
+  const selectedProject = useAtomValue(selectedProjectAtom);
+  const selectedProjectPath = selectedProject?.path ?? null;
+  const selectedSessionId = useAtomValue(selectedSessionIdAtom);
+  const selectProject = useSetAtom(selectProjectAtom);
+  const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
-
-  const selectedProject = projects.find((p) => p.path === selectedProjectPath) ?? null;
 
   return (
     <View className="w-72 border-r border-border bg-background">
@@ -108,6 +114,13 @@ export function ProjectSidebar() {
           </>
         ) : null}
       </ScrollView>
+      <Pressable
+        onPress={() => router.push("/(main)/settings")}
+        className="flex-row items-center gap-2 px-4 py-3 border-t border-border active:bg-accent/50"
+      >
+        <Settings size={16} color="#9ca3af" />
+        <Text className="text-sm text-foreground">Settings</Text>
+      </Pressable>
     </View>
   );
 }
