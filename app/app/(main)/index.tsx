@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { Platform, Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { GitBranch } from "lucide-react-native";
 import { Card, PressableCard } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
-import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { ServiceActions } from "@/components/service-actions";
 import { StatusDot, StatusPill } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
@@ -256,7 +255,6 @@ export default function DashboardIndex() {
 
   return (
     <View className="flex-1 bg-background">
-      {Platform.OS !== "web" ? <ProjectSidebar /> : null}
       <ScrollView className="flex-1" contentContainerClassName="px-8 py-7 max-w-[900px] w-full">
         {!project ? (
           <Text className="text-sm text-muted-foreground">

@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
-import { useRouter } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { ChevronLeft, GitBranch, Settings } from "lucide-react-native";
+import { ChevronLeft, GitBranch, Home, MessageSquare, Settings } from "lucide-react-native";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
@@ -383,6 +383,48 @@ function WorktreeTree({
   );
 }
 
+// ─── Bottom nav (tablet/desktop) ──────────────────────────────────────────
+
+const BOTTOM_NAV = [
+  { label: "Dashboard", route: "/" as const, Icon: Home },
+  { label: "Threads", route: "/threads" as const, Icon: MessageSquare },
+  { label: "Settings", route: "/settings" as const, Icon: Settings },
+];
+
+function navItemActive(pathname: string, route: string): boolean {
+  if (route === "/") return pathname === "/" || pathname === "/(main)";
+  return pathname.startsWith(route);
+}
+
+function SidebarBottomNav() {
+  const router = useRouter();
+  const pathname = usePathname();
+  return (
+    <View className="flex-row border-t border-border">
+      {BOTTOM_NAV.map(({ label, route, Icon }) => {
+        const active = navItemActive(pathname, route);
+        return (
+          <Pressable
+            key={route}
+            onPress={() => router.push(route)}
+            className="flex-1 items-center py-2.5 active:bg-accent/50"
+          >
+            <Icon size={15} color="#a1a1aa" />
+            <Text
+              className={cn(
+                "mt-0.5 text-[10px]",
+                active ? "text-foreground" : "text-muted-foreground",
+              )}
+            >
+              {label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 // ─── Top-level component ──────────────────────────────────────────────────
 
 export function ProjectSidebar() {
@@ -462,13 +504,7 @@ export function ProjectSidebar() {
           </>
         )}
       </ScrollView>
-      <Pressable
-        onPress={() => router.push("/(main)/settings")}
-        className="flex-row items-center gap-2 px-4 py-3 border-t border-border active:bg-accent/50"
-      >
-        <Settings size={15} color="#a1a1aa" />
-        <Text className="text-[13px] text-muted-foreground">Settings</Text>
-      </Pressable>
+      <SidebarBottomNav />
     </View>
   );
 }

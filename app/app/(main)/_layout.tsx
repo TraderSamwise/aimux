@@ -1,8 +1,7 @@
 import React, { useEffect, useRef } from "react";
-import { Platform, View } from "react-native";
 import { Stack } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
-import { ProjectSidebar } from "@/components/ProjectSidebar";
+import { AppShell } from "@/components/AppShell";
 import { getDesktopState, listProjects } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
@@ -94,22 +93,16 @@ export default function MainLayout() {
   }, [selectedProjectPath, endpointKey, refreshNonce, getToken, store]);
 
   return (
-    <View
-      className="flex-1 bg-background"
-      style={Platform.OS === "web" ? { flexDirection: "row" } : undefined}
-    >
-      {Platform.OS === "web" ? <ProjectSidebar /> : null}
-      <View className="flex-1">
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="index" />
-          <Stack.Screen name="agent/[sessionId]/chat" />
-          <Stack.Screen name="plans/[sessionId]" />
-          <Stack.Screen name="service/[serviceId]" />
-          <Stack.Screen name="threads" />
-          <Stack.Screen name="graveyard" />
-          <Stack.Screen name="settings" />
-        </Stack>
-      </View>
-    </View>
+    <AppShell>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="agent/[sessionId]/chat" />
+        <Stack.Screen name="plans/[sessionId]" />
+        <Stack.Screen name="service/[serviceId]" />
+        <Stack.Screen name="threads" />
+        <Stack.Screen name="graveyard" />
+        <Stack.Screen name="settings" />
+      </Stack>
+    </AppShell>
   );
 }
