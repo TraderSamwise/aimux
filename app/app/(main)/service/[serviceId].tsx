@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Platform, Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import { ChevronLeft } from "lucide-react-native";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
-import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { ServiceActions } from "@/components/service-actions";
 import { StatusDot } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
@@ -67,11 +66,7 @@ export default function ServiceDetailScreen() {
   }
 
   return (
-    <View
-      className="flex-1 bg-background"
-      style={Platform.OS === "web" ? { flexDirection: "row" } : undefined}
-    >
-      {Platform.OS !== "web" ? <ProjectSidebar /> : null}
+    <View className="flex-1 bg-background">
       <ScrollView className="flex-1 p-6">
         <Pressable onPress={goBack} className="flex-row items-center gap-1 mb-4 active:opacity-70">
           <ChevronLeft size={16} color="#9ca3af" />
