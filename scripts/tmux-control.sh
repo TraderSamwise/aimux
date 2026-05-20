@@ -641,7 +641,7 @@ fallback_local_control() {
       switch_local_window "$target_window_id" "$target_item_id"
       ;;
     team)
-      target_window_id=$(resolve_local_target_from_statusline) || return 1
+      target_window_id=$(resolve_local_target_from_statusline) || return 0
       target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
       switch_local_window "$target_window_id" "$target_item_id"
       ;;

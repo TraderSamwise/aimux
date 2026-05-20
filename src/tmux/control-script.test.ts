@@ -940,7 +940,7 @@ describe("tmux-control.sh", () => {
     expect(curlLog).toEqual([]);
   });
 
-  it("does not switch team targets when the resolved teammate has no tmux window", () => {
+  it("does not fail when the resolved teammate has no tmux window", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@parent" }],
       windows: {
@@ -970,7 +970,7 @@ describe("tmux-control.sh", () => {
       }),
     );
 
-    expect(() =>
+    expect(() => {
       runControl(envRoot, [
         "team",
         "--project-root",
@@ -987,8 +987,8 @@ describe("tmux-control.sh", () => {
         "@parent",
         "--current-path",
         "/repo/project/worktree",
-      ]),
-    ).toThrow();
+      ]);
+    }).not.toThrow();
 
     const log = readLog(envRoot);
     const curlLog = readCurlLog(envRoot);

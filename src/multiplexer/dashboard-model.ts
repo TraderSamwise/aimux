@@ -377,7 +377,12 @@ async function resumeAgentAndDirectTeammates(
   host: DashboardModelHost,
   sessionId: string,
   sessionSeed?: any,
-): Promise<{ sessionId: string; status: "running" }> {
+): Promise<{
+  sessionId: string;
+  status: "running";
+  warning?: string;
+  teammateFailures?: Array<{ sessionId: string; error: string }>;
+}> {
   const offline = resolveOfflineSessionForAction(host, sessionId, sessionSeed);
   if (!offline) {
     throw new Error(`Agent "${sessionId}" not found`);
@@ -396,7 +401,14 @@ async function resumeAgentAndDirectTeammates(
   }
 
   if (teammateFailures.length > 0) {
-    throw new Error(lifecycleFailureMessage("resume", teammateFailures));
+    return {
+      ...result,
+      warning: lifecycleFailureMessage("resume", teammateFailures),
+      teammateFailures: teammateFailures.map(({ sessionId, error }) => ({
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      })),
+    };
   }
   return result;
 }

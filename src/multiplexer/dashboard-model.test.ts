@@ -568,9 +568,12 @@ describe("metadata pending actions", () => {
       await startProjectServices(host);
       const desktop = (host.metadataServer as any).options.desktop;
 
-      await expect(desktop.resumeAgent({ sessionId: "claude-parent" })).rejects.toThrow(
-        "Failed to resume 1 teammate: codex-reviewer: teammate backend missing",
-      );
+      await expect(desktop.resumeAgent({ sessionId: "claude-parent" })).resolves.toMatchObject({
+        sessionId: "claude-parent",
+        status: "running",
+        warning: "Failed to resume 1 teammate: codex-reviewer: teammate backend missing",
+        teammateFailures: [{ sessionId: "codex-reviewer", error: "teammate backend missing" }],
+      });
 
       expect(resumeOrder).toEqual(["claude-parent", "codex-reviewer"]);
       expect(host.sessions.map((session: any) => session.id)).toEqual(["claude-parent"]);
