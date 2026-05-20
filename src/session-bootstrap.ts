@@ -38,6 +38,7 @@ export function buildAimuxAgentInstructions(
       '- Delegate work by POSTing `/agents/teammates/send` with JSON like `{ "parentSessionId": "' +
       sessionPath +
       '", "teammateSessionId": "codex-abc123", "body": "Review this patch", "interrupt": true }`.\n' +
+      "- Manage direct teammate lifecycle with `/agents/teammates/stop`, `/agents/teammates/resume`, `/agents/teammates/kill`, and `/agents/teammates/resurrect`; pass your `parentSessionId` plus the direct `teammateSessionId`.\n" +
       "- If your own session instructions say you are already a teammate for another parent, do not create nested teammates unless the user explicitly asks."
     : "";
 

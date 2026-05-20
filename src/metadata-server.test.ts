@@ -382,6 +382,139 @@ describe("MetadataServer threads API", () => {
     expect(writes).toEqual([]);
   });
 
+  it("controls only direct teammate lifecycle targets", async () => {
+    server?.stop();
+    const calls: string[] = [];
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [
+            {
+              id: "child",
+              command: "codex",
+              status: "offline",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+            },
+            {
+              id: "other-child",
+              command: "codex",
+              status: "offline",
+              team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+            },
+          ],
+        }),
+        resumeAgent: ({ sessionId }) => {
+          calls.push(`resume:${sessionId}`);
+          return { sessionId, status: "running" as const };
+        },
+      },
+      lifecycle: {
+        stopAgent: ({ sessionId }) => {
+          calls.push(`stop:${sessionId}`);
+          return { sessionId, status: "offline" as const };
+        },
+        killAgent: ({ sessionId }) => {
+          calls.push(`kill:${sessionId}`);
+          return { sessionId, status: "graveyard" as const, previousStatus: "offline" as const };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const request = (path: string, teammateSessionId = "child") =>
+      fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ parentSessionId: "parent", teammateSessionId }),
+      });
+
+    expect((await (await request("/agents/teammates/stop")).json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      sessionId: "child",
+      teammateSessionId: "child",
+    });
+    expect((await (await request("/agents/teammates/resume")).json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      sessionId: "child",
+      teammateSessionId: "child",
+    });
+    expect((await (await request("/agents/teammates/kill")).json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      sessionId: "child",
+      teammateSessionId: "child",
+      status: "graveyard",
+    });
+
+    const foreign = await request("/agents/teammates/stop", "other-child");
+    const foreignBody = (await foreign.json()) as { ok: boolean; error: string };
+    expect(foreign.status).toBe(404);
+    expect(foreignBody.error).toContain("not attached");
+    expect(calls).toEqual(["stop:child", "resume:child", "kill:child"]);
+  });
+
+  it("resurrects direct graveyard teammates through graveyard-aware validation", async () => {
+    server?.stop();
+    const calls: string[] = [];
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [],
+        }),
+        listGraveyard: () => [
+          {
+            id: "child",
+            command: "codex",
+            status: "graveyard",
+            team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+          },
+          {
+            id: "other-child",
+            command: "codex",
+            status: "graveyard",
+            team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+          },
+        ],
+        resurrectGraveyard: ({ sessionId }) => {
+          calls.push(`resurrect:${sessionId}`);
+          return { sessionId, status: "offline" as const };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/resurrect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "child" }),
+    });
+    expect(res.ok).toBe(true);
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      sessionId: "child",
+      teammateSessionId: "child",
+      status: "offline",
+    });
+
+    const foreign = await fetch(`${base}/agents/teammates/resurrect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "other-child" }),
+    });
+    const foreignBody = (await foreign.json()) as { ok: boolean; error: string };
+    expect(foreign.status).toBe(404);
+    expect(foreignBody.error).toContain("graveyard teammate");
+    expect(calls).toEqual(["resurrect:child"]);
+  });
+
   it("passes reused teammate creation responses over HTTP", async () => {
     server?.stop();
     const calls: unknown[] = [];

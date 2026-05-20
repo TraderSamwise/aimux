@@ -433,6 +433,10 @@ The project-service HTTP API also exposes:
 - `GET /agents/teammates?parentSessionId=...`
 - `POST /agents/teammates/create`
 - `POST /agents/teammates/send`
+- `POST /agents/teammates/stop`
+- `POST /agents/teammates/resume`
+- `POST /agents/teammates/kill`
+- `POST /agents/teammates/resurrect`
 
 Use `aimux metadata endpoint` to get the local base URL for the current project service.
 
@@ -485,6 +489,16 @@ curl -sS "$endpoint/agents/teammates/send" \
 ```
 
 `/agents/teammates/send` only accepts direct teammates of the parent. Set `interrupt: true` to interrupt the teammate before delivering the message.
+
+Manage a direct teammate lifecycle with the same parent/teammate guard:
+
+```bash
+curl -sS "$endpoint/agents/teammates/stop" \
+  -H 'content-type: application/json' \
+  -d '{ "parentSessionId": "claude-abc123", "teammateSessionId": "codex-def456" }'
+```
+
+Use `/agents/teammates/resume` for offline teammates, `/agents/teammates/kill` to send a direct teammate to the graveyard, and `/agents/teammates/resurrect` to move a direct graveyarded teammate back to offline. Each endpoint rejects teammates not directly attached to the parent.
 
 ## Plugins And Watchers
 

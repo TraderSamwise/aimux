@@ -570,6 +570,69 @@ export class MetadataServer {
     };
   }
 
+  private resolveDirectTeammate(
+    parentSessionId: string,
+    teammateSessionId: string,
+  ):
+    | {
+        ok: true;
+        parent: DesktopSessionRecord;
+        teammate: DesktopSessionRecord;
+      }
+    | {
+        ok: false;
+        status: number;
+        error: string;
+      } {
+    if (!teammateSessionId.trim()) {
+      return { ok: false, status: 400, error: "teammateSessionId is required" };
+    }
+    const resolved = this.resolveDirectTeammates(parentSessionId);
+    if (!resolved.ok) return resolved;
+    const teammate = resolved.teammates.find((session) => session.id === teammateSessionId);
+    if (!teammate) {
+      return {
+        ok: false,
+        status: 404,
+        error: `teammate "${teammateSessionId}" is not attached to parent "${parentSessionId}"`,
+      };
+    }
+    return { ok: true, parent: resolved.parent, teammate };
+  }
+
+  private resolveDirectGraveyardTeammate(
+    parentSessionId: string,
+    teammateSessionId: string,
+  ):
+    | {
+        ok: true;
+        parent: DesktopSessionRecord;
+        teammate: DesktopSessionRecord;
+      }
+    | {
+        ok: false;
+        status: number;
+        error: string;
+      } {
+    if (!this.options.desktop?.listGraveyard) {
+      return { ok: false, status: 501, error: "graveyard discovery not supported by this service" };
+    }
+    const resolved = this.resolveDirectTeammates(parentSessionId);
+    if (!resolved.ok) return resolved;
+    const teammate = selectDirectTeammates(
+      desktopSessionList(this.options.desktop.listGraveyard()),
+      resolved.parent.id,
+    ).find((session) => session.id === teammateSessionId);
+    if (!teammate) {
+      return {
+        ok: false,
+        status: 404,
+        error: `graveyard teammate "${teammateSessionId}" is not attached to parent "${parentSessionId}"`,
+      };
+    }
+    return { ok: true, parent: resolved.parent, teammate };
+  }
+
   private listen(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!this.server) return reject(new Error("server not initialized"));
@@ -2040,6 +2103,112 @@ export class MetadataServer {
         }
         this.options.onChange?.();
         send(res, 200, { ok: result.accepted, parentSessionId, teammateSessionId: teammate.id, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/teammates/stop") {
+        const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
+        const resolved = this.resolveDirectTeammate(
+          body.parentSessionId?.trim() ?? "",
+          body.teammateSessionId?.trim() ?? "",
+        );
+        if (!resolved.ok) {
+          send(res, resolved.status, { ok: false, error: resolved.error });
+          return;
+        }
+        if (!this.options.lifecycle?.stopAgent) {
+          send(res, 501, { ok: false, error: "agent stop not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.stopAgent({ sessionId: resolved.teammate.id });
+        this.options.onChange?.();
+        send(res, 200, {
+          ok: true,
+          parentSessionId: resolved.parent.id,
+          teammateSessionId: resolved.teammate.id,
+          ...result,
+        });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/teammates/resume") {
+        const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
+        const resolved = this.resolveDirectTeammate(
+          body.parentSessionId?.trim() ?? "",
+          body.teammateSessionId?.trim() ?? "",
+        );
+        if (!resolved.ok) {
+          send(res, resolved.status, { ok: false, error: resolved.error });
+          return;
+        }
+        if (!this.options.desktop?.resumeAgent) {
+          send(res, 501, { ok: false, error: "agent resume not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.resumeAgent({
+          sessionId: resolved.teammate.id,
+          session: resolved.teammate,
+        });
+        this.options.onChange?.();
+        send(res, 200, {
+          ok: true,
+          parentSessionId: resolved.parent.id,
+          teammateSessionId: resolved.teammate.id,
+          ...result,
+        });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/teammates/kill") {
+        const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
+        const resolved = this.resolveDirectTeammate(
+          body.parentSessionId?.trim() ?? "",
+          body.teammateSessionId?.trim() ?? "",
+        );
+        if (!resolved.ok) {
+          send(res, resolved.status, { ok: false, error: resolved.error });
+          return;
+        }
+        if (!this.options.lifecycle?.killAgent) {
+          send(res, 501, { ok: false, error: "agent kill not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.killAgent({
+          sessionId: resolved.teammate.id,
+          session: resolved.teammate,
+        });
+        this.options.onChange?.();
+        send(res, 200, {
+          ok: true,
+          parentSessionId: resolved.parent.id,
+          teammateSessionId: resolved.teammate.id,
+          ...result,
+        });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/teammates/resurrect") {
+        const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
+        const resolved = this.resolveDirectGraveyardTeammate(
+          body.parentSessionId?.trim() ?? "",
+          body.teammateSessionId?.trim() ?? "",
+        );
+        if (!resolved.ok) {
+          send(res, resolved.status, { ok: false, error: resolved.error });
+          return;
+        }
+        if (!this.options.desktop?.resurrectGraveyard) {
+          send(res, 501, { ok: false, error: "graveyard resurrect not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.resurrectGraveyard({ sessionId: resolved.teammate.id });
+        this.options.onChange?.();
+        send(res, 200, {
+          ok: true,
+          parentSessionId: resolved.parent.id,
+          teammateSessionId: resolved.teammate.id,
+          ...result,
+        });
         return;
       }
 
