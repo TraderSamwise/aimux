@@ -1,15 +1,16 @@
 import React, { useEffect, useRef } from "react";
 import { Platform, View } from "react-native";
 import { Stack } from "expo-router";
+import { useSetAtom } from "jotai";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { listProjects } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useProjectsStore } from "@/stores/projects";
+import { reconcileProjectsAtom } from "@/stores/projects";
 
 const POLL_INTERVAL_MS = 2000;
 
 export default function MainLayout() {
-  const setProjects = useProjectsStore((s) => s.setProjects);
+  const reconcileProjects = useSetAtom(reconcileProjectsAtom);
   const { getToken } = useAuth();
   const tokenRef = useRef<string | null>(null);
 
@@ -23,7 +24,7 @@ export default function MainLayout() {
         const token = await getToken();
         if (!cancelled) tokenRef.current = token;
         const projects = await listProjects({ token });
-        if (!cancelled) setProjects(projects);
+        if (!cancelled) reconcileProjects(projects);
       } catch (err) {
         // Failed fetches report inline per-operation; no global UI per task description.
         if (!cancelled) console.warn("project list refresh failed:", err);
@@ -38,7 +39,7 @@ export default function MainLayout() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [getToken, setProjects]);
+  }, [getToken, reconcileProjects]);
 
   return (
     <View
@@ -53,6 +54,7 @@ export default function MainLayout() {
           <Stack.Screen name="plans/[sessionId]" />
           <Stack.Screen name="threads" />
           <Stack.Screen name="graveyard" />
+          <Stack.Screen name="settings" />
         </Stack>
       </View>
     </View>

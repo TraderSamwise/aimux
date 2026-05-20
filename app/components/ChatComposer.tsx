@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { Pressable, TextInput, View } from "react-native";
+import { useSetAtom } from "jotai";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
-import { useChatStore } from "@/stores/chat";
+import { addPendingAtom, updatePendingAtom } from "@/stores/chat";
 import { sendAgentInput, uploadAttachmentBase64 } from "@/lib/api";
 import type { AgentInputPart, HistoryPart } from "@/lib/events";
 import { pickImages } from "@/lib/image-picker";
@@ -35,8 +36,8 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const addPending = useChatStore((s) => s.addPending);
-  const updatePending = useChatStore((s) => s.updatePending);
+  const addPending = useSetAtom(addPendingAtom);
+  const updatePending = useSetAtom(updatePendingAtom);
 
   async function handleAttach() {
     setError(null);
@@ -100,11 +101,14 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
       });
     }
 
-    addPending(sessionId, {
-      clientMessageId,
-      parts: historyParts,
-      ts: new Date().toISOString(),
-      deliveryState: "sending",
+    addPending({
+      sessionId,
+      pending: {
+        clientMessageId,
+        parts: historyParts,
+        ts: new Date().toISOString(),
+        deliveryState: "sending",
+      },
     });
 
     try {
@@ -115,18 +119,28 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
       );
       if (!result.accepted) {
         const msg = result.error ?? "The agent input operation failed.";
-        updatePending(sessionId, clientMessageId, { deliveryState: "failed", deliveryError: msg });
+        updatePending({
+          sessionId,
+          clientMessageId,
+          patch: { deliveryState: "failed", deliveryError: msg },
+        });
         setError(msg);
         return;
       }
-      updatePending(sessionId, clientMessageId, {
-        deliveryState: (result.operation?.state as "submitted") ?? "submitted",
+      updatePending({
+        sessionId,
+        clientMessageId,
+        patch: { deliveryState: (result.operation?.state as "submitted") ?? "submitted" },
       });
       setDraft("");
       setDraftImages([]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      updatePending(sessionId, clientMessageId, { deliveryState: "failed", deliveryError: msg });
+      updatePending({
+        sessionId,
+        clientMessageId,
+        patch: { deliveryState: "failed", deliveryError: msg },
+      });
       setError(msg);
     } finally {
       setSending(false);

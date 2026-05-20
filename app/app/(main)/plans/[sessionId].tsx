@@ -1,16 +1,17 @@
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, ScrollView, TextInput, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useAtomValue } from "jotai";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { ApiError, getPlan, putPlan } from "@/lib/api";
-import { selectedProjectFromState, useProjectsStore } from "@/stores/projects";
+import { selectedProjectAtom } from "@/stores/projects";
 
 export default function PlanEditorScreen() {
   const params = useLocalSearchParams<{ sessionId: string }>();
   const sessionId = String(params.sessionId);
-  const project = useProjectsStore(selectedProjectFromState);
+  const project = useAtomValue(selectedProjectAtom);
   const { getToken } = useAuth();
   const router = useRouter();
 

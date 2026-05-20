@@ -1,26 +1,35 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useAtomValue, useSetAtom } from "jotai";
 import { Text } from "@/components/ui/text";
-import { Button } from "@/components/ui/button";
-import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { ChatComposer } from "@/components/ChatComposer";
 import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
 import { getAgentHistory } from "@/lib/api";
-import { useChatStore } from "@/stores/chat";
-import { selectedProjectFromState, useProjectsStore } from "@/stores/projects";
+import {
+  chatHistoryFamily,
+  ingestEventAtom,
+  lastErrorFamily,
+  outputBufferFamily,
+  pendingMessagesFamily,
+  setHistoryAtom,
+} from "@/stores/chat";
+import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 import type { ChatMessage } from "@/lib/events";
 
 export default function ChatScreen() {
   const params = useLocalSearchParams<{ sessionId: string }>();
   const sessionId = String(params.sessionId);
-  const project = useProjectsStore(selectedProjectFromState);
-  const selectSession = useProjectsStore((s) => s.selectSession);
-  const ingestEvent = useChatStore((s) => s.ingestEvent);
-  const setHistory = useChatStore((s) => s.setHistory);
-  const sessionState = useChatStore((s) => s.bySession[sessionId]);
+  const project = useAtomValue(selectedProjectAtom);
+  const selectSession = useSetAtom(selectedSessionIdAtom);
+  const ingestEvent = useSetAtom(ingestEventAtom);
+  const setHistory = useSetAtom(setHistoryAtom);
+  const history = useAtomValue(chatHistoryFamily(sessionId));
+  const pendingMessages = useAtomValue(pendingMessagesFamily(sessionId));
+  const output = useAtomValue(outputBufferFamily(sessionId));
+  const lastError = useAtomValue(lastErrorFamily(sessionId));
   const { getToken } = useAuth();
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
@@ -54,7 +63,7 @@ export default function ChatScreen() {
     getAgentHistory(serviceEndpoint, sessionId, 50, { token })
       .then((res) => {
         if (cancelled) return;
-        setHistory(sessionId, res.messages ?? []);
+        setHistory({ sessionId, messages: res.messages ?? [] });
       })
       .catch((err) => {
         if (!cancelled) console.warn("history fetch failed:", err);
@@ -86,8 +95,7 @@ export default function ChatScreen() {
   }, [serviceEndpoint?.host, serviceEndpoint?.port, sessionId, token, ingestEvent]);
 
   const allMessages = useMemo<ChatMessage[]>(() => {
-    const history = sessionState?.history ?? [];
-    const pending = (sessionState?.pendingMessages ?? []).map((p) => ({
+    const pending = pendingMessages.map((p) => ({
       id: `pending-${p.clientMessageId}`,
       clientMessageId: p.clientMessageId,
       role: "user" as const,
@@ -99,11 +107,11 @@ export default function ChatScreen() {
     return [...history, ...pending].sort((a, b) =>
       String(a.ts ?? "").localeCompare(String(b.ts ?? "")),
     );
-  }, [sessionState?.history, sessionState?.pendingMessages]);
+  }, [history, pendingMessages]);
 
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: true });
-  }, [allMessages.length, sessionState?.output]);
+  }, [allMessages.length, output]);
 
   const session = project?.sessions.find((s) => s.id === sessionId) ?? null;
 
@@ -152,16 +160,14 @@ export default function ChatScreen() {
                     serviceEndpoint={serviceEndpoint}
                   />
                 ))}
-                {sessionState?.output ? (
+                {output ? (
                   <View className="self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1">
                     <Text className="text-xs text-muted-foreground mb-1">Live output</Text>
-                    <Text className="text-secondary-foreground text-xs font-mono">
-                      {sessionState.output}
-                    </Text>
+                    <Text className="text-secondary-foreground text-xs font-mono">{output}</Text>
                   </View>
                 ) : null}
-                {sessionState?.lastError ? (
-                  <Text className="text-xs text-destructive my-2">{sessionState.lastError}</Text>
+                {lastError ? (
+                  <Text className="text-xs text-destructive my-2">{lastError}</Text>
                 ) : null}
               </ScrollView>
               <ChatComposer serviceEndpoint={serviceEndpoint} sessionId={sessionId} token={token} />
