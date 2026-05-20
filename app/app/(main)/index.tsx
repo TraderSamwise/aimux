@@ -1,13 +1,14 @@
 import React from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useRouter } from "expo-router";
+import { useAtomValue, useSetAtom } from "jotai";
 import { Text } from "@/components/ui/text";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
-import { selectedProjectFromState, useProjectsStore } from "@/stores/projects";
+import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 
 export default function DashboardIndex() {
-  const project = useProjectsStore(selectedProjectFromState);
-  const selectSession = useProjectsStore((s) => s.selectSession);
+  const project = useAtomValue(selectedProjectAtom);
+  const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
 
   return (
