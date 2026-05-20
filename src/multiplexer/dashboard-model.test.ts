@@ -260,21 +260,42 @@ describe("metadata pending actions", () => {
         lifecycle.createTeammateAgent({
           sessionId: "codex-reviewer",
           parentSessionId: "claude-parent",
-          role: "reviewer",
-          label: "review",
+          role: " reviewer ",
+          label: " review ",
           tool: "codex",
+          worktreePath: "/tmp/review-worktree",
+          extraArgs: ["--model", "gpt-5.5"],
+          initialPrompt: "Review the patch and report blockers first.",
+          open: true,
+          order: 2,
         }),
       ).rejects.toThrow("teammate sentinel");
+      expect(host.createTeammateAgent).toHaveBeenLastCalledWith({
+        parentSessionId: "claude-parent",
+        role: " reviewer ",
+        label: " review ",
+        toolConfigKey: "codex",
+        targetSessionId: "codex-reviewer",
+        targetWorktreePath: "/tmp/review-worktree",
+        open: true,
+        extraArgs: ["--model", "gpt-5.5"],
+        initialPrompt: "Review the patch and report blockers first.",
+        order: 2,
+      });
       expect(setSessionAction).toHaveBeenLastCalledWith(
         "codex-reviewer",
         "creating",
         expect.objectContaining({
           sessionSeed: expect.objectContaining({
+            command: "codex",
+            label: "codex",
+            worktreePath: "/tmp/review-worktree",
             team: expect.objectContaining({
               teamId: "team-claude-parent",
               parentSessionId: "claude-parent",
               role: "reviewer",
               label: "review",
+              order: 2,
             }),
           }),
         }),

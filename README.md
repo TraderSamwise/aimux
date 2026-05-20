@@ -442,6 +442,12 @@ Use `aimux metadata endpoint` to get the local base URL for the current project 
 
 Teammate agents are first-party aimux agents attached to a parent agent. They stay hidden from the normal dashboard unless the parent agent is focused, but can still be inspected, entered, stopped, restarted, and graveyarded through the parent/team UI.
 
+Dashboard navigation exposes only the selected parent's direct team:
+
+- On the dashboard, select a parent agent and press `e` to open its teammate picker.
+- In an attached agent pane, press `Ctrl-A e` to toggle between the parent and its first/active teammate.
+- Non-selected parents do not expose their teammates in dashboard rows, details, or footer chips.
+
 Direct teammate teams are capped at 3 agents. Creating a teammate is idempotent by normalized `role` + `label` for the same parent: if that direct teammate already exists, aimux returns it instead of creating a duplicate.
 
 List direct teammates for a parent:
@@ -470,9 +476,11 @@ Useful request fields:
 - `parentSessionId` - required aimux session ID of the primary agent.
 - `role` / `label` - optional teammate role and display label.
 - `tool` - optional tool config key; omitted means inherit the parent tool and safe model/provider/runtime flags.
+- `sessionId` - optional aimux session ID; omitted means aimux generates one.
 - `worktreePath` - optional target worktree; omitted means inherit the parent worktree.
 - `extraArgs` - optional CLI args for model/provider flags; when set, these override inherited runtime flags.
 - `initialPrompt` - optional first task sent to the teammate after launch.
+- `order` - optional numeric order within the parent's direct team.
 - `open` - optional boolean; `false` creates without switching focus.
 
 Delegate to an existing direct teammate:

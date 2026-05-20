@@ -546,13 +546,33 @@ describe("MetadataServer threads API", () => {
         parentSessionId: "parent",
         role: "reviewer",
         label: "reviewer",
+        tool: "codex",
+        sessionId: "codex-reviewer",
+        worktreePath: "/tmp/review-worktree",
+        extraArgs: ["--model", "gpt-5.5"],
+        initialPrompt: "Review the patch and report blockers first.",
+        order: 2,
+        open: true,
       }),
     });
     const body = (await res.json()) as { ok: boolean; reused?: boolean; sessionId: string };
 
     expect(res.ok).toBe(true);
     expect(body).toMatchObject({ ok: true, reused: true, sessionId: "reviewer-1" });
-    expect(calls).toEqual([{ parentSessionId: "parent", role: "reviewer", label: "reviewer" }]);
+    expect(calls).toEqual([
+      {
+        parentSessionId: "parent",
+        role: "reviewer",
+        label: "reviewer",
+        tool: "codex",
+        sessionId: "codex-reviewer",
+        worktreePath: "/tmp/review-worktree",
+        extraArgs: ["--model", "gpt-5.5"],
+        initialPrompt: "Review the patch and report blockers first.",
+        order: 2,
+        open: true,
+      },
+    ]);
   });
 
   it("passes agent resume over HTTP", async () => {
