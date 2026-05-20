@@ -23,6 +23,9 @@ describe("buildAimuxAgentInstructions", () => {
     expect(instructions).toContain("Claude, Codex, and shell sessions");
     expect(instructions).toContain("Your aimux session ID is codex-123");
     expect(instructions).toContain(".aimux/tasks/*.json");
+    expect(instructions).toContain("/agents/teammates/create");
+    expect(instructions).toContain("Reuse existing teammates first");
+    expect(instructions).toContain("aimux metadata endpoint");
     expect(instructions).toContain("Do not proactively create or edit `.aimux/plans/*` or `.aimux/status/*`");
     expect(instructions).not.toContain("Maintain a plan file");
     expect(instructions).not.toContain("Maintain a status file");
@@ -50,6 +53,25 @@ describe("SessionBootstrapService", () => {
     expect(preamble).toContain("Your aimux session ID is claude-123");
     expect(preamble).toContain("Do not proactively create or edit `.aimux/plans/*` or `.aimux/status/*`");
     expect(preamble).not.toContain("Maintain a plan file");
+  });
+
+  it("does not tell teammate sessions to create nested teammates", () => {
+    const service = new SessionBootstrapService(deps);
+    const preamble = service.buildSessionPreamble({
+      sessionId: "codex-child",
+      command: "codex",
+      includeAimuxPreamble: true,
+      extraPreamble: 'You are a teammate for aimux parent agent "codex-parent".',
+      team: {
+        teamId: "team-codex-parent",
+        parentSessionId: "codex-parent",
+        role: "coder",
+      },
+    });
+
+    expect(preamble).toContain('You are a teammate for aimux parent agent "codex-parent".');
+    expect(preamble).not.toContain("/agents/teammates/create");
+    expect(preamble).not.toContain("Reuse existing teammates first");
   });
 
   it("attempts detached Codex kickoff delivery even if readiness probing times out", async () => {

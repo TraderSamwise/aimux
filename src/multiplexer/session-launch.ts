@@ -397,6 +397,7 @@ export function createSession(
         worktreePath,
         extraPreamble,
         includeAimuxPreamble: automaticPreambleEnabled,
+        team,
       });
   const shouldInjectLaunchPreamble = Boolean(!effectiveSuppressStartupPreamble && preambleFlag && preamble.trim());
   const shouldUseCodexInitialPrompt = Boolean(

@@ -430,8 +430,35 @@ The project-service HTTP API also exposes:
 - `POST /log`
 - `POST /clear-log`
 - `POST /notify`
+- `POST /agents/teammates/create`
 
 Use `aimux metadata endpoint` to get the local base URL for the current project service.
+
+Teammate agents are first-party aimux agents attached to a parent agent. They stay hidden from the normal dashboard unless the parent agent is focused, but can still be inspected, entered, stopped, restarted, and graveyarded through the parent/team UI.
+
+Create a teammate from an agent or shell with:
+
+```bash
+endpoint="$(aimux metadata endpoint)"
+curl -sS "$endpoint/agents/teammates/create" \
+  -H 'content-type: application/json' \
+  -d '{
+    "parentSessionId": "claude-abc123",
+    "role": "coder",
+    "label": "coder-1",
+    "initialPrompt": "Implement the bounded parser tests and report back."
+  }'
+```
+
+Useful request fields:
+
+- `parentSessionId` - required aimux session ID of the primary agent.
+- `role` / `label` - optional teammate role and display label.
+- `tool` - optional tool config key; omitted means inherit the parent tool.
+- `worktreePath` - optional target worktree; omitted means inherit the parent worktree.
+- `extraArgs` - optional CLI args, for model/provider flags.
+- `initialPrompt` - optional first task sent to the teammate after launch.
+- `open` - optional boolean; `false` creates without switching focus.
 
 ## Plugins And Watchers
 

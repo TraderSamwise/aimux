@@ -8,6 +8,7 @@ import { debug, debugPreamble } from "./debug.js";
 import { listWorktrees as listAllWorktrees } from "./worktree.js";
 import { type TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { deliverTmuxPrompt } from "./agent-prompt-delivery.js";
+import { type SessionTeamMetadata } from "./team.js";
 
 export interface ForkSourceSnapshot {
   historyText?: string;
@@ -16,9 +17,24 @@ export interface ForkSourceSnapshot {
   statusText?: string;
 }
 
-export function buildAimuxAgentInstructions(opts: { sessionId?: string } = {}): string {
+export function buildAimuxAgentInstructions(
+  opts: { sessionId?: string; includeTeammateCreationInstructions?: boolean } = {},
+): string {
   const sessionLine = opts.sessionId ? `Your aimux session ID is ${opts.sessionId}.\n` : "";
   const sessionPath = opts.sessionId ?? "{session-id}";
+  const includeTeammates = opts.includeTeammateCreationInstructions !== false;
+  const teammateInstructions = includeTeammates
+    ? "\n\n" +
+      "## Teammates\n" +
+      "- When the user asks you to make or use a team, create 1-3 aimux teammate agents through the local metadata API instead of inventing external processes.\n" +
+      "- Reuse existing teammates first. Check `.aimux/sessions.json` for sessions with `team.parentSessionId` equal to your session ID before creating new ones; ask before replacing an existing team.\n" +
+      "- Teammates are first-party aimux agents. The user can inspect and enter them, but they stay hidden from the normal dashboard unless your agent is focused.\n" +
+      "- Default to your same tool and worktree. Only set `tool`, `worktreePath`, `extraArgs`, or role/model-specific args when the user or task requires it.\n" +
+      '- Discover the API with `aimux metadata endpoint`, then POST `/agents/teammates/create` with JSON like `{ "parentSessionId": "' +
+      sessionPath +
+      '", "role": "coder", "label": "coder-1", "initialPrompt": "..." }`.\n' +
+      "- If your own session instructions say you are already a teammate for another parent, do not create nested teammates unless the user explicitly asks."
+    : "";
 
   return (
     "You are running inside aimux, an agent multiplexer for this repository. " +
@@ -46,7 +62,8 @@ export function buildAimuxAgentInstructions(opts: { sessionId?: string } = {}): 
     "## Delegation Protocol\n" +
     'When asked to delegate, hand off, or assign work to another aimux agent, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. ' +
     "Optional fields are `assignedTo` for a specific session ID and `tool` for a preferred tool type. Aimux dispatches pending tasks to idle agents and injects the prompt.\n" +
-    "When you receive `[AIMUX TASK ...]`, complete it and mark the task `done` with `result`, or `failed` with `error`."
+    "When you receive `[AIMUX TASK ...]`, complete it and mark the task `done` with `result`, or `failed` with `error`." +
+    teammateInstructions
   );
 }
 
@@ -67,12 +84,16 @@ export class SessionBootstrapService {
     worktreePath?: string;
     extraPreamble?: string;
     includeAimuxPreamble?: boolean;
+    team?: SessionTeamMetadata;
   }): string {
-    const { sessionId, worktreePath, extraPreamble, includeAimuxPreamble = true } = opts;
+    const { sessionId, worktreePath, extraPreamble, includeAimuxPreamble = true, team } = opts;
     let preamble = "";
 
     if (includeAimuxPreamble) {
-      preamble = buildAimuxAgentInstructions({ sessionId });
+      preamble = buildAimuxAgentInstructions({
+        sessionId,
+        includeTeammateCreationInstructions: !team?.parentSessionId,
+      });
     }
 
     if (includeAimuxPreamble) {

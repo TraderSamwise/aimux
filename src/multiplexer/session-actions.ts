@@ -254,6 +254,7 @@ export async function createTeammateAgent(
   const rolePreamble = buildRolePreamble(role, loadTeamConfig());
   const teammatePreamble = [
     `You are a teammate for aimux parent agent "${parent.id}".`,
+    "You are a first-party aimux agent: the user can inspect, enter, stop, and restart you like any other agent.",
     "Stay focused on delegated work and report findings back to the parent agent.",
     rolePreamble,
   ]
