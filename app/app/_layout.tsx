@@ -2,7 +2,7 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import React, { useEffect } from "react";
 import { useColorScheme } from "nativewind";
 import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
-import { AuthProvider, useAuth } from "@/lib/auth";
+import { AuthProvider, LOCAL_MODE, useAuth } from "@/lib/auth";
 import { useThemeEffect } from "@/lib/theme-effect";
 
 import "../global.css";
@@ -17,6 +17,8 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     if (!isLoaded) return;
     if (isSignedIn && onAuthScreen) {
       router.replace("/");
+    } else if (!isSignedIn && !LOCAL_MODE && !onAuthScreen) {
+      router.replace("/sign-in");
     }
   }, [isSignedIn, isLoaded, onAuthScreen, router]);
 
