@@ -517,8 +517,6 @@ export const persistenceMethods = {
       await waitForWorktreeSessionsToStop(this, path);
 
       const attachedServices = collectWorktreeServices(this, path);
-      detachWorktreeServices(this, path);
-
       const attachedAgents = collectWorktreeAgents(this, path);
 
       const nextEntries = [
@@ -536,6 +534,7 @@ export const persistenceMethods = {
       writeWorktreeGraveyardEntries(nextEntries);
       this.worktreeGraveyardEntries = nextEntries;
 
+      detachWorktreeServices(this, path);
       this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
       this.saveState();
       return { path, status: "graveyarded" };
