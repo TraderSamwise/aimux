@@ -149,6 +149,239 @@ describe("MetadataServer threads API", () => {
     expect(body).toEqual({ ok: true, sessionId: "claude-1" });
   });
 
+  it("lists direct teammates from the hidden desktop teammate projection", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [
+            {
+              id: "late",
+              command: "codex",
+              status: "running",
+              createdAt: "2026-01-01T00:00:02.000Z",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "coder", order: 2 },
+            },
+            {
+              id: "early",
+              command: "claude",
+              status: "creating",
+              pending: true,
+              pendingAction: "creating",
+              createdAt: "2026-01-01T00:00:01.000Z",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer", order: 1 },
+            },
+            {
+              id: "nested",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-nested", parentSessionId: "late", role: "coder" },
+            },
+            {
+              id: "other",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+            },
+          ],
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates?parentSessionId=parent`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      teammates: Array<{ id: string; sessionId: string; tool: string; role?: string; label?: string }>;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.teammates.map((session) => session.id)).toEqual(["early", "late"]);
+    expect(body.teammates[0]).toMatchObject({
+      id: "early",
+      sessionId: "early",
+      tool: "claude",
+      role: "reviewer",
+    });
+  });
+
+  it("rejects teammate agents as parents for teammate discovery and delegation", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [
+            {
+              id: "child",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+            },
+          ],
+        }),
+      },
+      lifecycle: {
+        writeAgentInput: ({ sessionId }) => ({
+          sessionId,
+          accepted: true,
+          operation: {
+            id: "inputop-never",
+            sessionId,
+            submit: true,
+            state: "submitted" as const,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const listRes = await fetch(`${base}/agents/teammates?parentSessionId=child`);
+    const listBody = (await listRes.json()) as { ok: boolean; error: string };
+    expect(listRes.status).toBe(400);
+    expect(listBody.error).toContain("nested teams");
+
+    const sendRes = await fetch(`${base}/agents/teammates/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "child", teammateSessionId: "grandchild", body: "hello" }),
+    });
+    const sendBody = (await sendRes.json()) as { ok: boolean; error: string };
+    expect(sendRes.status).toBe(400);
+    expect(sendBody.error).toContain("nested teams");
+  });
+
+  it("interrupts a direct teammate before sending delegated input", async () => {
+    server?.stop();
+    const calls: string[] = [];
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [
+            {
+              id: "child",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+            },
+          ],
+        }),
+      },
+      lifecycle: {
+        interruptAgent: ({ sessionId }) => {
+          calls.push(`interrupt:${sessionId}`);
+          return { sessionId };
+        },
+        writeAgentInput: ({ sessionId, data, submit }) => {
+          calls.push(`write:${sessionId}:${data}:${submit}`);
+          return {
+            sessionId,
+            accepted: true,
+            operation: {
+              id: "inputop-team",
+              sessionId,
+              submit: submit === true,
+              state: submit ? ("submitted" as const) : ("applied" as const),
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        parentSessionId: "parent",
+        teammateSessionId: "child",
+        title: "Review task",
+        body: "Check this patch.",
+        interrupt: true,
+      }),
+    });
+    const body = (await res.json()) as { ok: boolean; sessionId: string; teammateSessionId: string };
+
+    expect(res.ok).toBe(true);
+    expect(body).toMatchObject({ ok: true, sessionId: "child", teammateSessionId: "child" });
+    expect(calls).toEqual(["interrupt:child", "write:child:Review task\n\nCheck this patch.:true"]);
+  });
+
+  it("rejects delegated input to non-direct teammates", async () => {
+    server?.stop();
+    const writes: string[] = [];
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [
+            { id: "parent", command: "claude", status: "running" },
+            { id: "ordinary", command: "codex", status: "running" },
+          ],
+          teammates: [
+            {
+              id: "other-child",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+            },
+          ],
+        }),
+      },
+      lifecycle: {
+        writeAgentInput: ({ sessionId }) => {
+          writes.push(sessionId);
+          return {
+            sessionId,
+            accepted: true,
+            operation: {
+              id: "inputop-never",
+              sessionId,
+              submit: true,
+              state: "submitted" as const,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "ordinary", body: "hello" }),
+    });
+    const body = (await res.json()) as { ok: boolean; error: string };
+
+    expect(res.status).toBe(404);
+    expect(body.error).toContain("not attached");
+    expect(writes).toEqual([]);
+  });
+
   it("passes agent resume over HTTP", async () => {
     server?.stop();
     server = new MetadataServer({

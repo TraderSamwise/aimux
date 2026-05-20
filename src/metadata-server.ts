@@ -68,6 +68,7 @@ import {
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
+import { isTeammateSession, selectDirectTeammates, type SessionTeamMetadata } from "./team.js";
 import {
   listSwitchableAgentItems,
   resolveAttentionAgent,
@@ -433,6 +434,48 @@ function sendSseEvent(res: ServerResponse, event: string, data: unknown): void {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+type DesktopSessionRecord = Record<string, unknown> & {
+  id: string;
+  createdAt?: string;
+  team?: SessionTeamMetadata;
+};
+
+function isDesktopSessionRecord(value: unknown): value is DesktopSessionRecord {
+  return Boolean(value && typeof value === "object" && typeof (value as { id?: unknown }).id === "string");
+}
+
+function desktopSessionList(value: unknown): DesktopSessionRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isDesktopSessionRecord);
+}
+
+function composeTeammateDelegationInput(body: { title?: string; body?: string; data?: string }): string | undefined {
+  const text = typeof body.data === "string" ? body.data : typeof body.body === "string" ? body.body : undefined;
+  if (!text) return undefined;
+  const title = typeof body.title === "string" ? body.title.trim() : "";
+  return title ? `${title}\n\n${text}` : text;
+}
+
+function teammateApiRecord(session: DesktopSessionRecord): Record<string, unknown> {
+  return {
+    id: session.id,
+    sessionId: session.id,
+    tool: session.command,
+    command: session.command,
+    label: session.team?.label ?? session.label,
+    role: session.team?.role,
+    status: session.status,
+    worktreePath: session.worktreePath,
+    headline: session.headline,
+    preview: session.preview,
+    createdAt: session.createdAt,
+    lastUsedAt: session.lastUsedAt,
+    pending: session.pending,
+    pendingAction: session.pendingAction,
+    team: session.team,
+  };
+}
+
 export class MetadataServer {
   private server: Server | null = null;
   private port = 0;
@@ -482,6 +525,42 @@ export class MetadataServer {
 
   notifyChange(): void {
     this.options.onChange?.();
+  }
+
+  private resolveDirectTeammates(parentSessionId: string):
+    | {
+        ok: true;
+        parent: DesktopSessionRecord;
+        teammates: DesktopSessionRecord[];
+      }
+    | {
+        ok: false;
+        status: number;
+        error: string;
+      } {
+    if (!parentSessionId.trim()) {
+      return { ok: false, status: 400, error: "parentSessionId is required" };
+    }
+    if (!this.options.desktop?.getState) {
+      return { ok: false, status: 501, error: "teammate discovery not supported by this service" };
+    }
+
+    const state = this.options.desktop.getState();
+    const sessions = desktopSessionList(state.sessions);
+    const teammates = desktopSessionList(state.teammates);
+    const parent = [...sessions, ...teammates].find((session) => session.id === parentSessionId);
+    if (!parent) {
+      return { ok: false, status: 404, error: `parent agent "${parentSessionId}" not found` };
+    }
+    if (isTeammateSession(parent)) {
+      return { ok: false, status: 400, error: "teammate agents cannot create or delegate to nested teams" };
+    }
+
+    return {
+      ok: true,
+      parent,
+      teammates: selectDirectTeammates(teammates, parentSessionId),
+    };
   }
 
   private listen(port: number): Promise<void> {
@@ -1852,6 +1931,21 @@ export class MetadataServer {
         return;
       }
 
+      if (req.method === "GET" && url.pathname === "/agents/teammates") {
+        const parentSessionId = url.searchParams.get("parentSessionId")?.trim() ?? "";
+        const result = this.resolveDirectTeammates(parentSessionId);
+        if (!result.ok) {
+          send(res, result.status, { ok: false, error: result.error });
+          return;
+        }
+        send(res, 200, {
+          ok: true,
+          parentSessionId: result.parent.id,
+          teammates: result.teammates.map(teammateApiRecord),
+        });
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/agents/teammates/create") {
         const body = (await readJson(req)) as {
           parentSessionId: string;
@@ -1872,6 +1966,73 @@ export class MetadataServer {
         const result = await this.options.lifecycle.createTeammateAgent(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/teammates/send") {
+        const body = (await readJson(req)) as {
+          parentSessionId: string;
+          teammateSessionId: string;
+          body?: string;
+          data?: string;
+          parts?: AgentInputPart[];
+          title?: string;
+          clientMessageId?: string;
+          submit?: boolean;
+          interrupt?: boolean;
+        };
+        const parentSessionId = body.parentSessionId?.trim() ?? "";
+        const teammateSessionId = body.teammateSessionId?.trim() ?? "";
+        const resolved = this.resolveDirectTeammates(parentSessionId);
+        if (!resolved.ok) {
+          send(res, resolved.status, { ok: false, error: resolved.error });
+          return;
+        }
+        const teammate = resolved.teammates.find((session) => session.id === teammateSessionId);
+        if (!teammate) {
+          send(res, 404, {
+            ok: false,
+            error: `teammate "${teammateSessionId}" is not attached to parent "${parentSessionId}"`,
+          });
+          return;
+        }
+        if (!this.options.lifecycle?.writeAgentInput) {
+          send(res, 501, { ok: false, error: "agent input not supported by this service" });
+          return;
+        }
+        const data = composeTeammateDelegationInput(body);
+        if (!data && !Array.isArray(body.parts)) {
+          send(res, 400, { ok: false, error: "teammate message requires body, data, or parts" });
+          return;
+        }
+        if (body.interrupt) {
+          if (!this.options.lifecycle?.interruptAgent) {
+            send(res, 501, { ok: false, error: "agent interrupt not supported by this service" });
+            return;
+          }
+          await this.options.lifecycle.interruptAgent({ sessionId: teammate.id });
+        }
+        const result = await this.options.lifecycle.writeAgentInput({
+          sessionId: teammate.id,
+          data,
+          parts: body.parts,
+          clientMessageId: body.clientMessageId,
+          submit: body.submit ?? true,
+        });
+        if (this.options.lifecycle.readAgentHistory) {
+          try {
+            const history = await this.options.lifecycle.readAgentHistory({ sessionId: teammate.id, lastN: 20 });
+            this.eventBus.publishHistoryUpdate({
+              sessionId: history.sessionId,
+              messages: history.messages,
+              lastN: history.lastN,
+            });
+          } catch {
+            // History update is best-effort; the write result should still succeed.
+          }
+        }
+        this.options.onChange?.();
+        send(res, 200, { ok: result.accepted, parentSessionId, teammateSessionId: teammate.id, ...result });
         return;
       }
 

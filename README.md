@@ -430,11 +430,20 @@ The project-service HTTP API also exposes:
 - `POST /log`
 - `POST /clear-log`
 - `POST /notify`
+- `GET /agents/teammates?parentSessionId=...`
 - `POST /agents/teammates/create`
+- `POST /agents/teammates/send`
 
 Use `aimux metadata endpoint` to get the local base URL for the current project service.
 
 Teammate agents are first-party aimux agents attached to a parent agent. They stay hidden from the normal dashboard unless the parent agent is focused, but can still be inspected, entered, stopped, restarted, and graveyarded through the parent/team UI.
+
+List direct teammates for a parent:
+
+```bash
+endpoint="$(aimux metadata endpoint)"
+curl -sS "$endpoint/agents/teammates?parentSessionId=claude-abc123"
+```
 
 Create a teammate from an agent or shell with:
 
@@ -459,6 +468,21 @@ Useful request fields:
 - `extraArgs` - optional CLI args, for model/provider flags.
 - `initialPrompt` - optional first task sent to the teammate after launch.
 - `open` - optional boolean; `false` creates without switching focus.
+
+Delegate to an existing direct teammate:
+
+```bash
+curl -sS "$endpoint/agents/teammates/send" \
+  -H 'content-type: application/json' \
+  -d '{
+    "parentSessionId": "claude-abc123",
+    "teammateSessionId": "codex-def456",
+    "body": "Review the parser patch and report blockers first.",
+    "interrupt": true
+  }'
+```
+
+`/agents/teammates/send` only accepts direct teammates of the parent. Set `interrupt: true` to interrupt the teammate before delivering the message.
 
 ## Plugins And Watchers
 

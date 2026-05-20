@@ -27,12 +27,17 @@ export function buildAimuxAgentInstructions(
     ? "\n\n" +
       "## Teammates\n" +
       "- When the user asks you to make or use a team, create 1-3 aimux teammate agents through the local metadata API instead of inventing external processes.\n" +
-      "- Reuse existing teammates first. Check `.aimux/sessions.json` for sessions with `team.parentSessionId` equal to your session ID before creating new ones; ask before replacing an existing team.\n" +
+      "- Reuse existing teammates first. Discover the local endpoint with `aimux metadata endpoint`, then GET `/agents/teammates?parentSessionId=" +
+      sessionPath +
+      "` before creating new ones; ask before replacing an existing team.\n" +
       "- Teammates are first-party aimux agents. The user can inspect and enter them, but they stay hidden from the normal dashboard unless your agent is focused.\n" +
       "- Default to your same tool and worktree. Only set `tool`, `worktreePath`, `extraArgs`, or role/model-specific args when the user or task requires it.\n" +
       '- Discover the API with `aimux metadata endpoint`, then POST `/agents/teammates/create` with JSON like `{ "parentSessionId": "' +
       sessionPath +
       '", "role": "coder", "label": "coder-1", "initialPrompt": "..." }`.\n' +
+      '- Delegate work by POSTing `/agents/teammates/send` with JSON like `{ "parentSessionId": "' +
+      sessionPath +
+      '", "teammateSessionId": "codex-abc123", "body": "Review this patch", "interrupt": true }`.\n' +
       "- If your own session instructions say you are already a teammate for another parent, do not create nested teammates unless the user explicitly asks."
     : "";
 
