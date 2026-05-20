@@ -450,6 +450,20 @@ export class AimuxDaemon {
       return { status: 200, body: { ok: true, project } };
     }
 
+    const proxyMatch = path.match(/^\/proxy\/([^/]+)\/(\d+)(\/.*)/);
+    if (proxyMatch) {
+      const [, host, portStr, subPath] = proxyMatch;
+      try {
+        const { status, json } = await requestJson(`http://${host}:${portStr}${subPath}`, {
+          method,
+          body: body !== undefined ? body : undefined,
+        });
+        return { status, body: json };
+      } catch (err) {
+        return { status: 502, body: { ok: false, error: err instanceof Error ? err.message : "Proxy error" } };
+      }
+    }
+
     return { status: 404, body: { ok: false, error: "not found" } };
   }
 
