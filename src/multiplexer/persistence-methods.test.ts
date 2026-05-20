@@ -538,6 +538,80 @@ describe("persistenceMethods", () => {
     ]);
   });
 
+  it("graveyards direct teammates with their parent worktree even across worktrees", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-graveyard-cross-worktree-team-"));
+    await initPaths(repoRoot);
+    const pending = new DashboardPendingActions(() => {});
+    const worktreePath = "/repo/.aimux/worktrees/demo";
+    try {
+      listWorktreesMock.mockReturnValue([
+        {
+          name: "demo",
+          branch: "demo",
+          path: worktreePath,
+          isBare: false,
+        },
+      ]);
+      const parent = {
+        id: "parent-1",
+        command: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        worktreePath,
+        createdAt: "2026-05-01T00:00:00.000Z",
+      };
+      const teammate = {
+        id: "teammate-1",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        worktreePath: "/repo/.aimux/worktrees/other",
+        team: { teamId: "team-parent-1", parentSessionId: "parent-1", role: "reviewer" },
+        createdAt: "2026-05-02T00:00:00.000Z",
+      };
+      const independent = {
+        id: "independent-1",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        worktreePath: "/repo/.aimux/worktrees/other",
+      };
+      const host = {
+        dashboardPendingActions: pending,
+        footerFlash: "",
+        footerFlashTicks: 0,
+        syncSessionsFromState: vi.fn(),
+        listWorktreeGraveyardEntries: vi.fn(() => []),
+        invalidateDesktopStateSnapshot: vi.fn(),
+        refreshLocalDashboardModel: vi.fn(),
+        mode: "project-service",
+        tmuxRuntimeManager: {
+          listProjectManagedWindows: vi.fn(() => []),
+          killWindow: vi.fn(),
+        },
+        offlineServices: [],
+        buildLiveServiceStates: vi.fn(() => []),
+        offlineSessions: [parent, teammate, independent],
+        sessions: [],
+        sessionWorktreePaths: new Map(),
+        isSessionRuntimeLive: vi.fn(() => false),
+        saveState: vi.fn(),
+      };
+
+      await persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath);
+
+      expect(writeWorktreeGraveyardEntries).toHaveBeenCalledWith([
+        expect.objectContaining({
+          path: worktreePath,
+          agents: [expect.objectContaining({ id: "teammate-1" }), expect.objectContaining({ id: "parent-1" })],
+        }),
+      ]);
+      expect(host.offlineSessions).toEqual([independent]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not detach worktree services when graveyarding fails while waiting for agents to stop", async () => {
     vi.useFakeTimers();
     const pending = new DashboardPendingActions(() => {});

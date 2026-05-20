@@ -620,6 +620,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         status: "offline",
         active: false,
         worktreePath: session.worktreePath,
+        team: session.team,
       } satisfies DashboardSession);
     await runDashboardSessionMutation(host, {
       sessionId: session.id,

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -209,6 +209,64 @@ describe("MetadataServer threads API", () => {
       tool: "claude",
       role: "reviewer",
     });
+  });
+
+  it("opens notification targets from hidden teammate desktop projection", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [
+            {
+              id: "teammate-1",
+              command: "codex",
+              status: "running",
+              tmuxWindowId: "@7",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer" },
+            },
+          ],
+          services: [],
+        }),
+      },
+    });
+    await server.start();
+
+    const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
+    const opened: any[] = [];
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const getTargetByWindowId = TmuxRuntimeManager.prototype.getTargetByWindowId;
+    const getAttachedClientForTarget = TmuxRuntimeManager.prototype.getAttachedClientForTarget;
+    const openTarget = TmuxRuntimeManager.prototype.openTarget;
+    const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.getTargetByWindowId = (_sessionName, windowId) =>
+      windowId === "@7" ? target : undefined;
+    TmuxRuntimeManager.prototype.getAttachedClientForTarget = () => undefined as any;
+    TmuxRuntimeManager.prototype.openTarget = (nextTarget) => {
+      opened.push(nextTarget);
+    };
+    TmuxRuntimeManager.prototype.refreshStatus = vi.fn();
+    try {
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "teammate-1" }),
+      });
+
+      expect(res.ok).toBe(true);
+      expect(opened).toEqual([target]);
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.getTargetByWindowId = getTargetByWindowId;
+      TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
+      TmuxRuntimeManager.prototype.openTarget = openTarget;
+      TmuxRuntimeManager.prototype.refreshStatus = refreshStatus;
+    }
   });
 
   it("rejects teammate agents as parents for teammate discovery and delegation", async () => {

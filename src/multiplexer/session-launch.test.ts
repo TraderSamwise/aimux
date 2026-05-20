@@ -492,6 +492,74 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("sends Codex teammate preambles through the initial kickoff prompt", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-team-preamble-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+    const team = {
+      teamId: "team-1",
+      parentSessionId: "parent-1",
+      role: "reviewer",
+    };
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => "aimux teammate preamble"),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(() => "codex startup instructions"),
+        deliverDetachedCodexKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    createSession(
+      host,
+      "codex",
+      ["--dangerously-bypass-approvals-and-sandbox"],
+      undefined,
+      "codex",
+      "You are the reviewer teammate.",
+      undefined,
+      repoRoot,
+      undefined,
+      "codex-team",
+      false,
+      false,
+      team,
+    );
+
+    expect(host.sessionBootstrap.buildSessionPreamble).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "codex-team",
+        extraPreamble: "You are the reviewer teammate.",
+        team,
+      }),
+    );
+    expect(host.sessionBootstrap.buildInitialKickoffPrompt).toHaveBeenCalledWith(
+      "codex-team",
+      "aimux teammate preamble",
+    );
+    const launched = (host.tmuxRuntimeManager.createWindow.mock.calls[0][4] as string[]).join(" ");
+    expect(launched).toContain("codex startup instructions");
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("rejects duplicate session ids before launching a second runtime", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-dup-"));
     execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });

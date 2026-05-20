@@ -1193,8 +1193,10 @@ export class MetadataServer {
         const currentClientSession =
           body.currentClientSession?.trim() || url.searchParams.get("currentClientSession")?.trim() || undefined;
         const clientTty = body.clientTty?.trim() || url.searchParams.get("clientTty")?.trim() || undefined;
-        const desktop = this.options.desktop.getState() as { sessions?: any[]; services?: any[] };
-        const session = (desktop.sessions ?? []).find((entry) => entry.id === sessionId);
+        const desktop = this.options.desktop.getState() as { sessions?: any[]; teammates?: any[]; services?: any[] };
+        const session = [...(desktop.sessions ?? []), ...(desktop.teammates ?? [])].find(
+          (entry) => entry.id === sessionId,
+        );
         const service = (desktop.services ?? []).find((entry) => entry.id === sessionId);
         const tmux = new TmuxRuntimeManager();
 

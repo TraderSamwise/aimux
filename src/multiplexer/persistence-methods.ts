@@ -507,18 +507,30 @@ export const persistenceMethods = {
 
     setGraveyardPending();
     try {
+      const baseAgents = [
+        ...this.sessions.filter((session: any) => this.sessionWorktreePaths.get(session.id) === path),
+        ...this.offlineSessions.filter((session: any) => session.worktreePath === path),
+      ].filter((session: any) => !isTeammateSession(session));
+      const directTeammateIds = new Set<string>();
+      for (const parent of baseAgents) {
+        for (const teammate of selectDirectTeammates([...this.sessions, ...this.offlineSessions], parent.id)) {
+          directTeammateIds.add(teammate.id);
+        }
+      }
       const liveSessions = this.sessions.filter(
         (session: any) =>
-          this.sessionWorktreePaths.get(session.id) === path && this.isSessionRuntimeLive(session) && !session.exited,
+          (this.sessionWorktreePaths.get(session.id) === path || directTeammateIds.has(session.id)) &&
+          this.isSessionRuntimeLive(session) &&
+          !session.exited,
       );
       for (const session of liveSessions) {
         stopSessionToOffline(this, session);
       }
 
-      await waitForWorktreeSessionsToStop(this, path);
+      await waitForWorktreeSessionsToStop(this, path, directTeammateIds);
 
       const attachedServices = collectWorktreeServices(this, path);
-      const attachedAgents = collectWorktreeAgents(this, path);
+      const attachedAgents = collectWorktreeAgents(this, path, directTeammateIds);
 
       const nextEntries = [
         ...worktreeGraveyardEntries.filter((entry: WorktreeGraveyardEntry) => entry.path !== path),
@@ -536,7 +548,9 @@ export const persistenceMethods = {
       this.worktreeGraveyardEntries = nextEntries;
 
       detachWorktreeServices(this, path);
-      this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
+      this.offlineSessions = this.offlineSessions.filter(
+        (session: any) => session.worktreePath !== path && !directTeammateIds.has(session.id),
+      );
       this.saveState();
       return { path, status: "graveyarded" };
     } finally {
@@ -1066,10 +1080,10 @@ function sortDesktopWorktrees(
   });
 }
 
-function collectWorktreeAgents(host: any, path: string): any[] {
+function collectWorktreeAgents(host: any, path: string, additionalSessionIds = new Set<string>()): any[] {
   const byId = new Map<string, any>();
   for (const session of host.offlineSessions) {
-    if (session.worktreePath !== path) continue;
+    if (session.worktreePath !== path && !additionalSessionIds.has(session.id)) continue;
     byId.set(session.id, session);
   }
   return [...byId.values()].sort((a, b) => {
@@ -1096,12 +1110,19 @@ function collectWorktreeServices(host: any, path: string): any[] {
   });
 }
 
-async function waitForWorktreeSessionsToStop(host: any, path: string, timeoutMs = 10_000): Promise<void> {
+async function waitForWorktreeSessionsToStop(
+  host: any,
+  path: string,
+  additionalSessionIds = new Set<string>(),
+  timeoutMs = 10_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const remaining = host.sessions.some(
       (session: any) =>
-        host.sessionWorktreePaths.get(session.id) === path && host.isSessionRuntimeLive(session) && !session.exited,
+        (host.sessionWorktreePaths.get(session.id) === path || additionalSessionIds.has(session.id)) &&
+        host.isSessionRuntimeLive(session) &&
+        !session.exited,
     );
     if (!remaining) return;
     await new Promise((resolve) => setTimeout(resolve, 100));

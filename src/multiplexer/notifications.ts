@@ -104,6 +104,17 @@ function ensureNotificationState(host: NotificationHost): void {
   }
 }
 
+function findNotificationSessionTarget(host: NotificationHost, sessionId: string): any | undefined {
+  return (
+    host.getDashboardSessions?.().find((entry: any) => entry.id === sessionId) ??
+    (host.dashboardTeammatesCache ?? []).find((entry: any) => entry.id === sessionId)
+  );
+}
+
+function findNotificationServiceTarget(host: NotificationHost, sessionId: string): any | undefined {
+  return host.getDashboardServices?.().find((entry: any) => entry.id === sessionId);
+}
+
 export function showNotifications(host: NotificationHost): void {
   host.clearDashboardSubscreens();
   refreshNotificationEntries(host);
@@ -121,11 +132,11 @@ export function renderNotifications(host: NotificationHost): void {
 
 export function notificationTargetLabel(host: NotificationHost, sessionId?: string): string | null {
   if (!sessionId) return null;
-  const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
+  const session = findNotificationSessionTarget(host, sessionId);
   if (session) {
     return `${session.label ?? session.command}${session.worktreeName ? ` · ${session.worktreeName}` : ""}`;
   }
-  const service = host.getDashboardServices().find((entry: any) => entry.id === sessionId);
+  const service = findNotificationServiceTarget(host, sessionId);
   if (service) {
     return `${service.label ?? service.command} [service]${service.worktreeName ? ` · ${service.worktreeName}` : ""}`;
   }
@@ -137,11 +148,11 @@ export function notificationTargetState(
   sessionId?: string,
 ): "live" | "offline" | "missing" | "none" {
   if (!sessionId) return "none";
-  const session = host.getDashboardSessions().find((entry: any) => entry.id === sessionId);
+  const session = findNotificationSessionTarget(host, sessionId);
   if (session) {
     return session.status === "offline" ? "offline" : "live";
   }
-  const service = host.getDashboardServices().find((entry: any) => entry.id === sessionId);
+  const service = findNotificationServiceTarget(host, sessionId);
   if (service) {
     return service.status === "running" ? "live" : "offline";
   }
@@ -166,10 +177,12 @@ async function openSelectedNotification(host: NotificationHost): Promise<void> {
     renderNotifications(host);
     return;
   }
-  const session = host.getDashboardSessions().find((candidate: any) => candidate.id === entry.sessionId);
+  const session = findNotificationSessionTarget(host, entry.sessionId);
   if (session) {
     try {
-      await host.activateDashboardEntry(session);
+      await host.activateDashboardEntry(session, {
+        preserveDashboardSelection: Boolean(session.team),
+      });
     } catch {
       host.footerFlash = "Failed to open notification target";
       host.footerFlashTicks = 3;
@@ -182,7 +195,7 @@ async function openSelectedNotification(host: NotificationHost): Promise<void> {
     }
     return;
   }
-  const service = host.getDashboardServices().find((candidate: any) => candidate.id === entry.sessionId);
+  const service = findNotificationServiceTarget(host, entry.sessionId);
   if (!service) {
     host.footerFlash = "Notification target is no longer available";
     host.footerFlashTicks = 3;

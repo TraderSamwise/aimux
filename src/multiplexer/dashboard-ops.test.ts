@@ -312,6 +312,55 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("preserves teammate metadata in dashboard resume pending seeds", async () => {
+    const session = {
+      id: "teammate-1",
+      command: "codex",
+      label: "reviewer",
+      worktreePath: "/repo",
+      team: { teamId: "team-parent", parentSessionId: "parent-1", role: "reviewer" },
+    };
+    const sessions = [[], [{ ...session, status: "running", tmuxWindowId: "@1" }]];
+    let sessionIndex = 0;
+    const sessionSeeds: any[] = [];
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null, opts?: any) {
+        if (opts?.sessionSeed) sessionSeeds.push(opts.sessionSeed);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(sessionSeeds[0]).toEqual(expect.objectContaining({ id: "teammate-1", team: session.team }));
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/resume",
+      {
+        sessionId: "teammate-1",
+        session: expect.objectContaining({
+          id: "teammate-1",
+          team: session.team,
+        }),
+      },
+      { timeoutMs: 10_000 },
+    );
+  });
+
   it("treats a live tmux agent window as successful resume when the dashboard model lags", async () => {
     const session = { id: "sess-1", command: "claude", label: "claude" };
     const sessions = [[{ ...session, status: "offline", pendingAction: "starting" }]];

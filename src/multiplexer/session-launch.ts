@@ -403,8 +403,8 @@ export function createSession(
   const shouldUseCodexInitialPrompt = Boolean(
     !effectiveSuppressStartupPreamble &&
     !preambleFlag &&
-    !extraPreamble &&
     automaticPreambleEnabled &&
+    (!extraPreamble || Boolean(team)) &&
     preamble.trim() &&
     canUseCodexInitialPrompt(args, command, toolConfigKey),
   );

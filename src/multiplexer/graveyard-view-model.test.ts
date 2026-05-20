@@ -211,14 +211,14 @@ describe("buildGraveyardViewModel", () => {
       },
     });
 
-    expect(view.rows.map((row) => row.kind)).toEqual(["section", "orphan-teammate-display"]);
+    expect(view.rows.map((row) => row.kind)).toEqual(["section", "orphan-teammate"]);
     expect(view.rows[1]).toMatchObject({
-      kind: "orphan-teammate-display",
+      kind: "orphan-teammate",
       entry: { id: "orphan-teammate" },
       parentSessionId: "missing-parent",
       lastUsedAt: "2026-05-04T00:00:00.000Z",
     });
-    expect(view.selectableRows).toHaveLength(0);
+    expect(view.selectableRows).toEqual([]);
   });
 
   it("does not mark teammates orphaned when the parent is a graveyard entry or attached to a graveyarded worktree", () => {
@@ -270,7 +270,7 @@ describe("buildGraveyardViewModel", () => {
       ],
     });
 
-    expect(view.rows.some((row) => row.kind === "orphan-teammate-display")).toBe(false);
+    expect(view.rows.some((row) => row.kind === "orphan-teammate")).toBe(false);
   });
 
   it("does not duplicate teammate rows already present in graveyard entries", () => {
@@ -290,7 +290,7 @@ describe("buildGraveyardViewModel", () => {
     });
 
     expect(view.rows.map((row) => row.kind)).toEqual(["section", "agent-worktree", "standalone-agent"]);
-    expect(view.rows.some((row) => row.kind === "orphan-teammate-display")).toBe(false);
+    expect(view.rows.some((row) => row.kind === "orphan-teammate")).toBe(false);
     expect(view.selectableRows).toHaveLength(1);
   });
 });

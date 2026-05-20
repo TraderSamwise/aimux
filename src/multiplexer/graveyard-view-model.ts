@@ -69,7 +69,7 @@ export type GraveyardStandaloneAgentRow = {
 };
 
 export type GraveyardOrphanTeammateRow = {
-  kind: "orphan-teammate-display";
+  kind: "orphan-teammate";
   entry: SessionState;
   parentSessionId: string;
   lastUsedAt?: string;
@@ -106,9 +106,7 @@ export function buildGraveyardViewModel(input: BuildGraveyardViewModelInput): Gr
   const flatAgentsClaimedByWorktree = new Set<string>();
   const renderedAgentIds = new Set<string>();
 
-  const addSelectable = <T extends GraveyardWorktreeRow | GraveyardStandaloneAgentRow>(
-    row: Omit<T, "actionIndex" | "actionNumber">,
-  ): T => {
+  const addSelectable = <T extends GraveyardSelectableRow>(row: Omit<T, "actionIndex" | "actionNumber">): T => {
     const actionIndex = selectableRows.length;
     const withAction = { ...row, actionIndex, actionNumber: actionIndex + 1 } as T;
     selectableRows.push(withAction);
@@ -200,7 +198,7 @@ export function buildGraveyardViewModel(input: BuildGraveyardViewModelInput): Gr
       const parentSessionId = teammate.team?.parentSessionId;
       if (!parentSessionId) continue;
       rows.push({
-        kind: "orphan-teammate-display",
+        kind: "orphan-teammate",
         entry: teammate,
         parentSessionId,
         lastUsedAt: input.lastUsedById?.[teammate.id]?.lastUsedAt,
