@@ -3,6 +3,7 @@ import { Pressable, ScrollView, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { ChevronLeft, GitBranch, Settings } from "lucide-react-native";
+import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { StatusDot } from "@/components/status-dot";
@@ -101,24 +102,24 @@ function ProjectHeader({
     <Pressable
       onPress={onSwitchProject}
       accessibilityLabel="Switch project"
-      className="flex-row items-center px-3 py-3 border-b border-border bg-secondary active:bg-accent"
+      className="flex-row items-center px-4 py-3.5 border-b border-border bg-card active:bg-accent"
     >
-      <View className="p-0.5 rounded mr-1.5">
+      <View className="mr-2 -ml-1">
         <ChevronLeft size={16} color="#a1a1aa" />
       </View>
       <View className="flex-1 min-w-0">
-        <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-0.5">
+        <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
           Project
         </Text>
         <Text
-          className="text-[15px] font-bold text-foreground"
+          className="text-[16px] font-bold text-foreground"
           numberOfLines={1}
           ellipsizeMode="tail"
         >
           {project.name}
         </Text>
         <Text
-          className="text-[11px] text-muted-foreground mt-0.5"
+          className="text-[11px] text-muted-foreground mt-1"
           numberOfLines={1}
           ellipsizeMode="middle"
         >
@@ -133,10 +134,10 @@ function ProjectHeader({
 
 function BranchChip({ branch }: { branch: string }) {
   return (
-    <View className="flex-row items-center gap-1 self-start px-1.5 py-0.5 rounded bg-secondary border border-border max-w-full">
+    <View className="flex-row items-center self-start px-2 py-0.5 rounded bg-background border border-border max-w-full">
       <GitBranch size={10} color="#a1a1aa" />
       <Text
-        className="text-[10px] font-mono text-muted-foreground"
+        className="text-[10px] font-mono text-muted-foreground ml-1.5"
         numberOfLines={1}
         ellipsizeMode="middle"
       >
@@ -162,23 +163,22 @@ function AgentRow({
     <Pressable
       onPress={onPress}
       className={cn(
-        "flex-row items-center gap-2.5 px-3 py-2",
+        "flex-row items-center px-3 py-2",
         isSelected ? "bg-accent" : "active:bg-accent/60",
       )}
     >
-      <StatusDot status={session.status} size="sm" />
+      <View className="mr-2.5">
+        <StatusDot status={session.status} size="sm" />
+      </View>
       <View className="flex-1 min-w-0">
         <Text
-          className={cn(
-            "text-[13px] font-medium",
-            isSelected ? "text-foreground" : "text-foreground",
-          )}
+          className="text-[13px] font-medium text-foreground"
           numberOfLines={1}
           ellipsizeMode="tail"
         >
           {session.label || session.id}
         </Text>
-        <Text className="text-[11px] text-muted-foreground" numberOfLines={1}>
+        <Text className="text-[11px] text-muted-foreground mt-0.5" numberOfLines={1}>
           {tool ? `${tool} · ${session.status}` : session.status}
         </Text>
       </View>
@@ -202,12 +202,14 @@ function ServiceRow({
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
 
   return (
-    <View className="flex-row items-center gap-2.5 px-3 py-2">
+    <View className="flex-row items-center px-3 py-2">
       <Pressable
         onPress={onPress}
-        className="flex-1 flex-row items-center gap-2.5 min-w-0 active:opacity-70"
+        className="flex-1 flex-row items-center min-w-0 active:opacity-70"
       >
-        <StatusDot status={service.status} size="sm" />
+        <View className="mr-2.5">
+          <StatusDot status={service.status} size="sm" />
+        </View>
         <View className="flex-1 min-w-0">
           <Text
             className="text-[13px] font-medium text-foreground"
@@ -217,7 +219,7 @@ function ServiceRow({
             {service.label || service.id}
           </Text>
           <Text
-            className="text-[11px] text-muted-foreground"
+            className="text-[11px] text-muted-foreground mt-0.5"
             numberOfLines={1}
             ellipsizeMode="tail"
           >
@@ -225,7 +227,9 @@ function ServiceRow({
           </Text>
         </View>
       </Pressable>
-      <ServiceActions service={service} endpoint={endpoint} token={token} iconSize={14} />
+      <View className="ml-2">
+        <ServiceActions service={service} endpoint={endpoint} token={token} compact />
+      </View>
     </View>
   );
 }
@@ -252,11 +256,11 @@ function WorktreeGroup({
   const railColor = bucket.isMainCheckout ? "bg-emerald-500" : "bg-sky-500";
 
   return (
-    <View className="mx-3 mb-3 rounded-lg border border-border bg-card overflow-hidden">
+    <Card className="mx-3 mb-3 p-0 overflow-hidden">
       {/* Worktree header */}
-      <View className="flex-row items-stretch border-b border-border">
+      <View className="flex-row items-stretch border-b border-border bg-secondary">
         <View className={cn("w-1", railColor)} />
-        <View className="flex-1 min-w-0 px-3 py-2.5">
+        <View className="flex-1 min-w-0 px-3.5 py-3">
           <Text
             className="text-[15px] font-bold text-foreground"
             numberOfLines={1}
@@ -265,7 +269,7 @@ function WorktreeGroup({
             {bucket.name}
           </Text>
           {bucket.branch ? (
-            <View className="mt-1.5">
+            <View className="mt-2">
               <BranchChip branch={bucket.branch} />
             </View>
           ) : null}
@@ -274,10 +278,10 @@ function WorktreeGroup({
 
       {/* Body */}
       {hasAgents ? (
-        <View>
-          <View className="px-3 pt-2.5 pb-1">
+        <View className="pb-1">
+          <View className="px-3.5 pt-3 pb-1.5">
             <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-              Agents
+              Agents · {bucket.sessions.length}
             </Text>
           </View>
           {bucket.sessions.map((session) => (
@@ -292,10 +296,10 @@ function WorktreeGroup({
       ) : null}
 
       {hasServices ? (
-        <View className={cn(hasAgents && "border-t border-border")}>
-          <View className="px-3 pt-2.5 pb-1">
+        <View className={cn("pb-2", hasAgents && "border-t border-border")}>
+          <View className="px-3.5 pt-3 pb-1.5">
             <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-              Services
+              Services · {bucket.services.length}
             </Text>
           </View>
           {bucket.services.map((service) => (
@@ -311,13 +315,13 @@ function WorktreeGroup({
       ) : null}
 
       {!hasAgents && !hasServices ? (
-        <View className="px-3 py-3">
+        <View className="px-3.5 py-3">
           <Text className="text-[11px] text-muted-foreground italic">empty worktree</Text>
         </View>
       ) : (
-        <View className="h-1.5" />
+        <View className="h-0.5" />
       )}
-    </View>
+    </Card>
   );
 }
 
