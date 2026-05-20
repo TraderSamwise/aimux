@@ -801,6 +801,201 @@ describe("tmux-control.sh", () => {
     expect(log).not.toContain("link-window -d -s @other-agent -t aimux-proj-client-live");
   });
 
+  it("switches from a focused parent agent to its first teammate in statusline order", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@parent" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@parent", index: 1, name: "claude" },
+          { id: "@reviewer", index: 7, name: "codex" },
+          { id: "@coder", index: 8, name: "claude" },
+          { id: "@other", index: 9, name: "codex" },
+        ],
+        "aimux-proj-client-live": [{ id: "@parent", index: 1, name: "claude" }],
+      },
+      windowMetadata: {
+        "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@reviewer": { sessionId: "reviewer", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@coder": { sessionId: "coder", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@other": { sessionId: "other", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(
+      join(envRoot.projectStateDir, "statusline.json"),
+      JSON.stringify({
+        sessions: [{ id: "parent", tmuxWindowId: "@parent", kind: "agent", worktreePath: "/repo/project/worktree" }],
+        teammates: [
+          {
+            id: "coder",
+            tmuxWindowId: "@coder",
+            kind: "agent",
+            createdAt: "2026-04-04T00:00:00.000Z",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "coder", order: 2 },
+          },
+          {
+            id: "reviewer",
+            tmuxWindowId: "@reviewer",
+            kind: "agent",
+            createdAt: "2026-04-04T00:01:00.000Z",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", order: 1 },
+          },
+          {
+            id: "other",
+            tmuxWindowId: "@other",
+            kind: "agent",
+            team: { teamId: "team-2", parentSessionId: "other-parent", role: "coder", order: 0 },
+          },
+        ],
+      }),
+    );
+
+    runControl(envRoot, [
+      "team",
+      "--project-root",
+      "/repo/project",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-live",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@parent",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
+    expect(log).toContain("link-window -d -s @reviewer -t aimux-proj-client-live");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(log).not.toContain("link-window -d -s @other -t aimux-proj-client-live");
+    expect(curlLog).toEqual([]);
+  });
+
+  it("switches from a focused teammate back to its recorded parent", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@teammate" }],
+      windows: {
+        "aimux-proj": [
+          { id: "@parent", index: 1, name: "claude" },
+          { id: "@teammate", index: 7, name: "codex" },
+        ],
+        "aimux-proj-client-live": [{ id: "@teammate", index: 1, name: "codex" }],
+      },
+      windowMetadata: {
+        "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
+        "@teammate": { sessionId: "reviewer", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(
+      join(envRoot.projectStateDir, "statusline.json"),
+      JSON.stringify({
+        sessions: [{ id: "parent", tmuxWindowId: "@parent", kind: "agent", worktreePath: "/repo/project/worktree" }],
+        teammates: [
+          {
+            id: "reviewer",
+            tmuxWindowId: "@teammate",
+            kind: "agent",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer" },
+          },
+        ],
+      }),
+    );
+
+    runControl(envRoot, [
+      "team",
+      "--project-root",
+      "/repo/project",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-live",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "codex",
+      "--current-window-id",
+      "@teammate",
+      "--current-path",
+      "/repo/project/worktree",
+    ]);
+
+    const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
+    expect(log).toContain("link-window -d -s @parent -t aimux-proj-client-live");
+    expect(log).toContain("switch-client -c /dev/live -t aimux-proj-client-live:2");
+    expect(curlLog).toEqual([]);
+  });
+
+  it("does not switch team targets when the resolved teammate has no tmux window", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@parent" }],
+      windows: {
+        "aimux-proj": [{ id: "@parent", index: 1, name: "claude" }],
+        "aimux-proj-client-live": [{ id: "@parent", index: 1, name: "claude" }],
+      },
+      windowMetadata: {
+        "@parent": { sessionId: "parent", kind: "agent", worktreePath: "/repo/project/worktree" },
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(
+      join(envRoot.projectStateDir, "statusline.json"),
+      JSON.stringify({
+        sessions: [{ id: "parent", tmuxWindowId: "@parent", kind: "agent", worktreePath: "/repo/project/worktree" }],
+        teammates: [
+          {
+            id: "reviewer",
+            kind: "agent",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer" },
+          },
+        ],
+      }),
+    );
+
+    expect(() =>
+      runControl(envRoot, [
+        "team",
+        "--project-root",
+        "/repo/project",
+        "--project-state-dir",
+        envRoot.projectStateDir,
+        "--current-client-session",
+        "aimux-proj-client-live",
+        "--client-tty",
+        "/dev/live",
+        "--current-window",
+        "claude",
+        "--current-window-id",
+        "@parent",
+        "--current-path",
+        "/repo/project/worktree",
+      ]),
+    ).toThrow();
+
+    const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
+    expect(log).not.toContain("link-window -d -s @reviewer -t aimux-proj-client-live");
+    expect(curlLog).toEqual([]);
+  });
+
   it("shows the switch menu locally when the endpoint is stale", () => {
     const envRoot = createFakeEnvironment({
       clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],

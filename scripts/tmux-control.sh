@@ -15,7 +15,7 @@ item_index=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    next|prev|attention|dashboard|inbox|menu|window|active)
+    next|prev|attention|dashboard|inbox|menu|window|active|team)
       action="$1"
       shift
       ;;
@@ -372,8 +372,65 @@ try:
 except Exception:
     raise SystemExit(1)
 sessions = list(data.get("sessions") or [])
+teammates = list(data.get("teammates") or [])
 if explicit_window_id:
     print(explicit_window_id)
+    raise SystemExit(0)
+if action == "team":
+    all_sessions = sessions + teammates
+    current = None
+    for session in all_sessions:
+        if session.get("tmuxWindowId") == current_window_id:
+            current = session
+            break
+    if not current:
+        raise SystemExit(1)
+
+    current_team = current.get("team") or {}
+    parent_id = current_team.get("parentSessionId")
+    if parent_id:
+        parent = next((session for session in sessions if session.get("id") == parent_id), None)
+        target = (parent or {}).get("tmuxWindowId") or ""
+        if not target:
+            raise SystemExit(1)
+        print(target)
+        raise SystemExit(0)
+
+    current_id = current.get("id")
+    if not current_id:
+        raise SystemExit(1)
+
+    def parse_time(value):
+        if not value:
+            return float("inf")
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return float("inf")
+
+    direct = [
+        session
+        for session in teammates
+        if (session.get("team") or {}).get("parentSessionId") == current_id
+    ]
+    def teammate_order(session):
+        order = (session.get("team") or {}).get("order")
+        if isinstance(order, bool):
+            return float("inf")
+        return order if isinstance(order, (int, float)) else float("inf")
+
+    direct.sort(key=lambda session: (
+        teammate_order(session),
+        parse_time(session.get("createdAt")),
+        session.get("id") or "",
+    ))
+    if not direct:
+        raise SystemExit(1)
+    target = direct[0].get("tmuxWindowId") or ""
+    if not target:
+        raise SystemExit(1)
+    print(target)
     raise SystemExit(0)
 if not sessions:
     raise SystemExit(1)
@@ -583,6 +640,11 @@ fallback_local_control() {
       target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; import sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
       switch_local_window "$target_window_id" "$target_item_id"
       ;;
+    team)
+      target_window_id=$(resolve_local_target_from_statusline) || return 1
+      target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
+      switch_local_window "$target_window_id" "$target_item_id"
+      ;;
   esac
   return 1
 }
@@ -613,17 +675,18 @@ case "$action" in
   inbox) path="/control/open-inbox" ;;
   window) path="/control/focus-window" ;;
   active) path="/control/active-window" ;;
+  team) path="" ;;
   menu) path="" ;;
   *) exit 1 ;;
 esac
 
 case "$action" in
-  next|prev|attention|dashboard|inbox|menu|window|active)
+  next|prev|attention|dashboard|inbox|menu|window|active|team)
     fallback_local_control && exit 0
     ;;
 esac
 
-if [ "$endpoint_available" -eq 1 ]; then
+if [ "$endpoint_available" -eq 1 ] && [ -n "$path" ]; then
   if request_control 0.35; then
     exit 0
   fi

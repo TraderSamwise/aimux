@@ -883,6 +883,7 @@ export class TmuxRuntimeManager {
     this.exec(["unbind-key", "-T", "prefix", "p"]);
     this.exec(["unbind-key", "-T", "prefix", "d"]);
     this.exec(["unbind-key", "-T", "prefix", "u"]);
+    this.exec(["unbind-key", "-T", "prefix", "e"]);
     this.exec(["unbind-key", "-T", "prefix", "K"]);
     for (const digit of ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]) {
       this.exec(["unbind-key", "-T", "prefix", digit]);
@@ -938,6 +939,15 @@ export class TmuxRuntimeManager {
       "run-shell",
       "-b",
       `${controlScript} attention --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
+    ]);
+    this.exec([
+      "bind-key",
+      "-T",
+      "prefix",
+      "e",
+      "run-shell",
+      "-b",
+      `${controlScript} team --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",
