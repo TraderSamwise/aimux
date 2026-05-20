@@ -104,6 +104,56 @@ function teammateFailureMessage(action: string, failures: Array<{ sessionId: str
   return `Failed to ${action} ${failures.length} teammate${failures.length === 1 ? "" : "s"}: ${details}`;
 }
 
+const TEAMMATE_INHERITABLE_ARG_FLAGS = new Set([
+  "--model",
+  "-m",
+  "--provider",
+  "--reasoning",
+  "--reasoning-effort",
+  "--effort",
+  "--service-tier",
+]);
+
+function stripBaseArgs(args: string[], baseArgs: string[]): string[] {
+  if (baseArgs.length === 0) return [...args];
+  const hasBasePrefix = baseArgs.every((arg, index) => args[index] === arg);
+  return hasBasePrefix ? args.slice(baseArgs.length) : [...args];
+}
+
+function collectTeammateInheritedArgs(args: string[]): string[] {
+  const inherited: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const equalsIndex = arg.indexOf("=");
+    if (equalsIndex > 0) {
+      const flag = arg.slice(0, equalsIndex);
+      const value = arg.slice(equalsIndex + 1);
+      if (TEAMMATE_INHERITABLE_ARG_FLAGS.has(flag) && value) {
+        inherited.push(arg);
+      }
+      continue;
+    }
+
+    if (!TEAMMATE_INHERITABLE_ARG_FLAGS.has(arg)) continue;
+    const value = args[index + 1];
+    if (!value || value.startsWith("-")) continue;
+    inherited.push(arg, value);
+    index += 1;
+  }
+  return inherited;
+}
+
+function deriveTeammateLaunchExtraArgs(opts: {
+  parentArgs: string[];
+  parentBaseArgs: string[];
+  sameToolConfig: boolean;
+  explicitExtraArgs?: string[];
+}): string[] {
+  if (opts.explicitExtraArgs !== undefined) return [...opts.explicitExtraArgs];
+  if (!opts.sameToolConfig) return [];
+  return collectTeammateInheritedArgs(stripBaseArgs(opts.parentArgs, opts.parentBaseArgs));
+}
+
 export async function forkAgent(
   host: SessionActionsHost,
   opts: {
@@ -245,6 +295,14 @@ export async function createTeammateAgent(
   const inheritedWorktreePath = host.sessionWorktreePaths?.get?.(parent.id) ?? parent.worktreePath;
   const targetWorktreePath = opts.targetWorktreePath ?? inheritedWorktreePath;
   const normalizedWorktreePath = targetWorktreePath === process.cwd() ? undefined : targetWorktreePath;
+  const parentToolCfg = config.tools[parentToolConfigKey];
+  const parentArgs = host.sessionOriginalArgs?.get?.(parent.id) ?? parent.args ?? [];
+  const launchExtraArgs = deriveTeammateLaunchExtraArgs({
+    parentArgs: Array.isArray(parentArgs) ? parentArgs : [],
+    parentBaseArgs: parentToolCfg?.args ?? [],
+    sameToolConfig: toolConfigKey === parentToolConfigKey,
+    explicitExtraArgs: opts.extraArgs,
+  });
   const rolePreamble = buildRolePreamble(role, loadTeamConfig());
   const teammatePreamble = [
     `You are a teammate for aimux parent agent "${parent.id}".`,
@@ -257,7 +315,7 @@ export async function createTeammateAgent(
 
   const transport = host.createSession(
     toolCfg.command,
-    [...toolCfg.args, ...(opts.extraArgs ?? [])],
+    [...toolCfg.args, ...launchExtraArgs],
     toolCfg.preambleFlag,
     toolConfigKey,
     teammatePreamble,

@@ -31,7 +31,7 @@ export function buildAimuxAgentInstructions(
       sessionPath +
       "` before creating new ones; ask before replacing an existing team.\n" +
       "- Teammates are first-party aimux agents. The user can inspect and enter them, but they stay hidden from the normal dashboard unless your agent is focused.\n" +
-      "- Default to your same tool and worktree. Only set `tool`, `worktreePath`, `extraArgs`, or role/model-specific args when the user or task requires it.\n" +
+      "- Default to your same tool, worktree, and safe model/provider/runtime selection. Only set `tool`, `worktreePath`, `extraArgs`, or role/model-specific args when the user or task requires it.\n" +
       '- Discover the API with `aimux metadata endpoint`, then POST `/agents/teammates/create` with JSON like `{ "parentSessionId": "' +
       sessionPath +
       '", "role": "coder", "label": "coder-1", "initialPrompt": "..." }`.\n' +

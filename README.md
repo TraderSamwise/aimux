@@ -463,9 +463,9 @@ Useful request fields:
 
 - `parentSessionId` - required aimux session ID of the primary agent.
 - `role` / `label` - optional teammate role and display label.
-- `tool` - optional tool config key; omitted means inherit the parent tool.
+- `tool` - optional tool config key; omitted means inherit the parent tool and safe model/provider/runtime flags.
 - `worktreePath` - optional target worktree; omitted means inherit the parent worktree.
-- `extraArgs` - optional CLI args, for model/provider flags.
+- `extraArgs` - optional CLI args for model/provider flags; when set, these override inherited runtime flags.
 - `initialPrompt` - optional first task sent to the teammate after launch.
 - `open` - optional boolean; `false` creates without switching focus.
 

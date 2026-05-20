@@ -12,6 +12,13 @@ vi.mock("../config.js", () => ({
     defaultTool: "codex",
     tools: {
       codex: { command: "codex", enabled: true, args: [], preambleFlag: undefined, sessionIdFlag: undefined },
+      "codex-default": {
+        command: "codex",
+        enabled: true,
+        args: ["--model", "default"],
+        preambleFlag: undefined,
+        sessionIdFlag: undefined,
+      },
       claude: { command: "claude", enabled: true, args: [], preambleFlag: undefined, sessionIdFlag: undefined },
     },
   }),
@@ -103,6 +110,7 @@ describe("session actions", () => {
       offlineSessions: [],
       sessionToolKeys: new Map([["claude-parent", "claude"]]),
       sessionWorktreePaths: new Map([["claude-parent", join(repoRoot, ".aimux/worktrees/feature")]]),
+      sessionOriginalArgs: new Map(),
       createSession: vi.fn(() => ({ id: "claude-reviewer" })),
       sessionTmuxTargets: new Map(),
       waitAndOpenLiveTmuxWindowForEntry: vi.fn(),
@@ -150,6 +158,125 @@ describe("session actions", () => {
       },
     );
     expect(host.updateSessionLabel).toHaveBeenCalledWith("claude-reviewer", "reviewer");
+  });
+
+  it("inherits safe parent model/runtime args for same-tool teammates", async () => {
+    const parent = { id: "claude-parent", command: "claude", exited: false };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent],
+      offlineSessions: [],
+      sessionToolKeys: new Map([["claude-parent", "claude"]]),
+      sessionOriginalArgs: new Map([
+        [
+          "claude-parent",
+          [
+            "--model",
+            "opus",
+            "--resume",
+            "bad-session-id",
+            "--reasoning-effort",
+            "high",
+            "--permission-mode",
+            "bypassPermissions",
+            "--service-tier=priority",
+          ],
+        ],
+      ]),
+      sessionWorktreePaths: new Map(),
+      createSession: vi.fn(() => ({ id: "claude-reviewer" })),
+      sessionTmuxTargets: new Map(),
+    };
+
+    await createTeammateAgent(host, {
+      parentSessionId: "claude-parent",
+      role: "reviewer",
+      open: false,
+    });
+
+    expect(host.createSession).toHaveBeenCalledWith(
+      "claude",
+      ["--model", "opus", "--reasoning-effort", "high", "--service-tier=priority"],
+      undefined,
+      "claude",
+      expect.any(String),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      false,
+      expect.objectContaining({ parentSessionId: "claude-parent" }),
+    );
+  });
+
+  it("does not duplicate tool base args when inheriting teammate runtime args", async () => {
+    const parent = { id: "codex-parent", command: "codex", exited: false };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent],
+      offlineSessions: [],
+      sessionToolKeys: new Map([["codex-parent", "codex-default"]]),
+      sessionOriginalArgs: new Map([["codex-parent", ["--model", "default", "--model", "gpt-5.5"]]]),
+      sessionWorktreePaths: new Map(),
+      createSession: vi.fn(() => ({ id: "codex-worker" })),
+      sessionTmuxTargets: new Map(),
+    };
+
+    await createTeammateAgent(host, {
+      parentSessionId: "codex-parent",
+      role: "coder",
+      open: false,
+    });
+
+    expect(host.createSession.mock.calls[0][1]).toEqual(["--model", "default", "--model", "gpt-5.5"]);
+  });
+
+  it("lets explicit teammate extra args suppress inherited parent args", async () => {
+    const parent = { id: "claude-parent", command: "claude", exited: false };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent],
+      offlineSessions: [],
+      sessionToolKeys: new Map([["claude-parent", "claude"]]),
+      sessionOriginalArgs: new Map([["claude-parent", ["--model", "opus"]]]),
+      sessionWorktreePaths: new Map(),
+      createSession: vi.fn(() => ({ id: "claude-reviewer" })),
+      sessionTmuxTargets: new Map(),
+    };
+
+    await createTeammateAgent(host, {
+      parentSessionId: "claude-parent",
+      role: "reviewer",
+      extraArgs: [],
+      open: false,
+    });
+
+    expect(host.createSession.mock.calls[0][1]).toEqual([]);
+  });
+
+  it("does not inherit parent args when creating a teammate with a different tool config", async () => {
+    const parent = { id: "claude-parent", command: "claude", exited: false };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent],
+      offlineSessions: [],
+      sessionToolKeys: new Map([["claude-parent", "claude"]]),
+      sessionOriginalArgs: new Map([["claude-parent", ["--model", "opus"]]]),
+      sessionWorktreePaths: new Map(),
+      createSession: vi.fn(() => ({ id: "codex-worker" })),
+      sessionTmuxTargets: new Map(),
+    };
+
+    await createTeammateAgent(host, {
+      parentSessionId: "claude-parent",
+      toolConfigKey: "codex",
+      role: "coder",
+      open: false,
+    });
+
+    expect(host.createSession.mock.calls[0][0]).toBe("codex");
+    expect(host.createSession.mock.calls[0][1]).toEqual([]);
   });
 
   it("sends teammate initial prompts through normal agent input", async () => {
