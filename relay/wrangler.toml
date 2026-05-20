@@ -11,3 +11,9 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_classes = ["RelayObject"]
+
+[env.production]
+name = "aimux-relay"
+routes = [
+  { pattern = "relay.aimux.com", custom_domain = true }
+]
