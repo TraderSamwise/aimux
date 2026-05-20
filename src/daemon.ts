@@ -8,6 +8,7 @@ import { listDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { AUTH_ENABLED, ApiError, verifyApiUser } from "./auth.js";
+import { RelayClient } from "./relay-client.js";
 
 const DAEMON_PORT = 43190;
 const DAEMON_HOST = "127.0.0.1";
@@ -234,6 +235,7 @@ export async function projectServiceStatus(projectRoot: string): Promise<Project
 
 export class AimuxDaemon {
   private server: Server | null = null;
+  private relayClient: RelayClient | null = null;
   private readonly children = new Map<string, ChildProcess>();
   private state: DaemonState = loadDaemonState();
 
@@ -261,9 +263,18 @@ export class AimuxDaemon {
       });
     });
     this.refreshState();
+
+    const relayUrl = process.env.AIMUX_RELAY_URL;
+    const relayToken = process.env.AIMUX_RELAY_TOKEN;
+    if (relayUrl && relayToken) {
+      this.relayClient = new RelayClient(relayUrl, relayToken, this);
+      this.relayClient.connect();
+    }
   }
 
   stop(): void {
+    this.relayClient?.disconnect();
+    this.relayClient = null;
     for (const entry of Object.values(this.state.projects)) {
       try {
         process.kill(entry.pid, "SIGTERM");
@@ -397,16 +408,55 @@ export class AimuxDaemon {
     return existing;
   }
 
-  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async routeRequest(method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
     this.refreshState();
-    const url = new URL(req.url ?? "/", `http://${DAEMON_HOST}:${DAEMON_PORT}`);
 
-    if (req.method === "GET" && url.pathname === "/health") {
-      send(res, 200, { ok: true, pid: process.pid, port: DAEMON_PORT });
-      return;
+    if (method === "GET" && path === "/health") {
+      return { status: 200, body: { ok: true, pid: process.pid, port: DAEMON_PORT } };
     }
 
-    if (AUTH_ENABLED) {
+    if (method === "GET" && path === "/projects") {
+      const liveById = this.state.projects;
+      const projects = listDesktopProjects().map((project) => ({
+        ...project,
+        service: liveById[project.id] ?? null,
+        serviceAlive: Boolean(liveById[project.id]),
+        serviceEndpoint: project.path ? loadMetadataEndpoint(project.path) : null,
+      }));
+      return { status: 200, body: { ok: true, projects } };
+    }
+
+    if (method === "GET" && path.startsWith("/projects/")) {
+      const projectId = decodeURIComponent(path.slice("/projects/".length));
+      const project = this.state.projects[projectId] ?? null;
+      return { status: 200, body: { ok: true, project } };
+    }
+
+    if (method === "POST" && path === "/projects/ensure") {
+      const b = body as { projectRoot?: string } | undefined;
+      if (!b?.projectRoot) {
+        return { status: 400, body: { ok: false, error: "projectRoot is required" } };
+      }
+      const project = await this.ensureProject(b.projectRoot);
+      return { status: 200, body: { ok: true, project } };
+    }
+
+    if (method === "POST" && path === "/projects/stop") {
+      const b = body as { projectRoot?: string } | undefined;
+      if (!b?.projectRoot) {
+        return { status: 400, body: { ok: false, error: "projectRoot is required" } };
+      }
+      const project = this.stopProject(b.projectRoot);
+      return { status: 200, body: { ok: true, project } };
+    }
+
+    return { status: 404, body: { ok: false, error: "not found" } };
+  }
+
+  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? "/", `http://${DAEMON_HOST}:${DAEMON_PORT}`);
+
+    if (AUTH_ENABLED && url.pathname !== "/health") {
       try {
         await verifyApiUser(req);
       } catch (err) {
@@ -417,47 +467,8 @@ export class AimuxDaemon {
       }
     }
 
-    if (req.method === "GET" && url.pathname === "/projects") {
-      const liveById = this.state.projects;
-      const projects = listDesktopProjects().map((project) => ({
-        ...project,
-        service: liveById[project.id] ?? null,
-        serviceAlive: Boolean(liveById[project.id]),
-        serviceEndpoint: project.path ? loadMetadataEndpoint(project.path) : null,
-      }));
-      send(res, 200, { ok: true, projects });
-      return;
-    }
-
-    if (req.method === "GET" && url.pathname.startsWith("/projects/")) {
-      const projectId = decodeURIComponent(url.pathname.slice("/projects/".length));
-      const project = this.state.projects[projectId] ?? null;
-      send(res, 200, { ok: true, project });
-      return;
-    }
-
-    if (req.method === "POST" && url.pathname === "/projects/ensure") {
-      const body = (await readJson(req)) as { projectRoot: string };
-      if (!body.projectRoot) {
-        send(res, 400, { ok: false, error: "projectRoot is required" });
-        return;
-      }
-      const project = await this.ensureProject(body.projectRoot);
-      send(res, 200, { ok: true, project });
-      return;
-    }
-
-    if (req.method === "POST" && url.pathname === "/projects/stop") {
-      const body = (await readJson(req)) as { projectRoot: string };
-      if (!body.projectRoot) {
-        send(res, 400, { ok: false, error: "projectRoot is required" });
-        return;
-      }
-      const project = this.stopProject(body.projectRoot);
-      send(res, 200, { ok: true, project });
-      return;
-    }
-
-    send(res, 404, { ok: false, error: "not found" });
+    const body = req.method === "POST" ? await readJson(req) : undefined;
+    const result = await this.routeRequest(req.method ?? "GET", url.pathname, body);
+    send(res, result.status, result.body);
   }
 }
