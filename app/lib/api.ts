@@ -10,6 +10,7 @@
 // hosted/Clerk-enabled deployments.
 
 import { getDaemonUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
+import type { DesktopState } from "@/lib/desktop-state";
 import type { AgentInputPart, ChatMessage, ParsedAgentOutput } from "@/lib/events";
 
 export interface ApiOpts {
@@ -234,6 +235,201 @@ export async function uploadAttachmentBase64(
   return callJson<AttachmentResponse>(
     `${getServiceUrl(endpoint)}/attachments`,
     { method: "POST", body: JSON.stringify(input) },
+    opts,
+  );
+}
+
+// ── Desktop state (project → worktree → agents | services hierarchy) ────
+
+export async function getDesktopState(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<DesktopState> {
+  return callJson<DesktopState>(
+    `${getServiceUrl(endpoint)}/desktop-state`,
+    { method: "GET" },
+    opts,
+  );
+}
+
+// ── Agent actions ────────────────────────────────────────────────────────
+
+export interface AgentSpawnInput {
+  tool: string;
+  worktreePath?: string;
+  label?: string;
+  role?: string;
+}
+
+export async function spawnAgent(
+  endpoint: ServiceEndpoint,
+  input: AgentSpawnInput,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; sessionId: string }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/agents/spawn`,
+    { method: "POST", body: JSON.stringify(input) },
+    opts,
+  );
+}
+
+export async function forkAgent(
+  endpoint: ServiceEndpoint,
+  input: { sessionId: string; tool?: string; worktreePath?: string },
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; sessionId: string }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/agents/fork`,
+    { method: "POST", body: JSON.stringify(input) },
+    opts,
+  );
+}
+
+export async function stopAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/agents/stop`,
+    { method: "POST", body: JSON.stringify({ sessionId }) },
+    opts,
+  );
+}
+
+export async function resumeAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/agents/resume`,
+    { method: "POST", body: JSON.stringify({ sessionId }) },
+    opts,
+  );
+}
+
+export async function interruptAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/agents/interrupt`,
+    { method: "POST", body: JSON.stringify({ sessionId }) },
+    opts,
+  );
+}
+
+export async function renameAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  label: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/agents/rename`,
+    { method: "POST", body: JSON.stringify({ sessionId, label }) },
+    opts,
+  );
+}
+
+export async function migrateAgent(
+  endpoint: ServiceEndpoint,
+  input: { sessionId: string; worktreePath?: string },
+  opts?: ApiOpts,
+): Promise<{ ok: boolean }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/agents/migrate`,
+    { method: "POST", body: JSON.stringify(input) },
+    opts,
+  );
+}
+
+export async function killAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/agents/kill`,
+    { method: "POST", body: JSON.stringify({ sessionId }) },
+    opts,
+  );
+}
+
+// ── Service actions ──────────────────────────────────────────────────────
+
+export async function createService(
+  endpoint: ServiceEndpoint,
+  input: { command?: string; worktreePath?: string; serviceId?: string },
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; serviceId: string }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/services/create`,
+    { method: "POST", body: JSON.stringify(input) },
+    opts,
+  );
+}
+
+export async function stopService(
+  endpoint: ServiceEndpoint,
+  serviceId: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; serviceId: string; status: "stopped" }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/services/stop`,
+    { method: "POST", body: JSON.stringify({ serviceId }) },
+    opts,
+  );
+}
+
+export async function resumeService(
+  endpoint: ServiceEndpoint,
+  serviceId: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; serviceId: string; status: "running" }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/services/resume`,
+    { method: "POST", body: JSON.stringify({ serviceId }) },
+    opts,
+  );
+}
+
+export async function removeService(
+  endpoint: ServiceEndpoint,
+  serviceId: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; serviceId: string; status: "removed" }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/services/remove`,
+    { method: "POST", body: JSON.stringify({ serviceId }) },
+    opts,
+  );
+}
+
+// ── Worktree actions ─────────────────────────────────────────────────────
+
+export async function createWorktree(
+  endpoint: ServiceEndpoint,
+  name: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; path: string }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/worktrees/create`,
+    { method: "POST", body: JSON.stringify({ name }) },
+    opts,
+  );
+}
+
+export async function removeWorktree(
+  endpoint: ServiceEndpoint,
+  path: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; path: string }> {
+  return callJson(
+    `${getServiceUrl(endpoint)}/worktrees/remove`,
+    { method: "POST", body: JSON.stringify({ path }) },
     opts,
   );
 }
