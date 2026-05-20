@@ -2,13 +2,14 @@ import React, { useEffect, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { ChevronLeft, Settings } from "lucide-react-native";
+import { ChevronLeft, GitBranch, Settings } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
+import { StatusDot } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
-import { AGENT_STATUS_TONE, SERVICE_STATUS_TONE, firstTokenOf } from "@/lib/status-tone";
+import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import type { DaemonProject } from "@/lib/api";
@@ -22,6 +23,13 @@ import {
 } from "@/stores/projects";
 import { sidebarShowProjectPickerAtom } from "@/stores/ui";
 
+// Type ladder used throughout the sidebar:
+//   - Project name / worktree name (title)      → text-[15px] font-bold
+//   - Section headings (Agents, Services)       → text-[10px] uppercase tracking-widest
+//   - Row primary (agent/service label)         → text-[13px] font-medium
+//   - Row secondary (tool, status, detail)      → text-[11px] text-muted-foreground
+//   - Path / branch chip                        → text-[11px] muted
+
 // ─── Project picker ───────────────────────────────────────────────────────
 
 function ProjectPicker({
@@ -34,9 +42,9 @@ function ProjectPicker({
   onSelect: (path: string) => void;
 }) {
   return (
-    <>
-      <View className="px-4 pt-6 pb-2">
-        <Text className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <View className="pt-5 pb-2">
+      <View className="px-4 pb-3">
+        <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
           Projects
         </Text>
       </View>
@@ -51,24 +59,32 @@ function ProjectPicker({
             <Pressable
               key={project.path}
               onPress={() => onSelect(project.path)}
-              className={cn("px-4 py-2", isSelected ? "bg-accent" : "active:bg-accent/50")}
+              className={cn(
+                "px-4 py-2.5 border-l-2",
+                isSelected
+                  ? "border-l-emerald-500 bg-accent"
+                  : "border-l-transparent active:bg-accent/60",
+              )}
             >
               <Text
-                className={cn(
-                  "text-sm",
-                  isSelected ? "text-accent-foreground font-medium" : "text-foreground",
-                )}
+                className="text-[14px] font-semibold text-foreground"
+                numberOfLines={1}
+                ellipsizeMode="tail"
               >
                 {project.name}
               </Text>
-              <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+              <Text
+                className="text-[11px] text-muted-foreground mt-0.5"
+                numberOfLines={1}
+                ellipsizeMode="middle"
+              >
                 {project.path}
               </Text>
             </Pressable>
           );
         })
       )}
-    </>
+    </View>
   );
 }
 
@@ -82,22 +98,50 @@ function ProjectHeader({
   onSwitchProject: () => void;
 }) {
   return (
-    <View className="flex-row items-center px-4 pt-6 pb-3 border-b border-border">
-      <Pressable
-        onPress={onSwitchProject}
-        accessibilityLabel="Switch project"
-        className="p-1 rounded mr-2 active:bg-accent/50"
-      >
-        <ChevronLeft size={16} color="#9ca3af" />
-      </Pressable>
-      <View className="flex-1">
-        <Text className="text-sm font-medium text-foreground" numberOfLines={1}>
+    <Pressable
+      onPress={onSwitchProject}
+      accessibilityLabel="Switch project"
+      className="flex-row items-center px-3 py-3 border-b border-border bg-secondary active:bg-accent"
+    >
+      <View className="p-0.5 rounded mr-1.5">
+        <ChevronLeft size={16} color="#a1a1aa" />
+      </View>
+      <View className="flex-1 min-w-0">
+        <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-0.5">
+          Project
+        </Text>
+        <Text
+          className="text-[15px] font-bold text-foreground"
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
           {project.name}
         </Text>
-        <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+        <Text
+          className="text-[11px] text-muted-foreground mt-0.5"
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
           {project.path}
         </Text>
       </View>
+    </Pressable>
+  );
+}
+
+// ─── Branch chip ──────────────────────────────────────────────────────────
+
+function BranchChip({ branch }: { branch: string }) {
+  return (
+    <View className="flex-row items-center gap-1 self-start px-1.5 py-0.5 rounded bg-secondary border border-border max-w-full">
+      <GitBranch size={10} color="#a1a1aa" />
+      <Text
+        className="text-[10px] font-mono text-muted-foreground"
+        numberOfLines={1}
+        ellipsizeMode="middle"
+      >
+        {branch}
+      </Text>
     </View>
   );
 }
@@ -113,28 +157,31 @@ function AgentRow({
   isSelected: boolean;
   onPress: () => void;
 }) {
-  const tone = AGENT_STATUS_TONE[session.status] ?? "text-zinc-400";
   const tool = firstTokenOf(session.command);
   return (
     <Pressable
       onPress={onPress}
-      className={cn("px-4 py-2 pl-8", isSelected ? "bg-accent" : "active:bg-accent/50")}
+      className={cn(
+        "flex-row items-center gap-2.5 px-3 py-2",
+        isSelected ? "bg-accent" : "active:bg-accent/60",
+      )}
     >
-      <View className="flex-row items-center gap-2">
-        <Text className={cn("text-xs", tone)}>●</Text>
+      <StatusDot status={session.status} size="sm" />
+      <View className="flex-1 min-w-0">
         <Text
           className={cn(
-            "text-sm flex-1",
-            isSelected ? "font-medium text-accent-foreground" : "text-foreground",
+            "text-[13px] font-medium",
+            isSelected ? "text-foreground" : "text-foreground",
           )}
           numberOfLines={1}
+          ellipsizeMode="tail"
         >
           {session.label || session.id}
         </Text>
+        <Text className="text-[11px] text-muted-foreground" numberOfLines={1}>
+          {tool ? `${tool} · ${session.status}` : session.status}
+        </Text>
       </View>
-      <Text className="text-xs text-muted-foreground ml-4" numberOfLines={1}>
-        {tool ? `${tool} · ${session.status}` : session.status}
-      </Text>
     </Pressable>
   );
 }
@@ -152,25 +199,33 @@ function ServiceRow({
   token: string | null;
   onPress: () => void;
 }) {
-  const tone = SERVICE_STATUS_TONE[service.status] ?? "text-zinc-400";
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
 
   return (
-    <View className="px-4 py-2 pl-8">
-      <View className="flex-row items-center gap-2">
-        <Pressable onPress={onPress} className="flex-1 flex-row items-center gap-2">
-          <Text className={cn("text-xs", tone)}>●</Text>
-          <Text className="text-sm flex-1 text-foreground" numberOfLines={1}>
+    <View className="flex-row items-center gap-2.5 px-3 py-2">
+      <Pressable
+        onPress={onPress}
+        className="flex-1 flex-row items-center gap-2.5 min-w-0 active:opacity-70"
+      >
+        <StatusDot status={service.status} size="sm" />
+        <View className="flex-1 min-w-0">
+          <Text
+            className="text-[13px] font-medium text-foreground"
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
             {service.label || service.id}
           </Text>
-        </Pressable>
-        <ServiceActions service={service} endpoint={endpoint} token={token} iconSize={14} />
-      </View>
-      <Pressable onPress={onPress}>
-        <Text className="text-xs text-muted-foreground ml-4" numberOfLines={1}>
-          {detail ? `${detail} · ${service.status}` : service.status}
-        </Text>
+          <Text
+            className="text-[11px] text-muted-foreground"
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {detail ? `${detail} · ${service.status}` : service.status}
+          </Text>
+        </View>
       </Pressable>
+      <ServiceActions service={service} endpoint={endpoint} token={token} iconSize={14} />
     </View>
   );
 }
@@ -192,52 +247,75 @@ function WorktreeGroup({
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
 }) {
+  const hasAgents = bucket.sessions.length > 0;
+  const hasServices = bucket.services.length > 0;
+  const railColor = bucket.isMainCheckout ? "bg-emerald-500" : "bg-sky-500";
+
   return (
-    <View>
-      <View className="px-4 pt-4 pb-1">
-        <Text className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          {bucket.name}
+    <View className="mx-3 mb-3 rounded-lg border border-border bg-card overflow-hidden">
+      {/* Worktree header */}
+      <View className="flex-row items-stretch border-b border-border">
+        <View className={cn("w-1", railColor)} />
+        <View className="flex-1 min-w-0 px-3 py-2.5">
+          <Text
+            className="text-[15px] font-bold text-foreground"
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {bucket.name}
+          </Text>
           {bucket.branch ? (
-            <Text className="text-xs text-muted-foreground"> · {bucket.branch}</Text>
+            <View className="mt-1.5">
+              <BranchChip branch={bucket.branch} />
+            </View>
           ) : null}
-        </Text>
+        </View>
       </View>
 
-      <View className="px-4 pt-2 pb-1">
-        <Text className="text-[10px] uppercase tracking-wider text-muted-foreground">Agents</Text>
-      </View>
-      {bucket.sessions.length === 0 ? (
-        <View className="px-4 py-1 pl-8">
-          <Text className="text-xs text-muted-foreground">(none)</Text>
+      {/* Body */}
+      {hasAgents ? (
+        <View>
+          <View className="px-3 pt-2.5 pb-1">
+            <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Agents
+            </Text>
+          </View>
+          {bucket.sessions.map((session) => (
+            <AgentRow
+              key={session.id}
+              session={session}
+              isSelected={session.id === selectedSessionId}
+              onPress={() => onPickSession(session.id)}
+            />
+          ))}
         </View>
-      ) : (
-        bucket.sessions.map((session) => (
-          <AgentRow
-            key={session.id}
-            session={session}
-            isSelected={session.id === selectedSessionId}
-            onPress={() => onPickSession(session.id)}
-          />
-        ))
-      )}
+      ) : null}
 
-      <View className="px-4 pt-2 pb-1">
-        <Text className="text-[10px] uppercase tracking-wider text-muted-foreground">Services</Text>
-      </View>
-      {bucket.services.length === 0 ? (
-        <View className="px-4 py-1 pl-8">
-          <Text className="text-xs text-muted-foreground">(none)</Text>
+      {hasServices ? (
+        <View className={cn(hasAgents && "border-t border-border")}>
+          <View className="px-3 pt-2.5 pb-1">
+            <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Services
+            </Text>
+          </View>
+          {bucket.services.map((service) => (
+            <ServiceRow
+              key={service.id}
+              service={service}
+              endpoint={endpoint}
+              token={token}
+              onPress={() => onPickService(service.id)}
+            />
+          ))}
+        </View>
+      ) : null}
+
+      {!hasAgents && !hasServices ? (
+        <View className="px-3 py-3">
+          <Text className="text-[11px] text-muted-foreground italic">empty worktree</Text>
         </View>
       ) : (
-        bucket.services.map((service) => (
-          <ServiceRow
-            key={service.id}
-            service={service}
-            endpoint={endpoint}
-            token={token}
-            onPress={() => onPickService(service.id)}
-          />
-        ))
+        <View className="h-1.5" />
       )}
     </View>
   );
@@ -265,9 +343,12 @@ function WorktreeTree({
 
   if (!endpoint && desktopState === null) {
     return (
-      <View className="px-4 py-3">
-        <Text className="text-sm text-muted-foreground">
-          Project host not running. Start the project host to see worktrees and agents.
+      <View className="mx-3 mt-3 mb-2 rounded-lg border border-border bg-card px-3 py-3">
+        <Text className="text-[12px] font-medium text-foreground/90 leading-snug">
+          Project host not running.
+        </Text>
+        <Text className="text-[11px] text-muted-foreground mt-1 leading-snug">
+          Start the host to see worktrees, agents, and services.
         </Text>
       </View>
     );
@@ -275,14 +356,14 @@ function WorktreeTree({
 
   if (groups.length === 0) {
     return (
-      <View className="px-4 py-3">
-        <Text className="text-sm text-muted-foreground">No worktrees yet</Text>
+      <View className="px-4 py-4">
+        <Text className="text-xs text-muted-foreground">No worktrees yet</Text>
       </View>
     );
   }
 
   return (
-    <>
+    <View className="pt-3 pb-3">
       {groups.map((bucket) => (
         <WorktreeGroup
           key={bucket.key}
@@ -294,7 +375,7 @@ function WorktreeTree({
           onPickService={onPickService}
         />
       ))}
-    </>
+    </View>
   );
 }
 
@@ -355,7 +436,7 @@ export function ProjectSidebar() {
   }
 
   return (
-    <View className="w-72 border-r border-border bg-background">
+    <View className="w-80 border-r border-border bg-background">
       <ScrollView className="flex-1">
         {pickerMode ? (
           <ProjectPicker
@@ -381,8 +462,8 @@ export function ProjectSidebar() {
         onPress={() => router.push("/(main)/settings")}
         className="flex-row items-center gap-2 px-4 py-3 border-t border-border active:bg-accent/50"
       >
-        <Settings size={16} color="#9ca3af" />
-        <Text className="text-sm text-foreground">Settings</Text>
+        <Settings size={15} color="#a1a1aa" />
+        <Text className="text-[13px] text-muted-foreground">Settings</Text>
       </Pressable>
     </View>
   );
