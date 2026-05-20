@@ -3,14 +3,14 @@ import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import { ChevronLeft } from "lucide-react-native";
+import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { ServiceActions } from "@/components/service-actions";
+import { StatusDot } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, WorktreeBucket } from "@/lib/desktop-state";
-import { SERVICE_STATUS_TONE } from "@/lib/status-tone";
-import { cn } from "@/lib/utils";
 import { worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
 
@@ -109,7 +109,6 @@ function ServiceDetailBody({
   token: string | null;
   onRemoved: () => void;
 }) {
-  const tone = SERVICE_STATUS_TONE[service.status] ?? "text-zinc-400";
   const title = service.label || service.id;
   const showSubtitle = !!service.label && service.label !== service.id;
   const args = service.args && service.args.length > 0 ? service.args.join(" ") : null;
@@ -117,39 +116,45 @@ function ServiceDetailBody({
 
   return (
     <>
-      <View className="flex-row items-start mb-4">
-        <View className="flex-1">
-          <Text className="text-2xl font-bold text-foreground" numberOfLines={1}>
+      <View className="flex-row items-start mb-6">
+        <View className="flex-1 min-w-0">
+          <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-1.5">
+            Service
+          </Text>
+          <Text
+            className="text-[28px] font-bold text-foreground leading-tight"
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
             {title}
           </Text>
           {showSubtitle ? (
-            <Text className="text-xs text-muted-foreground mt-1" numberOfLines={1}>
+            <Text className="text-[12px] text-muted-foreground mt-1.5" numberOfLines={1}>
               {service.id}
             </Text>
           ) : null}
         </View>
-        <View className="ml-3">
+        <View className="ml-3 mt-7">
           <ServiceActions
             service={service}
             endpoint={endpoint}
             token={token}
-            iconSize={18}
             onRemoved={onRemoved}
           />
         </View>
       </View>
 
-      <View className="rounded-lg border border-border bg-card p-4 mb-4">
-        <View className="flex-row items-center mb-2">
-          <Text className={cn("text-xs mr-2", tone)}>●</Text>
-          <Text className="text-sm font-medium text-foreground">{service.status}</Text>
+      <Card className="p-5">
+        <View className="flex-row items-center mb-3">
+          <StatusDot status={service.status} size="md" />
+          <Text className="text-[14px] font-semibold text-foreground ml-2.5">{service.status}</Text>
         </View>
         {worktreeLine ? <Row label="Worktree" value={worktreeLine} /> : null}
         {service.command ? <Row label="Command" value={service.command} /> : null}
         {args ? <Row label="Args" value={args} /> : null}
         {service.shellCommand ? <Row label="Shell" value={service.shellCommand} /> : null}
         {service.previewLine ? <Row label="Preview" value={service.previewLine} /> : null}
-      </View>
+      </Card>
     </>
   );
 }
