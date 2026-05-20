@@ -344,6 +344,15 @@ switch_local_window() {
   exit 0
 }
 
+show_local_message() {
+  message="$1"
+  if [ -n "${pane_id-}" ]; then
+    tmux display-message -t "$pane_id" "$message" >/dev/null 2>&1 || true
+  else
+    tmux display-message "$message" >/dev/null 2>&1 || true
+  fi
+}
+
 show_local_switcher() {
   if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
     resolve_live_client || return 1
@@ -551,6 +560,7 @@ for line in windows:
     if not worktree or not current_path.startswith(worktree):
         continue
     kind = meta.get("kind") or "agent"
+    team = meta.get("team") or {}
     items.append({
         "windowId": window_id,
         "windowIndex": int(index),
@@ -560,6 +570,8 @@ for line in windows:
         "attention": meta.get("attention", ""),
         "unseenCount": int(meta.get("unseenCount") or 0),
         "statusText": meta.get("statusText", ""),
+        "team": team if isinstance(team, dict) else {},
+        "createdAt": meta.get("createdAt", ""),
     })
 
 if not items:
@@ -577,6 +589,57 @@ else:
     items = [item for item in items if current_path.startswith(item.get("worktreePath") or "")]
 
 items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
+if not items:
+    raise SystemExit(1)
+
+current = next((item for item in items if item.get("windowId") == current_window_id), None)
+if action == "team":
+    if not current:
+        raise SystemExit(1)
+    current_team = current.get("team") or {}
+    parent_id = current_team.get("parentSessionId")
+    if parent_id:
+        parent = next((item for item in items if item.get("sessionId") == parent_id and not (item.get("team") or {}).get("parentSessionId")), None)
+        if not parent:
+            raise SystemExit(1)
+        print(parent["windowId"])
+        raise SystemExit(0)
+
+    current_id = current.get("sessionId")
+    if not current_id:
+        raise SystemExit(1)
+
+    direct = [
+        item
+        for item in items
+        if (item.get("team") or {}).get("parentSessionId") == current_id
+    ]
+    def teammate_order(item):
+        order = (item.get("team") or {}).get("order")
+        if isinstance(order, bool):
+            return 10**9
+        return order if isinstance(order, (int, float)) else 10**9
+
+    direct.sort(key=lambda item: (teammate_order(item), item.get("windowIndex", 10**9), item.get("createdAt") or "", item.get("sessionId") or ""))
+    if not direct:
+        raise SystemExit(1)
+    print(direct[0]["windowId"])
+    raise SystemExit(0)
+
+if current and (current.get("team") or {}).get("parentSessionId"):
+    parent_id = (current.get("team") or {}).get("parentSessionId")
+    items = [item for item in items if (item.get("team") or {}).get("parentSessionId") == parent_id]
+    def teammate_nav_order(item):
+        order = (item.get("team") or {}).get("order")
+        if isinstance(order, bool):
+            return 10**9
+        return order if isinstance(order, (int, float)) else 10**9
+
+    items.sort(key=lambda s: (teammate_nav_order(s), s.get("windowIndex", 10**9), s.get("createdAt") or "", s.get("sessionId") or ""))
+else:
+    items = [item for item in items if not (item.get("team") or {}).get("parentSessionId")]
+    items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
+
 if not items:
     raise SystemExit(1)
 
@@ -641,7 +704,10 @@ fallback_local_control() {
       switch_local_window "$target_window_id" "$target_item_id"
       ;;
     team)
-      target_window_id=$(resolve_local_target_from_statusline) || return 0
+      target_window_id=$(resolve_local_target_from_tmux_metadata || resolve_local_target_from_statusline) || {
+        show_local_message "aimux: no live teammate target"
+        return 0
+      }
       target_item_id=$(tmux show-window-options -v -t "$target_window_id" @aimux-meta 2>/dev/null | python3 -c 'import json,sys; raw=sys.stdin.read().strip(); print((json.loads(raw).get("sessionId","") if raw else ""))' 2>/dev/null || true)
       switch_local_window "$target_window_id" "$target_item_id"
       ;;
