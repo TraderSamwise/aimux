@@ -7,6 +7,7 @@ import { getDaemonInfoPath, getDaemonStatePath, getProjectIdFor } from "./paths.
 import { listDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
+import { AUTH_ENABLED, ApiError, verifyApiUser } from "./auth.js";
 
 const DAEMON_PORT = 43190;
 const DAEMON_HOST = "127.0.0.1";
@@ -403,6 +404,17 @@ export class AimuxDaemon {
     if (req.method === "GET" && url.pathname === "/health") {
       send(res, 200, { ok: true, pid: process.pid, port: DAEMON_PORT });
       return;
+    }
+
+    if (AUTH_ENABLED) {
+      try {
+        await verifyApiUser(req);
+      } catch (err) {
+        const status = err instanceof ApiError ? err.status : 401;
+        const message = err instanceof Error ? err.message : "Unauthorized";
+        send(res, status, { ok: false, error: message });
+        return;
+      }
     }
 
     if (req.method === "GET" && url.pathname === "/projects") {

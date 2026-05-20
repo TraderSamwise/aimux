@@ -83,7 +83,7 @@ export default function SignInScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <View className="flex-1 justify-center px-8">
-        <Text className="text-3xl font-bold text-foreground text-center mb-8">Aimux</Text>
+        <Text className="text-3xl font-mono font-bold text-foreground text-center mb-8">Aimux</Text>
 
         {!needsVerification ? (
           <>
@@ -114,7 +114,7 @@ export default function SignInScreen() {
               onSubmitEditing={handleSignIn}
             />
 
-            {error ? <Text className="text-red-500 text-sm mb-3">{error}</Text> : null}
+            {error ? <Text className="text-destructive text-sm mb-3">{error}</Text> : null}
 
             <Button
               label={loading ? "Signing in..." : "Sign In"}
@@ -146,7 +146,7 @@ export default function SignInScreen() {
               onSubmitEditing={handleVerify}
             />
 
-            {error ? <Text className="text-red-500 text-sm mb-3">{error}</Text> : null}
+            {error ? <Text className="text-destructive text-sm mb-3">{error}</Text> : null}
 
             <Button
               label={loading ? "Verifying..." : "Verify"}
