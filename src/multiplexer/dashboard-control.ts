@@ -23,6 +23,7 @@ import {
   buildNotificationPanelOverlayOutput,
   buildServiceInputOverlayOutput,
   buildSwitcherOverlayOutput,
+  buildTeammatePickerOverlayOutput,
   buildWorktreeListOverlayOutput,
   buildWorktreeRemoveConfirmOverlayOutput,
 } from "../tui/screens/overlay-renderers.js";
@@ -146,6 +147,9 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     case "notification-panel":
       host.handleNotificationPanelKey(data);
       return true;
+    case "teammate-picker":
+      host.handleTeammatePickerKey(data);
+      return true;
     case "worktree-remove-confirm":
       host.handleWorktreeRemoveConfirmKey(data);
       return true;
@@ -202,6 +206,9 @@ export function buildActiveDashboardOverlayOutput(host: DashboardControlHost): s
   }
   if (host.dashboardOverlayState.kind === "notification-panel") {
     return buildNotificationPanelOverlayOutput(host);
+  }
+  if (host.dashboardOverlayState.kind === "teammate-picker") {
+    return buildTeammatePickerOverlayOutput(host);
   }
   if (host.dashboardOverlayState.kind === "thread-reply") {
     return buildThreadReplyOverlayOutput(host);

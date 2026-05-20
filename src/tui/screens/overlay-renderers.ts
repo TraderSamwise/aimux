@@ -180,6 +180,45 @@ export function renderNotificationPanel(ctx: any): void {
   if (output) process.stdout.write(output);
 }
 
+export function buildTeammatePickerOverlayOutput(ctx: any): string | null {
+  const teammates = ctx.getTeammatePickerEntries?.() ?? [];
+  if (teammates.length === 0) return null;
+
+  const cols = process.stdout.columns ?? 80;
+  const rows = process.stdout.rows ?? 24;
+  const visible = teammates.slice(0, Math.max(3, rows - 10));
+  const selectedIndex = Math.max(0, Math.min(ctx.teammatePickerState?.index ?? 0, visible.length - 1));
+  const statusLabel =
+    typeof ctx.derivedStatusLabel === "function"
+      ? (entry: any) => ctx.derivedStatusLabel(entry)
+      : (entry: any) => entry.status;
+  const labelFor = (entry: any): string => {
+    const label = entry.team?.label ?? entry.label ?? entry.command ?? entry.id;
+    const role = entry.team?.role ?? entry.role;
+    return role ? `${label} (${role})` : label;
+  };
+  const formatLine = (entry: any, index: number): string => {
+    const marker = index === selectedIndex ? ">" : " ";
+    const number = index < 9 ? `[${index + 1}]` : "   ";
+    const status = statusLabel(entry);
+    const summary = entry.headline ?? entry.previewLine ?? entry.lastEvent?.message;
+    const suffix = summary ? ` - ${summary}` : "";
+    return `  ${marker} ${number} ${labelFor(entry)} - ${status}${suffix}`;
+  };
+
+  const lines = ["Team", "", ...visible.map(formatLine)];
+  if (teammates.length > visible.length) {
+    lines.push(`  ${teammates.length - visible.length} more`);
+  }
+  lines.push("", "  [↑↓] select  [1-9/Enter] open  [Esc] back");
+  return renderOverlayBox(lines, cols, rows, "blue");
+}
+
+export function renderTeammatePickerOverlay(ctx: any): void {
+  const output = buildTeammatePickerOverlayOutput(ctx);
+  if (output) process.stdout.write(output);
+}
+
 export function buildHelpOverlayOutput(_ctx: any): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;

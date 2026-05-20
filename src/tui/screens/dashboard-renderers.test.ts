@@ -196,6 +196,7 @@ describe("renderDashboardFrame worktree progress", () => {
     );
 
     expect(frame).toContain("Team");
+    expect(frame).toContain("[e] team");
     expect(frame).toContain("review(reviewer)");
     expect(frame).toContain("working");
     expect(frame).toContain("scan(explorer)");

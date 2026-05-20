@@ -314,6 +314,209 @@ describe("dashboardInteractionMethods", () => {
     expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
   });
 
+  it("can open a teammate without changing dashboard selection", async () => {
+    const entry = {
+      id: "reviewer-1",
+      status: "running",
+      worktreePath: "/repo/.aimux/worktrees/demo",
+      team: { teamId: "team-1", parentSessionId: "parent-1", role: "reviewer" },
+    };
+    const host: any = {
+      dashboardWorktreeGroupsCache: [
+        {
+          name: "demo",
+          path: "/repo/.aimux/worktrees/demo",
+          sessions: [],
+          services: [],
+        },
+      ],
+      waitAndOpenLiveTmuxWindowForEntry: vi.fn(async () => "opened"),
+      preferDashboardEntrySelection: vi.fn(),
+      persistDashboardUiState: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.activateDashboardEntry.call(host, entry, { preserveDashboardSelection: true });
+
+    expect(host.preferDashboardEntrySelection).not.toHaveBeenCalled();
+    expect(host.persistDashboardUiState).not.toHaveBeenCalled();
+    expect(host.waitAndOpenLiveTmuxWindowForEntry).toHaveBeenCalledWith(entry);
+  });
+
+  it("opens a teammate picker only for selected agents with teammates", () => {
+    const parent = { id: "parent-1", command: "claude", status: "running" };
+    const host: any = {
+      dashboardState: {
+        hasWorktrees: () => false,
+        level: "worktrees",
+        worktreeEntries: [],
+      },
+      activeIndex: 0,
+      getDashboardSessions: vi.fn(() => [parent]),
+      dashboardSessionsCache: [parent],
+      dashboardTeammatesCache: [
+        {
+          id: "reviewer-1",
+          command: "codex",
+          status: "running",
+          team: { teamId: "team-1", parentSessionId: "parent-1", role: "reviewer", order: 1 },
+        },
+      ],
+      openDashboardOverlay: vi.fn(),
+      renderTeammatePicker: vi.fn(),
+    };
+
+    dashboardInteractionMethods.showTeammatePicker.call(host);
+
+    expect(host.teammatePickerState).toEqual({ parentSessionId: "parent-1", index: 0 });
+    expect(host.openDashboardOverlay).toHaveBeenCalledWith("teammate-picker");
+    expect(host.renderTeammatePicker).toHaveBeenCalledOnce();
+  });
+
+  it("maps teammate picker digits to rendered teammate order", () => {
+    const parent = { id: "parent-1", command: "claude", status: "running" };
+    const second = {
+      id: "second",
+      command: "claude",
+      status: "running",
+      team: { teamId: "team-1", parentSessionId: "parent-1", order: 2 },
+    };
+    const first = {
+      id: "first",
+      command: "codex",
+      status: "running",
+      team: { teamId: "team-1", parentSessionId: "parent-1", order: 1 },
+    };
+    const host: any = {
+      teammatePickerState: { parentSessionId: "parent-1", index: 0 },
+      dashboardState: {
+        hasWorktrees: () => false,
+        level: "worktrees",
+        worktreeEntries: [],
+      },
+      activeIndex: 0,
+      getDashboardSessions: vi.fn(() => [parent]),
+      dashboardSessionsCache: [parent],
+      dashboardTeammatesCache: [second, first],
+      clearDashboardOverlay: vi.fn(),
+      activateDashboardEntry: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleTeammatePickerKey.call(host, Buffer.from("1"));
+
+    expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
+    expect(host.activateDashboardEntry).toHaveBeenCalledWith(expect.objectContaining({ id: "first" }), {
+      preserveDashboardSelection: true,
+    });
+  });
+
+  it("does not open teammate digits hidden behind the more indicator", () => {
+    const rowsDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+    Object.defineProperty(process.stdout, "rows", { configurable: true, value: 12 });
+    try {
+      const parent = { id: "parent-1", command: "claude", status: "running" };
+      const teammates = Array.from({ length: 4 }, (_, index) => ({
+        id: `teammate-${index + 1}`,
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-1", parentSessionId: "parent-1", order: index + 1 },
+      }));
+      const host: any = {
+        teammatePickerState: { parentSessionId: "parent-1", index: 0 },
+        dashboardState: {
+          hasWorktrees: () => false,
+          level: "worktrees",
+          worktreeEntries: [],
+        },
+        activeIndex: 0,
+        getDashboardSessions: vi.fn(() => [parent]),
+        dashboardSessionsCache: [parent],
+        dashboardTeammatesCache: teammates,
+        clearDashboardOverlay: vi.fn(),
+        activateDashboardEntry: vi.fn(),
+      };
+
+      dashboardInteractionMethods.handleTeammatePickerKey.call(host, Buffer.from("4"));
+
+      expect(host.activateDashboardEntry).not.toHaveBeenCalled();
+      expect(host.clearDashboardOverlay).not.toHaveBeenCalled();
+    } finally {
+      if (rowsDescriptor) {
+        Object.defineProperty(process.stdout, "rows", rowsDescriptor);
+      }
+    }
+  });
+
+  it("closes a stale teammate picker instead of retargeting to another selected parent", () => {
+    const selectedParent = { id: "other-parent", command: "claude", status: "running" };
+    const host: any = {
+      teammatePickerState: { parentSessionId: "missing-parent", index: 0 },
+      dashboardState: {
+        hasWorktrees: () => false,
+        level: "worktrees",
+        worktreeEntries: [],
+      },
+      activeIndex: 0,
+      getDashboardSessions: vi.fn(() => [selectedParent]),
+      dashboardSessionsCache: [selectedParent],
+      dashboardTeammatesCache: [
+        {
+          id: "wrong-teammate",
+          command: "codex",
+          status: "running",
+          team: { teamId: "team-1", parentSessionId: "other-parent", order: 1 },
+        },
+      ],
+      clearDashboardOverlay: vi.fn(),
+      restoreDashboardAfterOverlayDismiss: vi.fn(),
+      activateDashboardEntry: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleTeammatePickerKey.call(host, Buffer.from("\r"));
+
+    expect(host.teammatePickerState).toBeNull();
+    expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
+    expect(host.restoreDashboardAfterOverlayDismiss).toHaveBeenCalledOnce();
+    expect(host.activateDashboardEntry).not.toHaveBeenCalled();
+  });
+
+  it("opens the visibly highlighted teammate when stored picker index is stale", () => {
+    const parent = { id: "parent-1", command: "claude", status: "running" };
+    const teammates = [
+      {
+        id: "first",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-1", parentSessionId: "parent-1", order: 1 },
+      },
+      {
+        id: "second",
+        command: "claude",
+        status: "running",
+        team: { teamId: "team-1", parentSessionId: "parent-1", order: 2 },
+      },
+    ];
+    const host: any = {
+      teammatePickerState: { parentSessionId: "parent-1", index: 99 },
+      dashboardState: {
+        hasWorktrees: () => false,
+        level: "worktrees",
+        worktreeEntries: [],
+      },
+      activeIndex: 0,
+      getDashboardSessions: vi.fn(() => [parent]),
+      dashboardSessionsCache: [parent],
+      dashboardTeammatesCache: teammates,
+      clearDashboardOverlay: vi.fn(),
+      activateDashboardEntry: vi.fn(),
+    };
+
+    dashboardInteractionMethods.handleTeammatePickerKey.call(host, Buffer.from("\r"));
+
+    expect(host.activateDashboardEntry).toHaveBeenCalledWith(expect.objectContaining({ id: "second" }), {
+      preserveDashboardSelection: true,
+    });
+  });
+
   it("persists preferred service selection before opening a service", async () => {
     const service = {
       id: "service-1",

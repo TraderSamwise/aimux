@@ -204,6 +204,7 @@ export class Multiplexer {
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
   private notificationPanelState: NotificationPanelState | null = null;
+  private teammatePickerState: { parentSessionId: string; index: number } | null = null;
   private dashboardPendingActions = new DashboardPendingActions(() => {
     if (this.mode === "dashboard") {
       void this.refreshDashboardModelFromService(true).then(() => {

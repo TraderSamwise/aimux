@@ -5,10 +5,12 @@ import {
   buildDashboardQuickJumpWorktrees,
   resolveDashboardQuickJumpTarget,
 } from "../dashboard/quick-jump.js";
+import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
 import { parseKeys } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { requestReview } from "../task-dispatcher.js";
+import { isTeammateSession } from "../team.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
   return isBlockingPendingDashboardActionKind(entry?.pendingAction);
@@ -112,6 +114,41 @@ function moveSelectedDashboardWorktreeEntry(host: any, direction: "up" | "down")
   host.footerFlashTicks = 2;
   host.renderDashboard();
   return true;
+}
+
+function selectedDashboardSession(host: any): DashboardSession | undefined {
+  const allSessions = host.getDashboardSessions();
+  if (host.dashboardState.level === "sessions" && host.dashboardState.worktreeEntries.length > 0) {
+    const entry = host.dashboardState.worktreeEntries[host.dashboardState.sessionIndex];
+    if (entry?.kind !== "session") return undefined;
+    return allSessions.find((session: DashboardSession) => session.id === entry.id);
+  }
+  if (!host.dashboardState.hasWorktrees()) {
+    return allSessions[host.activeIndex];
+  }
+  return undefined;
+}
+
+function teammateParentSession(host: any): DashboardSession | undefined {
+  const parentId = host.teammatePickerState?.parentSessionId;
+  const selected = selectedDashboardSession(host);
+  if (parentId) {
+    const parent =
+      host.dashboardSessionsCache?.find((session: DashboardSession) => session.id === parentId) ??
+      (selected?.id === parentId ? selected : undefined);
+    if (parent && !isTeammateSession(parent)) return parent;
+    return undefined;
+  }
+  if (selected && !isTeammateSession(selected)) return selected;
+  return undefined;
+}
+
+function teammatePickerEntries(host: any): DashboardSession[] {
+  return selectDashboardTeammates(host.dashboardTeammatesCache ?? [], teammateParentSession(host));
+}
+
+function teammatePickerVisibleCount(total: number): number {
+  return Math.min(total, Math.max(3, (process.stdout.rows ?? 24) - 10));
 }
 
 export const dashboardInteractionMethods = {
@@ -276,6 +313,9 @@ export const dashboardInteractionMethods = {
         return;
       case "v":
         this.showServiceCreatePrompt();
+        return;
+      case "e":
+        this.showTeammatePicker();
         return;
       case "f": {
         const selected = this.getSelectedDashboardSessionForActions();
@@ -626,7 +666,11 @@ export const dashboardInteractionMethods = {
     await this.waitAndOpenLiveTmuxWindowForService(service.id);
   },
 
-  async activateDashboardEntry(this: any, entry: DashboardSession): Promise<void> {
+  async activateDashboardEntry(
+    this: any,
+    entry: DashboardSession,
+    options: { preserveDashboardSelection?: boolean } = {},
+  ): Promise<void> {
     if (!entry) return;
     const worktreeGroup = findDashboardWorktreeGroup(this, entry.worktreePath);
     if (isRemovingDashboardWorktree(worktreeGroup)) {
@@ -640,8 +684,10 @@ export const dashboardInteractionMethods = {
       return;
     }
 
-    this.preferDashboardEntrySelection("session", entry.id, entry.worktreePath);
-    this.persistDashboardUiState();
+    if (!options.preserveDashboardSelection) {
+      this.preferDashboardEntrySelection("session", entry.id, entry.worktreePath);
+      this.persistDashboardUiState();
+    }
 
     const openResult = await this.waitAndOpenLiveTmuxWindowForEntry(entry);
     if (openResult !== "missing") {
@@ -668,6 +714,90 @@ export const dashboardInteractionMethods = {
       this.noteLastUsedItem(entry.id);
       this.focusSession(ptyIdx);
     }
+  },
+
+  getTeammatePickerEntries(this: any): DashboardSession[] {
+    return teammatePickerEntries(this);
+  },
+
+  showTeammatePicker(this: any): void {
+    const parent = teammateParentSession(this);
+    if (!parent) {
+      this.footerFlash = "Select an agent with teammates";
+      this.footerFlashTicks = 2;
+      this.renderDashboard();
+      return;
+    }
+    const teammates = selectDashboardTeammates(this.dashboardTeammatesCache ?? [], parent);
+    if (teammates.length === 0) {
+      this.footerFlash = `${parent.label ?? parent.command} has no teammates`;
+      this.footerFlashTicks = 2;
+      this.renderDashboard();
+      return;
+    }
+    this.teammatePickerState = { parentSessionId: parent.id, index: 0 };
+    this.openDashboardOverlay("teammate-picker");
+    this.renderTeammatePicker();
+  },
+
+  renderTeammatePicker(this: any): void {
+    this.redrawDashboardWithOverlay();
+  },
+
+  handleTeammatePickerKey(this: any, data: Buffer): void {
+    const events = parseKeys(data);
+    if (events.length === 0) return;
+    const event = events[0];
+    const key = event.name || event.char;
+    const teammates = teammatePickerEntries(this);
+    const visibleTeammates = teammates.slice(0, teammatePickerVisibleCount(teammates.length));
+    const selectedIndex = Math.max(0, Math.min(this.teammatePickerState?.index ?? 0, visibleTeammates.length - 1));
+
+    if (key === "escape") {
+      this.teammatePickerState = null;
+      this.clearDashboardOverlay();
+      this.restoreDashboardAfterOverlayDismiss();
+      return;
+    }
+
+    if (visibleTeammates.length === 0) {
+      this.teammatePickerState = null;
+      this.clearDashboardOverlay();
+      this.restoreDashboardAfterOverlayDismiss();
+      return;
+    }
+
+    if (key === "down" || key === "j") {
+      this.teammatePickerState = {
+        parentSessionId: this.teammatePickerState?.parentSessionId ?? teammateParentSession(this)?.id ?? "",
+        index: ((this.teammatePickerState?.index ?? 0) + 1) % visibleTeammates.length,
+      };
+      this.renderTeammatePicker();
+      return;
+    }
+
+    if (key === "up" || key === "k") {
+      this.teammatePickerState = {
+        parentSessionId: this.teammatePickerState?.parentSessionId ?? teammateParentSession(this)?.id ?? "",
+        index: ((this.teammatePickerState?.index ?? 0) - 1 + visibleTeammates.length) % visibleTeammates.length,
+      };
+      this.renderTeammatePicker();
+      return;
+    }
+
+    let targetIndex: number | undefined;
+    if (key === "enter" || key === "return") {
+      targetIndex = selectedIndex;
+    } else if (key >= "1" && key <= "9") {
+      targetIndex = parseInt(key, 10) - 1;
+    }
+    if (targetIndex === undefined) return;
+
+    const teammate = visibleTeammates[targetIndex];
+    if (!teammate) return;
+    this.teammatePickerState = null;
+    this.clearDashboardOverlay();
+    void this.activateDashboardEntry(teammate, { preserveDashboardSelection: true });
   },
 
   handleServiceInputKey(this: any, data: Buffer): void {
