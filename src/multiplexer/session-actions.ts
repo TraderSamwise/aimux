@@ -1,7 +1,13 @@
 import { waitForSessionExit } from "../dashboard/session-actions.js";
 import { loadConfig } from "../config.js";
 import { getSessionBackendSessionId } from "../metadata-store.js";
-import { buildRolePreamble, isTeammateSession, loadTeamConfig, type SessionTeamMetadata } from "../team.js";
+import {
+  buildRolePreamble,
+  compareTeammateSessions,
+  isTeammateSession,
+  loadTeamConfig,
+  type SessionTeamMetadata,
+} from "../team.js";
 
 type SessionActionsHost = any;
 
@@ -78,6 +84,30 @@ function evictStaleRuntime(host: SessionActionsHost, runtime: any): void {
   }
   host.stoppingSessionIds?.delete?.(runtime.id);
   host.sessionTmuxTargets?.delete?.(runtime.id);
+}
+
+function findKnownSession(host: SessionActionsHost, sessionId: string): any | undefined {
+  return (
+    host.sessions.find((session: any) => session.id === sessionId) ??
+    host.offlineSessions.find((session: any) => session.id === sessionId)
+  );
+}
+
+function directTeammatesForParent(host: SessionActionsHost, parentSessionId: string): any[] {
+  const byId = new Map<string, any>();
+  for (const session of [...host.sessions, ...host.offlineSessions]) {
+    if (!session?.id || session.id === parentSessionId) continue;
+    if (session.team?.parentSessionId !== parentSessionId) continue;
+    byId.set(session.id, session);
+  }
+  return [...byId.values()].sort(compareTeammateSessions);
+}
+
+function teammateFailureMessage(action: string, failures: Array<{ sessionId: string; error: unknown }>): string {
+  const details = failures
+    .map(({ sessionId, error }) => `${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+    .join("; ");
+  return `Failed to ${action} ${failures.length} teammate${failures.length === 1 ? "" : "s"}: ${details}`;
 }
 
 export async function forkAgent(
@@ -293,12 +323,10 @@ export async function renameAgent(
   return { sessionId, label: host.getSessionLabel(sessionId) };
 }
 
-export async function stopAgent(
+async function stopSingleAgent(
   host: SessionActionsHost,
   sessionId: string,
 ): Promise<{ sessionId: string; status: "offline" }> {
-  host.syncSessionsFromState();
-
   const runningSession = host.sessions.find((session: any) => session.id === sessionId);
   if (!runningSession) {
     const offlineSession = host.offlineSessions.find((session: any) => session.id === sessionId);
@@ -325,7 +353,33 @@ export async function stopAgent(
   return { sessionId, status: "offline" };
 }
 
-export async function sendAgentToGraveyard(
+export async function stopAgent(
+  host: SessionActionsHost,
+  sessionId: string,
+): Promise<{ sessionId: string; status: "offline" }> {
+  host.syncSessionsFromState();
+
+  const target = findKnownSession(host, sessionId);
+  const teammateFailures: Array<{ sessionId: string; error: unknown }> = [];
+  if (target && !isTeammateSession(target)) {
+    const teammates = directTeammatesForParent(host, sessionId);
+    for (const teammate of teammates) {
+      try {
+        await stopSingleAgent(host, teammate.id);
+      } catch (error) {
+        teammateFailures.push({ sessionId: teammate.id, error });
+      }
+    }
+  }
+
+  const result = await stopSingleAgent(host, sessionId);
+  if (teammateFailures.length > 0) {
+    throw new Error(teammateFailureMessage("stop", teammateFailures));
+  }
+  return result;
+}
+
+async function sendSingleAgentToGraveyard(
   host: SessionActionsHost,
   sessionId: string,
   sessionSeed?: any,
@@ -374,6 +428,37 @@ export async function sendAgentToGraveyard(
   host.graveyardAfterStopSessionIds.delete(sessionId);
   host.graveyardSession(sessionId, graveyardSeed);
   return { sessionId, status: "graveyard", previousStatus };
+}
+
+export async function sendAgentToGraveyard(
+  host: SessionActionsHost,
+  sessionId: string,
+  sessionSeed?: any,
+): Promise<{
+  sessionId: string;
+  status: "graveyard";
+  previousStatus: "running" | "offline";
+}> {
+  host.syncSessionsFromState();
+
+  const target = findKnownSession(host, sessionId) ?? (sessionSeed?.id === sessionId ? sessionSeed : undefined);
+  const teammateFailures: Array<{ sessionId: string; error: unknown }> = [];
+  if (target && !isTeammateSession(target)) {
+    const teammates = directTeammatesForParent(host, sessionId);
+    for (const teammate of teammates) {
+      try {
+        await sendSingleAgentToGraveyard(host, teammate.id, teammate);
+      } catch (error) {
+        teammateFailures.push({ sessionId: teammate.id, error });
+      }
+    }
+  }
+
+  const result = await sendSingleAgentToGraveyard(host, sessionId, sessionSeed);
+  if (teammateFailures.length > 0) {
+    throw new Error(teammateFailureMessage("graveyard", teammateFailures));
+  }
+  return result;
 }
 
 export async function migrateAgentSession(

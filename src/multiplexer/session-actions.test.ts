@@ -30,6 +30,23 @@ describe("session actions", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  function liveRuntime(id: string, command = "claude", extra: Record<string, unknown> = {}) {
+    return {
+      id,
+      command,
+      exited: false,
+      startTime: Date.parse("2026-05-01T00:00:00.000Z"),
+      onExit(callback: () => void) {
+        this.exitCallback = callback;
+      },
+      kill() {
+        this.exited = true;
+        this.exitCallback?.();
+      },
+      ...extra,
+    } as any;
+  }
+
   it("waits for live entry readiness before falling back on spawn", async () => {
     const target = { sessionName: "aimux-test", windowId: "@2", windowName: "codex" };
     const host: any = {
@@ -187,6 +204,184 @@ describe("session actions", () => {
       'Parent agent "nested" is already a teammate',
     );
     expect(host.createSession).not.toHaveBeenCalled();
+  });
+
+  it("stops direct teammates before stopping a primary agent", async () => {
+    const parent = liveRuntime("claude-parent");
+    const teammate = liveRuntime("claude-reviewer", "claude", {
+      team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer", order: 0 },
+    });
+    const independent = liveRuntime("claude-independent");
+    const stopOrder: string[] = [];
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent, teammate, independent],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      sessionToolKeys: new Map([
+        ["claude-parent", "claude"],
+        ["claude-reviewer", "claude"],
+        ["claude-independent", "claude"],
+      ]),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      getSessionLabel: vi.fn(() => undefined),
+      deriveHeadline: vi.fn(() => undefined),
+      isSessionRuntimeLive: vi.fn(() => true),
+      stopSessionToOffline: vi.fn((session: any) => {
+        stopOrder.push(session.id);
+        session.kill();
+      }),
+      saveState: vi.fn(),
+    };
+
+    await stopAgent(host, "claude-parent");
+
+    expect(stopOrder).toEqual(["claude-reviewer", "claude-parent"]);
+    expect(stopOrder).not.toContain("claude-independent");
+  });
+
+  it("does not propagate lifecycle actions upward when stopping a teammate directly", async () => {
+    const parent = liveRuntime("claude-parent");
+    const teammate = liveRuntime("claude-reviewer", "claude", {
+      team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+    });
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent, teammate],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      sessionToolKeys: new Map([
+        ["claude-parent", "claude"],
+        ["claude-reviewer", "claude"],
+      ]),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      getSessionLabel: vi.fn(() => undefined),
+      deriveHeadline: vi.fn(() => undefined),
+      isSessionRuntimeLive: vi.fn(() => true),
+      stopSessionToOffline: vi.fn((session: any) => session.kill()),
+      saveState: vi.fn(),
+    };
+
+    await stopAgent(host, "claude-reviewer");
+
+    expect(host.stopSessionToOffline).toHaveBeenCalledTimes(1);
+    expect(host.stopSessionToOffline).toHaveBeenCalledWith(teammate);
+  });
+
+  it("graveyards direct teammates before graveyarding a primary agent", async () => {
+    const graveyardOrder: string[] = [];
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [],
+      offlineSessions: [
+        {
+          id: "claude-parent",
+          command: "claude",
+          toolConfigKey: "claude",
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+        {
+          id: "claude-reviewer",
+          command: "claude",
+          toolConfigKey: "claude",
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+          team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer", order: 0 },
+        },
+      ],
+      graveyardAfterStopSessionIds: new Set(),
+      stoppingSessionIds: new Set(),
+      graveyardSession: vi.fn((sessionId: string) => {
+        graveyardOrder.push(sessionId);
+        host.offlineSessions = host.offlineSessions.filter((session: any) => session.id !== sessionId);
+      }),
+      saveState: vi.fn(),
+    };
+
+    await sendAgentToGraveyard(host, "claude-parent");
+
+    expect(graveyardOrder).toEqual(["claude-reviewer", "claude-parent"]);
+    expect(host.offlineSessions).toEqual([]);
+  });
+
+  it("attempts the parent stop even when a teammate stop fails", async () => {
+    const parent = liveRuntime("claude-parent");
+    const teammate = liveRuntime("claude-reviewer", "claude", {
+      team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+    });
+    const stopOrder: string[] = [];
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent, teammate],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      sessionToolKeys: new Map([
+        ["claude-parent", "claude"],
+        ["claude-reviewer", "claude"],
+      ]),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map(),
+      getSessionLabel: vi.fn(() => undefined),
+      deriveHeadline: vi.fn(() => undefined),
+      isSessionRuntimeLive: vi.fn(() => true),
+      stopSessionToOffline: vi.fn((session: any) => {
+        stopOrder.push(session.id);
+        if (session.id === "claude-reviewer") {
+          throw new Error("tmux refused");
+        }
+        session.kill();
+      }),
+      saveState: vi.fn(),
+    };
+
+    await expect(stopAgent(host, "claude-parent")).rejects.toThrow(
+      "Failed to stop 1 teammate: claude-reviewer: tmux refused",
+    );
+    expect(stopOrder).toEqual(["claude-reviewer", "claude-parent"]);
+  });
+
+  it("offlines a stale teammate runtime while stopping a primary agent", async () => {
+    const parent = liveRuntime("claude-parent");
+    const teammate = liveRuntime("claude-reviewer", "claude", {
+      backendSessionId: "backend-reviewer",
+      team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+    });
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent, teammate],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(),
+      sessionToolKeys: new Map([
+        ["claude-parent", "claude"],
+        ["claude-reviewer", "claude"],
+      ]),
+      sessionOriginalArgs: new Map(),
+      sessionWorktreePaths: new Map([["claude-reviewer", repoRoot]]),
+      getSessionLabel: vi.fn(() => undefined),
+      deriveHeadline: vi.fn(() => undefined),
+      isSessionRuntimeLive: vi.fn((session: any) => session.id !== "claude-reviewer"),
+      evictZombieSession: vi.fn((session: any) => {
+        host.sessions = host.sessions.filter((entry: any) => entry.id !== session.id);
+      }),
+      stopSessionToOffline: vi.fn((session: any) => session.kill()),
+      saveState: vi.fn(),
+    };
+
+    await stopAgent(host, "claude-parent");
+
+    expect(host.evictZombieSession).toHaveBeenCalledWith(teammate);
+    expect(host.offlineSessions).toMatchObject([
+      {
+        id: "claude-reviewer",
+        lifecycle: "offline",
+        backendSessionId: "backend-reviewer",
+        team: { parentSessionId: "claude-parent" },
+      },
+    ]);
+    expect(host.stopSessionToOffline).toHaveBeenCalledWith(parent);
   });
 
   it("falls back to direct target open after readiness wait misses on fork", async () => {
