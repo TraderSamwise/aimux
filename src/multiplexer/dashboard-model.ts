@@ -17,7 +17,7 @@ import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { requestJson } from "../http-client.js";
 import { loadConfig } from "../config.js";
 import type { SessionTeamMetadata } from "../team.js";
-import { isTeammateSession } from "../team.js";
+import { isTeammateSession, selectDirectTeammates } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
@@ -67,6 +67,7 @@ function sessionStateFromDashboardSeed(seed: any): any | undefined {
     worktreePath: typeof seed.worktreePath === "string" ? seed.worktreePath : undefined,
     label: typeof seed.label === "string" ? seed.label : undefined,
     headline: typeof seed.headline === "string" ? seed.headline : undefined,
+    team: seed.team,
   };
 }
 
@@ -115,6 +116,7 @@ function toDashboardSessionSeed(seed: any): DashboardSession | undefined {
     backendSessionId: seed.backendSessionId,
     remoteBackendSessionId: seed.remoteBackendSessionId,
     headline: seed.headline,
+    team: seed.team,
   };
 }
 
@@ -341,6 +343,64 @@ export async function withMetadataServicePending<T>(
   }
 }
 
+function lifecycleFailureMessage(action: string, failures: Array<{ sessionId: string; error: unknown }>): string {
+  const noun = failures.length === 1 ? "teammate" : "teammates";
+  const details = failures
+    .map(({ sessionId, error }) => `${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+    .join("; ");
+  return `Failed to ${action} ${failures.length} ${noun}: ${details}`;
+}
+
+async function resumeOfflineAgentWithPending(
+  host: DashboardModelHost,
+  sessionId: string,
+  sessionSeed?: any,
+): Promise<{ sessionId: string; status: "running" }> {
+  return withMetadataSessionPending(
+    host,
+    sessionId,
+    "starting",
+    () => {
+      const offline = resolveOfflineSessionForAction(host, sessionId, sessionSeed);
+      if (!offline) {
+        throw new Error(`Agent "${sessionId}" not found`);
+      }
+      host.resumeOfflineSession(offline);
+      return { sessionId, status: "running" as const };
+    },
+    findDashboardSessionSeed(host, sessionId, sessionSeed),
+    () => waitForMetadataSessionRunning(host, sessionId),
+  );
+}
+
+async function resumeAgentAndDirectTeammates(
+  host: DashboardModelHost,
+  sessionId: string,
+  sessionSeed?: any,
+): Promise<{ sessionId: string; status: "running" }> {
+  const offline = resolveOfflineSessionForAction(host, sessionId, sessionSeed);
+  if (!offline) {
+    throw new Error(`Agent "${sessionId}" not found`);
+  }
+
+  const teammates = isTeammateSession(offline) ? [] : selectDirectTeammates(host.offlineSessions ?? [], sessionId);
+  const result = await resumeOfflineAgentWithPending(host, sessionId, sessionSeed);
+  const teammateFailures: Array<{ sessionId: string; error: unknown }> = [];
+
+  for (const teammate of teammates) {
+    try {
+      await resumeOfflineAgentWithPending(host, teammate.id, toDashboardSessionSeed(teammate) ?? teammate);
+    } catch (error) {
+      teammateFailures.push({ sessionId: teammate.id, error });
+    }
+  }
+
+  if (teammateFailures.length > 0) {
+    throw new Error(lifecycleFailureMessage("resume", teammateFailures));
+  }
+  return result;
+}
+
 function runProjectServiceUiRefresh(host: DashboardModelHost): void {
   host.writeStatuslineFile();
   if (host.mode === "dashboard") {
@@ -470,7 +530,7 @@ export function applyDashboardModel(
   host.dashboardRawWorktreeGroupsCache = worktreeGroups;
   host.dashboardSessionsCache = host.dashboardPendingActions.applyToSessions(dashSessions);
   host.dashboardTeammatesCache = host.dashboardPendingActions
-    .applyToSessions(dashTeammates)
+    .applyToSessions(dashTeammates, { includeTeammates: true })
     .filter((session: DashboardSession) => isTeammateSession(session));
   host.dashboardServicesCache = host.dashboardPendingActions.applyToServices(dashServices);
   host.dashboardWorktreeGroupsCache = host.dashboardUiStateStore.orderWorktreeGroups(
@@ -956,22 +1016,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           () => host.removeOfflineService(serviceId),
           () => waitForMetadataCondition(host, () => isMetadataServiceRemoved(host, serviceId)),
         ),
-      resumeAgent: ({ sessionId, session }: any) =>
-        withMetadataSessionPending(
-          host,
-          sessionId,
-          "starting",
-          () => {
-            const offline = resolveOfflineSessionForAction(host, sessionId, session);
-            if (!offline) {
-              throw new Error(`Agent "${sessionId}" not found`);
-            }
-            host.resumeOfflineSession(offline);
-            return { sessionId, status: "running" as const };
-          },
-          findDashboardSessionSeed(host, sessionId, session),
-          () => waitForMetadataSessionRunning(host, sessionId),
-        ),
+      resumeAgent: ({ sessionId, session }: any) => resumeAgentAndDirectTeammates(host, sessionId, session),
       listGraveyard: () => host.listGraveyardEntries(),
       resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
     },

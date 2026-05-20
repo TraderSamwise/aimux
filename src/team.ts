@@ -43,6 +43,20 @@ export function compareTeammateSessions(
   return left.id.localeCompare(right.id);
 }
 
+export function selectDirectTeammates<T extends { id: string; createdAt?: string; team?: SessionTeamMetadata }>(
+  sessions: T[],
+  parentSessionId: string,
+): T[] {
+  const byId = new Map<string, T>();
+  for (const session of sessions) {
+    if (session.team?.parentSessionId !== parentSessionId) continue;
+    if (!byId.has(session.id)) {
+      byId.set(session.id, session);
+    }
+  }
+  return [...byId.values()].sort(compareTeammateSessions);
+}
+
 const DEFAULT_TEAM_CONFIG: TeamConfig = {
   roles: {
     coder: {

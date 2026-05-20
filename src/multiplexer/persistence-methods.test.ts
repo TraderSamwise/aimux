@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { listWorktreesMock, spawnMock } = vi.hoisted(() => ({
@@ -60,6 +63,7 @@ vi.mock("../metadata-store.js", async (importOriginal) => {
 });
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import { getGraveyardPath, getStatePath, initPaths } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
 import { writeWorktreeGraveyardEntries } from "./worktree-graveyard.js";
 
@@ -344,7 +348,7 @@ describe("persistenceMethods", () => {
 
     const state = persistenceMethods.buildDesktopState.call(host);
 
-    expect(state.sessions.map((session) => session.id)).toEqual(["codex-normal", "codex-teammate"]);
+    expect(state.sessions.map((session) => session.id)).toEqual(["codex-normal"]);
     expect(state.teammates.map((session) => session.id)).toEqual(["codex-teammate"]);
   });
 
@@ -613,6 +617,87 @@ describe("persistenceMethods", () => {
       expect(pending.getWorktreeAction(worktreePath)).toBeUndefined();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("resurrects direct teammate graveyard entries with a primary agent", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-resurrect-team-"));
+    try {
+      await initPaths(repoRoot);
+      const parent = { id: "claude-parent", command: "claude", toolConfigKey: "claude", args: [] };
+      const teammate = {
+        id: "codex-reviewer",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+      };
+      const nested = {
+        id: "claude-nested",
+        command: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        team: { teamId: "team-codex-reviewer", parentSessionId: "codex-reviewer", role: "reviewer" },
+      };
+      const independent = { id: "codex-independent", command: "codex", toolConfigKey: "codex", args: [] };
+      writeFileSync(getGraveyardPath(), JSON.stringify([parent, teammate, nested, independent], null, 2) + "\n");
+      writeFileSync(getStatePath(), JSON.stringify({ savedAt: "now", cwd: repoRoot, sessions: [] }, null, 2) + "\n");
+      const host = {
+        offlineSessions: [],
+        loadOfflineSessions: vi.fn(),
+        listGraveyardEntries: vi.fn(() => JSON.parse(readFileSync(getGraveyardPath(), "utf-8"))),
+      };
+
+      await expect(persistenceMethods.resurrectGraveyardSession.call(host, "claude-parent")).resolves.toEqual({
+        sessionId: "claude-parent",
+        status: "offline",
+      });
+
+      expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["claude-parent", "codex-reviewer"]);
+      expect(JSON.parse(readFileSync(getGraveyardPath(), "utf-8")).map((session: any) => session.id)).toEqual([
+        "claude-nested",
+        "codex-independent",
+      ]);
+      expect(JSON.parse(readFileSync(getStatePath(), "utf-8")).sessions.map((session: any) => session.id)).toEqual([
+        "claude-parent",
+        "codex-reviewer",
+      ]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not propagate graveyard resurrection upward when resurrecting a teammate directly", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-resurrect-teammate-"));
+    try {
+      await initPaths(repoRoot);
+      const parent = { id: "claude-parent", command: "claude", toolConfigKey: "claude", args: [] };
+      const teammate = {
+        id: "codex-reviewer",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+      };
+      writeFileSync(getGraveyardPath(), JSON.stringify([parent, teammate], null, 2) + "\n");
+      writeFileSync(getStatePath(), JSON.stringify({ savedAt: "now", cwd: repoRoot, sessions: [] }, null, 2) + "\n");
+      const host = {
+        offlineSessions: [],
+        loadOfflineSessions: vi.fn(),
+        listGraveyardEntries: vi.fn(() => JSON.parse(readFileSync(getGraveyardPath(), "utf-8"))),
+      };
+
+      await expect(persistenceMethods.resurrectGraveyardSession.call(host, "codex-reviewer")).resolves.toEqual({
+        sessionId: "codex-reviewer",
+        status: "offline",
+      });
+
+      expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["codex-reviewer"]);
+      expect(JSON.parse(readFileSync(getGraveyardPath(), "utf-8")).map((session: any) => session.id)).toEqual([
+        "claude-parent",
+      ]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
     }
   });
 });

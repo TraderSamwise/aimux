@@ -3,9 +3,9 @@ import { loadConfig } from "../config.js";
 import { getSessionBackendSessionId } from "../metadata-store.js";
 import {
   buildRolePreamble,
-  compareTeammateSessions,
   isTeammateSession,
   loadTeamConfig,
+  selectDirectTeammates,
   type SessionTeamMetadata,
 } from "../team.js";
 
@@ -94,13 +94,7 @@ function findKnownSession(host: SessionActionsHost, sessionId: string): any | un
 }
 
 function directTeammatesForParent(host: SessionActionsHost, parentSessionId: string): any[] {
-  const byId = new Map<string, any>();
-  for (const session of [...host.sessions, ...host.offlineSessions]) {
-    if (!session?.id || session.id === parentSessionId) continue;
-    if (session.team?.parentSessionId !== parentSessionId) continue;
-    byId.set(session.id, session);
-  }
-  return [...byId.values()].sort(compareTeammateSessions);
+  return selectDirectTeammates([...host.sessions, ...host.offlineSessions], parentSessionId);
 }
 
 function teammateFailureMessage(action: string, failures: Array<{ sessionId: string; error: unknown }>): string {

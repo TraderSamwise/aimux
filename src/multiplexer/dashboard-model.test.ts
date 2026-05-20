@@ -285,6 +285,286 @@ describe("metadata pending actions", () => {
     }
   });
 
+  it("resumes direct offline teammates after resuming a primary agent", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-resume-team-"));
+    const pending = new DashboardPendingActions(() => {});
+    const setSessionAction = vi.spyOn(pending, "setSessionAction");
+    const resumeOrder: string[] = [];
+    const parent = { id: "claude-parent", command: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline" };
+    const teammate = {
+      id: "codex-reviewer",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      lifecycle: "offline",
+      team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer", order: 0 },
+    };
+    const nested = {
+      id: "claude-nested",
+      command: "claude",
+      toolConfigKey: "claude",
+      args: [],
+      lifecycle: "offline",
+      team: { teamId: "team-codex-reviewer", parentSessionId: "codex-reviewer", role: "reviewer", order: 0 },
+    };
+    const independent = {
+      id: "codex-independent",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      lifecycle: "offline",
+    };
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      eventBus: undefined,
+      buildDesktopState: vi.fn(),
+      listProjectedDesktopWorktrees: vi.fn(),
+      dashboardSessionsCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      sessions: [],
+      services: [],
+      offlineSessions: [parent, teammate, nested, independent],
+      offlineServices: [],
+      sessionWorktreePaths: new Map(),
+      sessionTmuxTargets: new Map(),
+      getSessionLabel: vi.fn(),
+      serviceLabelForCommand: vi.fn(),
+      refreshProjectStatusline: vi.fn(),
+      createDesktopWorktree: vi.fn(),
+      removeDesktopWorktree: vi.fn(),
+      graveyardDesktopWorktree: vi.fn(),
+      listWorktreeGraveyardEntries: vi.fn(),
+      resurrectGraveyardWorktree: vi.fn(),
+      deleteGraveyardWorktree: vi.fn(),
+      createService: vi.fn(),
+      stopService: vi.fn(),
+      resumeOfflineServiceById: vi.fn(),
+      removeOfflineService: vi.fn(),
+      resumeOfflineSession: vi.fn((session: any) => {
+        resumeOrder.push(session.id);
+        host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== session.id);
+        host.sessions.push({ ...session, lifecycle: "live", exited: false });
+      }),
+      listGraveyardEntries: vi.fn(),
+      resurrectGraveyardSession: vi.fn(),
+      sendOrchestrationMessage: vi.fn(),
+      sendHandoffMessage: vi.fn(),
+      spawnAgent: vi.fn(),
+      createTeammateAgent: vi.fn(),
+      forkAgent: vi.fn(),
+      stopAgent: vi.fn(),
+      interruptAgent: vi.fn(),
+      renameAgent: vi.fn(),
+      migrateAgent: vi.fn(),
+      killAgent: vi.fn(),
+      recordBackendSessionId: vi.fn(),
+      writeAgentInput: vi.fn(),
+      readAgentOutput: vi.fn(),
+      readAgentHistory: vi.fn(),
+    };
+
+    try {
+      await initPaths(repoRoot);
+      await startProjectServices(host);
+      const desktop = (host.metadataServer as any).options.desktop;
+
+      await expect(desktop.resumeAgent({ sessionId: "claude-parent" })).resolves.toEqual({
+        sessionId: "claude-parent",
+        status: "running",
+      });
+
+      expect(resumeOrder).toEqual(["claude-parent", "codex-reviewer"]);
+      expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["claude-nested", "codex-independent"]);
+      expect(setSessionAction).toHaveBeenCalledWith(
+        "codex-reviewer",
+        "starting",
+        expect.objectContaining({
+          sessionSeed: expect.objectContaining({
+            team: expect.objectContaining({ parentSessionId: "claude-parent", role: "reviewer" }),
+          }),
+        }),
+      );
+    } finally {
+      host.metadataServer?.stop?.();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not propagate resume upward when resuming a teammate directly", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-resume-teammate-"));
+    const pending = new DashboardPendingActions(() => {});
+    const resumeOrder: string[] = [];
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      eventBus: undefined,
+      buildDesktopState: vi.fn(),
+      listProjectedDesktopWorktrees: vi.fn(),
+      dashboardSessionsCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      sessions: [],
+      services: [],
+      offlineSessions: [
+        { id: "claude-parent", command: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline" },
+        {
+          id: "codex-reviewer",
+          command: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+        },
+      ],
+      offlineServices: [],
+      sessionWorktreePaths: new Map(),
+      sessionTmuxTargets: new Map(),
+      getSessionLabel: vi.fn(),
+      serviceLabelForCommand: vi.fn(),
+      refreshProjectStatusline: vi.fn(),
+      createDesktopWorktree: vi.fn(),
+      removeDesktopWorktree: vi.fn(),
+      graveyardDesktopWorktree: vi.fn(),
+      listWorktreeGraveyardEntries: vi.fn(),
+      resurrectGraveyardWorktree: vi.fn(),
+      deleteGraveyardWorktree: vi.fn(),
+      createService: vi.fn(),
+      stopService: vi.fn(),
+      resumeOfflineServiceById: vi.fn(),
+      removeOfflineService: vi.fn(),
+      resumeOfflineSession: vi.fn((session: any) => {
+        resumeOrder.push(session.id);
+        host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== session.id);
+        host.sessions.push({ ...session, lifecycle: "live", exited: false });
+      }),
+      listGraveyardEntries: vi.fn(),
+      resurrectGraveyardSession: vi.fn(),
+      sendOrchestrationMessage: vi.fn(),
+      sendHandoffMessage: vi.fn(),
+      spawnAgent: vi.fn(),
+      createTeammateAgent: vi.fn(),
+      forkAgent: vi.fn(),
+      stopAgent: vi.fn(),
+      interruptAgent: vi.fn(),
+      renameAgent: vi.fn(),
+      migrateAgent: vi.fn(),
+      killAgent: vi.fn(),
+      recordBackendSessionId: vi.fn(),
+      writeAgentInput: vi.fn(),
+      readAgentOutput: vi.fn(),
+      readAgentHistory: vi.fn(),
+    };
+
+    try {
+      await initPaths(repoRoot);
+      await startProjectServices(host);
+      const desktop = (host.metadataServer as any).options.desktop;
+
+      await expect(desktop.resumeAgent({ sessionId: "codex-reviewer" })).resolves.toEqual({
+        sessionId: "codex-reviewer",
+        status: "running",
+      });
+
+      expect(resumeOrder).toEqual(["codex-reviewer"]);
+      expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["claude-parent"]);
+    } finally {
+      host.metadataServer?.stop?.();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a teammate offline when teammate resume fails after primary resume succeeds", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-resume-team-fail-"));
+    const pending = new DashboardPendingActions(() => {});
+    const resumeOrder: string[] = [];
+    const parent = { id: "claude-parent", command: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline" };
+    const teammate = {
+      id: "codex-reviewer",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      lifecycle: "offline",
+      team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+    };
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      eventBus: undefined,
+      buildDesktopState: vi.fn(),
+      listProjectedDesktopWorktrees: vi.fn(),
+      dashboardSessionsCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      sessions: [],
+      services: [],
+      offlineSessions: [parent, teammate],
+      offlineServices: [],
+      sessionWorktreePaths: new Map(),
+      sessionTmuxTargets: new Map(),
+      getSessionLabel: vi.fn(),
+      serviceLabelForCommand: vi.fn(),
+      refreshProjectStatusline: vi.fn(),
+      createDesktopWorktree: vi.fn(),
+      removeDesktopWorktree: vi.fn(),
+      graveyardDesktopWorktree: vi.fn(),
+      listWorktreeGraveyardEntries: vi.fn(),
+      resurrectGraveyardWorktree: vi.fn(),
+      deleteGraveyardWorktree: vi.fn(),
+      createService: vi.fn(),
+      stopService: vi.fn(),
+      resumeOfflineServiceById: vi.fn(),
+      removeOfflineService: vi.fn(),
+      resumeOfflineSession: vi.fn((session: any) => {
+        resumeOrder.push(session.id);
+        if (session.id === "codex-reviewer") {
+          throw new Error("teammate backend missing");
+        }
+        host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== session.id);
+        host.sessions.push({ ...session, lifecycle: "live", exited: false });
+      }),
+      listGraveyardEntries: vi.fn(),
+      resurrectGraveyardSession: vi.fn(),
+      sendOrchestrationMessage: vi.fn(),
+      sendHandoffMessage: vi.fn(),
+      spawnAgent: vi.fn(),
+      createTeammateAgent: vi.fn(),
+      forkAgent: vi.fn(),
+      stopAgent: vi.fn(),
+      interruptAgent: vi.fn(),
+      renameAgent: vi.fn(),
+      migrateAgent: vi.fn(),
+      killAgent: vi.fn(),
+      recordBackendSessionId: vi.fn(),
+      writeAgentInput: vi.fn(),
+      readAgentOutput: vi.fn(),
+      readAgentHistory: vi.fn(),
+    };
+
+    try {
+      await initPaths(repoRoot);
+      await startProjectServices(host);
+      const desktop = (host.metadataServer as any).options.desktop;
+
+      await expect(desktop.resumeAgent({ sessionId: "claude-parent" })).rejects.toThrow(
+        "Failed to resume 1 teammate: codex-reviewer: teammate backend missing",
+      );
+
+      expect(resumeOrder).toEqual(["claude-parent", "codex-reviewer"]);
+      expect(host.sessions.map((session: any) => session.id)).toEqual(["claude-parent"]);
+      expect(host.offlineSessions).toEqual([
+        expect.objectContaining({
+          id: "codex-reviewer",
+          team: expect.objectContaining({ parentSessionId: "claude-parent", role: "reviewer" }),
+        }),
+      ]);
+    } finally {
+      host.metadataServer?.stop?.();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("keeps session pending until the settle callback resolves", async () => {
     const pending = new DashboardPendingActions(() => {});
     const host: any = {

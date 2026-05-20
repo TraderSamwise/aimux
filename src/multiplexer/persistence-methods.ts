@@ -25,6 +25,7 @@ import {
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
+import { isTeammateSession, selectDirectTeammates } from "../team.js";
 import {
   findMainRepo,
   getWorktreeBaseDir,
@@ -33,7 +34,6 @@ import {
   isToolInternalWorktree,
   listWorktrees as listAllWorktrees,
 } from "../worktree.js";
-import { isTeammateSession } from "../team.js";
 
 function recordDashboardFailure(
   host: any,
@@ -264,7 +264,7 @@ export const persistenceMethods = {
       this.dashboardUiStateStore.orderSessionsForWorktree(sessions, worktreePath),
     );
     const teammateSessions = this.dashboardPendingActions
-      .applyToSessions(desktopState.teammates ?? [])
+      .applyToSessions(desktopState.teammates ?? [], { includeTeammates: true })
       .filter((session: DashboardSession) => isTeammateSession(session));
     const orderedTeammates = orderStatuslineItemsByWorktree(teammateSessions, (sessions, worktreePath) =>
       this.dashboardUiStateStore.orderSessionsForWorktree(sessions, worktreePath),
@@ -350,7 +350,7 @@ export const persistenceMethods = {
     return {
       sessions: this.dashboardPendingActions.applyToSessions(desktopState.sessions),
       teammates: this.dashboardPendingActions
-        .applyToSessions(desktopState.teammates ?? [])
+        .applyToSessions(desktopState.teammates ?? [], { includeTeammates: true })
         .filter((session: DashboardSession) => isTeammateSession(session)),
       services: this.dashboardPendingActions.applyToServices(desktopState.services),
       statusline: this.buildStatuslineSnapshot(),
@@ -372,6 +372,7 @@ export const persistenceMethods = {
         (this.dashboardTeammatesCache ?? []).map(
           ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...session }: any) => session,
         ),
+        { includeTeammates: true },
       )
       .filter((session: DashboardSession) => isTeammateSession(session));
     this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(
@@ -971,17 +972,32 @@ export const persistenceMethods = {
       throw new Error(`Graveyard session "${sessionId}" not found`);
     }
 
-    const nextGraveyard = graveyardEntries.filter((candidate: any) => candidate.id !== sessionId);
+    const entriesToRestore = isTeammateSession(entry)
+      ? [entry]
+      : [entry, ...selectDirectTeammates(graveyardEntries, entry.id)];
+    const restoreIds = new Set(entriesToRestore.map((candidate: any) => candidate.id));
+    const nextGraveyard = graveyardEntries.filter((candidate: any) => !restoreIds.has(candidate.id));
     writeFileSync(getGraveyardPath(), JSON.stringify(nextGraveyard, null, 2) + "\n");
 
-    this.offlineSessions.push(entry);
+    const offlineIds = new Set(this.offlineSessions.map((session: any) => session.id));
+    for (const candidate of entriesToRestore) {
+      if (offlineIds.has(candidate.id)) continue;
+      this.offlineSessions.push(candidate);
+      offlineIds.add(candidate.id);
+    }
+
     const statePath = getStatePath();
     try {
       let state: any = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] };
       if (existsSync(statePath)) {
         state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
       }
-      state.sessions.push(entry);
+      const stateIds = new Set((state.sessions ?? []).map((session: any) => session.id));
+      for (const candidate of entriesToRestore) {
+        if (stateIds.has(candidate.id)) continue;
+        state.sessions.push(candidate);
+        stateIds.add(candidate.id);
+      }
       writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
     } catch {}
 

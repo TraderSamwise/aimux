@@ -35,6 +35,14 @@ interface PendingWorktreeActionOptions extends PendingActionOptions {
   worktreeSeed?: WorktreeGroup;
 }
 
+interface ApplyPendingSessionOptions {
+  includeTeammates?: boolean;
+}
+
+function isTeammateSessionSeed(session: DashboardSession | undefined): boolean {
+  return Boolean(session?.team?.parentSessionId);
+}
+
 function visibleEntryKey(entry?: PendingActionEntry): string {
   if (!entry) return "";
   return JSON.stringify({
@@ -211,7 +219,7 @@ export class DashboardPendingActions {
     return this.version;
   }
 
-  applyToSessions(sessions: DashboardSession[]): DashboardSession[] {
+  applyToSessions(sessions: DashboardSession[], opts: ApplyPendingSessionOptions = {}): DashboardSession[] {
     if (this.actions.size === 0) return sessions;
     const seen = new Set<string>();
     const applied = sessions.map((session) => {
@@ -230,6 +238,8 @@ export class DashboardPendingActions {
       const sessionId = entryKey.slice("session:".length);
       if (seen.has(sessionId)) continue;
       if (!entry.sessionSeed) continue;
+      if (isTeammateSessionSeed(entry.sessionSeed) && !opts.includeTeammates) continue;
+      if (!isTeammateSessionSeed(entry.sessionSeed) && opts.includeTeammates) continue;
       if (!canSynthesizeMissingSession(entry.kind)) continue;
       applied.push({
         ...entry.sessionSeed,

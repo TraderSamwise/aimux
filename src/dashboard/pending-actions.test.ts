@@ -48,6 +48,32 @@ describe("DashboardPendingActions", () => {
     ]);
   });
 
+  it("does not synthesize teammate session rows into normal session lists", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("codex-reviewer", "starting", {
+      sessionSeed: {
+        index: -1,
+        id: "codex-reviewer",
+        command: "codex",
+        label: "reviewer",
+        status: "offline",
+        active: false,
+        worktreePath: "/repo",
+        team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+      },
+    });
+
+    expect(pending.applyToSessions([])).toEqual([]);
+    expect(pending.applyToSessions([], { includeTeammates: true })).toEqual([
+      expect.objectContaining({
+        id: "codex-reviewer",
+        pendingAction: "starting",
+        optimistic: true,
+        team: expect.objectContaining({ parentSessionId: "claude-parent" }),
+      }),
+    ]);
+  });
+
   it("keeps stopping session rows visible while waiting for offline state", () => {
     const pending = new DashboardPendingActions(() => {});
     pending.setSessionAction("claude-1", "stopping", {
