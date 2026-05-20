@@ -23,13 +23,21 @@ export function buildAimuxAgentInstructions(
   const sessionLine = opts.sessionId ? `Your aimux session ID is ${opts.sessionId}.\n` : "";
   const sessionPath = opts.sessionId ?? "{session-id}";
   const includeTeammates = opts.includeTeammateCreationInstructions !== false;
+  const teamCoordinationLine = includeTeammates
+    ? "- Team delegation uses the local metadata teammate API; teammates are first-party aimux agents, not ad-hoc shell processes or task files.\n"
+    : "- This session is already a teammate; do not create nested teammate teams.\n";
+  const delegationProtocol = includeTeammates
+    ? "When the user specifically asks for a team or teammates, first use the Teammates API below to discover, reuse, create, and message direct teammate agents. " +
+      'For generic delegation, handoff, or assignment to ordinary idle aimux agents, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. '
+    : 'For generic delegation, handoff, or assignment to ordinary idle aimux agents, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. ';
   const teammateInstructions = includeTeammates
     ? "\n\n" +
       "## Teammates\n" +
-      "- When the user asks you to make or use a team, create 1-3 aimux teammate agents through the local metadata API instead of inventing external processes.\n" +
+      "- When the user asks you to make or use a team, discover and reuse existing teammates first; create 1-3 aimux teammate agents through the local metadata API only when needed.\n" +
       "- Reuse existing teammates first. Discover the local endpoint with `aimux metadata endpoint`, then GET `/agents/teammates?parentSessionId=" +
       sessionPath +
       "` before creating new ones; ask before replacing an existing team.\n" +
+      "- Once a team exists, prefer delegating bounded subtasks to those direct teammates until the user removes or replaces the team.\n" +
       "- Teammates are first-party aimux agents. The user can inspect and enter them, but they stay hidden from the normal dashboard unless your agent is focused.\n" +
       "- Default to your same tool, worktree, and safe model/provider/runtime selection. Only set `tool`, `worktreePath`, `extraArgs`, or role/model-specific args when the user or task requires it.\n" +
       '- Discover the API with `aimux metadata endpoint`, then POST `/agents/teammates/create` with JSON like `{ "parentSessionId": "' +
@@ -50,8 +58,8 @@ export function buildAimuxAgentInstructions(
     "## Aimux Model\n" +
     "- The user controls aimux from the dashboard and tmux status/footer UI.\n" +
     "- Agents are normal tool processes running inside aimux-managed tmux windows.\n" +
-    "- Cross-agent coordination is file-based: use `.aimux/tasks/*.json` when explicitly asked to delegate or hand off work.\n" +
-    "- Do not assume you can directly invoke another live agent unless the user gives a specific aimux CLI command or asks you to create an aimux task.\n" +
+    "- Broad cross-agent coordination can use `.aimux/tasks/*.json` when explicitly asked to delegate or hand off work to ordinary idle agents.\n" +
+    teamCoordinationLine +
     "\n" +
     "## Shared Context Files\n" +
     `- .aimux/context/${sessionPath}/live.md — recent conversation for this session\n` +
@@ -66,7 +74,7 @@ export function buildAimuxAgentInstructions(
     "Only update those files when the user asks for coordination/delegation, when the task is explicitly long-running, or when state would materially help another agent continue the work.\n" +
     "\n" +
     "## Delegation Protocol\n" +
-    'When asked to delegate, hand off, or assign work to another aimux agent, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. ' +
+    delegationProtocol +
     "Optional fields are `assignedTo` for a specific session ID and `tool` for a preferred tool type. Aimux dispatches pending tasks to idle agents and injects the prompt.\n" +
     "When you receive `[AIMUX TASK ...]`, complete it and mark the task `done` with `result`, or `failed` with `error`." +
     teammateInstructions

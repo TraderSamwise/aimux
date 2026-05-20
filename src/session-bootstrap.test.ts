@@ -27,7 +27,11 @@ describe("buildAimuxAgentInstructions", () => {
     expect(instructions).toContain("/agents/teammates/create");
     expect(instructions).toContain("/agents/teammates/send");
     expect(instructions).toContain("Reuse existing teammates first");
+    expect(instructions).toContain("Team delegation uses the local metadata teammate API");
+    expect(instructions).toContain("Once a team exists, prefer delegating bounded subtasks");
+    expect(instructions).toContain("For generic delegation, handoff, or assignment to ordinary idle aimux agents");
     expect(instructions).toContain("aimux metadata endpoint");
+    expect(instructions).not.toContain("Do not assume you can directly invoke another live agent");
     expect(instructions).not.toContain("Check `.aimux/sessions.json` for sessions with `team.parentSessionId`");
     expect(instructions).toContain("Do not proactively create or edit `.aimux/plans/*` or `.aimux/status/*`");
     expect(instructions).not.toContain("Maintain a plan file");
@@ -73,8 +77,10 @@ describe("SessionBootstrapService", () => {
     });
 
     expect(preamble).toContain('You are a teammate for aimux parent agent "codex-parent".');
+    expect(preamble).toContain("This session is already a teammate; do not create nested teammate teams.");
     expect(preamble).not.toContain("/agents/teammates/create");
     expect(preamble).not.toContain("Reuse existing teammates first");
+    expect(preamble).not.toContain("Team delegation uses the local metadata teammate API");
   });
 
   it("attempts detached Codex kickoff delivery even if readiness probing times out", async () => {
