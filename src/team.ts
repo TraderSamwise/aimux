@@ -57,6 +57,22 @@ export function selectDirectTeammates<T extends { id: string; createdAt?: string
   return [...byId.values()].sort(compareTeammateSessions);
 }
 
+export function selectOrphanTeammates<T extends { id: string; createdAt?: string; team?: SessionTeamMetadata }>(
+  sessions: T[],
+  knownParentIds: Iterable<string>,
+): T[] {
+  const parents = new Set(knownParentIds);
+  const byId = new Map<string, T>();
+  for (const session of sessions) {
+    const parentSessionId = session.team?.parentSessionId;
+    if (!parentSessionId || parents.has(parentSessionId)) continue;
+    if (!byId.has(session.id)) {
+      byId.set(session.id, session);
+    }
+  }
+  return [...byId.values()].sort(compareTeammateSessions);
+}
+
 const DEFAULT_TEAM_CONFIG: TeamConfig = {
   roles: {
     coder: {
