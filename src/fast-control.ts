@@ -31,6 +31,8 @@ export interface FastControlItem {
   recentRank: number;
 }
 
+type ManagedWindowEntry = { target: TmuxTarget; metadata: TmuxWindowMetadata };
+
 export function navigationUrgencyScore(input: {
   semantic?: {
     user?: { attention?: string; label?: string };
@@ -65,14 +67,23 @@ export function resolveScopedWorktreePath(projectRoot: string, currentPath?: str
 
 function resolveContextWorktreePath(
   context: FastControlContext,
-  tmux: TmuxRuntimeManager,
-  managedWindows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }>,
+  currentManagedWindow: ManagedWindowEntry | undefined,
 ): string {
-  const byWindowId = context.currentWindowId
-    ? managedWindows.find((entry) => entry.target.windowId === context.currentWindowId)
-    : undefined;
-  if (byWindowId?.metadata.worktreePath) {
-    return pathResolve(byWindowId.metadata.worktreePath);
+  if (currentManagedWindow?.metadata.worktreePath) {
+    return pathResolve(currentManagedWindow.metadata.worktreePath);
+  }
+
+  return resolveScopedWorktreePath(context.projectRoot, context.currentPath);
+}
+
+function resolveCurrentManagedWindow(
+  context: FastControlContext,
+  tmux: TmuxRuntimeManager,
+  managedWindows: ManagedWindowEntry[],
+): ManagedWindowEntry | undefined {
+  if (context.currentWindowId) {
+    const byWindowId = managedWindows.find((entry) => entry.target.windowId === context.currentWindowId);
+    if (byWindowId) return byWindowId;
   }
 
   const currentClientSession = context.currentClientSession?.trim();
@@ -82,13 +93,33 @@ function resolveContextWorktreePath(
       .find((window) => window.active && !isDashboardWindowName(window.name));
     if (currentClientWindow) {
       const byActiveClientWindow = managedWindows.find((entry) => entry.target.windowId === currentClientWindow.id);
-      if (byActiveClientWindow?.metadata.worktreePath) {
-        return pathResolve(byActiveClientWindow.metadata.worktreePath);
-      }
+      if (byActiveClientWindow) return byActiveClientWindow;
     }
   }
 
-  return resolveScopedWorktreePath(context.projectRoot, context.currentPath);
+  return managedWindows.find(
+    ({ target, metadata }) => target.windowName === context.currentWindow || metadata.label === context.currentWindow,
+  );
+}
+
+function compareSwitchableWindows(
+  left: ManagedWindowEntry,
+  right: ManagedWindowEntry,
+  teammateParentSessionId: string | undefined,
+): number {
+  if (teammateParentSessionId) {
+    const leftOrder =
+      typeof left.metadata.team?.order === "number" ? left.metadata.team.order : Number.POSITIVE_INFINITY;
+    const rightOrder =
+      typeof right.metadata.team?.order === "number" ? right.metadata.team.order : Number.POSITIVE_INFINITY;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    return left.target.windowIndex - right.target.windowIndex;
+  }
+
+  const kindRank = left.metadata.kind === "service" ? 1 : 0;
+  const otherKindRank = right.metadata.kind === "service" ? 1 : 0;
+  if (kindRank !== otherKindRank) return kindRank - otherKindRank;
+  return left.target.windowIndex - right.target.windowIndex;
 }
 
 function urgencyFor(projectRoot: string, sessionId?: string): number {
@@ -110,19 +141,19 @@ export function listSwitchableAgentItems(
   const tmuxSession = tmux.getProjectSession(context.projectRoot);
   const recentRankMap = getRecentRankMap(context.projectRoot, context.currentClientSession);
   const managedWindows = tmux.listManagedWindows(tmuxSession.sessionName);
-  const scopedWorktreePath = resolveContextWorktreePath(context, tmux, managedWindows);
+  const currentManagedWindow = resolveCurrentManagedWindow(context, tmux, managedWindows);
+  const teammateParentSessionId = currentManagedWindow?.metadata.team?.parentSessionId;
+  const scopedWorktreePath = resolveContextWorktreePath(context, currentManagedWindow);
   let managed = managedWindows
     .filter(({ target, metadata }) => {
       if (isDashboardWindowName(target.windowName)) return false;
+      if (teammateParentSessionId) {
+        return metadata.kind !== "service" && metadata.team?.parentSessionId === teammateParentSessionId;
+      }
       const worktreePath = metadata.worktreePath || context.projectRoot;
-      return pathResolve(worktreePath) === scopedWorktreePath;
+      return !metadata.team && pathResolve(worktreePath) === scopedWorktreePath;
     })
-    .sort((a, b) => {
-      const kindRank = a.metadata.kind === "service" ? 1 : 0;
-      const otherKindRank = b.metadata.kind === "service" ? 1 : 0;
-      if (kindRank !== otherKindRank) return kindRank - otherKindRank;
-      return a.target.windowIndex - b.target.windowIndex;
-    })
+    .sort((a, b) => compareSwitchableWindows(a, b, teammateParentSessionId))
     .map((entry) => ({
       ...entry,
       id: entry.metadata.sessionId,

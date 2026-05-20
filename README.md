@@ -446,6 +446,7 @@ Dashboard navigation exposes only the selected parent's direct team:
 
 - On the dashboard, select a parent agent and press `e` to open its teammate picker.
 - In an attached agent pane, press `Ctrl-A e` to toggle between the parent and its first/active teammate.
+- `Ctrl-A n/p` stays within the current plane: root agent/service panes before `Ctrl-A e`, direct teammates after `Ctrl-A e`.
 - Non-selected parents do not expose their teammates in dashboard rows, details, or footer chips.
 
 Direct teammate teams are capped at 3 agents. Creating a teammate is idempotent by normalized `role` + `label` for the same parent: if that direct teammate already exists, aimux returns it instead of creating a duplicate.
