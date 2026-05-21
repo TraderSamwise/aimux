@@ -134,6 +134,7 @@ case "${1:-}" in
         ;;
 
     "bump-ota")
+        CHANNEL=${2:-"testflight"}
         read_current_version
         NEW_BUILD=$CURRENT_BUILD
         NEW_OTA=$((CURRENT_OTA + 1))
@@ -142,7 +143,7 @@ case "${1:-}" in
         echo "📈 New version: Build $NEW_BUILD.$NEW_OTA"
 
         create_backups
-        update_versions $NEW_BUILD $NEW_OTA
+        update_versions $NEW_BUILD $NEW_OTA $CHANNEL
         commit_version "chore: OTA update v$NEW_OTA for Build $NEW_BUILD"
         cleanup_backups
         ;;
