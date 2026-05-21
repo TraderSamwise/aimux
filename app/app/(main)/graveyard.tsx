@@ -22,8 +22,15 @@ export default function GraveyardScreen() {
   const endpoint = project?.serviceEndpoint ?? null;
 
   useEffect(() => {
-    if (!endpoint) return;
+    // Project switched away (or host went offline): drop stale data + error
+    // so we don't render the previous project's graveyard.
+    if (!endpoint) {
+      setEntries([]);
+      setError(null);
+      return;
+    }
     let cancelled = false;
+    setError(null);
     (async () => {
       try {
         const token = await getToken();
@@ -38,6 +45,7 @@ export default function GraveyardScreen() {
         } else {
           setEntries([]);
         }
+        setError(null);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       }
