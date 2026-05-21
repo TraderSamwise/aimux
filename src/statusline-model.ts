@@ -339,6 +339,41 @@ export function resolveFocusedTeammate(
   };
 }
 
+export function resolveFocusedTeammateGroup(
+  data: StatuslineData,
+  projectRoot: string,
+  currentSession?: string,
+  currentWindow?: string,
+  currentWindowId?: string,
+  currentPath?: string,
+): ResolvedStatuslineSession[] {
+  const focusedTeammate = resolveFocusedTeammate(
+    data,
+    projectRoot,
+    currentSession,
+    currentWindow,
+    currentWindowId,
+    currentPath,
+  );
+  const parentSessionId = focusedTeammate?.team?.parentSessionId;
+  if (!focusedTeammate || !parentSessionId) return [];
+  return (data.teammates ?? [])
+    .filter((session) => session.team?.parentSessionId === parentSessionId)
+    .filter((session) => session.status !== "offline" && session.status !== "exited")
+    .sort(compareTeammateSessions)
+    .slice(0, 5)
+    .map((session) => {
+      const resolvedMetadata = data.metadata?.[session.id];
+      return {
+        ...session,
+        derived: resolvedMetadata?.derived,
+        semantic: session.semantic,
+        metadata: resolvedMetadata,
+        isCurrent: session.id === focusedTeammate.id,
+      };
+    });
+}
+
 export function resolveCurrentTeammates(
   data: StatuslineData,
   projectRoot: string,

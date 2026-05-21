@@ -12,6 +12,7 @@ import {
   resolveCurrentTeammates,
   resolveExactCurrentSessionId,
   resolveExactSessionMetadata,
+  resolveFocusedTeammateGroup,
   resolveFocusedTeammate,
   resolveScopedSessions,
   trim,
@@ -240,10 +241,24 @@ function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[num
   return session.isCurrent ? `#[fg=black,bg=yellow] ${label} #[default]` : label;
 }
 
+function teammateLabel(session: ReturnType<typeof resolveFocusedTeammateGroup>[number]): string {
+  return (
+    session.team?.label?.trim() || session.label?.trim() || session.team?.role?.trim() || compactSessionTitle(session)
+  );
+}
+
+function renderTeammateChip(session: ReturnType<typeof resolveFocusedTeammateGroup>[number]): string {
+  const identity = trim(teammateLabel(session), 18);
+  const hint = renderSessionCompactHint(session);
+  const badge = hint?.includes(" unread") || hint?.includes(" new") ? null : renderSemanticBadge(session.semantic);
+  const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 28);
+  return session.isCurrent ? `#[fg=black,bg=cyan] ${label} #[default]` : `#[fg=cyan]${label}#[default]`;
+}
+
 function renderTeammateSegment(teammates: ReturnType<typeof resolveCurrentTeammates>): string | null {
   if (teammates.length === 0) return null;
   const labels = teammates.slice(0, 3).map((teammate) => {
-    const identity = compactSessionTitle(teammate);
+    const identity = teammateLabel(teammate);
     const hint = renderSessionCompactHint(teammate) ?? teammate.semantic?.presentation.statusLabel ?? teammate.status;
     return trim(`${identity}${hint ? ` ${hint}` : ""}`, 24);
   });
@@ -279,7 +294,6 @@ function renderBottomLine(
     return chosen.join(separator);
   }
 
-  const chips = resolveScopedSessions(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
   const focusedTeammate = resolveFocusedTeammate(
     data,
     projectRoot,
@@ -288,14 +302,18 @@ function renderBottomLine(
     currentWindowId,
     currentPath,
   );
-  const chipSessions =
-    focusedTeammate && !chips.some((session) => session.id === focusedTeammate.id)
-      ? [focusedTeammate, ...chips]
-      : chips;
+  const teammateChips = focusedTeammate
+    ? resolveFocusedTeammateGroup(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath)
+    : [];
+  const chips = focusedTeammate
+    ? teammateChips
+    : resolveScopedSessions(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
   const headline = renderExactHeadline(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
-  const teammateSegment = renderTeammateSegment(
-    resolveCurrentTeammates(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath),
-  );
+  const teammateSegment = focusedTeammate
+    ? `#[fg=cyan]team plane#[default]`
+    : renderTeammateSegment(
+        resolveCurrentTeammates(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath),
+      );
   const pluginSegments = renderPluginSegments(
     data,
     projectRoot,
@@ -310,7 +328,7 @@ function renderBottomLine(
 
   const chosenChips: string[] = [];
   let used = 0;
-  for (const chip of chipSessions.map(renderSessionChip)) {
+  for (const chip of chips.map(focusedTeammate ? renderTeammateChip : renderSessionChip)) {
     const next = visibleSegmentLength(chip) + (chosenChips.length > 0 ? chipSeparator.length : 0);
     if (used + next > maxWidth) break;
     chosenChips.push(chip);
