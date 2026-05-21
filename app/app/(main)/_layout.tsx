@@ -35,6 +35,7 @@ export default function MainLayout() {
     const relayUrl = env.AIMUX_RELAY_URL;
     if (!relayUrl) {
       store.set(relayConfiguredAtom, false);
+      store.set(relayStatusAtom, "disconnected");
       return;
     }
     store.set(relayConfiguredAtom, true);
@@ -46,6 +47,7 @@ export default function MainLayout() {
       unsub();
       setApiRelay(null);
       transport.disconnect();
+      store.set(relayStatusAtom, "disconnected");
     };
   }, [getToken, store]);
 

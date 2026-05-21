@@ -35,9 +35,7 @@ export function saveCredentials(creds: AimuxCredentials): void {
   const path = getAuthPath();
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(creds, null, 2)}\n`, { mode: 0o600 });
-  try {
-    chmodSync(path, 0o600);
-  } catch {}
+  chmodSync(path, 0o600);
 }
 
 export function clearCredentials(): "cleared" | "none" | "failed" {

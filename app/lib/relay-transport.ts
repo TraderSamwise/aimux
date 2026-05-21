@@ -8,7 +8,7 @@ interface RelayResponse {
   id: string;
   type: "response";
   status: number;
-  body: unknown;
+  body?: unknown;
 }
 
 interface RelayControl {
@@ -22,6 +22,7 @@ type RelayMessage = RelayResponse | RelayControl;
 const REQUEST_TIMEOUT_MS = 30_000;
 const INITIAL_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
+const TOKEN_PROTOCOL_PREFIX = "aimux-token.";
 
 let idCounter = 0;
 
@@ -76,9 +77,9 @@ export class RelayTransport {
       return;
     }
 
-    const url = `${this.relayUrl}/client/connect?token=${encodeURIComponent(token)}`;
+    const url = `${this.relayUrl}/client/connect`;
     try {
-      this.ws = new WebSocket(url);
+      this.ws = new WebSocket(url, ["aimux", `${TOKEN_PROTOCOL_PREFIX}${token}`]);
     } catch {
       this.setStatus("disconnected");
       this.scheduleRetry();

@@ -12,8 +12,8 @@
 1. Create a Clerk application at https://dashboard.clerk.com
 2. Enable email + password sign-in method
 3. Note your keys:
-   - **Publishable key** (pk_live_...) — used by the app
-   - **Secret key** (sk_live_...) — used by the daemon and relay
+   - **Publishable key** (pk*live*...) — used by the app
+   - **Secret key** (sk*live*...) — used by the daemon and relay
 
 ## 2. Relay Server (Cloudflare Worker)
 
@@ -48,12 +48,14 @@ wrangler deploy --env production
 ```
 
 The relay will be available at:
+
 - Dev: `https://aimux-relay.<your-subdomain>.workers.dev`
 - Production: `https://relay.aimux.com` (after DNS setup)
 
 ### DNS for relay.aimux.com
 
 Add a CNAME record in Cloudflare DNS:
+
 - Name: `relay`
 - Target: `aimux-relay.<your-subdomain>.workers.dev`
 - Proxy: enabled (orange cloud)
@@ -66,7 +68,7 @@ Or use Cloudflare custom domains (configured in wrangler.toml).
 
 Set in your hosting platform (Vercel, etc.):
 
-```
+```env
 EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
 EXPO_PUBLIC_AIMUX_RELAY_URL=wss://relay.aimux.com
 ```
@@ -81,6 +83,7 @@ vercel deploy --prod
 ### DNS for aimux.com
 
 Point aimux.com to Vercel:
+
 - A record → Vercel's IP
 - Or CNAME → cname.vercel-dns.com
 
@@ -118,7 +121,7 @@ Environment variables are baked into the native bundle at build time via `app.co
 
 ## Architecture
 
-```
+```text
 User's machine                    Cloud                        User's phone/laptop
 ┌──────────┐                ┌──────────────┐                ┌──────────────┐
 │  aimux   │───WS tunnel───│  Cloudflare   │───WS tunnel───│  aimux app   │
