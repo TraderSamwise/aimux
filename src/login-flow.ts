@@ -22,10 +22,9 @@ function openBrowser(url: string): void {
   const args = platform() === "win32" ? ["/c", "start", "", url] : [url];
   try {
     const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+    child.on("error", () => {});
     child.unref();
-  } catch {
-    // Browser open is best-effort; the URL is also printed for manual open.
-  }
+  } catch {}
 }
 
 export interface LoginOptions {
