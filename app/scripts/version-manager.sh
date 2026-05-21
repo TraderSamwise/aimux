@@ -54,7 +54,7 @@ export const APP_VERSION = {
 };
 
 export const getVersionString = () => {
-  const { buildNumber, otaVersion, channel } = APP_VERSION;
+  const { buildNumber, otaVersion } = APP_VERSION;
   const versionStr = \`\${APP_VERSION.version} (\${buildNumber}.\${otaVersion})\`;
   return versionStr;
 };
