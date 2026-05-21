@@ -1,7 +1,10 @@
 export interface Env {
   RELAY: DurableObjectNamespace;
-  CLERK_SECRET_KEY: string;
-  RELAY_TOKEN_SECRET: string;
+  // Secrets are configured via `wrangler secret put` at deploy time. They
+  // may be unset in a dev/preview environment; callers must guard on
+  // missing values rather than assume they're populated.
+  CLERK_SECRET_KEY?: string;
+  RELAY_TOKEN_SECRET?: string;
 }
 
 export interface RelayRequest {
