@@ -123,7 +123,7 @@ export default {
       return corsResponse(JSON.stringify({ ok: false, error: "Not found" }), 404);
     }
 
-    const upgradeHeader = request.headers.get("Upgrade");
+    const upgradeHeader = request.headers.get("Upgrade")?.toLowerCase();
     if (upgradeHeader !== "websocket") {
       return corsResponse(JSON.stringify({ ok: false, error: "Expected WebSocket upgrade" }), 426);
     }

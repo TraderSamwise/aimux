@@ -14,7 +14,7 @@ export class RelayObject extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const upgradeHeader = request.headers.get("Upgrade");
+    const upgradeHeader = request.headers.get("Upgrade")?.toLowerCase();
     if (upgradeHeader !== "websocket") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }

@@ -39,10 +39,14 @@ export class RelayTransport {
   private _status: RelayStatus = "disconnected";
   private listeners = new Set<RelayStatusListener>();
 
+  private readonly relayUrl: string;
+
   constructor(
-    private readonly relayUrl: string,
+    relayUrl: string,
     private readonly getToken: () => Promise<string | null>,
-  ) {}
+  ) {
+    this.relayUrl = relayUrl.replace(/\/+$/, "");
+  }
 
   get status(): RelayStatus {
     return this._status;

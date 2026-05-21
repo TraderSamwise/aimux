@@ -54,7 +54,9 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
 }
 
 async function callDaemonViaRelay<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const result = await _relay!.request(method, path, body);
+  const relay = _relay;
+  if (!relay) throw new ApiError(0, null, "Relay not connected");
+  const result = await relay.request(method, path, body);
   if (result.status >= 400) {
     const b = result.body as { error?: string } | null;
     throw new ApiError(result.status, result.body, b?.error ?? `HTTP ${result.status}`);
