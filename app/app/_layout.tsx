@@ -13,15 +13,17 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const onPublicScreen =
     segments[0] === "sign-in" || segments[0] === "sign-up" || segments[0] === "landing";
+  // cli-auth manages its own signed-in/out states — never auto-redirect it.
+  const onCliAuth = segments[0] === "cli-auth";
 
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!isLoaded || onCliAuth) return;
     if (isSignedIn && onPublicScreen) {
       router.replace("/");
     } else if (!isSignedIn && !LOCAL_MODE && !onPublicScreen) {
       router.replace("/landing");
     }
-  }, [isSignedIn, isLoaded, onPublicScreen, router]);
+  }, [isSignedIn, isLoaded, onPublicScreen, onCliAuth, router]);
 
   if (!isLoaded) return null;
   return <>{children}</>;
@@ -40,6 +42,7 @@ export default function RootLayout() {
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="(main)" options={{ headerShown: false }} />
             <Stack.Screen name="landing" options={{ headerShown: false }} />
+            <Stack.Screen name="cli-auth" options={{ headerShown: false }} />
             <Stack.Screen name="sign-in" options={{ headerShown: false, presentation: "modal" }} />
             <Stack.Screen name="sign-up" options={{ headerShown: false, presentation: "modal" }} />
           </Stack>
