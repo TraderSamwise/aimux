@@ -7,18 +7,6 @@
   scrollbar-width: thin;
 }
 
-/* Override prefers-reduced-motion — this app is too interactive to function without animations */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: revert !important;
-    animation-delay: revert !important;
-    transition-duration: revert !important;
-    transition-delay: revert !important;
-  }
-}
-
 body {
   background-color: hsl(0, 0%, 100%);
 }

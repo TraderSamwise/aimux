@@ -12,7 +12,12 @@ const envRuntimePath = path.join(root, "lib", "envRuntime.ts");
 const { requiredReleaseEnvKeys, allKnownEnvKeys } = require("../lib/envContract");
 
 const target = process.argv[2] || "production";
-const profile = target === "production" ? "production" : "testflight";
+const allowedProfiles = new Set(["production", "testflight"]);
+if (!allowedProfiles.has(target)) {
+  console.error(`Invalid release profile '${target}'. Use 'production' or 'testflight'.`);
+  process.exit(1);
+}
+const profile = target;
 
 function parseEnvFile(content) {
   const values = {};
@@ -90,8 +95,8 @@ function findDeclaredPublicEnvKeys() {
   return [...keys].sort();
 }
 
-function readReleaseEnv() {
-  const envFilePath = fs.existsSync(envProductionPath) ? envProductionPath : envPath;
+function readReleaseEnv(profile) {
+  const envFilePath = profile === "production" ? envProductionPath : envPath;
   if (!fs.existsSync(envFilePath)) return { envFilePath, values: {} };
   return {
     envFilePath,
@@ -104,7 +109,7 @@ if (!fs.existsSync(easJsonPath)) {
   process.exit(1);
 }
 
-const { envFilePath, values: releaseEnv } = readReleaseEnv();
+const { envFilePath, values: releaseEnv } = readReleaseEnv(profile);
 const easJson = JSON.parse(fs.readFileSync(easJsonPath, "utf8"));
 const easEnv = easJson?.build?.[profile]?.env || {};
 const usedKeys = findUsedPublicEnvKeys();

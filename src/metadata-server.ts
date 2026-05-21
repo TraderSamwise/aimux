@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir } from "./paths.js";
 import {
@@ -1135,7 +1135,8 @@ export class MetadataServer {
             send(res, 404, { ok: false, error: "Plan not found" });
             return;
           }
-          throw err;
+          send(res, 500, { ok: false, error: "Failed to read plan" });
+          return;
         }
         return;
       }
@@ -1161,10 +1162,16 @@ export class MetadataServer {
         }
         const planPath = join(getPlansDir(), `${sessionId}.md`);
         const dir = dirname(planPath);
-        mkdirSync(dir, { recursive: true });
         const tmpPath = join(dir, `.${sessionId}.${randomUUID()}.tmp`);
-        writeFileSync(tmpPath, body.content, "utf8");
-        renameSync(tmpPath, planPath);
+        try {
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(tmpPath, body.content, "utf8");
+          renameSync(tmpPath, planPath);
+        } catch {
+          rmSync(tmpPath, { force: true });
+          send(res, 500, { ok: false, error: "Failed to write plan" });
+          return;
+        }
         send(res, 200, { ok: true, sessionId });
         return;
       }

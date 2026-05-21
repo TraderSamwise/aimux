@@ -112,7 +112,7 @@ export function groupByWorktree(state: DesktopState): WorktreeBucket[] {
     // Unknown worktree — synthesize a bucket so the entry is still rendered.
     const fallback: WorktreeBucket = {
       key: worktreePath,
-      name: worktreePath.split("/").pop() ?? worktreePath,
+      name: worktreePath.split(/[\\/]/).pop() ?? worktreePath,
       branch: "",
       path: worktreePath,
       isMainCheckout: false,

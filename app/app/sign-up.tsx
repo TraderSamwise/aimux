@@ -116,7 +116,7 @@ export default function SignUpScreen() {
               className="mt-3"
               variant="ghost"
               label="Already have an account? Sign In"
-              onPress={() => router.back()}
+              onPress={() => router.replace("/sign-in")}
             />
           </>
         ) : (

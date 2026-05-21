@@ -4,6 +4,8 @@
 # Usage:
 #   yarn build:testflight   # Build for TestFlight (default)
 #   yarn build:production   # Build for App Store
+#   yarn build --android
+#   yarn build --platform all
 #   yarn build --clear-cache
 #   yarn build:testflight --clear-cache
 #   yarn build:production --clear-cache
@@ -11,9 +13,11 @@
 set -e
 
 CHANNEL="testflight"
+PLATFORM="ios"
 EXTRA_ARGS=()
 
-for arg in "$@"; do
+while [ $# -gt 0 ]; do
+  arg="$1"
   case $arg in
     --production)
       CHANNEL="production"
@@ -21,11 +25,38 @@ for arg in "$@"; do
     --testflight)
       CHANNEL="testflight"
       ;;
+    --ios)
+      PLATFORM="ios"
+      ;;
+    --android)
+      PLATFORM="android"
+      ;;
+    --all)
+      PLATFORM="all"
+      ;;
+    --platform)
+      if [ -z "${2:-}" ]; then
+        echo "Missing value for --platform"
+        exit 1
+      fi
+      PLATFORM="$2"
+      shift
+      ;;
     *)
       EXTRA_ARGS+=("$arg")
       ;;
   esac
+  shift
 done
+
+case "$PLATFORM" in
+  ios|android|all)
+    ;;
+  *)
+    echo "Invalid platform '$PLATFORM'. Use ios, android, or all."
+    exit 1
+    ;;
+esac
 
 if [ "$CHANNEL" = "production" ]; then
   EAS_PROFILE="production"
@@ -35,7 +66,7 @@ else
   CHANNEL_NAME="TestFlight"
 fi
 
-echo "🚀 Starting $CHANNEL_NAME build for iOS..."
+echo "🚀 Starting $CHANNEL_NAME build for $PLATFORM..."
 
 echo ""
 ./scripts/version-manager.sh current
@@ -44,7 +75,7 @@ echo ""
 node scripts/check-release-env.js "$CHANNEL"
 
 echo "🏗️  Starting EAS build ($CHANNEL_NAME)..."
-eas build --platform ios --profile "$EAS_PROFILE" --auto-submit "${EXTRA_ARGS[@]}"
+eas build --platform "$PLATFORM" --profile "$EAS_PROFILE" --auto-submit "${EXTRA_ARGS[@]}"
 
 echo ""
 echo "✅ Build process complete!"
