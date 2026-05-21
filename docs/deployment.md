@@ -74,18 +74,22 @@ Point aimux.com to Vercel:
 
 ## 4. Local Daemon Setup
 
-Users configure their local daemon to connect to the relay:
+Once `AIMUX_RELAY_URL` points at your deployed relay, users authorize
+their local daemon via the browser:
 
 ```bash
-# In their .env or shell profile
-export CLERK_SECRET_KEY=sk_live_...          # For JWT validation
-export AIMUX_RELAY_URL=wss://relay.aimux.com  # Relay connection
-export AIMUX_RELAY_TOKEN=<clerk-session-jwt>  # User's auth token
+aimux login
 ```
 
-Then start the daemon normally: `aimux daemon run`
+This opens the web app at `${EXPO_PUBLIC_WEB_APP_URL}/cli-auth`, mints a
+long-lived (~90d) HS256 daemon token at the relay, and stores it locally
+at `~/.aimux/auth.json`. The daemon picks it up on next start, or
+`aimux remote enable` connects without a restart.
 
-The daemon connects to the relay automatically when `AIMUX_RELAY_URL` and `AIMUX_RELAY_TOKEN` are set.
+`AIMUX_RELAY_URL` may also be set in the environment as an override.
+Server-side, the relay needs `CLERK_SECRET_KEY` (verifies the user's
+Clerk session during `aimux login`) and `RELAY_TOKEN_SECRET` (signs the
+HS256 daemon tokens it mints).
 
 ## 5. Native App (iOS/Android)
 
