@@ -1,6 +1,7 @@
 import React from "react";
 import { View } from "react-native";
 import { AuthMenu } from "@/components/AuthMenu";
+import { RelayIndicator } from "@/components/RelayIndicator";
 import { Text } from "@/components/ui/text";
 
 export function TopBar({ left }: { left?: React.ReactNode }) {
@@ -9,6 +10,9 @@ export function TopBar({ left }: { left?: React.ReactNode }) {
       {left ? <View className="-ml-1 mr-2">{left}</View> : null}
       <Text className="font-mono text-[17px] font-bold text-foreground">aimux</Text>
       <View className="flex-1" />
+      <View className="mr-3">
+        <RelayIndicator />
+      </View>
       <AuthMenu />
     </View>
   );
