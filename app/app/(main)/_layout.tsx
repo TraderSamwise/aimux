@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect } from "react";
 import { Stack } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
@@ -24,7 +24,6 @@ export default function MainLayout() {
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
   const store = useStore();
   const { getToken } = useAuth();
-  const tokenRef = useRef<string | null>(null);
 
   // Poll /projects every 2s; reconcile into the projects atom.
   useEffect(() => {
@@ -35,7 +34,6 @@ export default function MainLayout() {
       if (cancelled) return;
       try {
         const token = await getToken();
-        if (!cancelled) tokenRef.current = token;
         const projects = await listProjects({ token });
         if (!cancelled) reconcileProjects(projects);
       } catch (err) {
