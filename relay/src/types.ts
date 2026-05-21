@@ -5,6 +5,10 @@ export interface Env {
   // missing values rather than assume they're populated.
   CLERK_SECRET_KEY?: string;
   RELAY_TOKEN_SECRET?: string;
+  // Comma-separated allowlist of web-app origins permitted to call the
+  // token-issuing endpoint. When unset, /cli/issue-token rejects all
+  // cross-origin requests outright.
+  CLI_TOKEN_ALLOWED_ORIGINS?: string;
 }
 
 export interface RelayRequest {
