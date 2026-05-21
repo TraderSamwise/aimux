@@ -20,13 +20,24 @@ import {
   type InstanceSessionRef,
 } from "./instance-registry.js";
 
+function runGit(args: string, dir: string): void {
+  // Strip inherited GIT_* env so commands honor `cwd` even when invoked under a git hook.
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_INDEX_FILE;
+  delete env.GIT_OBJECT_DIRECTORY;
+  delete env.GIT_COMMON_DIR;
+  execSync(`git ${args}`, { cwd: dir, stdio: "pipe", env });
+}
+
 function makeTmpRepo(): string {
   // realpathSync to resolve macOS /tmp -> /private/tmp symlink
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "aimux-test-")));
-  execSync("git init", { cwd: dir, stdio: "pipe" });
-  execSync("git config user.email test@example.com", { cwd: dir, stdio: "pipe" });
-  execSync("git config user.name test", { cwd: dir, stdio: "pipe" });
-  execSync("git commit --allow-empty -m init", { cwd: dir, stdio: "pipe" });
+  runGit("init", dir);
+  runGit("config user.email test@example.com", dir);
+  runGit("config user.name test", dir);
+  runGit("commit --allow-empty -m init", dir);
   mkdirSync(join(dir, ".aimux"), { recursive: true });
   writeFileSync(join(dir, "instances.json"), "[]");
   return dir;
