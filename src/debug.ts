@@ -17,6 +17,23 @@ export interface LoggingRuntimeConfig extends LoggingConfig {
   projectRoot?: string;
 }
 
+export interface LoggingCliOptions {
+  debug?: boolean;
+  trace?: boolean;
+  logLevel?: string;
+  logCategory?: string;
+}
+
+export interface ResolveLoggingOptions {
+  config: LoggingConfig;
+  env?: Record<string, string | undefined>;
+  cli?: LoggingCliOptions;
+  path: string;
+  processKind: LoggingRuntimeConfig["processKind"];
+  projectId?: string;
+  projectRoot?: string;
+}
+
 export interface LogFields {
   [key: string]: unknown;
 }
@@ -51,9 +68,75 @@ function normalizeLevel(level: string | undefined, fallback: LogLevel): LogLevel
     : fallback;
 }
 
+function isExplicitFalse(value: string): boolean {
+  return ["0", "false", "off", "no"].includes(value.trim().toLowerCase());
+}
+
 function normalizeCategories(categories: string[] | undefined): string[] {
   const normalized = (categories ?? ["*"]).map((category) => category.trim()).filter(Boolean);
   return normalized.length > 0 ? normalized : ["*"];
+}
+
+export function parseLogCategories(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  return normalizeCategories(value.split(","));
+}
+
+export function resolveLoggingRuntimeConfig(options: ResolveLoggingOptions): LoggingRuntimeConfig {
+  const env = options.env ?? process.env;
+  const cli = options.cli ?? {};
+  let enabled = options.config.enabled;
+  let level = options.config.level;
+  let categories = normalizeCategories(options.config.categories);
+
+  const envLog = env.AIMUX_LOG;
+  if (envLog !== undefined) {
+    if (isExplicitFalse(envLog)) {
+      enabled = false;
+    } else {
+      enabled = true;
+      level = normalizeLevel(envLog, level);
+    }
+  }
+  if (env.AIMUX_LOG_LEVEL) {
+    enabled = true;
+    level = normalizeLevel(env.AIMUX_LOG_LEVEL, level);
+  }
+  const envCategories = parseLogCategories(env.AIMUX_LOG_CATEGORIES);
+  if (envCategories) {
+    enabled = true;
+    categories = envCategories;
+  }
+
+  if (cli.debug) {
+    enabled = true;
+    level = "debug";
+  }
+  if (cli.trace) {
+    enabled = true;
+    level = "trace";
+  }
+  if (cli.logLevel) {
+    enabled = true;
+    level = normalizeLevel(cli.logLevel, level);
+  }
+  const cliCategories = parseLogCategories(cli.logCategory);
+  if (cliCategories) {
+    enabled = true;
+    categories = cliCategories;
+  }
+
+  return {
+    enabled,
+    level,
+    categories,
+    maxBytes: options.config.maxBytes,
+    maxFiles: options.config.maxFiles,
+    path: options.path,
+    processKind: options.processKind,
+    projectId: options.projectId,
+    projectRoot: options.projectRoot,
+  };
 }
 
 export function configureLogging(config: Partial<LoggingRuntimeConfig>): LoggingRuntimeConfig {
