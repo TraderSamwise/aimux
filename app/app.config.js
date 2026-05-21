@@ -1,5 +1,11 @@
 const { APP_VERSION } = require("./lib/version.ts");
 
+// EAS project ID is set by `eas init` (or passed at build time via env).
+// Without a real ID, OTA updates can't function — keep them disabled
+// instead of pointing at a placeholder UUID that 404s on every launch.
+const EAS_PROJECT_ID = process.env.EAS_PROJECT_ID || "00000000-0000-0000-0000-000000000000";
+const HAS_REAL_EAS_PROJECT = EAS_PROJECT_ID !== "00000000-0000-0000-0000-000000000000";
+
 module.exports = {
   expo: {
     name: "aimux",
@@ -36,19 +42,21 @@ module.exports = {
     },
     runtimeVersion: "1.0.0",
     updates: {
-      url: "https://u.expo.dev/00000000-0000-0000-0000-000000000000",
-      enabled: true,
+      url: `https://u.expo.dev/${EAS_PROJECT_ID}`,
+      enabled: HAS_REAL_EAS_PROJECT,
       checkAutomatically: "ON_LOAD",
       fallbackToCacheTimeout: 30000,
     },
-    plugins: ["expo-router", "expo-updates", "expo-image-picker"],
+    plugins: HAS_REAL_EAS_PROJECT
+      ? ["expo-router", "expo-updates", "expo-image-picker"]
+      : ["expo-router", "expo-image-picker"],
     experiments: {
       typedRoutes: true,
     },
     extra: {
       router: {},
       eas: {
-        projectId: "00000000-0000-0000-0000-000000000000",
+        projectId: EAS_PROJECT_ID,
       },
     },
     owner: "tradersamwise",
