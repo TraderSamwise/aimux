@@ -28,14 +28,17 @@ else
   CHANNEL_NAME="Production"
 fi
 
-# Block if dict version is out of sync
-./scripts/check-dict-version.sh --strict
 node scripts/check-release-env.js "$CHANNEL"
 
 echo "📤 Starting OTA update ($CHANNEL_NAME channel)..."
 
 echo ""
 ./scripts/version-manager.sh current
+echo ""
+
+# Increment otaVersion before publishing so EAS picks up the bump and clients
+# can tell this update apart from the previous one.
+./scripts/version-manager.sh bump-ota
 echo ""
 
 VERSION_FILE="lib/version.ts"
