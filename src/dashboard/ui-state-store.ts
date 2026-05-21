@@ -38,6 +38,10 @@ export class DashboardUiStateStore {
   };
 
   loadSharedState(state?: DashboardState): void {
+    this.orderState = {
+      agentOrderByWorktreeKey: {},
+      serviceOrderByWorktreeKey: {},
+    };
     try {
       const raw = readFileSync(getDashboardUiStatePath(), "utf-8");
       const snapshot = JSON.parse(raw) as DashboardUiSharedSnapshot;

@@ -269,6 +269,10 @@ export async function createTeammateAgent(
   reused?: true;
 }> {
   host.syncSessionsFromState();
+  const initialPrompt = opts.initialPrompt?.trim();
+  if (initialPrompt && typeof host.writeAgentInput !== "function") {
+    throw new Error("Initial teammate prompt requires agent input support");
+  }
 
   const parent = host.sessions.find((session: any) => session.id === opts.parentSessionId && !session.exited);
   if (!parent) {
@@ -376,11 +380,8 @@ export async function createTeammateAgent(
     }
   }
 
-  if (opts.initialPrompt?.trim()) {
-    if (typeof host.writeAgentInput !== "function") {
-      throw new Error("Initial teammate prompt requires agent input support");
-    }
-    await host.writeAgentInput(transport.id, opts.initialPrompt.trim(), undefined, undefined, true);
+  if (initialPrompt) {
+    await host.writeAgentInput(transport.id, initialPrompt, undefined, undefined, true);
   }
 
   return {

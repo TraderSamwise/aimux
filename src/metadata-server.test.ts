@@ -633,6 +633,43 @@ describe("MetadataServer threads API", () => {
     ]);
   });
 
+  it("rejects teammate creation when the requested parent is itself a teammate", async () => {
+    server?.stop();
+    const createTeammateAgent = vi.fn();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [],
+          teammates: [
+            {
+              id: "nested",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer" },
+            },
+          ],
+        }),
+      },
+      lifecycle: { createTeammateAgent },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "nested", role: "reviewer" }),
+    });
+    const body = (await res.json()) as { ok: boolean; error: string };
+
+    expect(res.status).toBe(400);
+    expect(body.error).toContain("nested teams");
+    expect(createTeammateAgent).not.toHaveBeenCalled();
+  });
+
   it("passes agent resume over HTTP", async () => {
     server?.stop();
     server = new MetadataServer({

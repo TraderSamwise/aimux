@@ -417,15 +417,26 @@ function filterWorktreeGraveyard(
 function filterNotifications(
   source: SourceResult<unknown>,
   target: string,
+  matches: TargetMatch[],
+  seen: Set<string>,
 ): SourceResult<{ notifications: unknown[] }> {
   if (source.status !== "found") return { ...source, value: undefined };
   const notifications = asArray(asObject(source.value)?.notifications).filter((entry) => {
     const record = asObject(entry);
-    return (
-      matchesString(getString(record, "sessionId"), target) ||
-      matchesString(getString(record, "targetKey"), target) ||
-      matchesString(getString(record, "id"), target)
-    );
+    const sessionId = getString(record, "sessionId");
+    const targetKey = getString(record, "targetKey");
+    const id = getString(record, "id");
+    const matched = matchesString(sessionId, target) || matchesString(targetKey, target) || matchesString(id, target);
+    if (matched) {
+      addMatch(matches, seen, {
+        canonicalKey: `notification:${id ?? targetKey ?? sessionId ?? "unknown"}`,
+        kind: "notification",
+        source: "notifications",
+        id,
+        raw: entry,
+      });
+    }
+    return matched;
   });
   return { status: "found", path: source.path, value: { notifications } };
 }
@@ -523,7 +534,7 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
   const gitWorktrees = filterGitWorktrees(options.worktrees, paths, target, matches, seen);
   const graveyard = filterGraveyard(readJson(paths.graveyardPath), target, matches, seen);
   const worktreeGraveyard = filterWorktreeGraveyard(readJson(paths.worktreeGraveyardPath), target, matches, seen);
-  const notifications = filterNotifications(readJson(paths.notificationsPath), target);
+  const notifications = filterNotifications(readJson(paths.notificationsPath), target, matches, seen);
   const operationFailures = filterOperationFailures(
     readJson(paths.dashboardOperationFailuresPath),
     target,

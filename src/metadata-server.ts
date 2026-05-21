@@ -2031,6 +2031,19 @@ export class MetadataServer {
           initialPrompt?: string;
           order?: number;
         };
+        const parentSessionId = body.parentSessionId?.trim() ?? "";
+        if (!parentSessionId) {
+          send(res, 400, { ok: false, error: "parentSessionId is required" });
+          return;
+        }
+        body.parentSessionId = parentSessionId;
+        if (this.options.desktop?.getState) {
+          const resolved = this.resolveDirectTeammates(parentSessionId);
+          if (!resolved.ok) {
+            send(res, resolved.status, { ok: false, error: resolved.error });
+            return;
+          }
+        }
         if (!this.options.lifecycle?.createTeammateAgent) {
           send(res, 501, { ok: false, error: "teammate creation not supported by this service" });
           return;
