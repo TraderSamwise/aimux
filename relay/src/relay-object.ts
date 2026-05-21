@@ -2,10 +2,15 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+// In-flight requests: response with this id will be routed back to the
+// requesting client only. Entries are cleared on response, client close, or
+// after this TTL — bounds memory if a request never completes.
+const PENDING_REQUEST_TTL_MS = 60_000;
 
 export class RelayObject extends DurableObject<Env> {
   private daemonWs: WebSocket | null = null;
   private clientSockets = new Set<WebSocket>();
+  private pendingRequests = new Map<string, { client: WebSocket; expiresAt: number }>();
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -63,12 +68,26 @@ export class RelayObject extends DurableObject<Env> {
     const isDaemon = tags.includes("daemon");
 
     if (isDaemon && parsed.type === "response") {
-      this.broadcastToClients(parsed);
+      this.sweepExpiredPending();
+      const pending = this.pendingRequests.get(parsed.id);
+      if (pending) {
+        this.pendingRequests.delete(parsed.id);
+        try {
+          pending.client.send(JSON.stringify(parsed));
+        } catch {
+          // client has gone away — drop silently
+        }
+      }
     } else if (!isDaemon && parsed.type === "request") {
       if (this.daemonWs) {
+        this.pendingRequests.set(parsed.id, {
+          client: ws,
+          expiresAt: Date.now() + PENDING_REQUEST_TTL_MS,
+        });
         try {
           this.daemonWs.send(message);
         } catch {
+          this.pendingRequests.delete(parsed.id);
           this.send(ws, {
             id: parsed.id,
             type: "response",
@@ -84,6 +103,13 @@ export class RelayObject extends DurableObject<Env> {
           body: { ok: false, error: "Daemon not connected" },
         });
       }
+    }
+  }
+
+  private sweepExpiredPending(): void {
+    const now = Date.now();
+    for (const [id, entry] of this.pendingRequests) {
+      if (entry.expiresAt < now) this.pendingRequests.delete(id);
     }
   }
 
@@ -116,6 +142,9 @@ export class RelayObject extends DurableObject<Env> {
       this.broadcastToClients({ type: "daemon_status", online: false });
     } else {
       this.clientSockets.delete(ws);
+      for (const [id, entry] of this.pendingRequests) {
+        if (entry.client === ws) this.pendingRequests.delete(id);
+      }
     }
     try {
       ws.close(1000, "Closed");
