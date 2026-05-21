@@ -13,4 +13,7 @@ export const env = {
   get AIMUX_DAEMON_URL(): string | undefined {
     return rawEnv.EXPO_PUBLIC_AIMUX_DAEMON_URL || undefined;
   },
+  get AIMUX_RELAY_URL(): string | undefined {
+    return rawEnv.EXPO_PUBLIC_AIMUX_RELAY_URL || undefined;
+  },
 };

@@ -49,7 +49,7 @@ export function AuthMenu() {
         className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
         onPress={() => {
           close();
-          void signOut();
+          void signOut().then(() => router.replace("/sign-in"));
         }}
       >
         <Text className="text-sm text-destructive">Sign out</Text>

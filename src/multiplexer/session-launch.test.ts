@@ -4,6 +4,16 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
+
+function gitInit(cwd: string): void {
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_INDEX_FILE;
+  delete env.GIT_OBJECT_DIRECTORY;
+  delete env.GIT_COMMON_DIR;
+  execFileSync("git", ["init"], { cwd, stdio: "ignore", env });
+}
 import {
   createSession,
   focusSession,
@@ -99,7 +109,7 @@ describe("createSession", () => {
 
   it("does not inject startup preamble when explicitly suppressed", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     const buildSessionPreamble = vi.fn(() => "aimux preamble");
@@ -155,7 +165,7 @@ describe("createSession", () => {
 
   it("wraps claude launches through the managed env boundary", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     const host: any = {
@@ -197,7 +207,7 @@ describe("createSession", () => {
 
   it("stores explicit Claude resume backend ids without adding a competing session id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-resume-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     const host: any = {
@@ -247,7 +257,7 @@ describe("createSession", () => {
 
   it("passes fresh Codex aimux instructions as the initial prompt", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-prompt-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     const host: any = {
@@ -296,7 +306,7 @@ describe("createSession", () => {
 
   it("does not append initial Codex instructions to explicit Codex subcommands", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-subcommand-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     const host: any = {
@@ -346,7 +356,7 @@ describe("createSession", () => {
 
   it("stores explicit Codex resume backend ids instead of waiting for file capture", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-resume-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     const host: any = {
@@ -393,7 +403,7 @@ describe("createSession", () => {
 
   it("does not append initial Codex instructions after an explicit -- prompt delimiter", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-delimiter-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     const host: any = {
@@ -443,7 +453,7 @@ describe("createSession", () => {
 
   it("adds aimux preamble but not session id args to claude resume launches", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-resume-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     const host: any = {
@@ -495,7 +505,7 @@ describe("createSession", () => {
 
   it("clears stale native transcript paths when launching a new process for a session", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-transcript-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     updateSessionMetadata(
@@ -559,7 +569,7 @@ describe("createSession", () => {
 
   it("passes teammate metadata into managed session registration", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-team-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
     const team = {
       teamId: "team-1",
@@ -623,7 +633,7 @@ describe("createSession", () => {
 
   it("sends Codex teammate preambles through the initial kickoff prompt", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-team-preamble-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
     const team = {
       teamId: "team-1",
@@ -691,7 +701,7 @@ describe("createSession", () => {
 
   it("rejects duplicate session ids before launching a second runtime", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-dup-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     const host: any = {
@@ -743,8 +753,8 @@ describe("migrateAgent", () => {
   it("uses durable backend metadata when migrating a runtime that missed its backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-migrate-"));
     const targetRoot = mkdtempSync(join(tmpdir(), "aimux-session-migrate-target-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
-    execFileSync("git", ["init"], { cwd: targetRoot, stdio: "ignore" });
+    gitInit(repoRoot);
+    gitInit(targetRoot);
     await initPaths(repoRoot);
     recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
 
@@ -830,7 +840,7 @@ describe("migrateAgent", () => {
 describe("focusSession", () => {
   it("uses durable backend metadata when opening a session that missed its backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-focus-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
     recordSessionBackendSessionIdMetadata("claude-1", "backend-1", repoRoot);
 
@@ -862,7 +872,7 @@ describe("focusSession", () => {
 describe("resumeSessions", () => {
   it("uses durable backend metadata when saved resume state is incomplete", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-metadata-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
     recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
 
@@ -926,7 +936,7 @@ describe("resumeSessions", () => {
 
   it("preserves teammate metadata and session id when resuming saved teammate sessions", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-team-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
     const team = { teamId: "team-1", parentSessionId: "claude-parent", role: "reviewer" };
 
@@ -987,7 +997,7 @@ describe("resumeSessions", () => {
 
   it("skips saved sessions without exact backend resume args instead of using broad fallback args", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-"));
-    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    gitInit(repoRoot);
     await initPaths(repoRoot);
 
     class Host {
