@@ -38,7 +38,7 @@ echo ""
 
 # Increment otaVersion before publishing so EAS picks up the bump and clients
 # can tell this update apart from the previous one.
-./scripts/version-manager.sh bump-ota
+./scripts/version-manager.sh bump-ota "$CHANNEL"
 echo ""
 
 VERSION_FILE="lib/version.ts"
