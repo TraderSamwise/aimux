@@ -248,11 +248,12 @@ export const dashboardStateMethods = {
   applyDashboardModel(
     this: any,
     dashSessions: DashboardSession[],
+    dashTeammates: DashboardSession[],
     dashServices: DashboardService[],
     worktreeGroups: WorktreeGroup[],
     mainCheckoutInfo: { name: string; branch: string },
   ): boolean {
-    return applyDashboardModelImpl(this, dashSessions, dashServices, worktreeGroups, mainCheckoutInfo);
+    return applyDashboardModelImpl(this, dashSessions, dashTeammates, dashServices, worktreeGroups, mainCheckoutInfo);
   },
 
   invalidateDesktopStateSnapshot(this: any): void {
@@ -277,6 +278,7 @@ export const dashboardStateMethods = {
 
   buildDesktopStateSnapshot(this: any): {
     sessions: DashboardSession[];
+    teammates: DashboardSession[];
     services: DashboardService[];
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
     mainCheckoutInfo: { name: string; branch: string };

@@ -112,6 +112,49 @@ export function getProjectStateDirById(projectId: string): string {
   return join(getGlobalAimuxDir(), "projects", projectId);
 }
 
+export interface ReadOnlyProjectPaths {
+  repoRoot: string;
+  projectId: string;
+  projectStateDir: string;
+  localAimuxDir: string;
+  statePath: string;
+  graveyardPath: string;
+  worktreeGraveyardPath: string;
+  instancesPath: string;
+  localInstancesPath: string;
+  metadataPath: string;
+  notificationsPath: string;
+  notificationContextPath: string;
+  dashboardOperationFailuresPath: string;
+}
+
+/**
+ * Resolve aimux project paths without initializing or registering the project.
+ * Use this for diagnostics that must not create directories, migrate files, or
+ * update project registry state as a side effect.
+ */
+export function getReadOnlyProjectPathsFor(cwd: string): ReadOnlyProjectPaths {
+  const repoRoot = resolveRepoRoot(cwd);
+  const projectId = computeProjectId(repoRoot);
+  const projectStateDir = join(getGlobalAimuxDir(), "projects", projectId);
+  const localAimuxDir = join(repoRoot, ".aimux");
+  return {
+    repoRoot,
+    projectId,
+    projectStateDir,
+    localAimuxDir,
+    statePath: join(projectStateDir, "state.json"),
+    graveyardPath: join(projectStateDir, "graveyard.json"),
+    worktreeGraveyardPath: join(projectStateDir, "worktree-graveyard.json"),
+    instancesPath: join(projectStateDir, "instances.json"),
+    localInstancesPath: join(localAimuxDir, "instances.json"),
+    metadataPath: join(projectStateDir, "metadata.json"),
+    notificationsPath: join(projectStateDir, "notifications.json"),
+    notificationContextPath: join(projectStateDir, "notification-context.json"),
+    dashboardOperationFailuresPath: join(projectStateDir, "dashboard-operation-failures.json"),
+  };
+}
+
 // ── Global paths (~/.aimux/...) ────────────────────────────────────
 
 const HOME = homedir();

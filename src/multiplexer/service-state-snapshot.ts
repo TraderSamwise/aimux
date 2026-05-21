@@ -83,6 +83,7 @@ export function snapshotProjectAgentWindows(projectRoot: string, tmux: TmuxRunti
       lifecycle: "offline",
       createdAt: metadata.createdAt,
       backendSessionId: metadata.backendSessionId,
+      team: metadata.team,
       worktreePath: metadata.worktreePath,
       label: metadata.label,
       headline: metadata.statusText,

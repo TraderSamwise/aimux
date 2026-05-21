@@ -67,6 +67,7 @@ function sessionStateFromInstanceRef(ref: InstanceSessionRef): SessionState | nu
     lifecycle: "offline",
     createdAt: ref.createdAt,
     backendSessionId: ref.backendSessionId,
+    team: ref.team,
     worktreePath: ref.worktreePath,
   };
 }
@@ -284,6 +285,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
         lifecycle: "live" as const,
         createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
         backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
+        team: s.team,
         worktreePath: mux.sessionWorktreePaths.get(s.id),
         label: this.getSessionLabel(s.id),
         headline: this.deriveHeadline(s.id),

@@ -1,5 +1,6 @@
 import type { DashboardService, DashboardSession, MainCheckoutInfo, WorktreeGroup } from "./index.js";
 import type { DashboardOperationFailure } from "./operation-failures.js";
+import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import { HOTKEY_TIMEOUT_MS } from "../hotkeys.js";
 import { dashboardCreatedSortKey, sortDashboardEntriesByCreatedAt } from "./sort.js";
 
@@ -19,7 +20,7 @@ export interface DashboardQuickJumpWorktree {
   branch: string;
   pending?: boolean;
   removing?: boolean;
-  pendingAction?: "creating" | "removing" | "graveyarding";
+  pendingAction?: PendingWorktreeActionKind;
   operationFailure?: DashboardOperationFailure;
   sessions: DashboardSession[];
   services: DashboardService[];
@@ -47,6 +48,10 @@ function buildEntryList(sessions: DashboardSession[], services: DashboardService
     });
   }
   return entries;
+}
+
+function entriesForGroup<T>(orderedGroupEntries: T[], fallbackEntries: T[] | undefined): T[] {
+  return orderedGroupEntries.length > 0 ? orderedGroupEntries : (fallbackEntries ?? []);
 }
 
 export function buildDashboardQuickJumpWorktrees(input: {
@@ -107,8 +112,8 @@ export function buildDashboardQuickJumpWorktrees(input: {
       removing: mainGroup.removing,
       pendingAction: mainGroup.pendingAction,
       operationFailure: mainGroup.operationFailure,
-      sessions: sortDashboardEntriesByCreatedAt(mainSessions),
-      services: sortDashboardEntriesByCreatedAt(mainServices),
+      sessions: entriesForGroup(mainGroup.sessions, sortDashboardEntriesByCreatedAt(mainSessions)),
+      services: entriesForGroup(mainGroup.services, sortDashboardEntriesByCreatedAt(mainServices)),
     });
   } else {
     pushWorktree({
@@ -132,8 +137,8 @@ export function buildDashboardQuickJumpWorktrees(input: {
       removing: group.removing,
       pendingAction: group.pendingAction,
       operationFailure: group.operationFailure,
-      sessions: wtSessionMap.get(group.path) ?? [],
-      services: wtServiceMap.get(group.path) ?? [],
+      sessions: entriesForGroup(group.sessions, wtSessionMap.get(group.path)),
+      services: entriesForGroup(group.services, wtServiceMap.get(group.path)),
     });
     renderedPaths.add(group.path);
   }

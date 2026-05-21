@@ -2,5 +2,7 @@ node_modules/
 dist/
 release/
 .aimux/
+.claude/
+.env
 *.tsbuildinfo
 src-tauri/target/

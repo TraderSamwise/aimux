@@ -150,4 +150,38 @@ describe("service-state-snapshot", () => {
       rmSync(repoRoot, { recursive: true, force: true });
     }
   });
+
+  it("preserves teammate metadata when snapshotting managed agent windows", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-agent-snapshot-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+    try {
+      const tmux: any = {
+        listProjectManagedWindows: () => [
+          {
+            target: { windowId: "@1", windowName: "codex" },
+            metadata: {
+              kind: "agent",
+              sessionId: "codex-teammate",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: repoRoot,
+              team: { teamId: "team-1", parentSessionId: "claude-parent", role: "reviewer" },
+            },
+          },
+        ],
+        isWindowAlive: () => true,
+      };
+
+      expect(snapshotProjectAgentWindows(repoRoot, tmux)).toEqual([
+        expect.objectContaining({
+          id: "codex-teammate",
+          team: { teamId: "team-1", parentSessionId: "claude-parent", role: "reviewer" },
+        }),
+      ]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
 });

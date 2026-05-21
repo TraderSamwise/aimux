@@ -23,6 +23,7 @@ import {
   paneStillContainsPromptDraft,
   scheduleTmuxPromptSubmit,
 } from "../agent-prompt-delivery.js";
+import type { SessionTeamMetadata } from "../team.js";
 
 type SessionRuntimeHost = any;
 
@@ -372,6 +373,7 @@ export function registerManagedSession(
   worktreePath?: string,
   role?: string,
   startTime?: number,
+  team?: SessionTeamMetadata,
 ): any {
   const existing = host.sessions.find((runtime: any) => runtime.transport === session);
   if (existing) return existing;
@@ -379,6 +381,7 @@ export function registerManagedSession(
   const runtime = new SessionRuntime(session, startTime, {
     onEvent: (event: any) => host.handleSessionRuntimeEvent(runtime, event),
   });
+  runtime.team = team;
 
   if (toolConfigKey) {
     host.sessionToolKeys.set(runtime.id, toolConfigKey);
@@ -387,7 +390,9 @@ export function registerManagedSession(
   if (worktreePath) {
     host.sessionWorktreePaths.set(runtime.id, worktreePath);
   }
-  if (role) {
+  if (team) {
+    host.sessionRoles.delete(runtime.id);
+  } else if (role) {
     host.sessionRoles.set(runtime.id, role);
   } else if (!host.sessionRoles.has(runtime.id)) {
     try {
@@ -476,6 +481,7 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
       lifecycle: "offline",
       createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : undefined,
       backendSessionId,
+      team: runtime.team,
       worktreePath: host.sessionWorktreePaths.get(runtime.id),
       label: host.getSessionLabel(runtime.id),
       headline: host.deriveHeadline(runtime.id),
@@ -509,7 +515,12 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
   host.renderDashboard();
 }
 
-export function buildTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: string, command: string): any {
+export function buildTmuxWindowMetadata(
+  host: SessionRuntimeHost,
+  sessionId: string,
+  command: string,
+  existing?: { team?: SessionTeamMetadata } | null,
+): any {
   const sessionMetadata = loadMetadataState().sessions[sessionId];
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   return {
@@ -519,6 +530,7 @@ export function buildTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: str
     args: host.sessionOriginalArgs.get(sessionId) ?? [],
     toolConfigKey: host.sessionToolKeys.get(sessionId) ?? command,
     backendSessionId: runtime?.backendSessionId ?? sessionMetadata?.backendSessionId,
+    team: runtime?.team ?? existing?.team,
     worktreePath: host.sessionWorktreePaths.get(sessionId),
     label: getSessionLabel(host, sessionId),
     role: host.sessionRoles.get(sessionId),
@@ -539,7 +551,7 @@ export function syncTmuxWindowMetadata(host: SessionRuntimeHost, sessionId: stri
     if (fallbackMetadata && fallbackMetadata.sessionId !== sessionId) return;
   }
   const existing = host.tmuxRuntimeManager.getWindowMetadata(target);
-  const metadata = buildTmuxWindowMetadata(host, sessionId, runtime.command);
+  const metadata = buildTmuxWindowMetadata(host, sessionId, runtime.command, existing);
   metadata.createdAt =
     existing?.createdAt ??
     (runtime.startTime ? new Date(runtime.startTime).toISOString() : undefined) ??

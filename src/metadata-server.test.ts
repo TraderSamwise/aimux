@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -147,6 +147,490 @@ describe("MetadataServer threads API", () => {
     const body = (await res.json()) as { ok: boolean; sessionId: string };
     expect(res.ok).toBe(true);
     expect(body).toEqual({ ok: true, sessionId: "claude-1" });
+  });
+
+  it("lists direct teammates from the hidden desktop teammate projection", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [
+            {
+              id: "late",
+              command: "codex",
+              status: "running",
+              createdAt: "2026-01-01T00:00:02.000Z",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "coder", order: 2 },
+            },
+            {
+              id: "early",
+              command: "claude",
+              status: "creating",
+              pending: true,
+              pendingAction: "creating",
+              createdAt: "2026-01-01T00:00:01.000Z",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer", order: 1 },
+            },
+            {
+              id: "nested",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-nested", parentSessionId: "late", role: "coder" },
+            },
+            {
+              id: "other",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+            },
+          ],
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates?parentSessionId=parent`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      teammates: Array<{ id: string; sessionId: string; tool: string; role?: string; label?: string }>;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.teammates.map((session) => session.id)).toEqual(["early", "late"]);
+    expect(body.teammates[0]).toMatchObject({
+      id: "early",
+      sessionId: "early",
+      tool: "claude",
+      role: "reviewer",
+    });
+  });
+
+  it("opens notification targets from hidden teammate desktop projection", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [
+            {
+              id: "teammate-1",
+              command: "codex",
+              status: "running",
+              tmuxWindowId: "@7",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer" },
+            },
+          ],
+          services: [],
+        }),
+      },
+    });
+    await server.start();
+
+    const target = { sessionName: "aimux-test", windowId: "@7", windowIndex: 7, windowName: "codex" } as any;
+    const opened: any[] = [];
+    const getProjectSession = TmuxRuntimeManager.prototype.getProjectSession;
+    const getTargetByWindowId = TmuxRuntimeManager.prototype.getTargetByWindowId;
+    const getAttachedClientForTarget = TmuxRuntimeManager.prototype.getAttachedClientForTarget;
+    const openTarget = TmuxRuntimeManager.prototype.openTarget;
+    const refreshStatus = TmuxRuntimeManager.prototype.refreshStatus;
+    TmuxRuntimeManager.prototype.getProjectSession = () => ({ sessionName: "aimux-test" }) as any;
+    TmuxRuntimeManager.prototype.getTargetByWindowId = (_sessionName, windowId) =>
+      windowId === "@7" ? target : undefined;
+    TmuxRuntimeManager.prototype.getAttachedClientForTarget = () => undefined as any;
+    TmuxRuntimeManager.prototype.openTarget = (nextTarget) => {
+      opened.push(nextTarget);
+    };
+    TmuxRuntimeManager.prototype.refreshStatus = vi.fn();
+    try {
+      const endpoint = server.getAddress();
+      expect(endpoint).toBeTruthy();
+      const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+      const res = await fetch(`${base}/control/open-notification-target`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "teammate-1" }),
+      });
+
+      expect(res.ok).toBe(true);
+      expect(opened).toEqual([target]);
+    } finally {
+      TmuxRuntimeManager.prototype.getProjectSession = getProjectSession;
+      TmuxRuntimeManager.prototype.getTargetByWindowId = getTargetByWindowId;
+      TmuxRuntimeManager.prototype.getAttachedClientForTarget = getAttachedClientForTarget;
+      TmuxRuntimeManager.prototype.openTarget = openTarget;
+      TmuxRuntimeManager.prototype.refreshStatus = refreshStatus;
+    }
+  });
+
+  it("rejects teammate agents as parents for teammate discovery and delegation", async () => {
+    server?.stop();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [
+            {
+              id: "child",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+            },
+          ],
+        }),
+      },
+      lifecycle: {
+        writeAgentInput: ({ sessionId }) => ({
+          sessionId,
+          accepted: true,
+          operation: {
+            id: "inputop-never",
+            sessionId,
+            submit: true,
+            state: "submitted" as const,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const listRes = await fetch(`${base}/agents/teammates?parentSessionId=child`);
+    const listBody = (await listRes.json()) as { ok: boolean; error: string };
+    expect(listRes.status).toBe(400);
+    expect(listBody.error).toContain("nested teams");
+
+    const sendRes = await fetch(`${base}/agents/teammates/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "child", teammateSessionId: "grandchild", body: "hello" }),
+    });
+    const sendBody = (await sendRes.json()) as { ok: boolean; error: string };
+    expect(sendRes.status).toBe(400);
+    expect(sendBody.error).toContain("nested teams");
+  });
+
+  it("interrupts a direct teammate before sending delegated input", async () => {
+    server?.stop();
+    const calls: string[] = [];
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [
+            {
+              id: "child",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+            },
+          ],
+        }),
+      },
+      lifecycle: {
+        interruptAgent: ({ sessionId }) => {
+          calls.push(`interrupt:${sessionId}`);
+          return { sessionId };
+        },
+        writeAgentInput: ({ sessionId, data, submit }) => {
+          calls.push(`write:${sessionId}:${data}:${submit}`);
+          return {
+            sessionId,
+            accepted: true,
+            operation: {
+              id: "inputop-team",
+              sessionId,
+              submit: submit === true,
+              state: submit ? ("submitted" as const) : ("applied" as const),
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        parentSessionId: "parent",
+        teammateSessionId: "child",
+        title: "Review task",
+        body: "Check this patch.",
+        interrupt: true,
+      }),
+    });
+    const body = (await res.json()) as { ok: boolean; sessionId: string; teammateSessionId: string };
+
+    expect(res.ok).toBe(true);
+    expect(body).toMatchObject({ ok: true, sessionId: "child", teammateSessionId: "child" });
+    expect(calls).toEqual(["interrupt:child", "write:child:Review task\n\nCheck this patch.:true"]);
+  });
+
+  it("rejects delegated input to non-direct teammates", async () => {
+    server?.stop();
+    const writes: string[] = [];
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [
+            { id: "parent", command: "claude", status: "running" },
+            { id: "ordinary", command: "codex", status: "running" },
+          ],
+          teammates: [
+            {
+              id: "other-child",
+              command: "codex",
+              status: "running",
+              team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+            },
+          ],
+        }),
+      },
+      lifecycle: {
+        writeAgentInput: ({ sessionId }) => {
+          writes.push(sessionId);
+          return {
+            sessionId,
+            accepted: true,
+            operation: {
+              id: "inputop-never",
+              sessionId,
+              submit: true,
+              state: "submitted" as const,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "ordinary", body: "hello" }),
+    });
+    const body = (await res.json()) as { ok: boolean; error: string };
+
+    expect(res.status).toBe(404);
+    expect(body.error).toContain("not attached");
+    expect(writes).toEqual([]);
+  });
+
+  it("controls only direct teammate lifecycle targets", async () => {
+    server?.stop();
+    const calls: string[] = [];
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [
+            {
+              id: "child",
+              command: "codex",
+              status: "offline",
+              team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+            },
+            {
+              id: "other-child",
+              command: "codex",
+              status: "offline",
+              team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+            },
+          ],
+        }),
+        resumeAgent: ({ sessionId }) => {
+          calls.push(`resume:${sessionId}`);
+          return { sessionId, status: "running" as const };
+        },
+      },
+      lifecycle: {
+        stopAgent: ({ sessionId }) => {
+          calls.push(`stop:${sessionId}`);
+          return { sessionId, status: "offline" as const };
+        },
+        killAgent: ({ sessionId }) => {
+          calls.push(`kill:${sessionId}`);
+          return { sessionId, status: "graveyard" as const, previousStatus: "offline" as const };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const request = (path: string, teammateSessionId = "child") =>
+      fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ parentSessionId: "parent", teammateSessionId }),
+      });
+
+    expect((await (await request("/agents/teammates/stop")).json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      sessionId: "child",
+      teammateSessionId: "child",
+    });
+    expect((await (await request("/agents/teammates/resume")).json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      sessionId: "child",
+      teammateSessionId: "child",
+    });
+    expect((await (await request("/agents/teammates/kill")).json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      sessionId: "child",
+      teammateSessionId: "child",
+      status: "graveyard",
+    });
+
+    const foreign = await request("/agents/teammates/stop", "other-child");
+    const foreignBody = (await foreign.json()) as { ok: boolean; error: string };
+    expect(foreign.status).toBe(404);
+    expect(foreignBody.error).toContain("not attached");
+    expect(calls).toEqual(["stop:child", "resume:child", "kill:child"]);
+  });
+
+  it("resurrects direct graveyard teammates through graveyard-aware validation", async () => {
+    server?.stop();
+    const calls: string[] = [];
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [],
+        }),
+        listGraveyard: () => [
+          {
+            id: "child",
+            command: "codex",
+            status: "graveyard",
+            team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+          },
+          {
+            id: "other-child",
+            command: "codex",
+            status: "graveyard",
+            team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+          },
+        ],
+        resurrectGraveyard: ({ sessionId }) => {
+          calls.push(`resurrect:${sessionId}`);
+          return { sessionId, status: "offline" as const };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/resurrect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "child" }),
+    });
+    expect(res.ok).toBe(true);
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      sessionId: "child",
+      teammateSessionId: "child",
+      status: "offline",
+    });
+
+    const foreign = await fetch(`${base}/agents/teammates/resurrect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "other-child" }),
+    });
+    const foreignBody = (await foreign.json()) as { ok: boolean; error: string };
+    expect(foreign.status).toBe(404);
+    expect(foreignBody.error).toContain("graveyard teammate");
+    expect(calls).toEqual(["resurrect:child"]);
+  });
+
+  it("passes reused teammate creation responses over HTTP", async () => {
+    server?.stop();
+    const calls: unknown[] = [];
+    server = new MetadataServer({
+      lifecycle: {
+        createTeammateAgent: (input) => {
+          calls.push(input);
+          return {
+            sessionId: "reviewer-1",
+            parentSessionId: input.parentSessionId,
+            teamId: `team-${input.parentSessionId}`,
+            role: input.role,
+            label: input.label,
+            reused: true,
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        parentSessionId: "parent",
+        role: "reviewer",
+        label: "reviewer",
+        tool: "codex",
+        sessionId: "codex-reviewer",
+        worktreePath: "/tmp/review-worktree",
+        extraArgs: ["--model", "gpt-5.5"],
+        initialPrompt: "Review the patch and report blockers first.",
+        order: 2,
+        open: true,
+      }),
+    });
+    const body = (await res.json()) as { ok: boolean; reused?: boolean; sessionId: string };
+
+    expect(res.ok).toBe(true);
+    expect(body).toMatchObject({ ok: true, reused: true, sessionId: "reviewer-1" });
+    expect(calls).toEqual([
+      {
+        parentSessionId: "parent",
+        role: "reviewer",
+        label: "reviewer",
+        tool: "codex",
+        sessionId: "codex-reviewer",
+        worktreePath: "/tmp/review-worktree",
+        extraArgs: ["--model", "gpt-5.5"],
+        initialPrompt: "Review the patch and report blockers first.",
+        order: 2,
+        open: true,
+      },
+    ]);
   });
 
   it("passes agent resume over HTTP", async () => {

@@ -37,11 +37,11 @@ export class DashboardUiStateStore {
     serviceOrderByWorktreeKey: {},
   };
 
-  loadInto(state: DashboardState, clientKey: string): void {
+  loadSharedState(state?: DashboardState): void {
     try {
       const raw = readFileSync(getDashboardUiStatePath(), "utf-8");
       const snapshot = JSON.parse(raw) as DashboardUiSharedSnapshot;
-      if (typeof snapshot.detailsSidebarVisible === "boolean") {
+      if (state && typeof snapshot.detailsSidebarVisible === "boolean") {
         state.detailsSidebarVisible = snapshot.detailsSidebarVisible;
       }
       this.orderState = {
@@ -49,7 +49,10 @@ export class DashboardUiStateStore {
         serviceOrderByWorktreeKey: sanitizeOrderMap(snapshot.serviceOrderByWorktreeKey),
       };
     } catch {}
+  }
 
+  loadInto(state: DashboardState, clientKey: string): void {
+    this.loadSharedState(state);
     try {
       const raw = readFileSync(getDashboardClientUiStatePath(clientKey), "utf-8");
       const snapshot = JSON.parse(raw) as DashboardUiClientSnapshot;

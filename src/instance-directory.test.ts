@@ -98,8 +98,10 @@ describe("InstanceDirectory", () => {
 
   it("builds sessions file entries with remote dedupe", () => {
     const directory = new InstanceDirectory();
+    const localTeam = { teamId: "team-local", parentSessionId: "parent-local" };
+    const remoteTeam = { teamId: "team-remote", parentSessionId: "parent-remote" };
     const localSessions: InstanceSessionRef[] = [
-      { id: "local-1", tool: "codex", backendSessionId: "backend-local", worktreePath: "/repo" },
+      { id: "local-1", tool: "codex", backendSessionId: "backend-local", team: localTeam, worktreePath: "/repo" },
     ];
     const remoteInstances: InstanceInfo[] = [
       {
@@ -110,7 +112,13 @@ describe("InstanceDirectory", () => {
         cwd: "/tmp",
         sessions: [
           { id: "local-1", tool: "codex" },
-          { id: "remote-1", tool: "claude", backendSessionId: "backend-remote", worktreePath: "/repo/w1" },
+          {
+            id: "remote-1",
+            tool: "claude",
+            backendSessionId: "backend-remote",
+            team: remoteTeam,
+            worktreePath: "/repo/w1",
+          },
         ],
       },
     ];
@@ -121,6 +129,7 @@ describe("InstanceDirectory", () => {
         tool: "codex",
         status: "running",
         backendSessionId: "backend-local",
+        team: localTeam,
         worktreePath: "/repo",
       },
       {
@@ -128,6 +137,7 @@ describe("InstanceDirectory", () => {
         tool: "claude",
         status: "running",
         backendSessionId: "backend-remote",
+        team: remoteTeam,
         worktreePath: "/repo/w1",
         instance: "PID 321",
       },

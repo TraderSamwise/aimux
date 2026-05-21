@@ -31,12 +31,53 @@ import { beginWorktreeRemoval, handleWorktreeInputKey, handleWorktreeRemoveConfi
 
 function createPendingActionsStore() {
   const state = new Map<string, string | null>();
+  const seeds = new Map<string, any>();
   return {
     state,
-    set(key: string, value: string | null) {
+    setWorktreeAction(path: string | undefined, value: string, opts?: { worktreeSeed?: any }) {
+      const key = `worktree:${path ?? "__main__"}`;
       state.set(key, value);
+      if (opts?.worktreeSeed) seeds.set(key, opts.worktreeSeed);
+    },
+    clearWorktreeAction(path: string | undefined) {
+      const key = `worktree:${path ?? "__main__"}`;
+      state.set(key, null);
+      seeds.delete(key);
+    },
+    applyToWorktrees(worktrees: any[]) {
+      const seen = new Set(worktrees.map((worktree) => `worktree:${worktree.path ?? "__main__"}`));
+      const applied = worktrees.map((worktree) => {
+        const value = state.get(`worktree:${worktree.path ?? "__main__"}`);
+        if (!value) return worktree;
+        return { ...worktree, pending: true, pendingAction: value, optimistic: true };
+      });
+      for (const [key, seed] of seeds) {
+        const value = state.get(key);
+        if (!value || seen.has(key)) continue;
+        applied.push({ ...seed, pending: true, pendingAction: value, optimistic: true });
+      }
+      applied.sort((a, b) => {
+        if (a.path === undefined) return -1;
+        if (b.path === undefined) return 1;
+        return Date.parse(b.createdAt ?? "0") - Date.parse(a.createdAt ?? "0");
+      });
+      return applied;
     },
   };
+}
+
+function attachPendingReapply(host: any, pending: ReturnType<typeof createPendingActionsStore>): void {
+  host.reapplyDashboardPendingActions = vi.fn(() => {
+    const rawWorktrees = host.dashboardRawWorktreeGroupsCache ?? host.dashboardWorktreeGroupsCache;
+    host.dashboardWorktreeGroupsCache = pending.applyToWorktrees(rawWorktrees);
+    host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((group: any) => group.path);
+  });
+}
+
+function applyRawWorktrees(host: any, pending: ReturnType<typeof createPendingActionsStore>, worktrees: any[]): void {
+  host.dashboardRawWorktreeGroupsCache = worktrees;
+  host.dashboardWorktreeGroupsCache = pending.applyToWorktrees(worktrees);
+  host.dashboardState.worktreeNavOrder = host.dashboardWorktreeGroupsCache.map((group: any) => group.path);
 }
 
 describe("worktrees dashboard mutation protocol", () => {
@@ -54,7 +95,7 @@ describe("worktrees dashboard mutation protocol", () => {
       dashboardUiStateStore: { markSelectionDirty: vi.fn() },
       renderDashboard: vi.fn(),
       refreshDashboardModelFromService: vi.fn(async () => {
-        host.dashboardWorktreeGroupsCache = [
+        applyRawWorktrees(host, pending, [
           {
             name: "demo",
             branch: "demo",
@@ -62,12 +103,13 @@ describe("worktrees dashboard mutation protocol", () => {
             sessions: [],
             services: [],
           },
-        ];
+        ]);
         return true;
       }),
       settleDashboardCreatePending: vi.fn(),
       showDashboardError: vi.fn(),
     };
+    attachPendingReapply(host, pending);
 
     handleWorktreeInputKey(host, Buffer.from("\r"));
 
@@ -104,6 +146,7 @@ describe("worktrees dashboard mutation protocol", () => {
       settleDashboardCreatePending: vi.fn(),
       showDashboardError: vi.fn(),
     };
+    attachPendingReapply(host, pending);
 
     handleWorktreeInputKey(host, Buffer.from("\r"));
 
@@ -142,7 +185,7 @@ describe("worktrees dashboard mutation protocol", () => {
       renderDashboard: vi.fn(),
       refreshDashboardModelFromService: vi.fn(async () => {
         refreshCount += 1;
-        host.dashboardWorktreeGroupsCache = [
+        applyRawWorktrees(host, pending, [
           {
             name: "demo",
             branch: refreshCount < 2 ? "(creating)" : "demo",
@@ -151,12 +194,13 @@ describe("worktrees dashboard mutation protocol", () => {
             services: [],
             ...(refreshCount < 2 ? { pending: true, pendingAction: "creating" } : {}),
           },
-        ];
+        ]);
         return true;
       }),
       settleDashboardCreatePending: vi.fn(),
       showDashboardError: vi.fn(),
     };
+    attachPendingReapply(host, pending);
 
     handleWorktreeInputKey(host, Buffer.from("\r"));
     await vi.waitFor(() => {
@@ -188,7 +232,7 @@ describe("worktrees dashboard mutation protocol", () => {
       dashboardUiStateStore: { markSelectionDirty: vi.fn() },
       renderDashboard: vi.fn(),
       refreshDashboardModelFromService: vi.fn(async () => {
-        host.dashboardWorktreeGroupsCache = [
+        applyRawWorktrees(host, pending, [
           {
             name: "demo",
             branch: "(failed)",
@@ -202,12 +246,13 @@ describe("worktrees dashboard mutation protocol", () => {
               worktreePath: "/repo/.aimux/worktrees/demo",
             },
           },
-        ];
+        ]);
         return true;
       }),
       settleDashboardCreatePending: vi.fn(),
       showDashboardError: vi.fn(),
     };
+    attachPendingReapply(host, pending);
 
     handleWorktreeInputKey(host, Buffer.from("\r"));
 
@@ -253,7 +298,7 @@ describe("worktrees dashboard mutation protocol", () => {
       dashboardUiStateStore: { markSelectionDirty: vi.fn() },
       renderDashboard: vi.fn(),
       refreshDashboardModelFromService: vi.fn(async () => {
-        host.dashboardWorktreeGroupsCache = [
+        applyRawWorktrees(host, pending, [
           {
             name: "newer",
             branch: "newer",
@@ -261,12 +306,13 @@ describe("worktrees dashboard mutation protocol", () => {
             sessions: [],
             services: [],
           },
-        ];
+        ]);
         return true;
       }),
       settleDashboardCreatePending: vi.fn(),
       showDashboardError: vi.fn(),
     };
+    attachPendingReapply(host, pending);
 
     handleWorktreeInputKey(host, Buffer.from("\r"));
 
@@ -284,7 +330,7 @@ describe("worktrees dashboard mutation protocol", () => {
     const host: any = {
       mode: "dashboard",
       worktreeRemovalJob: null,
-      pendingWorktreeRemovals: undefined,
+      pendingWorktreeRemovals: new Map([[path, Promise.resolve({ path, status: "removed" })]]),
       dashboardPendingActions: pending,
       dashboardWorktreeGroupsCache: [{ name: "demo", branch: "demo", path, sessions: [], services: [] }],
       dashboardState: { worktreeNavOrder: [path], focusedWorktreePath: path },
@@ -298,12 +344,14 @@ describe("worktrees dashboard mutation protocol", () => {
       footerFlashTicks: 0,
       showDashboardError: vi.fn(),
     };
+    attachPendingReapply(host, pending);
 
     beginWorktreeRemoval(host, path, "demo", 0);
 
     await vi.waitFor(() => expect(host.footerFlash).toBe("Graveyarded: demo"));
 
-    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 10_000 });
+    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 180_000 });
+    expect(host.reapplyDashboardPendingActions).toHaveBeenCalled();
     expect(pending.state.get(`worktree:${path}`)).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -332,11 +380,12 @@ describe("worktrees dashboard mutation protocol", () => {
       clearDashboardOverlay: vi.fn(),
       restoreDashboardAfterOverlayDismiss: vi.fn(),
     };
+    attachPendingReapply(host, pending);
 
     handleWorktreeRemoveConfirmKey(host, Buffer.from("\r"));
 
     expect(host.clearDashboardOverlay).toHaveBeenCalledOnce();
     expect(host.restoreDashboardAfterOverlayDismiss).not.toHaveBeenCalled();
-    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 10_000 });
+    expect(postToProjectService).toHaveBeenCalledWith(host, "/worktrees/graveyard", { path }, { timeoutMs: 180_000 });
   });
 });

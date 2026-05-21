@@ -1,6 +1,13 @@
 import { waitForSessionExit } from "../dashboard/session-actions.js";
 import { loadConfig } from "../config.js";
 import { getSessionBackendSessionId } from "../metadata-store.js";
+import {
+  buildRolePreamble,
+  isTeammateSession,
+  loadTeamConfig,
+  selectDirectTeammates,
+  type SessionTeamMetadata,
+} from "../team.js";
 
 type SessionActionsHost = any;
 
@@ -15,6 +22,7 @@ function sessionStateFromRuntime(host: SessionActionsHost, runtime: any): any | 
     lifecycle: "offline",
     createdAt: runtime.startTime ? new Date(runtime.startTime).toISOString() : runtime.createdAt,
     backendSessionId: runtime.backendSessionId ?? getSessionBackendSessionId(runtime.id),
+    team: runtime.team,
     worktreePath: host.sessionWorktreePaths?.get?.(runtime.id) ?? runtime.worktreePath,
     label: host.getSessionLabel?.(runtime.id) ?? runtime.label,
     headline: host.deriveHeadline?.(runtime.id) ?? runtime.headline,
@@ -44,6 +52,7 @@ function sessionStateFromActionSeed(seed: any): any | undefined {
         : typeof seed.remoteBackendSessionId === "string"
           ? seed.remoteBackendSessionId
           : getSessionBackendSessionId(seed.id),
+    team: seed.team,
     worktreePath: typeof seed.worktreePath === "string" ? seed.worktreePath : undefined,
     label: typeof seed.label === "string" ? seed.label : undefined,
     headline: typeof seed.headline === "string" ? seed.headline : undefined,
@@ -75,6 +84,80 @@ function evictStaleRuntime(host: SessionActionsHost, runtime: any): void {
   }
   host.stoppingSessionIds?.delete?.(runtime.id);
   host.sessionTmuxTargets?.delete?.(runtime.id);
+}
+
+function findKnownSession(host: SessionActionsHost, sessionId: string): any | undefined {
+  return (
+    host.sessions.find((session: any) => session.id === sessionId) ??
+    host.offlineSessions.find((session: any) => session.id === sessionId)
+  );
+}
+
+function directTeammatesForParent(host: SessionActionsHost, parentSessionId: string): any[] {
+  return selectDirectTeammates([...host.sessions, ...host.offlineSessions], parentSessionId);
+}
+
+function teammateFailureMessage(action: string, failures: Array<{ sessionId: string; error: unknown }>): string {
+  const details = failures
+    .map(({ sessionId, error }) => `${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+    .join("; ");
+  return `Failed to ${action} ${failures.length} teammate${failures.length === 1 ? "" : "s"}: ${details}`;
+}
+
+const TEAMMATE_INHERITABLE_ARG_FLAGS = new Set([
+  "--model",
+  "-m",
+  "--provider",
+  "--reasoning",
+  "--reasoning-effort",
+  "--effort",
+  "--service-tier",
+]);
+const MAX_DIRECT_TEAMMATES_PER_PARENT = 3;
+
+function normalizeOptionalString(value?: string): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
+function stripBaseArgs(args: string[], baseArgs: string[]): string[] {
+  if (baseArgs.length === 0) return [...args];
+  const hasBasePrefix = baseArgs.every((arg, index) => args[index] === arg);
+  return hasBasePrefix ? args.slice(baseArgs.length) : [...args];
+}
+
+function collectTeammateInheritedArgs(args: string[]): string[] {
+  const inherited: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const equalsIndex = arg.indexOf("=");
+    if (equalsIndex > 0) {
+      const flag = arg.slice(0, equalsIndex);
+      const value = arg.slice(equalsIndex + 1);
+      if (TEAMMATE_INHERITABLE_ARG_FLAGS.has(flag) && value) {
+        inherited.push(arg);
+      }
+      continue;
+    }
+
+    if (!TEAMMATE_INHERITABLE_ARG_FLAGS.has(arg)) continue;
+    const value = args[index + 1];
+    if (!value || value.startsWith("-")) continue;
+    inherited.push(arg, value);
+    index += 1;
+  }
+  return inherited;
+}
+
+function deriveTeammateLaunchExtraArgs(opts: {
+  parentArgs: string[];
+  parentBaseArgs: string[];
+  sameToolConfig: boolean;
+  explicitExtraArgs?: string[];
+}): string[] {
+  if (opts.explicitExtraArgs !== undefined) return [...opts.explicitExtraArgs];
+  if (!opts.sameToolConfig) return [];
+  return collectTeammateInheritedArgs(stripBaseArgs(opts.parentArgs, opts.parentBaseArgs));
 }
 
 export async function forkAgent(
@@ -163,6 +246,152 @@ export async function spawnAgent(
   return { sessionId: transport.id };
 }
 
+export async function createTeammateAgent(
+  host: SessionActionsHost,
+  opts: {
+    parentSessionId: string;
+    role?: string;
+    label?: string;
+    toolConfigKey?: string;
+    targetSessionId?: string;
+    targetWorktreePath?: string;
+    open?: boolean;
+    extraArgs?: string[];
+    initialPrompt?: string;
+    order?: number;
+  },
+): Promise<{
+  sessionId: string;
+  parentSessionId: string;
+  teamId: string;
+  role?: string;
+  label?: string;
+  reused?: true;
+}> {
+  host.syncSessionsFromState();
+
+  const parent = host.sessions.find((session: any) => session.id === opts.parentSessionId && !session.exited);
+  if (!parent) {
+    throw new Error(`Parent agent "${opts.parentSessionId}" is not running locally`);
+  }
+  if (isTeammateSession(parent)) {
+    throw new Error(`Parent agent "${opts.parentSessionId}" is already a teammate`);
+  }
+
+  const config = loadConfig();
+  const parentToolConfigKey = host.sessionToolKeys?.get?.(parent.id) ?? parent.toolConfigKey ?? parent.command;
+  const toolConfigKey = opts.toolConfigKey ?? parentToolConfigKey ?? config.defaultTool;
+  const toolCfg = config.tools[toolConfigKey];
+  if (!toolCfg) {
+    throw new Error(`Unknown tool config: ${toolConfigKey}`);
+  }
+  if (!toolCfg.enabled) {
+    throw new Error(`Tool "${toolConfigKey}" is disabled`);
+  }
+
+  const teamConfig = loadTeamConfig();
+  const role = normalizeOptionalString(opts.role) || teamConfig.defaultRole;
+  const label = normalizeOptionalString(opts.label);
+  const teamId = `team-${parent.id}`;
+  const siblings = directTeammatesForParent(host, parent.id);
+  const existing = siblings.find(
+    (session: any) =>
+      (normalizeOptionalString(session.team?.role) || teamConfig.defaultRole) === role &&
+      normalizeOptionalString(session.team?.label) === label,
+  );
+  if (existing) {
+    return {
+      sessionId: existing.id,
+      parentSessionId: parent.id,
+      teamId: existing.team?.teamId ?? teamId,
+      role: normalizeOptionalString(existing.team?.role) || role,
+      label: normalizeOptionalString(existing.team?.label),
+      reused: true,
+    };
+  }
+  if (siblings.length >= MAX_DIRECT_TEAMMATES_PER_PARENT) {
+    throw new Error(
+      `Parent agent "${parent.id}" already has ${siblings.length} teammates; reuse, stop, or graveyard an existing teammate before creating another`,
+    );
+  }
+  const nextOrder =
+    opts.order ??
+    siblings.reduce((max: number, session: any) => Math.max(max, Number(session.team?.order ?? -1)), -1) + 1;
+  const team: SessionTeamMetadata = {
+    teamId,
+    parentSessionId: parent.id,
+    role,
+    label,
+    order: nextOrder,
+  };
+
+  const inheritedWorktreePath = host.sessionWorktreePaths?.get?.(parent.id) ?? parent.worktreePath;
+  const targetWorktreePath = opts.targetWorktreePath ?? inheritedWorktreePath;
+  const normalizedWorktreePath = targetWorktreePath === process.cwd() ? undefined : targetWorktreePath;
+  const parentToolCfg = config.tools[parentToolConfigKey];
+  const parentArgs = host.sessionOriginalArgs?.get?.(parent.id) ?? parent.args ?? [];
+  const launchExtraArgs = deriveTeammateLaunchExtraArgs({
+    parentArgs: Array.isArray(parentArgs) ? parentArgs : [],
+    parentBaseArgs: parentToolCfg?.args ?? [],
+    sameToolConfig: toolConfigKey === parentToolConfigKey,
+    explicitExtraArgs: opts.extraArgs,
+  });
+  const rolePreamble = buildRolePreamble(role, teamConfig);
+  const teammatePreamble = [
+    `You are a teammate for aimux parent agent "${parent.id}".`,
+    "You are a first-party aimux agent: the user can inspect, enter, stop, and restart you like any other agent.",
+    "Stay focused on delegated work and report findings back to the parent agent.",
+    rolePreamble,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const transport = host.createSession(
+    toolCfg.command,
+    [...toolCfg.args, ...launchExtraArgs],
+    toolCfg.preambleFlag,
+    toolConfigKey,
+    teammatePreamble,
+    toolCfg.sessionIdFlag,
+    normalizedWorktreePath,
+    undefined,
+    opts.targetSessionId,
+    false,
+    false,
+    team,
+  );
+
+  if (team.label && typeof host.updateSessionLabel === "function") {
+    await host.updateSessionLabel(transport.id, team.label);
+  }
+
+  const target = host.sessionTmuxTargets.get(transport.id);
+  if (opts.open !== false && target) {
+    const openResult =
+      typeof host.waitAndOpenLiveTmuxWindowForEntry === "function"
+        ? await host.waitAndOpenLiveTmuxWindowForEntry({ id: transport.id })
+        : host.openLiveTmuxWindowForEntry({ id: transport.id });
+    if (openResult === "missing") {
+      host.tmuxRuntimeManager.openTarget(target, { insideTmux: host.tmuxRuntimeManager.isInsideTmux() });
+    }
+  }
+
+  if (opts.initialPrompt?.trim()) {
+    if (typeof host.writeAgentInput !== "function") {
+      throw new Error("Initial teammate prompt requires agent input support");
+    }
+    await host.writeAgentInput(transport.id, opts.initialPrompt.trim(), undefined, undefined, true);
+  }
+
+  return {
+    sessionId: transport.id,
+    parentSessionId: parent.id,
+    teamId,
+    role,
+    label: team.label,
+  };
+}
+
 export async function renameAgent(
   host: SessionActionsHost,
   sessionId: string,
@@ -180,12 +409,10 @@ export async function renameAgent(
   return { sessionId, label: host.getSessionLabel(sessionId) };
 }
 
-export async function stopAgent(
+async function stopSingleAgent(
   host: SessionActionsHost,
   sessionId: string,
 ): Promise<{ sessionId: string; status: "offline" }> {
-  host.syncSessionsFromState();
-
   const runningSession = host.sessions.find((session: any) => session.id === sessionId);
   if (!runningSession) {
     const offlineSession = host.offlineSessions.find((session: any) => session.id === sessionId);
@@ -212,7 +439,33 @@ export async function stopAgent(
   return { sessionId, status: "offline" };
 }
 
-export async function sendAgentToGraveyard(
+export async function stopAgent(
+  host: SessionActionsHost,
+  sessionId: string,
+): Promise<{ sessionId: string; status: "offline" }> {
+  host.syncSessionsFromState();
+
+  const target = findKnownSession(host, sessionId);
+  const teammateFailures: Array<{ sessionId: string; error: unknown }> = [];
+  if (target && !isTeammateSession(target)) {
+    const teammates = directTeammatesForParent(host, sessionId);
+    for (const teammate of teammates) {
+      try {
+        await stopSingleAgent(host, teammate.id);
+      } catch (error) {
+        teammateFailures.push({ sessionId: teammate.id, error });
+      }
+    }
+  }
+
+  const result = await stopSingleAgent(host, sessionId);
+  if (teammateFailures.length > 0) {
+    throw new Error(teammateFailureMessage("stop", teammateFailures));
+  }
+  return result;
+}
+
+async function sendSingleAgentToGraveyard(
   host: SessionActionsHost,
   sessionId: string,
   sessionSeed?: any,
@@ -261,6 +514,37 @@ export async function sendAgentToGraveyard(
   host.graveyardAfterStopSessionIds.delete(sessionId);
   host.graveyardSession(sessionId, graveyardSeed);
   return { sessionId, status: "graveyard", previousStatus };
+}
+
+export async function sendAgentToGraveyard(
+  host: SessionActionsHost,
+  sessionId: string,
+  sessionSeed?: any,
+): Promise<{
+  sessionId: string;
+  status: "graveyard";
+  previousStatus: "running" | "offline";
+}> {
+  host.syncSessionsFromState();
+
+  const target = findKnownSession(host, sessionId) ?? (sessionSeed?.id === sessionId ? sessionSeed : undefined);
+  const teammateFailures: Array<{ sessionId: string; error: unknown }> = [];
+  if (target && !isTeammateSession(target)) {
+    const teammates = directTeammatesForParent(host, sessionId);
+    for (const teammate of teammates) {
+      try {
+        await sendSingleAgentToGraveyard(host, teammate.id, teammate);
+      } catch (error) {
+        teammateFailures.push({ sessionId: teammate.id, error });
+      }
+    }
+  }
+
+  const result = await sendSingleAgentToGraveyard(host, sessionId, sessionSeed);
+  if (teammateFailures.length > 0) {
+    throw new Error(teammateFailureMessage("graveyard", teammateFailures));
+  }
+  return result;
 }
 
 export async function migrateAgentSession(

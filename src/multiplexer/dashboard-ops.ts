@@ -8,7 +8,8 @@ import {
   waitForSessionExit,
   waitForSessionStart,
 } from "../dashboard/session-actions.js";
-import type { DashboardSession } from "../dashboard/index.js";
+import type { DashboardService, DashboardSession } from "../dashboard/index.js";
+import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
 import {
   isAttachableDashboardSessionEntry,
   isLiveDashboardServiceRuntimeEntry,
@@ -17,12 +18,14 @@ import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { generateServiceId, serviceLabelForCommand } from "./services.js";
 
 type DashboardOpsHost = any;
+type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
+type DashboardSessionMutationPendingAction = Exclude<PendingSessionActionKind, "renaming">;
 
 function buildPendingSessionSeed(input: {
   sessionId: string;
   tool: string;
   worktreePath?: string;
-  pendingAction: "creating" | "forking";
+  pendingAction: PendingSessionCreateAction;
 }): DashboardSession {
   return {
     index: -1,
@@ -40,7 +43,7 @@ function buildPendingSessionSeed(input: {
 
 interface DashboardSessionMutationOptions {
   sessionId: string;
-  pendingAction: "creating" | "forking" | "migrating" | "starting" | "stopping" | "graveyarding";
+  pendingAction: DashboardSessionMutationPendingAction;
   sessionSeed?: DashboardSession;
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
@@ -53,7 +56,7 @@ interface DashboardSessionMutationOptions {
 
 interface DashboardServiceMutationOptions {
   serviceId: string;
-  pendingAction: "creating" | "starting" | "stopping" | "removing";
+  pendingAction: PendingServiceActionKind;
   serviceSeed?: any;
   request: () => Promise<void>;
   settle: () => Promise<boolean>;
@@ -62,6 +65,32 @@ interface DashboardServiceMutationOptions {
   onError?: () => Promise<void> | void;
   successFlash?: { message: string; ticks?: number };
   errorTitle: string;
+}
+
+function restoreWarningLines(result: any): string[] {
+  const warning = typeof result?.warning === "string" ? result.warning.trim() : "";
+  if (!warning) return [];
+
+  const failures = Array.isArray(result?.teammateFailures)
+    ? result.teammateFailures
+        .map((failure: any) => {
+          const sessionId = typeof failure?.sessionId === "string" ? failure.sessionId : "";
+          const message =
+            typeof failure?.error === "string"
+              ? failure.error.trim()
+              : typeof failure?.message === "string"
+                ? failure.message.trim()
+                : "";
+          if (!sessionId || !message) return "";
+          return message.includes(sessionId) ? message : `${sessionId}: ${message}`;
+        })
+        .filter((line: string) => line.trim().length > 0)
+    : [];
+
+  const lines: string[] = failures.length > 0 ? failures : [warning];
+  const uniqueLines = Array.from(new Set(lines));
+  uniqueLines.push("Stale teammates remain offline; create a new team to replace them.");
+  return uniqueLines;
 }
 
 function assertDashboardMutationSettled(settled: boolean, action: string): void {
@@ -249,13 +278,13 @@ async function runDashboardServiceMutation(
   host: DashboardOpsHost,
   opts: DashboardServiceMutationOptions,
 ): Promise<void> {
-  host.setPendingDashboardSessionAction(opts.serviceId, opts.pendingAction, { serviceSeed: opts.serviceSeed });
+  host.setPendingDashboardServiceAction(opts.serviceId, opts.pendingAction, { serviceSeed: opts.serviceSeed });
   opts.onBeforeRequest?.();
   host.renderDashboard();
   try {
     await opts.request();
     assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
-    host.setPendingDashboardSessionAction(opts.serviceId, null);
+    host.setPendingDashboardServiceAction(opts.serviceId, null);
     opts.onAfterSettle?.();
     if (opts.successFlash) {
       host.footerFlash = opts.successFlash.message;
@@ -263,7 +292,7 @@ async function runDashboardServiceMutation(
     }
     host.renderDashboard();
   } catch (error) {
-    host.setPendingDashboardSessionAction(opts.serviceId, null);
+    host.setPendingDashboardServiceAction(opts.serviceId, null);
     await opts.onError?.();
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
   }
@@ -370,13 +399,37 @@ export async function forkDashboardAgentWithFeedback(
 export function setPendingDashboardSessionAction(
   host: DashboardOpsHost,
   sessionId: string,
-  kind: any,
-  opts?: { sessionSeed?: DashboardSession; serviceSeed?: any },
-): void {
-  host.dashboardPendingActions.set(sessionId, kind, opts);
+  kind: PendingSessionActionKind | null,
+  opts?: { sessionSeed?: DashboardSession },
+): number | undefined {
+  let token: number | undefined;
+  if (kind) {
+    token = host.dashboardPendingActions.setSessionAction(sessionId, kind, opts);
+  } else {
+    host.dashboardPendingActions.clearSessionAction(sessionId);
+  }
   if (typeof host.reapplyDashboardPendingActions === "function") {
     host.reapplyDashboardPendingActions();
   }
+  return token;
+}
+
+export function setPendingDashboardServiceAction(
+  host: DashboardOpsHost,
+  serviceId: string,
+  kind: PendingServiceActionKind | null,
+  opts?: { serviceSeed?: DashboardService },
+): number | undefined {
+  let token: number | undefined;
+  if (kind) {
+    token = host.dashboardPendingActions.setServiceAction(serviceId, kind, opts);
+  } else {
+    host.dashboardPendingActions.clearServiceAction(serviceId);
+  }
+  if (typeof host.reapplyDashboardPendingActions === "function") {
+    host.reapplyDashboardPendingActions();
+  }
+  return token;
 }
 
 export async function stopSessionToOfflineWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
@@ -580,7 +633,7 @@ export async function graveyardSessionWithFeedback(
 export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
   if (host.mode === "dashboard") {
     const label = session.label ?? session.command;
-    if (host.dashboardPendingActions.get(session.id) === "starting") {
+    if (host.dashboardPendingActions.getSessionAction(session.id) === "starting") {
       return;
     }
     const sessionSeed =
@@ -593,7 +646,9 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         status: "offline",
         active: false,
         worktreePath: session.worktreePath,
+        team: session.team,
       } satisfies DashboardSession);
+    let resumeResult: any;
     await runDashboardSessionMutation(host, {
       sessionId: session.id,
       pendingAction: "starting",
@@ -603,7 +658,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService(
+        resumeResult = await host.postToProjectService(
           "/agents/resume",
           { sessionId: session.id, session: sessionSeed },
           { timeoutMs: 10_000 },
@@ -614,6 +669,10 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
       onError: () => host.refreshDashboardModelFromService(true),
       errorTitle: `Failed to restore "${label}"`,
     });
+    const warningLines = restoreWarningLines(resumeResult);
+    if (warningLines.length > 0) {
+      host.showDashboardError(`Restored "${label}" with teammate issues`, warningLines);
+    }
     return;
   }
   await runResumeOfflineSessionWithFeedback(dashboardSessionActionDeps(host), session);
@@ -623,7 +682,7 @@ export async function resumeOfflineServiceWithFeedback(
   host: DashboardOpsHost,
   service: { id: string; label?: string },
 ): Promise<void> {
-  if (host.dashboardPendingActions.get(service.id) === "starting") {
+  if (host.dashboardPendingActions.getServiceAction(service.id) === "starting") {
     return;
   }
   if (host.mode === "dashboard") {
@@ -654,18 +713,18 @@ export async function resumeOfflineServiceWithFeedback(
     });
     return;
   }
-  host.setPendingDashboardSessionAction(service.id, "starting");
+  host.setPendingDashboardServiceAction(service.id, "starting");
   host.footerFlash = `Restoring ${service.label ?? service.id}`;
   host.footerFlashTicks = 3;
   host.renderDashboard();
   try {
     host.resumeOfflineServiceById(service.id);
-    host.setPendingDashboardSessionAction(service.id, null);
+    host.setPendingDashboardServiceAction(service.id, null);
     host.footerFlash = `◆ Started service ${service.label ?? service.id}`;
     host.footerFlashTicks = 3;
     host.renderDashboard();
   } catch (error) {
-    host.setPendingDashboardSessionAction(service.id, null);
+    host.setPendingDashboardServiceAction(service.id, null);
     host.refreshLocalDashboardModel();
     host.showDashboardError("Failed to start service", [error instanceof Error ? error.message : String(error)]);
   }
@@ -771,17 +830,27 @@ export async function waitForSessionStartForHost(
 export function dashboardSessionActionDeps(host: DashboardOpsHost) {
   return {
     getSessionLabel: (sessionId: string) => host.getSessionLabel(sessionId),
-    getPendingAction: (sessionId: string) => host.dashboardPendingActions.get(sessionId),
-    setPendingAction: (sessionId: string, kind: any) => setPendingDashboardSessionAction(host, sessionId, kind),
+    getPendingAction: (sessionId: string) => host.dashboardPendingActions.getSessionAction(sessionId),
+    setPendingAction: (sessionId: string, kind: PendingSessionActionKind | null) =>
+      setPendingDashboardSessionAction(host, sessionId, kind),
     stopSessionToOffline: (session: any) => host.stopSessionToOffline(session),
     isGraveyardAfterStop: (sessionId: string) => host.graveyardAfterStopSessionIds.has(sessionId),
     sendAgentToGraveyard: (sessionId: string) => host.sendAgentToGraveyard(sessionId).then(() => undefined),
-    resumeOfflineSession: (session: any) =>
-      host.mode === "dashboard"
-        ? host
-            .postToProjectService("/agents/resume", { sessionId: session.id }, { timeoutMs: 10_000 })
-            .then(() => undefined)
-        : host.resumeOfflineSession(session),
+    resumeOfflineSession: async (session: any) => {
+      if (host.mode !== "dashboard") {
+        host.resumeOfflineSession(session);
+        return;
+      }
+      const result = await host.postToProjectService(
+        "/agents/resume",
+        { sessionId: session.id },
+        { timeoutMs: 10_000 },
+      );
+      const warningLines = restoreWarningLines(result);
+      if (warningLines.length > 0) {
+        throw new Error(warningLines.join("\n"));
+      }
+    },
     refreshLocalDashboardModel: () => host.refreshLocalDashboardModel(),
     adjustAfterRemove: (hasWorktrees: boolean) => host.adjustAfterRemove(hasWorktrees),
     renderDashboard: () => host.renderCurrentDashboardView(),

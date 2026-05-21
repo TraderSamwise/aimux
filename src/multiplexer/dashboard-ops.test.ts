@@ -12,15 +12,40 @@ import {
   stopSessionToOfflineWithFeedback,
 } from "./dashboard-ops.js";
 
+function makePendingActionsFake() {
+  const actions = new Map<string, string | null>();
+  return {
+    getSessionAction(sessionId: string) {
+      return actions.get(`session:${sessionId}`);
+    },
+    getServiceAction(serviceId: string) {
+      return actions.get(`service:${serviceId}`);
+    },
+    setSessionAction(sessionId: string, kind: string) {
+      actions.set(`session:${sessionId}`, kind);
+    },
+    clearSessionAction(sessionId: string) {
+      actions.set(`session:${sessionId}`, null);
+    },
+    setServiceAction(serviceId: string, kind: string) {
+      actions.set(`service:${serviceId}`, kind);
+    },
+    clearServiceAction(serviceId: string) {
+      actions.set(`service:${serviceId}`, null);
+    },
+  };
+}
+
 describe("dashboard-ops", () => {
   it("creates a service through the project service and clears creating when a live row appears", async () => {
     let createdServiceId = "";
     const services = [[], () => [{ id: createdServiceId, status: "running", pid: 1234, foregroundCommand: "zsh" }]];
     let serviceIndex = 0;
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(serviceId: string, kind: string | null, opts?: any) {
-        this.dashboardPendingActions.set(serviceId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null, opts?: any) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
         this.serviceSeed = opts?.serviceSeed;
       },
       serviceSeed: undefined as any,
@@ -51,7 +76,7 @@ describe("dashboard-ops", () => {
       { serviceId, command: "", worktreePath: "/repo" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get(serviceId)).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction(serviceId)).toBeNull();
     expect(host.footerFlash).toBe("◆ Created service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -61,9 +86,10 @@ describe("dashboard-ops", () => {
     let serviceIndex = 0;
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -84,7 +110,7 @@ describe("dashboard-ops", () => {
       { serviceId: "svc-1" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Started service shell");
     expect(host.footerFlashTicks).toBe(3);
     expect(host.renderDashboard).toHaveBeenCalledTimes(2);
@@ -93,9 +119,10 @@ describe("dashboard-ops", () => {
 
   it("refreshes local state and shows a dashboard error when service resume fails", async () => {
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -109,7 +136,7 @@ describe("dashboard-ops", () => {
 
     await resumeOfflineServiceWithFeedback(host, { id: "svc-1", label: "shell" });
 
-    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.refreshLocalDashboardModel).toHaveBeenCalledOnce();
     expect(host.showDashboardError).toHaveBeenCalledWith("Failed to start service", ["boom"]);
   });
@@ -117,9 +144,10 @@ describe("dashboard-ops", () => {
   it("stops a service through the project service in dashboard mode without requiring rendered cache convergence", async () => {
     const services = [[{ id: "svc-1", status: "running" }]];
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -137,7 +165,7 @@ describe("dashboard-ops", () => {
       { serviceId: "svc-1" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Stopped service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -146,9 +174,10 @@ describe("dashboard-ops", () => {
     const services = [[{ id: "svc-1", status: "offline" }], []];
     let serviceIndex = 0;
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -169,7 +198,7 @@ describe("dashboard-ops", () => {
       { serviceId: "svc-1" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Deleted service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -179,9 +208,10 @@ describe("dashboard-ops", () => {
     const sessions = [[{ ...session, status: "running" }]];
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -200,7 +230,7 @@ describe("dashboard-ops", () => {
       { sessionId: "sess-1" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Stopped claude");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -211,9 +241,10 @@ describe("dashboard-ops", () => {
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -235,9 +266,83 @@ describe("dashboard-ops", () => {
       { sessionId: "sess-1", session: expect.objectContaining({ id: "sess-1", command: "claude" }) },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored claude");
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("surfaces partial teammate restore failures after restoring the parent agent", async () => {
+    const session = { id: "parent-1", command: "claude", label: "claude" };
+    const sessions = [[], [{ ...session, status: "waiting", tmuxWindowId: "@21" }]];
+    let sessionIndex = 0;
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => ({
+        ok: true,
+        warning: "Failed to resume 2 teammates",
+        teammateFailures: [
+          { sessionId: "codex-1", error: "missing backend session id" },
+          { sessionId: "codex-2", error: "missing backend session id" },
+        ],
+      })),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.dashboardPendingActions.getSessionAction("parent-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restored claude");
+    expect(host.showDashboardError).toHaveBeenCalledWith("Restored \"claude\" with teammate issues", [
+      "codex-1: missing backend session id",
+      "codex-2: missing backend session id",
+      "Stale teammates remain offline; create a new team to replace them.",
+    ]);
+  });
+
+  it("does not surface bare teammate ids when partial restore failures are unstructured", async () => {
+    const session = { id: "parent-1", command: "claude", label: "claude" };
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => ({
+        ok: true,
+        warning:
+          'Failed to resume 2 teammates: codex-1: Cannot restore session "codex-1"; codex-2: Cannot restore session "codex-2"',
+        teammateFailures: [{ sessionId: "codex-1" }, { sessionId: "codex-2" }],
+      })),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => [{ ...session, status: "waiting", tmuxWindowId: "@21" }]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.showDashboardError).toHaveBeenCalledWith("Restored \"claude\" with teammate issues", [
+      'Failed to resume 2 teammates: codex-1: Cannot restore session "codex-1"; codex-2: Cannot restore session "codex-2"',
+      "Stale teammates remain offline; create a new team to replace them.",
+    ]);
   });
 
   it("treats a live runtime as successful resume even if the rendered row stays stale", async () => {
@@ -256,9 +361,10 @@ describe("dashboard-ops", () => {
     ];
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -275,9 +381,58 @@ describe("dashboard-ops", () => {
 
     expect(host.waitForSessionStart).not.toHaveBeenCalled();
     expect(host.refreshLocalDashboardModel).toHaveBeenCalled();
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored codex");
     expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("preserves teammate metadata in dashboard resume pending seeds", async () => {
+    const session = {
+      id: "teammate-1",
+      command: "codex",
+      label: "reviewer",
+      worktreePath: "/repo",
+      team: { teamId: "team-parent", parentSessionId: "parent-1", role: "reviewer" },
+    };
+    const sessions = [[], [{ ...session, status: "running", tmuxWindowId: "@1" }]];
+    let sessionIndex = 0;
+    const sessionSeeds: any[] = [];
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null, opts?: any) {
+        if (opts?.sessionSeed) sessionSeeds.push(opts.sessionSeed);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(sessionSeeds[0]).toEqual(expect.objectContaining({ id: "teammate-1", team: session.team }));
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/resume",
+      {
+        sessionId: "teammate-1",
+        session: expect.objectContaining({
+          id: "teammate-1",
+          team: session.team,
+        }),
+      },
+      { timeoutMs: 10_000 },
+    );
   });
 
   it("treats a live tmux agent window as successful resume when the dashboard model lags", async () => {
@@ -285,9 +440,10 @@ describe("dashboard-ops", () => {
     const sessions = [[{ ...session, status: "offline", pendingAction: "starting" }]];
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -322,7 +478,7 @@ describe("dashboard-ops", () => {
 
     expect(host.tmuxRuntimeManager.listProjectManagedWindows).toHaveBeenCalled();
     expect(host.refreshLocalDashboardModel).toHaveBeenCalled();
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored claude");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -334,9 +490,10 @@ describe("dashboard-ops", () => {
     ];
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
-      setPendingDashboardSessionAction(serviceId: string, kind: string | null) {
-        this.dashboardPendingActions.set(serviceId, kind);
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardServiceAction(serviceId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearServiceAction(serviceId);
+        else this.dashboardPendingActions.setServiceAction(serviceId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -350,7 +507,7 @@ describe("dashboard-ops", () => {
 
     await resumeOfflineServiceWithFeedback(host, service);
 
-    expect(host.dashboardPendingActions.get("svc-1")).toBeNull();
+    expect(host.dashboardPendingActions.getServiceAction("svc-1")).toBeNull();
     expect(host.footerFlash).toBe("◆ Started service shell");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -365,9 +522,10 @@ describe("dashboard-ops", () => {
     let sessionIndex = 0;
     const host = {
       mode: "dashboard",
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       footerFlash: "",
       footerFlashTicks: 0,
@@ -392,7 +550,7 @@ describe("dashboard-ops", () => {
       { sessionId: "sess-1", worktreePath: "/repo/.aimux/worktrees/demo" },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Migrated codex to demo");
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
@@ -405,9 +563,10 @@ describe("dashboard-ops", () => {
       mode: "dashboard",
       offlineSessions: [] as any[],
       sessions: [session],
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       getSessionLabel: vi.fn(() => "claude"),
       renderDashboard: vi.fn(),
@@ -430,7 +589,7 @@ describe("dashboard-ops", () => {
       { sessionId: "sess-1", session: expect.objectContaining({ id: "sess-1", command: "claude" }) },
       { timeoutMs: 10_000 },
     );
-    expect(host.dashboardPendingActions.get("sess-1")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.adjustAfterRemove).toHaveBeenCalledWith(true);
     expect(host.footerFlash).toBe("Sent claude to graveyard");
     expect(host.showDashboardError).not.toHaveBeenCalled();
@@ -444,9 +603,10 @@ describe("dashboard-ops", () => {
     ];
     let sessionIndex = 0;
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       preferDashboardEntrySelection: vi.fn(),
       renderDashboard: vi.fn(),
@@ -477,7 +637,7 @@ describe("dashboard-ops", () => {
       { timeoutMs: 10_000 },
     );
     expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "claude-abcd12", "/repo");
-    expect(host.dashboardPendingActions.get("claude-abcd12")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("claude-abcd12")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
@@ -485,9 +645,10 @@ describe("dashboard-ops", () => {
     const sessions = [[], [{ id: "codex-fork12", status: "running", tmuxWindowId: "@43" }]];
     let sessionIndex = 0;
     const host = {
-      dashboardPendingActions: new Map<string, string | null>(),
+      dashboardPendingActions: makePendingActionsFake(),
       setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
-        this.dashboardPendingActions.set(sessionId, kind);
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
       },
       preferDashboardEntrySelection: vi.fn(),
       renderDashboard: vi.fn(),
@@ -521,7 +682,7 @@ describe("dashboard-ops", () => {
       { timeoutMs: 10_000 },
     );
     expect(host.preferDashboardEntrySelection).toHaveBeenCalledWith("session", "codex-fork12", "/repo");
-    expect(host.dashboardPendingActions.get("codex-fork12")).toBeNull();
+    expect(host.dashboardPendingActions.getSessionAction("codex-fork12")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 });

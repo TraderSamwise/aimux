@@ -236,4 +236,66 @@ describe("dashboard quick jump", () => {
       [4, "service", "old-main-service"],
     ]);
   });
+
+  it("preserves ordered entries already attached to rendered worktree groups", () => {
+    const oldAgent = {
+      index: 0,
+      id: "old-agent",
+      command: "codex",
+      status: "running",
+      active: false,
+      worktreePath: "/repo/w1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const newAgent = {
+      index: 1,
+      id: "new-agent",
+      command: "claude",
+      status: "running",
+      active: false,
+      worktreePath: "/repo/w1",
+      createdAt: "2026-01-03T00:00:00.000Z",
+    };
+    const oldService = {
+      id: "old-service",
+      command: "shell",
+      args: [],
+      status: "running",
+      active: false,
+      worktreePath: "/repo/w1",
+      createdAt: "2026-01-02T00:00:00.000Z",
+    };
+    const newService = {
+      id: "new-service",
+      command: "shell",
+      args: [],
+      status: "running",
+      active: false,
+      worktreePath: "/repo/w1",
+      createdAt: "2026-01-04T00:00:00.000Z",
+    };
+
+    const worktrees = buildDashboardQuickJumpWorktrees({
+      sessions: [newAgent, oldAgent],
+      services: [newService, oldService],
+      worktreeGroups: [
+        {
+          name: "w1",
+          branch: "feat/w1",
+          path: "/repo/w1",
+          status: "active",
+          sessions: [oldAgent, newAgent],
+          services: [oldService, newService],
+        },
+      ],
+      mainCheckout: { name: "Main Checkout", branch: "master" },
+    });
+
+    expect(worktrees[1]?.entries.map((entry) => [entry.digit, entry.kind, entry.id])).toEqual([
+      [1, "session", "old-agent"],
+      [2, "session", "new-agent"],
+      [3, "service", "old-service"],
+      [4, "service", "new-service"],
+    ]);
+  });
 });

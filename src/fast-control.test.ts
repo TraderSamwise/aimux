@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { listSwitchableAgentItems, listSwitchableAgentMenuItems } from "./fast-control.js";
+import {
+  listSwitchableAgentItems,
+  listSwitchableAgentMenuItems,
+  resolveNextAgent,
+  resolvePrevAgent,
+} from "./fast-control.js";
 import { TmuxRuntimeManager } from "./tmux-runtime-manager.js";
 
 vi.mock("./worktree.js", () => ({
@@ -198,5 +203,143 @@ describe("fast-control worktree scoping", () => {
     );
 
     expect(items.map((item) => item.label)).toEqual(["claude(coder)", "shell[svc]"]);
+  });
+
+  it("keeps root navigation out of teammate windows in the same worktree", () => {
+    const tmux = {
+      getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-abc" })),
+      listManagedWindows: vi.fn(() => [
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@1", windowIndex: 1, windowName: "parent" },
+          metadata: {
+            kind: "agent",
+            sessionId: "parent",
+            label: "parent",
+            command: "claude",
+            worktreePath: "/repo/wt",
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@2", windowIndex: 2, windowName: "reviewer" },
+          metadata: {
+            kind: "agent",
+            sessionId: "reviewer",
+            label: "reviewer",
+            command: "codex",
+            worktreePath: "/repo/wt",
+            team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer", order: 1 },
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@3", windowIndex: 3, windowName: "shell" },
+          metadata: {
+            kind: "service",
+            sessionId: "shell-1",
+            label: "shell",
+            command: "shell",
+            worktreePath: "/repo/wt",
+          },
+        },
+      ]),
+      listWindows: vi.fn(() => [
+        { id: "@1", index: 1, name: "parent", active: true, activity: 100 },
+        { id: "@2", index: 2, name: "reviewer", active: false, activity: 90 },
+        { id: "@3", index: 3, name: "shell", active: false, activity: 80 },
+      ]),
+    } as unknown as TmuxRuntimeManager;
+
+    const context = {
+      projectRoot: "/repo",
+      currentClientSession: "aimux-repo-abc-client-123",
+      currentWindow: "parent",
+      currentWindowId: "@1",
+      currentPath: "/repo/wt",
+    };
+
+    const items = listSwitchableAgentItems(context, tmux);
+    expect(items.map((item) => item.target.windowId)).toEqual(["@1", "@3"]);
+    expect(resolveNextAgent(context, tmux)?.target.windowId).toBe("@3");
+    expect(resolvePrevAgent(context, tmux)?.target.windowId).toBe("@3");
+  });
+
+  it("cycles only direct teammates after entering teammate land", () => {
+    const tmux = {
+      getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-abc" })),
+      listManagedWindows: vi.fn(() => [
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@1", windowIndex: 1, windowName: "parent" },
+          metadata: {
+            kind: "agent",
+            sessionId: "parent",
+            label: "parent",
+            command: "claude",
+            worktreePath: "/repo/wt",
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@2", windowIndex: 4, windowName: "implementer" },
+          metadata: {
+            kind: "agent",
+            sessionId: "implementer",
+            label: "implementer",
+            command: "codex",
+            worktreePath: "/repo/other",
+            team: { teamId: "team-parent", parentSessionId: "parent", role: "coder", order: 2 },
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@3", windowIndex: 3, windowName: "reviewer" },
+          metadata: {
+            kind: "agent",
+            sessionId: "reviewer",
+            label: "reviewer",
+            command: "codex",
+            worktreePath: "/repo/wt",
+            team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer", order: 1 },
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@4", windowIndex: 2, windowName: "other-team" },
+          metadata: {
+            kind: "agent",
+            sessionId: "other-team",
+            label: "other-team",
+            command: "codex",
+            worktreePath: "/repo/wt",
+            team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder", order: 0 },
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@5", windowIndex: 5, windowName: "shell" },
+          metadata: {
+            kind: "service",
+            sessionId: "shell-1",
+            label: "shell",
+            command: "shell",
+            worktreePath: "/repo/wt",
+          },
+        },
+      ]),
+      listWindows: vi.fn(() => [
+        { id: "@1", index: 1, name: "parent", active: false, activity: 100 },
+        { id: "@2", index: 4, name: "implementer", active: true, activity: 90 },
+        { id: "@3", index: 3, name: "reviewer", active: false, activity: 80 },
+        { id: "@4", index: 2, name: "other-team", active: false, activity: 70 },
+        { id: "@5", index: 5, name: "shell", active: false, activity: 60 },
+      ]),
+    } as unknown as TmuxRuntimeManager;
+
+    const context = {
+      projectRoot: "/repo",
+      currentClientSession: "aimux-repo-abc-client-123",
+      currentWindow: "implementer",
+      currentWindowId: "@2",
+      currentPath: "/repo/other",
+    };
+
+    const items = listSwitchableAgentItems(context, tmux);
+    expect(items.map((item) => item.target.windowId)).toEqual(["@3", "@2"]);
+    expect(resolveNextAgent(context, tmux)?.target.windowId).toBe("@3");
+    expect(resolvePrevAgent(context, tmux)?.target.windowId).toBe("@3");
   });
 });

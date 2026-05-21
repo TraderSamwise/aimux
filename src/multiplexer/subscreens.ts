@@ -35,6 +35,13 @@ import { navigationUrgencyScore } from "../fast-control.js";
 
 type SubscreenHost = any;
 
+function findDashboardSessionOrTeammate(host: SubscreenHost, sessionId: string): any | undefined {
+  return (
+    host.getDashboardSessions?.().find((session: any) => session.id === sessionId) ??
+    (host.dashboardTeammatesCache ?? []).find((session: any) => session.id === sessionId)
+  );
+}
+
 export function attentionScore(host: SubscreenHost, entry: any): number {
   return navigationUrgencyScore(entry);
 }
@@ -453,8 +460,12 @@ export function handleThreadsKey(host: SubscreenHost, data: Buffer): void {
     const targetSessionId = entry.thread.owner ?? entry.thread.waitingOn?.[0] ?? entry.thread.participants[0];
     if (targetSessionId) {
       markThreadSeen(entry.thread.id, targetSessionId);
-      const dashEntry = host.getDashboardSessions().find((session: any) => session.id === targetSessionId);
-      if (dashEntry) void host.activateDashboardEntry(dashEntry);
+      const dashEntry = findDashboardSessionOrTeammate(host, targetSessionId);
+      if (dashEntry) {
+        void host.activateDashboardEntry(dashEntry, {
+          preserveDashboardSelection: Boolean(dashEntry.team),
+        });
+      }
     }
   }
 }

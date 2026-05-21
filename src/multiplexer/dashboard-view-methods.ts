@@ -24,6 +24,7 @@ import {
   stopService as stopServiceImpl,
 } from "./services.js";
 import { derivedStatusLabel } from "../dashboard/index.js";
+import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
 
 export const dashboardViewMethods = {
@@ -35,29 +36,40 @@ export const dashboardViewMethods = {
     return `${command}-${Math.random().toString(36).slice(2, 8)}`;
   },
 
-  settleDashboardCreatePending(this: any, itemId: string): void {
+  settleDashboardCreatePending(this: any, itemId: string, target?: "session" | "service" | "worktree"): void {
     if (!(this.startedInDashboard && this.mode === "dashboard")) return;
+    const pendingTarget =
+      target ??
+      (itemId.startsWith("worktree:")
+        ? "worktree"
+        : this.getDashboardSessions?.().some((entry: any) => entry.id === itemId)
+          ? "session"
+          : "service");
     this.dashboardPendingActions.settleCreatePending(
+      pendingTarget,
       itemId,
       () => {
         this.refreshLocalDashboardModel();
         this.renderDashboard();
       },
       {
-        timeoutMs: itemId.startsWith("worktree:") ? 180_000 : undefined,
+        timeoutMs: pendingTarget === "worktree" ? 180_000 : undefined,
         isSettled: async () => {
           if (typeof this.refreshDashboardModelFromService === "function") {
             await this.refreshDashboardModelFromService(true);
           }
-          if (itemId.startsWith("worktree:")) {
-            const path = itemId.slice("worktree:".length);
+          if (pendingTarget === "worktree") {
+            const path = itemId.startsWith("worktree:") ? itemId.slice("worktree:".length) : itemId;
             const rawWorktree = this.listDesktopWorktrees?.().find((entry: any) => entry.path === path);
             if (rawWorktree && rawWorktree.pending !== true && rawWorktree.pendingAction !== "creating") return true;
             const group = this.dashboardWorktreeGroupsCache?.find((entry: any) => entry.path === path);
             return Boolean(group) && group.pendingAction !== "creating" && group.pending !== true;
           }
-          const service = this.getDashboardServices?.().find((entry: any) => entry.id === itemId);
-          if (service) return service.pendingAction !== "creating" || hasRuntimeEvidence(service);
+          if (pendingTarget === "service") {
+            const service = this.getDashboardServices?.().find((entry: any) => entry.id === itemId);
+            if (service) return service.pendingAction !== "creating" || hasRuntimeEvidence(service);
+            return false;
+          }
           const session = this.getDashboardSessions?.().find((entry: any) => entry.id === itemId);
           return isAttachableDashboardSessionEntry(session);
         },
@@ -111,6 +123,7 @@ export const dashboardViewMethods = {
           }
         : this.getViewportSize();
       const dashSessions = this.dashboardSessionsCache;
+      const dashTeammates = this.dashboardTeammatesCache ?? [];
       const dashServices = this.dashboardServicesCache;
       const worktreeGroups = this.dashboardWorktreeGroupsCache;
       const mainCheckoutInfo = this.dashboardMainCheckoutInfoCache;
@@ -127,6 +140,9 @@ export const dashboardViewMethods = {
       } else if (!hasWorktrees && dashSessions.length > 0) {
         selectedSession = dashSessions[this.activeIndex]?.id;
       }
+      const selectedSessionEntry = selectedSession
+        ? dashSessions.find((session: any) => session.id === selectedSession)
+        : undefined;
 
       this.dashboard.update({
         sessions: dashSessions,
@@ -137,6 +153,7 @@ export const dashboardViewMethods = {
         navLevel: hasWorktrees ? this.dashboardState.level : "sessions",
         selectedSessionId: selectedSession,
         selectedServiceId: selectedService,
+        selectedTeammates: selectDashboardTeammates(dashTeammates, selectedSessionEntry),
         runtimeLabel: "tmux",
         mainCheckout: mainCheckoutInfo,
         operationFailures: this.dashboardOperationFailuresCache ?? [],

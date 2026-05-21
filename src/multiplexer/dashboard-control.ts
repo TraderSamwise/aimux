@@ -6,7 +6,7 @@ import type { DashboardScreen } from "../dashboard/state.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
-import { loadMetadataState, resolveProjectServiceEndpoint } from "../metadata-store.js";
+import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
 import { parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { getProjectStateDir } from "../paths.js";
@@ -23,6 +23,7 @@ import {
   buildNotificationPanelOverlayOutput,
   buildServiceInputOverlayOutput,
   buildSwitcherOverlayOutput,
+  buildTeammatePickerOverlayOutput,
   buildWorktreeListOverlayOutput,
   buildWorktreeRemoveConfirmOverlayOutput,
 } from "../tui/screens/overlay-renderers.js";
@@ -146,6 +147,9 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     case "notification-panel":
       host.handleNotificationPanelKey(data);
       return true;
+    case "teammate-picker":
+      host.handleTeammatePickerKey(data);
+      return true;
     case "worktree-remove-confirm":
       host.handleWorktreeRemoveConfirmKey(data);
       return true;
@@ -202,6 +206,9 @@ export function buildActiveDashboardOverlayOutput(host: DashboardControlHost): s
   }
   if (host.dashboardOverlayState.kind === "notification-panel") {
     return buildNotificationPanelOverlayOutput(host);
+  }
+  if (host.dashboardOverlayState.kind === "teammate-picker") {
+    return buildTeammatePickerOverlayOutput(host);
   }
   if (host.dashboardOverlayState.kind === "thread-reply") {
     return buildThreadReplyOverlayOutput(host);
@@ -595,10 +602,15 @@ export async function postToProjectService(
   body: unknown,
   opts?: { timeoutMs?: number },
 ): Promise<any> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const endpoint = resolveProjectServiceEndpoint(process.cwd());
+  const projectRoot = process.cwd();
+  const timeoutMs = opts?.timeoutMs ?? 1000;
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown = null;
+  for (let attempt = 0; Date.now() <= deadline; attempt += 1) {
+    const endpoint = resolveProjectServiceEndpoint(projectRoot);
     if (!endpoint) {
       await ensureDashboardControlPlane(host);
+      await sleepProjectServiceRetry(attempt);
       continue;
     }
     try {
@@ -606,25 +618,51 @@ export async function postToProjectService(
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
-        timeoutMs: opts?.timeoutMs ?? 1000,
+        timeoutMs: Math.max(1, deadline - Date.now()),
       });
       if (status >= 200 && status < 300 && json?.ok !== false) {
         return json;
       }
-      if (attempt === 0) {
+      lastError = new Error(json?.error || `request failed: ${status}`);
+      if (attempt === 0 || isProjectServiceRetryableStatus(status)) {
         await ensureDashboardControlPlane(host);
+        await sleepProjectServiceRetry(attempt);
         continue;
       }
-      throw new Error(json?.error || `request failed: ${status}`);
+      throw lastError;
     } catch (error) {
-      if (attempt === 0) {
+      lastError = error;
+      if (isProjectServiceConnectionError(error) && Date.now() < deadline) {
+        removeMetadataEndpoint(projectRoot);
         await ensureDashboardControlPlane(host);
+        await sleepProjectServiceRetry(attempt);
         continue;
       }
       throw error;
     }
   }
-  throw new Error("no live project service endpoint");
+  throw lastError instanceof Error ? lastError : new Error("no live project service endpoint");
+}
+
+function isProjectServiceConnectionError(error: unknown): boolean {
+  const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    code === "ECONNREFUSED" ||
+    code === "ECONNRESET" ||
+    code === "EPIPE" ||
+    message.includes("ECONNREFUSED") ||
+    message.includes("ECONNRESET") ||
+    message.includes("socket hang up")
+  );
+}
+
+function isProjectServiceRetryableStatus(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
+}
+
+async function sleepProjectServiceRetry(attempt: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, Math.min(250, 50 + attempt * 25)));
 }
 
 export async function ensureDashboardControlPlane(host: DashboardControlHost): Promise<void> {
