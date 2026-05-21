@@ -509,7 +509,7 @@ describe("renderTmuxStatusline", () => {
 
     expect(rendered).toContain("#[fg=black,bg=yellow] claude(coder)");
     expect(rendered).toContain("shell[svc]");
-    expect(rendered).toContain("team: review(reviewer) running");
+    expect(rendered).toContain("team: review running");
     expect(rendered).not.toContain("other");
     expect(rendered.indexOf("claude(coder)")).toBeLessThan(rendered.indexOf("shell[svc]"));
     expect(rendered.indexOf("shell[svc]")).toBeLessThan(rendered.indexOf("team:"));
@@ -558,6 +558,19 @@ describe("renderTmuxStatusline", () => {
             team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", label: "review", order: 1 },
           },
           {
+            id: "implementer",
+            kind: "agent",
+            tool: "codex",
+            role: "implementer",
+            label: "impl",
+            windowName: "codex",
+            tmuxWindowId: "@11",
+            worktreePath: repoRoot,
+            status: "running",
+            semantic: semantic({ status: "running", unseenCount: 4 }),
+            team: { teamId: "team-1", parentSessionId: "parent", role: "implementer", label: "impl", order: 2 },
+          },
+          {
             id: "other",
             kind: "agent",
             tool: "claude",
@@ -599,11 +612,12 @@ describe("renderTmuxStatusline", () => {
     expect(renderedTop).toContain("PR #44");
     expect(renderedTop).toContain("needs input");
     expect(renderedTop).toContain("review-top");
-    expect(renderedBottom).toContain("#[fg=black,bg=yellow] review(reviewer) on you ?");
-    expect(renderedBottom).toContain("shell[svc]");
+    expect(renderedBottom).toContain("#[fg=black,bg=cyan] review on you ?");
+    expect(renderedBottom).toContain("#[fg=cyan]impl 4 new");
+    expect(renderedBottom).not.toContain("shell[svc]");
     expect(renderedBottom).toContain("Review the parser patch");
     expect(renderedBottom).toContain("review-bottom");
-    expect(renderedBottom).not.toContain("team:");
+    expect(renderedBottom).toContain("team plane");
     expect(renderedBottom).not.toContain("other");
   });
 
@@ -668,7 +682,7 @@ describe("renderTmuxStatusline", () => {
     });
 
     expect(renderedBottom).toContain("#[fg=black,bg=yellow] claude(coder)");
-    expect(renderedBottom).toContain("team: review(reviewer) running");
+    expect(renderedBottom).toContain("team: review running");
     expect(renderedBottom).toContain("Parent headline");
     expect(renderedBottom).toContain("parent-plugin");
     expect(renderedBottom).not.toContain("reviewer-plugin");
