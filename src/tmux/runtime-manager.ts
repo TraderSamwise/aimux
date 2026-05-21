@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
-import { debug } from "../debug.js";
+import { debug, log } from "../debug.js";
 import { getProjectStateDirFor } from "../paths.js";
 import type { SessionTeamMetadata } from "../team.js";
 
@@ -795,6 +795,15 @@ export class TmuxRuntimeManager {
             ...target,
             sessionName,
           };
+    log.info("opening tmux target", "tmux", {
+      targetSession: target.sessionName,
+      targetWindowId: target.windowId,
+      targetWindowName: target.windowName,
+      effectiveSession: effectiveTarget.sessionName,
+      effectiveWindowIndex: effectiveTarget.windowIndex,
+      insideTmux,
+      alreadyResolved: options.alreadyResolved === true,
+    });
     if (isDashboardWindowName(effectiveTarget.windowName)) {
       this.cancelCopyMode(effectiveTarget);
     }

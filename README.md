@@ -241,6 +241,26 @@ Runtime health:
 
 - The tmux statusline shows `ctl ok`, `ctl daemon↓`, or `ctl stale`.
 - `ctl stale` means the project-service `statusline.json` snapshot has stopped updating, which usually means the project service died.
+- Persistent runtime logging is disabled by default. Enable it with config, env, or CLI flags when reproducing a bug:
+
+```bash
+aimux --debug
+AIMUX_LOG=1 AIMUX_LOG_LEVEL=debug aimux
+AIMUX_LOG=1 AIMUX_LOG_CATEGORIES=daemon,session,tmux aimux
+```
+
+- Project logs are written under `~/.aimux/projects/<project-id>/logs/aimux.jsonl`.
+- Daemon logs are written under `~/.aimux/daemon/logs/daemon.jsonl`.
+- Child stdout/stderr is captured separately as `daemon-stdio.log` or `project-service-stdio.log` when logging is enabled.
+
+```bash
+aimux logs path
+aimux logs tail -n 100
+aimux logs path --daemon
+aimux logs tail --daemon
+aimux logs clear
+```
+
 - Manual recovery is now:
 
 ```bash
@@ -751,6 +771,13 @@ This creates `.aimux/config.json`. You can also create a global config at `~/.ai
       "sessionPrefix": "aimux"
     }
   },
+  "logging": {
+    "enabled": false,
+    "level": "info",
+    "categories": ["*"],
+    "maxBytes": 10000000,
+    "maxFiles": 5
+  },
   "notifications": {
     "enabled": true,
     "onPrompt": true,
@@ -770,6 +797,15 @@ This creates `.aimux/config.json`. You can also create a global config at `~/.ai
 Tmux runtime:
 
 - `sessionPrefix` — deterministic prefix used for managed per-project tmux sessions
+
+Logging:
+
+- `enabled` — persist structured JSONL runtime logs
+- `level` — `error`, `warn`, `info`, `debug`, or `trace`
+- `categories` — category allowlist, or `["*"]`
+- `maxBytes` / `maxFiles` — simple file rotation limits
+- CLI overrides: `--debug`, `--trace`, `--log-level <level>`, `--log-category <a,b>`
+- Env overrides: `AIMUX_LOG`, `AIMUX_LOG_LEVEL`, `AIMUX_LOG_CATEGORIES`
 
 ### Tool Configuration
 

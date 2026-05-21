@@ -12,7 +12,7 @@ import {
 } from "../claude-hooks.js";
 import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
-import { debug } from "../debug.js";
+import { debug, log } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
 import {
@@ -21,10 +21,7 @@ import {
   recordSessionBackendSessionIdMetadata,
 } from "../metadata-store.js";
 import type { SessionTeamMetadata } from "../team.js";
-import {
-  captureBackendSessionIdFromSessionFiles,
-  extractCodexBackendSessionIdFromArgs,
-} from "./session-capture.js";
+import { captureBackendSessionIdFromSessionFiles, extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
 export { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
 
 type SessionLaunchHost = any;
@@ -70,7 +67,7 @@ function scheduleBackendSessionCapture(input: {
         retry.unref?.();
         return;
       }
-      debug(`session capture did not find exact backend id for ${input.sessionId}`, "session");
+      log.warn("session capture did not find exact backend id", "session", { sessionId: input.sessionId });
       return;
     }
 
@@ -80,14 +77,16 @@ function scheduleBackendSessionCapture(input: {
       } else {
         recordSessionBackendSessionIdMetadata(input.sessionId, backendSessionId, input.projectRoot);
       }
-      debug(`captured backend id for ${input.sessionId}: ${backendSessionId}`, "session");
+      log.info("captured backend id", "session", {
+        sessionId: input.sessionId,
+        backendSessionId,
+      });
     } catch (error) {
-      debug(
-        `failed to record captured backend id for ${input.sessionId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        "session",
-      );
+      log.warn("failed to record captured backend id", "session", {
+        sessionId: input.sessionId,
+        backendSessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   };
   const timer = setTimeout(attempt, delayMs);
@@ -296,6 +295,10 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
   const sessionsToResume = toolFilter
     ? state.sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter)
     : state.sessions;
+  log.info("resuming saved sessions", "session", {
+    requestedTool: toolFilter,
+    count: sessionsToResume.length,
+  });
 
   if (sessionsToResume.length === 0) {
     console.error(`No saved sessions found for tool "${toolFilter}". Starting fresh.`);
@@ -308,7 +311,10 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
   for (const saved of sessionsToResume) {
     const backendSessionId = saved.backendSessionId ?? metadata[saved.id]?.backendSessionId;
     if (ownedByOthers.has(saved.id) || (backendSessionId && ownedByOthers.has(backendSessionId))) {
-      debug(`skipping resume of ${saved.id} — owned by another instance`, "session");
+      log.warn("skipping resume owned by another instance", "session", {
+        sessionId: saved.id,
+        backendSessionId,
+      });
       continue;
     }
 
@@ -323,7 +329,13 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
     }
     const resumeArgs = toolCfg.resumeArgs!.map((a: string) => a.replace("{sessionId}", backendSessionId!));
     const args = host.sessionBootstrap.composeToolArgs(toolCfg, resumeArgs, saved.args);
-    debug(`resuming ${saved.command} with backendSessionId=${backendSessionId}`, "session");
+    log.info("resuming session", "session", {
+      sessionId: saved.id,
+      command: saved.command,
+      backendSessionId,
+      toolConfigKey: saved.toolConfigKey,
+      worktreePath: saved.worktreePath,
+    });
     host.createSession(
       saved.command,
       args,
