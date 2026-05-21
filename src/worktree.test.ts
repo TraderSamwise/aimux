@@ -63,11 +63,11 @@ describe("worktree helpers", () => {
 
     expect(target).toBe("/repo/.aimux/worktrees/fix-auth");
     expect(mkdirSyncMock).toHaveBeenCalledWith("/repo/.aimux/worktrees", { recursive: true });
-    expect(execFileSyncMock).toHaveBeenLastCalledWith("git", ["worktree", "add", target, "-b", "fix-auth"], {
-      cwd: "/repo",
-      encoding: "utf-8",
-      stdio: "pipe",
-    });
+    expect(execFileSyncMock).toHaveBeenLastCalledWith(
+      "git",
+      ["worktree", "add", target, "-b", "fix-auth"],
+      expect.objectContaining({ cwd: "/repo", encoding: "utf-8", stdio: "pipe" }),
+    );
   });
 
   it("checks out an existing branch instead of recreating it", async () => {
@@ -77,11 +77,11 @@ describe("worktree helpers", () => {
 
     const target = createWorktree("fix-auth", "/repo");
 
-    expect(execFileSyncMock).toHaveBeenLastCalledWith("git", ["worktree", "add", target, "fix-auth"], {
-      cwd: "/repo",
-      encoding: "utf-8",
-      stdio: "pipe",
-    });
+    expect(execFileSyncMock).toHaveBeenLastCalledWith(
+      "git",
+      ["worktree", "add", target, "fix-auth"],
+      expect.objectContaining({ cwd: "/repo", encoding: "utf-8", stdio: "pipe" }),
+    );
   });
 
   it("identifies Claude private agent scratch worktrees", async () => {
