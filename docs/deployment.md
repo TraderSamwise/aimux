@@ -34,6 +34,12 @@ wrangler secret put CLERK_SECRET_KEY
 # e.g. `openssl rand -base64 48` or `head -c 48 /dev/urandom | base64`
 wrangler secret put RELAY_TOKEN_SECRET
 
+# Set allowed origins for the /cli/issue-token endpoint. This restricts
+# which web-app origins can mint daemon tokens via cross-origin POST.
+# Comma-separated list of origins (scheme + host + port).
+wrangler secret put CLI_TOKEN_ALLOWED_ORIGINS
+# e.g. https://aimux.com,https://staging.aimux.com
+
 # Deploy (dev)
 wrangler deploy
 
