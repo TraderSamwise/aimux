@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { initProject, loadConfig } from "../config.js";
+import { initProject, loadConfig, type SessionCaptureConfig } from "../config.js";
 import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
@@ -15,8 +15,17 @@ import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
-import { clearSessionTranscriptPath, loadMetadataState } from "../metadata-store.js";
+import {
+  clearSessionTranscriptPath,
+  loadMetadataState,
+  recordSessionBackendSessionIdMetadata,
+} from "../metadata-store.js";
 import type { SessionTeamMetadata } from "../team.js";
+import {
+  captureBackendSessionIdFromSessionFiles,
+  extractCodexBackendSessionIdFromArgs,
+} from "./session-capture.js";
+export { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
 
 type SessionLaunchHost = any;
 
@@ -39,6 +48,51 @@ const CODEX_OPTIONS_WITH_VALUE = new Set([
   "-s",
   "--sandbox",
 ]);
+
+function scheduleBackendSessionCapture(input: {
+  host: SessionLaunchHost;
+  sessionId: string;
+  projectRoot: string;
+  capture?: SessionCaptureConfig;
+  startedAtMs: number;
+}): void {
+  if (!input.capture) return;
+  const delayMs = Math.max(0, input.capture.delayMs ?? 0);
+  const maxWaitMs = Math.max(delayMs, 60_000);
+  const deadlineMs = input.startedAtMs + maxWaitMs;
+  const attempt = () => {
+    const backendSessionId = captureBackendSessionIdFromSessionFiles(input.capture!, input.sessionId, {
+      startedAtMs: input.startedAtMs,
+    });
+    if (!backendSessionId) {
+      if (Date.now() < deadlineMs) {
+        const retry = setTimeout(attempt, 1000);
+        retry.unref?.();
+        return;
+      }
+      debug(`session capture did not find exact backend id for ${input.sessionId}`, "session");
+      return;
+    }
+
+    try {
+      if (typeof input.host.recordSessionBackendSessionId === "function") {
+        input.host.recordSessionBackendSessionId(input.sessionId, backendSessionId);
+      } else {
+        recordSessionBackendSessionIdMetadata(input.sessionId, backendSessionId, input.projectRoot);
+      }
+      debug(`captured backend id for ${input.sessionId}: ${backendSessionId}`, "session");
+    } catch (error) {
+      debug(
+        `failed to record captured backend id for ${input.sessionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        "session",
+      );
+    }
+  };
+  const timer = setTimeout(attempt, delayMs);
+  timer.unref?.();
+}
 
 function firstCodexPositionalArg(args: string[]): string | undefined {
   let skipNext = false;
@@ -383,10 +437,17 @@ export function createSession(
     toolCfg && toolConfigKey === "claude" && toolCfg.command === command
       ? extractClaudeBackendSessionIdFromArgs(args)
       : undefined;
+  const explicitCodexBackendSessionId =
+    toolCfg && toolConfigKey === "codex" && toolCfg.command === command
+      ? extractCodexBackendSessionIdFromArgs(args)
+      : undefined;
   const effectiveSuppressStartupPreamble = suppressStartupPreamble;
   const effectiveSessionIdFlag = isClaudeResumeStyleLaunch ? undefined : sessionIdFlag;
   const backendSessionId =
-    backendSessionIdOverride ?? explicitClaudeBackendSessionId ?? (effectiveSessionIdFlag ? randomUUID() : undefined);
+    backendSessionIdOverride ??
+    explicitClaudeBackendSessionId ??
+    explicitCodexBackendSessionId ??
+    (effectiveSessionIdFlag ? randomUUID() : undefined);
   const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;
 
   const preamble = effectiveSuppressStartupPreamble
@@ -500,6 +561,15 @@ export function createSession(
   session.backendSessionId = backendSessionId;
   if (session instanceof TmuxSessionTransport) {
     host.syncTmuxWindowMetadata(sessionId);
+  }
+  if (!backendSessionId) {
+    scheduleBackendSessionCapture({
+      host,
+      sessionId,
+      projectRoot,
+      capture: toolCfg?.sessionCapture,
+      startedAtMs: sessionStartTime,
+    });
   }
 
   host.activeIndex = host.sessions.length - 1;

@@ -271,6 +271,80 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("surfaces partial teammate restore failures after restoring the parent agent", async () => {
+    const session = { id: "parent-1", command: "claude", label: "claude" };
+    const sessions = [[], [{ ...session, status: "waiting", tmuxWindowId: "@21" }]];
+    let sessionIndex = 0;
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => ({
+        ok: true,
+        warning: "Failed to resume 2 teammates",
+        teammateFailures: [
+          { sessionId: "codex-1", error: "missing backend session id" },
+          { sessionId: "codex-2", error: "missing backend session id" },
+        ],
+      })),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.dashboardPendingActions.getSessionAction("parent-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restored claude");
+    expect(host.showDashboardError).toHaveBeenCalledWith("Restored \"claude\" with teammate issues", [
+      "codex-1: missing backend session id",
+      "codex-2: missing backend session id",
+      "Stale teammates remain offline; create a new team to replace them.",
+    ]);
+  });
+
+  it("does not surface bare teammate ids when partial restore failures are unstructured", async () => {
+    const session = { id: "parent-1", command: "claude", label: "claude" };
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async () => ({
+        ok: true,
+        warning:
+          'Failed to resume 2 teammates: codex-1: Cannot restore session "codex-1"; codex-2: Cannot restore session "codex-2"',
+        teammateFailures: [{ sessionId: "codex-1" }, { sessionId: "codex-2" }],
+      })),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() => [{ ...session, status: "waiting", tmuxWindowId: "@21" }]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.showDashboardError).toHaveBeenCalledWith("Restored \"claude\" with teammate issues", [
+      'Failed to resume 2 teammates: codex-1: Cannot restore session "codex-1"; codex-2: Cannot restore session "codex-2"',
+      "Stale teammates remain offline; create a new team to replace them.",
+    ]);
+  });
+
   it("treats a live runtime as successful resume even if the rendered row stays stale", async () => {
     const session = { id: "sess-1", command: "codex", label: "codex" };
     const sessions = [

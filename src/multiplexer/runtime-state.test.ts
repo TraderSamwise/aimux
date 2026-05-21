@@ -130,6 +130,7 @@ describe("resumeOfflineSession", () => {
       toolConfigKey: "codex",
       args: [],
       worktreePath: repoRoot,
+      createdAt: new Date().toISOString(),
     });
 
     expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
@@ -146,6 +147,74 @@ describe("resumeOfflineSession", () => {
       undefined,
       repoRoot,
       "native-session",
+      "codex-1",
+      true,
+      true,
+      undefined,
+    ]);
+  });
+
+  it("repairs a missing Codex backend id from the native session file before refusing restore", () => {
+    const captureDir = join(repoRoot, "codex-sessions");
+    mkdirSync(captureDir, { recursive: true });
+    writeFileSync(
+      join(captureDir, "019e4837-66d5-7ab2-9bf6-bff1f958ecae.jsonl"),
+      '{"message":"This is an aimux-managed session with session ID codex-1"}\n',
+    );
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux", "config.json"),
+      JSON.stringify({
+        tools: {
+          codex: {
+            sessionCapture: {
+              dir: captureDir,
+              pattern: "([0-9a-f-]+)\\.jsonl$",
+              delayMs: 0,
+            },
+          },
+        },
+      }),
+    );
+    const createSession = vi.fn();
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-1" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: {
+        canResumeWithBackendSessionId: vi.fn(() => true),
+      },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      saveState: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession,
+    };
+
+    resumeOfflineSession(host, {
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      worktreePath: repoRoot,
+      createdAt: new Date().toISOString(),
+    });
+
+    expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex" }),
+      "019e4837-66d5-7ab2-9bf6-bff1f958ecae",
+    );
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession.mock.calls[0]).toMatchObject([
+      "codex",
+      expect.arrayContaining(["resume", "019e4837-66d5-7ab2-9bf6-bff1f958ecae"]),
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      "019e4837-66d5-7ab2-9bf6-bff1f958ecae",
       "codex-1",
       true,
       true,
