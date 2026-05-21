@@ -1109,7 +1109,7 @@ export class MetadataServer {
         const planPath = join(getPlansDir(), `${sessionId}.md`);
         try {
           const content = readFileSync(planPath, "utf8");
-          send(res, 200, { ok: true, sessionId, path: planPath, content });
+          send(res, 200, { ok: true, sessionId, content });
         } catch (err: any) {
           if (err?.code === "ENOENT") {
             send(res, 404, { ok: false, error: "Plan not found" });
@@ -1139,7 +1139,7 @@ export class MetadataServer {
         const tmpPath = join(dir, `.${sessionId}.${randomUUID()}.tmp`);
         writeFileSync(tmpPath, body.content, "utf8");
         renameSync(tmpPath, planPath);
-        send(res, 200, { ok: true, sessionId, path: planPath });
+        send(res, 200, { ok: true, sessionId });
         return;
       }
 

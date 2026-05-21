@@ -1863,22 +1863,19 @@ describe("MetadataServer plan endpoints", () => {
       body: JSON.stringify({ content: "# Plan A\n\nFirst draft." }),
     });
     expect(putRes.status).toBe(200);
-    const putBody = (await putRes.json()) as { ok: boolean; sessionId: string; path: string };
+    const putBody = (await putRes.json()) as { ok: boolean; sessionId: string };
     expect(putBody.ok).toBe(true);
     expect(putBody.sessionId).toBe("session-a");
-    expect(putBody.path).toBe(join(getPlansDir(), "session-a.md"));
 
     const getRes = await fetch(`${base}/plans/session-a`);
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as {
       ok: boolean;
       sessionId: string;
-      path: string;
       content: string;
     };
     expect(getBody.ok).toBe(true);
     expect(getBody.sessionId).toBe("session-a");
-    expect(getBody.path).toBe(putBody.path);
     expect(getBody.content).toBe("# Plan A\n\nFirst draft.");
   });
 
@@ -1979,9 +1976,9 @@ describe("MetadataServer plan endpoints", () => {
       body: JSON.stringify({ content: "hello" }),
     });
     expect(putRes.status).toBe(200);
-    const body = (await putRes.json()) as { ok: boolean; path: string };
+    const body = (await putRes.json()) as { ok: boolean; sessionId: string };
     expect(body.ok).toBe(true);
-    expect(body.path).toBe(join(getPlansDir(), "session-f.md"));
-    expect(readFileSync(body.path, "utf8")).toBe("hello");
+    expect(body.sessionId).toBe("session-f");
+    expect(readFileSync(join(getPlansDir(), "session-f.md"), "utf8")).toBe("hello");
   });
 });
