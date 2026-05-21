@@ -81,8 +81,17 @@ function parseWorktreeList(output: string): WorktreeInfo[] {
  * Uses `git worktree list --porcelain` — the first entry is always the main worktree.
  */
 export function findMainRepo(cwd?: string): string {
+  // Strip inherited GIT_* env so git honors `cwd` even when invoked from a
+  // context (e.g. git hook) where the parent set GIT_DIR/GIT_WORK_TREE.
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_INDEX_FILE;
+  delete env.GIT_OBJECT_DIRECTORY;
+  delete env.GIT_COMMON_DIR;
   const output = execSync("git worktree list --porcelain", {
     cwd: cwd ?? process.cwd(),
+    env,
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -91,6 +100,7 @@ export function findMainRepo(cwd?: string): string {
   if (!match) {
     return execSync("git rev-parse --show-toplevel", {
       cwd: cwd ?? process.cwd(),
+      env,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
