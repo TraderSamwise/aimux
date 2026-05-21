@@ -157,6 +157,23 @@ export class RelayObject extends DurableObject<Env> {
     const tags = this.ctx.getTags(ws);
     if (tags.includes("daemon") && this.daemonWs === ws) {
       this.daemonWs = null;
+      // Fail every in-flight request immediately instead of waiting for
+      // the TTL — the daemon that was going to answer just disappeared.
+      for (const [id, entry] of this.pendingRequests) {
+        try {
+          entry.client.send(
+            JSON.stringify({
+              id,
+              type: "response",
+              status: 502,
+              body: { ok: false, error: "Daemon connection lost" },
+            }),
+          );
+        } catch {
+          // client gone too — nothing to deliver
+        }
+      }
+      this.pendingRequests.clear();
       this.broadcastToClients({ type: "daemon_status", online: false });
     } else {
       this.clientSockets.delete(ws);
