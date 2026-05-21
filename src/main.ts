@@ -1361,8 +1361,13 @@ program
         // future startup, so this isn't fatal.
       }
     }
-    const cleared = clearCredentials();
-    console.log(cleared ? "✓ Logged out. Remote access disabled." : "Not logged in.");
+    const result = clearCredentials();
+    if (result === "cleared") console.log("✓ Logged out. Remote access disabled.");
+    else if (result === "none") console.log("Not logged in.");
+    else {
+      console.error("Failed to remove credentials file — check permissions.");
+      process.exitCode = 1;
+    }
   });
 
 program

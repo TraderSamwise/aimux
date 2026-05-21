@@ -38,8 +38,9 @@ function isAllowedCallback(raw: string): boolean {
 }
 
 export default function CliAuthScreen() {
-  const params = useLocalSearchParams<{ callback?: string }>();
+  const params = useLocalSearchParams<{ callback?: string; state?: string }>();
   const callback = typeof params.callback === "string" ? params.callback : null;
+  const loginState = typeof params.state === "string" ? params.state : null;
   const { isSignedIn, isLoaded, getToken, userId } = useAuth();
   const [phase, setPhase] = useState<Phase>("checking");
   const [error, setError] = useState<string>("");
@@ -95,14 +96,14 @@ export default function CliAuthScreen() {
         if (cancelled) return;
         setPhase("done");
         redirectToCallback(
-          `token=${encodeURIComponent(data.token)}&userId=${encodeURIComponent(userId ?? "")}`,
+          `token=${encodeURIComponent(data.token)}&userId=${encodeURIComponent(userId ?? "")}&state=${encodeURIComponent(loginState ?? "")}`,
         );
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
         setPhase("error");
-        redirectToCallback(`error=${encodeURIComponent(msg)}`);
+        redirectToCallback(`error=${encodeURIComponent(msg)}&state=${encodeURIComponent(loginState ?? "")}`);
       }
     })();
     return () => {
