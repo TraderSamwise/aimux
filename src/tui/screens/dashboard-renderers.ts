@@ -59,7 +59,7 @@ function summarizeTeammate(
 ): string {
   const identity = session.team?.label ?? session.label ?? session.command;
   const role = session.team?.role ?? session.role;
-  const status = session.semantic?.presentation.statusLabel ?? derivedStatusLabel(session);
+  const status = derivedStatusLabel(session);
   const hint = session.semantic?.presentation.compactHint;
   return [role ? `${identity}(${role})` : identity, status, hint && hint !== status ? hint : undefined]
     .filter(Boolean)

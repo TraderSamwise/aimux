@@ -463,13 +463,11 @@ if action == "team":
         parse_time(session.get("createdAt")),
         session.get("id") or "",
     ))
+    direct = [session for session in direct if session.get("tmuxWindowId")]
     if not direct:
-        log(f"no direct teammates for currentId={current_id!r}")
+        log(f"no direct live teammates for currentId={current_id!r}")
         raise SystemExit(1)
-    target = direct[0].get("tmuxWindowId") or ""
-    if not target:
-        log(f"first direct teammate has no tmux window id={direct[0].get('id')!r} status={direct[0].get('status')!r}")
-        raise SystemExit(1)
+    target = direct[0].get("tmuxWindowId")
     log(f"target teammate window={target!r} id={direct[0].get('id')!r}")
     print(target)
     raise SystemExit(0)

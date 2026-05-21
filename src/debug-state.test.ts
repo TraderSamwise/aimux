@@ -150,4 +150,24 @@ describe("buildDebugStateReport", () => {
     expect(report.targetResolution.status).toBe("ambiguous");
     expect(report.targetResolution.entityCount).toBe(2);
   });
+
+  it("resolves targets found only in notifications", () => {
+    const paths = makePaths();
+    writeJson(paths.notificationsPath, {
+      notifications: [{ id: "notice-1", sessionId: "codex-a1", targetKey: "session:codex-a1" }],
+    });
+
+    const report = buildDebugStateReport({
+      target: "codex-a1",
+      paths,
+      tmuxWindows: [],
+      worktrees: [],
+    });
+
+    expect(report.targetResolution.status).toBe("matched");
+    expect(report.targetResolution.matches).toEqual([
+      expect.objectContaining({ kind: "notification", source: "notifications", id: "notice-1" }),
+    ]);
+    expect(report.sources.notifications.value?.notifications).toHaveLength(1);
+  });
 });

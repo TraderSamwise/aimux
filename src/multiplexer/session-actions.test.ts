@@ -471,6 +471,30 @@ describe("session actions", () => {
     );
   });
 
+  it("rejects teammate initial prompts before creating sessions when agent input is unsupported", async () => {
+    const parent = { id: "codex-parent", command: "codex", exited: false };
+    const host: any = {
+      syncSessionsFromState: vi.fn(),
+      sessions: [parent],
+      offlineSessions: [],
+      sessionToolKeys: new Map([["codex-parent", "codex"]]),
+      sessionWorktreePaths: new Map(),
+      createSession: vi.fn(() => ({ id: "codex-worker" })),
+      sessionTmuxTargets: new Map(),
+    };
+
+    await expect(
+      createTeammateAgent(host, {
+        parentSessionId: "codex-parent",
+        role: "coder",
+        initialPrompt: "Investigate the failing test.",
+        open: false,
+      }),
+    ).rejects.toThrow("Initial teammate prompt requires agent input support");
+
+    expect(host.createSession).not.toHaveBeenCalled();
+  });
+
   it("rejects teammate creation for missing or nested parents", async () => {
     const host: any = {
       syncSessionsFromState: vi.fn(),

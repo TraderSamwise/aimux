@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 
 import type { SessionCaptureConfig } from "../config.js";
@@ -29,13 +29,29 @@ function captureDates(now: Date, lookbackDays: number): Date[] {
 }
 
 function readSessionCaptureSample(path: string): string {
-  const text = readFileSync(path, "utf8");
-  if (text.length <= SESSION_CAPTURE_MAX_BYTES * 2) return text;
-  return `${text.slice(0, SESSION_CAPTURE_MAX_BYTES)}\n${text.slice(text.length - SESSION_CAPTURE_MAX_BYTES)}`;
+  const size = statSync(path).size;
+  if (size <= SESSION_CAPTURE_MAX_BYTES * 2) return readFileSync(path, "utf8");
+
+  const fd = openSync(path, "r");
+  try {
+    const head = Buffer.alloc(SESSION_CAPTURE_MAX_BYTES);
+    const tail = Buffer.alloc(SESSION_CAPTURE_MAX_BYTES);
+    readSync(fd, head, 0, SESSION_CAPTURE_MAX_BYTES, 0);
+    readSync(fd, tail, 0, SESSION_CAPTURE_MAX_BYTES, Math.max(0, size - SESSION_CAPTURE_MAX_BYTES));
+    return `${head.toString("utf8")}\n${tail.toString("utf8")}`;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function hasExactAimuxSessionPreamble(text: string, sessionId: string): boolean {
-  return text.includes(`This is an aimux-managed session with session ID ${sessionId}`);
+  return new RegExp(`This is an aimux-managed session with session ID ${escapeRegex(sessionId)}(?![A-Za-z0-9_-])`).test(
+    text,
+  );
 }
 
 export function captureBackendSessionIdFromSessionFiles(

@@ -45,4 +45,16 @@ describe("postToProjectService", () => {
     expect(mocks.ensureProjectService).toHaveBeenCalledWith(process.cwd());
     expect(mocks.requestJson).toHaveBeenCalledTimes(2);
   });
+
+  it("does not retry non-retryable HTTP failures", async () => {
+    mocks.requestJson.mockResolvedValueOnce({ status: 409, json: { ok: false, error: "already exists" } });
+    const { postToProjectService } = await import("./dashboard-control.js");
+
+    await expect(
+      postToProjectService({ dashboardServiceRecovery: null }, "/agents/spawn", { sessionId: "claude-1" }),
+    ).rejects.toThrow("already exists");
+
+    expect(mocks.ensureProjectService).not.toHaveBeenCalled();
+    expect(mocks.requestJson).toHaveBeenCalledTimes(1);
+  });
 });
