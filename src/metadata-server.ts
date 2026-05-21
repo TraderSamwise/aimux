@@ -792,6 +792,16 @@ export class MetadataServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+    if (req.method === "OPTIONS") {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
     if (req.method === "GET" && url.pathname === "/events") {
