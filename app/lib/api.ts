@@ -47,7 +47,7 @@ async function callJson<T>(url: string, init: RequestInit, opts?: ApiOpts): Prom
   return (await res.json()) as T;
 }
 
-// ── Daemon (port 9876) ────────────────────────────────────────────────────
+// ── Daemon (port 43190) ───────────────────────────────────────────────────
 
 export interface DaemonHealth {
   ok: boolean;
