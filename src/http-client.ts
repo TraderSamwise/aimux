@@ -1,5 +1,6 @@
 import http from "node:http";
 import https from "node:https";
+import { log } from "./debug.js";
 
 export interface HttpJsonResponse<T = any> {
   status: number;
@@ -16,6 +17,7 @@ export async function requestJson<T = any>(
   } = {},
 ): Promise<HttpJsonResponse<T>> {
   const url = new URL(urlString);
+  const logUrl = `${url.origin}${url.pathname}`;
   const transport = url.protocol === "https:" ? https : http;
   const bodyString =
     options.body === undefined
@@ -35,10 +37,11 @@ export async function requestJson<T = any>(
   }
 
   return await new Promise<HttpJsonResponse<T>>((resolve, reject) => {
+    const method = options.method ?? (bodyString === undefined ? "GET" : "POST");
     const req = transport.request(
       url,
       {
-        method: options.method ?? (bodyString === undefined ? "GET" : "POST"),
+        method,
         headers,
         agent: false,
       },
@@ -51,8 +54,22 @@ export async function requestJson<T = any>(
           try {
             json = raw ? (JSON.parse(raw) as T) : ({} as T);
           } catch (error) {
+            log.warn("http json parse failed", "http", {
+              method,
+              url: logUrl,
+              status: res.statusCode ?? 0,
+              bytes: Buffer.byteLength(raw),
+              error: error instanceof Error ? error.message : String(error),
+            });
             reject(error);
             return;
+          }
+          if ((res.statusCode ?? 0) >= 400) {
+            log.warn("http request returned error status", "http", {
+              method,
+              url: logUrl,
+              status: res.statusCode ?? 0,
+            });
           }
           resolve({
             status: res.statusCode ?? 0,
@@ -61,8 +78,20 @@ export async function requestJson<T = any>(
         });
       },
     );
-    req.on("error", reject);
+    req.on("error", (error) => {
+      log.warn("http request failed", "http", {
+        method,
+        url: logUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      reject(error);
+    });
     req.setTimeout(options.timeoutMs ?? 0, () => {
+      log.warn("http request timed out", "http", {
+        method,
+        url: logUrl,
+        timeoutMs: options.timeoutMs ?? 0,
+      });
       req.destroy(new Error(`request timed out after ${options.timeoutMs ?? 0}ms`));
     });
     if (bodyString !== undefined) {

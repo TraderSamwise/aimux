@@ -43,4 +43,40 @@ describe("config", () => {
 
     expect(loadConfig().tools.claude.resumeByBackendSessionId).toBe(true);
   });
+
+  it("defaults logging to disabled structured project logs", () => {
+    expect(loadConfig().logging).toEqual({
+      enabled: false,
+      level: "info",
+      categories: ["*"],
+      maxBytes: 10_000_000,
+      maxFiles: 5,
+    });
+  });
+
+  it("deep merges logging config overrides", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          logging: {
+            enabled: true,
+            level: "debug",
+            categories: ["daemon", "session"],
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    expect(loadConfig().logging).toEqual({
+      enabled: true,
+      level: "debug",
+      categories: ["daemon", "session"],
+      maxBytes: 10_000_000,
+      maxFiles: 5,
+    });
+  });
 });

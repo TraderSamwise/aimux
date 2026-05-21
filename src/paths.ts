@@ -184,9 +184,45 @@ export function getDaemonStatePath(): string {
   return join(getDaemonDir(), "state.json");
 }
 
+export function getDaemonLogsDir(): string {
+  return join(getDaemonDir(), "logs");
+}
+
+export function getDaemonLogPath(): string {
+  return join(getDaemonLogsDir(), "daemon.jsonl");
+}
+
+export function getDaemonStdioLogPath(): string {
+  return join(getDaemonLogsDir(), "daemon-stdio.log");
+}
+
 export function getProjectStateDir(): string {
   assertInitialized();
   return join(getGlobalAimuxDir(), "projects", _projectId!);
+}
+
+export function getProjectLogsDir(): string {
+  return join(getProjectStateDir(), "logs");
+}
+
+export function getProjectLogPath(): string {
+  return join(getProjectLogsDir(), "aimux.jsonl");
+}
+
+export function getProjectServiceStdioLogPath(): string {
+  return join(getProjectLogsDir(), "project-service-stdio.log");
+}
+
+export function getProjectLogsDirFor(cwd: string): string {
+  return join(getProjectStateDirFor(cwd), "logs");
+}
+
+export function getProjectLogPathFor(cwd: string): string {
+  return join(getProjectLogsDirFor(cwd), "aimux.jsonl");
+}
+
+export function getProjectServiceStdioLogPathFor(cwd: string): string {
+  return join(getProjectLogsDirFor(cwd), "project-service-stdio.log");
 }
 
 export function getStatePath(): string {
