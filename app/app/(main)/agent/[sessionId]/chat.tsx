@@ -35,7 +35,6 @@ export default function ChatScreen() {
   const [token, setToken] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
-  const lastEventTsRef = useRef<string | null>(null);
 
   // Keep selectedSessionId in the projects store in sync with the route param so the sidebar highlights it.
   useEffect(() => {
@@ -84,7 +83,6 @@ export default function ChatScreen() {
       sessionId,
       token,
       onEvent: (event) => {
-        if ("ts" in event && typeof event.ts === "string") lastEventTsRef.current = event.ts;
         ingestEvent(event);
       },
       onError: (err) => {

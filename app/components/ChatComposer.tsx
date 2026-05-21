@@ -127,10 +127,15 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
         setError(msg);
         return;
       }
+      // Server operation state is queued|applied|submitted|failed; client tracks
+      // sending|submitted|failed. Anything not failed has been accepted and is
+      // effectively submitted from the UI's perspective.
+      const opState = result.operation?.state;
+      const deliveryState: "submitted" | "failed" = opState === "failed" ? "failed" : "submitted";
       updatePending({
         sessionId,
         clientMessageId,
-        patch: { deliveryState: (result.operation?.state as "submitted") ?? "submitted" },
+        patch: { deliveryState },
       });
       setDraft("");
       setDraftImages([]);
