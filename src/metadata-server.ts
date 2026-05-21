@@ -1103,7 +1103,13 @@ export class MetadataServer {
 
     try {
       if (req.method === "GET" && url.pathname.startsWith("/plans/")) {
-        const raw = decodeURIComponent(url.pathname.slice("/plans/".length));
+        let raw: string;
+        try {
+          raw = decodeURIComponent(url.pathname.slice("/plans/".length));
+        } catch {
+          send(res, 400, { ok: false, error: "invalid sessionId" });
+          return;
+        }
         const validation = validateSessionId(raw);
         if (!validation.ok) {
           send(res, 400, { ok: false, error: "invalid sessionId" });
@@ -1125,7 +1131,13 @@ export class MetadataServer {
       }
 
       if (req.method === "PUT" && url.pathname.startsWith("/plans/")) {
-        const raw = decodeURIComponent(url.pathname.slice("/plans/".length));
+        let raw: string;
+        try {
+          raw = decodeURIComponent(url.pathname.slice("/plans/".length));
+        } catch {
+          send(res, 400, { ok: false, error: "invalid sessionId" });
+          return;
+        }
         const validation = validateSessionId(raw);
         if (!validation.ok) {
           send(res, 400, { ok: false, error: "invalid sessionId" });

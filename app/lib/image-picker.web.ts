@@ -22,22 +22,31 @@ export async function pickImages(): Promise<PickedImage[] | null> {
     input.accept = "image/*";
     input.multiple = true;
     input.onchange = async () => {
-      const files = Array.from(input.files ?? []);
-      if (files.length === 0) {
+      try {
+        const files = Array.from(input.files ?? []);
+        if (files.length === 0) {
+          resolve(null);
+          return;
+        }
+        const out: PickedImage[] = [];
+        for (const file of files) {
+          const contentBase64 = await fileToBase64(file);
+          out.push({
+            filename: file.name || "image",
+            mimeType: file.type || "application/octet-stream",
+            contentBase64,
+          });
+        }
+        resolve(out);
+      } catch {
         resolve(null);
-        return;
       }
-      const out: PickedImage[] = [];
-      for (const file of files) {
-        const contentBase64 = await fileToBase64(file);
-        out.push({
-          filename: file.name || "image",
-          mimeType: file.type || "application/octet-stream",
-          contentBase64,
-        });
-      }
-      resolve(out);
     };
+    window.addEventListener(
+      "focus",
+      () => setTimeout(() => { if (!input.files?.length) resolve(null); }, 500),
+      { once: true },
+    );
     input.click();
   });
 }
