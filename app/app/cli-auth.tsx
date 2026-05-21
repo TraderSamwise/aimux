@@ -11,12 +11,28 @@ import { env } from "@/lib/env";
 // daemon token, then redirect the browser to the localhost callback so the CLI
 // can capture it. Web-only — the CLI flow never runs on native.
 
-type Phase = "checking" | "need-signin" | "issuing" | "done" | "error";
+type Phase = "checking" | "need-signin" | "issuing" | "error" | "invalid-callback" | "done";
 
 function relayHttpBase(): string | null {
   const ws = env.AIMUX_RELAY_URL;
   if (!ws) return null;
   return ws.replace(/^ws/, "http").replace(/\/$/, "");
+}
+
+// Daemon tokens are powerful — we must not redirect them anywhere except a
+// localhost loopback callback server spun up by the local `aimux login` CLI.
+function isAllowedCallback(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:") return false;
+  if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost" && url.hostname !== "[::1]")
+    return false;
+  if (url.pathname !== "/callback") return false;
+  return true;
 }
 
 export default function CliAuthScreen() {
@@ -39,6 +55,13 @@ export default function CliAuthScreen() {
     if (!callback) {
       setError("Missing callback parameter");
       setPhase("error");
+      return;
+    }
+    if (!isAllowedCallback(callback)) {
+      // Refuse outright — never even attempt to mint a token for an unsafe
+      // callback target, and never redirect anywhere we might leak it.
+      setError("Refusing to authorize: callback is not a localhost loopback URL.");
+      setPhase("invalid-callback");
       return;
     }
     if (LOCAL_MODE) {
@@ -128,7 +151,7 @@ export default function CliAuthScreen() {
           </Text>
         ) : null}
 
-        {phase === "error" ? (
+        {phase === "error" || phase === "invalid-callback" ? (
           <Text className="text-[14px] text-destructive text-center">{error}</Text>
         ) : null}
       </View>
