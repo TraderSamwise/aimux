@@ -645,7 +645,14 @@ program
   .option("--log-category <categories>", "Comma-separated log categories to include")
   .hook("preAction", async (_thisCommand, actionCommand) => {
     const opts = typeof actionCommand?.opts === "function" ? actionCommand.opts() : {};
-    const requestedProject = typeof opts.project === "string" ? opts.project : undefined;
+    const requestedProject =
+      typeof opts.project === "string"
+        ? opts.project
+        : typeof opts.projectRoot === "string"
+          ? opts.projectRoot
+          : typeof opts["project-root"] === "string"
+            ? opts["project-root"]
+            : undefined;
     const projectRoot = requestedProject ? resolveProjectRoot(pathResolve(requestedProject)) : undefined;
     await initPaths(projectRoot);
     configureLoggingForCommand(actionCommand);
