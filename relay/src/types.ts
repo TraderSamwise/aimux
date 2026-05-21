@@ -1,6 +1,7 @@
 export interface Env {
   RELAY: DurableObjectNamespace;
   CLERK_SECRET_KEY: string;
+  RELAY_TOKEN_SECRET: string;
 }
 
 export interface RelayRequest {
