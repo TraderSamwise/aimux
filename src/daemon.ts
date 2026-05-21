@@ -8,7 +8,8 @@ import { listDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { AUTH_ENABLED, ApiError, verifyApiUser } from "./auth.js";
-import { RelayClient } from "./relay-client.js";
+import { RelayClient, type RelayStatusSnapshot } from "./relay-client.js";
+import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 
 const DAEMON_PORT = 43190;
 const DAEMON_HOST = "127.0.0.1";
@@ -267,13 +268,38 @@ export class AimuxDaemon {
       });
     });
     this.refreshState();
+    this.connectRelayIfConfigured();
+  }
 
-    const relayUrl = process.env.AIMUX_RELAY_URL;
-    const relayToken = process.env.AIMUX_RELAY_TOKEN;
-    if (relayUrl && relayToken) {
+  // Resolve relay config from stored credentials (`aimux login`), with env-var
+  // overrides for advanced/CI use. Connects only when remote access is enabled.
+  private connectRelayIfConfigured(): void {
+    if (this.relayClient) return;
+    const creds = loadCredentials();
+    const relayUrl = process.env.AIMUX_RELAY_URL ?? creds?.relayUrl;
+    const relayToken = process.env.AIMUX_RELAY_TOKEN ?? creds?.token;
+    const enabled = creds ? creds.remoteEnabled : Boolean(process.env.AIMUX_RELAY_TOKEN);
+    if (relayUrl && relayToken && enabled) {
       this.relayClient = new RelayClient(relayUrl, relayToken, this);
       this.relayClient.connect();
     }
+  }
+
+  getRelayStatus(): RelayStatusSnapshot | { status: "off" } {
+    return this.relayClient?.getStatus() ?? { status: "off" };
+  }
+
+  enableRelay(): RelayStatusSnapshot | { status: "off" } {
+    setRemoteEnabled(true);
+    this.connectRelayIfConfigured();
+    return this.getRelayStatus();
+  }
+
+  disableRelay(): { status: "off" } {
+    setRemoteEnabled(false);
+    this.relayClient?.disconnect();
+    this.relayClient = null;
+    return { status: "off" };
   }
 
   stop(): void {
@@ -495,6 +521,18 @@ export class AimuxDaemon {
 
     if (method === "GET" && path === "/health") {
       return { status: 200, body: { ok: true, pid: process.pid, port: DAEMON_PORT } };
+    }
+
+    if (method === "GET" && path === "/relay/status") {
+      return { status: 200, body: { ok: true, relay: this.getRelayStatus() } };
+    }
+
+    if (method === "POST" && path === "/relay/enable") {
+      return { status: 200, body: { ok: true, relay: this.enableRelay() } };
+    }
+
+    if (method === "POST" && path === "/relay/disable") {
+      return { status: 200, body: { ok: true, relay: this.disableRelay() } };
     }
 
     if (method === "GET" && path === "/projects") {
