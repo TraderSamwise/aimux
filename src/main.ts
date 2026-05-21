@@ -147,6 +147,7 @@ function renderProjectServiceVersionHelp(error: ProjectServiceVersionError): str
 
 async function restartStaleControlPlane(projectRoot: string): Promise<void> {
   console.error(`aimux: restarting stale daemon-managed control plane for ${projectRoot}...`);
+  log.warn("restarting stale control plane", "runtime", { projectRoot });
   await stopDaemon();
   removeMetadataEndpoint(projectRoot);
   await ensureDaemonRunning();
@@ -192,9 +193,21 @@ async function waitForVerifiedProjectService(
         const health = await fetchProjectServiceHealth(endpoint);
         lastServiceInfo = health.serviceInfo ?? null;
         if (manifestsMatch(expected, health.serviceInfo)) {
+          log.info("project service verified", "runtime", {
+            projectRoot,
+            endpoint,
+            pid: health.pid,
+            elapsedMs: Date.now() - startedAt,
+          });
           return { endpoint, health };
         }
         lastError = `project service manifest mismatch: expected ${JSON.stringify(expected)} actual ${JSON.stringify(health.serviceInfo ?? null)}`;
+        log.warn("project service manifest mismatch", "runtime", {
+          projectRoot,
+          endpoint,
+          expected,
+          actual: health.serviceInfo ?? null,
+        });
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
         if (
@@ -205,6 +218,11 @@ async function waitForVerifiedProjectService(
             lastError.includes("socket hang up"))
         ) {
           respawnAttempted = true;
+          log.warn("respawning project service after connection failure", "runtime", {
+            projectRoot,
+            endpoint,
+            error: lastError,
+          });
           removeMetadataEndpoint(projectRoot);
           await ensureProjectService(projectRoot);
         }
@@ -215,6 +233,7 @@ async function waitForVerifiedProjectService(
         missingEndpointSince = Date.now();
       } else if (!respawnAttempted && Date.now() - missingEndpointSince >= 1000) {
         respawnAttempted = true;
+        log.warn("respawning project service after missing endpoint", "runtime", { projectRoot });
         await stopProjectService(projectRoot);
         removeMetadataEndpoint(projectRoot);
         await ensureProjectService(projectRoot);
@@ -694,11 +713,19 @@ program
       process.on("SIGTERM", shutdown);
       process.on("uncaughtException", (err) => {
         cleanupAll();
+        log.error("uncaught exception", "runtime", {
+          error: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        });
         console.error(err);
         process.exit(1);
       });
       process.on("unhandledRejection", (reason) => {
         cleanupAll();
+        log.error("unhandled rejection", "runtime", {
+          error: reason instanceof Error ? reason.message : String(reason),
+          stack: reason instanceof Error ? reason.stack : undefined,
+        });
         console.error(reason);
         process.exit(1);
       });
@@ -1297,11 +1324,19 @@ program
     process.on("SIGTERM", shutdown);
     process.on("uncaughtException", (err) => {
       cleanupAll();
+      log.error("project service uncaught exception", "runtime", {
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
       console.error(err);
       process.exit(1);
     });
     process.on("unhandledRejection", (reason) => {
       cleanupAll();
+      log.error("project service unhandled rejection", "runtime", {
+        error: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
       console.error(reason);
       process.exit(1);
     });
