@@ -109,7 +109,22 @@ export class RelayObject extends DurableObject<Env> {
   private sweepExpiredPending(): void {
     const now = Date.now();
     for (const [id, entry] of this.pendingRequests) {
-      if (entry.expiresAt < now) this.pendingRequests.delete(id);
+      if (entry.expiresAt >= now) continue;
+      this.pendingRequests.delete(id);
+      // Tell the waiting client the request never made it back, so it can
+      // fail-fast instead of hanging until its own transport timeout.
+      try {
+        entry.client.send(
+          JSON.stringify({
+            id,
+            type: "response",
+            status: 504,
+            body: { ok: false, error: "Daemon did not respond in time" },
+          }),
+        );
+      } catch {
+        // client has gone away — nothing to deliver
+      }
     }
   }
 
@@ -122,6 +137,9 @@ export class RelayObject extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    // Reap stale pending-request entries even when the daemon never sent a
+    // response — clients waiting on those ids get a 504 back here.
+    this.sweepExpiredPending();
     const allSockets = this.ctx.getWebSockets();
     for (const ws of allSockets) {
       try {
@@ -130,7 +148,7 @@ export class RelayObject extends DurableObject<Env> {
         this.removeSocket(ws);
       }
     }
-    if (allSockets.length > 0) {
+    if (allSockets.length > 0 || this.pendingRequests.size > 0) {
       this.ensureHeartbeat();
     }
   }
