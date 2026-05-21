@@ -29,7 +29,9 @@ function isAllowedCallback(raw: string): boolean {
     return false;
   }
   if (url.protocol !== "http:") return false;
-  if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost" && url.hostname !== "[::1]")
+  // URL.hostname strips the brackets from IPv6 literals, so the loopback
+  // comparison is against "::1", not "[::1]".
+  if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost" && url.hostname !== "::1")
     return false;
   if (url.pathname !== "/callback") return false;
   return true;
