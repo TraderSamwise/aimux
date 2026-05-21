@@ -230,8 +230,12 @@ export default function DashboardIndex() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const t = await getToken();
-      if (!cancelled) setToken(t);
+      try {
+        const t = await getToken();
+        if (!cancelled) setToken(t);
+      } catch {
+        if (!cancelled) setToken(null);
+      }
     })();
     return () => {
       cancelled = true;

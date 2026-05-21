@@ -36,6 +36,8 @@ export default function SignInScreen() {
           strategy: "email_code",
         });
         setNeedsVerification(true);
+      } else {
+        setError(`Sign in requires additional steps: ${result.status}`);
       }
     } catch (err: any) {
       setError(err.errors?.[0]?.longMessage ?? "Sign in failed");
