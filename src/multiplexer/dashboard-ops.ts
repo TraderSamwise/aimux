@@ -342,19 +342,18 @@ export async function spawnDashboardAgentWithFeedback(
     extraArgs?: string[];
   },
 ): Promise<void> {
+  const sessionSeed = buildPendingSessionSeed({
+    sessionId: input.sessionId,
+    tool: input.tool,
+    worktreePath: input.worktreePath,
+    pendingAction: "creating",
+  });
   await runDashboardSessionMutation(host, {
     sessionId: input.sessionId,
     pendingAction: "creating",
+    sessionSeed,
     onBeforeRequest: () => {
       host.preferDashboardEntrySelection("session", input.sessionId, input.worktreePath);
-      host.setPendingDashboardSessionAction(input.sessionId, "creating", {
-        sessionSeed: buildPendingSessionSeed({
-          sessionId: input.sessionId,
-          tool: input.tool,
-          worktreePath: input.worktreePath,
-          pendingAction: "creating",
-        }),
-      });
     },
     request: async () => {
       await host.postToProjectService(
@@ -386,19 +385,18 @@ export async function forkDashboardAgentWithFeedback(
     extraArgs?: string[];
   },
 ): Promise<void> {
+  const sessionSeed = buildPendingSessionSeed({
+    sessionId: input.targetSessionId,
+    tool: input.tool,
+    worktreePath: input.worktreePath,
+    pendingAction: "forking",
+  });
   await runDashboardSessionMutation(host, {
     sessionId: input.targetSessionId,
     pendingAction: "forking",
+    sessionSeed,
     onBeforeRequest: () => {
       host.preferDashboardEntrySelection("session", input.targetSessionId, input.worktreePath);
-      host.setPendingDashboardSessionAction(input.targetSessionId, "forking", {
-        sessionSeed: buildPendingSessionSeed({
-          sessionId: input.targetSessionId,
-          tool: input.tool,
-          worktreePath: input.worktreePath,
-          pendingAction: "forking",
-        }),
-      });
     },
     request: async () => {
       await host.postToProjectService(
