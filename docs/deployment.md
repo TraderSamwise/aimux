@@ -24,9 +24,15 @@ yarn install
 # Login to Cloudflare
 wrangler login
 
-# Set the Clerk secret key
+# Set the Clerk secret key (verifies app-side session JWTs)
 wrangler secret put CLERK_SECRET_KEY
 # Paste your sk_live_... key
+
+# Set the daemon-token signing key (HS256 secret used to mint + verify
+# long-lived daemon tokens from `aimux login`). Use a strong random
+# value — anything that compromises this lets an attacker forge tokens.
+# e.g. `openssl rand -base64 48` or `head -c 48 /dev/urandom | base64`
+wrangler secret put RELAY_TOKEN_SECRET
 
 # Deploy (dev)
 wrangler deploy
