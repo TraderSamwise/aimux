@@ -5,4 +5,7 @@ export const rawEnv = {
   get EXPO_PUBLIC_AIMUX_DAEMON_URL(): string | undefined {
     return process.env.EXPO_PUBLIC_AIMUX_DAEMON_URL;
   },
+  get EXPO_PUBLIC_AIMUX_RELAY_URL(): string | undefined {
+    return process.env.EXPO_PUBLIC_AIMUX_RELAY_URL;
+  },
 };

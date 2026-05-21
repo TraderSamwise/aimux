@@ -2,8 +2,10 @@ import React, { useEffect } from "react";
 import { Stack } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
-import { getDesktopState, listProjects } from "@/lib/api";
+import { getDesktopState, listProjects, setApiRelay } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { env } from "@/lib/env";
+import { RelayTransport } from "@/lib/relay-transport";
 import {
   desktopStateErrorFamily,
   desktopStateFamily,
@@ -14,6 +16,7 @@ import {
   selectedProjectEndpointAtom,
   selectedProjectPathAtom,
 } from "@/stores/projects";
+import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -24,6 +27,29 @@ export default function MainLayout() {
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
   const store = useStore();
   const { getToken } = useAuth();
+
+  // Relay transport lifecycle: connect when a relay URL is configured, mirror
+  // its status into the store, and register it with the API layer so requests
+  // route through the tunnel. No-op when EXPO_PUBLIC_AIMUX_RELAY_URL is unset.
+  useEffect(() => {
+    const relayUrl = env.AIMUX_RELAY_URL;
+    if (!relayUrl) {
+      store.set(relayConfiguredAtom, false);
+      store.set(relayStatusAtom, "disconnected");
+      return;
+    }
+    store.set(relayConfiguredAtom, true);
+    const transport = new RelayTransport(relayUrl, getToken);
+    const unsub = transport.onStatusChange((status) => store.set(relayStatusAtom, status));
+    setApiRelay(transport);
+    void transport.connect();
+    return () => {
+      unsub();
+      setApiRelay(null);
+      transport.disconnect();
+      store.set(relayStatusAtom, "disconnected");
+    };
+  }, [getToken, store]);
 
   // Poll /projects every 2s; reconcile into the projects atom.
   useEffect(() => {

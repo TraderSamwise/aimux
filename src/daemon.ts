@@ -14,6 +14,8 @@ import { listDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { getLoggingConfig, log } from "./debug.js";
+import { RelayClient, type RelayStatusSnapshot } from "./relay-client.js";
+import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 
 const DAEMON_PORT = 43190;
 const DAEMON_HOST = "127.0.0.1";
@@ -22,6 +24,10 @@ const PROJECT_SERVICE_STARTUP_GRACE_MS = 15_000;
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
+const PROXY_TIMEOUT_MS = 10_000;
+// `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
+// needs brackets) and metadata services bind to 127.0.0.1 anyway.
+const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
 
 export interface AimuxDaemonInfo {
   pid: number;
@@ -291,6 +297,7 @@ export async function projectServiceStatus(projectRoot: string): Promise<Project
 
 export class AimuxDaemon {
   private server: Server | null = null;
+  private relayClient: RelayClient | null = null;
   private readonly children = new Map<string, ChildProcess>();
   private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
   private state: DaemonState = loadDaemonState();
@@ -320,10 +327,47 @@ export class AimuxDaemon {
     });
     this.refreshState();
     log.info("daemon started", "daemon", { pid: process.pid, port: DAEMON_PORT });
+    this.connectRelayIfConfigured();
+  }
+
+  // Resolve relay config from stored credentials (`aimux login`), with env-var
+  // overrides for advanced/CI use. Connects only when remote access is enabled.
+  private connectRelayIfConfigured(): void {
+    const status = this.relayClient?.getStatus().status;
+    if (this.relayClient && status !== "auth_failed" && status !== "disconnected") return;
+    if (this.relayClient) this.relayClient.disconnect();
+    const creds = loadCredentials();
+    const relayUrl = process.env.AIMUX_RELAY_URL ?? creds?.relayUrl;
+    const relayToken = process.env.AIMUX_RELAY_TOKEN ?? creds?.token;
+    const hasEnvOverride = Boolean(process.env.AIMUX_RELAY_URL || process.env.AIMUX_RELAY_TOKEN);
+    const enabled = hasEnvOverride ? Boolean(relayUrl && relayToken) : Boolean(creds?.remoteEnabled);
+    if (relayUrl && relayToken && enabled) {
+      this.relayClient = new RelayClient(relayUrl, relayToken, this);
+      this.relayClient.connect();
+    }
+  }
+
+  getRelayStatus(): RelayStatusSnapshot | { status: "off" } {
+    return this.relayClient?.getStatus() ?? { status: "off" };
+  }
+
+  enableRelay(): RelayStatusSnapshot | { status: "off" } {
+    setRemoteEnabled(true);
+    this.connectRelayIfConfigured();
+    return this.getRelayStatus();
+  }
+
+  disableRelay(): { status: "off" } {
+    setRemoteEnabled(false);
+    this.relayClient?.disconnect();
+    this.relayClient = null;
+    return { status: "off" };
   }
 
   stop(): void {
     log.info("daemon stopping child services", "daemon", { projectCount: Object.keys(this.state.projects).length });
+    this.relayClient?.disconnect();
+    this.relayClient = null;
     for (const entry of Object.values(this.state.projects)) {
       try {
         process.kill(entry.pid, "SIGTERM");
@@ -571,16 +615,28 @@ export class AimuxDaemon {
     return existing;
   }
 
-  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async routeRequest(method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
     this.refreshState();
-    const url = new URL(req.url ?? "/", `http://${DAEMON_HOST}:${DAEMON_PORT}`);
+    const routeUrl = new URL(path, `http://${DAEMON_HOST}:${DAEMON_PORT}`);
+    const pathname = routeUrl.pathname;
 
-    if (req.method === "GET" && url.pathname === "/health") {
-      send(res, 200, { ok: true, pid: process.pid, port: DAEMON_PORT });
-      return;
+    if (method === "GET" && pathname === "/health") {
+      return { status: 200, body: { ok: true, pid: process.pid, port: DAEMON_PORT } };
     }
 
-    if (req.method === "GET" && url.pathname === "/projects") {
+    if (method === "GET" && pathname === "/relay/status") {
+      return { status: 200, body: { ok: true, relay: this.getRelayStatus() } };
+    }
+
+    if (method === "POST" && pathname === "/relay/enable") {
+      return { status: 200, body: { ok: true, relay: this.enableRelay() } };
+    }
+
+    if (method === "POST" && pathname === "/relay/disable") {
+      return { status: 200, body: { ok: true, relay: this.disableRelay() } };
+    }
+
+    if (method === "GET" && pathname === "/projects") {
       const liveById = this.state.projects;
       const projects = listDesktopProjects().map((project) => ({
         ...project,
@@ -588,39 +644,64 @@ export class AimuxDaemon {
         serviceAlive: Boolean(liveById[project.id]),
         serviceEndpoint: project.path ? loadMetadataEndpoint(project.path) : null,
       }));
-      send(res, 200, { ok: true, projects });
-      return;
+      return { status: 200, body: { ok: true, projects } };
     }
 
-    if (req.method === "GET" && url.pathname.startsWith("/projects/")) {
-      const projectId = decodeURIComponent(url.pathname.slice("/projects/".length));
+    if (method === "GET" && pathname.startsWith("/projects/")) {
+      const projectId = decodeURIComponent(pathname.slice("/projects/".length));
       const project = this.state.projects[projectId] ?? null;
-      send(res, 200, { ok: true, project });
-      return;
+      return { status: 200, body: { ok: true, project } };
     }
 
-    if (req.method === "POST" && url.pathname === "/projects/ensure") {
-      const body = (await readJson(req)) as { projectRoot: string };
-      if (!body.projectRoot) {
-        send(res, 400, { ok: false, error: "projectRoot is required" });
-        return;
+    if (method === "POST" && pathname === "/projects/ensure") {
+      const b = body as { projectRoot?: string } | undefined;
+      if (!b?.projectRoot) {
+        return { status: 400, body: { ok: false, error: "projectRoot is required" } };
       }
-      const project = await this.ensureProject(body.projectRoot);
-      send(res, 200, { ok: true, project });
-      return;
+      const project = await this.ensureProject(b.projectRoot);
+      return { status: 200, body: { ok: true, project } };
     }
 
-    if (req.method === "POST" && url.pathname === "/projects/stop") {
-      const body = (await readJson(req)) as { projectRoot: string };
-      if (!body.projectRoot) {
-        send(res, 400, { ok: false, error: "projectRoot is required" });
-        return;
+    if (method === "POST" && pathname === "/projects/stop") {
+      const b = body as { projectRoot?: string } | undefined;
+      if (!b?.projectRoot) {
+        return { status: 400, body: { ok: false, error: "projectRoot is required" } };
       }
-      const project = this.stopProject(body.projectRoot);
-      send(res, 200, { ok: true, project });
-      return;
+      const project = this.stopProject(b.projectRoot);
+      return { status: 200, body: { ok: true, project } };
     }
 
-    send(res, 404, { ok: false, error: "not found" });
+    const proxyMatch = pathname.match(/^\/proxy\/([^/]+)\/(\d+)(\/.*)/);
+    if (proxyMatch) {
+      const [, host, portStr, subPath] = proxyMatch;
+      if (!PROXY_ALLOWED_HOSTS.has(host)) {
+        return { status: 403, body: { ok: false, error: "proxy host not allowed" } };
+      }
+      try {
+        const { status, json } = await requestJson(`http://${host}:${portStr}${subPath}${routeUrl.search}`, {
+          method,
+          body: body !== undefined ? body : undefined,
+          timeoutMs: PROXY_TIMEOUT_MS,
+        });
+        return { status, body: json };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Proxy error";
+        const status = /timed? out|timeout/i.test(message) ? 504 : 502;
+        return { status, body: { ok: false, error: message } };
+      }
+    }
+
+    return { status: 404, body: { ok: false, error: "not found" } };
+  }
+
+  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // No auth on the HTTP server: the daemon binds to 127.0.0.1, and remote
+    // app requests come in over the relay (which performs Clerk/HS256 verify
+    // before forwarding) and call routeRequest() directly in-process. Local
+    // CLI is trusted with the daemon's user.
+    const url = new URL(req.url ?? "/", `http://${DAEMON_HOST}:${DAEMON_PORT}`);
+    const body = req.method === "POST" ? await readJson(req) : undefined;
+    const result = await this.routeRequest(req.method ?? "GET", `${url.pathname}${url.search}`, body);
+    send(res, result.status, result.body);
   }
 }
