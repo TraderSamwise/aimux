@@ -29,12 +29,15 @@ function openBrowser(url: string): void {
 
 export interface LoginOptions {
   webAppUrl?: string;
-  relayUrl?: string;
 }
 
 export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: string }> {
+  // Relay URL is read from env only (no CLI override): the daemon token is
+  // minted by whichever relay the web app uses, so it has to be the same
+  // one the daemon then connects to — pinning it to env keeps both ends in
+  // sync.
   const webAppUrl = (opts.webAppUrl ?? process.env.AIMUX_WEB_APP_URL ?? DEFAULT_WEB_APP_URL).replace(/\/$/, "");
-  const relayUrl = (opts.relayUrl ?? process.env.AIMUX_RELAY_URL ?? DEFAULT_RELAY_URL).replace(/\/$/, "");
+  const relayUrl = (process.env.AIMUX_RELAY_URL ?? DEFAULT_RELAY_URL).replace(/\/$/, "");
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {

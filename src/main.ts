@@ -1331,10 +1331,12 @@ program
   .command("login")
   .description("Sign in to enable remote access via aimux.com")
   .option("--web-app-url <url>", "Override the web app URL")
-  .option("--relay-url <url>", "Override the relay URL")
-  .action(async (opts: { webAppUrl?: string; relayUrl?: string }) => {
+  // No --relay-url here: the token is minted by whichever relay the web app
+  // points at, so a CLI override would just store a relay URL that rejects
+  // the resulting token (different RELAY_TOKEN_SECRET).
+  .action(async (opts: { webAppUrl?: string }) => {
     try {
-      const { userId } = await runLoginFlow({ webAppUrl: opts.webAppUrl, relayUrl: opts.relayUrl });
+      const { userId } = await runLoginFlow({ webAppUrl: opts.webAppUrl });
       console.log(`\n✓ Logged in as ${userId}`);
       console.log("Remote access is enabled. Restart the daemon to connect, or it will connect on next start.");
     } catch (err) {
@@ -1346,7 +1348,19 @@ program
 program
   .command("logout")
   .description("Clear stored credentials and disable remote access")
-  .action(() => {
+  .action(async () => {
+    // If the daemon is running it already has the credential loaded into
+    // memory; tell it to disconnect before we yank the file so the running
+    // process stops talking to the relay immediately (best-effort — we
+    // ignore failures since the daemon may not be up).
+    if (loadDaemonInfo()) {
+      try {
+        await requestDaemonJson("/relay/disable", { method: "POST" });
+      } catch {
+        // daemon offline or refused; the file removal below still kills
+        // future startup, so this isn't fatal.
+      }
+    }
     const cleared = clearCredentials();
     console.log(cleared ? "✓ Logged out. Remote access disabled." : "Not logged in.");
   });
