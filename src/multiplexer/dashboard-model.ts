@@ -317,7 +317,13 @@ export async function withMetadataSessionPending<T>(
     return result;
   } catch (error) {
     if (sessionId) {
-      setPendingDashboardSessionAction(host, sessionId, null);
+      if (typeof token === "number") {
+        if (host.dashboardPendingActions?.clearSessionActionIfToken?.(sessionId, token)) {
+          host.reapplyDashboardPendingActions?.();
+        }
+      } else {
+        setPendingDashboardSessionAction(host, sessionId, null);
+      }
     }
     throw error;
   }
@@ -338,7 +344,9 @@ export async function withMetadataServicePending<T>(
     clearMetadataServicePendingAfterSettle(host, serviceId, kind, token, settle, result);
     return result;
   } catch (error) {
-    setPendingDashboardServiceAction(host, serviceId, null);
+    if (host.dashboardPendingActions?.clearServiceActionIfToken?.(serviceId, token)) {
+      host.reapplyDashboardPendingActions?.();
+    }
     throw error;
   }
 }

@@ -489,6 +489,27 @@ describe("DashboardPendingActions", () => {
     }
   });
 
+  it("does not let stale settle callbacks clear newer pending actions", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = new DashboardPendingActions(() => {});
+      let settled = false;
+      pending.setServiceAction("service-1", "creating");
+
+      pending.settleCreatePending("service", "service-1", () => {
+        settled = true;
+      });
+      pending.setServiceAction("service-1", "starting");
+
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(pending.getServiceAction("service-1")).toBe("starting");
+      expect(settled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps worktree pending actions isolated from matching session and service ids", () => {
     const pending = new DashboardPendingActions(() => {});
     const id = "/repo/.aimux/worktrees/demo";

@@ -395,6 +395,7 @@ export function resolveCurrentTeammates(
   if (!parentSession || isTeammateSession(parentSession)) return [];
   return (data.teammates ?? [])
     .filter((session) => session.team?.parentSessionId === parentSessionId)
+    .filter((session) => session.status !== "offline" && session.status !== "exited")
     .sort(compareTeammateSessions)
     .slice(0, 5)
     .map((session) => {

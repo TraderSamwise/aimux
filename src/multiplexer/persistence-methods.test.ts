@@ -369,7 +369,7 @@ describe("persistenceMethods", () => {
         id: "codex-teammate",
         command: "codex",
         status: "running",
-        active: false,
+        active: true,
         team: { teamId: "team-1", parentSessionId: "claude-parent", role: "reviewer", label: "review" },
       },
     });
@@ -402,6 +402,7 @@ describe("persistenceMethods", () => {
     expect(statusline.teammates[0]).toEqual(
       expect.objectContaining({
         id: "codex-teammate",
+        active: true,
         team: expect.objectContaining({ parentSessionId: "claude-parent" }),
       }),
     );
@@ -603,9 +604,11 @@ describe("persistenceMethods", () => {
       expect(writeWorktreeGraveyardEntries).toHaveBeenCalledWith([
         expect.objectContaining({
           path: worktreePath,
-          agents: [expect.objectContaining({ id: "teammate-1" }), expect.objectContaining({ id: "parent-1" })],
+          agents: [expect.objectContaining({ id: "parent-1" })],
         }),
       ]);
+      const flatGraveyard = JSON.parse(readFileSync(getGraveyardPath(), "utf-8"));
+      expect(flatGraveyard).toEqual([expect.objectContaining({ id: "teammate-1" })]);
       expect(host.offlineSessions).toEqual([independent]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });

@@ -201,4 +201,51 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(frame).toContain("working");
     expect(frame).toContain("scan(explorer)");
   });
+
+  it("renders pending teammate labels even when semantic state is stale", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        navLevel: "sessions",
+        selectedSessionId: "parent",
+        sessions: [
+          {
+            index: 0,
+            id: "parent",
+            command: "claude",
+            status: "running",
+            active: true,
+          },
+        ],
+        selectedTeammates: [
+          {
+            index: 1,
+            id: "reviewer",
+            command: "codex",
+            status: "running",
+            active: false,
+            pendingAction: "stopping",
+            optimistic: true,
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", label: "review" },
+            semantic: deriveSessionSemantics({
+              status: "running",
+              attention: "needs_input",
+            }),
+          },
+        ],
+        worktreeGroups: [
+          {
+            name: "Main Checkout",
+            branch: "master",
+            status: "active",
+            sessions: [],
+            services: [],
+          },
+        ],
+      }),
+      140,
+      40,
+    );
+
+    expect(frame).toContain("review(reviewer) · stopping · on you");
+  });
 });

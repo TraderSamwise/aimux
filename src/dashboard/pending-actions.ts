@@ -113,6 +113,10 @@ export class DashboardPendingActions {
     return this.clearEntryIfToken("service", serviceId, token);
   }
 
+  clearWorktreeActionIfToken(path: string | undefined, token: number): boolean {
+    return this.clearEntryIfToken("worktree", DashboardPendingActions.worktreeKey(path), token);
+  }
+
   setWorktreeAction(
     path: string | undefined,
     kind: PendingWorktreeActionKind,
@@ -316,11 +320,13 @@ export class DashboardPendingActions {
     target: PendingActionTarget,
     itemId: string,
     onSettled: () => void,
-    opts?: { isSettled?: () => boolean | Promise<boolean>; timeoutMs?: number },
+    opts?: { isSettled?: () => boolean | Promise<boolean>; timeoutMs?: number; expectedToken?: number },
   ): void {
     const minVisibleMs = 250;
     const timeoutMs = opts?.timeoutMs ?? 10_000;
     const startedAt = Date.now();
+    const expectedToken =
+      opts?.expectedToken ?? this.actions.get(DashboardPendingActions.actionKey(target, itemId))?.token;
     void (async () => {
       const remaining = minVisibleMs - (Date.now() - startedAt);
       if (remaining > 0) {
@@ -333,7 +339,12 @@ export class DashboardPendingActions {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
       }
-      this.clearEntry(target, itemId);
+      if (expectedToken !== undefined && !this.clearEntryIfToken(target, itemId, expectedToken)) {
+        return;
+      }
+      if (expectedToken === undefined) {
+        this.clearEntry(target, itemId);
+      }
       onSettled();
     })();
   }
