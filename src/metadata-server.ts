@@ -408,9 +408,13 @@ function desiredPort(): number {
   return 43000 + (parseInt(hash, 16) % 10000);
 }
 
+// Plan paths join this directly into `${sessionId}.md`, so restrict to a
+// conservative charset (no whitespace, no separators, no traversal) and
+// cap length so we don't produce surprising filenames.
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
+
 function validateSessionId(raw: string): { ok: true; value: string } | { ok: false } {
-  if (!raw) return { ok: false };
-  if (raw.includes("/") || raw.includes("\\")) return { ok: false };
+  if (!SESSION_ID_PATTERN.test(raw)) return { ok: false };
   if (raw.includes("..")) return { ok: false };
   return { ok: true, value: raw };
 }

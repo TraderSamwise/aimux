@@ -19,6 +19,18 @@ export function isToolInternalWorktree(worktree: Pick<WorktreeInfo, "name" | "pa
   );
 }
 
+// Strip inherited GIT_* env so git honors `cwd` even when invoked from a
+// context (e.g. git hook) where the parent set GIT_DIR/GIT_WORK_TREE.
+function gitEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_INDEX_FILE;
+  delete env.GIT_OBJECT_DIRECTORY;
+  delete env.GIT_COMMON_DIR;
+  return env;
+}
+
 function execFileText(command: string, args: string[], cwd: string): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(
@@ -26,6 +38,7 @@ function execFileText(command: string, args: string[], cwd: string): Promise<str
       args,
       {
         cwd,
+        env: gitEnv(),
         encoding: "utf8",
         timeout: 2_000,
         maxBuffer: 1024 * 1024,
@@ -81,17 +94,9 @@ function parseWorktreeList(output: string): WorktreeInfo[] {
  * Uses `git worktree list --porcelain` — the first entry is always the main worktree.
  */
 export function findMainRepo(cwd?: string): string {
-  // Strip inherited GIT_* env so git honors `cwd` even when invoked from a
-  // context (e.g. git hook) where the parent set GIT_DIR/GIT_WORK_TREE.
-  const env = { ...process.env };
-  delete env.GIT_DIR;
-  delete env.GIT_WORK_TREE;
-  delete env.GIT_INDEX_FILE;
-  delete env.GIT_OBJECT_DIRECTORY;
-  delete env.GIT_COMMON_DIR;
   const output = execSync("git worktree list --porcelain", {
     cwd: cwd ?? process.cwd(),
-    env,
+    env: gitEnv(),
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -100,7 +105,7 @@ export function findMainRepo(cwd?: string): string {
   if (!match) {
     return execSync("git rev-parse --show-toplevel", {
       cwd: cwd ?? process.cwd(),
-      env,
+      env: gitEnv(),
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
@@ -118,6 +123,7 @@ export function listWorktrees(cwd?: string): WorktreeInfo[] {
   try {
     output = execSync("git worktree list --porcelain", {
       cwd: effectiveCwd,
+      env: gitEnv(),
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -170,6 +176,7 @@ export function branchExistsInRepo(cwd: string, branch: string): boolean {
   try {
     execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
       cwd,
+      env: gitEnv(),
       stdio: "ignore",
     });
     return true;
@@ -191,6 +198,7 @@ export function createWorktree(name: string, cwd?: string): string {
   mkdirSync(dirname(targetPath), { recursive: true });
   execFileSync("git", getWorktreeAddArgs(name, targetPath, mainRepo), {
     cwd: mainRepo,
+    env: gitEnv(),
     encoding: "utf-8",
     stdio: "pipe",
   });
