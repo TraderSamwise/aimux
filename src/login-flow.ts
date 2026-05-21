@@ -40,11 +40,6 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
   const relayUrl = (process.env.AIMUX_RELAY_URL ?? DEFAULT_RELAY_URL).replace(/\/$/, "");
 
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      server.close();
-      reject(new Error("Login timed out after 5 minutes"));
-    }, LOGIN_TIMEOUT_MS);
-
     const server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
       if (url.pathname !== "/callback") {
@@ -88,6 +83,11 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
       });
       resolve({ userId });
     });
+
+    const timer = setTimeout(() => {
+      server.close();
+      reject(new Error("Login timed out after 5 minutes"));
+    }, LOGIN_TIMEOUT_MS);
 
     server.on("error", (err) => {
       clearTimeout(timer);
