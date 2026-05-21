@@ -67,6 +67,12 @@ export default {
     let userId: string;
     try {
       if (isDaemonToken(token)) {
+        if (!env.RELAY_TOKEN_SECRET) {
+          return corsResponse(
+            JSON.stringify({ ok: false, error: "Relay not configured: RELAY_TOKEN_SECRET unset" }),
+            500,
+          );
+        }
         userId = await verifyDaemonToken(token, env.RELAY_TOKEN_SECRET);
       } else {
         userId = await verifyWsToken(token, env);
