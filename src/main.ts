@@ -73,6 +73,8 @@ import {
   type ThreadStatus,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
+import { runLoginFlow } from "./login-flow.js";
+import { clearCredentials, loadCredentials } from "./credentials.js";
 import {
   acceptHandoff,
   approveReview,
@@ -1306,6 +1308,57 @@ program
     console.log(`Compacting history for ${sessionIds.length} session(s)...`);
     llmCompact(sessionIds);
     console.log(`Done. Summary written to ${getContextDir()}/summary.md`);
+  });
+
+program
+  .command("login")
+  .description("Sign in to enable remote access via aimux.com")
+  .option("--web-app-url <url>", "Override the web app URL")
+  .option("--relay-url <url>", "Override the relay URL")
+  .action(async (opts: { webAppUrl?: string; relayUrl?: string }) => {
+    try {
+      const { userId } = await runLoginFlow({ webAppUrl: opts.webAppUrl, relayUrl: opts.relayUrl });
+      console.log(`\n✓ Logged in as ${userId}`);
+      console.log("Remote access is enabled. Restart the daemon to connect, or it will connect on next start.");
+    } catch (err) {
+      console.error(`Login failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("logout")
+  .description("Clear stored credentials and disable remote access")
+  .action(() => {
+    const cleared = clearCredentials();
+    console.log(cleared ? "✓ Logged out. Remote access disabled." : "Not logged in.");
+  });
+
+program
+  .command("whoami")
+  .description("Show the current remote-access login status")
+  .option("--json", "Emit JSON")
+  .action((opts: { json?: boolean }) => {
+    const creds = loadCredentials();
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          creds
+            ? { loggedIn: true, userId: creds.userId, relayUrl: creds.relayUrl, remoteEnabled: creds.remoteEnabled }
+            : { loggedIn: false },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    if (!creds) {
+      console.log("Not logged in. Run `aimux login` to enable remote access.");
+      return;
+    }
+    console.log(`Logged in as ${creds.userId}`);
+    console.log(`Relay: ${creds.relayUrl}`);
+    console.log(`Remote access: ${creds.remoteEnabled ? "enabled" : "disabled"}`);
   });
 
 async function prepareProjectContext(requestedProject?: string): Promise<string> {
