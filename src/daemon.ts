@@ -7,7 +7,6 @@ import { getDaemonInfoPath, getDaemonStatePath, getProjectIdFor } from "./paths.
 import { listDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
-import { AUTH_ENABLED, ApiError, verifyApiUser } from "./auth.js";
 import { RelayClient, type RelayStatusSnapshot } from "./relay-client.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 
@@ -18,6 +17,8 @@ const PROJECT_SERVICE_STARTUP_GRACE_MS = 15_000;
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
+const PROXY_TIMEOUT_MS = 10_000;
+const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 export interface AimuxDaemonInfo {
   pid: number;
@@ -573,14 +574,20 @@ export class AimuxDaemon {
     const proxyMatch = path.match(/^\/proxy\/([^/]+)\/(\d+)(\/.*)/);
     if (proxyMatch) {
       const [, host, portStr, subPath] = proxyMatch;
+      if (!PROXY_ALLOWED_HOSTS.has(host)) {
+        return { status: 403, body: { ok: false, error: "proxy host not allowed" } };
+      }
       try {
         const { status, json } = await requestJson(`http://${host}:${portStr}${subPath}`, {
           method,
           body: body !== undefined ? body : undefined,
+          timeoutMs: PROXY_TIMEOUT_MS,
         });
         return { status, body: json };
       } catch (err) {
-        return { status: 502, body: { ok: false, error: err instanceof Error ? err.message : "Proxy error" } };
+        const message = err instanceof Error ? err.message : "Proxy error";
+        const status = /timed? out|timeout/i.test(message) ? 504 : 502;
+        return { status, body: { ok: false, error: message } };
       }
     }
 
@@ -588,19 +595,11 @@ export class AimuxDaemon {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // No auth on the HTTP server: the daemon binds to 127.0.0.1, and remote
+    // app requests come in over the relay (which performs Clerk/HS256 verify
+    // before forwarding) and call routeRequest() directly in-process. Local
+    // CLI is trusted with the daemon's user.
     const url = new URL(req.url ?? "/", `http://${DAEMON_HOST}:${DAEMON_PORT}`);
-
-    if (AUTH_ENABLED && url.pathname !== "/health") {
-      try {
-        await verifyApiUser(req);
-      } catch (err) {
-        const status = err instanceof ApiError ? err.status : 401;
-        const message = err instanceof Error ? err.message : "Unauthorized";
-        send(res, status, { ok: false, error: message });
-        return;
-      }
-    }
-
     const body = req.method === "POST" ? await readJson(req) : undefined;
     const result = await this.routeRequest(req.method ?? "GET", url.pathname, body);
     send(res, result.status, result.body);
