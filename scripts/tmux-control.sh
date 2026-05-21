@@ -99,6 +99,10 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 aimux_bin="${AIMUX_BIN:-$script_dir/../bin/aimux}"
 debug_log="${TMPDIR:-/tmp}/aimux-debug.log"
 
+debug_log_line() {
+  printf '%s\n' "aimux-control: $*" >>"$debug_log" 2>/dev/null || true
+}
+
 load_endpoint() {
   [ -f "$endpoint_file" ] || return 1
   endpoint=$(tr -d '\n' < "$endpoint_file")
@@ -373,19 +377,32 @@ show_local_switcher() {
 resolve_local_target_from_statusline() {
   [ -f "$statusline_json" ] || return 1
   resolved_target=$(
-    python3 - "$statusline_json" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" <<'PY'
+    python3 - "$statusline_json" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" "$debug_log" <<'PY'
 import json, sys
-path, project_root, current_path, current_window_id, explicit_window_id, action, item_index = sys.argv[1:]
+path, project_root, current_path, current_window_id, explicit_window_id, action, item_index, debug_log = sys.argv[1:]
+
+def log(message):
+    if action != "team":
+        return
+    try:
+        with open(debug_log, "a") as handle:
+            handle.write(f"aimux-control team statusline: {message}\n")
+    except Exception:
+        pass
+
 try:
     data = json.load(open(path))
-except Exception:
+except Exception as error:
+    log(f"read failed path={path!r} error={error}")
     raise SystemExit(1)
 sessions = list(data.get("sessions") or [])
 teammates = list(data.get("teammates") or [])
 if explicit_window_id:
+    log(f"explicit target {explicit_window_id}")
     print(explicit_window_id)
     raise SystemExit(0)
 if action == "team":
+    log(f"start currentWindowId={current_window_id!r} sessions={len(sessions)} teammates={len(teammates)}")
     all_sessions = sessions + teammates
     current = None
     for session in all_sessions:
@@ -393,15 +410,23 @@ if action == "team":
             current = session
             break
     if not current:
+        live_ids = [
+            f"{session.get('id')}:{session.get('tmuxWindowId') or '-'}:{(session.get('team') or {}).get('parentSessionId') or '-'}"
+            for session in all_sessions
+        ]
+        log(f"current not found candidates={live_ids}")
         raise SystemExit(1)
 
     current_team = current.get("team") or {}
     parent_id = current_team.get("parentSessionId")
+    log(f"current id={current.get('id')!r} parentId={parent_id!r} window={current.get('tmuxWindowId')!r}")
     if parent_id:
         parent = next((session for session in sessions if session.get("id") == parent_id), None)
         target = (parent or {}).get("tmuxWindowId") or ""
         if not target:
+            log(f"parent target missing parentId={parent_id!r} parentFound={bool(parent)}")
             raise SystemExit(1)
+        log(f"target parent window={target!r}")
         print(target)
         raise SystemExit(0)
 
@@ -423,6 +448,10 @@ if action == "team":
         for session in teammates
         if (session.get("team") or {}).get("parentSessionId") == current_id
     ]
+    log("direct candidates=" + repr([
+        f"{session.get('id')}:{session.get('tmuxWindowId') or '-'}:{session.get('status') or '-'}"
+        for session in direct
+    ]))
     def teammate_order(session):
         order = (session.get("team") or {}).get("order")
         if isinstance(order, bool):
@@ -435,10 +464,13 @@ if action == "team":
         session.get("id") or "",
     ))
     if not direct:
+        log(f"no direct teammates for currentId={current_id!r}")
         raise SystemExit(1)
     target = direct[0].get("tmuxWindowId") or ""
     if not target:
+        log(f"first direct teammate has no tmux window id={direct[0].get('id')!r} status={direct[0].get('status')!r}")
         raise SystemExit(1)
+    log(f"target teammate window={target!r} id={direct[0].get('id')!r}")
     print(target)
     raise SystemExit(0)
 if not sessions:
@@ -529,20 +561,32 @@ resolve_local_target_from_tmux_metadata() {
   resolve_live_client || true
   host_session=$(resolve_host_session_name) || return 1
   resolved_target=$(
-    python3 - "$host_session" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" <<'PY'
+    python3 - "$host_session" "$project_root" "$current_path" "$current_window_id" "$window_id" "$action" "$item_index" "$debug_log" <<'PY'
 import json, subprocess, sys
-host_session, project_root, current_path, current_window_id, explicit_window_id, action, item_index = sys.argv[1:]
+host_session, project_root, current_path, current_window_id, explicit_window_id, action, item_index, debug_log = sys.argv[1:]
+
+def log(message):
+    if action != "team":
+        return
+    try:
+        with open(debug_log, "a") as handle:
+            handle.write(f"aimux-control team metadata: {message}\n")
+    except Exception:
+        pass
 
 def run(*args):
     return subprocess.check_output(["tmux", *args], text=True)
 
 if explicit_window_id:
+    log(f"explicit target {explicit_window_id}")
     print(explicit_window_id)
     raise SystemExit(0)
 
 try:
     windows = run("list-windows", "-t", host_session, "-F", "#{window_id}|#{window_index}|#{window_name}").splitlines()
-except Exception:
+    log(f"start host={host_session!r} currentWindowId={current_window_id!r} currentPath={current_path!r} windows={len(windows)}")
+except Exception as error:
+    log(f"list windows failed host={host_session!r} error={error}")
     raise SystemExit(1)
 
 items = []
@@ -550,14 +594,17 @@ for line in windows:
     try:
         window_id, index, name = line.split("|", 2)
     except ValueError:
+        log(f"skip malformed window line={line!r}")
         continue
     try:
         raw = run("show-window-options", "-v", "-t", window_id, "@aimux-meta").strip()
         meta = json.loads(raw)
-    except Exception:
+    except Exception as error:
+        log(f"skip window={window_id!r} name={name!r} no/invalid meta error={error}")
         continue
     worktree = meta.get("worktreePath") or project_root
     if not worktree or not current_path.startswith(worktree):
+        log(f"skip window={window_id!r} session={meta.get('sessionId')!r} worktree mismatch worktree={worktree!r}")
         continue
     kind = meta.get("kind") or "agent"
     team = meta.get("team") or {}
@@ -575,6 +622,7 @@ for line in windows:
     })
 
 if not items:
+    log("no metadata candidates after filtering")
     raise SystemExit(1)
 
 current_worktree = None
@@ -587,26 +635,36 @@ if current_worktree:
     items = [item for item in items if item.get("worktreePath") == current_worktree]
 else:
     items = [item for item in items if current_path.startswith(item.get("worktreePath") or "")]
+log("items=" + repr([
+    f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('kind')}:{(item.get('team') or {}).get('parentSessionId') or '-'}:{item.get('statusText') or '-'}"
+    for item in items
+]))
 
 items.sort(key=lambda s: (0 if s.get("kind") == "agent" else 1, s.get("windowIndex", 10**9)))
 if not items:
+    log("no metadata candidates in current worktree")
     raise SystemExit(1)
 
 current = next((item for item in items if item.get("windowId") == current_window_id), None)
 if action == "team":
     if not current:
+        log(f"current metadata item not found currentWindowId={current_window_id!r}")
         raise SystemExit(1)
     current_team = current.get("team") or {}
     parent_id = current_team.get("parentSessionId")
+    log(f"current id={current.get('sessionId')!r} parentId={parent_id!r} window={current.get('windowId')!r}")
     if parent_id:
         parent = next((item for item in items if item.get("sessionId") == parent_id and not (item.get("team") or {}).get("parentSessionId")), None)
         if not parent:
+            log(f"parent metadata target missing parentId={parent_id!r}")
             raise SystemExit(1)
+        log(f"target parent window={parent['windowId']!r}")
         print(parent["windowId"])
         raise SystemExit(0)
 
     current_id = current.get("sessionId")
     if not current_id:
+        log("current metadata item has no session id")
         raise SystemExit(1)
 
     direct = [
@@ -614,6 +672,10 @@ if action == "team":
         for item in items
         if (item.get("team") or {}).get("parentSessionId") == current_id
     ]
+    log("direct candidates=" + repr([
+        f"{item.get('windowId')}:{item.get('sessionId')}:{item.get('statusText') or '-'}"
+        for item in direct
+    ]))
     def teammate_order(item):
         order = (item.get("team") or {}).get("order")
         if isinstance(order, bool):
@@ -622,7 +684,9 @@ if action == "team":
 
     direct.sort(key=lambda item: (teammate_order(item), item.get("windowIndex", 10**9), item.get("createdAt") or "", item.get("sessionId") or ""))
     if not direct:
+        log(f"no direct live teammate metadata candidates currentId={current_id!r}")
         raise SystemExit(1)
+    log(f"target teammate window={direct[0]['windowId']!r} id={direct[0].get('sessionId')!r}")
     print(direct[0]["windowId"])
     raise SystemExit(0)
 
@@ -704,7 +768,9 @@ fallback_local_control() {
       switch_local_window "$target_window_id" "$target_item_id"
       ;;
     team)
+      debug_log_line "team requested session=${current_client_session:-unknown} window=${current_window_id:-unknown} path=${current_path:-unknown} pane=${pane_id:-unknown}"
       target_window_id=$(resolve_local_target_from_tmux_metadata || resolve_local_target_from_statusline) || {
+        debug_log_line "team no live target session=${current_client_session:-unknown} window=${current_window_id:-unknown} path=${current_path:-unknown}"
         show_local_message "aimux: no live teammate target"
         return 0
       }

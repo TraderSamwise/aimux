@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -12,9 +12,91 @@ import {
   runDashboard,
   runProjectService,
 } from "./session-launch.js";
+import { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
 import { loadMetadataState, recordSessionBackendSessionIdMetadata, updateSessionMetadata } from "../metadata-store.js";
 
 describe("createSession", () => {
+  it("captures a Codex backend session id from the native session file containing the aimux session id", () => {
+    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-home-"));
+    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"),
+      '{"message":"unrelated codex session"}\n',
+    );
+    writeFileSync(
+      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
+      '{"message":"This is an aimux-managed session with session ID codex-team"}\n',
+    );
+
+    expect(
+      captureBackendSessionIdFromSessionFiles(
+        {
+          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
+          pattern: "([0-9a-f-]+)\\.jsonl$",
+          delayMs: 0,
+        },
+        "codex-team",
+        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
+      ),
+    ).toBe("11111111-2222-3333-4444-555555555555");
+
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("does not guess a Codex backend session id when multiple native files mention the aimux session id", () => {
+    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-ambiguous-"));
+    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
+      "This is an aimux-managed session with session ID codex-team\n",
+    );
+    writeFileSync(
+      join(sessionDir, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"),
+      "This is an aimux-managed session with session ID codex-team\n",
+    );
+
+    expect(
+      captureBackendSessionIdFromSessionFiles(
+        {
+          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
+          pattern: "([0-9a-f-]+)\\.jsonl$",
+          delayMs: 0,
+        },
+        "codex-team",
+        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
+      ),
+    ).toBeUndefined();
+
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("captures a Codex backend session id from the startup preamble even after the transcript grows", () => {
+    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-large-"));
+    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
+    mkdirSync(sessionDir, { recursive: true });
+    const filler = "x".repeat(300_000);
+    writeFileSync(
+      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
+      `{"message":"This is an aimux-managed session with session ID codex-team"}\n${filler}\n`,
+    );
+
+    expect(
+      captureBackendSessionIdFromSessionFiles(
+        {
+          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
+          pattern: "([0-9a-f-]+)\\.jsonl$",
+          delayMs: 0,
+        },
+        "codex-team",
+        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
+      ),
+    ).toBe("11111111-2222-3333-4444-555555555555");
+
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
   it("does not inject startup preamble when explicitly suppressed", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-"));
     execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
@@ -257,6 +339,53 @@ describe("createSession", () => {
     const launched = (createWindowArgs[4] as string[]).join(" ");
     expect(launched).toContain("resume");
     expect(launched).not.toContain("codex startup instructions");
+    expect(host.sessionBootstrap.deliverDetachedCodexKickoffPrompt).not.toHaveBeenCalled();
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("stores explicit Codex resume backend ids instead of waiting for file capture", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-resume-"));
+    execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => "aimux preamble"),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+        buildInitialKickoffPrompt: vi.fn(() => "codex startup instructions"),
+        deliverDetachedCodexKickoffPrompt: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    const session = createSession(
+      host,
+      "codex",
+      ["--dangerously-bypass-approvals-and-sandbox", "resume", "019e4837-66d5-7ab2-9bf6-bff1f958ecae"],
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+    );
+
+    expect(session.backendSessionId).toBe("019e4837-66d5-7ab2-9bf6-bff1f958ecae");
     expect(host.sessionBootstrap.deliverDetachedCodexKickoffPrompt).not.toHaveBeenCalled();
 
     rmSync(repoRoot, { recursive: true, force: true });

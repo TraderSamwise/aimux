@@ -67,6 +67,32 @@ interface DashboardServiceMutationOptions {
   errorTitle: string;
 }
 
+function restoreWarningLines(result: any): string[] {
+  const warning = typeof result?.warning === "string" ? result.warning.trim() : "";
+  if (!warning) return [];
+
+  const failures = Array.isArray(result?.teammateFailures)
+    ? result.teammateFailures
+        .map((failure: any) => {
+          const sessionId = typeof failure?.sessionId === "string" ? failure.sessionId : "";
+          const message =
+            typeof failure?.error === "string"
+              ? failure.error.trim()
+              : typeof failure?.message === "string"
+                ? failure.message.trim()
+                : "";
+          if (!sessionId || !message) return "";
+          return message.includes(sessionId) ? message : `${sessionId}: ${message}`;
+        })
+        .filter((line: string) => line.trim().length > 0)
+    : [];
+
+  const lines: string[] = failures.length > 0 ? failures : [warning];
+  const uniqueLines = Array.from(new Set(lines));
+  uniqueLines.push("Stale teammates remain offline; create a new team to replace them.");
+  return uniqueLines;
+}
+
 function assertDashboardMutationSettled(settled: boolean, action: string): void {
   if (!settled) {
     throw new Error(`${action} did not settle before timing out`);
@@ -622,6 +648,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         worktreePath: session.worktreePath,
         team: session.team,
       } satisfies DashboardSession);
+    let resumeResult: any;
     await runDashboardSessionMutation(host, {
       sessionId: session.id,
       pendingAction: "starting",
@@ -631,7 +658,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         host.footerFlashTicks = 3;
       },
       request: async () => {
-        await host.postToProjectService(
+        resumeResult = await host.postToProjectService(
           "/agents/resume",
           { sessionId: session.id, session: sessionSeed },
           { timeoutMs: 10_000 },
@@ -642,6 +669,10 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
       onError: () => host.refreshDashboardModelFromService(true),
       errorTitle: `Failed to restore "${label}"`,
     });
+    const warningLines = restoreWarningLines(resumeResult);
+    if (warningLines.length > 0) {
+      host.showDashboardError(`Restored "${label}" with teammate issues`, warningLines);
+    }
     return;
   }
   await runResumeOfflineSessionWithFeedback(dashboardSessionActionDeps(host), session);
@@ -805,12 +836,21 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
     stopSessionToOffline: (session: any) => host.stopSessionToOffline(session),
     isGraveyardAfterStop: (sessionId: string) => host.graveyardAfterStopSessionIds.has(sessionId),
     sendAgentToGraveyard: (sessionId: string) => host.sendAgentToGraveyard(sessionId).then(() => undefined),
-    resumeOfflineSession: (session: any) =>
-      host.mode === "dashboard"
-        ? host
-            .postToProjectService("/agents/resume", { sessionId: session.id }, { timeoutMs: 10_000 })
-            .then(() => undefined)
-        : host.resumeOfflineSession(session),
+    resumeOfflineSession: async (session: any) => {
+      if (host.mode !== "dashboard") {
+        host.resumeOfflineSession(session);
+        return;
+      }
+      const result = await host.postToProjectService(
+        "/agents/resume",
+        { sessionId: session.id },
+        { timeoutMs: 10_000 },
+      );
+      const warningLines = restoreWarningLines(result);
+      if (warningLines.length > 0) {
+        throw new Error(warningLines.join("\n"));
+      }
+    },
     refreshLocalDashboardModel: () => host.refreshLocalDashboardModel(),
     adjustAfterRemove: (hasWorktrees: boolean) => host.adjustAfterRemove(hasWorktrees),
     renderDashboard: () => host.renderCurrentDashboardView(),
