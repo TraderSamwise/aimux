@@ -63,35 +63,53 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
       const userId = url.searchParams.get("userId");
       const error = url.searchParams.get("error");
 
-      // Respond to the browser first so the user sees a friendly page.
-      res.statusCode = error ? 400 : 200;
-      res.setHeader("content-type", "text/html");
-      res.end(
-        error
-          ? `<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>Login failed</h2><p>${escapeHtml(error)}</p><p>You can close this tab and try again.</p></body></html>`
-          : `<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>✓ Logged in to aimux</h2><p>You can close this tab and return to the terminal.</p></body></html>`,
-      );
-
       clearTimeout(timer);
       server.close();
 
       if (error) {
+        res.statusCode = 400;
+        res.setHeader("content-type", "text/html");
+        res.end(
+          `<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>Login failed</h2><p>${escapeHtml(error)}</p><p>You can close this tab and try again.</p></body></html>`,
+        );
         reject(new Error(error));
         return;
       }
       if (!token || !userId) {
-        reject(new Error("Callback missing token or userId"));
+        const message = "Callback missing token or userId";
+        res.statusCode = 400;
+        res.setHeader("content-type", "text/html");
+        res.end(
+          `<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>Login failed</h2><p>${escapeHtml(message)}</p><p>You can close this tab and try again.</p></body></html>`,
+        );
+        reject(new Error(message));
         return;
       }
 
-      saveCredentials({
-        version: 1,
-        relayUrl,
-        token,
-        userId,
-        createdAt: new Date().toISOString(),
-        remoteEnabled: true,
-      });
+      try {
+        saveCredentials({
+          version: 1,
+          relayUrl,
+          token,
+          userId,
+          createdAt: new Date().toISOString(),
+          remoteEnabled: true,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        res.statusCode = 500;
+        res.setHeader("content-type", "text/html");
+        res.end(
+          `<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>Login failed</h2><p>Could not save credentials: ${escapeHtml(message)}</p><p>You can close this tab and try again.</p></body></html>`,
+        );
+        reject(new Error(`Could not save credentials: ${message}`));
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/html");
+      res.end(
+        `<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>✓ Logged in to aimux</h2><p>You can close this tab and return to the terminal.</p></body></html>`,
+      );
       resolve({ userId });
     });
 

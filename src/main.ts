@@ -74,7 +74,7 @@ import {
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import { runLoginFlow } from "./login-flow.js";
-import { clearCredentials, loadCredentials } from "./credentials.js";
+import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
 import {
   acceptHandoff,
   approveReview,
@@ -1406,12 +1406,13 @@ remoteCmd
   .action(async (opts: { json?: boolean }) => {
     const creds = loadCredentials();
     let relay: unknown = { status: "off" };
-    try {
-      await ensureDaemonRunning();
-      const result = await requestDaemonJson("/relay/status");
-      relay = result.relay;
-    } catch {
-      // Daemon not running — fall back to credential state.
+    if (loadDaemonInfo()) {
+      try {
+        const result = await requestDaemonJson("/relay/status");
+        relay = result.relay;
+      } catch {
+        // Daemon is not reachable — fall back to credential state.
+      }
     }
     if (opts.json) {
       console.log(JSON.stringify({ loggedIn: Boolean(creds), relay }, null, 2));
@@ -1446,9 +1447,13 @@ remoteCmd
   .command("disable")
   .description("Disable remote access and disconnect from the relay")
   .action(async () => {
-    await ensureDaemonRunning();
-    await requestDaemonJson("/relay/disable", { method: "POST" });
-    console.log("✓ Remote access disabled. Daemon disconnected from relay.");
+    if (loadDaemonInfo()) {
+      await requestDaemonJson("/relay/disable", { method: "POST" });
+      console.log("✓ Remote access disabled. Daemon disconnected from relay.");
+      return;
+    }
+    setRemoteEnabled(false);
+    console.log("✓ Remote access disabled.");
   });
 
 async function prepareProjectContext(requestedProject?: string): Promise<string> {

@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clerk/backend": "^3.0.1"
+    "@clerk/backend": "^3.4.12"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250514.0",

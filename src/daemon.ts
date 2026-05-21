@@ -283,7 +283,8 @@ export class AimuxDaemon {
     const creds = loadCredentials();
     const relayUrl = process.env.AIMUX_RELAY_URL ?? creds?.relayUrl;
     const relayToken = process.env.AIMUX_RELAY_TOKEN ?? creds?.token;
-    const enabled = creds ? creds.remoteEnabled : Boolean(process.env.AIMUX_RELAY_TOKEN);
+    const hasEnvOverride = Boolean(process.env.AIMUX_RELAY_URL || process.env.AIMUX_RELAY_TOKEN);
+    const enabled = hasEnvOverride ? Boolean(relayUrl && relayToken) : Boolean(creds?.remoteEnabled);
     if (relayUrl && relayToken && enabled) {
       this.relayClient = new RelayClient(relayUrl, relayToken, this);
       this.relayClient.connect();
@@ -523,24 +524,26 @@ export class AimuxDaemon {
 
   async routeRequest(method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
     this.refreshState();
+    const routeUrl = new URL(path, `http://${DAEMON_HOST}:${DAEMON_PORT}`);
+    const pathname = routeUrl.pathname;
 
-    if (method === "GET" && path === "/health") {
+    if (method === "GET" && pathname === "/health") {
       return { status: 200, body: { ok: true, pid: process.pid, port: DAEMON_PORT } };
     }
 
-    if (method === "GET" && path === "/relay/status") {
+    if (method === "GET" && pathname === "/relay/status") {
       return { status: 200, body: { ok: true, relay: this.getRelayStatus() } };
     }
 
-    if (method === "POST" && path === "/relay/enable") {
+    if (method === "POST" && pathname === "/relay/enable") {
       return { status: 200, body: { ok: true, relay: this.enableRelay() } };
     }
 
-    if (method === "POST" && path === "/relay/disable") {
+    if (method === "POST" && pathname === "/relay/disable") {
       return { status: 200, body: { ok: true, relay: this.disableRelay() } };
     }
 
-    if (method === "GET" && path === "/projects") {
+    if (method === "GET" && pathname === "/projects") {
       const liveById = this.state.projects;
       const projects = listDesktopProjects().map((project) => ({
         ...project,
@@ -551,13 +554,13 @@ export class AimuxDaemon {
       return { status: 200, body: { ok: true, projects } };
     }
 
-    if (method === "GET" && path.startsWith("/projects/")) {
-      const projectId = decodeURIComponent(path.slice("/projects/".length));
+    if (method === "GET" && pathname.startsWith("/projects/")) {
+      const projectId = decodeURIComponent(pathname.slice("/projects/".length));
       const project = this.state.projects[projectId] ?? null;
       return { status: 200, body: { ok: true, project } };
     }
 
-    if (method === "POST" && path === "/projects/ensure") {
+    if (method === "POST" && pathname === "/projects/ensure") {
       const b = body as { projectRoot?: string } | undefined;
       if (!b?.projectRoot) {
         return { status: 400, body: { ok: false, error: "projectRoot is required" } };
@@ -566,7 +569,7 @@ export class AimuxDaemon {
       return { status: 200, body: { ok: true, project } };
     }
 
-    if (method === "POST" && path === "/projects/stop") {
+    if (method === "POST" && pathname === "/projects/stop") {
       const b = body as { projectRoot?: string } | undefined;
       if (!b?.projectRoot) {
         return { status: 400, body: { ok: false, error: "projectRoot is required" } };
@@ -575,14 +578,14 @@ export class AimuxDaemon {
       return { status: 200, body: { ok: true, project } };
     }
 
-    const proxyMatch = path.match(/^\/proxy\/([^/]+)\/(\d+)(\/.*)/);
+    const proxyMatch = pathname.match(/^\/proxy\/([^/]+)\/(\d+)(\/.*)/);
     if (proxyMatch) {
       const [, host, portStr, subPath] = proxyMatch;
       if (!PROXY_ALLOWED_HOSTS.has(host)) {
         return { status: 403, body: { ok: false, error: "proxy host not allowed" } };
       }
       try {
-        const { status, json } = await requestJson(`http://${host}:${portStr}${subPath}`, {
+        const { status, json } = await requestJson(`http://${host}:${portStr}${subPath}${routeUrl.search}`, {
           method,
           body: body !== undefined ? body : undefined,
           timeoutMs: PROXY_TIMEOUT_MS,
@@ -605,7 +608,7 @@ export class AimuxDaemon {
     // CLI is trusted with the daemon's user.
     const url = new URL(req.url ?? "/", `http://${DAEMON_HOST}:${DAEMON_PORT}`);
     const body = req.method === "POST" ? await readJson(req) : undefined;
-    const result = await this.routeRequest(req.method ?? "GET", url.pathname, body);
+    const result = await this.routeRequest(req.method ?? "GET", `${url.pathname}${url.search}`, body);
     send(res, result.status, result.body);
   }
 }

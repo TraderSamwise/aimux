@@ -18,6 +18,7 @@ type RelayMessage = RelayRequest | RelayControl;
 const INITIAL_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
 const MAX_HANDSHAKE_FAILURES = 5;
+const TOKEN_PROTOCOL_PREFIX = "aimux-token.";
 
 export type RelayConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected" | "auth_failed";
 
@@ -68,10 +69,10 @@ export class RelayClient {
       return;
     }
     this.status = this.lastConnectedAt ? "reconnecting" : "connecting";
-    const url = `${this.relayUrl}/daemon/connect?token=${encodeURIComponent(this.token)}`;
+    const url = `${this.relayUrl}/daemon/connect`;
 
     try {
-      this.ws = new WebSocket(url);
+      this.ws = new WebSocket(url, ["aimux", `${TOKEN_PROTOCOL_PREFIX}${this.token}`]);
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
       this.scheduleRetry();

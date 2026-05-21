@@ -12,6 +12,7 @@ import { env } from "@/lib/env";
 // can capture it. Web-only — the CLI flow never runs on native.
 
 type Phase = "checking" | "need-signin" | "issuing" | "error" | "invalid-callback" | "done";
+const TOKEN_ISSUE_TIMEOUT_MS = 15_000;
 
 function relayHttpBase(): string | null {
   const ws = env.AIMUX_RELAY_URL;
@@ -68,8 +69,12 @@ export default function CliAuthScreen() {
       return;
     }
     if (LOCAL_MODE) {
-      setError("This deployment runs in local mode — no remote login needed.");
+      const msg = "This deployment runs in local mode — no remote login needed.";
+      setError(msg);
       setPhase("error");
+      redirectToCallback(
+        `error=${encodeURIComponent(msg)}&state=${encodeURIComponent(loginState ?? "")}`,
+      );
       return;
     }
     if (!isSignedIn) {
@@ -85,10 +90,18 @@ export default function CliAuthScreen() {
         if (!base) throw new Error("Relay URL not configured");
         const token = await getToken();
         if (!token) throw new Error("Could not get session token");
-        const res = await fetch(`${base}/cli/issue-token`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), TOKEN_ISSUE_TIMEOUT_MS);
+        let res: Response;
+        try {
+          res = await fetch(`${base}/cli/issue-token`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
         const data = (await res.json()) as { ok?: boolean; token?: string; error?: string };
         if (!res.ok || !data.ok || !data.token) {
           throw new Error(data.error ?? `Token issuance failed (${res.status})`);
@@ -103,7 +116,9 @@ export default function CliAuthScreen() {
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
         setPhase("error");
-        redirectToCallback(`error=${encodeURIComponent(msg)}&state=${encodeURIComponent(loginState ?? "")}`);
+        redirectToCallback(
+          `error=${encodeURIComponent(msg)}&state=${encodeURIComponent(loginState ?? "")}`,
+        );
       }
     })();
     return () => {

@@ -9,6 +9,7 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
+const TOKEN_PROTOCOL_PREFIX = "aimux-token.";
 
 function corsResponse(body: string, status: number): Response {
   return new Response(body, { status, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
@@ -26,21 +27,28 @@ function tokenIssueCorsHeaders(request: Request, env: Env): Record<string, strin
   if (!allowed.includes(origin)) return null;
   return {
     "Access-Control-Allow-Origin": origin,
-    "Vary": "Origin",
+    Vary: "Origin",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
 }
 
-function tokenIssueResponse(
-  body: string,
-  status: number,
-  corsHeaders: Record<string, string>,
-): Response {
+function tokenIssueResponse(body: string, status: number, corsHeaders: Record<string, string>): Response {
   return new Response(body, {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+function getWebSocketToken(request: Request): string | null {
+  const protocols = request.headers.get("Sec-WebSocket-Protocol") ?? "";
+  for (const rawProtocol of protocols.split(",")) {
+    const protocol = rawProtocol.trim();
+    if (protocol.startsWith(TOKEN_PROTOCOL_PREFIX)) {
+      return protocol.slice(TOKEN_PROTOCOL_PREFIX.length);
+    }
+  }
+  return null;
 }
 
 export default {
@@ -78,11 +86,7 @@ export default {
       const authHeader = request.headers.get("Authorization");
       const clerkToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
       if (!clerkToken) {
-        return tokenIssueResponse(
-          JSON.stringify({ ok: false, error: "Missing authorization" }),
-          401,
-          corsHeaders,
-        );
+        return tokenIssueResponse(JSON.stringify({ ok: false, error: "Missing authorization" }), 401, corsHeaders);
       }
       // Distinguish unset Clerk secret (server misconfig → 500) from a bad
       // token (auth failure → 401) so deployments fail loudly when secrets
@@ -105,18 +109,10 @@ export default {
       try {
         userId = await verifyWsToken(clerkToken, env);
       } catch {
-        return tokenIssueResponse(
-          JSON.stringify({ ok: false, error: "Invalid token" }),
-          401,
-          corsHeaders,
-        );
+        return tokenIssueResponse(JSON.stringify({ ok: false, error: "Invalid token" }), 401, corsHeaders);
       }
       const daemonToken = await mintDaemonToken(userId, env.RELAY_TOKEN_SECRET);
-      return tokenIssueResponse(
-        JSON.stringify({ ok: true, token: daemonToken }),
-        200,
-        corsHeaders,
-      );
+      return tokenIssueResponse(JSON.stringify({ ok: true, token: daemonToken }), 200, corsHeaders);
     }
 
     if (url.pathname !== "/daemon/connect" && url.pathname !== "/client/connect") {
@@ -128,30 +124,30 @@ export default {
       return corsResponse(JSON.stringify({ ok: false, error: "Expected WebSocket upgrade" }), 426);
     }
 
-    const token = url.searchParams.get("token");
+    const token = getWebSocketToken(request);
     if (!token) {
-      return corsResponse(JSON.stringify({ ok: false, error: "Missing token parameter" }), 401);
+      return corsResponse(JSON.stringify({ ok: false, error: "Missing WebSocket token protocol" }), 401);
     }
 
     // Daemons present a relay-signed long-lived token; web clients present a
     // short-lived Clerk session JWT. Pick the verifier by token shape. Check
     // required secrets up front so a missing config returns 500 (server
     // misconfig) instead of being masked as 401 "Invalid token".
-    if (isDaemonToken(token) && !env.RELAY_TOKEN_SECRET) {
-      return corsResponse(
-        JSON.stringify({ ok: false, error: "Relay not configured: RELAY_TOKEN_SECRET unset" }),
-        500,
-      );
+    const isDaemonEndpoint = url.pathname === "/daemon/connect";
+    const tokenIsDaemon = isDaemonToken(token);
+    if (isDaemonEndpoint !== tokenIsDaemon) {
+      return corsResponse(JSON.stringify({ ok: false, error: "Token type does not match endpoint" }), 403);
     }
-    if (!isDaemonToken(token) && !env.CLERK_SECRET_KEY) {
-      return corsResponse(
-        JSON.stringify({ ok: false, error: "Relay not configured: CLERK_SECRET_KEY unset" }),
-        500,
-      );
+
+    if (tokenIsDaemon && !env.RELAY_TOKEN_SECRET) {
+      return corsResponse(JSON.stringify({ ok: false, error: "Relay not configured: RELAY_TOKEN_SECRET unset" }), 500);
+    }
+    if (!tokenIsDaemon && !env.CLERK_SECRET_KEY) {
+      return corsResponse(JSON.stringify({ ok: false, error: "Relay not configured: CLERK_SECRET_KEY unset" }), 500);
     }
     let userId: string;
     try {
-      if (isDaemonToken(token)) {
+      if (tokenIsDaemon) {
         userId = await verifyDaemonToken(token, env.RELAY_TOKEN_SECRET!);
       } else {
         userId = await verifyWsToken(token, env);

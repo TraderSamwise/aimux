@@ -23,7 +23,7 @@ export interface RelayResponse {
   id: string;
   type: "response";
   status: number;
-  body: unknown;
+  body?: unknown;
 }
 
 export interface RelayControl {

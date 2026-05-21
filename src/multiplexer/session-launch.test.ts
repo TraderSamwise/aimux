@@ -754,7 +754,7 @@ describe("migrateAgent", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-migrate-"));
     const targetRoot = mkdtempSync(join(tmpdir(), "aimux-session-migrate-target-"));
     gitInit(repoRoot);
-    execFileSync("git", ["init"], { cwd: targetRoot, stdio: "ignore" });
+    gitInit(targetRoot);
     await initPaths(repoRoot);
     recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
 
