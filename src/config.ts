@@ -45,11 +45,25 @@ export interface RuntimeConfig {
   tmux: TmuxRuntimeConfig;
 }
 
+export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
+
+export interface LoggingConfig {
+  enabled: boolean;
+  level: LogLevel;
+  /** Category names to include. "*" includes all categories. */
+  categories: string[];
+  /** Rotate the active log file after it reaches this size. */
+  maxBytes: number;
+  /** Number of rotated log files to keep. */
+  maxFiles: number;
+}
+
 export interface AimuxConfig {
   defaultTool: string;
   contextMaxEntries: number;
   liveWindowSize: number;
   compactEveryNTurns: number;
+  logging: LoggingConfig;
   notifications: NotificationConfig;
   statusline: StatuslineConfig;
   runtime: RuntimeConfig;
@@ -102,6 +116,13 @@ const DEFAULT_CONFIG: AimuxConfig = {
   contextMaxEntries: 20,
   liveWindowSize: 20,
   compactEveryNTurns: 50,
+  logging: {
+    enabled: false,
+    level: "info",
+    categories: ["*"],
+    maxBytes: 10_000_000,
+    maxFiles: 5,
+  },
   notifications: {
     enabled: true,
     onPrompt: true,
