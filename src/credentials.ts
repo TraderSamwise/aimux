@@ -43,7 +43,13 @@ export function saveCredentials(creds: AimuxCredentials): void {
 export function clearCredentials(): boolean {
   const path = getAuthPath();
   if (!existsSync(path)) return false;
-  rmSync(path);
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // Permission, lock, or race with another process removing the file.
+    // Don't crash `aimux logout` — just report the no-op.
+    return false;
+  }
   return true;
 }
 
