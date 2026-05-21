@@ -6,3 +6,10 @@ release/
 .env
 *.tsbuildinfo
 src-tauri/target/
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+**/.dev.vars
+**/.wrangler/

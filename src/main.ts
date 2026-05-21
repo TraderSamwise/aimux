@@ -73,6 +73,8 @@ import {
   type ThreadStatus,
 } from "./threads.js";
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
+import { runLoginFlow } from "./login-flow.js";
+import { clearCredentials, loadCredentials } from "./credentials.js";
 import {
   acceptHandoff,
   approveReview,
@@ -1154,9 +1156,19 @@ daemonCmd
   .action(async (opts: { json?: boolean }) => {
     const info = loadDaemonInfo();
     const state = loadDaemonState();
+    let relay: unknown = { status: "off" };
+    if (info) {
+      try {
+        const result = await requestDaemonJson("/relay/status");
+        relay = result.relay;
+      } catch {
+        // Relay status unavailable — leave as off.
+      }
+    }
     const payload = {
       daemon: info,
       projects: Object.values(state.projects),
+      relay,
     };
     if (opts.json) {
       console.log(JSON.stringify(payload, null, 2));
@@ -1168,6 +1180,12 @@ daemonCmd
     }
     console.log(`Daemon pid=${info.pid} port=${info.port}`);
     console.log(`Managed projects: ${Object.keys(state.projects).length}`);
+    const r = relay as { status?: string; relayUrl?: string };
+    if (r.status && r.status !== "off") {
+      console.log(`Relay: ${r.status}${r.relayUrl ? ` (${r.relayUrl})` : ""}`);
+    } else {
+      console.log("Relay: off");
+    }
   });
 
 daemonCmd
@@ -1307,6 +1325,111 @@ program
     console.log(`Compacting history for ${sessionIds.length} session(s)...`);
     llmCompact(sessionIds);
     console.log(`Done. Summary written to ${getContextDir()}/summary.md`);
+  });
+
+program
+  .command("login")
+  .description("Sign in to enable remote access via aimux.com")
+  .option("--web-app-url <url>", "Override the web app URL")
+  .option("--relay-url <url>", "Override the relay URL")
+  .action(async (opts: { webAppUrl?: string; relayUrl?: string }) => {
+    try {
+      const { userId } = await runLoginFlow({ webAppUrl: opts.webAppUrl, relayUrl: opts.relayUrl });
+      console.log(`\n✓ Logged in as ${userId}`);
+      console.log("Remote access is enabled. Restart the daemon to connect, or it will connect on next start.");
+    } catch (err) {
+      console.error(`Login failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("logout")
+  .description("Clear stored credentials and disable remote access")
+  .action(() => {
+    const cleared = clearCredentials();
+    console.log(cleared ? "✓ Logged out. Remote access disabled." : "Not logged in.");
+  });
+
+program
+  .command("whoami")
+  .description("Show the current remote-access login status")
+  .option("--json", "Emit JSON")
+  .action((opts: { json?: boolean }) => {
+    const creds = loadCredentials();
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          creds
+            ? { loggedIn: true, userId: creds.userId, relayUrl: creds.relayUrl, remoteEnabled: creds.remoteEnabled }
+            : { loggedIn: false },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    if (!creds) {
+      console.log("Not logged in. Run `aimux login` to enable remote access.");
+      return;
+    }
+    console.log(`Logged in as ${creds.userId}`);
+    console.log(`Relay: ${creds.relayUrl}`);
+    console.log(`Remote access: ${creds.remoteEnabled ? "enabled" : "disabled"}`);
+  });
+
+const remoteCmd = program.command("remote").description("Manage remote access via the relay");
+
+remoteCmd
+  .command("status")
+  .description("Show relay connection status")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const creds = loadCredentials();
+    let relay: unknown = { status: "off" };
+    try {
+      await ensureDaemonRunning();
+      const result = await requestDaemonJson("/relay/status");
+      relay = result.relay;
+    } catch {
+      // Daemon not running — fall back to credential state.
+    }
+    if (opts.json) {
+      console.log(JSON.stringify({ loggedIn: Boolean(creds), relay }, null, 2));
+      return;
+    }
+    if (!creds) {
+      console.log("Not logged in. Run `aimux login` to enable remote access.");
+      return;
+    }
+    const r = relay as { status?: string; relayUrl?: string; lastError?: string | null };
+    console.log(`Remote access: ${creds.remoteEnabled ? "enabled" : "disabled"}`);
+    console.log(`Relay: ${creds.relayUrl}`);
+    console.log(`Connection: ${r.status ?? "unknown"}`);
+    if (r.lastError) console.log(`Last error: ${r.lastError}`);
+  });
+
+remoteCmd
+  .command("enable")
+  .description("Enable remote access and connect to the relay")
+  .action(async () => {
+    if (!loadCredentials()) {
+      console.error("Not logged in. Run `aimux login` first.");
+      process.exit(1);
+    }
+    await ensureDaemonRunning();
+    const result = await requestDaemonJson("/relay/enable", { method: "POST" });
+    const r = result.relay as { status?: string };
+    console.log(`✓ Remote access enabled (connection: ${r.status ?? "unknown"})`);
+  });
+
+remoteCmd
+  .command("disable")
+  .description("Disable remote access and disconnect from the relay")
+  .action(async () => {
+    await ensureDaemonRunning();
+    await requestDaemonJson("/relay/disable", { method: "POST" });
+    console.log("✓ Remote access disabled. Daemon disconnected from relay.");
   });
 
 async function prepareProjectContext(requestedProject?: string): Promise<string> {

@@ -1,5 +1,9 @@
 import { Redirect } from "expo-router";
+import { LOCAL_MODE, useAuth } from "@/lib/auth";
 
 export default function RootIndex() {
-  return <Redirect href="/(main)" />;
+  const { isSignedIn, isLoaded } = useAuth();
+  if (!isLoaded) return null;
+  if (isSignedIn || LOCAL_MODE) return <Redirect href="/(main)" />;
+  return <Redirect href="/landing" />;
 }
