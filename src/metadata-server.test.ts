@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getDashboardClientUiStatePath, initPaths } from "./paths.js";
+import { getDashboardClientUiStatePath, getPlansDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState } from "./metadata-store.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
@@ -1825,5 +1825,160 @@ describe("MetadataServer threads API", () => {
       title: "shell @ Main Checkout finished",
       body: "Shell returned to a prompt.",
     });
+  });
+});
+
+describe("MetadataServer plan endpoints", () => {
+  let repoRoot = "";
+  let server: MetadataServer | null = null;
+  let base = "";
+
+  beforeEach(async () => {
+    repoRoot = mkdtempSync(join(tmpdir(), "aimux-metadata-server-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+    server = new MetadataServer();
+    await server.start();
+    const endpoint = server.getAddress();
+    base = `http://${endpoint!.host}:${endpoint!.port}`;
+  });
+
+  afterEach(() => {
+    server?.stop();
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("returns 404 when plan file is missing", async () => {
+    const res = await fetch(`${base}/plans/missing-session`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("Plan not found");
+  });
+
+  it("PUT then GET roundtrip returns same content", async () => {
+    const putRes = await fetch(`${base}/plans/session-a`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "# Plan A\n\nFirst draft." }),
+    });
+    expect(putRes.status).toBe(200);
+    const putBody = (await putRes.json()) as { ok: boolean; sessionId: string };
+    expect(putBody.ok).toBe(true);
+    expect(putBody.sessionId).toBe("session-a");
+
+    const getRes = await fetch(`${base}/plans/session-a`);
+    expect(getRes.status).toBe(200);
+    const getBody = (await getRes.json()) as {
+      ok: boolean;
+      sessionId: string;
+      content: string;
+    };
+    expect(getBody.ok).toBe(true);
+    expect(getBody.sessionId).toBe("session-a");
+    expect(getBody.content).toBe("# Plan A\n\nFirst draft.");
+  });
+
+  it("second PUT overwrites first", async () => {
+    const first = await fetch(`${base}/plans/session-b`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "first" }),
+    });
+    expect(first.status).toBe(200);
+
+    const second = await fetch(`${base}/plans/session-b`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "second" }),
+    });
+    expect(second.status).toBe(200);
+
+    const getRes = await fetch(`${base}/plans/session-b`);
+    const body = (await getRes.json()) as { content: string };
+    expect(body.content).toBe("second");
+  });
+
+  it("PUT empty string content is allowed", async () => {
+    const putRes = await fetch(`${base}/plans/session-c`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "" }),
+    });
+    expect(putRes.status).toBe(200);
+
+    const getRes = await fetch(`${base}/plans/session-c`);
+    const body = (await getRes.json()) as { content: string };
+    expect(body.content).toBe("");
+  });
+
+  it("PUT rejects non-string content with 400", async () => {
+    const res = await fetch(`${base}/plans/session-d`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: 42 }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("content must be a string");
+  });
+
+  it("PUT rejects missing content field with 400", async () => {
+    const res = await fetch(`${base}/plans/session-e`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("content must be a string");
+  });
+
+  it("rejects invalid sessionId variants on GET and PUT", async () => {
+    // Note: a literal ".." sessionId is unreachable — both `fetch` and the WHATWG URL
+    // parser used by the server normalize `/plans/..` (or `/plans/%2E%2E`) to `/`.
+    // The `..`-substring check in validateSessionId is defense-in-depth for cases
+    // like `f..oo` that survive URL parsing but still indicate path traversal intent.
+    // We percent-encode each char so slashes don't get collapsed before reaching the server.
+    const percentEncode = (s: string) =>
+      Array.from(s)
+        .map((c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`)
+        .join("");
+    const invalid = ["f..oo", "foo/bar", "foo\\bar"];
+    for (const raw of invalid) {
+      const encoded = percentEncode(raw);
+      const getRes = await fetch(`${base}/plans/${encoded}`);
+      expect(getRes.status, `GET /plans/${raw}`).toBe(400);
+      const getBody = (await getRes.json()) as { ok: boolean; error: string };
+      expect(getBody.ok).toBe(false);
+      expect(getBody.error).toBe("invalid sessionId");
+
+      const putRes = await fetch(`${base}/plans/${encoded}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "x" }),
+      });
+      expect(putRes.status, `PUT /plans/${raw}`).toBe(400);
+      const putBody = (await putRes.json()) as { ok: boolean; error: string };
+      expect(putBody.ok).toBe(false);
+      expect(putBody.error).toBe("invalid sessionId");
+    }
+  });
+
+  it("PUT creates parent dir when missing", async () => {
+    rmSync(getPlansDir(), { recursive: true, force: true });
+
+    const putRes = await fetch(`${base}/plans/session-f`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "hello" }),
+    });
+    expect(putRes.status).toBe(200);
+    const body = (await putRes.json()) as { ok: boolean; sessionId: string };
+    expect(body.ok).toBe(true);
+    expect(body.sessionId).toBe("session-f");
+    expect(readFileSync(join(getPlansDir(), "session-f.md"), "utf8")).toBe("hello");
   });
 });

@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-import { getDashboardClientUiStatePath, getProjectId, getProjectStateDir } from "./paths.js";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir } from "./paths.js";
 import {
   type MetadataTone,
   updateSessionMetadata,
@@ -407,6 +408,17 @@ function desiredPort(): number {
   return 43000 + (parseInt(hash, 16) % 10000);
 }
 
+// Plan paths join this directly into `${sessionId}.md`, so restrict to a
+// conservative charset (no whitespace, no separators, no traversal) and
+// cap length so we don't produce surprising filenames.
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
+
+function validateSessionId(raw: string): { ok: true; value: string } | { ok: false } {
+  if (!SESSION_ID_PATTERN.test(raw)) return { ok: false };
+  if (raw.includes("..")) return { ok: false };
+  return { ok: true, value: raw };
+}
+
 async function readJson(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -780,6 +792,16 @@ export class MetadataServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+    if (req.method === "OPTIONS") {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
 
     if (req.method === "GET" && url.pathname === "/events") {
@@ -1090,6 +1112,70 @@ export class MetadataServer {
     }
 
     try {
+      if (req.method === "GET" && url.pathname.startsWith("/plans/")) {
+        let raw: string;
+        try {
+          raw = decodeURIComponent(url.pathname.slice("/plans/".length));
+        } catch {
+          send(res, 400, { ok: false, error: "invalid sessionId" });
+          return;
+        }
+        const validation = validateSessionId(raw);
+        if (!validation.ok) {
+          send(res, 400, { ok: false, error: "invalid sessionId" });
+          return;
+        }
+        const sessionId = validation.value;
+        const planPath = join(getPlansDir(), `${sessionId}.md`);
+        try {
+          const content = readFileSync(planPath, "utf8");
+          send(res, 200, { ok: true, sessionId, content });
+        } catch (err: any) {
+          if (err?.code === "ENOENT") {
+            send(res, 404, { ok: false, error: "Plan not found" });
+            return;
+          }
+          send(res, 500, { ok: false, error: "Failed to read plan" });
+          return;
+        }
+        return;
+      }
+
+      if (req.method === "PUT" && url.pathname.startsWith("/plans/")) {
+        let raw: string;
+        try {
+          raw = decodeURIComponent(url.pathname.slice("/plans/".length));
+        } catch {
+          send(res, 400, { ok: false, error: "invalid sessionId" });
+          return;
+        }
+        const validation = validateSessionId(raw);
+        if (!validation.ok) {
+          send(res, 400, { ok: false, error: "invalid sessionId" });
+          return;
+        }
+        const sessionId = validation.value;
+        const body = (await readJson(req)) as { content?: unknown };
+        if (typeof body.content !== "string") {
+          send(res, 400, { ok: false, error: "content must be a string" });
+          return;
+        }
+        const planPath = join(getPlansDir(), `${sessionId}.md`);
+        const dir = dirname(planPath);
+        const tmpPath = join(dir, `.${sessionId}.${randomUUID()}.tmp`);
+        try {
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(tmpPath, body.content, "utf8");
+          renameSync(tmpPath, planPath);
+        } catch {
+          rmSync(tmpPath, { force: true });
+          send(res, 500, { ok: false, error: "Failed to write plan" });
+          return;
+        }
+        send(res, 200, { ok: true, sessionId });
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/set-status") {
         const body = (await readJson(req)) as { session: string; text: string; tone?: MetadataTone };
         updateSessionMetadata(body.session, (current) => ({
