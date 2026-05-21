@@ -17,6 +17,22 @@ describe("dashboardViewMethods.renderDashboard", () => {
           status: "running",
         },
       ],
+      dashboardTeammatesCache: [
+        {
+          id: "reviewer",
+          command: "codex",
+          worktreePath: "/wt",
+          status: "running",
+          team: { teamId: "team-1", parentSessionId: "live-session", role: "reviewer" },
+        },
+        {
+          id: "other-reviewer",
+          command: "codex",
+          worktreePath: "/wt",
+          status: "running",
+          team: { teamId: "team-2", parentSessionId: "other-session", role: "reviewer" },
+        },
+      ],
       dashboardServicesCache: [],
       dashboardWorktreeGroupsCache: [{ path: "/wt" }],
       dashboardMainCheckoutInfoCache: { name: "Main Checkout", branch: "master" },
@@ -52,6 +68,7 @@ describe("dashboardViewMethods.renderDashboard", () => {
         navLevel: "sessions",
         selectedSessionId: "live-session",
         selectedServiceId: undefined,
+        selectedTeammates: [expect.objectContaining({ id: "reviewer" })],
         runtimeLabel: "tmux",
         mainCheckout: host.dashboardMainCheckoutInfoCache,
       }),
@@ -99,7 +116,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       startedInDashboard: true,
       mode: "dashboard",
       dashboardPendingActions: {
-        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
           isSettled = opts.isSettled;
         }),
       },
@@ -128,7 +145,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       startedInDashboard: true,
       mode: "dashboard",
       dashboardPendingActions: {
-        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
           isSettled = opts.isSettled;
         }),
       },
@@ -154,7 +171,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       startedInDashboard: true,
       mode: "dashboard",
       dashboardPendingActions: {
-        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
           isSettled = opts.isSettled;
         }),
       },
@@ -183,7 +200,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       startedInDashboard: true,
       mode: "dashboard",
       dashboardPendingActions: {
-        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
           isSettled = opts.isSettled;
         }),
       },
@@ -211,7 +228,7 @@ describe("dashboardViewMethods.settleDashboardCreatePending", () => {
       startedInDashboard: true,
       mode: "dashboard",
       dashboardPendingActions: {
-        settleCreatePending: vi.fn((_itemId, _onSettled, opts) => {
+        settleCreatePending: vi.fn((_target, _itemId, _onSettled, opts) => {
           isSettled = opts.isSettled;
         }),
       },

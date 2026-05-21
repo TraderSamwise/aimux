@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
 import { addNotification, listNotifications } from "../notifications.js";
-import { handleNotificationsKey } from "./notifications.js";
+import { handleNotificationsKey, notificationTargetLabel, notificationTargetState } from "./notifications.js";
 
 describe("notification target open", () => {
   let host: any;
@@ -77,5 +77,36 @@ describe("notification target open", () => {
     await vi.waitFor(() => expect(host.activateDashboardService).toHaveBeenCalled());
 
     expect(listNotifications({ unreadOnly: true, sessionId: "service-1" })).toHaveLength(1);
+  });
+
+  it("opens teammate notification targets from the hidden teammate cache", async () => {
+    const teammateNotification = addNotification({
+      title: "Needs input",
+      body: "Open teammate",
+      sessionId: "teammate-1",
+    });
+    host.notificationEntries = [teammateNotification];
+    host.dashboardTeammatesCache = [
+      {
+        id: "teammate-1",
+        command: "codex",
+        label: "reviewer",
+        status: "offline",
+        worktreeName: "demo",
+        team: { teamId: "team-parent", parentSessionId: "parent-1", role: "reviewer" },
+      },
+    ];
+    host.activateDashboardEntry = vi.fn(async () => undefined);
+
+    expect(notificationTargetLabel(host, "teammate-1")).toBe("reviewer · demo");
+    expect(notificationTargetState(host, "teammate-1")).toBe("offline");
+
+    handleNotificationsKey(host, Buffer.from("\r"));
+    await vi.waitFor(() => expect(host.activateDashboardEntry).toHaveBeenCalled());
+
+    expect(host.activateDashboardEntry).toHaveBeenCalledWith(expect.objectContaining({ id: "teammate-1" }), {
+      preserveDashboardSelection: true,
+    });
+    expect(listNotifications({ unreadOnly: true, sessionId: "teammate-1" })).toHaveLength(0);
   });
 });

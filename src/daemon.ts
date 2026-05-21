@@ -15,6 +15,9 @@ const DAEMON_PORT = 43190;
 const DAEMON_HOST = "127.0.0.1";
 const DAEMON_STARTUP_TIMEOUT_MS = 10_000;
 const PROJECT_SERVICE_STARTUP_GRACE_MS = 15_000;
+const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
+const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
+const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 
 export interface AimuxDaemonInfo {
   pid: number;
@@ -238,6 +241,7 @@ export class AimuxDaemon {
   private server: Server | null = null;
   private relayClient: RelayClient | null = null;
   private readonly children = new Map<string, ChildProcess>();
+  private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
   private state: DaemonState = loadDaemonState();
 
   async start(): Promise<void> {
@@ -358,7 +362,9 @@ export class AimuxDaemon {
     };
     this.state.projects[projectId] = state;
     child.on("exit", () => {
-      this.children.delete(projectId);
+      if (this.children.get(projectId) === child) {
+        this.children.delete(projectId);
+      }
       const current = this.state.projects[projectId];
       if (current?.pid === state.pid) {
         delete this.state.projects[projectId];
@@ -372,6 +378,19 @@ export class AimuxDaemon {
   private async ensureProject(projectRoot: string): Promise<ProjectServiceState> {
     const resolvedRoot = pathResolve(projectRoot);
     const projectId = getProjectIdFor(resolvedRoot);
+    const existingEnsure = this.projectEnsurePromises.get(projectId);
+    if (existingEnsure) return existingEnsure;
+
+    const ensure = this.ensureProjectUnlocked(resolvedRoot, projectId).finally(() => {
+      if (this.projectEnsurePromises.get(projectId) === ensure) {
+        this.projectEnsurePromises.delete(projectId);
+      }
+    });
+    this.projectEnsurePromises.set(projectId, ensure);
+    return ensure;
+  }
+
+  private async ensureProjectUnlocked(resolvedRoot: string, projectId: string): Promise<ProjectServiceState> {
     const existing = this.state.projects[projectId];
     if (existing && isPidAlive(existing.pid)) {
       const startedAtMs = Date.parse(existing.startedAt);
@@ -391,12 +410,7 @@ export class AimuxDaemon {
         if (withinStartupGrace) {
           return refreshExisting();
         }
-        try {
-          process.kill(existing.pid, "SIGTERM");
-        } catch {}
-        delete this.state.projects[projectId];
-        this.refreshState();
-        return this.spawnProjectService(resolvedRoot, projectId);
+        return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
       }
       try {
         const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
@@ -409,16 +423,82 @@ export class AimuxDaemon {
         if (withinStartupGrace) {
           return refreshExisting();
         }
-        try {
-          process.kill(existing.pid, "SIGTERM");
-        } catch {}
-        delete this.state.projects[projectId];
-        this.refreshState();
-        return this.spawnProjectService(resolvedRoot, projectId);
+        return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
       }
       return refreshExisting();
     }
     return this.spawnProjectService(resolvedRoot, projectId);
+  }
+
+  private async replaceProjectServiceAfterExit(
+    resolvedRoot: string,
+    projectId: string,
+    existing: ProjectServiceState,
+    refreshExisting: () => ProjectServiceState,
+  ): Promise<ProjectServiceState> {
+    const stopped = await this.terminateProjectService(projectId, existing);
+    if (!stopped) {
+      return refreshExisting();
+    }
+    const current = this.state.projects[projectId];
+    if (current?.pid === existing.pid) {
+      delete this.state.projects[projectId];
+    }
+    const child = this.children.get(projectId);
+    if (child?.pid === existing.pid) {
+      this.children.delete(projectId);
+    }
+    this.refreshState();
+    return this.spawnProjectService(resolvedRoot, projectId);
+  }
+
+  private async terminateProjectService(projectId: string, existing: ProjectServiceState): Promise<boolean> {
+    const child = this.children.get(projectId);
+    try {
+      process.kill(existing.pid, "SIGTERM");
+    } catch {
+      return true;
+    }
+    if (await this.waitForProjectServiceExit(existing.pid, child, PROJECT_SERVICE_TERM_GRACE_MS)) {
+      return true;
+    }
+    try {
+      process.kill(existing.pid, "SIGKILL");
+    } catch {
+      return true;
+    }
+    return this.waitForProjectServiceExit(existing.pid, child, PROJECT_SERVICE_KILL_GRACE_MS);
+  }
+
+  private async waitForProjectServiceExit(
+    pid: number,
+    child: ChildProcess | undefined,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    if (!isPidAlive(pid)) return true;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const cleanups: Array<() => void> = [];
+
+      const finish = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        for (const cleanup of cleanups) cleanup();
+        resolve(value);
+      };
+
+      const onExit = () => finish(true);
+      if (child) {
+        child.once("exit", onExit);
+        cleanups.push(() => child.off("exit", onExit));
+      }
+      const interval = setInterval(() => {
+        if (!isPidAlive(pid)) finish(true);
+      }, PROJECT_SERVICE_EXIT_POLL_MS);
+      cleanups.push(() => clearInterval(interval));
+      const timeout = setTimeout(() => finish(!isPidAlive(pid)), timeoutMs);
+      cleanups.push(() => clearTimeout(timeout));
+    });
   }
 
   private stopProject(projectRoot: string): ProjectServiceState | null {
@@ -429,7 +509,9 @@ export class AimuxDaemon {
       process.kill(existing.pid, "SIGTERM");
     } catch {}
     delete this.state.projects[projectId];
-    this.children.delete(projectId);
+    if (this.children.get(projectId)?.pid === existing.pid) {
+      this.children.delete(projectId);
+    }
     this.refreshState();
     return existing;
   }

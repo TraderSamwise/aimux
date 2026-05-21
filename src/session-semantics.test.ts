@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveSessionSemantics,
+  sessionDisplayStatusLabel,
   sessionSemanticAttentionScore,
   sessionSemanticCompactHint,
   sessionSemanticStatusLabel,
@@ -70,5 +71,33 @@ describe("session semantics", () => {
 
     expect(sessionSemanticCompactHint(notificationSemantic)).toBe("3 unread");
     expect(sessionSemanticCompactHint(activitySemantic)).toBe("3 new");
+  });
+
+  it("keeps raw dashboard status fallback labels in the semantic display helper", () => {
+    expect(sessionDisplayStatusLabel({ status: "running" })).toBe("running");
+    expect(sessionDisplayStatusLabel({ status: "idle" })).toBe("idle");
+    expect(sessionDisplayStatusLabel({ status: "waiting" })).toBe("thinking");
+    expect(sessionDisplayStatusLabel({ status: "exited" })).toBe("exited");
+    expect(sessionDisplayStatusLabel({ status: "offline" })).toBe("offline");
+  });
+
+  it("keeps pending action labels authoritative over semantic user state", () => {
+    const semantic = deriveSessionSemantics({
+      status: "running",
+      attention: "needs_input",
+    });
+
+    expect(sessionDisplayStatusLabel({ status: "running", semantic })).toBe("needs input");
+    for (const pendingAction of [
+      "creating",
+      "forking",
+      "migrating",
+      "starting",
+      "stopping",
+      "graveyarding",
+      "renaming",
+    ] as const) {
+      expect(sessionDisplayStatusLabel({ status: "running", pendingAction, semantic })).toBe(pendingAction);
+    }
   });
 });

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getGraveyardPath, getStatePath, initPaths } from "../paths.js";
 import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
+import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import {
   buildLiveServiceStates,
   getInstanceSessionRefs,
@@ -57,6 +58,11 @@ describe("resumeOfflineSession", () => {
   });
 
   it("suppresses startup preamble for native offline session resume", () => {
+    const team = {
+      teamId: "team-1",
+      parentSessionId: "parent-1",
+      role: "reviewer",
+    };
     const createSession = vi.fn();
     const host: any = {
       sessions: [],
@@ -79,6 +85,7 @@ describe("resumeOfflineSession", () => {
       toolConfigKey: "codex",
       backendSessionId: "native-session",
       args: [],
+      team,
       worktreePath: repoRoot,
     });
 
@@ -95,6 +102,7 @@ describe("resumeOfflineSession", () => {
       "codex-1",
       true,
       true,
+      team,
     ]);
   });
 
@@ -122,6 +130,7 @@ describe("resumeOfflineSession", () => {
       toolConfigKey: "codex",
       args: [],
       worktreePath: repoRoot,
+      createdAt: new Date().toISOString(),
     });
 
     expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
@@ -141,6 +150,75 @@ describe("resumeOfflineSession", () => {
       "codex-1",
       true,
       true,
+      undefined,
+    ]);
+  });
+
+  it("repairs a missing Codex backend id from the native session file before refusing restore", () => {
+    const captureDir = join(repoRoot, "codex-sessions");
+    mkdirSync(captureDir, { recursive: true });
+    writeFileSync(
+      join(captureDir, "019e4837-66d5-7ab2-9bf6-bff1f958ecae.jsonl"),
+      '{"message":"This is an aimux-managed session with session ID codex-1"}\n',
+    );
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux", "config.json"),
+      JSON.stringify({
+        tools: {
+          codex: {
+            sessionCapture: {
+              dir: captureDir,
+              pattern: "([0-9a-f-]+)\\.jsonl$",
+              delayMs: 0,
+            },
+          },
+        },
+      }),
+    );
+    const createSession = vi.fn();
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-1" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: {
+        canResumeWithBackendSessionId: vi.fn(() => true),
+      },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      saveState: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession,
+    };
+
+    resumeOfflineSession(host, {
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      worktreePath: repoRoot,
+      createdAt: new Date().toISOString(),
+    });
+
+    expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex" }),
+      "019e4837-66d5-7ab2-9bf6-bff1f958ecae",
+    );
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession.mock.calls[0]).toMatchObject([
+      "codex",
+      expect.arrayContaining(["resume", "019e4837-66d5-7ab2-9bf6-bff1f958ecae"]),
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      "019e4837-66d5-7ab2-9bf6-bff1f958ecae",
+      "codex-1",
+      true,
+      true,
+      undefined,
     ]);
   });
 
@@ -188,6 +266,7 @@ describe("resumeOfflineSession", () => {
       "codex-1",
       true,
       true,
+      undefined,
     ]);
   });
 
@@ -428,6 +507,8 @@ describe("resumeOfflineSession", () => {
   });
 
   it("does not reload a starting session as offline from stale saved state", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("codex-1", "starting");
     const host: any = {
       sessions: [],
       offlineSessions: [],
@@ -435,9 +516,7 @@ describe("resumeOfflineSession", () => {
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
-      dashboardPendingActions: {
-        get: vi.fn((sessionId: string) => (sessionId === "codex-1" ? "starting" : undefined)),
-      },
+      dashboardPendingActions: pending,
       debug: vi.fn(),
     };
 
@@ -461,15 +540,49 @@ describe("resumeOfflineSession", () => {
     expect(host.offlineSessions).toEqual([]);
   });
 
+  it("does not hide an offline session when only a service with the same id is starting", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setServiceAction("codex-1", "starting");
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+      getRemoteInstancesSafe: vi.fn(() => []),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      dashboardPendingActions: pending,
+      debug: vi.fn(),
+    };
+
+    const changed = loadOfflineSessions(host, {
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          backendSessionId: "native-session",
+          worktreePath: repoRoot,
+        },
+      ],
+      services: [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(true);
+    expect(host.offlineSessions).toMatchObject([{ id: "codex-1" }]);
+  });
+
   it("does not reload a starting service as offline from stale saved state", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setServiceAction("service-1", "starting");
     const host: any = {
       offlineServices: [],
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
-      dashboardPendingActions: {
-        get: vi.fn((serviceId: string) => (serviceId === "service-1" ? "starting" : undefined)),
-      },
+      dashboardPendingActions: pending,
     };
 
     const changed = loadOfflineServices(host, {
@@ -486,6 +599,33 @@ describe("resumeOfflineSession", () => {
 
     expect(changed).toBe(false);
     expect(host.offlineServices).toEqual([]);
+  });
+
+  it("does not hide an offline service when only a session with the same id is starting", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("service-1", "starting");
+    const host: any = {
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      dashboardPendingActions: pending,
+    };
+
+    const changed = loadOfflineServices(host, {
+      sessions: [],
+      services: [
+        {
+          id: "service-1",
+          label: "shell",
+          worktreePath: repoRoot,
+        },
+      ],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(true);
+    expect(host.offlineServices).toMatchObject([{ id: "service-1" }]);
   });
 
   it("does not resurrect legacy live snapshots as offline sessions", () => {
@@ -785,6 +925,11 @@ describe("resumeOfflineSession", () => {
   });
 
   it("restores team role from tmux metadata", () => {
+    const team = {
+      teamId: "team-1",
+      parentSessionId: "parent-1",
+      role: "reviewer",
+    };
     const host: any = {
       sessions: [],
       sessionTmuxTargets: new Map(),
@@ -805,6 +950,7 @@ describe("resumeOfflineSession", () => {
               toolConfigKey: "codex",
               worktreePath: repoRoot,
               role: "reviewer",
+              team,
               createdAt: "2026-04-21T00:00:00.000Z",
             },
           },
@@ -824,6 +970,7 @@ describe("resumeOfflineSession", () => {
       repoRoot,
       "reviewer",
       Date.parse("2026-04-21T00:00:00.000Z"),
+      team,
     );
   });
 

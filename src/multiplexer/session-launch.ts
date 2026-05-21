@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { initProject, loadConfig } from "../config.js";
+import { initProject, loadConfig, type SessionCaptureConfig } from "../config.js";
 import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
@@ -15,7 +15,14 @@ import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
-import { clearSessionTranscriptPath, loadMetadataState } from "../metadata-store.js";
+import {
+  clearSessionTranscriptPath,
+  loadMetadataState,
+  recordSessionBackendSessionIdMetadata,
+} from "../metadata-store.js";
+import type { SessionTeamMetadata } from "../team.js";
+import { captureBackendSessionIdFromSessionFiles, extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
+export { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
 
 type SessionLaunchHost = any;
 
@@ -38,6 +45,51 @@ const CODEX_OPTIONS_WITH_VALUE = new Set([
   "-s",
   "--sandbox",
 ]);
+
+function scheduleBackendSessionCapture(input: {
+  host: SessionLaunchHost;
+  sessionId: string;
+  projectRoot: string;
+  capture?: SessionCaptureConfig;
+  startedAtMs: number;
+}): void {
+  if (!input.capture) return;
+  const delayMs = Math.max(0, input.capture.delayMs ?? 0);
+  const maxWaitMs = Math.max(delayMs, 60_000);
+  const deadlineMs = input.startedAtMs + maxWaitMs;
+  const attempt = () => {
+    const backendSessionId = captureBackendSessionIdFromSessionFiles(input.capture!, input.sessionId, {
+      startedAtMs: input.startedAtMs,
+    });
+    if (!backendSessionId) {
+      if (Date.now() < deadlineMs) {
+        const retry = setTimeout(attempt, 1000);
+        retry.unref?.();
+        return;
+      }
+      debug(`session capture did not find exact backend id for ${input.sessionId}`, "session");
+      return;
+    }
+
+    try {
+      if (typeof input.host.recordSessionBackendSessionId === "function") {
+        input.host.recordSessionBackendSessionId(input.sessionId, backendSessionId);
+      } else {
+        recordSessionBackendSessionIdMetadata(input.sessionId, backendSessionId, input.projectRoot);
+      }
+      debug(`captured backend id for ${input.sessionId}: ${backendSessionId}`, "session");
+    } catch (error) {
+      debug(
+        `failed to record captured backend id for ${input.sessionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        "session",
+      );
+    }
+  };
+  const timer = setTimeout(attempt, delayMs);
+  timer.unref?.();
+}
 
 function firstCodexPositionalArg(args: string[]): string | undefined {
   let skipNext = false;
@@ -278,9 +330,10 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
       undefined,
       saved.worktreePath,
       backendSessionId,
-      undefined,
+      saved.id,
       false,
       true,
+      saved.team,
     );
   }
 
@@ -340,6 +393,11 @@ export async function restoreSessions(host: SessionLaunchHost, toolFilter?: stri
       extraPreamble.trim() || undefined,
       undefined,
       saved.worktreePath,
+      undefined,
+      saved.id,
+      false,
+      false,
+      saved.team,
     );
   }
 
@@ -360,6 +418,7 @@ export function createSession(
   sessionIdOverride?: string,
   detachedInTmux = false,
   suppressStartupPreamble = false,
+  team?: SessionTeamMetadata,
 ): any {
   const cols = process.stdout.columns ?? 80;
   const sessionId = sessionIdOverride ?? `${command}-${Math.random().toString(36).slice(2, 8)}`;
@@ -375,10 +434,17 @@ export function createSession(
     toolCfg && toolConfigKey === "claude" && toolCfg.command === command
       ? extractClaudeBackendSessionIdFromArgs(args)
       : undefined;
+  const explicitCodexBackendSessionId =
+    toolCfg && toolConfigKey === "codex" && toolCfg.command === command
+      ? extractCodexBackendSessionIdFromArgs(args)
+      : undefined;
   const effectiveSuppressStartupPreamble = suppressStartupPreamble;
   const effectiveSessionIdFlag = isClaudeResumeStyleLaunch ? undefined : sessionIdFlag;
   const backendSessionId =
-    backendSessionIdOverride ?? explicitClaudeBackendSessionId ?? (effectiveSessionIdFlag ? randomUUID() : undefined);
+    backendSessionIdOverride ??
+    explicitClaudeBackendSessionId ??
+    explicitCodexBackendSessionId ??
+    (effectiveSessionIdFlag ? randomUUID() : undefined);
   const automaticPreambleEnabled = config.runtime.agentPreambleEnabled !== false;
 
   const preamble = effectiveSuppressStartupPreamble
@@ -389,13 +455,14 @@ export function createSession(
         worktreePath,
         extraPreamble,
         includeAimuxPreamble: automaticPreambleEnabled,
+        team,
       });
   const shouldInjectLaunchPreamble = Boolean(!effectiveSuppressStartupPreamble && preambleFlag && preamble.trim());
   const shouldUseCodexInitialPrompt = Boolean(
     !effectiveSuppressStartupPreamble &&
     !preambleFlag &&
-    !extraPreamble &&
     automaticPreambleEnabled &&
+    (!extraPreamble || Boolean(team)) &&
     preamble.trim() &&
     canUseCodexInitialPrompt(args, command, toolConfigKey),
   );
@@ -486,11 +553,20 @@ export function createSession(
   );
   host.sessionTmuxTargets.set(sessionId, target);
   const session = tmuxTransport;
-  host.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime);
+  host.registerManagedSession(tmuxTransport, args, toolConfigKey, worktreePath, undefined, sessionStartTime, team);
 
   session.backendSessionId = backendSessionId;
   if (session instanceof TmuxSessionTransport) {
     host.syncTmuxWindowMetadata(sessionId);
+  }
+  if (!backendSessionId) {
+    scheduleBackendSessionCapture({
+      host,
+      sessionId,
+      projectRoot,
+      capture: toolCfg?.sessionCapture,
+      startedAtMs: sessionStartTime,
+    });
   }
 
   host.activeIndex = host.sessions.length - 1;
@@ -596,6 +672,7 @@ export async function migrateAgent(
       sessionId,
       true,
       true,
+      session.team,
     );
     const kickoff = host.sessionBootstrap.buildCodexMigrationKickoffPrompt(
       sessionId,
@@ -618,6 +695,9 @@ export async function migrateAgent(
     effectiveTarget,
     useBackendResume ? backendSessionId : undefined,
     sessionId,
+    false,
+    false,
+    session.team,
   );
 }
 

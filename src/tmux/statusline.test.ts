@@ -393,6 +393,301 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("yarn devpp");
   });
 
+  it("preserves statusline session order for footer chips instead of tmux window order", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "codex",
+            kind: "agent",
+            tool: "codex",
+            windowName: "codex",
+            tmuxWindowId: "@9",
+            tmuxWindowIndex: 9,
+            worktreePath: repoRoot,
+            status: "running",
+          },
+          {
+            id: "claude",
+            kind: "agent",
+            tool: "claude",
+            windowName: "claude",
+            tmuxWindowId: "@1",
+            tmuxWindowIndex: 1,
+            worktreePath: repoRoot,
+            status: "running",
+          },
+          {
+            id: "service",
+            kind: "service",
+            tool: "shell",
+            windowName: "shell",
+            tmuxWindowId: "@0",
+            tmuxWindowIndex: 0,
+            worktreePath: repoRoot,
+            status: "running",
+          },
+        ],
+      }),
+    );
+
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "codex",
+      currentWindowId: "@9",
+      currentPath: repoRoot,
+      currentSession: "aimux-mobile",
+      width: 220,
+    });
+    expect(rendered.indexOf("codex")).toBeLessThan(rendered.indexOf("claude"));
+    expect(rendered.indexOf("claude")).toBeLessThan(rendered.indexOf("shell[svc]"));
+  });
+
+  it("renders current parent teammates separately from scoped footer chips", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "parent",
+            kind: "agent",
+            tool: "claude",
+            role: "coder",
+            windowName: "claude",
+            tmuxWindowId: "@1",
+            worktreePath: repoRoot,
+            status: "running",
+          },
+          {
+            id: "service",
+            kind: "service",
+            tool: "shell",
+            windowName: "shell",
+            tmuxWindowId: "@2",
+            worktreePath: repoRoot,
+            status: "running",
+          },
+        ],
+        teammates: [
+          {
+            id: "reviewer",
+            kind: "agent",
+            tool: "codex",
+            role: "reviewer",
+            label: "review",
+            windowName: "codex",
+            tmuxWindowId: "@9",
+            worktreePath: repoRoot,
+            status: "running",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", label: "review", order: 1 },
+          },
+          {
+            id: "other",
+            kind: "agent",
+            tool: "claude",
+            windowName: "claude",
+            tmuxWindowId: "@10",
+            worktreePath: repoRoot,
+            status: "running",
+            team: { teamId: "team-2", parentSessionId: "other-parent", role: "coder", label: "other" },
+          },
+        ],
+      }),
+    );
+
+    const rendered = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "claude",
+      currentWindowId: "@1",
+      currentPath: repoRoot,
+      currentSession: "aimux-main",
+      width: 220,
+    });
+
+    expect(rendered).toContain("#[fg=black,bg=yellow] claude(coder)");
+    expect(rendered).toContain("shell[svc]");
+    expect(rendered).toContain("team: review running");
+    expect(rendered).not.toContain("other");
+    expect(rendered.indexOf("claude(coder)")).toBeLessThan(rendered.indexOf("shell[svc]"));
+    expect(rendered.indexOf("shell[svc]")).toBeLessThan(rendered.indexOf("team:"));
+  });
+
+  it("renders the focused teammate as the current footer chip without exposing unrelated teammates", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "parent",
+            kind: "agent",
+            tool: "claude",
+            role: "coder",
+            windowName: "claude",
+            tmuxWindowId: "@1",
+            worktreePath: repoRoot,
+            status: "running",
+          },
+          {
+            id: "service",
+            kind: "service",
+            tool: "shell",
+            windowName: "shell",
+            tmuxWindowId: "@2",
+            worktreePath: repoRoot,
+            status: "running",
+          },
+        ],
+        teammates: [
+          {
+            id: "reviewer",
+            kind: "agent",
+            tool: "codex",
+            role: "reviewer",
+            label: "review",
+            windowName: "codex",
+            tmuxWindowId: "@9",
+            worktreePath: repoRoot,
+            status: "running",
+            headline: "Review the parser patch",
+            semantic: semantic({ status: "running", attention: "needs_input", unseenCount: 2 }),
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", label: "review", order: 1 },
+          },
+          {
+            id: "implementer",
+            kind: "agent",
+            tool: "codex",
+            role: "implementer",
+            label: "impl",
+            windowName: "codex",
+            tmuxWindowId: "@11",
+            worktreePath: repoRoot,
+            status: "running",
+            semantic: semantic({ status: "running", unseenCount: 4 }),
+            team: { teamId: "team-1", parentSessionId: "parent", role: "implementer", label: "impl", order: 2 },
+          },
+          {
+            id: "other",
+            kind: "agent",
+            tool: "claude",
+            windowName: "claude",
+            tmuxWindowId: "@10",
+            worktreePath: repoRoot,
+            status: "running",
+            team: { teamId: "team-2", parentSessionId: "other-parent", role: "coder", label: "other" },
+          },
+        ],
+        metadata: {
+          reviewer: {
+            context: { worktreeName: "review-wt", branch: "feat/review", pr: { number: 44 } },
+            statusline: {
+              top: [{ id: "top", text: "review-top" }],
+              bottom: [{ id: "bottom", text: "review-bottom" }],
+            },
+          },
+        },
+      }),
+    );
+
+    const renderedTop = renderTmuxStatusline(repoRoot, "top", {
+      currentWindow: "codex",
+      currentWindowId: "@9",
+      currentPath: repoRoot,
+      currentSession: "aimux-main",
+      width: 220,
+    });
+    const renderedBottom = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "codex",
+      currentWindowId: "@9",
+      currentPath: repoRoot,
+      currentSession: "aimux-main",
+      width: 220,
+    });
+
+    expect(renderedTop).toContain("feat/review");
+    expect(renderedTop).toContain("PR #44");
+    expect(renderedTop).toContain("needs input");
+    expect(renderedTop).toContain("review-top");
+    expect(renderedBottom).toContain("#[fg=black,bg=cyan] review on you ?");
+    expect(renderedBottom).toContain("#[fg=cyan]impl 4 new");
+    expect(renderedBottom).not.toContain("shell[svc]");
+    expect(renderedBottom).toContain("Review the parser patch");
+    expect(renderedBottom).toContain("review-bottom");
+    expect(renderedBottom).toContain("team plane");
+    expect(renderedBottom).not.toContain("other");
+  });
+
+  it("prefers visible sessions over hidden teammates for name-only exact statusline fallback", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [
+          {
+            id: "parent",
+            kind: "agent",
+            tool: "claude",
+            role: "coder",
+            windowName: "claude",
+            worktreePath: repoRoot,
+            status: "running",
+            headline: "Parent headline",
+            active: true,
+          },
+          {
+            id: "service",
+            kind: "service",
+            tool: "shell",
+            windowName: "shell",
+            worktreePath: repoRoot,
+            status: "running",
+          },
+        ],
+        teammates: [
+          {
+            id: "reviewer",
+            kind: "agent",
+            tool: "claude",
+            role: "reviewer",
+            label: "review",
+            windowName: "claude",
+            tmuxWindowId: "@9",
+            worktreePath: repoRoot,
+            status: "running",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", label: "review", order: 1 },
+          },
+        ],
+        metadata: {
+          parent: {
+            context: { worktreeName: "parent-wt", branch: "feat/parent" },
+            statusline: { bottom: [{ id: "parent-plugin", text: "parent-plugin" }] },
+          },
+          reviewer: {
+            statusline: { bottom: [{ id: "reviewer-plugin", text: "reviewer-plugin" }] },
+          },
+        },
+      }),
+    );
+
+    const renderedBottom = renderTmuxStatusline(repoRoot, "bottom", {
+      currentWindow: "claude",
+      currentPath: repoRoot,
+      currentSession: "aimux-main",
+      width: 220,
+    });
+
+    expect(renderedBottom).toContain("#[fg=black,bg=yellow] claude(coder)");
+    expect(renderedBottom).toContain("team: review running");
+    expect(renderedBottom).toContain("Parent headline");
+    expect(renderedBottom).toContain("parent-plugin");
+    expect(renderedBottom).not.toContain("reviewer-plugin");
+  });
+
   it("omits offline and exited sessions from scoped footer chips", () => {
     const nestedPath = join(repoRoot, ".aimux", "worktrees", "tealstreet-pr5180");
     mkdirSync(nestedPath, { recursive: true });

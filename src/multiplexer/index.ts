@@ -11,6 +11,7 @@ import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from 
 import { AgentTracker } from "../agent-tracker.js";
 import { InstanceDirectory } from "../instance-directory.js";
 import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "../tmux/runtime-manager.js";
+import type { SessionTeamMetadata } from "../team.js";
 import { MetadataServer } from "../metadata-server.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { PluginRuntime } from "../plugin-runtime.js";
@@ -79,6 +80,7 @@ export interface SessionState {
   lifecycle?: "live" | "offline";
   createdAt?: string;
   backendSessionId?: string;
+  team?: SessionTeamMetadata;
   worktreePath?: string;
   label?: string;
   headline?: string;
@@ -202,6 +204,7 @@ export class Multiplexer {
   private planEntries: PlanEntry[] = [];
   private planIndex = 0;
   private notificationPanelState: NotificationPanelState | null = null;
+  private teammatePickerState: { parentSessionId: string; index: number } | null = null;
   private dashboardPendingActions = new DashboardPendingActions(() => {
     if (this.mode === "dashboard") {
       void this.refreshDashboardModelFromService(true).then(() => {
@@ -271,7 +274,9 @@ export class Multiplexer {
   private lastStatuslineSnapshotKey: string | null = null;
   private desktopStateSnapshot: ReturnType<Multiplexer["buildDesktopStateSnapshot"]> | null = null;
   private dashboardSessionsCache: DashboardSession[] = [];
+  private dashboardTeammatesCache: DashboardSession[] = [];
   private dashboardServicesCache: DashboardService[] = [];
+  private dashboardRawWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardWorktreeGroupsCache: WorktreeGroup[] = [];
   private dashboardOperationFailuresCache: DashboardOperationFailure[] = [];
   private dashboardMainCheckoutInfoCache = { name: "Main Checkout", branch: "" };
@@ -421,8 +426,9 @@ export class Multiplexer {
     worktreePath?: string,
     role?: string,
     startTime?: number,
+    team?: SessionTeamMetadata,
   ): ManagedSession {
-    return registerManagedSessionImpl(this, session, args, toolConfigKey, worktreePath, role, startTime);
+    return registerManagedSessionImpl(this, session, args, toolConfigKey, worktreePath, role, startTime, team);
   }
 
   private handleSessionRuntimeEvent(runtime: ManagedSession, event: SessionRuntimeEvent): void {
@@ -507,6 +513,7 @@ export class Multiplexer {
     sessionIdOverride?: string,
     detachedInTmux = false,
     suppressStartupPreamble = false,
+    team?: SessionTeamMetadata,
   ): SessionTransport {
     return createSessionImpl(
       this,
@@ -521,6 +528,7 @@ export class Multiplexer {
       sessionIdOverride,
       detachedInTmux,
       suppressStartupPreamble,
+      team,
     );
   }
 

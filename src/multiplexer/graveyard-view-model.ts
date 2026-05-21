@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { parseRecencyTimestamp } from "../recency.js";
 import type { LastUsedEntry } from "../last-used.js";
+import { isTeammateSession, selectOrphanTeammates } from "../team.js";
 import type { ServiceState, SessionState } from "./index.js";
 import type { WorktreeGraveyardEntry } from "./worktree-graveyard.js";
 
@@ -67,6 +68,13 @@ export type GraveyardStandaloneAgentRow = {
   lastUsedAt?: string;
 };
 
+export type GraveyardOrphanTeammateRow = {
+  kind: "orphan-teammate";
+  entry: SessionState;
+  parentSessionId: string;
+  lastUsedAt?: string;
+};
+
 export type GraveyardViewRow =
   | GraveyardSectionRow
   | GraveyardAgentWorktreeRow
@@ -74,7 +82,8 @@ export type GraveyardViewRow =
   | GraveyardAttachedAgentRow
   | GraveyardAttachedServiceRow
   | GraveyardAttachedMoreRow
-  | GraveyardStandaloneAgentRow;
+  | GraveyardStandaloneAgentRow
+  | GraveyardOrphanTeammateRow;
 
 export type GraveyardSelectableRow = GraveyardWorktreeRow | GraveyardStandaloneAgentRow;
 
@@ -86,6 +95,8 @@ export interface GraveyardViewModel {
 export interface BuildGraveyardViewModelInput {
   worktrees: WorktreeGraveyardEntry[];
   agents: SessionState[];
+  parentSessions?: SessionState[];
+  teammates?: SessionState[];
   lastUsedById?: Record<string, LastUsedEntry | undefined>;
 }
 
@@ -93,10 +104,9 @@ export function buildGraveyardViewModel(input: BuildGraveyardViewModelInput): Gr
   const rows: GraveyardViewRow[] = [];
   const selectableRows: GraveyardSelectableRow[] = [];
   const flatAgentsClaimedByWorktree = new Set<string>();
+  const renderedAgentIds = new Set<string>();
 
-  const addSelectable = <T extends GraveyardWorktreeRow | GraveyardStandaloneAgentRow>(
-    row: Omit<T, "actionIndex" | "actionNumber">,
-  ): T => {
+  const addSelectable = <T extends GraveyardSelectableRow>(row: Omit<T, "actionIndex" | "actionNumber">): T => {
     const actionIndex = selectableRows.length;
     const withAction = { ...row, actionIndex, actionNumber: actionIndex + 1 } as T;
     selectableRows.push(withAction);
@@ -126,6 +136,9 @@ export function buildGraveyardViewModel(input: BuildGraveyardViewModelInput): Gr
         sortAt: worktreeSortTimestamp(worktree, attachedAgents, attachedServices),
       });
       rows.push(worktreeRow);
+      for (const agent of attachedAgents) {
+        renderedAgentIds.add(agent.entry.id);
+      }
       for (const agent of visibleAttachedAgents) {
         rows.push({ kind: "attached-agent-display", parentPath: worktree.path, agent });
       }
@@ -156,6 +169,7 @@ export function buildGraveyardViewModel(input: BuildGraveyardViewModelInput): Gr
             lastUsedAt: input.lastUsedById?.[agent.id]?.lastUsedAt,
           }),
         );
+        renderedAgentIds.add(agent.id);
       }
     }
   }
@@ -171,10 +185,43 @@ export function buildGraveyardViewModel(input: BuildGraveyardViewModelInput): Gr
           lastUsedAt: input.lastUsedById?.[agent.id]?.lastUsedAt,
         }),
       );
+      renderedAgentIds.add(agent.id);
+    }
+  }
+
+  const orphanTeammates = selectOrphanTeammates(input.teammates ?? [], collectKnownParentIds(input)).filter(
+    (session) => !renderedAgentIds.has(session.id) && !input.agents.some((agent) => agent.id === session.id),
+  );
+  if (orphanTeammates.length > 0) {
+    rows.push({ kind: "section", label: "Orphaned Teammates" });
+    for (const teammate of orphanTeammates) {
+      const parentSessionId = teammate.team?.parentSessionId;
+      if (!parentSessionId) continue;
+      rows.push({
+        kind: "orphan-teammate",
+        entry: teammate,
+        parentSessionId,
+        lastUsedAt: input.lastUsedById?.[teammate.id]?.lastUsedAt,
+      });
     }
   }
 
   return { rows, selectableRows };
+}
+
+function collectKnownParentIds(input: BuildGraveyardViewModelInput): Set<string> {
+  const ids = new Set<string>();
+  const add = (session: SessionState | undefined): void => {
+    if (!session || isTeammateSession(session)) return;
+    ids.add(session.id);
+  };
+
+  for (const session of input.parentSessions ?? []) add(session);
+  for (const agent of input.agents) add(agent);
+  for (const worktree of input.worktrees) {
+    for (const agent of worktree.agents ?? []) add(agent);
+  }
+  return ids;
 }
 
 function sortWorktrees(
