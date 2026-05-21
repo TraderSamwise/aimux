@@ -32,6 +32,8 @@ read_current_version() {
 create_backups() {
     echo "📦 Creating version backup..."
     cp "$VERSION_FILE" "$VERSION_FILE.backup"
+    [ -f "$INFO_PLIST" ] && cp "$INFO_PLIST" "$INFO_PLIST.backup"
+    [ -f "$PBXPROJ" ] && cp "$PBXPROJ" "$PBXPROJ.backup"
 }
 
 update_versions() {
@@ -96,10 +98,20 @@ rollback_versions() {
     else
         echo "⚠️  No backup found"
     fi
+    if [ -f "$INFO_PLIST.backup" ]; then
+        cp "$INFO_PLIST.backup" "$INFO_PLIST"
+        rm "$INFO_PLIST.backup"
+        echo "✅ Rolled back $INFO_PLIST"
+    fi
+    if [ -f "$PBXPROJ.backup" ]; then
+        cp "$PBXPROJ.backup" "$PBXPROJ"
+        rm "$PBXPROJ.backup"
+        echo "✅ Rolled back $PBXPROJ"
+    fi
 }
 
 cleanup_backups() {
-    rm -f "$VERSION_FILE.backup"
+    rm -f "$VERSION_FILE.backup" "$INFO_PLIST.backup" "$PBXPROJ.backup"
 }
 
 commit_version() {

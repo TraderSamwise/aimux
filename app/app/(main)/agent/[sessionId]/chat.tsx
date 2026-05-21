@@ -8,6 +8,7 @@ import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
 import { getAgentHistory } from "@/lib/api";
+import { singleRouteParam } from "@/lib/route-params";
 import {
   chatHistoryFamily,
   ingestEventAtom,
@@ -20,16 +21,17 @@ import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 import type { ChatMessage } from "@/lib/events";
 
 export default function ChatScreen() {
-  const params = useLocalSearchParams<{ sessionId: string }>();
-  const sessionId = String(params.sessionId);
+  const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
+  const sessionId = singleRouteParam(params.sessionId);
+  const sessionKey = sessionId ?? "";
   const project = useAtomValue(selectedProjectAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const ingestEvent = useSetAtom(ingestEventAtom);
   const setHistory = useSetAtom(setHistoryAtom);
-  const history = useAtomValue(chatHistoryFamily(sessionId));
-  const pendingMessages = useAtomValue(pendingMessagesFamily(sessionId));
-  const output = useAtomValue(outputBufferFamily(sessionId));
-  const lastError = useAtomValue(lastErrorFamily(sessionId));
+  const history = useAtomValue(chatHistoryFamily(sessionKey));
+  const pendingMessages = useAtomValue(pendingMessagesFamily(sessionKey));
+  const output = useAtomValue(outputBufferFamily(sessionKey));
+  const lastError = useAtomValue(lastErrorFamily(sessionKey));
   const { getToken } = useAuth();
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
@@ -38,14 +40,19 @@ export default function ChatScreen() {
 
   // Keep selectedSessionId in the projects store in sync with the route param so the sidebar highlights it.
   useEffect(() => {
+    if (!sessionId) return;
     selectSession(sessionId);
   }, [sessionId, selectSession]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const t = await getToken();
-      if (!cancelled) setToken(t);
+      try {
+        const t = await getToken();
+        if (!cancelled) setToken(t);
+      } catch {
+        if (!cancelled) setToken(null);
+      }
     })();
     return () => {
       cancelled = true;
@@ -111,7 +118,7 @@ export default function ChatScreen() {
     scrollRef.current?.scrollToEnd({ animated: true });
   }, [allMessages.length, output]);
 
-  const session = project?.sessions.find((s) => s.id === sessionId) ?? null;
+  const session = sessionId ? (project?.sessions.find((s) => s.id === sessionId) ?? null) : null;
 
   return (
     <View className="flex-1 bg-background">
@@ -121,7 +128,7 @@ export default function ChatScreen() {
           <View className="border-b border-border px-4 py-3 flex-row items-center justify-between">
             <View className="flex-1">
               <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
-                {session?.label || sessionId}
+                {session?.label || sessionId || "Unknown session"}
               </Text>
               <Text className="text-xs text-muted-foreground" numberOfLines={1}>
                 {session?.tool ?? ""} · {session?.status ?? "unknown"}
@@ -129,10 +136,12 @@ export default function ChatScreen() {
             </View>
             <Pressable
               onPress={() =>
-                router.push({
-                  pathname: "/(main)/plans/[sessionId]",
-                  params: { sessionId },
-                })
+                sessionId
+                  ? router.push({
+                      pathname: "/(main)/plans/[sessionId]",
+                      params: { sessionId },
+                    })
+                  : undefined
               }
             >
               <Text className="text-sm text-primary">Plan</Text>
@@ -153,7 +162,7 @@ export default function ChatScreen() {
                 ) : null}
                 {allMessages.map((m, idx) => (
                   <MessageBlock
-                    key={m.id || `${m.clientMessageId}` || `idx-${idx}`}
+                    key={m.id ?? m.clientMessageId ?? `idx-${idx}`}
                     message={m}
                     serviceEndpoint={serviceEndpoint}
                   />
@@ -168,7 +177,13 @@ export default function ChatScreen() {
                   <Text className="text-xs text-destructive my-2">{lastError}</Text>
                 ) : null}
               </ScrollView>
-              <ChatComposer serviceEndpoint={serviceEndpoint} sessionId={sessionId} token={token} />
+              {sessionId ? (
+                <ChatComposer
+                  serviceEndpoint={serviceEndpoint}
+                  sessionId={sessionId}
+                  token={token}
+                />
+              ) : null}
             </>
           )}
         </View>

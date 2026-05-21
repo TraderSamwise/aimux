@@ -40,7 +40,7 @@ module.exports = {
       output: "single",
       favicon: "./assets/images/favicon.png",
     },
-    runtimeVersion: "1.0.0",
+    runtimeVersion: { policy: "fingerprint" },
     updates: {
       url: `https://u.expo.dev/${EAS_PROJECT_ID}`,
       enabled: HAS_REAL_EAS_PROJECT,

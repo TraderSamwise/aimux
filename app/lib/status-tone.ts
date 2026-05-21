@@ -17,5 +17,5 @@ export const SERVICE_STATUS_TONE: Record<string, string> = {
 
 export function firstTokenOf(command: string | undefined): string {
   if (!command) return "";
-  return command.split(/\s+/)[0];
+  return command.trim().split(/\s+/, 1)[0] ?? "";
 }

@@ -44,7 +44,10 @@ export async function pickImages(): Promise<PickedImage[] | null> {
     };
     window.addEventListener(
       "focus",
-      () => setTimeout(() => { if (!input.files?.length) resolve(null); }, 500),
+      () =>
+        setTimeout(() => {
+          if (!input.files?.length) resolve(null);
+        }, 500),
       { once: true },
     );
     input.click();

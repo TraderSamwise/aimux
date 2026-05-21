@@ -3,20 +3,13 @@ import { ScrollView, View } from "react-native";
 import { useAtomValue } from "jotai";
 import { Text } from "@/components/ui/text";
 import { useAuth } from "@/lib/auth";
-import { listGraveyard } from "@/lib/api";
+import { listGraveyard, type GraveyardEntryResponse } from "@/lib/api";
 import { selectedProjectAtom } from "@/stores/projects";
-
-interface GraveyardEntry {
-  id: string;
-  tool?: string;
-  label?: string;
-  diedAt?: string;
-}
 
 export default function GraveyardScreen() {
   const project = useAtomValue(selectedProjectAtom);
   const { getToken } = useAuth();
-  const [entries, setEntries] = useState<GraveyardEntry[]>([]);
+  const [entries, setEntries] = useState<GraveyardEntryResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const endpoint = project?.serviceEndpoint ?? null;
@@ -34,20 +27,19 @@ export default function GraveyardScreen() {
     (async () => {
       try {
         const token = await getToken();
-        const data = (await listGraveyard(endpoint, { token })) as
-          | GraveyardEntry[]
-          | { entries?: GraveyardEntry[] };
+        const data = await listGraveyard(endpoint, { token });
         if (cancelled) return;
-        if (Array.isArray(data)) {
-          setEntries(data);
-        } else if (Array.isArray(data?.entries)) {
+        if (Array.isArray(data.entries)) {
           setEntries(data.entries);
         } else {
           setEntries([]);
         }
         setError(null);
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) {
+          setEntries([]);
+          setError(err instanceof Error ? err.message : String(err));
+        }
       }
     })();
     return () => {

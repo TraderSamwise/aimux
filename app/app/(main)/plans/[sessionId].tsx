@@ -6,11 +6,12 @@ import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { ApiError, getPlan, putPlan } from "@/lib/api";
+import { singleRouteParam } from "@/lib/route-params";
 import { selectedProjectAtom } from "@/stores/projects";
 
 export default function PlanEditorScreen() {
-  const params = useLocalSearchParams<{ sessionId: string }>();
-  const sessionId = String(params.sessionId);
+  const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
+  const sessionId = singleRouteParam(params.sessionId);
   const project = useAtomValue(selectedProjectAtom);
   const { getToken } = useAuth();
   const router = useRouter();
@@ -29,8 +30,8 @@ export default function PlanEditorScreen() {
     setLoading(true);
     setError(null);
     (async () => {
-      const token = await getToken();
       try {
+        const token = await getToken();
         const res = await getPlan(serviceEndpoint, sessionId, { token });
         if (cancelled) return;
         setContent(res.content);
@@ -53,7 +54,7 @@ export default function PlanEditorScreen() {
   }, [serviceEndpoint?.host, serviceEndpoint?.port, sessionId, getToken]);
 
   async function handleSave() {
-    if (!serviceEndpoint) return;
+    if (!serviceEndpoint || !sessionId) return;
     setSaving(true);
     setError(null);
     try {
@@ -74,7 +75,7 @@ export default function PlanEditorScreen() {
       <View className="border-b border-border px-4 py-3 flex-row items-center justify-between">
         <View className="flex-1">
           <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
-            Plan: {sessionId}
+            Plan: {sessionId ?? "Unknown session"}
           </Text>
           {dirty ? <Text className="text-xs text-amber-500">Unsaved changes</Text> : null}
         </View>

@@ -58,7 +58,12 @@ export default function MainLayout() {
   // that create new array identities.
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
   useEffect(() => {
-    if (!selectedProjectPath || !endpoint) return;
+    if (!selectedProjectPath) return;
+    if (!endpoint) {
+      store.set(desktopStateFamily(selectedProjectPath), null);
+      store.set(desktopStateErrorFamily(selectedProjectPath), null);
+      return;
+    }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 

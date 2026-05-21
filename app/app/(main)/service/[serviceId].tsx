@@ -8,6 +8,7 @@ import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { StatusDot } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
+import { singleRouteParam } from "@/lib/route-params";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, WorktreeBucket } from "@/lib/desktop-state";
 import { worktreeGroupsFamily } from "@/stores/desktopState";
@@ -15,8 +16,9 @@ import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/proje
 
 function findService(
   groups: WorktreeBucket[],
-  serviceId: string,
+  serviceId: string | undefined,
 ): { service: DesktopService; bucket: WorktreeBucket } | null {
+  if (!serviceId) return null;
   for (const bucket of groups) {
     const service = bucket.services.find((s) => s.id === serviceId);
     if (service) return { service, bucket };
@@ -38,8 +40,8 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 export default function ServiceDetailScreen() {
-  const params = useLocalSearchParams<{ serviceId: string }>();
-  const serviceId = String(params.serviceId);
+  const params = useLocalSearchParams<{ serviceId?: string | string[] }>();
+  const serviceId = singleRouteParam(params.serviceId);
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
@@ -50,8 +52,12 @@ export default function ServiceDetailScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const t = await getToken();
-      if (!cancelled) setToken(t);
+      try {
+        const t = await getToken();
+        if (!cancelled) setToken(t);
+      } catch {
+        if (!cancelled) setToken(null);
+      }
     })();
     return () => {
       cancelled = true;
