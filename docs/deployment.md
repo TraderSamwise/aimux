@@ -81,7 +81,7 @@ their local daemon via the browser:
 aimux login
 ```
 
-This opens the web app at `${EXPO_PUBLIC_WEB_APP_URL}/cli-auth`, mints a
+This opens the web app at `${AIMUX_WEB_APP_URL}/cli-auth` (defaulting to `https://aimux.com`), mints a
 long-lived (~90d) HS256 daemon token at the relay, and stores it locally
 at `~/.aimux/auth.json`. The daemon picks it up on next start, or
 `aimux remote enable` connects without a restart.
@@ -114,16 +114,23 @@ User's machine                    Cloud                        User's phone/lapt
 └──────────┘                └──────────────┘                └──────────────┘
      │                            │                               │
      │ localhost:43190            │ relay.aimux.com                │
-     │ (direct access)           │ (Clerk JWT auth)               │
+     │ HS256 daemon token         │ Clerk session JWT              │
      │                            │                               │
      └────────────────────────────┴───────────────────────────────┘
-                          All authenticated via Clerk
+            Daemon: HS256 minted by relay     App: Clerk session JWT
 ```
 
 ## Security Notes
 
-- The relay verifies Clerk JWTs on both daemon and client connections
-- Each user gets an isolated Durable Object — no cross-user data leakage
-- The daemon's proxy route only forwards to localhost metadata servers
-- WS tokens are passed as query params (standard for browser WS auth)
-- The daemon skips auth when CLERK_SECRET_KEY is unset (LOCAL_MODE)
+- The relay verifies tokens by shape: app connections present a Clerk session
+  JWT (verified with `@clerk/backend` against `CLERK_SECRET_KEY`); daemon
+  connections present a relay-minted HS256 token signed with `RELAY_TOKEN_SECRET`
+  (issued via `POST /cli/issue-token` during `aimux login`).
+- Each user gets an isolated Durable Object — no cross-user data leakage.
+- Within a user's DO, in-flight request IDs are routed back to the requesting
+  client only, so multiple clients (e.g. desktop + phone) don't see each other's
+  responses.
+- The daemon's `/proxy` route only forwards to loopback hosts and applies a
+  bounded timeout; out-of-allowlist hosts return 403.
+- WS tokens are passed as query params (standard for browser WS auth, since
+  WebSocket upgrades can't carry custom Authorization headers).
