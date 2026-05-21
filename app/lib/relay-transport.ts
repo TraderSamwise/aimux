@@ -118,7 +118,11 @@ export class RelayTransport {
     this.setStatus("disconnected");
   }
 
-  async request(method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+  async request(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: unknown }> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Relay not connected");
     }
