@@ -17,6 +17,7 @@ type RelayMessage = RelayRequest | RelayControl;
 
 const INITIAL_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
+const MAX_HANDSHAKE_FAILURES = 5;
 
 export type RelayConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected" | "auth_failed";
 
@@ -35,12 +36,16 @@ export class RelayClient {
   private status: RelayConnectionStatus = "disconnected";
   private lastConnectedAt: string | null = null;
   private lastError: string | null = null;
+  private readonly relayUrl: string;
+  private handshakeFailures = 0;
 
   constructor(
-    private readonly relayUrl: string,
+    relayUrl: string,
     private readonly token: string,
     private readonly daemon: AimuxDaemon,
-  ) {}
+  ) {
+    this.relayUrl = relayUrl.replace(/\/+$/, "");
+  }
 
   getStatus(): RelayStatusSnapshot {
     return {
@@ -57,7 +62,7 @@ export class RelayClient {
     // clear error so the user doesn't see an endless reconnect loop full of
     // ReferenceErrors when running on an older runtime.
     if (typeof globalThis.WebSocket !== "function") {
-      this.status = "auth_failed";
+      this.status = "disconnected";
       this.lastError = "Node runtime is missing globalThis.WebSocket — upgrade to Node 22+ to use the aimux relay";
       this.stopped = true;
       return;
@@ -75,6 +80,7 @@ export class RelayClient {
 
     this.ws.addEventListener("open", () => {
       this.retryMs = INITIAL_RETRY_MS;
+      this.handshakeFailures = 0;
       this.status = "connected";
       this.lastConnectedAt = new Date().toISOString();
       this.lastError = null;
@@ -87,13 +93,24 @@ export class RelayClient {
 
     this.ws.addEventListener("close", (event) => {
       this.ws = null;
-      // 1008/4001 = auth rejected by relay; don't hammer with retries.
       const code = (event as unknown as { code?: number }).code;
+      // 1008/4001 = auth rejected by relay; don't hammer with retries.
       if (code === 1008 || code === 4001) {
         this.status = "auth_failed";
         this.lastError = "Relay rejected credentials — run `aimux login` again";
         console.warn(`[relay] Auth failed (code ${code}). Stopping reconnect.`);
         return;
+      }
+      // 1006 = abnormal close, often a failed HTTP upgrade (e.g. 401).
+      // Stop after repeated handshake failures to avoid infinite retry spam.
+      if (code === 1006) {
+        this.handshakeFailures++;
+        if (this.handshakeFailures >= MAX_HANDSHAKE_FAILURES) {
+          this.status = "auth_failed";
+          this.lastError = "Too many handshake failures — token may be expired, run `aimux login` again";
+          console.warn(`[relay] ${MAX_HANDSHAKE_FAILURES} consecutive handshake failures. Stopping reconnect.`);
+          return;
+        }
       }
       if (!this.stopped) {
         this.status = "reconnecting";
