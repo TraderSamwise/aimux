@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { configureLogging, debug, log, resetLoggingForTests } from "./debug.js";
+import { configureLogging, debug, log, resetLoggingForTests, resolveLoggingRuntimeConfig } from "./debug.js";
 
 describe("debug logging", () => {
   let root = "";
@@ -82,5 +82,42 @@ describe("debug logging", () => {
 
     expect(readFileSync(`${logPath}.1`, "utf-8")).toBe("existing\n");
     expect(readFileSync(logPath, "utf-8")).toContain("after rotate");
+  });
+
+  it("resolves logging config with env and cli precedence", () => {
+    const resolved = resolveLoggingRuntimeConfig({
+      config: {
+        enabled: false,
+        level: "info",
+        categories: ["session"],
+        maxBytes: 123,
+        maxFiles: 2,
+      },
+      env: {
+        AIMUX_LOG: "1",
+        AIMUX_LOG_LEVEL: "debug",
+        AIMUX_LOG_CATEGORIES: "daemon,tmux",
+      },
+      cli: {
+        trace: true,
+        logCategory: "http",
+      },
+      path: logPath,
+      processKind: "test",
+      projectId: "project-1",
+      projectRoot: root,
+    });
+
+    expect(resolved).toEqual({
+      enabled: true,
+      level: "trace",
+      categories: ["http"],
+      maxBytes: 123,
+      maxFiles: 2,
+      path: logPath,
+      processKind: "test",
+      projectId: "project-1",
+      projectRoot: root,
+    });
   });
 });

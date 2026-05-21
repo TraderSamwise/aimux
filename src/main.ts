@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Multiplexer } from "./multiplexer/index.js";
 import { llmCompact } from "./context/compactor.js";
-import { initProject } from "./config.js";
+import { initProject, loadConfig } from "./config.js";
 import {
   initPaths,
   getHistoryDir,
@@ -22,6 +22,9 @@ import {
   getStatePath,
   getContextDir,
   getProjectId,
+  getRepoRoot,
+  getDaemonLogPath,
+  getProjectLogPath,
   getProjectStateDirFor,
 } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
@@ -110,6 +113,7 @@ import {
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.js";
 import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/service-state-snapshot.js";
+import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -547,6 +551,63 @@ function ensureTmuxAvailable(tmux: TmuxRuntimeManager): void {
   }
 }
 
+function commandPath(command: Command): string[] {
+  const names: string[] = [];
+  let current: Command | null = command;
+  while (current) {
+    const name = current.name();
+    if (name) names.unshift(name);
+    current = current.parent ?? null;
+  }
+  return names;
+}
+
+function loggingProcessKind(command: Command): "cli" | "daemon" | "project-service" {
+  const names = commandPath(command);
+  if (names.at(-1) === "__project-service-internal") return "project-service";
+  if (names.at(-2) === "daemon" && names.at(-1) === "run") return "daemon";
+  return "cli";
+}
+
+function configureLoggingForCommand(command: Command): void {
+  const processKind = loggingProcessKind(command);
+  const config = loadConfig();
+  const path = processKind === "daemon" ? getDaemonLogPath() : getProjectLogPath();
+  const cli = program.opts<LoggingCliOptions>();
+  const resolved = resolveLoggingRuntimeConfig({
+    config: config.logging,
+    env: process.env,
+    cli,
+    path,
+    processKind,
+    projectId: getProjectId(),
+    projectRoot: getRepoRoot(),
+  });
+  configureLogging(resolved);
+  log.info("logging configured", "logging", {
+    path: resolved.path,
+    level: resolved.level,
+    categories: resolved.categories,
+  });
+}
+
+function parseLineCount(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? "80", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 80;
+}
+
+function selectedLogPath(opts: { daemon?: boolean }): string {
+  return opts.daemon ? getDaemonLogPath() : getProjectLogPath();
+}
+
+function readLastLogLines(path: string, lines: number): string {
+  if (!existsSync(path)) return "";
+  const content = readFileSync(path, "utf-8");
+  const allLines = content.split(/\r?\n/);
+  if (allLines.at(-1) === "") allLines.pop();
+  return allLines.slice(-lines).join("\n");
+}
+
 const pkgJsonPath = pathJoin(pathDirname(fileURLToPath(import.meta.url)), "..", "package.json");
 const pkgVersion = (JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string }).version;
 
@@ -559,11 +620,16 @@ program
   .option("--resume", "Resume previous sessions using native tool resume")
   .option("--restore", "Start fresh sessions with injected history context")
   .option("--tmux-dashboard-internal", "Internal tmux dashboard entrypoint")
+  .option("--debug", "Enable debug logging for this process")
+  .option("--trace", "Enable trace logging for this process")
+  .option("--log-level <level>", "Enable logging at level: error|warn|info|debug|trace")
+  .option("--log-category <categories>", "Comma-separated log categories to include")
   .hook("preAction", async (_thisCommand, actionCommand) => {
     const opts = typeof actionCommand?.opts === "function" ? actionCommand.opts() : {};
     const requestedProject = typeof opts.project === "string" ? opts.project : undefined;
     const projectRoot = requestedProject ? resolveProjectRoot(pathResolve(requestedProject)) : undefined;
     await initPaths(projectRoot);
+    configureLoggingForCommand(actionCommand);
   })
   .action(
     async (
@@ -2470,6 +2536,46 @@ program
   .action((target: string) => {
     const report = buildDebugStateReport({ cwd: process.cwd(), target });
     console.log(renderDebugStateReport(report));
+  });
+
+const logsCmd = program.command("logs").description("Inspect persistent aimux logs");
+
+logsCmd
+  .command("path")
+  .description("Print the active log file path")
+  .option("--daemon", "Show the global daemon log path")
+  .option("--project <path>", "Project path")
+  .action((opts: { daemon?: boolean; project?: string }) => {
+    console.log(selectedLogPath(opts));
+  });
+
+logsCmd
+  .command("tail")
+  .description("Print recent log lines")
+  .option("--daemon", "Tail the global daemon log")
+  .option("--project <path>", "Project path")
+  .option("-n, --lines <number>", "Number of lines to print", "80")
+  .action((opts: { daemon?: boolean; project?: string; lines?: string }) => {
+    const path = selectedLogPath(opts);
+    const output = readLastLogLines(path, parseLineCount(opts.lines));
+    if (output) {
+      console.log(output);
+      return;
+    }
+    console.error(`No log entries at ${path}`);
+    process.exit(1);
+  });
+
+logsCmd
+  .command("clear")
+  .description("Clear the active log file")
+  .option("--daemon", "Clear the global daemon log")
+  .option("--project <path>", "Project path")
+  .action((opts: { daemon?: boolean; project?: string }) => {
+    const path = selectedLogPath(opts);
+    mkdirSync(pathDirname(path), { recursive: true });
+    writeFileSync(path, "");
+    console.log(`Cleared ${path}`);
   });
 
 doctorCmd
