@@ -24,10 +24,13 @@ describe("path project identity", () => {
   it("resolves persistent log paths", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-log-paths-"));
     try {
-      expect(getDaemonLogPath()).toMatch(/\.aimux\/daemon\/logs\/daemon\.jsonl$/);
-      expect(getDaemonStdioLogPath()).toMatch(/\.aimux\/daemon\/logs\/daemon-stdio\.log$/);
-      expect(getProjectLogPathFor(repoRoot)).toMatch(/\.aimux\/projects\/aimux-log-paths-.*\/logs\/aimux\.jsonl$/);
-      expect(getProjectServiceStdioLogPathFor(repoRoot)).toMatch(
+      const norm = (p: string) => p.replaceAll("\\", "/");
+      expect(norm(getDaemonLogPath())).toMatch(/\.aimux\/daemon\/logs\/daemon\.jsonl$/);
+      expect(norm(getDaemonStdioLogPath())).toMatch(/\.aimux\/daemon\/logs\/daemon-stdio\.log$/);
+      expect(norm(getProjectLogPathFor(repoRoot))).toMatch(
+        /\.aimux\/projects\/aimux-log-paths-.*\/logs\/aimux\.jsonl$/,
+      );
+      expect(norm(getProjectServiceStdioLogPathFor(repoRoot))).toMatch(
         /\.aimux\/projects\/aimux-log-paths-.*\/logs\/project-service-stdio\.log$/,
       );
     } finally {
