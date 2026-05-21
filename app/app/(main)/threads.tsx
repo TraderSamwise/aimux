@@ -20,13 +20,22 @@ export default function ThreadsScreen() {
   const endpoint = project?.serviceEndpoint ?? null;
 
   useEffect(() => {
-    if (!endpoint) return;
+    // Project switched away (or host went offline): drop stale data + error
+    // so we don't render the previous project's threads.
+    if (!endpoint) {
+      setThreads([]);
+      setError(null);
+      return;
+    }
     let cancelled = false;
+    setError(null);
     (async () => {
       try {
         const token = await getToken();
         const data = (await listThreads(endpoint, undefined, { token })) as ThreadSummary[];
-        if (!cancelled) setThreads(Array.isArray(data) ? data : []);
+        if (cancelled) return;
+        setThreads(Array.isArray(data) ? data : []);
+        setError(null);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       }
