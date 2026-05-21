@@ -1,12 +1,19 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve as pathResolve } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { writeJsonAtomic } from "./atomic-write.js";
-import { getDaemonInfoPath, getDaemonStatePath, getProjectIdFor } from "./paths.js";
+import {
+  getDaemonInfoPath,
+  getDaemonStatePath,
+  getDaemonStdioLogPath,
+  getProjectIdFor,
+  getProjectServiceStdioLogPathFor,
+} from "./paths.js";
 import { listDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
+import { getLoggingConfig, log } from "./debug.js";
 
 const DAEMON_PORT = 43190;
 const DAEMON_HOST = "127.0.0.1";
@@ -39,6 +46,36 @@ interface DaemonState {
 
 function ensureParent(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
+}
+
+function loggingChildEnv(): NodeJS.ProcessEnv {
+  const logging = getLoggingConfig();
+  if (!logging.enabled) return process.env;
+  return {
+    ...process.env,
+    AIMUX_LOG: "1",
+    AIMUX_LOG_LEVEL: logging.level,
+    AIMUX_LOG_CATEGORIES: logging.categories.join(","),
+  };
+}
+
+function loggingChildStdio(path: string): { stdio: StdioOptions; close: () => void } {
+  const logging = getLoggingConfig();
+  if (!logging.enabled) return { stdio: "ignore", close: () => {} };
+  try {
+    ensureParent(path);
+    const stdout = createWriteStream(path, { flags: "a" });
+    const stderr = createWriteStream(path, { flags: "a" });
+    stdout.on("error", () => {});
+    stderr.on("error", () => {});
+    const close = () => {
+      stdout.end();
+      stderr.end();
+    };
+    return { stdio: ["ignore", stdout, stderr], close };
+  } catch {
+    return { stdio: "ignore", close: () => {} };
+  }
 }
 
 function saveJson(path: string, value: unknown): void {
@@ -102,6 +139,11 @@ export async function stopDaemon(signal: NodeJS.Signals = "SIGTERM"): Promise<Ai
   const info = loadDaemonInfo();
   if (!info) return null;
   const state = loadDaemonState();
+  log.info("stopping daemon", "daemon", {
+    pid: info.pid,
+    signal,
+    projectCount: Object.keys(state.projects).length,
+  });
   for (const entry of Object.values(state.projects)) {
     try {
       process.kill(entry.pid, signal);
@@ -167,7 +209,11 @@ export async function ensureDaemonRunning(): Promise<AimuxDaemonInfo> {
     try {
       await requestDaemonJson("/health");
       return existing;
-    } catch {
+    } catch (error) {
+      log.warn("stored daemon info failed health check", "daemon", {
+        pid: existing.pid,
+        error: error instanceof Error ? error.message : String(error),
+      });
       clearFile(getDaemonInfoPath());
     }
   }
@@ -182,15 +228,24 @@ export async function ensureDaemonRunning(): Promise<AimuxDaemonInfo> {
         updatedAt: new Date().toISOString(),
       };
       saveJson(getDaemonInfoPath(), adopted);
+      log.info("adopted existing daemon on default port", "daemon", { ...adopted });
       return adopted;
     }
-  } catch {}
+  } catch (error) {
+    log.debug("default daemon health probe failed", "daemon", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
+  const stdio = loggingChildStdio(getDaemonStdioLogPath());
   const child = spawn(process.execPath, [process.argv[1]!, "daemon", "run"], {
     detached: true,
-    stdio: "ignore",
+    env: loggingChildEnv(),
+    stdio: stdio.stdio,
   });
+  child.once("exit", stdio.close);
   child.unref();
+  log.info("spawned daemon", "daemon", { pid: child.pid });
 
   const deadline = Date.now() + DAEMON_STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -264,9 +319,11 @@ export class AimuxDaemon {
       });
     });
     this.refreshState();
+    log.info("daemon started", "daemon", { pid: process.pid, port: DAEMON_PORT });
   }
 
   stop(): void {
+    log.info("daemon stopping child services", "daemon", { projectCount: Object.keys(this.state.projects).length });
     for (const entry of Object.values(this.state.projects)) {
       try {
         process.kill(entry.pid, "SIGTERM");
@@ -309,9 +366,11 @@ export class AimuxDaemon {
   }
 
   private spawnProjectService(projectRoot: string, projectId: string): ProjectServiceState {
+    const stdio = loggingChildStdio(getProjectServiceStdioLogPathFor(projectRoot));
     const child = spawn(process.execPath, [process.argv[1]!, "__project-service-internal"], {
       cwd: projectRoot,
-      stdio: "ignore",
+      env: loggingChildEnv(),
+      stdio: stdio.stdio,
     });
     this.children.set(projectId, child);
     const now = new Date().toISOString();
@@ -323,7 +382,20 @@ export class AimuxDaemon {
       updatedAt: now,
     };
     this.state.projects[projectId] = state;
-    child.on("exit", () => {
+    log.info("spawned project service", "daemon", {
+      projectId,
+      projectRoot,
+      pid: state.pid,
+    });
+    child.on("exit", (code, signal) => {
+      stdio.close();
+      log.warn("project service exited", "daemon", {
+        projectId,
+        projectRoot,
+        pid: state.pid,
+        code,
+        signal,
+      });
       if (this.children.get(projectId) === child) {
         this.children.delete(projectId);
       }
@@ -372,6 +444,11 @@ export class AimuxDaemon {
         if (withinStartupGrace) {
           return refreshExisting();
         }
+        log.warn("project service missing metadata endpoint after startup grace", "daemon", {
+          projectId,
+          projectRoot: resolvedRoot,
+          pid: existing.pid,
+        });
         return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
       }
       try {
@@ -381,10 +458,16 @@ export class AimuxDaemon {
         if (status < 200 || status >= 300 || json?.ok === false) {
           throw new Error(json?.error || `health request failed: ${status}`);
         }
-      } catch {
+      } catch (error) {
         if (withinStartupGrace) {
           return refreshExisting();
         }
+        log.warn("project service health check failed", "daemon", {
+          projectId,
+          projectRoot: resolvedRoot,
+          pid: existing.pid,
+          error: error instanceof Error ? error.message : String(error),
+        });
         return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
       }
       return refreshExisting();
@@ -400,6 +483,11 @@ export class AimuxDaemon {
   ): Promise<ProjectServiceState> {
     const stopped = await this.terminateProjectService(projectId, existing);
     if (!stopped) {
+      log.warn("project service did not exit before replacement deadline", "daemon", {
+        projectId,
+        projectRoot: resolvedRoot,
+        pid: existing.pid,
+      });
       return refreshExisting();
     }
     const current = this.state.projects[projectId];
@@ -416,6 +504,11 @@ export class AimuxDaemon {
 
   private async terminateProjectService(projectId: string, existing: ProjectServiceState): Promise<boolean> {
     const child = this.children.get(projectId);
+    log.info("terminating project service", "daemon", {
+      projectId,
+      projectRoot: existing.projectRoot,
+      pid: existing.pid,
+    });
     try {
       process.kill(existing.pid, "SIGTERM");
     } catch {

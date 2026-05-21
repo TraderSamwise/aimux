@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requestJson } from "./http-client.js";
+import { configureLogging, resetLoggingForTests } from "./debug.js";
 
 let tmpRoot = "";
 let projectRoot = "";
@@ -19,9 +20,12 @@ vi.mock("node:child_process", () => ({
 vi.mock("./paths.js", () => ({
   getDaemonInfoPath: () => join(tmpRoot, ".aimux", "daemon", "daemon.json"),
   getDaemonStatePath: () => join(tmpRoot, ".aimux", "daemon", "state.json"),
+  getDaemonStdioLogPath: () => join(tmpRoot, ".aimux", "daemon", "logs", "daemon-stdio.log"),
   getProjectStateDir: () => join(tmpRoot, ".aimux", "projects", "global"),
   getProjectStateDirFor: (cwd: string) => join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
+  getProjectServiceStdioLogPathFor: (cwd: string) =>
+    join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`, "logs", "project-service-stdio.log"),
 }));
 
 vi.mock("./project-scanner.js", () => ({
@@ -64,6 +68,7 @@ describe("daemon supervision", () => {
     nextPid = 20_000;
     livePids = new Set<number>();
     childrenByPid = new Map<number, EventEmitter>();
+    resetLoggingForTests();
     spawnMock.mockReset();
     vi.mocked(requestJson).mockReset();
     vi.mocked(requestJson).mockResolvedValue({
@@ -92,6 +97,7 @@ describe("daemon supervision", () => {
   });
 
   afterEach(() => {
+    resetLoggingForTests();
     vi.restoreAllMocks();
     rmSync(tmpRoot, { recursive: true, force: true });
   });
@@ -244,5 +250,34 @@ describe("daemon supervision", () => {
 
     expect(livePids.has(project.pid)).toBe(false);
     expect(readFileSync(daemonInfoPath, "utf-8")).toBe("");
+  });
+
+  it("inherits logging env and captures project service stdio when logging is enabled", async () => {
+    configureLogging({
+      enabled: true,
+      level: "debug",
+      categories: ["daemon", "session"],
+      maxBytes: 100_000,
+      maxFiles: 2,
+      path: join(tmpRoot, ".aimux", "projects", "global", "logs", "aimux.jsonl"),
+      processKind: "test",
+    });
+    const { AimuxDaemon } = await import("./daemon.js");
+
+    const daemon = new AimuxDaemon();
+    const project = await (daemon as any).ensureProject(projectRoot);
+    const options = spawnMock.mock.calls[0]?.[2] as {
+      env?: Record<string, string | undefined>;
+      stdio?: unknown;
+    };
+
+    expect(project.pid).toBe(20_000);
+    expect(options.env).toMatchObject({
+      AIMUX_LOG: "1",
+      AIMUX_LOG_LEVEL: "debug",
+      AIMUX_LOG_CATEGORIES: "daemon,session",
+    });
+    expect(Array.isArray(options.stdio)).toBe(true);
+    childrenByPid.get(project.pid)?.emit("exit", 0, null);
   });
 });
