@@ -138,7 +138,16 @@ export class RelayTransport {
       }, REQUEST_TIMEOUT_MS);
 
       this.pending.set(id, { resolve, reject, timer });
-      this.ws!.send(JSON.stringify({ id, type: "request", method, path, body }));
+      try {
+        this.ws!.send(JSON.stringify({ id, type: "request", method, path, body }));
+      } catch (err) {
+        // The socket can close between the readyState check above and the
+        // send call (race with onclose / network drop). Clean up the entry
+        // so it doesn't sit there until the request timer fires.
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(err instanceof Error ? err : new Error("Relay send failed"));
+      }
     });
   }
 
