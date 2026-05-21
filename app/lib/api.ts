@@ -110,7 +110,10 @@ export async function getDaemonHealth(opts?: ApiOpts): Promise<DaemonHealth> {
 
 export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
   if (_relay?.isConnected) {
-    const data = await callDaemonViaRelay<{ ok: boolean; projects: DaemonProject[] }>("GET", "/projects");
+    const data = await callDaemonViaRelay<{ ok: boolean; projects: DaemonProject[] }>(
+      "GET",
+      "/projects",
+    );
     return data.projects;
   }
   const data = await callJson<{ ok: boolean; projects: DaemonProject[] }>(
@@ -276,7 +279,8 @@ export async function getDesktopState(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<DesktopState> {
-  if (_relay?.isConnected) return callServiceViaRelay<DesktopState>(endpoint, "GET", "/desktop-state");
+  if (_relay?.isConnected)
+    return callServiceViaRelay<DesktopState>(endpoint, "GET", "/desktop-state");
   return callJson<DesktopState>(
     `${getServiceUrl(endpoint)}/desktop-state`,
     { method: "GET" },
@@ -409,7 +413,8 @@ export async function stopService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "stopped" }> {
-  if (_relay?.isConnected) return callServiceViaRelay(endpoint, "POST", "/services/stop", { serviceId });
+  if (_relay?.isConnected)
+    return callServiceViaRelay(endpoint, "POST", "/services/stop", { serviceId });
   return callJson(
     `${getServiceUrl(endpoint)}/services/stop`,
     { method: "POST", body: JSON.stringify({ serviceId }) },
@@ -422,7 +427,8 @@ export async function resumeService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "running" }> {
-  if (_relay?.isConnected) return callServiceViaRelay(endpoint, "POST", "/services/resume", { serviceId });
+  if (_relay?.isConnected)
+    return callServiceViaRelay(endpoint, "POST", "/services/resume", { serviceId });
   return callJson(
     `${getServiceUrl(endpoint)}/services/resume`,
     { method: "POST", body: JSON.stringify({ serviceId }) },
@@ -435,7 +441,8 @@ export async function removeService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "removed" }> {
-  if (_relay?.isConnected) return callServiceViaRelay(endpoint, "POST", "/services/remove", { serviceId });
+  if (_relay?.isConnected)
+    return callServiceViaRelay(endpoint, "POST", "/services/remove", { serviceId });
   return callJson(
     `${getServiceUrl(endpoint)}/services/remove`,
     { method: "POST", body: JSON.stringify({ serviceId }) },

@@ -13,9 +13,12 @@ export default function LandingScreen() {
       contentContainerClassName="flex-1 items-center justify-center px-8 py-16"
     >
       <View className="max-w-[560px] w-full items-center">
-        <Text className="font-mono text-[42px] font-bold text-foreground tracking-tight">aimux</Text>
+        <Text className="font-mono text-[42px] font-bold text-foreground tracking-tight">
+          aimux
+        </Text>
         <Text className="text-[18px] text-muted-foreground mt-4 text-center leading-relaxed">
-          Manage your AI agents from anywhere.{"\n"}One dashboard for Claude, Codex, and shell sessions.
+          Manage your AI agents from anywhere.{"\n"}One dashboard for Claude, Codex, and shell
+          sessions.
         </Text>
 
         <View className="mt-10 w-full max-w-[320px]">
@@ -29,9 +32,18 @@ export default function LandingScreen() {
         </View>
 
         <View className="mt-16 w-full">
-          <FeatureRow title="Remote control" description="Stop, resume, and interact with agents from your phone or another machine." />
-          <FeatureRow title="Multi-project" description="Switch between projects. Each with its own worktrees, agents, and services." />
-          <FeatureRow title="Real-time" description="Live status updates via SSE. See what your agents are doing right now." />
+          <FeatureRow
+            title="Remote control"
+            description="Stop, resume, and interact with agents from your phone or another machine."
+          />
+          <FeatureRow
+            title="Multi-project"
+            description="Switch between projects. Each with its own worktrees, agents, and services."
+          />
+          <FeatureRow
+            title="Real-time"
+            description="Live status updates via SSE. See what your agents are doing right now."
+          />
         </View>
 
         {Platform.OS === "web" ? (
