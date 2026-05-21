@@ -317,7 +317,7 @@ export const persistenceMethods = {
         headline: session.headline,
         status: session.status,
         role: session.role,
-        active: false,
+        active: session.active,
         worktreePath: session.worktreePath,
         semantic: session.semantic,
         team: session.team,
@@ -531,6 +531,13 @@ export const persistenceMethods = {
 
       const attachedServices = collectWorktreeServices(this, path);
       const attachedAgents = collectWorktreeAgents(this, path, directTeammateIds);
+      const worktreeAgents = attachedAgents.filter(
+        (agent) => agent.worktreePath === path || !directTeammateIds.has(agent.id),
+      );
+      const crossWorktreeTeammates = attachedAgents.filter(
+        (agent) => directTeammateIds.has(agent.id) && agent.worktreePath !== path,
+      );
+      appendFlatGraveyardAgents(crossWorktreeTeammates);
 
       const nextEntries = [
         ...worktreeGraveyardEntries.filter((entry: WorktreeGraveyardEntry) => entry.path !== path),
@@ -540,7 +547,7 @@ export const persistenceMethods = {
           branch: matching.branch,
           createdAt: matching.createdAt,
           graveyardedAt: new Date().toISOString(),
-          agents: attachedAgents,
+          agents: worktreeAgents,
           services: attachedServices,
         },
       ];
@@ -1195,6 +1202,23 @@ function takeFlatGraveyardAgentsForWorktree(path: string): any[] {
   } catch {
     return [];
   }
+}
+
+function appendFlatGraveyardAgents(agents: any[]): void {
+  if (agents.length === 0) return;
+  const graveyardPath = getGraveyardPath();
+  let entries: any[] = [];
+  if (existsSync(graveyardPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(graveyardPath, "utf-8"));
+      if (Array.isArray(parsed)) entries = parsed;
+    } catch {}
+  }
+  const nextById = new Map(entries.map((entry) => [entry?.id, entry]));
+  for (const agent of agents) {
+    if (agent?.id) nextById.set(agent.id, agent);
+  }
+  writeFileSync(graveyardPath, JSON.stringify([...nextById.values()], null, 2) + "\n");
 }
 
 function removeFlatGraveyardAgentsForWorktree(path: string): void {

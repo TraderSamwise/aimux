@@ -624,7 +624,7 @@ export async function postToProjectService(
         return json;
       }
       lastError = new Error(json?.error || `request failed: ${status}`);
-      if (attempt === 0 || isProjectServiceRetryableStatus(status)) {
+      if (isProjectServiceRetryableStatus(status) && Date.now() < deadline) {
         await ensureDashboardControlPlane(host);
         await sleepProjectServiceRetry(attempt);
         continue;

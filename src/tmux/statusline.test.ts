@@ -495,6 +495,18 @@ describe("renderTmuxStatusline", () => {
             status: "running",
             team: { teamId: "team-2", parentSessionId: "other-parent", role: "coder", label: "other" },
           },
+          {
+            id: "retired",
+            kind: "agent",
+            tool: "codex",
+            role: "reviewer",
+            label: "retired",
+            windowName: "codex",
+            tmuxWindowId: "@11",
+            worktreePath: repoRoot,
+            status: "offline",
+            team: { teamId: "team-1", parentSessionId: "parent", role: "reviewer", label: "retired", order: 0 },
+          },
         ],
       }),
     );
@@ -511,6 +523,7 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("shell[svc]");
     expect(rendered).toContain("team: review running");
     expect(rendered).not.toContain("other");
+    expect(rendered).not.toContain("retired");
     expect(rendered.indexOf("claude(coder)")).toBeLessThan(rendered.indexOf("shell[svc]"));
     expect(rendered.indexOf("shell[svc]")).toBeLessThan(rendered.indexOf("team:"));
   });

@@ -72,6 +72,30 @@ describe("createSession", () => {
     rmSync(homeDir, { recursive: true, force: true });
   });
 
+  it("does not match session id prefixes while capturing Codex backend ids", () => {
+    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-prefix-"));
+    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
+      "This is an aimux-managed session with session ID codex-10\n",
+    );
+
+    expect(
+      captureBackendSessionIdFromSessionFiles(
+        {
+          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
+          pattern: "([0-9a-f-]+)\\.jsonl$",
+          delayMs: 0,
+        },
+        "codex-1",
+        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
+      ),
+    ).toBeUndefined();
+
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
   it("captures a Codex backend session id from the startup preamble even after the transcript grows", () => {
     const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-large-"));
     const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");

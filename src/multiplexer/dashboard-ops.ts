@@ -69,8 +69,6 @@ interface DashboardServiceMutationOptions {
 
 function restoreWarningLines(result: any): string[] {
   const warning = typeof result?.warning === "string" ? result.warning.trim() : "";
-  if (!warning) return [];
-
   const failures = Array.isArray(result?.teammateFailures)
     ? result.teammateFailures
         .map((failure: any) => {
@@ -87,10 +85,9 @@ function restoreWarningLines(result: any): string[] {
         .filter((line: string) => line.trim().length > 0)
     : [];
 
-  const lines: string[] = failures.length > 0 ? failures : [warning];
-  const uniqueLines = Array.from(new Set(lines));
-  uniqueLines.push("Stale teammates remain offline; create a new team to replace them.");
-  return uniqueLines;
+  if (failures.length > 0) return Array.from(new Set(failures));
+  if (!warning) return [];
+  return Array.from(new Set([warning, "Stale teammates remain offline; create a new team to replace them."]));
 }
 
 function assertDashboardMutationSettled(settled: boolean, action: string): void {
@@ -254,13 +251,21 @@ async function runDashboardSessionMutation(
   host: DashboardOpsHost,
   opts: DashboardSessionMutationOptions,
 ): Promise<void> {
-  host.setPendingDashboardSessionAction(opts.sessionId, opts.pendingAction, { sessionSeed: opts.sessionSeed });
+  const token = host.setPendingDashboardSessionAction(opts.sessionId, opts.pendingAction, {
+    sessionSeed: opts.sessionSeed,
+  });
   opts.onBeforeRequest?.();
   host.renderDashboard();
   try {
     await opts.request();
     assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
-    host.setPendingDashboardSessionAction(opts.sessionId, null);
+    if (typeof token === "number") {
+      if (host.dashboardPendingActions?.clearSessionActionIfToken?.(opts.sessionId, token)) {
+        host.reapplyDashboardPendingActions?.();
+      }
+    } else {
+      host.setPendingDashboardSessionAction(opts.sessionId, null);
+    }
     opts.onAfterSettle?.();
     if (opts.successFlash) {
       host.footerFlash = opts.successFlash.message;
@@ -268,7 +273,13 @@ async function runDashboardSessionMutation(
     }
     host.renderDashboard();
   } catch (error) {
-    host.setPendingDashboardSessionAction(opts.sessionId, null);
+    if (typeof token === "number") {
+      if (host.dashboardPendingActions?.clearSessionActionIfToken?.(opts.sessionId, token)) {
+        host.reapplyDashboardPendingActions?.();
+      }
+    } else {
+      host.setPendingDashboardSessionAction(opts.sessionId, null);
+    }
     await opts.onError?.();
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
   }
@@ -278,13 +289,21 @@ async function runDashboardServiceMutation(
   host: DashboardOpsHost,
   opts: DashboardServiceMutationOptions,
 ): Promise<void> {
-  host.setPendingDashboardServiceAction(opts.serviceId, opts.pendingAction, { serviceSeed: opts.serviceSeed });
+  const token = host.setPendingDashboardServiceAction(opts.serviceId, opts.pendingAction, {
+    serviceSeed: opts.serviceSeed,
+  });
   opts.onBeforeRequest?.();
   host.renderDashboard();
   try {
     await opts.request();
     assertDashboardMutationSettled(await opts.settle(), opts.pendingAction);
-    host.setPendingDashboardServiceAction(opts.serviceId, null);
+    if (typeof token === "number") {
+      if (host.dashboardPendingActions?.clearServiceActionIfToken?.(opts.serviceId, token)) {
+        host.reapplyDashboardPendingActions?.();
+      }
+    } else {
+      host.setPendingDashboardServiceAction(opts.serviceId, null);
+    }
     opts.onAfterSettle?.();
     if (opts.successFlash) {
       host.footerFlash = opts.successFlash.message;
@@ -292,7 +311,13 @@ async function runDashboardServiceMutation(
     }
     host.renderDashboard();
   } catch (error) {
-    host.setPendingDashboardServiceAction(opts.serviceId, null);
+    if (typeof token === "number") {
+      if (host.dashboardPendingActions?.clearServiceActionIfToken?.(opts.serviceId, token)) {
+        host.reapplyDashboardPendingActions?.();
+      }
+    } else {
+      host.setPendingDashboardServiceAction(opts.serviceId, null);
+    }
     await opts.onError?.();
     host.showDashboardError(opts.errorTitle, [error instanceof Error ? error.message : String(error)]);
   }
@@ -841,9 +866,21 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
         host.resumeOfflineSession(session);
         return;
       }
+      const sessionSeed =
+        host.getDashboardSessions?.().find((entry: any) => entry.id === session.id) ??
+        ({
+          index: -1,
+          id: session.id,
+          command: session.command,
+          label: session.label ?? session.command,
+          status: "offline",
+          active: false,
+          worktreePath: session.worktreePath,
+          team: session.team,
+        } satisfies DashboardSession);
       const result = await host.postToProjectService(
         "/agents/resume",
-        { sessionId: session.id },
+        { sessionId: session.id, session: sessionSeed },
         { timeoutMs: 10_000 },
       );
       const warningLines = restoreWarningLines(result);
