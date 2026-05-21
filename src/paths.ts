@@ -176,6 +176,10 @@ export function getDaemonDir(): string {
   return join(getGlobalAimuxDir(), "daemon");
 }
 
+export function getAuthPath(): string {
+  return join(getGlobalAimuxDir(), "auth.json");
+}
+
 export function getDaemonInfoPath(): string {
   return join(getDaemonDir(), "daemon.json");
 }

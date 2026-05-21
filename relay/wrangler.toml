@@ -1,0 +1,19 @@
+name = "aimux-relay"
+main = "src/index.ts"
+compatibility_date = "2025-05-19"
+compatibility_flags = ["nodejs_compat"]
+
+[durable_objects]
+bindings = [
+  { name = "RELAY", class_name = "RelayObject" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["RelayObject"]
+
+[env.production]
+name = "aimux-relay"
+routes = [
+  { pattern = "relay.aimux.com", custom_domain = true }
+]

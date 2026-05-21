@@ -281,3 +281,80 @@ describe("daemon supervision", () => {
     childrenByPid.get(project.pid)?.emit("exit", 0, null);
   });
 });
+
+describe("daemon routing (relay + proxy)", () => {
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "aimux-daemon-routes-"));
+    projectRoot = join(tmpRoot, "project");
+    mkdirSync(projectRoot, { recursive: true });
+    livePids = new Set();
+    childrenByPid = new Map();
+    nextPid = 30_000;
+
+    spawnMock.mockImplementation(() => {
+      const pid = nextPid++;
+      const child = new EventEmitter() as EventEmitter & { pid: number; kill: (sig?: string) => boolean };
+      child.pid = pid;
+      child.kill = () => {
+        livePids.delete(pid);
+        setImmediate(() => child.emit("exit", 0, null));
+        return true;
+      };
+      livePids.add(pid);
+      childrenByPid.set(pid, child);
+      return child;
+    });
+  });
+
+  afterEach(() => {
+    vi.mocked(requestJson).mockReset();
+    vi.mocked(requestJson).mockResolvedValue({ status: 200, json: { ok: true } });
+    vi.restoreAllMocks();
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("reports relay status as off when no relay is configured", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const res = await daemon.routeRequest("GET", "/relay/status");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, relay: { status: "off" } });
+  });
+
+  it("rejects /proxy requests to non-loopback hosts with 403", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const res = await daemon.routeRequest("GET", "/proxy/evil.example.com/8080/health");
+
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ ok: false });
+    expect(vi.mocked(requestJson)).not.toHaveBeenCalled();
+  });
+
+  it("forwards /proxy requests for loopback hosts and propagates timeoutMs", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const res = await daemon.routeRequest("GET", "/proxy/127.0.0.1/4321/state");
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(requestJson)).toHaveBeenCalledWith(
+      "http://127.0.0.1:4321/state",
+      expect.objectContaining({ method: "GET", timeoutMs: expect.any(Number) }),
+    );
+  });
+
+  it("returns 504 when the proxied target times out", async () => {
+    vi.mocked(requestJson).mockRejectedValueOnce(new Error("request timed out after 10000ms"));
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const res = await daemon.routeRequest("GET", "/proxy/127.0.0.1/4321/slow");
+
+    expect(res.status).toBe(504);
+    expect(res.body).toMatchObject({ ok: false });
+  });
+});
