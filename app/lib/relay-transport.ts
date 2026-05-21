@@ -159,6 +159,10 @@ export class RelayTransport {
     return this._status === "connected" && this.daemonOnline;
   }
 
+  get wsConnected(): boolean {
+    return this._status === "connected" || this._status === "daemon_offline";
+  }
+
   private handleMessage(data: string): void {
     let msg: RelayMessage;
     try {

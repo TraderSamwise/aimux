@@ -106,12 +106,12 @@ export interface DaemonProject {
 }
 
 export async function getDaemonHealth(opts?: ApiOpts): Promise<DaemonHealth> {
-  if (_relay?.isConnected) return callDaemonViaRelay<DaemonHealth>("GET", "/health");
+  if (_relay?.wsConnected) return callDaemonViaRelay<DaemonHealth>("GET", "/health");
   return callJson<DaemonHealth>(`${getDaemonUrl()}/health`, { method: "GET" }, opts);
 }
 
 export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
-  if (_relay?.isConnected) {
+  if (_relay?.wsConnected) {
     const data = await callDaemonViaRelay<{ ok: boolean; projects: DaemonProject[] }>(
       "GET",
       "/projects",
@@ -127,7 +127,7 @@ export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
 }
 
 export async function ensureProject(projectRoot: string, opts?: ApiOpts): Promise<unknown> {
-  if (_relay?.isConnected) return callDaemonViaRelay("POST", "/projects/ensure", { projectRoot });
+  if (_relay?.wsConnected) return callDaemonViaRelay("POST", "/projects/ensure", { projectRoot });
   return callJson(
     `${getDaemonUrl()}/projects/ensure`,
     { method: "POST", body: JSON.stringify({ projectRoot }) },
@@ -280,7 +280,7 @@ export async function getDesktopState(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<DesktopState> {
-  if (_relay?.isConnected)
+  if (_relay?.wsConnected)
     return callServiceViaRelay<DesktopState>(endpoint, "GET", "/desktop-state");
   return callJson<DesktopState>(
     `${getServiceUrl(endpoint)}/desktop-state`,
@@ -414,7 +414,7 @@ export async function stopService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "stopped" }> {
-  if (_relay?.isConnected)
+  if (_relay?.wsConnected)
     return callServiceViaRelay(endpoint, "POST", "/services/stop", { serviceId });
   return callJson(
     `${getServiceUrl(endpoint)}/services/stop`,
@@ -428,7 +428,7 @@ export async function resumeService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "running" }> {
-  if (_relay?.isConnected)
+  if (_relay?.wsConnected)
     return callServiceViaRelay(endpoint, "POST", "/services/resume", { serviceId });
   return callJson(
     `${getServiceUrl(endpoint)}/services/resume`,
@@ -442,7 +442,7 @@ export async function removeService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "removed" }> {
-  if (_relay?.isConnected)
+  if (_relay?.wsConnected)
     return callServiceViaRelay(endpoint, "POST", "/services/remove", { serviceId });
   return callJson(
     `${getServiceUrl(endpoint)}/services/remove`,
