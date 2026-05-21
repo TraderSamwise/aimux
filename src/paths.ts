@@ -38,8 +38,17 @@ function resolveRepoRoot(cwd: string): string {
   }
 
   try {
+    // Strip inherited GIT_* env so the command honors `cwd` even when invoked
+    // from a context (e.g. git hook) where the parent set GIT_DIR/GIT_WORK_TREE.
+    const env = { ...process.env };
+    delete env.GIT_DIR;
+    delete env.GIT_WORK_TREE;
+    delete env.GIT_INDEX_FILE;
+    delete env.GIT_OBJECT_DIRECTORY;
+    delete env.GIT_COMMON_DIR;
     const gitCommonDir = execSync("git rev-parse --git-common-dir", {
       cwd,
+      env,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
