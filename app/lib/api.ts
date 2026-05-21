@@ -126,9 +126,19 @@ export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
   return data.projects;
 }
 
-export async function ensureProject(projectRoot: string, opts?: ApiOpts): Promise<unknown> {
-  if (_relay?.wsConnected) return callDaemonViaRelay("POST", "/projects/ensure", { projectRoot });
-  return callJson(
+export interface EnsureProjectResponse {
+  ok: boolean;
+  project?: DaemonProject;
+  [k: string]: unknown;
+}
+
+export async function ensureProject(
+  projectRoot: string,
+  opts?: ApiOpts,
+): Promise<EnsureProjectResponse> {
+  if (_relay?.wsConnected)
+    return callDaemonViaRelay<EnsureProjectResponse>("POST", "/projects/ensure", { projectRoot });
+  return callJson<EnsureProjectResponse>(
     `${getDaemonUrl()}/projects/ensure`,
     { method: "POST", body: JSON.stringify({ projectRoot }) },
     opts,
@@ -479,21 +489,62 @@ export async function removeWorktree(
 
 // ── Worktrees, graveyard, threads (list-only for v1) ────────────────────
 
-export async function listWorktrees(endpoint: ServiceEndpoint, opts?: ApiOpts): Promise<unknown> {
-  return callJson(`${getServiceUrl(endpoint)}/worktrees`, { method: "GET" }, opts);
+export interface WorktreesResponse {
+  ok: boolean;
+  worktrees: DesktopState["worktrees"];
+  [k: string]: unknown;
 }
 
-export async function listGraveyard(endpoint: ServiceEndpoint, opts?: ApiOpts): Promise<unknown> {
-  return callJson(`${getServiceUrl(endpoint)}/graveyard`, { method: "GET" }, opts);
+export interface GraveyardEntryResponse {
+  id: string;
+  tool?: string;
+  label?: string;
+  diedAt?: string;
+  [k: string]: unknown;
+}
+
+export interface GraveyardResponse {
+  ok: boolean;
+  entries: GraveyardEntryResponse[];
+  worktrees?: unknown[];
+  [k: string]: unknown;
+}
+
+export interface ThreadSummaryResponse {
+  thread: { id: string; title?: string; status?: string; kind?: string };
+  lastMessage?: { body?: string; createdAt?: string };
+  [k: string]: unknown;
+}
+
+export async function listWorktrees(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<WorktreesResponse> {
+  return callJson<WorktreesResponse>(
+    `${getServiceUrl(endpoint)}/worktrees`,
+    { method: "GET" },
+    opts,
+  );
+}
+
+export async function listGraveyard(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<GraveyardResponse> {
+  return callJson<GraveyardResponse>(
+    `${getServiceUrl(endpoint)}/graveyard`,
+    { method: "GET" },
+    opts,
+  );
 }
 
 export async function listThreads(
   endpoint: ServiceEndpoint,
   sessionId?: string,
   opts?: ApiOpts,
-): Promise<unknown> {
+): Promise<ThreadSummaryResponse[]> {
   const url = sessionId
     ? `${getServiceUrl(endpoint)}/threads?session=${encodeURIComponent(sessionId)}`
     : `${getServiceUrl(endpoint)}/threads`;
-  return callJson(url, { method: "GET" }, opts);
+  return callJson<ThreadSummaryResponse[]>(url, { method: "GET" }, opts);
 }

@@ -2,7 +2,7 @@
 //
 // The polyfill (event-source-polyfill) handles transport reconnection internally —
 // we don't layer manual retry on top. We only intervene on permanent failures
-// (e.g., 401) by stopping reconnects and surfacing via onError.
+// (e.g., non-retriable 4xx) by stopping reconnects and surfacing via onError.
 
 import { EventSourcePolyfill } from "event-source-polyfill";
 import { getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
@@ -86,10 +86,10 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
     // permanent failures (HTTP errors with a status set on the event by the
     // polyfill) so the caller can decide whether to give up.
     const status = (event as unknown as { status?: number }).status;
-    if (status === 401 || status === 403) {
+    if (typeof status === "number" && status >= 400 && status < 500 && status !== 429) {
       es.close();
       stopped = true;
-      onError?.(new Error(`heartbeat unauthorized (status ${status})`));
+      onError?.(new Error(`heartbeat request failed (status ${status})`));
     }
     // For transient failures, let the polyfill keep trying.
   };

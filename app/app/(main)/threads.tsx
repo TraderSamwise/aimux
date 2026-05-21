@@ -3,18 +3,13 @@ import { ScrollView, View } from "react-native";
 import { useAtomValue } from "jotai";
 import { Text } from "@/components/ui/text";
 import { useAuth } from "@/lib/auth";
-import { listThreads } from "@/lib/api";
+import { listThreads, type ThreadSummaryResponse } from "@/lib/api";
 import { selectedProjectAtom } from "@/stores/projects";
-
-interface ThreadSummary {
-  thread: { id: string; title?: string; status?: string; kind?: string };
-  lastMessage?: { body?: string; createdAt?: string };
-}
 
 export default function ThreadsScreen() {
   const project = useAtomValue(selectedProjectAtom);
   const { getToken } = useAuth();
-  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [threads, setThreads] = useState<ThreadSummaryResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const endpoint = project?.serviceEndpoint ?? null;
@@ -32,12 +27,15 @@ export default function ThreadsScreen() {
     (async () => {
       try {
         const token = await getToken();
-        const data = (await listThreads(endpoint, undefined, { token })) as ThreadSummary[];
+        const data = await listThreads(endpoint, undefined, { token });
         if (cancelled) return;
         setThreads(Array.isArray(data) ? data : []);
         setError(null);
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) {
+          setThreads([]);
+          setError(err instanceof Error ? err.message : String(err));
+        }
       }
     })();
     return () => {

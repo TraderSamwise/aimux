@@ -20,6 +20,7 @@ yarn android  # Android emulator
 ```
 
 **What triggers what:**
+
 - `app/app/`, `app/components/`, `app/lib/`, `app/stores/` changes → Metro HMR (no restart)
 - `src/*.ts` Node CLI changes → need `yarn build` at the repo root so the daemon and metadata server see updated `dist/` code
 - The app is a pure HTTP+SSE client of the aimux daemon; it does NOT bundle the CLI
@@ -29,7 +30,7 @@ yarn android  # Android emulator
 - `app/app/` — Expo Router screens (file-based routing). `(main)` group is the authed app shell with project sidebar + chat/plans/threads screens.
 - `app/lib/api.ts` — typed HTTP client. Daemon routes target `localhost:43190` by default; per-project metadata-server routes target the `serviceEndpoint` returned by `/projects`.
 - `app/lib/heartbeat.ts` — `event-source-polyfill` wrapper for the per-project `/events` SSE stream. The polyfill auto-reconnects on transient failures.
-- `app/stores/` — Zustand stores: `projects` (list + selection), `chat` (per-session history, pending, output, streaming), `ui` (sidebar).
+- `app/stores/` — Jotai stores: `projects` (list + selection), `chat` (per-session history, pending, output, streaming), `ui` (sidebar).
 - `app/lib/image-picker.{web,native}.ts` — platform-split. Web uses `<input type=file>`; native uses `expo-image-picker`.
 
 ### What the app is NOT

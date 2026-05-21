@@ -10,7 +10,12 @@ const requiredReleaseEnvKeys = [];
 const buildOnlyEnvKeys = [];
 
 const allKnownEnvKeys = Array.from(
-  new Set([...defaultedRuntimeEnvKeys, ...optionalRuntimeEnvKeys, ...requiredReleaseEnvKeys]),
+  new Set([
+    ...defaultedRuntimeEnvKeys,
+    ...optionalRuntimeEnvKeys,
+    ...requiredReleaseEnvKeys,
+    ...buildOnlyEnvKeys,
+  ]),
 ).sort();
 
 module.exports = {

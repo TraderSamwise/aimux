@@ -27,7 +27,9 @@ export function MobileTabBar() {
         return (
           <Pressable
             key={route}
-            onPress={() => router.push(route)}
+            onPress={() => {
+              if (!active) router.replace(route);
+            }}
             className="flex-1 items-center justify-center active:bg-accent/50"
           >
             {active ? <View className="absolute top-0 h-0.5 w-full bg-foreground" /> : null}

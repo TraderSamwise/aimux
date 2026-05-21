@@ -41,10 +41,10 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
 
   async function handleAttach() {
     setError(null);
-    const picked = await pickImages();
-    if (!picked || picked.length === 0) return;
-    setUploading(true);
     try {
+      const picked = await pickImages();
+      if (!picked || picked.length === 0) return;
+      setUploading(true);
       const uploaded: DraftImage[] = [];
       for (const image of picked) {
         const res = await uploadAttachmentBase64(
@@ -78,6 +78,7 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
   async function handleSend() {
     const trimmed = draft.trim();
     if (!trimmed && draftImages.length === 0) return;
+    if (uploading) return;
     if (sending) return;
 
     setError(null);
@@ -135,10 +136,20 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
       updatePending({
         sessionId,
         clientMessageId,
-        patch: { deliveryState },
+        patch: {
+          deliveryState,
+          deliveryError:
+            deliveryState === "failed"
+              ? (result.error ?? "The agent input operation failed.")
+              : undefined,
+        },
       });
-      setDraft("");
-      setDraftImages([]);
+      if (deliveryState === "submitted") {
+        setDraft("");
+        setDraftImages([]);
+      } else {
+        setError(result.error ?? "The agent input operation failed.");
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       updatePending({
@@ -188,7 +199,7 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
         <Button
           label={sending ? "Sending…" : "Send"}
           onPress={handleSend}
-          disabled={sending || (!draft.trim() && draftImages.length === 0)}
+          disabled={sending || uploading || (!draft.trim() && draftImages.length === 0)}
         />
       </View>
     </View>
