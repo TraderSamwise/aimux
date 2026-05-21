@@ -18,7 +18,9 @@ const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
 const PROXY_TIMEOUT_MS = 10_000;
-const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+// `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
+// needs brackets) and metadata services bind to 127.0.0.1 anyway.
+const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
 
 export interface AimuxDaemonInfo {
   pid: number;
