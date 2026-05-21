@@ -53,6 +53,15 @@ export class RelayClient {
 
   connect(): void {
     if (this.stopped) return;
+    // Node 22+ ships WebSocket on globalThis; 18/20 don't. Fail fast with a
+    // clear error so the user doesn't see an endless reconnect loop full of
+    // ReferenceErrors when running on an older runtime.
+    if (typeof globalThis.WebSocket !== "function") {
+      this.status = "auth_failed";
+      this.lastError = "Node runtime is missing globalThis.WebSocket — upgrade to Node 22+ to use the aimux relay";
+      this.stopped = true;
+      return;
+    }
     this.status = this.lastConnectedAt ? "reconnecting" : "connecting";
     const url = `${this.relayUrl}/daemon/connect?token=${encodeURIComponent(this.token)}`;
 
