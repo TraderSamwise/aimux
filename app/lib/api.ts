@@ -220,7 +220,6 @@ export async function sendAgentInput(
 export interface PlanResponse {
   ok: boolean;
   sessionId: string;
-  path: string;
   content: string;
 }
 
@@ -241,7 +240,7 @@ export async function putPlan(
   sessionId: string,
   content: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; sessionId: string; path: string }> {
+): Promise<{ ok: boolean; sessionId: string }> {
   return callJson(
     `${getServiceUrl(endpoint)}/plans/${encodeURIComponent(sessionId)}`,
     { method: "PUT", body: JSON.stringify({ content }) },

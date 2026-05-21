@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Modal, Platform, Pressable, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,29 @@ export function AuthMenu() {
 
   const close = () => setOpen(false);
 
+  const menu = (
+    <Card className="w-48 p-1">
+      <Pressable
+        className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
+        onPress={() => {
+          close();
+          router.push("/settings");
+        }}
+      >
+        <Text className="text-sm text-foreground">Settings</Text>
+      </Pressable>
+      <Pressable
+        className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
+        onPress={() => {
+          close();
+          void signOut().then(() => router.replace("/sign-in"));
+        }}
+      >
+        <Text className="text-sm text-destructive">Sign out</Text>
+      </Pressable>
+    </Card>
+  );
+
   return (
     <View className="relative">
       <Pressable
@@ -46,35 +69,22 @@ export function AuthMenu() {
       </Pressable>
 
       {open ? (
-        <>
-          <Pressable
-            onPress={close}
-            style={[
-              { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 40 },
-              Platform.OS === "web" ? ({ position: "fixed" } as object) : undefined,
-            ]}
-          />
-          <Card className="absolute right-0 top-full z-50 mt-2 w-48 p-1">
+        Platform.OS === "web" ? (
+          <>
             <Pressable
-              className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
-              onPress={() => {
-                close();
-                router.push("/settings");
-              }}
-            >
-              <Text className="text-sm text-foreground">Settings</Text>
-            </Pressable>
-            <Pressable
-              className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
-              onPress={() => {
-                close();
-                void signOut().then(() => router.replace("/sign-in"));
-              }}
-            >
-              <Text className="text-sm text-destructive">Sign out</Text>
-            </Pressable>
-          </Card>
-        </>
+              onPress={close}
+              style={
+                { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 40 } as object
+              }
+            />
+            <View className="absolute right-0 top-full z-50 mt-2">{menu}</View>
+          </>
+        ) : (
+          <Modal transparent visible animationType="none" onRequestClose={close}>
+            <Pressable onPress={close} style={StyleSheet.absoluteFill} />
+            <View style={{ position: "absolute", top: 56, right: 12 }}>{menu}</View>
+          </Modal>
+        )
       ) : null}
     </View>
   );
