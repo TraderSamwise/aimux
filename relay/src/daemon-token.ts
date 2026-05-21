@@ -16,7 +16,8 @@ function base64UrlEncode(data: ArrayBuffer | string): string {
 }
 
 function base64UrlDecodeToString(input: string): string {
-  const padded = input.replace(/-/g, "+").replace(/_/g, "/");
+  let padded = input.replace(/-/g, "+").replace(/_/g, "/");
+  while (padded.length % 4) padded += "=";
   return atob(padded);
 }
 
