@@ -175,6 +175,10 @@
 
   function agentStatusLabel(agent) {
     if (agent.status === "offline" && !agent.pending) return "offline";
+    if (agent.pending && ["creating", "forking", "starting"].includes(agent.pendingAction)) return "starting";
+    if (agent.pending && agent.pendingAction === "stopping") return "stopping";
+    if (agent.pending && agent.pendingAction === "graveyarding") return "killing";
+    if (agent.pending && agent.pendingAction === "migrating") return "migrating";
     if (agent.pending && agent.status === "starting") return "starting";
     if (agent.pending && agent.status === "stopping") return "stopping";
     if (agent.pending && agent.status === "killing") return "killing";
@@ -237,9 +241,9 @@
   }
 
   function serviceStatusLabel(service) {
-    if (service.pendingAction === "starting" || service.pending) return "starting";
     if (service.pendingAction === "stopping") return "stopping";
-    if (service.pendingAction === "graveyarding") return "removing";
+    if (service.pendingAction === "removing" || service.pendingAction === "graveyarding") return "removing";
+    if (service.pendingAction === "creating" || service.pendingAction === "starting" || service.pending) return "starting";
     if (service.status === "offline") return "offline";
     if (service.status === "exited") return "exited";
     return "running";
@@ -352,6 +356,7 @@
   async function spawnAgent(tool, worktreePath) {
     const project = appState.selectedProject;
     if (!project || isSpawnPending(tool, worktreePath)) return;
+    if (worktreePath && isWorktreeActionBlocked(worktreePath)) return;
     showSpawnMenu = null;
     try {
       await trackAction(
@@ -377,7 +382,7 @@
 
   function availableWorktreeTargets(agent) {
     const currentPath = agent.worktreePath || null;
-    return worktrees.filter((wt) => wt.path && wt.path !== currentPath && !wt.pending);
+    return worktrees.filter((wt) => wt.path && wt.path !== currentPath && !isWorktreeActionBlocked(wt.path));
   }
 
   function closeAgentMenus() {
@@ -527,6 +532,7 @@
   async function createService(worktreePath) {
     const project = appState.selectedProject;
     if (!project || isCreateServicePending(worktreePath)) return;
+    if (worktreePath && isWorktreeActionBlocked(worktreePath)) return;
     const command = serviceCommand.trim();
     const label = command || "shell";
     const create = () =>
@@ -577,7 +583,7 @@
 
   async function removeWorktree(path, name) {
     const project = appState.selectedProject;
-    if (!project || isRemoveWorktreePending(path)) return;
+    if (!project || isWorktreeActionBlocked(path)) return;
     try {
       await trackAction(
         {
@@ -635,7 +641,8 @@
   }
 
   function isForkPending(sessionId) {
-    return isActionPending({
+    const projectPath = appState.selectedProject?.path;
+    return isSessionActionBlocked(projectPath, sessionId, "fork") || isActionPending({
       projectPath: appState.selectedProject?.path,
       kind: "fork",
       sourceSessionId: sessionId,
@@ -643,19 +650,13 @@
   }
 
   function isRenamePending(sessionId) {
-    return isActionPending({
-      projectPath: appState.selectedProject?.path,
-      kind: "rename",
-      sessionId,
-    });
+    const projectPath = appState.selectedProject?.path;
+    return isSessionActionBlocked(projectPath, sessionId, "rename");
   }
 
   function isMigratePending(sessionId) {
-    return isActionPending({
-      projectPath: appState.selectedProject?.path,
-      kind: "migrate",
-      sessionId,
-    });
+    const projectPath = appState.selectedProject?.path;
+    return isSessionActionBlocked(projectPath, sessionId, "migrate");
   }
 
   function isSpawnPending(tool, worktreePath) {
@@ -682,6 +683,13 @@
     });
   }
 
+  function isWorktreeActionBlocked(path) {
+    if (!path) return false;
+    if (isRemoveWorktreePending(path)) return true;
+    const worktree = worktrees.find((wt) => wt.path === path);
+    return Boolean(worktree?.pending);
+  }
+
   function isCreateServicePending(worktreePath) {
     return isActionPending({
       projectPath: appState.selectedProject?.path,
@@ -690,28 +698,8 @@
     });
   }
 
-  function isStopServicePending(serviceId) {
-    return isActionPending({
-      projectPath: appState.selectedProject?.path,
-      kind: "stop-service",
-      serviceId,
-    });
-  }
-
-  function isResumeServicePending(serviceId) {
-    return isActionPending({
-      projectPath: appState.selectedProject?.path,
-      kind: "resume-service",
-      serviceId,
-    });
-  }
-
-  function isRemoveServicePending(serviceId) {
-    return isActionPending({
-      projectPath: appState.selectedProject?.path,
-      kind: "remove-service",
-      serviceId,
-    });
+  function isServiceBlocked(serviceId) {
+    return isServiceActionBlocked(appState.selectedProject?.path, serviceId);
   }
 
   function handleWorktreeKeydown(e) {
@@ -789,20 +777,20 @@
                 <button
                   class="wt-action wt-action-danger"
                   title={wt.agents.length > 0 || wt.services?.length > 0 ? "Worktree has attached agents or services" : "Remove worktree"}
-                  disabled={Boolean(wt.pending) || wt.agents.length > 0 || wt.services?.length > 0 || isRemoveWorktreePending(wt.path)}
+                  disabled={isWorktreeActionBlocked(wt.path) || wt.agents.length > 0 || wt.services?.length > 0}
                   onclick={() => { removeWorktreePath = removeWorktreePath === wt.path ? null : wt.path; showSpawnMenu = null; }}
                 >×</button>
               {/if}
               <button
                 class="wt-action"
                 title="Spawn agent in this worktree"
-                disabled={Boolean(wt.pending)}
+                disabled={isWorktreeActionBlocked(wt.path)}
                 onclick={() => { showSpawnMenu = showSpawnMenu === wt.path ? null : wt.path; }}
               >+</button>
               <button
                 class="wt-action"
                 title="Start service in this worktree"
-                disabled={Boolean(wt.pending)}
+                disabled={isWorktreeActionBlocked(wt.path)}
                 onclick={() => { showServiceInputFor = showServiceInputFor === wt.path ? null : wt.path; serviceCommand = ""; }}
               >v</button>
             {:else}
@@ -813,7 +801,7 @@
           {#if showSpawnMenu === wt.path && wt.path}
             <div class="spawn-menu">
               {#each tools as tool}
-                <button class="spawn-btn" onclick={() => spawnAgent(tool, wt.path)} disabled={isSpawnPending(tool, wt.path)}>
+                <button class="spawn-btn" onclick={() => spawnAgent(tool, wt.path)} disabled={isSpawnPending(tool, wt.path) || isWorktreeActionBlocked(wt.path)}>
                   {isSpawnPending(tool, wt.path) ? `spawning ${tool}...` : `spawn ${tool}`}
                 </button>
               {/each}
@@ -831,7 +819,7 @@
                 disabled={isCreateServicePending(wt.path)}
                 autofocus
               />
-              <button class="input-btn" onclick={() => createService(wt.path)} disabled={isCreateServicePending(wt.path)}>
+              <button class="input-btn" onclick={() => createService(wt.path)} disabled={isCreateServicePending(wt.path) || isWorktreeActionBlocked(wt.path)}>
                 {isCreateServicePending(wt.path) ? "starting..." : "start"}
               </button>
             </div>
@@ -840,8 +828,8 @@
           {#if removeWorktreePath === wt.path && wt.path}
             <div class="worktree-confirm">
               <span class="inline-hint">Remove {wt.name}? This deletes the checkout.</span>
-              <button class="inline-chip confirm" onclick={() => removeWorktree(wt.path, wt.name)} disabled={isRemoveWorktreePending(wt.path)}>
-                {isRemoveWorktreePending(wt.path) ? "removing..." : "remove"}
+              <button class="inline-chip confirm" onclick={() => removeWorktree(wt.path, wt.name)} disabled={isWorktreeActionBlocked(wt.path)}>
+                {isWorktreeActionBlocked(wt.path) ? "removing..." : "remove"}
               </button>
               <button class="inline-chip" onclick={() => { removeWorktreePath = null; }}>cancel</button>
             </div>
@@ -894,7 +882,7 @@
                             {isAgentActionPending(agent.id, "stop") ? "..." : "■"}
                           </button>
                         {/if}
-                        {#if !agent.pending || agent.pendingAction === "stop"}
+                        {#if !agent.pending || agent.pendingAction === "stopping"}
                           <button class="agent-action agent-action-kill" title="Kill" onclick={(e) => killAgent(e, agent)} disabled={isAgentActionPending(agent.id, "kill")}>
                             {isAgentActionPending(agent.id, "kill") ? "..." : "×"}
                           </button>
@@ -1023,9 +1011,9 @@
                         class="agent-action"
                         title={service.status === "offline" || service.status === "exited" ? "Remove service" : "Stop service"}
                         onclick={(e) => stopService(e, service)}
-                        disabled={isStopServicePending(service.id) || isResumeServicePending(service.id) || isRemoveServicePending(service.id)}
+                        disabled={isServiceBlocked(service.id)}
                       >
-                        {isStopServicePending(service.id) || isResumeServicePending(service.id) || isRemoveServicePending(service.id)
+                        {isServiceBlocked(service.id)
                           ? "..."
                           : service.status === "offline" || service.status === "exited"
                             ? "×"

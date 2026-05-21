@@ -14,6 +14,65 @@ export interface TeamConfig {
   defaultRole: string;
 }
 
+export interface SessionTeamMetadata {
+  teamId: string;
+  parentSessionId: string;
+  role?: string;
+  label?: string;
+  order?: number;
+}
+
+export function isTeammateSession(session: { team?: SessionTeamMetadata } | undefined): boolean {
+  return Boolean(session?.team?.parentSessionId);
+}
+
+export function compareTeammateSessions(
+  left: { id: string; createdAt?: string; team?: SessionTeamMetadata },
+  right: { id: string; createdAt?: string; team?: SessionTeamMetadata },
+): number {
+  const leftOrder = typeof left.team?.order === "number" ? left.team.order : Number.POSITIVE_INFINITY;
+  const rightOrder = typeof right.team?.order === "number" ? right.team.order : Number.POSITIVE_INFINITY;
+  if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+
+  const leftCreated = left.createdAt ? Date.parse(left.createdAt) : Number.POSITIVE_INFINITY;
+  const rightCreated = right.createdAt ? Date.parse(right.createdAt) : Number.POSITIVE_INFINITY;
+  const normalizedLeftCreated = Number.isFinite(leftCreated) ? leftCreated : Number.POSITIVE_INFINITY;
+  const normalizedRightCreated = Number.isFinite(rightCreated) ? rightCreated : Number.POSITIVE_INFINITY;
+  if (normalizedLeftCreated !== normalizedRightCreated) return normalizedLeftCreated - normalizedRightCreated;
+
+  return left.id.localeCompare(right.id);
+}
+
+export function selectDirectTeammates<T extends { id: string; createdAt?: string; team?: SessionTeamMetadata }>(
+  sessions: T[],
+  parentSessionId: string,
+): T[] {
+  const byId = new Map<string, T>();
+  for (const session of sessions) {
+    if (session.team?.parentSessionId !== parentSessionId) continue;
+    if (!byId.has(session.id)) {
+      byId.set(session.id, session);
+    }
+  }
+  return [...byId.values()].sort(compareTeammateSessions);
+}
+
+export function selectOrphanTeammates<T extends { id: string; createdAt?: string; team?: SessionTeamMetadata }>(
+  sessions: T[],
+  knownParentIds: Iterable<string>,
+): T[] {
+  const parents = new Set(knownParentIds);
+  const byId = new Map<string, T>();
+  for (const session of sessions) {
+    const parentSessionId = session.team?.parentSessionId;
+    if (!parentSessionId || parents.has(parentSessionId)) continue;
+    if (!byId.has(session.id)) {
+      byId.set(session.id, session);
+    }
+  }
+  return [...byId.values()].sort(compareTeammateSessions);
+}
+
 const DEFAULT_TEAM_CONFIG: TeamConfig = {
   roles: {
     coder: {

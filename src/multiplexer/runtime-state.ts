@@ -13,6 +13,7 @@ import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { markLastUsed } from "../last-used.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { getServiceLaunchCommandLine } from "./services.js";
+import { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
 
 type RuntimeStateHost = any;
 
@@ -91,6 +92,39 @@ function getSavedBackendSessionId(sessionId: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function parseTimestampMs(value: unknown): number | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function recoverCapturedBackendSessionId(
+  host: RuntimeStateHost,
+  session: any,
+  sessionMetadata: any,
+  toolCfg: any,
+): string | undefined {
+  if (!toolCfg?.sessionCapture) return undefined;
+  const startedAtMs = parseTimestampMs(session.createdAt) ?? parseTimestampMs(sessionMetadata?.createdAt);
+  if (!startedAtMs) return undefined;
+  const backendSessionId = captureBackendSessionIdFromSessionFiles(toolCfg.sessionCapture, session.id, {
+    startedAtMs,
+    lookbackDays: 30,
+  });
+  if (!backendSessionId) return undefined;
+  try {
+    recordSessionBackendSessionId(host, session.id, backendSessionId);
+  } catch (error) {
+    host.debug?.(
+      `failed to record recovered backend id for ${session.id}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "session",
+    );
+  }
+  return backendSessionId;
 }
 
 function markLifecycleUsed(host: RuntimeStateHost, itemId: string): void {
@@ -274,7 +308,7 @@ export function loadOfflineSessions(
       if (s.backendSessionId && liveBackendIds.has(s.backendSessionId)) return false;
       if (ownedIds.has(s.id)) return false;
       if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
-      if (host.dashboardPendingActions?.get?.(s.id) === "starting") return false;
+      if (host.dashboardPendingActions?.getSessionAction?.(s.id) === "starting") return false;
       if (!isAvailableWorktreePath(s.worktreePath)) return false;
       return true;
     })
@@ -282,13 +316,13 @@ export function loadOfflineSessions(
   const previousKey = host.offlineSessions
     .map(
       (session: any) =>
-        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}`,
+        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}:${JSON.stringify(session.team ?? null)}`,
     )
     .join("|");
   const nextKey = nextOfflineSessions
     .map(
       (session: any) =>
-        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}`,
+        `${session.id}:${session.label ?? ""}:${session.worktreePath ?? ""}:${session.backendSessionId ?? ""}:${JSON.stringify(session.team ?? null)}`,
     )
     .join("|");
   host.offlineSessions = nextOfflineSessions;
@@ -322,7 +356,7 @@ export function loadOfflineServices(host: RuntimeStateHost, state = host.constru
 
   const nextOfflineServices = savedServices.filter((service: any) => {
     if (liveServiceIds.has(service.id)) return false;
-    if (host.dashboardPendingActions?.get?.(service.id) === "starting") return false;
+    if (host.dashboardPendingActions?.getServiceAction?.(service.id) === "starting") return false;
     if (!isAvailableWorktreePath(service.worktreePath)) return false;
     return true;
   });
@@ -419,6 +453,7 @@ export function restoreTmuxSessionsFromState(
       metadata.worktreePath,
       metadata.role,
       metadata.createdAt ? Date.parse(metadata.createdAt) : undefined,
+      metadata.team,
     );
 
     const saved = savedById.get(metadata.sessionId);
@@ -450,6 +485,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
     lifecycle: "offline",
     createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
     backendSessionId,
+    team: session.team,
     worktreePath: host.sessionWorktreePaths.get(session.id),
     label: host.getSessionLabel(session.id),
     headline: host.deriveHeadline(session.id),
@@ -564,7 +600,10 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   const sessionMetadata = loadMetadataState().sessions[session.id];
   const derived = sessionMetadata?.derived;
   const relaunchFresh = derived?.activity === "error" || derived?.attention === "error";
-  const backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
+  let backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
+  if (!backendSessionId && !relaunchFresh) {
+    backendSessionId = recoverCapturedBackendSessionId(host, session, sessionMetadata, toolCfg);
+  }
   const useBackendResume =
     !relaunchFresh && host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId);
 
@@ -618,6 +657,7 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     session.id,
     true,
     useBackendResume,
+    session.team,
   );
 }
 
@@ -722,6 +762,7 @@ export function getInstanceSessionRefs(host: RuntimeStateHost): any[] {
     id: s.id,
     tool: s.command,
     backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
+    team: s.team,
     worktreePath: host.sessionWorktreePaths.get(s.id),
   }));
 }
@@ -735,6 +776,7 @@ export function writeSessionsFile(host: RuntimeStateHost): void {
     id: s.id,
     tool: s.command,
     backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
+    team: s.team,
     worktreePath: host.sessionWorktreePaths.get(s.id),
   }));
   const data = host.instanceDirectory.buildSessionsFileEntries(

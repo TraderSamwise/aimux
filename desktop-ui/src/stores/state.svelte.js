@@ -384,17 +384,45 @@ export function isActionPending(match = {}) {
   );
 }
 
-export function isSessionActionBlocked(projectPath, sessionId, requestedKind = null) {
-  const actions = inFlightActions.filter((action) => action.projectPath === projectPath && action.sessionId === sessionId);
-  if (actions.length === 0) return false;
-  if (requestedKind === "kill") {
-    return actions.some((action) => action.kind !== "stop");
-  }
+function findRawProject(projectPath) {
+  if (!projectPath) return null;
+  return projects.find((project) => project.path === projectPath) || null;
+}
+
+function findRawSession(projectPath, sessionId) {
+  if (!sessionId) return null;
+  return (findRawProject(projectPath)?.sessions || []).find((session) => session.id === sessionId) || null;
+}
+
+function findRawService(projectPath, serviceId) {
+  if (!serviceId) return null;
+  return (findRawProject(projectPath)?.services || []).find((service) => service.id === serviceId) || null;
+}
+
+function isRawSessionPendingBlocked(session, requestedKind = null) {
+  if (!session?.pending && !session?.pendingAction) return false;
+  if (requestedKind === "kill" && session.pendingAction === "stopping") return false;
   return true;
 }
 
+export function isSessionActionBlocked(projectPath, sessionId, requestedKind = null) {
+  const actions = inFlightActions.filter((action) => action.projectPath === projectPath && action.sessionId === sessionId);
+  if (actions.length > 0) {
+    if (requestedKind === "kill") {
+      if (actions.some((action) => action.kind !== "stop")) return true;
+      return isRawSessionPendingBlocked(findRawSession(projectPath, sessionId), requestedKind);
+    }
+    return true;
+  }
+  return isRawSessionPendingBlocked(findRawSession(projectPath, sessionId), requestedKind);
+}
+
 export function isServiceActionBlocked(projectPath, serviceId) {
-  return inFlightActions.some((action) => action.projectPath === projectPath && action.serviceId === serviceId);
+  if (inFlightActions.some((action) => action.projectPath === projectPath && action.serviceId === serviceId)) {
+    return true;
+  }
+  const service = findRawService(projectPath, serviceId);
+  return Boolean(service?.pending || service?.pendingAction);
 }
 
 function reconcileActions(incomingProjects) {
@@ -715,6 +743,22 @@ function overlayActionSignature(project) {
   );
 }
 
+function pendingActionForOverlay(action) {
+  if (!action) return null;
+  if (action.kind === "spawn") return "creating";
+  if (action.kind === "fork") return "forking";
+  if (action.kind === "stop") return "stopping";
+  if (action.kind === "kill") return "graveyarding";
+  if (action.kind === "rename") return "renaming";
+  if (action.kind === "migrate") return "migrating";
+  if (action.kind === "resurrect") return "starting";
+  if (action.kind === "create-service") return "creating";
+  if (action.kind === "stop-service") return "stopping";
+  if (action.kind === "resume-service") return "starting";
+  if (action.kind === "remove-service") return "removing";
+  return action.kind;
+}
+
 function applyActionOverlays(project) {
   if (!project) return null;
   const signature = overlayActionSignature(project);
@@ -752,6 +796,7 @@ function applyActionOverlays(project) {
         label: action.tool,
         status: "starting",
         pending: true,
+        pendingAction: pendingActionForOverlay(action),
         worktreePath: action.worktreePath || null,
       };
       if (!next.sessions.some((session) => session.id === pendingId)) {
@@ -770,6 +815,7 @@ function applyActionOverlays(project) {
         label: action.tool,
         status: "starting",
         pending: true,
+        pendingAction: pendingActionForOverlay(action),
         worktreePath: action.worktreePath || null,
       };
       if (!next.sessions.some((session) => session.id === pendingId)) {
@@ -777,20 +823,6 @@ function applyActionOverlays(project) {
       }
       if (next.statusline && !next.statusline.sessions.some((session) => session.id === pendingId)) {
         next.statusline.sessions = [pendingSession, ...next.statusline.sessions];
-      }
-    }
-
-    if (action.kind === "create-worktree") {
-      const pendingPath = action.worktreePath || `pending-worktree:${action.key}`;
-      const pendingWorktree = {
-        name: action.worktreeName,
-        path: pendingPath,
-        branch: "creating",
-        pending: true,
-        pendingAction: "creating",
-      };
-      if (!next.worktrees.some((worktree) => worktree.path === pendingPath)) {
-        next.worktrees = [...next.worktrees, pendingWorktree];
       }
     }
 
@@ -804,6 +836,7 @@ function applyActionOverlays(project) {
         previewLine: action.command?.trim() || "Interactive shell",
         status: "running",
         pending: true,
+        pendingAction: pendingActionForOverlay(action),
         worktreePath: action.worktreePath || null,
       };
       if (!next.services.some((service) => service.id === pendingId)) {
@@ -812,13 +845,14 @@ function applyActionOverlays(project) {
     }
 
     if (action.kind === "stop" || action.kind === "kill") {
+      const pendingAction = pendingActionForOverlay(action);
       next.sessions = next.sessions.map((session) =>
         session.id === action.sessionId
           ? {
               ...session,
               pending: true,
-              pendingAction: action.kind,
-              status: action.kind === "stop" ? "stopping" : "killing",
+              pendingAction,
+              status: pendingAction,
             }
           : session
       );
@@ -828,8 +862,8 @@ function applyActionOverlays(project) {
             ? {
                 ...session,
                 pending: true,
-                pendingAction: action.kind,
-                status: action.kind === "stop" ? "stopping" : "killing",
+                pendingAction,
+                status: pendingAction,
               }
             : session
         );
@@ -843,7 +877,7 @@ function applyActionOverlays(project) {
               ...session,
               label: action.label,
               pending: true,
-              pendingAction: action.kind,
+              pendingAction: pendingActionForOverlay(action),
             }
           : session
       );
@@ -854,7 +888,7 @@ function applyActionOverlays(project) {
                 ...session,
                 label: action.label,
                 pending: true,
-                pendingAction: action.kind,
+                pendingAction: pendingActionForOverlay(action),
               }
             : session
         );
@@ -867,7 +901,7 @@ function applyActionOverlays(project) {
           ? {
               ...session,
               pending: true,
-              pendingAction: action.kind,
+              pendingAction: pendingActionForOverlay(action),
               status: "migrating",
               worktreePath: action.worktreePath || session.worktreePath || null,
             }
@@ -879,7 +913,7 @@ function applyActionOverlays(project) {
             ? {
                 ...session,
                 pending: true,
-                pendingAction: action.kind,
+                pendingAction: pendingActionForOverlay(action),
                 status: "migrating",
                 worktreePath: action.worktreePath || session.worktreePath || null,
               }
@@ -896,6 +930,7 @@ function applyActionOverlays(project) {
         role: action.role,
         status: "offline",
         pending: true,
+        pendingAction: pendingActionForOverlay(action),
         worktreePath: action.worktreePath || null,
       };
       if (!next.sessions.some((session) => session.id === action.sessionId)) {
@@ -906,25 +941,13 @@ function applyActionOverlays(project) {
       }
     }
 
-    if (action.kind === "remove-worktree" && action.worktreePath) {
-      next.worktrees = next.worktrees.map((worktree) =>
-        worktree.path === action.worktreePath
-          ? {
-              ...worktree,
-              pending: true,
-              removing: true,
-            }
-          : worktree
-      );
-    }
-
     if (action.kind === "stop-service" && action.serviceId) {
       next.services = next.services.map((service) =>
         service.id === action.serviceId
           ? {
               ...service,
               pending: true,
-              pendingAction: "stopping",
+              pendingAction: pendingActionForOverlay(action),
               status: "stopping",
             }
           : service
@@ -952,7 +975,7 @@ function applyActionOverlays(project) {
             previewLine: action.command?.trim() || "Interactive shell",
             status: "offline",
             pending: true,
-            pendingAction: "starting",
+            pendingAction: pendingActionForOverlay(action),
             worktreePath: action.worktreePath || null,
           },
           ...next.services,
@@ -966,7 +989,7 @@ function applyActionOverlays(project) {
           ? {
               ...service,
               pending: true,
-              pendingAction: "graveyarding",
+              pendingAction: pendingActionForOverlay(action),
             }
           : service
       );

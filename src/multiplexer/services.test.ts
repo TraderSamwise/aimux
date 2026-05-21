@@ -321,7 +321,7 @@ describe("services", () => {
       },
       startedInDashboard: true,
       mode: "dashboard",
-      setPendingDashboardSessionAction: vi.fn(),
+      setPendingDashboardServiceAction: vi.fn(),
       saveState: vi.fn(),
       invalidateDesktopStateSnapshot: vi.fn(),
       refreshLocalDashboardModel: vi.fn(),
@@ -333,7 +333,7 @@ describe("services", () => {
     const result = createService(host, "yarn dev", repoRoot);
 
     expect(result.serviceId).toMatch(/^service-/);
-    expect(host.setPendingDashboardSessionAction).toHaveBeenCalledWith(
+    expect(host.setPendingDashboardServiceAction).toHaveBeenCalledWith(
       result.serviceId,
       "creating",
       expect.objectContaining({

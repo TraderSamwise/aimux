@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, wr
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "../debug.js";
-import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import {
   addDashboardOperationFailure,
   clearDashboardOperationFailures,
@@ -25,6 +25,7 @@ import {
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
+import { isTeammateSession, selectDirectTeammates } from "../team.js";
 import {
   findMainRepo,
   getWorktreeBaseDir,
@@ -57,6 +58,29 @@ function recordDashboardFailure(
   return failure;
 }
 
+function refreshDashboardWorktreeProjection(host: any): void {
+  host.invalidateDesktopStateSnapshot();
+  host.refreshLocalDashboardModel();
+  host.metadataServer?.notifyChange?.();
+  if (host.mode === "dashboard") {
+    host.renderDashboard();
+  }
+}
+
+function orderStatuslineItemsByWorktree<T extends { id: string; worktreePath?: string }>(
+  items: T[],
+  orderForWorktree: (items: T[], worktreePath: string | undefined) => T[],
+): T[] {
+  const grouped = new Map<string, { worktreePath: string | undefined; items: T[] }>();
+  for (const item of items) {
+    const key = item.worktreePath ?? "__main__";
+    const group = grouped.get(key) ?? { worktreePath: item.worktreePath, items: [] };
+    group.items.push(item);
+    grouped.set(key, group);
+  }
+  return [...grouped.values()].flatMap((group) => orderForWorktree(group.items, group.worktreePath));
+}
+
 export const persistenceMethods = {
   writeSessionsFile(this: any): void {
     const dir = getLocalAimuxDir();
@@ -68,6 +92,7 @@ export const persistenceMethods = {
       tool: s.command,
       createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
       backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
+      team: s.team,
       worktreePath: this.sessionWorktreePaths.get(s.id),
     }));
     const data = this.instanceDirectory.buildSessionsFileEntries(
@@ -85,6 +110,7 @@ export const persistenceMethods = {
       for (const session of this.sessions) {
         this.syncTmuxWindowMetadata(session.id);
       }
+      this.dashboardUiStateStore.loadSharedState(this.dashboardState);
       this.refreshDesktopStateSnapshot();
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
@@ -155,7 +181,7 @@ export const persistenceMethods = {
     this.writeStatuslineTextFile("top-dashboard.txt", dashboardTop);
     this.writeStatuslineTextFile("bottom-dashboard.txt", dashboardBottom);
 
-    for (const entry of data.sessions) {
+    for (const entry of [...data.sessions, ...(data.teammates ?? [])]) {
       if (!entry.tmuxWindowId) continue;
       const renderOptions = {
         currentWindow: entry.windowName,
@@ -209,6 +235,21 @@ export const persistenceMethods = {
       worktreePath?: string;
       launchCommandLine?: string;
     }>;
+    teammates: Array<{
+      id: string;
+      kind?: "agent" | "service";
+      tool: string;
+      label?: string;
+      tmuxWindowId?: string;
+      tmuxWindowIndex?: number;
+      windowName: string;
+      headline?: string;
+      status: string;
+      role?: string;
+      active: boolean;
+      worktreePath?: string;
+      team?: DashboardSession["team"];
+    }>;
     tasks: { pending: number; assigned: number };
     controlPlane: {
       daemonAlive: boolean;
@@ -219,11 +260,23 @@ export const persistenceMethods = {
     updatedAt: string;
   } {
     const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
+    const orderedSessions = orderStatuslineItemsByWorktree(desktopState.sessions, (sessions, worktreePath) =>
+      this.dashboardUiStateStore.orderSessionsForWorktree(sessions, worktreePath),
+    );
+    const teammateSessions = this.dashboardPendingActions
+      .applyToSessions(desktopState.teammates ?? [], { includeTeammates: true })
+      .filter((session: DashboardSession) => isTeammateSession(session));
+    const orderedTeammates = orderStatuslineItemsByWorktree(teammateSessions, (sessions, worktreePath) =>
+      this.dashboardUiStateStore.orderSessionsForWorktree(sessions, worktreePath),
+    );
+    const orderedServices = orderStatuslineItemsByWorktree(desktopState.services, (services, worktreePath) =>
+      this.dashboardUiStateStore.orderServicesForWorktree(services, worktreePath),
+    );
     return {
       project: basename(process.cwd()),
       dashboardScreen: this.dashboardState.screen,
       sessions: [
-        ...desktopState.sessions.map((session: any) => ({
+        ...orderedSessions.map((session: any) => ({
           id: session.id,
           kind: "agent" as const,
           tool: session.command,
@@ -238,7 +291,7 @@ export const persistenceMethods = {
           worktreePath: session.worktreePath,
           semantic: session.semantic,
         })),
-        ...desktopState.services.map((service: any) => ({
+        ...orderedServices.map((service: any) => ({
           id: service.id,
           kind: "service" as const,
           tool: service.command,
@@ -253,6 +306,22 @@ export const persistenceMethods = {
           launchCommandLine: service.launchCommandLine,
         })),
       ],
+      teammates: orderedTeammates.map((session: any) => ({
+        id: session.id,
+        kind: "agent" as const,
+        tool: session.command,
+        label: session.label,
+        tmuxWindowId: session.tmuxWindowId,
+        tmuxWindowIndex: session.tmuxWindowIndex,
+        windowName: session.command,
+        headline: session.headline,
+        status: session.status,
+        role: session.role,
+        active: false,
+        worktreePath: session.worktreePath,
+        semantic: session.semantic,
+        team: session.team,
+      })),
       tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
       controlPlane: {
         daemonAlive: Boolean(loadDaemonInfo()),
@@ -266,6 +335,7 @@ export const persistenceMethods = {
 
   buildDesktopState(this: any): {
     sessions: DashboardSession[];
+    teammates: DashboardSession[];
     services: DashboardService[];
     statusline: ReturnType<any["buildStatuslineSnapshot"]>;
     worktrees: Array<{ name: string; path: string; branch: string; isBare: boolean }>;
@@ -278,10 +348,13 @@ export const persistenceMethods = {
     }
     const desktopState = this.desktopStateSnapshot ?? this.buildDesktopStateSnapshot();
     return {
-      sessions: desktopState.sessions,
-      services: desktopState.services,
+      sessions: this.dashboardPendingActions.applyToSessions(desktopState.sessions),
+      teammates: this.dashboardPendingActions
+        .applyToSessions(desktopState.teammates ?? [], { includeTeammates: true })
+        .filter((session: DashboardSession) => isTeammateSession(session)),
+      services: this.dashboardPendingActions.applyToServices(desktopState.services),
       statusline: this.buildStatuslineSnapshot(),
-      worktrees: desktopState.worktrees,
+      worktrees: this.dashboardPendingActions.applyToWorktrees(desktopState.worktrees),
       operationFailures: desktopState.operationFailures,
       mainCheckoutInfo: desktopState.mainCheckoutInfo,
       mainCheckoutPath: desktopState.mainCheckoutPath,
@@ -291,12 +364,20 @@ export const persistenceMethods = {
   reapplyDashboardPendingActions(this: any): void {
     this.dashboardSessionsCache = this.dashboardPendingActions.applyToSessions(
       this.dashboardSessionsCache.map(
-        ({ pendingAction: _pendingAction, optimistic: _optimistic, ...session }: any) => session,
+        ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...session }: any) => session,
       ),
     );
+    this.dashboardTeammatesCache = this.dashboardPendingActions
+      .applyToSessions(
+        (this.dashboardTeammatesCache ?? []).map(
+          ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...session }: any) => session,
+        ),
+        { includeTeammates: true },
+      )
+      .filter((session: DashboardSession) => isTeammateSession(session));
     this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(
       this.dashboardServicesCache.map(
-        ({ pendingAction: _pendingAction, optimistic: _optimistic, ...service }: any) => service,
+        ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...service }: any) => service,
       ),
     );
     this.dashboardWorktreeGroupsCache = this.dashboardUiStateStore.orderWorktreeGroups(
@@ -326,15 +407,9 @@ export const persistenceMethods = {
     createdAt?: string;
     pending?: boolean;
     removing?: boolean;
-    pendingAction?: "creating";
+    pendingAction?: Extract<PendingWorktreeActionKind, "creating">;
     operationFailure?: DashboardOperationFailure;
   }> {
-    const pendingCreates = this.pendingWorktreeCreates as
-      | Map<string, Promise<{ path: string; status: "creating" | "created" }>>
-      | undefined;
-    const pendingRemovals = this.pendingWorktreeRemovals as
-      | Map<string, Promise<{ path: string; status: "removing" | "removed" }>>
-      | undefined;
     const hiddenPaths = listWorktreeGraveyardPaths();
     const worktrees: Array<{
       name: string;
@@ -344,32 +419,13 @@ export const persistenceMethods = {
       createdAt?: string;
       pending?: boolean;
       removing?: boolean;
-      pendingAction?: "creating";
+      pendingAction?: Extract<PendingWorktreeActionKind, "creating">;
       operationFailure?: DashboardOperationFailure;
     }> = listAllWorktrees()
       .filter((wt) => !wt.isBare && !hiddenPaths.has(wt.path) && !isToolInternalWorktree(wt))
       .map((wt) => ({
         ...wt,
-        pending: pendingRemovals?.has(wt.path) ?? false,
-        removing: pendingRemovals?.has(wt.path) ?? false,
       }));
-    if (pendingCreates?.size) {
-      for (const path of pendingCreates.keys()) {
-        if (worktrees.some((wt) => wt.path === path)) continue;
-        worktrees.push({
-          name: basename(path),
-          path,
-          branch: "(creating)",
-          isBare: false,
-          createdAt:
-            this.worktreeCreateJob?.path === path
-              ? new Date(this.worktreeCreateJob.startedAt).toISOString()
-              : undefined,
-          pending: true,
-          pendingAction: "creating",
-        });
-      }
-    }
     const worktreePaths = new Set(worktrees.map((worktree) => worktree.path));
     for (const failure of listDashboardOperationFailures()) {
       if (failure.targetKind !== "worktree" || failure.operation !== "create" || !failure.worktreePath) continue;
@@ -386,6 +442,20 @@ export const persistenceMethods = {
     }
     sortDesktopWorktrees(worktrees);
     return worktrees;
+  },
+
+  listProjectedDesktopWorktrees(this: any): Array<{
+    name: string;
+    path: string;
+    branch: string;
+    isBare: boolean;
+    createdAt?: string;
+    pending?: boolean;
+    removing?: boolean;
+    pendingAction?: Extract<PendingWorktreeActionKind, "creating" | "removing" | "graveyarding">;
+    operationFailure?: DashboardOperationFailure;
+  }> {
+    return this.dashboardPendingActions.applyToWorktrees(this.listDesktopWorktrees() as any);
   },
 
   listWorktreeGraveyardEntries(this: any): any[] {
@@ -412,46 +482,83 @@ export const persistenceMethods = {
       throw new Error(`Worktree "${matching.name}" is already in the graveyard`);
     }
 
-    const attachedServices = collectWorktreeServices(this, path);
-    detachWorktreeServices(this, path);
+    let pendingSet = false;
+    const setGraveyardPending = () => {
+      this.dashboardPendingActions.setWorktreeAction(path, "graveyarding", {
+        timeoutMs: 180_000,
+        onTimeout: () => {
+          const message = `Timed out graveyarding worktree "${matching.name}"`;
+          recordDashboardFailure(this, {
+            targetKind: "worktree",
+            operation: "graveyard",
+            title: `Failed to graveyard worktree "${matching.name}"`,
+            message,
+            worktreePath: path,
+            worktreeName: matching.name,
+          });
+          this.footerFlash = message;
+          this.footerFlashTicks = 5;
+          refreshDashboardWorktreeProjection(this);
+        },
+      });
+      pendingSet = true;
+      refreshDashboardWorktreeProjection(this);
+    };
 
-    const liveSessions = this.sessions.filter(
-      (session: any) =>
-        this.sessionWorktreePaths.get(session.id) === path && this.isSessionRuntimeLive(session) && !session.exited,
-    );
-    for (const session of liveSessions) {
-      stopSessionToOffline(this, session);
+    setGraveyardPending();
+    try {
+      const baseAgents = [
+        ...this.sessions.filter((session: any) => this.sessionWorktreePaths.get(session.id) === path),
+        ...this.offlineSessions.filter((session: any) => session.worktreePath === path),
+      ].filter((session: any) => !isTeammateSession(session));
+      const directTeammateIds = new Set<string>();
+      for (const parent of baseAgents) {
+        for (const teammate of selectDirectTeammates([...this.sessions, ...this.offlineSessions], parent.id)) {
+          directTeammateIds.add(teammate.id);
+        }
+      }
+      const liveSessions = this.sessions.filter(
+        (session: any) =>
+          (this.sessionWorktreePaths.get(session.id) === path || directTeammateIds.has(session.id)) &&
+          this.isSessionRuntimeLive(session) &&
+          !session.exited,
+      );
+      for (const session of liveSessions) {
+        stopSessionToOffline(this, session);
+      }
+
+      await waitForWorktreeSessionsToStop(this, path, directTeammateIds);
+
+      const attachedServices = collectWorktreeServices(this, path);
+      const attachedAgents = collectWorktreeAgents(this, path, directTeammateIds);
+
+      const nextEntries = [
+        ...worktreeGraveyardEntries.filter((entry: WorktreeGraveyardEntry) => entry.path !== path),
+        {
+          name: matching.name,
+          path: matching.path,
+          branch: matching.branch,
+          createdAt: matching.createdAt,
+          graveyardedAt: new Date().toISOString(),
+          agents: attachedAgents,
+          services: attachedServices,
+        },
+      ];
+      writeWorktreeGraveyardEntries(nextEntries);
+      this.worktreeGraveyardEntries = nextEntries;
+
+      detachWorktreeServices(this, path);
+      this.offlineSessions = this.offlineSessions.filter(
+        (session: any) => session.worktreePath !== path && !directTeammateIds.has(session.id),
+      );
+      this.saveState();
+      return { path, status: "graveyarded" };
+    } finally {
+      if (pendingSet) {
+        this.dashboardPendingActions.clearWorktreeAction(path);
+        refreshDashboardWorktreeProjection(this);
+      }
     }
-
-    await waitForWorktreeSessionsToStop(this, path);
-
-    const attachedAgents = collectWorktreeAgents(this, path);
-
-    const nextEntries = [
-      ...worktreeGraveyardEntries.filter((entry: WorktreeGraveyardEntry) => entry.path !== path),
-      {
-        name: matching.name,
-        path: matching.path,
-        branch: matching.branch,
-        createdAt: matching.createdAt,
-        graveyardedAt: new Date().toISOString(),
-        agents: attachedAgents,
-        services: attachedServices,
-      },
-    ];
-    writeWorktreeGraveyardEntries(nextEntries);
-    this.worktreeGraveyardEntries = nextEntries;
-
-    this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
-    this.saveState();
-    this.invalidateDesktopStateSnapshot();
-    this.refreshLocalDashboardModel();
-    this.metadataServer?.notifyChange?.();
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    }
-
-    return { path, status: "graveyarded" };
   },
 
   async resurrectGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "offline" }> {
@@ -578,6 +685,12 @@ export const persistenceMethods = {
       rejectCreate = reject;
     });
     pendingCreates.set(targetPath, createPromise);
+    const createStartedAt = Date.now();
+    this.worktreeCreateJob = {
+      path: targetPath,
+      name,
+      startedAt: createStartedAt,
+    };
     const clearPendingCreate = () => {
       if (pendingCreates.get(targetPath) === createPromise) {
         pendingCreates.delete(targetPath);
@@ -586,7 +699,17 @@ export const persistenceMethods = {
         this.worktreeCreateJob = null;
       }
     };
-    this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), "creating", {
+    this.dashboardPendingActions.setWorktreeAction(targetPath, "creating", {
+      worktreeSeed: {
+        name,
+        branch: name,
+        path: targetPath,
+        createdAt: new Date(createStartedAt).toISOString(),
+        status: "offline",
+        isBare: false,
+        sessions: [],
+        services: [],
+      },
       timeoutMs: 180_000,
       onTimeout: () => {
         clearPendingCreate();
@@ -608,11 +731,6 @@ export const persistenceMethods = {
         }
       },
     });
-    this.worktreeCreateJob = {
-      path: targetPath,
-      name,
-      startedAt: Date.now(),
-    };
     this.invalidateDesktopStateSnapshot();
     this.refreshLocalDashboardModel();
     if (this.mode === "dashboard") {
@@ -684,7 +802,7 @@ export const persistenceMethods = {
 
     const finalizeCreate = () => {
       clearPendingCreate();
-      this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(targetPath), null);
+      this.dashboardPendingActions.clearWorktreeAction(targetPath);
       this.invalidateDesktopStateSnapshot();
       this.refreshLocalDashboardModel();
       this.metadataServer?.notifyChange?.();
@@ -702,8 +820,30 @@ export const persistenceMethods = {
       string,
       Promise<{ path: string; status: "removing" | "removed" }>
     >;
+    const setRemovePending = () => {
+      this.dashboardPendingActions.setWorktreeAction(path, "removing", {
+        timeoutMs: 180_000,
+        onTimeout: () => {
+          const name = path.split("/").pop() ?? path;
+          const message = `Timed out removing worktree "${name}"`;
+          recordDashboardFailure(this, {
+            targetKind: "worktree",
+            operation: "remove",
+            title: `Failed to remove worktree "${name}"`,
+            message,
+            worktreePath: path,
+            worktreeName: name,
+          });
+          this.footerFlash = message;
+          this.footerFlashTicks = 5;
+          refreshDashboardWorktreeProjection(this);
+        },
+      });
+      refreshDashboardWorktreeProjection(this);
+    };
     const existingRemoval = pendingRemovals.get(path);
     if (existingRemoval) {
+      setRemovePending();
       return existingRemoval;
     }
 
@@ -714,33 +854,7 @@ export const persistenceMethods = {
       rejectRemoval = reject;
     });
     pendingRemovals.set(path, removalPromise);
-    this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(path), "removing", {
-      timeoutMs: 180_000,
-      onTimeout: () => {
-        const name = path.split("/").pop() ?? path;
-        const message = `Timed out removing worktree "${name}"`;
-        recordDashboardFailure(this, {
-          targetKind: "worktree",
-          operation: "remove",
-          title: `Failed to remove worktree "${name}"`,
-          message,
-          worktreePath: path,
-          worktreeName: name,
-        });
-        this.footerFlash = message;
-        this.footerFlashTicks = 5;
-        this.invalidateDesktopStateSnapshot();
-        this.refreshLocalDashboardModel();
-        if (this.mode === "dashboard") {
-          this.renderDashboard();
-        }
-      },
-    });
-    this.invalidateDesktopStateSnapshot();
-    this.refreshLocalDashboardModel();
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    }
+    setRemovePending();
 
     void (async () => {
       try {
@@ -846,14 +960,9 @@ export const persistenceMethods = {
     });
 
     const finalizeRemoval = () => {
-      this.dashboardPendingActions.set(DashboardPendingActions.worktreeKey(path), null);
+      this.dashboardPendingActions.clearWorktreeAction(path);
       pendingRemovals.delete(path);
-      this.invalidateDesktopStateSnapshot();
-      this.refreshLocalDashboardModel();
-      this.metadataServer?.notifyChange?.();
-      if (this.mode === "dashboard") {
-        this.renderDashboard();
-      }
+      refreshDashboardWorktreeProjection(this);
     };
     void removalPromise.then(finalizeRemoval, finalizeRemoval);
 
@@ -877,17 +986,32 @@ export const persistenceMethods = {
       throw new Error(`Graveyard session "${sessionId}" not found`);
     }
 
-    const nextGraveyard = graveyardEntries.filter((candidate: any) => candidate.id !== sessionId);
+    const entriesToRestore = isTeammateSession(entry)
+      ? [entry]
+      : [entry, ...selectDirectTeammates(graveyardEntries, entry.id)];
+    const restoreIds = new Set(entriesToRestore.map((candidate: any) => candidate.id));
+    const nextGraveyard = graveyardEntries.filter((candidate: any) => !restoreIds.has(candidate.id));
     writeFileSync(getGraveyardPath(), JSON.stringify(nextGraveyard, null, 2) + "\n");
 
-    this.offlineSessions.push(entry);
+    const offlineIds = new Set(this.offlineSessions.map((session: any) => session.id));
+    for (const candidate of entriesToRestore) {
+      if (offlineIds.has(candidate.id)) continue;
+      this.offlineSessions.push(candidate);
+      offlineIds.add(candidate.id);
+    }
+
     const statePath = getStatePath();
     try {
       let state: any = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] };
       if (existsSync(statePath)) {
         state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
       }
-      state.sessions.push(entry);
+      const stateIds = new Set((state.sessions ?? []).map((session: any) => session.id));
+      for (const candidate of entriesToRestore) {
+        if (stateIds.has(candidate.id)) continue;
+        state.sessions.push(candidate);
+        stateIds.add(candidate.id);
+      }
       writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
     } catch {}
 
@@ -956,10 +1080,10 @@ function sortDesktopWorktrees(
   });
 }
 
-function collectWorktreeAgents(host: any, path: string): any[] {
+function collectWorktreeAgents(host: any, path: string, additionalSessionIds = new Set<string>()): any[] {
   const byId = new Map<string, any>();
   for (const session of host.offlineSessions) {
-    if (session.worktreePath !== path) continue;
+    if (session.worktreePath !== path && !additionalSessionIds.has(session.id)) continue;
     byId.set(session.id, session);
   }
   return [...byId.values()].sort((a, b) => {
@@ -986,12 +1110,19 @@ function collectWorktreeServices(host: any, path: string): any[] {
   });
 }
 
-async function waitForWorktreeSessionsToStop(host: any, path: string, timeoutMs = 10_000): Promise<void> {
+async function waitForWorktreeSessionsToStop(
+  host: any,
+  path: string,
+  additionalSessionIds = new Set<string>(),
+  timeoutMs = 10_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const remaining = host.sessions.some(
       (session: any) =>
-        host.sessionWorktreePaths.get(session.id) === path && host.isSessionRuntimeLive(session) && !session.exited,
+        (host.sessionWorktreePaths.get(session.id) === path || additionalSessionIds.has(session.id)) &&
+        host.isSessionRuntimeLive(session) &&
+        !session.exited,
     );
     if (!remaining) return;
     await new Promise((resolve) => setTimeout(resolve, 100));

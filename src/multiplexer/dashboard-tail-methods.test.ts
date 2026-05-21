@@ -49,6 +49,7 @@ describe("dashboardTailMethods.takeoverSession", () => {
       "claude-remote",
       false,
       true,
+      undefined,
     ]);
 
     rmSync(repoRoot, { recursive: true, force: true });

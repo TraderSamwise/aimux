@@ -99,6 +99,7 @@ import { requestJson } from "./http-client.js";
 import { writeJsonAtomic } from "./atomic-write.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
 import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
+import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
 import {
   findLiveDashboardTarget,
@@ -267,7 +268,7 @@ function rewriteLocalStatuslineArtifacts(
     writeStatusFile(`bottom-dashboard-${dashboardSessionName}.txt`, dashboardBottom);
   }
 
-  for (const entry of data.sessions ?? []) {
+  for (const entry of [...(data.sessions ?? []), ...(data.teammates ?? [])]) {
     if (!entry.tmuxWindowId) continue;
     const renderOptions = {
       currentWindow: entry.windowName,
@@ -2462,6 +2463,14 @@ const statuslineCmd = program.command("statusline").description("Manage Claude C
 
 const doctorCmd = program.command("doctor").description("Inspect aimux runtime state");
 const repairCmd = program.command("repair").description("Repair the current project runtime in place");
+
+program
+  .command("debug-state <target>")
+  .description("Read-only debug snapshot for one session, service, backend session, or worktree")
+  .action((target: string) => {
+    const report = buildDebugStateReport({ cwd: process.cwd(), target });
+    console.log(renderDebugStateReport(report));
+  });
 
 doctorCmd
   .command("tmux")

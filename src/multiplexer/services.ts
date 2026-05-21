@@ -121,7 +121,7 @@ export function createService(
   const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(process.cwd());
   const shouldRenderPending = host.startedInDashboard && host.mode === "dashboard";
   if (shouldRenderPending) {
-    host.setPendingDashboardSessionAction(serviceId, "creating", {
+    host.setPendingDashboardServiceAction(serviceId, "creating", {
       serviceSeed: {
         id: serviceId,
         command: trimmed ? shell : "shell",
@@ -156,11 +156,11 @@ export function createService(
     host.refreshLocalDashboardModel();
     host.updateWorktreeSessions();
     host.preferDashboardEntrySelection("service", serviceId, worktreePath);
-    host.settleDashboardCreatePending(serviceId);
+    host.settleDashboardCreatePending(serviceId, "service");
     return { serviceId };
   } catch (error) {
     if (shouldRenderPending) {
-      host.setPendingDashboardSessionAction(serviceId, null);
+      host.setPendingDashboardServiceAction(serviceId, null);
     }
     throw error;
   }

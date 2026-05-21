@@ -2,6 +2,7 @@ import { debug } from "../debug.js";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { Multiplexer, SessionState } from "./index.js";
 import {
+  createTeammateAgent as createTeammateAgentImpl,
   forkAgent as forkAgentImpl,
   migrateAgentSession as migrateAgentSessionImpl,
   renameAgent as renameAgentImpl,
@@ -55,6 +56,7 @@ import {
   resumeOfflineServiceWithFeedback as resumeOfflineServiceWithFeedbackImpl,
   resumeOfflineSessionWithFeedback as resumeOfflineSessionWithFeedbackImpl,
   runDashboardOperation as runDashboardOperationImpl,
+  setPendingDashboardServiceAction as setPendingDashboardServiceActionImpl,
   setPendingDashboardSessionAction as setPendingDashboardSessionActionImpl,
   stopDashboardServiceWithFeedback as stopDashboardServiceWithFeedbackImpl,
   stopSessionToOfflineWithFeedback as stopSessionToOfflineWithFeedbackImpl,
@@ -65,11 +67,12 @@ import {
   wrapKeyValueForHost,
   wrapTextForHost,
 } from "./dashboard-ops.js";
-import type { PendingDashboardActionKind } from "../dashboard/pending-actions.js";
+import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
 import { loadConfig } from "../config.js";
 import type { SessionRuntime } from "../session-runtime.js";
+import type { InstanceSessionRef } from "../instance-registry.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";
@@ -77,7 +80,7 @@ type DashboardTailHost = {
   dashboardServicesCache: DashboardService[];
   dashboardWorktreeGroupsCache: Array<{ sessions: DashboardSession[] }>;
   instanceDirectory: {
-    claimSession(sessionId: string, fromInstanceId: string, cwd: string): Promise<{ worktreePath?: string } | null>;
+    claimSession(sessionId: string, fromInstanceId: string, cwd: string): Promise<InstanceSessionRef | null>;
   };
   sessionBootstrap: {
     canResumeWithBackendSessionId(toolCfg: { resumeArgs?: string[] }, backendSessionId?: string): boolean;
@@ -108,6 +111,21 @@ export type DashboardTailMethods = {
       extraArgs?: string[];
     },
   ): Promise<{ sessionId: string }>;
+  createTeammateAgent(
+    this: Multiplexer,
+    opts: {
+      parentSessionId: string;
+      role?: string;
+      label?: string;
+      toolConfigKey?: string;
+      targetSessionId?: string;
+      targetWorktreePath?: string;
+      open?: boolean;
+      extraArgs?: string[];
+      initialPrompt?: string;
+      order?: number;
+    },
+  ): Promise<{ sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string }>;
   renameAgent(this: Multiplexer, sessionId: string, label?: string): Promise<{ sessionId: string; label?: string }>;
   stopAgent(this: Multiplexer, sessionId: string): Promise<{ sessionId: string; status: "offline" }>;
   sendAgentToGraveyard(
@@ -161,8 +179,14 @@ export type DashboardTailMethods = {
   setPendingDashboardSessionAction(
     this: Multiplexer,
     sessionId: string,
-    kind: PendingDashboardActionKind | null,
+    kind: PendingSessionActionKind | null,
     opts?: { sessionSeed?: DashboardSession },
+  ): void;
+  setPendingDashboardServiceAction(
+    this: Multiplexer,
+    serviceId: string,
+    kind: PendingServiceActionKind | null,
+    opts?: { serviceSeed?: DashboardService },
   ): void;
   stopSessionToOfflineWithFeedback(this: Multiplexer, session: SessionRuntime): Promise<void>;
   clearDashboardSubscreens(this: Multiplexer): void;
@@ -225,6 +249,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   async spawnAgent(opts) {
     return spawnAgentImpl(this, opts);
+  },
+  async createTeammateAgent(opts) {
+    return createTeammateAgentImpl(this, opts);
   },
   async renameAgent(sessionId, label) {
     return renameAgentImpl(this, sessionId, label);
@@ -324,6 +351,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   setPendingDashboardSessionAction(sessionId, kind, opts) {
     setPendingDashboardSessionActionImpl(this, sessionId, kind, opts);
+  },
+  setPendingDashboardServiceAction(serviceId, kind, opts) {
+    setPendingDashboardServiceActionImpl(this, serviceId, kind, opts);
   },
   async stopSessionToOfflineWithFeedback(session) {
     await stopSessionToOfflineWithFeedbackImpl(this, session);
@@ -484,6 +514,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       target.id,
       false,
       true,
+      claimed.team,
     );
 
     this.renderDashboard();

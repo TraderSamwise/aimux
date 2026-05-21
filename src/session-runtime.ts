@@ -1,4 +1,5 @@
 import type { SessionStatus } from "./status-detector.js";
+import type { SessionTeamMetadata } from "./team.js";
 
 export interface SessionTransport {
   id: string;
@@ -23,6 +24,7 @@ export type SessionRuntimeEvent = { type: "output"; data: string } | { type: "ex
 
 export class SessionRuntime {
   private readonly startedAt?: number;
+  team?: SessionTeamMetadata;
 
   constructor(
     readonly transport: SessionTransport,

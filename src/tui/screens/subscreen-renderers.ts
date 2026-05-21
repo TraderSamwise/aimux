@@ -394,6 +394,14 @@ export function renderGraveyardScreen(ctx: any): void {
           ? ` \x1b[2m· ${formatRelativeRecency(row.service.lastUsedAt)}\x1b[0m`
           : "";
         listLines.push(`        ◇ ${identity} [service]${recency}`);
+      } else if (row.kind === "orphan-teammate") {
+        const teammate = row.entry;
+        const identity = teammate.label ? ` — ${teammate.label}` : "";
+        const headline = teammate.headline ? ` · ${ctx.truncatePlain(teammate.headline, 36)}` : "";
+        const recency = row.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(row.lastUsedAt)}\x1b[0m` : "";
+        listLines.push(
+          `    ◦ \x1b[2m${teammate.command}:${teammate.id}${identity} · missing parent ${row.parentSessionId}${headline}${recency}\x1b[0m`,
+        );
       } else if (row.kind === "agent-worktree") {
         listLines.push(`    ${row.name}`);
       } else {

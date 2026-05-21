@@ -179,6 +179,8 @@ function refreshGraveyardViewModel(host: ArchivesHost): GraveyardViewModel {
   const viewModel = buildGraveyardViewModel({
     worktrees: host.worktreeGraveyardEntries ?? [],
     agents: host.graveyardEntries ?? [],
+    parentSessions: [...(host.dashboardSessionsCache ?? []), ...(host.sessions ?? []), ...(host.offlineSessions ?? [])],
+    teammates: [...(host.dashboardTeammatesCache ?? []), ...(host.sessions ?? []), ...(host.offlineSessions ?? [])],
     lastUsedById: lastUsedState.items,
   });
   host.graveyardViewModel = viewModel;
