@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { getDashboardClientUiStatePath, getPlansDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState } from "./metadata-store.js";
+import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
@@ -311,19 +312,19 @@ describe("MetadataServer threads API", () => {
     expect(listRes.status).toBe(400);
     expect(listBody.error).toContain("nested teams");
 
-    const sendRes = await fetch(`${base}/agents/teammates/send`, {
+    const taskRes = await fetch(`${base}/agents/teammates/tasks`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ parentSessionId: "child", teammateSessionId: "grandchild", body: "hello" }),
     });
-    const sendBody = (await sendRes.json()) as { ok: boolean; error: string };
-    expect(sendRes.status).toBe(400);
-    expect(sendBody.error).toContain("nested teams");
+    const taskBody = (await taskRes.json()) as { ok: boolean; error: string };
+    expect(taskRes.status).toBe(400);
+    expect(taskBody.error).toContain("nested teams");
   });
 
-  it("interrupts a direct teammate before sending delegated input", async () => {
+  it("creates durable tasks for direct teammate work instead of raw input", async () => {
     server?.stop();
-    const calls: string[] = [];
+    const writes: string[] = [];
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -339,24 +340,9 @@ describe("MetadataServer threads API", () => {
         }),
       },
       lifecycle: {
-        interruptAgent: ({ sessionId }) => {
-          calls.push(`interrupt:${sessionId}`);
-          return { sessionId };
-        },
-        writeAgentInput: ({ sessionId, data, submit }) => {
-          calls.push(`write:${sessionId}:${data}:${submit}`);
-          return {
-            sessionId,
-            accepted: true,
-            operation: {
-              id: "inputop-team",
-              sessionId,
-              submit: submit === true,
-              state: submit ? ("submitted" as const) : ("applied" as const),
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          };
+        writeAgentInput: ({ sessionId }) => {
+          writes.push(sessionId);
+          throw new Error("raw teammate input should not be used");
         },
       },
     });
@@ -366,7 +352,7 @@ describe("MetadataServer threads API", () => {
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
-    const res = await fetch(`${base}/agents/teammates/send`, {
+    const res = await fetch(`${base}/agents/teammates/tasks`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -374,17 +360,51 @@ describe("MetadataServer threads API", () => {
         teammateSessionId: "child",
         title: "Review task",
         body: "Check this patch.",
-        interrupt: true,
       }),
     });
-    const body = (await res.json()) as { ok: boolean; sessionId: string; teammateSessionId: string };
+    const body = (await res.json()) as {
+      ok: boolean;
+      parentSessionId: string;
+      teammateSessionId: string;
+      task: { id: string; assignedBy: string; assignedTo: string; description: string; prompt: string };
+      thread?: { id: string; kind: string; waitingOn: string[] };
+    };
 
     expect(res.ok).toBe(true);
-    expect(body).toMatchObject({ ok: true, sessionId: "child", teammateSessionId: "child" });
-    expect(calls).toEqual(["interrupt:child", "write:child:Review task\n\nCheck this patch.:true"]);
+    expect(body).toMatchObject({
+      ok: true,
+      parentSessionId: "parent",
+      teammateSessionId: "child",
+      task: {
+        assignedBy: "parent",
+        assignedTo: "child",
+        description: "Review task",
+        prompt: "Check this patch.",
+      },
+    });
+    expect(body.thread?.kind).toBe("task");
+    expect(body.thread?.waitingOn).toEqual(["child"]);
+    expect(readTask(body.task.id)?.prompt).toBe("Check this patch.");
+    expect(writes).toEqual([]);
   });
 
-  it("rejects delegated input to non-direct teammates", async () => {
+  it("retires raw teammate send in favor of durable task assignment", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "child", body: "hello" }),
+    });
+    const body = (await res.json()) as { ok: boolean; error: string };
+
+    expect(res.status).toBe(410);
+    expect(body.error).toContain("/agents/teammates/tasks");
+  });
+
+  it("rejects teammate tasks to non-direct teammates", async () => {
     server?.stop();
     const writes: string[] = [];
     server = new MetadataServer({
@@ -407,18 +427,7 @@ describe("MetadataServer threads API", () => {
       lifecycle: {
         writeAgentInput: ({ sessionId }) => {
           writes.push(sessionId);
-          return {
-            sessionId,
-            accepted: true,
-            operation: {
-              id: "inputop-never",
-              sessionId,
-              submit: true,
-              state: "submitted" as const,
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          };
+          throw new Error("raw teammate input should not be used");
         },
       },
     });
@@ -428,7 +437,7 @@ describe("MetadataServer threads API", () => {
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
-    const res = await fetch(`${base}/agents/teammates/send`, {
+    const res = await fetch(`${base}/agents/teammates/tasks`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "ordinary", body: "hello" }),

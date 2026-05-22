@@ -468,11 +468,40 @@ function desktopSessionList(value: unknown): DesktopSessionRecord[] {
   return value.filter(isDesktopSessionRecord);
 }
 
-function composeTeammateDelegationInput(body: { title?: string; body?: string; data?: string }): string | undefined {
-  const text = typeof body.data === "string" ? body.data : typeof body.body === "string" ? body.body : undefined;
-  if (!text) return undefined;
-  const title = typeof body.title === "string" ? body.title.trim() : "";
-  return title ? `${title}\n\n${text}` : text;
+function firstLine(value: string): string {
+  return (
+    value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? ""
+  );
+}
+
+function teammateTaskDescription(body: {
+  title?: string;
+  description?: string;
+  body?: string;
+  prompt?: string;
+}): string {
+  const explicitTitle = typeof body.title === "string" ? body.title.trim() : "";
+  if (explicitTitle) return explicitTitle;
+  const explicitDescription = typeof body.description === "string" ? body.description.trim() : "";
+  if (explicitDescription) return explicitDescription;
+  const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+  const text = typeof body.body === "string" ? body.body.trim() : prompt;
+  const line = firstLine(text);
+  return line ? line.slice(0, 120) : "Teammate task";
+}
+
+function teammateTaskPrompt(body: { body?: string; prompt?: string }): string | undefined {
+  const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+  if (prompt) return prompt;
+  const text = typeof body.body === "string" ? body.body.trim() : "";
+  return text || undefined;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function teammateApiRecord(session: DesktopSessionRecord): Record<string, unknown> {
@@ -2140,17 +2169,15 @@ export class MetadataServer {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/agents/teammates/send") {
+      if (req.method === "POST" && url.pathname === "/agents/teammates/tasks") {
         const body = (await readJson(req)) as {
           parentSessionId: string;
           teammateSessionId: string;
-          body?: string;
-          data?: string;
-          parts?: AgentInputPart[];
           title?: string;
-          clientMessageId?: string;
-          submit?: boolean;
-          interrupt?: boolean;
+          description?: string;
+          body?: string;
+          prompt?: string;
+          worktreePath?: string;
         };
         const parentSessionId = body.parentSessionId?.trim() ?? "";
         const teammateSessionId = body.teammateSessionId?.trim() ?? "";
@@ -2167,43 +2194,32 @@ export class MetadataServer {
           });
           return;
         }
-        if (!this.options.lifecycle?.writeAgentInput) {
-          send(res, 501, { ok: false, error: "agent input not supported by this service" });
+        const prompt = teammateTaskPrompt(body);
+        if (!prompt) {
+          send(res, 400, { ok: false, error: "teammate task requires body or prompt" });
           return;
         }
-        const data = composeTeammateDelegationInput(body);
-        if (!data && !Array.isArray(body.parts)) {
-          send(res, 400, { ok: false, error: "teammate message requires body, data, or parts" });
-          return;
-        }
-        if (body.interrupt) {
-          if (!this.options.lifecycle?.interruptAgent) {
-            send(res, 501, { ok: false, error: "agent interrupt not supported by this service" });
-            return;
-          }
-          await this.options.lifecycle.interruptAgent({ sessionId: teammate.id });
-        }
-        const result = await this.options.lifecycle.writeAgentInput({
-          sessionId: teammate.id,
-          data,
-          parts: body.parts,
-          clientMessageId: body.clientMessageId,
-          submit: body.submit ?? true,
+        const result = await assignTask({
+          from: resolved.parent.id,
+          to: teammate.id,
+          description: teammateTaskDescription(body),
+          prompt,
+          worktreePath:
+            optionalString(body.worktreePath) ??
+            optionalString(teammate.worktreePath) ??
+            optionalString(resolved.parent.worktreePath),
         });
-        if (this.options.lifecycle.readAgentHistory) {
-          try {
-            const history = await this.options.lifecycle.readAgentHistory({ sessionId: teammate.id, lastN: 20 });
-            this.eventBus.publishHistoryUpdate({
-              sessionId: history.sessionId,
-              messages: history.messages,
-              lastN: history.lastN,
-            });
-          } catch {
-            // History update is best-effort; the write result should still succeed.
-          }
-        }
+        this.emitAssignedTaskAlert(result);
         this.options.onChange?.();
-        send(res, 200, { ok: result.accepted, parentSessionId, teammateSessionId: teammate.id, ...result });
+        send(res, 200, { ok: true, parentSessionId: resolved.parent.id, teammateSessionId: teammate.id, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/teammates/send") {
+        send(res, 410, {
+          ok: false,
+          error: "raw teammate send has been removed; create durable teammate work with /agents/teammates/tasks",
+        });
         return;
       }
 
