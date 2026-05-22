@@ -71,14 +71,16 @@ Set in your hosting platform (Vercel, etc.):
 
 ```env
 EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
-# Optional; production builds default to relay when unset.
-EXPO_PUBLIC_AIMUX_CONNECTION_MODE=relay
-# Optional; relay mode defaults to wss://relay.aimux.app when unset.
-EXPO_PUBLIC_AIMUX_RELAY_URL=wss://relay.aimux.app
+# Optional overrides:
+# EXPO_PUBLIC_AIMUX_CONNECTION_MODE=relay
+# EXPO_PUBLIC_AIMUX_RELAY_URL=wss://relay.aimux.app
 ```
 
 `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` is required for relay/production builds.
 Local mode may omit it and will run with local-only auth.
+Production builds default `EXPO_PUBLIC_AIMUX_CONNECTION_MODE` to `relay`, so
+only set it when forcing a local build. Set `EXPO_PUBLIC_AIMUX_RELAY_URL` only
+when pointing the app at a staging or self-hosted relay.
 
 ### Deploy to Vercel
 
