@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   getDaemonLogPath,
   getDaemonStdioLogPath,
+  getGlobalAimuxDir,
   getProjectIdFor,
   getProjectLogPathFor,
   getProjectServiceStdioLogPathFor,
@@ -35,6 +36,23 @@ describe("path project identity", () => {
       );
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses AIMUX_HOME for runtime-private global state", () => {
+    const previous = process.env.AIMUX_HOME;
+    const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-home-"));
+    try {
+      process.env.AIMUX_HOME = aimuxHome;
+      expect(getGlobalAimuxDir()).toBe(aimuxHome);
+      expect(getDaemonLogPath()).toBe(join(aimuxHome, "daemon", "logs", "daemon.jsonl"));
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AIMUX_HOME;
+      } else {
+        process.env.AIMUX_HOME = previous;
+      }
+      rmSync(aimuxHome, { recursive: true, force: true });
     }
   });
 });
