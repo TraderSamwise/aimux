@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve as pathResolve } from "node:path";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { writeJsonAtomic } from "./atomic-write.js";
@@ -17,8 +17,8 @@ import { getLoggingConfig, log } from "./debug.js";
 import { RelayClient, type RelayStatusSnapshot } from "./relay-client.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 
-const DAEMON_PORT = 43190;
-const DAEMON_HOST = "127.0.0.1";
+const DEFAULT_DAEMON_PORT = 43190;
+const DEFAULT_DAEMON_HOST = "127.0.0.1";
 const DAEMON_STARTUP_TIMEOUT_MS = 10_000;
 const PROJECT_SERVICE_STARTUP_GRACE_MS = 15_000;
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
@@ -28,6 +28,29 @@ const PROXY_TIMEOUT_MS = 10_000;
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
+
+export function getDaemonHost(): string {
+  const host = process.env.AIMUX_DAEMON_HOST?.trim();
+  const resolved = host || DEFAULT_DAEMON_HOST;
+  if (resolved !== "127.0.0.1" && resolved !== "localhost") {
+    throw new Error(`AIMUX_DAEMON_HOST must be loopback (127.0.0.1 or localhost), got ${resolved}`);
+  }
+  return resolved;
+}
+
+export function getDaemonPort(): number {
+  const raw = process.env.AIMUX_DAEMON_PORT?.trim();
+  if (!raw) return DEFAULT_DAEMON_PORT;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`AIMUX_DAEMON_PORT must be an integer between 1 and 65535, got ${raw}`);
+  }
+  return port;
+}
+
+function getDaemonBaseUrl(port = getDaemonPort()): string {
+  return `http://${getDaemonHost()}:${port}`;
+}
 
 export interface AimuxDaemonInfo {
   pid: number;
@@ -70,13 +93,14 @@ function loggingChildStdio(path: string): { stdio: StdioOptions; close: () => vo
   if (!logging.enabled) return { stdio: "ignore", close: () => {} };
   try {
     ensureParent(path);
-    const stdout = createWriteStream(path, { flags: "a" });
-    const stderr = createWriteStream(path, { flags: "a" });
-    stdout.on("error", () => {});
-    stderr.on("error", () => {});
+    const stdout = openSync(path, "a");
+    const stderr = openSync(path, "a");
+    let closed = false;
     const close = () => {
-      stdout.end();
-      stderr.end();
+      if (closed) return;
+      closed = true;
+      closeSync(stdout);
+      closeSync(stderr);
     };
     return { stdio: ["ignore", stdout, stderr], close };
   } catch {
@@ -198,7 +222,7 @@ export async function requestDaemonJson(path: string, init?: RequestInit): Promi
   if (!info) {
     throw new Error("aimux daemon is not running");
   }
-  const { status, json } = await requestJson(`http://${DAEMON_HOST}:${info.port}${path}`, {
+  const { status, json } = await requestJson(`${getDaemonBaseUrl(info.port)}${path}`, {
     method: init?.method,
     headers: init?.headers as Record<string, string> | undefined,
     body: init?.body,
@@ -225,11 +249,11 @@ export async function ensureDaemonRunning(): Promise<AimuxDaemonInfo> {
   }
 
   try {
-    const { status, json } = await requestJson(`http://${DAEMON_HOST}:${DAEMON_PORT}/health`);
+    const { status, json } = await requestJson(`${getDaemonBaseUrl()}/health`);
     if (status >= 200 && status < 300 && json?.ok !== false && typeof json?.pid === "number") {
       const adopted: AimuxDaemonInfo = {
         pid: json.pid,
-        port: typeof json?.port === "number" ? json.port : DAEMON_PORT,
+        port: typeof json?.port === "number" ? json.port : getDaemonPort(),
         startedAt: loadDaemonInfo()?.startedAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -244,11 +268,17 @@ export async function ensureDaemonRunning(): Promise<AimuxDaemonInfo> {
   }
 
   const stdio = loggingChildStdio(getDaemonStdioLogPath());
-  const child = spawn(process.execPath, [process.argv[1]!, "daemon", "run"], {
-    detached: true,
-    env: loggingChildEnv(),
-    stdio: stdio.stdio,
-  });
+  let child: ChildProcess;
+  try {
+    child = spawn(process.execPath, [process.argv[1]!, "daemon", "run"], {
+      detached: true,
+      env: loggingChildEnv(),
+      stdio: stdio.stdio,
+    });
+  } catch (error) {
+    stdio.close();
+    throw error;
+  }
   child.once("exit", stdio.close);
   child.unref();
   log.info("spawned daemon", "daemon", { pid: child.pid });
@@ -306,7 +336,7 @@ export class AimuxDaemon {
     if (this.server) return;
     saveJson(getDaemonInfoPath(), {
       pid: process.pid,
-      port: DAEMON_PORT,
+      port: getDaemonPort(),
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     } satisfies AimuxDaemonInfo);
@@ -318,15 +348,17 @@ export class AimuxDaemon {
         });
       });
     });
+    const host = getDaemonHost();
+    const port = getDaemonPort();
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
-      this.server!.listen(DAEMON_PORT, DAEMON_HOST, () => {
+      this.server!.listen(port, host, () => {
         this.server?.off("error", reject);
         resolve();
       });
     });
     this.refreshState();
-    log.info("daemon started", "daemon", { pid: process.pid, port: DAEMON_PORT });
+    log.info("daemon started", "daemon", { pid: process.pid, host, port });
     this.connectRelayIfConfigured();
   }
 
@@ -403,7 +435,7 @@ export class AimuxDaemon {
     saveJson(getDaemonStatePath(), this.state);
     saveJson(getDaemonInfoPath(), {
       pid: process.pid,
-      port: DAEMON_PORT,
+      port: getDaemonPort(),
       startedAt: loadDaemonInfo()?.startedAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     } satisfies AimuxDaemonInfo);
@@ -411,11 +443,17 @@ export class AimuxDaemon {
 
   private spawnProjectService(projectRoot: string, projectId: string): ProjectServiceState {
     const stdio = loggingChildStdio(getProjectServiceStdioLogPathFor(projectRoot));
-    const child = spawn(process.execPath, [process.argv[1]!, "__project-service-internal"], {
-      cwd: projectRoot,
-      env: loggingChildEnv(),
-      stdio: stdio.stdio,
-    });
+    let child: ChildProcess;
+    try {
+      child = spawn(process.execPath, [process.argv[1]!, "__project-service-internal"], {
+        cwd: projectRoot,
+        env: loggingChildEnv(),
+        stdio: stdio.stdio,
+      });
+    } catch (error) {
+      stdio.close();
+      throw error;
+    }
     this.children.set(projectId, child);
     const now = new Date().toISOString();
     const state: ProjectServiceState = {
@@ -617,11 +655,11 @@ export class AimuxDaemon {
 
   async routeRequest(method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
     this.refreshState();
-    const routeUrl = new URL(path, `http://${DAEMON_HOST}:${DAEMON_PORT}`);
+    const routeUrl = new URL(path, getDaemonBaseUrl());
     const pathname = routeUrl.pathname;
 
     if (method === "GET" && pathname === "/health") {
-      return { status: 200, body: { ok: true, pid: process.pid, port: DAEMON_PORT } };
+      return { status: 200, body: { ok: true, pid: process.pid, port: getDaemonPort() } };
     }
 
     if (method === "GET" && pathname === "/relay/status") {
@@ -699,7 +737,7 @@ export class AimuxDaemon {
     // app requests come in over the relay (which performs Clerk/HS256 verify
     // before forwarding) and call routeRequest() directly in-process. Local
     // CLI is trusted with the daemon's user.
-    const url = new URL(req.url ?? "/", `http://${DAEMON_HOST}:${DAEMON_PORT}`);
+    const url = new URL(req.url ?? "/", getDaemonBaseUrl());
     const body = req.method === "POST" ? await readJson(req) : undefined;
     const result = await this.routeRequest(req.method ?? "GET", `${url.pathname}${url.search}`, body);
     send(res, result.status, result.body);
