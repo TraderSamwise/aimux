@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+process.env.AIMUX_HOME ||= join(homedir(), ".aimux-dev");
+process.env.AIMUX_DAEMON_PORT ||= "43191";
+process.env.AIMUX_ENV ||= "development";
+
+import("../dist/main.js");
