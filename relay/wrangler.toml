@@ -17,3 +17,8 @@ name = "aimux-relay"
 routes = [
   { pattern = "relay.aimux.com", custom_domain = true }
 ]
+
+[env.production.durable_objects]
+bindings = [
+  { name = "RELAY", class_name = "RelayObject" }
+]
