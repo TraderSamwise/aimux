@@ -305,6 +305,22 @@ describe("daemon supervision", () => {
     }
   });
 
+  it("rejects daemon host overrides that bind outside loopback", async () => {
+    const previousHost = process.env.AIMUX_DAEMON_HOST;
+    try {
+      process.env.AIMUX_DAEMON_HOST = "0.0.0.0";
+      const { getDaemonHost } = await import("./daemon.js");
+
+      expect(() => getDaemonHost()).toThrow(/must be loopback/);
+    } finally {
+      if (previousHost === undefined) {
+        delete process.env.AIMUX_DAEMON_HOST;
+      } else {
+        process.env.AIMUX_DAEMON_HOST = previousHost;
+      }
+    }
+  });
+
   it("probes the configured daemon port when adopting an existing daemon", async () => {
     const previousPort = process.env.AIMUX_DAEMON_PORT;
     try {

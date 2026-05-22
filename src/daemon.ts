@@ -31,7 +31,11 @@ const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
 
 export function getDaemonHost(): string {
   const host = process.env.AIMUX_DAEMON_HOST?.trim();
-  return host || DEFAULT_DAEMON_HOST;
+  const resolved = host || DEFAULT_DAEMON_HOST;
+  if (resolved !== "127.0.0.1" && resolved !== "localhost") {
+    throw new Error(`AIMUX_DAEMON_HOST must be loopback (127.0.0.1 or localhost), got ${resolved}`);
+  }
+  return resolved;
 }
 
 export function getDaemonPort(): number {
