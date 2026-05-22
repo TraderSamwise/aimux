@@ -119,7 +119,8 @@ long-lived (~90d) HS256 daemon token at the relay, and stores it locally
 at `~/.aimux/auth.json`. The daemon picks it up on next start, or
 `aimux remote enable` connects without a restart.
 
-`AIMUX_RELAY_URL` may also be set in the environment as an override; it defaults to `wss://relay.aimux.app`.
+The relay URL may also be overridden by setting `AIMUX_RELAY_URL` in the
+environment; it defaults to `wss://relay.aimux.app`.
 Server-side, the relay needs `CLERK_SECRET_KEY` (verifies the user's
 Clerk session during `aimux login`) and `RELAY_TOKEN_SECRET` (signs the
 HS256 daemon tokens it mints).
