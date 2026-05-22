@@ -25,23 +25,20 @@ yarn install
 wrangler login
 
 # Set the Clerk secret key (verifies app-side session JWTs)
-wrangler secret put CLERK_SECRET_KEY
+wrangler secret put CLERK_SECRET_KEY --env production
 # Paste your sk_live_... key
 
 # Set the daemon-token signing key (HS256 secret used to mint + verify
 # long-lived daemon tokens from `aimux login`). Use a strong random
 # value — anything that compromises this lets an attacker forge tokens.
 # e.g. `openssl rand -base64 48` or `head -c 48 /dev/urandom | base64`
-wrangler secret put RELAY_TOKEN_SECRET
+wrangler secret put RELAY_TOKEN_SECRET --env production
 
 # Set allowed origins for the /cli/issue-token endpoint. This restricts
 # which web-app origins can mint daemon tokens via cross-origin POST.
 # Comma-separated list of origins (scheme + host + port).
-wrangler secret put CLI_TOKEN_ALLOWED_ORIGINS
+wrangler secret put CLI_TOKEN_ALLOWED_ORIGINS --env production
 # e.g. https://aimux.com,https://staging.aimux.com
-
-# Deploy (dev)
-wrangler deploy
 
 # Deploy (production with custom domain)
 wrangler deploy --env production
@@ -60,7 +57,9 @@ Add a CNAME record in Cloudflare DNS:
 - Target: `aimux-relay.<your-subdomain>.workers.dev`
 - Proxy: enabled (orange cloud)
 
-Or use Cloudflare custom domains (configured in wrangler.toml).
+Or use Cloudflare custom domains (configured in `wrangler.toml`). The production
+environment repeats the Durable Object binding because Wrangler environment
+bindings are not inherited from the top-level Worker config.
 
 ## 3. Web App
 
@@ -74,6 +73,17 @@ EXPO_PUBLIC_AIMUX_RELAY_URL=wss://relay.aimux.com
 ```
 
 ### Deploy to Vercel
+
+Configure the Vercel project with:
+
+- Root Directory: `app`
+- Build Command: `yarn export:web`
+- Output Directory: `dist`
+- Install Command: `yarn install --frozen-lockfile`
+
+The committed `app/vercel.json` mirrors those settings and rewrites all app
+routes back to `/`, which is required because Expo is configured with
+`web.output: "single"`.
 
 ```bash
 cd app
@@ -117,7 +127,7 @@ yarn build:testflight
 yarn build:production
 ```
 
-Environment variables are baked into the native bundle at build time via `app.config.ts`.
+Environment variables are baked into the native bundle at build time via `app.config.js`.
 
 ## Architecture
 
