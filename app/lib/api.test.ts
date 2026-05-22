@@ -5,6 +5,7 @@ vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 import {
   getAgentHistory,
   getAgentOutput,
+  listProjects,
   listThreads,
   putPlan,
   sendAgentInput,
@@ -15,6 +16,7 @@ import {
 import type { RelayTransport } from "@/lib/relay-transport";
 
 const endpoint = { host: "127.0.0.1", port: 43210 };
+const originalConnectionMode = process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
 
 function installFetchMock(body: unknown = { ok: true }): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async () => new Response(JSON.stringify(body)));
@@ -37,6 +39,11 @@ function installRelayMock(body: unknown = { ok: true }) {
 describe("api relay routing", () => {
   afterEach(() => {
     setApiRelay(null);
+    if (originalConnectionMode === undefined) {
+      delete process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
+    } else {
+      process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = originalConnectionMode;
+    }
     vi.restoreAllMocks();
   });
 
@@ -109,5 +116,28 @@ describe("api relay routing", () => {
       "/proxy/127.0.0.1/43210/threads?session=agent%2F1",
       undefined,
     );
+  });
+
+  it("does not fall back to direct HTTP when relay transport is not ready", async () => {
+    const fetchMock = installFetchMock();
+    const request = vi.fn(async () => {
+      throw new Error("Relay not connected");
+    });
+    setApiRelay({ wsConnected: false, request } as unknown as RelayTransport);
+
+    await expect(listProjects()).rejects.toThrow("Relay not connected");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledWith("GET", "/projects", undefined);
+  });
+
+  it("does not fall back to direct HTTP when relay mode is configured before transport registration", async () => {
+    process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
+    const fetchMock = installFetchMock();
+
+    await expect(getAgentHistory(endpoint, "session-1")).rejects.toThrow("Relay not connected");
+    await expect(listProjects()).rejects.toThrow("Relay not connected");
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
