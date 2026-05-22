@@ -490,7 +490,8 @@ function teammateTaskDescription(body: TeammateTaskBody): string {
   const explicitDescription = typeof body.description === "string" ? body.description.trim() : "";
   if (explicitDescription) return explicitDescription;
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-  const text = typeof body.body === "string" ? body.body.trim() : prompt;
+  const bodyText = typeof body.body === "string" ? body.body.trim() : "";
+  const text = bodyText || prompt;
   const line = firstLine(text);
   return line ? line.slice(0, 120) : "Teammate task";
 }
@@ -2211,6 +2212,10 @@ export class MetadataServer {
         };
         const parentSessionId = body.parentSessionId?.trim() ?? "";
         const teammateSessionId = body.teammateSessionId?.trim() ?? "";
+        if (!teammateSessionId) {
+          send(res, 400, { ok: false, error: "teammateSessionId is required" });
+          return;
+        }
         const resolved = this.resolveDirectTeammates(parentSessionId);
         if (!resolved.ok) {
           send(res, resolved.status, { ok: false, error: resolved.error });
