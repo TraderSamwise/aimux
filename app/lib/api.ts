@@ -74,6 +74,24 @@ async function callServiceViaRelay<T>(
   return callDaemonViaRelay<T>(method, proxyPath, body);
 }
 
+async function callProjectJson<T>(
+  endpoint: ServiceEndpoint,
+  method: string,
+  path: string,
+  opts?: ApiOpts,
+  body?: unknown,
+): Promise<T> {
+  if (_relay?.wsConnected) return callServiceViaRelay<T>(endpoint, method, path, body);
+  return callJson<T>(
+    `${getServiceUrl(endpoint)}${path}`,
+    {
+      method,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    },
+    opts,
+  );
+}
+
 // ── Daemon (port 43190) ───────────────────────────────────────────────────
 
 export interface DaemonHealth {
@@ -156,11 +174,7 @@ export async function getProjectState(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<ProjectStateResponse> {
-  return callJson<ProjectStateResponse>(
-    `${getServiceUrl(endpoint)}/state`,
-    { method: "GET" },
-    opts,
-  );
+  return callProjectJson<ProjectStateResponse>(endpoint, "GET", "/state", opts);
 }
 
 export interface AgentHistoryResponse {
@@ -175,8 +189,8 @@ export async function getAgentHistory(
   lastN: number = 50,
   opts?: ApiOpts,
 ): Promise<AgentHistoryResponse> {
-  const url = `${getServiceUrl(endpoint)}/agents/history?sessionId=${encodeURIComponent(sessionId)}&lastN=${lastN}`;
-  return callJson<AgentHistoryResponse>(url, { method: "GET" }, opts);
+  const path = `/agents/history?sessionId=${encodeURIComponent(sessionId)}&lastN=${lastN}`;
+  return callProjectJson<AgentHistoryResponse>(endpoint, "GET", path, opts);
 }
 
 export interface AgentOutputResponse {
@@ -194,8 +208,12 @@ export async function getAgentOutput(
 ): Promise<AgentOutputResponse> {
   const params = new URLSearchParams({ sessionId });
   if (startLine !== undefined) params.set("startLine", String(startLine));
-  const url = `${getServiceUrl(endpoint)}/agents/output?${params.toString()}`;
-  return callJson<AgentOutputResponse>(url, { method: "GET" }, opts);
+  return callProjectJson<AgentOutputResponse>(
+    endpoint,
+    "GET",
+    `/agents/output?${params.toString()}`,
+    opts,
+  );
 }
 
 export interface AgentInputRequest {
@@ -220,11 +238,7 @@ export async function sendAgentInput(
   input: AgentInputRequest,
   opts?: ApiOpts,
 ): Promise<AgentInputResult> {
-  return callJson<AgentInputResult>(
-    `${getServiceUrl(endpoint)}/agents/input`,
-    { method: "POST", body: JSON.stringify(input) },
-    opts,
-  );
+  return callProjectJson<AgentInputResult>(endpoint, "POST", "/agents/input", opts, input);
 }
 
 // ── Plans (Task 2 endpoints) ─────────────────────────────────────────────
@@ -240,9 +254,10 @@ export async function getPlan(
   sessionId: string,
   opts?: ApiOpts,
 ): Promise<PlanResponse> {
-  return callJson<PlanResponse>(
-    `${getServiceUrl(endpoint)}/plans/${encodeURIComponent(sessionId)}`,
-    { method: "GET" },
+  return callProjectJson<PlanResponse>(
+    endpoint,
+    "GET",
+    `/plans/${encodeURIComponent(sessionId)}`,
     opts,
   );
 }
@@ -253,10 +268,12 @@ export async function putPlan(
   content: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; sessionId: string }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/plans/${encodeURIComponent(sessionId)}`,
-    { method: "PUT", body: JSON.stringify({ content }) },
+  return callProjectJson<{ ok: boolean; sessionId: string }>(
+    endpoint,
+    "PUT",
+    `/plans/${encodeURIComponent(sessionId)}`,
     opts,
+    { content },
   );
 }
 
@@ -277,11 +294,7 @@ export async function uploadAttachmentBase64(
   input: { filename: string; mimeType: string; contentBase64: string },
   opts?: ApiOpts,
 ): Promise<AttachmentResponse> {
-  return callJson<AttachmentResponse>(
-    `${getServiceUrl(endpoint)}/attachments`,
-    { method: "POST", body: JSON.stringify(input) },
-    opts,
-  );
+  return callProjectJson<AttachmentResponse>(endpoint, "POST", "/attachments", opts, input);
 }
 
 // ── Desktop state (project → worktree → agents | services hierarchy) ────
@@ -290,13 +303,7 @@ export async function getDesktopState(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<DesktopState> {
-  if (_relay?.wsConnected)
-    return callServiceViaRelay<DesktopState>(endpoint, "GET", "/desktop-state");
-  return callJson<DesktopState>(
-    `${getServiceUrl(endpoint)}/desktop-state`,
-    { method: "GET" },
-    opts,
-  );
+  return callProjectJson<DesktopState>(endpoint, "GET", "/desktop-state", opts);
 }
 
 // ── Agent actions ────────────────────────────────────────────────────────
@@ -313,11 +320,7 @@ export async function spawnAgent(
   input: AgentSpawnInput,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; sessionId: string }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/agents/spawn`,
-    { method: "POST", body: JSON.stringify(input) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/agents/spawn", opts, input);
 }
 
 export async function forkAgent(
@@ -325,11 +328,7 @@ export async function forkAgent(
   input: { sessionId: string; tool?: string; worktreePath?: string },
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; sessionId: string }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/agents/fork`,
-    { method: "POST", body: JSON.stringify(input) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/agents/fork", opts, input);
 }
 
 export async function stopAgent(
@@ -337,11 +336,7 @@ export async function stopAgent(
   sessionId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/agents/stop`,
-    { method: "POST", body: JSON.stringify({ sessionId }) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/agents/stop", opts, { sessionId });
 }
 
 export async function resumeAgent(
@@ -349,11 +344,7 @@ export async function resumeAgent(
   sessionId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/agents/resume`,
-    { method: "POST", body: JSON.stringify({ sessionId }) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/agents/resume", opts, { sessionId });
 }
 
 export async function interruptAgent(
@@ -361,11 +352,7 @@ export async function interruptAgent(
   sessionId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/agents/interrupt`,
-    { method: "POST", body: JSON.stringify({ sessionId }) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/agents/interrupt", opts, { sessionId });
 }
 
 export async function renameAgent(
@@ -374,11 +361,7 @@ export async function renameAgent(
   label: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/agents/rename`,
-    { method: "POST", body: JSON.stringify({ sessionId, label }) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/agents/rename", opts, { sessionId, label });
 }
 
 export async function migrateAgent(
@@ -386,11 +369,7 @@ export async function migrateAgent(
   input: { sessionId: string; worktreePath?: string },
   opts?: ApiOpts,
 ): Promise<{ ok: boolean }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/agents/migrate`,
-    { method: "POST", body: JSON.stringify(input) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/agents/migrate", opts, input);
 }
 
 export async function killAgent(
@@ -398,11 +377,7 @@ export async function killAgent(
   sessionId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/agents/kill`,
-    { method: "POST", body: JSON.stringify({ sessionId }) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/agents/kill", opts, { sessionId });
 }
 
 // ── Service actions ──────────────────────────────────────────────────────
@@ -412,11 +387,7 @@ export async function createService(
   input: { command?: string; worktreePath?: string; serviceId?: string },
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/services/create`,
-    { method: "POST", body: JSON.stringify(input) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/services/create", opts, input);
 }
 
 export async function stopService(
@@ -424,13 +395,7 @@ export async function stopService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "stopped" }> {
-  if (_relay?.wsConnected)
-    return callServiceViaRelay(endpoint, "POST", "/services/stop", { serviceId });
-  return callJson(
-    `${getServiceUrl(endpoint)}/services/stop`,
-    { method: "POST", body: JSON.stringify({ serviceId }) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/services/stop", opts, { serviceId });
 }
 
 export async function resumeService(
@@ -438,13 +403,7 @@ export async function resumeService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "running" }> {
-  if (_relay?.wsConnected)
-    return callServiceViaRelay(endpoint, "POST", "/services/resume", { serviceId });
-  return callJson(
-    `${getServiceUrl(endpoint)}/services/resume`,
-    { method: "POST", body: JSON.stringify({ serviceId }) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/services/resume", opts, { serviceId });
 }
 
 export async function removeService(
@@ -452,13 +411,7 @@ export async function removeService(
   serviceId: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; serviceId: string; status: "removed" }> {
-  if (_relay?.wsConnected)
-    return callServiceViaRelay(endpoint, "POST", "/services/remove", { serviceId });
-  return callJson(
-    `${getServiceUrl(endpoint)}/services/remove`,
-    { method: "POST", body: JSON.stringify({ serviceId }) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/services/remove", opts, { serviceId });
 }
 
 // ── Worktree actions ─────────────────────────────────────────────────────
@@ -468,11 +421,7 @@ export async function createWorktree(
   name: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; path: string }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/worktrees/create`,
-    { method: "POST", body: JSON.stringify({ name }) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/worktrees/create", opts, { name });
 }
 
 export async function removeWorktree(
@@ -480,11 +429,7 @@ export async function removeWorktree(
   path: string,
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; path: string }> {
-  return callJson(
-    `${getServiceUrl(endpoint)}/worktrees/remove`,
-    { method: "POST", body: JSON.stringify({ path }) },
-    opts,
-  );
+  return callProjectJson(endpoint, "POST", "/worktrees/remove", opts, { path });
 }
 
 // ── Worktrees, graveyard, threads (list-only for v1) ────────────────────
@@ -520,22 +465,14 @@ export async function listWorktrees(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<WorktreesResponse> {
-  return callJson<WorktreesResponse>(
-    `${getServiceUrl(endpoint)}/worktrees`,
-    { method: "GET" },
-    opts,
-  );
+  return callProjectJson<WorktreesResponse>(endpoint, "GET", "/worktrees", opts);
 }
 
 export async function listGraveyard(
   endpoint: ServiceEndpoint,
   opts?: ApiOpts,
 ): Promise<GraveyardResponse> {
-  return callJson<GraveyardResponse>(
-    `${getServiceUrl(endpoint)}/graveyard`,
-    { method: "GET" },
-    opts,
-  );
+  return callProjectJson<GraveyardResponse>(endpoint, "GET", "/graveyard", opts);
 }
 
 export async function listThreads(
@@ -543,8 +480,6 @@ export async function listThreads(
   sessionId?: string,
   opts?: ApiOpts,
 ): Promise<ThreadSummaryResponse[]> {
-  const url = sessionId
-    ? `${getServiceUrl(endpoint)}/threads?session=${encodeURIComponent(sessionId)}`
-    : `${getServiceUrl(endpoint)}/threads`;
-  return callJson<ThreadSummaryResponse[]>(url, { method: "GET" }, opts);
+  const path = sessionId ? `/threads?session=${encodeURIComponent(sessionId)}` : "/threads";
+  return callProjectJson<ThreadSummaryResponse[]>(endpoint, "GET", path, opts);
 }

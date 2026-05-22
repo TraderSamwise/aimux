@@ -1085,7 +1085,6 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
               targetWorktreePath: input.worktreePath,
               open: input.open ?? false,
               extraArgs: input.extraArgs,
-              initialPrompt: input.initialPrompt,
               order: input.order,
             }),
           input.sessionId

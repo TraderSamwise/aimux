@@ -38,7 +38,6 @@ module.exports = {
     web: {
       bundler: "metro",
       output: "single",
-      favicon: "./assets/images/favicon.png",
     },
     runtimeVersion: { policy: "fingerprint" },
     updates: {
