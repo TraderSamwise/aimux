@@ -16,6 +16,7 @@ import { saveCredentials } from "./credentials.js";
 const DEFAULT_WEB_APP_URL = "https://aimux.app";
 const DEFAULT_RELAY_URL = "wss://relay.aimux.app";
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+const HTML_CONTENT_TYPE = "text/html; charset=utf-8";
 
 function openBrowser(url: string): void {
   const cmd = platform() === "darwin" ? "open" : platform() === "win32" ? "cmd" : "xdg-open";
@@ -52,7 +53,7 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
 
       if (url.searchParams.get("state") !== state) {
         res.statusCode = 403;
-        res.setHeader("content-type", "text/html");
+        res.setHeader("content-type", HTML_CONTENT_TYPE);
         res.end(
           '<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>Login failed</h2><p>State mismatch — this callback was not initiated by this login session.</p></body></html>',
         );
@@ -68,7 +69,7 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
 
       if (error) {
         res.statusCode = 400;
-        res.setHeader("content-type", "text/html");
+        res.setHeader("content-type", HTML_CONTENT_TYPE);
         res.end(
           `<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>Login failed</h2><p>${escapeHtml(error)}</p><p>You can close this tab and try again.</p></body></html>`,
         );
@@ -78,7 +79,7 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
       if (!token || !userId) {
         const message = "Callback missing token or userId";
         res.statusCode = 400;
-        res.setHeader("content-type", "text/html");
+        res.setHeader("content-type", HTML_CONTENT_TYPE);
         res.end(
           `<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>Login failed</h2><p>${escapeHtml(message)}</p><p>You can close this tab and try again.</p></body></html>`,
         );
@@ -98,7 +99,7 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         res.statusCode = 500;
-        res.setHeader("content-type", "text/html");
+        res.setHeader("content-type", HTML_CONTENT_TYPE);
         res.end(
           `<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>Login failed</h2><p>Could not save credentials: ${escapeHtml(message)}</p><p>You can close this tab and try again.</p></body></html>`,
         );
@@ -106,7 +107,7 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
         return;
       }
       res.statusCode = 200;
-      res.setHeader("content-type", "text/html");
+      res.setHeader("content-type", HTML_CONTENT_TYPE);
       res.end(
         `<html><body style="font-family:system-ui;text-align:center;padding-top:80px"><h2>✓ Logged in to aimux</h2><p>You can close this tab and return to the terminal.</p></body></html>`,
       );

@@ -1,5 +1,6 @@
 name = "aimux-relay"
 main = "src/index.ts"
+account_id = "14238866831e48d4eaf3aab8f6d30272"
 compatibility_date = "2025-05-19"
 compatibility_flags = ["nodejs_compat"]
 
@@ -10,7 +11,7 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
-new_classes = ["RelayObject"]
+new_sqlite_classes = ["RelayObject"]
 
 [env.production]
 name = "aimux-relay"

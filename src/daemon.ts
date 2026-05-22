@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve as pathResolve } from "node:path";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { writeJsonAtomic } from "./atomic-write.js";
@@ -70,13 +70,14 @@ function loggingChildStdio(path: string): { stdio: StdioOptions; close: () => vo
   if (!logging.enabled) return { stdio: "ignore", close: () => {} };
   try {
     ensureParent(path);
-    const stdout = createWriteStream(path, { flags: "a" });
-    const stderr = createWriteStream(path, { flags: "a" });
-    stdout.on("error", () => {});
-    stderr.on("error", () => {});
+    const stdout = openSync(path, "a");
+    const stderr = openSync(path, "a");
+    let closed = false;
     const close = () => {
-      stdout.end();
-      stderr.end();
+      if (closed) return;
+      closed = true;
+      closeSync(stdout);
+      closeSync(stderr);
     };
     return { stdio: ["ignore", stdout, stderr], close };
   } catch {
@@ -244,11 +245,17 @@ export async function ensureDaemonRunning(): Promise<AimuxDaemonInfo> {
   }
 
   const stdio = loggingChildStdio(getDaemonStdioLogPath());
-  const child = spawn(process.execPath, [process.argv[1]!, "daemon", "run"], {
-    detached: true,
-    env: loggingChildEnv(),
-    stdio: stdio.stdio,
-  });
+  let child: ChildProcess;
+  try {
+    child = spawn(process.execPath, [process.argv[1]!, "daemon", "run"], {
+      detached: true,
+      env: loggingChildEnv(),
+      stdio: stdio.stdio,
+    });
+  } catch (error) {
+    stdio.close();
+    throw error;
+  }
   child.once("exit", stdio.close);
   child.unref();
   log.info("spawned daemon", "daemon", { pid: child.pid });
@@ -411,11 +418,17 @@ export class AimuxDaemon {
 
   private spawnProjectService(projectRoot: string, projectId: string): ProjectServiceState {
     const stdio = loggingChildStdio(getProjectServiceStdioLogPathFor(projectRoot));
-    const child = spawn(process.execPath, [process.argv[1]!, "__project-service-internal"], {
-      cwd: projectRoot,
-      env: loggingChildEnv(),
-      stdio: stdio.stdio,
-    });
+    let child: ChildProcess;
+    try {
+      child = spawn(process.execPath, [process.argv[1]!, "__project-service-internal"], {
+        cwd: projectRoot,
+        env: loggingChildEnv(),
+        stdio: stdio.stdio,
+      });
+    } catch (error) {
+      stdio.close();
+      throw error;
+    }
     this.children.set(projectId, child);
     const now = new Date().toISOString();
     const state: ProjectServiceState = {
