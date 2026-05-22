@@ -13,8 +13,8 @@ import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import { saveCredentials } from "./credentials.js";
 
-const DEFAULT_WEB_APP_URL = "https://aimux.com";
-const DEFAULT_RELAY_URL = "wss://relay.aimux.com";
+const DEFAULT_WEB_APP_URL = "https://aimux.app";
+const DEFAULT_RELAY_URL = "wss://relay.aimux.app";
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
 function openBrowser(url: string): void {

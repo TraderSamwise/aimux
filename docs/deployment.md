@@ -4,7 +4,7 @@
 
 - Clerk account with a production application
 - Cloudflare account with Workers + Durable Objects enabled
-- Domain: aimux.com (or your domain) with DNS managed by Cloudflare
+- Domain: aimux.app with DNS managed by Cloudflare
 - Vercel account (for the web app) or EAS (for native builds)
 - Node.js 22+ on machines running the local aimux daemon; remote relay mode
   uses the runtime `WebSocket` implementation shipped with Node 22+
@@ -40,7 +40,7 @@ wrangler secret put RELAY_TOKEN_SECRET --env production
 # which web-app origins can mint daemon tokens via cross-origin POST.
 # Comma-separated list of origins (scheme + host + port).
 wrangler secret put CLI_TOKEN_ALLOWED_ORIGINS --env production
-# e.g. https://aimux.com,https://staging.aimux.com
+# e.g. https://aimux.app,https://staging.aimux.app
 
 # Deploy (production with custom domain)
 wrangler deploy --env production
@@ -49,9 +49,9 @@ wrangler deploy --env production
 The relay will be available at:
 
 - Dev: `https://aimux-relay.<your-subdomain>.workers.dev`
-- Production: `https://relay.aimux.com` (after DNS setup)
+- Production: `https://relay.aimux.app` (after DNS setup)
 
-### DNS for relay.aimux.com
+### DNS for relay.aimux.app
 
 Add a CNAME record in Cloudflare DNS:
 
@@ -71,7 +71,7 @@ Set in your hosting platform (Vercel, etc.):
 
 ```env
 EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
-EXPO_PUBLIC_AIMUX_RELAY_URL=wss://relay.aimux.com
+EXPO_PUBLIC_AIMUX_RELAY_URL=wss://relay.aimux.app
 ```
 
 ### Deploy to Vercel
@@ -92,9 +92,9 @@ cd app
 vercel deploy --prod
 ```
 
-### DNS for aimux.com
+### DNS for aimux.app
 
-Point aimux.com to Vercel:
+Point aimux.app to Vercel:
 
 - A record → Vercel's IP
 - Or CNAME → cname.vercel-dns.com
@@ -108,7 +108,7 @@ their local daemon via the browser:
 aimux login
 ```
 
-This opens the web app at `${AIMUX_WEB_APP_URL}/cli-auth` (defaulting to `https://aimux.com`), mints a
+This opens the web app at `${AIMUX_WEB_APP_URL}/cli-auth` (defaulting to `https://aimux.app`), mints a
 long-lived (~90d) HS256 daemon token at the relay, and stores it locally
 at `~/.aimux/auth.json`. The daemon picks it up on next start, or
 `aimux remote enable` connects without a restart.
@@ -140,7 +140,7 @@ User's machine                    Cloud                        User's phone/lapt
 │  daemon  │                │  Relay (DO)   │                │  (web/native)│
 └──────────┘                └──────────────┘                └──────────────┘
      │                            │                               │
-     │ localhost:43190            │ relay.aimux.com                │
+     │ localhost:43190            │ relay.aimux.app                │
      │ HS256 daemon token         │ Clerk session JWT              │
      │                            │                               │
      └────────────────────────────┴───────────────────────────────┘
