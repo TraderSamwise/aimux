@@ -3,17 +3,19 @@ import { Image, View } from "react-native";
 import { Text } from "@/components/ui/text";
 import type { ChatMessage, HistoryImagePart } from "@/lib/events";
 import { getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
+import { env } from "@/lib/env";
 
 interface Props {
   message: ChatMessage;
   serviceEndpoint: ServiceEndpoint;
 }
 
-function resolveImageUrl(part: HistoryImagePart, endpoint: ServiceEndpoint): string | null {
+export function resolveImageUrl(part: HistoryImagePart, endpoint: ServiceEndpoint): string | null {
   if (!part.contentUrl) return null;
   if (part.contentUrl.startsWith("http://") || part.contentUrl.startsWith("https://")) {
     return part.contentUrl;
   }
+  if (env.AIMUX_CONNECTION_MODE === "relay") return null;
   return `${getServiceUrl(endpoint)}${part.contentUrl}`;
 }
 

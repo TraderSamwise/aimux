@@ -16,6 +16,7 @@
     "build": "rm -rf dist && tsc",
     "dev": "tsc --watch",
     "dev:gui": "yarn build && node bin/aimux-dev daemon ensure && yarn --cwd app dev:local",
+    "dev:gui:relay": "yarn build && node bin/aimux-dev daemon ensure && yarn --cwd app dev:relay",
     "dev:daemon": "node bin/aimux-dev daemon restart",
     "start": "node dist/main.js",
     "test": "vitest run",
