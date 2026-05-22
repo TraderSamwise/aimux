@@ -122,7 +122,6 @@ export type DashboardTailMethods = {
       targetWorktreePath?: string;
       open?: boolean;
       extraArgs?: string[];
-      initialPrompt?: string;
       order?: number;
     },
   ): Promise<{ sessionId: string; parentSessionId: string; teamId: string; role?: string; label?: string }>;

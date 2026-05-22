@@ -24,10 +24,10 @@ export function buildAimuxAgentInstructions(
   const sessionPath = opts.sessionId ?? "{session-id}";
   const includeTeammates = opts.includeTeammateCreationInstructions !== false;
   const teamCoordinationLine = includeTeammates
-    ? "- Team delegation uses the local metadata teammate API; teammates are first-party aimux agents, not ad-hoc shell processes or task files.\n"
+    ? "- Team lifecycle uses the local metadata teammate API; actionable teammate work must be assigned as durable aimux tasks.\n"
     : "- This session is already a teammate; do not create nested teammate teams.\n";
   const delegationProtocol = includeTeammates
-    ? "When the user specifically asks for a team or teammates, first use the Teammates API below to discover, reuse, create, and message direct teammate agents. " +
+    ? "When the user specifically asks for a team or teammates, first use the Teammates API below to discover, reuse, create, and assign task work to direct teammate agents. " +
       'For generic delegation, handoff, or assignment to ordinary idle aimux agents, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. '
     : 'For generic delegation, handoff, or assignment to ordinary idle aimux agents, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. ';
   const teammateInstructions = includeTeammates
@@ -42,10 +42,10 @@ export function buildAimuxAgentInstructions(
       "- Default to your same tool, worktree, and safe model/provider/runtime selection. Only set `tool`, `worktreePath`, `extraArgs`, or role/model-specific args when the user or task requires it.\n" +
       '- Discover the API with `aimux metadata endpoint`, then POST `/agents/teammates/create` with JSON like `{ "parentSessionId": "' +
       sessionPath +
-      '", "role": "coder", "label": "coder-1", "initialPrompt": "..." }`.\n' +
-      '- Delegate work by POSTing `/agents/teammates/send` with JSON like `{ "parentSessionId": "' +
+      '", "role": "coder", "label": "coder-1", "initialTask": { "title": "Parser tests", "body": "Implement bounded parser tests and report back." } }`.\n' +
+      '- Delegate work by POSTing `/agents/teammates/tasks` with JSON like `{ "parentSessionId": "' +
       sessionPath +
-      '", "teammateSessionId": "codex-abc123", "body": "Review this patch", "interrupt": true }`.\n' +
+      '", "teammateSessionId": "codex-abc123", "title": "Review patch", "body": "Review this patch and report blockers first." }`.\n' +
       "- Manage direct teammate lifecycle with `/agents/teammates/stop`, `/agents/teammates/resume`, `/agents/teammates/kill`, and `/agents/teammates/resurrect`; pass your `parentSessionId` plus the direct `teammateSessionId`.\n" +
       "- If your own session instructions say you are already a teammate for another parent, do not create nested teammates."
     : "";

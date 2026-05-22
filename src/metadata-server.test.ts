@@ -617,15 +617,39 @@ describe("MetadataServer threads API", () => {
         sessionId: "codex-reviewer",
         worktreePath: "/tmp/review-worktree",
         extraArgs: ["--model", "gpt-5.5"],
-        initialPrompt: "Review the patch and report blockers first.",
+        initialTask: {
+          title: "Review the patch",
+          body: "Review the patch and report blockers first.",
+        },
         order: 2,
         open: true,
       }),
     });
-    const body = (await res.json()) as { ok: boolean; reused?: boolean; sessionId: string };
+    const body = (await res.json()) as {
+      ok: boolean;
+      reused?: boolean;
+      sessionId: string;
+      task?: { id: string; assignedBy: string; assignedTo: string; description: string; prompt: string };
+      thread?: { id: string; kind: string; waitingOn: string[] };
+    };
 
     expect(res.ok).toBe(true);
-    expect(body).toMatchObject({ ok: true, reused: true, sessionId: "reviewer-1" });
+    expect(body).toMatchObject({
+      ok: true,
+      reused: true,
+      sessionId: "reviewer-1",
+      task: {
+        assignedBy: "parent",
+        assignedTo: "reviewer-1",
+        description: "Review the patch",
+        prompt: "Review the patch and report blockers first.",
+      },
+    });
+    expect(body.thread?.kind).toBe("task");
+    expect(body.thread?.waitingOn).toEqual(["reviewer-1"]);
+    expect(body.task?.id ? readTask(body.task.id)?.prompt : undefined).toBe(
+      "Review the patch and report blockers first.",
+    );
     expect(calls).toEqual([
       {
         parentSessionId: "parent",
@@ -635,7 +659,6 @@ describe("MetadataServer threads API", () => {
         sessionId: "codex-reviewer",
         worktreePath: "/tmp/review-worktree",
         extraArgs: ["--model", "gpt-5.5"],
-        initialPrompt: "Review the patch and report blockers first.",
         order: 2,
         open: true,
       },
@@ -676,6 +699,36 @@ describe("MetadataServer threads API", () => {
 
     expect(res.status).toBe(400);
     expect(body.error).toContain("nested teams");
+    expect(createTeammateAgent).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty initial teammate tasks before creating a teammate", async () => {
+    server?.stop();
+    const createTeammateAgent = vi.fn();
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [],
+        }),
+      },
+      lifecycle: { createTeammateAgent },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "parent", role: "coder", initialTask: { title: "Empty task" } }),
+    });
+    const body = (await res.json()) as { ok: boolean; error: string };
+
+    expect(res.status).toBe(400);
+    expect(body.error).toContain("initialTask");
     expect(createTeammateAgent).not.toHaveBeenCalled();
   });
 

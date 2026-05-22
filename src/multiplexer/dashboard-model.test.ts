@@ -265,7 +265,6 @@ describe("metadata pending actions", () => {
           tool: "codex",
           worktreePath: "/tmp/review-worktree",
           extraArgs: ["--model", "gpt-5.5"],
-          initialPrompt: "Review the patch and report blockers first.",
           open: true,
           order: 2,
         }),
@@ -279,7 +278,6 @@ describe("metadata pending actions", () => {
         targetWorktreePath: "/tmp/review-worktree",
         open: true,
         extraArgs: ["--model", "gpt-5.5"],
-        initialPrompt: "Review the patch and report blockers first.",
         order: 2,
       });
       expect(setSessionAction).toHaveBeenLastCalledWith(
