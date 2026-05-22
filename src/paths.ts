@@ -6,6 +6,7 @@
  *                (config, team, plans, context, history, tasks, status, threads, sessions.json)
  *   - Global:   ~/.aimux/projects/<project-id>/  → runtime-private state
  *                (recordings, metadata, instance ownership, statusline internals, offline state)
+ *                Override with AIMUX_HOME for isolated dev/runtime lanes.
  *
  * Must call `await initPaths(cwd)` once at startup before using sync path functions.
  */
@@ -166,10 +167,16 @@ export function getReadOnlyProjectPathsFor(cwd: string): ReadOnlyProjectPaths {
 
 // ── Global paths (~/.aimux/...) ────────────────────────────────────
 
-const HOME = homedir();
+function resolveAimuxHome(): string {
+  const override = process.env.AIMUX_HOME?.trim();
+  if (!override) return join(homedir(), ".aimux");
+  if (override === "~") return homedir();
+  if (override.startsWith("~/")) return resolve(homedir(), override.slice(2));
+  return resolve(override);
+}
 
 export function getGlobalAimuxDir(): string {
-  return join(HOME, ".aimux");
+  return resolveAimuxHome();
 }
 
 export function getDaemonDir(): string {

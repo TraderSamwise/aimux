@@ -315,6 +315,18 @@ For the migration rationale, see [docs/global-control-plane-rfc.md](docs/global-
 
 The user-facing browser and native clients live in `app/` as a single Expo Router + React Native project. The same code targets web (browser), iOS, and Android.
 
+For GUI and daemon development, use the isolated `aimux-dev` runtime so your real
+`aimux` daemon and active work sessions keep running:
+
+```bash
+aimux-dev daemon restart
+aimux-dev daemon project-ensure --project /Users/sam/cs/glyde-frontend
+cd app
+yarn dev:local
+```
+
+See [docs/dev-runtime.md](docs/dev-runtime.md) for the full local GUI/backend loop.
+
 ```bash
 cd app
 yarn install

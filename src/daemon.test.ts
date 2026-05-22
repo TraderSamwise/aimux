@@ -280,6 +280,53 @@ describe("daemon supervision", () => {
     expect(Array.isArray(options.stdio)).toBe(true);
     childrenByPid.get(project.pid)?.emit("exit", 0, null);
   });
+
+  it("reads daemon host and port from environment overrides", async () => {
+    const previousHost = process.env.AIMUX_DAEMON_HOST;
+    const previousPort = process.env.AIMUX_DAEMON_PORT;
+    try {
+      process.env.AIMUX_DAEMON_HOST = "localhost";
+      process.env.AIMUX_DAEMON_PORT = "43191";
+      const { getDaemonHost, getDaemonPort } = await import("./daemon.js");
+
+      expect(getDaemonHost()).toBe("localhost");
+      expect(getDaemonPort()).toBe(43191);
+    } finally {
+      if (previousHost === undefined) {
+        delete process.env.AIMUX_DAEMON_HOST;
+      } else {
+        process.env.AIMUX_DAEMON_HOST = previousHost;
+      }
+      if (previousPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = previousPort;
+      }
+    }
+  });
+
+  it("probes the configured daemon port when adopting an existing daemon", async () => {
+    const previousPort = process.env.AIMUX_DAEMON_PORT;
+    try {
+      process.env.AIMUX_DAEMON_PORT = "43191";
+      vi.mocked(requestJson).mockResolvedValueOnce({
+        status: 200,
+        json: { ok: true, pid: 50_001, port: 43191 },
+      });
+      const { ensureDaemonRunning } = await import("./daemon.js");
+
+      const info = await ensureDaemonRunning();
+
+      expect(info.port).toBe(43191);
+      expect(vi.mocked(requestJson)).toHaveBeenCalledWith("http://127.0.0.1:43191/health");
+    } finally {
+      if (previousPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = previousPort;
+      }
+    }
+  });
 });
 
 describe("daemon routing (relay + proxy)", () => {

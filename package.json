@@ -4,7 +4,8 @@
   "description": "Native CLI agent multiplexer — run AI coding tools with their native TUIs intact",
   "main": "dist/main.js",
   "bin": {
-    "aimux": "./bin/aimux"
+    "aimux": "./bin/aimux",
+    "aimux-dev": "./bin/aimux-dev"
   },
   "files": [
     "bin",
@@ -14,6 +15,8 @@
   "scripts": {
     "build": "rm -rf dist && tsc",
     "dev": "tsc --watch",
+    "dev:gui": "yarn build && node bin/aimux-dev daemon ensure && yarn --cwd app dev:local",
+    "dev:daemon": "node bin/aimux-dev daemon restart",
     "start": "node dist/main.js",
     "test": "vitest run",
     "test:watch": "vitest",
