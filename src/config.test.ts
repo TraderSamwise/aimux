@@ -41,11 +41,11 @@ describe("config", () => {
       ) + "\n",
     );
 
-    expect(loadConfig().tools.claude.resumeByBackendSessionId).toBe(true);
+    expect(loadConfig({ includeGlobal: false }).tools.claude.resumeByBackendSessionId).toBe(true);
   });
 
   it("defaults logging to disabled structured project logs", () => {
-    expect(loadConfig().logging).toEqual({
+    expect(loadConfig({ includeGlobal: false }).logging).toEqual({
       enabled: false,
       level: "info",
       categories: ["*"],
@@ -71,7 +71,7 @@ describe("config", () => {
       ) + "\n",
     );
 
-    expect(loadConfig().logging).toEqual({
+    expect(loadConfig({ includeGlobal: false }).logging).toEqual({
       enabled: true,
       level: "debug",
       categories: ["daemon", "session"],
