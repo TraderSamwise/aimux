@@ -386,6 +386,24 @@ describe("MetadataServer threads API", () => {
     expect(body.thread?.waitingOn).toEqual(["child"]);
     expect(readTask(body.task.id)?.prompt).toBe("Check this patch.");
     expect(writes).toEqual([]);
+
+    const promptOnlyRes = await fetch(`${base}/agents/teammates/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        parentSessionId: "parent",
+        teammateSessionId: "child",
+        body: "   ",
+        prompt: "Investigate the prompt-only path.\nReport blockers first.",
+      }),
+    });
+    const promptOnly = (await promptOnlyRes.json()) as {
+      task: { description: string; prompt: string };
+    };
+
+    expect(promptOnlyRes.ok).toBe(true);
+    expect(promptOnly.task.description).toBe("Investigate the prompt-only path.");
+    expect(promptOnly.task.prompt).toBe("Investigate the prompt-only path.\nReport blockers first.");
   });
 
   it("retires raw teammate send in favor of durable task assignment", async () => {
@@ -402,6 +420,22 @@ describe("MetadataServer threads API", () => {
 
     expect(res.status).toBe(410);
     expect(body.error).toContain("/agents/teammates/tasks");
+  });
+
+  it("rejects teammate tasks with an empty teammateSessionId", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "   ", body: "hello" }),
+    });
+    const body = (await res.json()) as { ok: boolean; error: string };
+
+    expect(res.status).toBe(400);
+    expect(body.error).toContain("teammateSessionId");
   });
 
   it("rejects teammate tasks to non-direct teammates", async () => {
