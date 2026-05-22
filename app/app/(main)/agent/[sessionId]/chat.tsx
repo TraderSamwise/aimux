@@ -7,7 +7,7 @@ import { ChatComposer } from "@/components/ChatComposer";
 import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
-import { getAgentHistory } from "@/lib/api";
+import { getAgentHistory, getAgentOutput } from "@/lib/api";
 import { singleRouteParam } from "@/lib/route-params";
 import {
   chatHistoryFamily,
@@ -18,7 +18,10 @@ import {
   setHistoryAtom,
 } from "@/stores/chat";
 import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
+import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import type { ChatMessage } from "@/lib/events";
+
+const RELAY_CHAT_POLL_INTERVAL_MS = 2000;
 
 export default function ChatScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
@@ -31,7 +34,10 @@ export default function ChatScreen() {
   const history = useAtomValue(chatHistoryFamily(sessionKey));
   const pendingMessages = useAtomValue(pendingMessagesFamily(sessionKey));
   const output = useAtomValue(outputBufferFamily(sessionKey));
+  const setOutput = useSetAtom(outputBufferFamily(sessionKey));
   const lastError = useAtomValue(lastErrorFamily(sessionKey));
+  const relayConfigured = useAtomValue(relayConfiguredAtom);
+  const relayStatus = useAtomValue(relayStatusAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
@@ -60,10 +66,12 @@ export default function ChatScreen() {
   }, [getToken]);
 
   const serviceEndpoint = project?.serviceEndpoint ?? null;
+  const relayReady = !relayConfigured || relayStatus === "connected";
+  const useRelayPolling = relayConfigured && relayStatus === "connected";
 
   // Initial history fetch
   useEffect(() => {
-    if (!serviceEndpoint || !sessionId) return;
+    if (!serviceEndpoint || !sessionId || !relayReady) return;
     let cancelled = false;
     setLoadingHistory(true);
     getAgentHistory(serviceEndpoint, sessionId, 50, { token })
@@ -80,11 +88,13 @@ export default function ChatScreen() {
     return () => {
       cancelled = true;
     };
-  }, [serviceEndpoint?.host, serviceEndpoint?.port, sessionId, token, setHistory]);
+  }, [serviceEndpoint?.host, serviceEndpoint?.port, sessionId, token, relayReady, setHistory]);
 
-  // Subscribe to /events for this session
+  // Subscribe to /events for local sessions. Hosted/relay deployments cannot
+  // reach the project service EventSource directly, so they poll through the
+  // relay-aware API in the effect below.
   useEffect(() => {
-    if (!serviceEndpoint || !sessionId) return;
+    if (!serviceEndpoint || !sessionId || useRelayPolling || relayConfigured) return;
     const handle = startHeartbeat({
       serviceEndpoint,
       sessionId,
@@ -97,7 +107,58 @@ export default function ChatScreen() {
       },
     });
     return () => handle.stop();
-  }, [serviceEndpoint?.host, serviceEndpoint?.port, sessionId, token, ingestEvent]);
+  }, [
+    serviceEndpoint?.host,
+    serviceEndpoint?.port,
+    sessionId,
+    token,
+    ingestEvent,
+    useRelayPolling,
+    relayConfigured,
+  ]);
+
+  // Relay-mode live updates use request/response polling. This keeps the MVP
+  // working over the existing Durable Object relay without requiring an SSE
+  // streaming bridge.
+  useEffect(() => {
+    if (!serviceEndpoint || !sessionId || !useRelayPolling) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function poll() {
+      if (cancelled) return;
+      try {
+        const [historyResult, outputResult] = await Promise.all([
+          getAgentHistory(serviceEndpoint!, sessionId!, 50, { token }),
+          getAgentOutput(serviceEndpoint!, sessionId!, undefined, { token }),
+        ]);
+        if (cancelled) return;
+        setHistory({ sessionId: sessionId!, messages: historyResult.messages ?? [] });
+        setOutput(outputResult.output ?? "");
+      } catch (err) {
+        if (!cancelled) console.warn("relay chat poll failed:", err);
+      }
+      if (cancelled) return;
+      timer = setTimeout(poll, RELAY_CHAT_POLL_INTERVAL_MS);
+    }
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+    // serviceEndpoint is read inside the poll loop; host/port primitives keep
+    // this effect stable across project-list reconciles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    serviceEndpoint?.host,
+    serviceEndpoint?.port,
+    sessionId,
+    token,
+    useRelayPolling,
+    setHistory,
+    setOutput,
+  ]);
 
   const allMessages = useMemo<ChatMessage[]>(() => {
     const pending = pendingMessages.map((p) => ({

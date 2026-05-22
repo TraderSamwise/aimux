@@ -86,7 +86,14 @@ describe("TaskDispatcher", () => {
         (target, prompt) => deliveries.push({ sessionId: target.id, prompt }),
       );
 
-      await writeTask(makeTask({ id: "t1", assignedBy: "claude-leader" }));
+      await writeTask(
+        makeTask({
+          id: "t1",
+          assignedBy: "claude-leader",
+          description: "Short label",
+          prompt: "Run the full investigation and report exact reproduction steps.",
+        }),
+      );
       dispatcher.tick(["claude-worker"]);
       await flush();
 
@@ -94,6 +101,9 @@ describe("TaskDispatcher", () => {
       expect(deliveries).toHaveLength(1);
       expect(deliveries[0]).toMatchObject({ sessionId: "claude-worker" });
       expect(deliveries[0]?.prompt).toContain("[AIMUX TASK t1");
+      expect(deliveries[0]?.prompt).toContain("Short label");
+      expect(deliveries[0]?.prompt).toContain("Run the full investigation and report exact reproduction steps.");
+      expect(deliveries[0]?.prompt).toContain("aimux task complete t1 --from claude-worker");
 
       const task = readTask("t1");
       expect(task?.status).toBe("assigned");
@@ -101,6 +111,7 @@ describe("TaskDispatcher", () => {
       expect(task?.threadId).toBeDefined();
       const messages = readMessages(task?.threadId ?? "");
       expect(messages[0]?.deliveredTo).toContain("claude-worker");
+      expect(messages[0]?.body).toBe("Run the full investigation and report exact reproduction steps.");
     });
 
     it("does not inject into busy session", async () => {

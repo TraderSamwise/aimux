@@ -9,6 +9,10 @@ interface DispatchSession {
   write(data: string): void;
 }
 
+function taskBody(task: Task): string {
+  return task.prompt?.trim() || task.description;
+}
+
 export class TaskWorkflow {
   constructor(
     private readonly deliverPrompt: (session: DispatchSession, prompt: string) => void = defaultDeliverPrompt,
@@ -27,7 +31,7 @@ export class TaskWorkflow {
       from: task.assignedBy,
       to: [session.id],
       kind: "request",
-      body: task.description,
+      body: taskBody(task),
       metadata: { taskId: task.id },
     });
     markMessageDelivered(thread.id, initialMessage.message.id, session.id);
@@ -37,7 +41,8 @@ export class TaskWorkflow {
         ? `[AIMUX REVIEW ${task.id} from ${task.assignedBy}]`
         : `[AIMUX TASK ${task.id} from ${task.assignedBy}]`;
 
-    let prompt = `${prefix} ${task.description}\n\n`;
+    const bodyLabel = task.type === "review" ? "Review request" : "Task body";
+    let prompt = `${prefix} ${task.description}\n\n${bodyLabel}:\n${taskBody(task)}\n\n`;
 
     if (task.type === "review" && task.diff) {
       prompt += `Diff to review:\n${task.diff.slice(0, 3000)}\n\n`;

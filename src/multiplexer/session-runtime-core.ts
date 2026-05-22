@@ -21,7 +21,7 @@ import { captureGitContext } from "../context/context-bridge.js";
 import {
   normalizeSubmittedPrompt,
   paneStillContainsPromptDraft,
-  scheduleTmuxPromptSubmit,
+  waitForTmuxPromptSubmit,
 } from "../agent-prompt-delivery.js";
 import type { SessionTeamMetadata } from "../team.js";
 
@@ -224,18 +224,27 @@ export function paneStillContainsAgentDraft(host: SessionRuntimeHost, target: an
   return paneStillContainsPromptDraft(host.tmuxRuntimeManager, target, draft);
 }
 
-export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: string, target: any, draft: string): void {
+export function waitForTmuxAgentSubmit(
+  host: SessionRuntimeHost,
+  sessionId: string,
+  target: any,
+  draft: string,
+): Promise<boolean> {
   const isTargetCurrent = () => {
     const currentTarget = resolveLiveSessionTmuxTarget(host, sessionId);
     return Boolean(currentTarget && currentTarget.windowId === target.windowId);
   };
 
-  scheduleTmuxPromptSubmit({
+  return waitForTmuxPromptSubmit({
     tmuxRuntimeManager: host.tmuxRuntimeManager,
     target,
     draft,
     isTargetCurrent,
   });
+}
+
+export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: string, target: any, draft: string): void {
+  void waitForTmuxAgentSubmit(host, sessionId, target, draft);
 }
 
 export async function writeAgentInput(
@@ -278,15 +287,18 @@ export async function writeAgentInput(
       if (normalizedData) {
         writeTmuxAgentInput(host, sessionId, session.transport, normalizedData);
       }
+      if (submit) {
+        const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
+        if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
+        const submitted = await waitForTmuxAgentSubmit(host, sessionId, target, normalizedData);
+        if (!submitted) {
+          throw new Error(`Session "${sessionId}" prompt submit was not accepted by tmux`);
+        }
+      }
       operation = saveSessionInputOperation({
         ...operation,
         state: submit ? "submitted" : "applied",
       });
-      if (submit) {
-        const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
-        if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
-        scheduleTmuxAgentSubmit(host, sessionId, target, normalizedData);
-      }
     } else {
       session.write(submit ? `${normalizedData}\r` : normalizedData);
       operation = saveSessionInputOperation({

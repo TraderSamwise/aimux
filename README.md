@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/
 ```
 
 This installs the bundled release under `~/.aimux/native/` and links `aimux` into `~/.local/bin`.
-It still requires Node.js >= 18 and `tmux` in `PATH`; it does not require npm/yarn on the target machine.
+It still requires Node.js >= 22 and `tmux` in `PATH`; it does not require npm/yarn on the target machine.
 
 To install a specific version:
 
@@ -71,7 +71,7 @@ yarn build
 yarn link
 ```
 
-Requires Node.js >= 18 and `tmux` in `PATH`.
+Requires Node.js >= 22 and `tmux` in `PATH`.
 
 ## Quick Start
 
@@ -479,7 +479,7 @@ The project-service HTTP API also exposes:
 - `POST /notify`
 - `GET /agents/teammates?parentSessionId=...`
 - `POST /agents/teammates/create`
-- `POST /agents/teammates/send`
+- `POST /agents/teammates/tasks`
 - `POST /agents/teammates/stop`
 - `POST /agents/teammates/resume`
 - `POST /agents/teammates/kill`
@@ -515,7 +515,10 @@ curl -sS "$endpoint/agents/teammates/create" \
     "parentSessionId": "claude-abc123",
     "role": "coder",
     "label": "coder-1",
-    "initialPrompt": "Implement the bounded parser tests and report back."
+    "initialTask": {
+      "title": "Parser tests",
+      "body": "Implement the bounded parser tests and report back."
+    }
   }'
 ```
 
@@ -527,24 +530,24 @@ Useful request fields:
 - `sessionId` - optional aimux session ID; omitted means aimux generates one.
 - `worktreePath` - optional target worktree; omitted means inherit the parent worktree.
 - `extraArgs` - optional CLI args for model/provider flags; when set, these override inherited runtime flags.
-- `initialPrompt` - optional first task sent to the teammate after launch.
+- `initialTask` - optional first durable task assigned to the teammate after launch.
 - `order` - optional numeric order within the parent's direct team.
 - `open` - optional boolean; `false` creates without switching focus.
 
 Delegate to an existing direct teammate:
 
 ```bash
-curl -sS "$endpoint/agents/teammates/send" \
+curl -sS "$endpoint/agents/teammates/tasks" \
   -H 'content-type: application/json' \
   -d '{
     "parentSessionId": "claude-abc123",
     "teammateSessionId": "codex-def456",
-    "body": "Review the parser patch and report blockers first.",
-    "interrupt": true
+    "title": "Review parser patch",
+    "body": "Review the parser patch and report blockers first."
   }'
 ```
 
-`/agents/teammates/send` only accepts direct teammates of the parent. Set `interrupt: true` to interrupt the teammate before delivering the message.
+`/agents/teammates/tasks` only accepts direct teammates of the parent and creates a normal durable task targeted to that teammate. The teammate reports back with `aimux task complete` or `aimux task block`, and aimux routes completion back to the parent.
 
 Manage a direct teammate lifecycle with the same parent/teammate guard:
 
@@ -917,7 +920,7 @@ Relative `baseDir` values are resolved from the main repo root. Absolute paths a
 ## Requirements
 
 - macOS (Linux support planned)
-- Node.js >= 18
+- Node.js >= 22
 - At least one supported AI tool installed: `claude`, `codex`, or `aider`
 - Notifications work out of the box on macOS, Linux, and Windows
 

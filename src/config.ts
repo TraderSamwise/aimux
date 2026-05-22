@@ -215,12 +215,12 @@ function normalizeConfig(config: AimuxConfig): AimuxConfig {
  * Load config with hierarchy: defaults → global (~/.aimux/config.json) → project (.aimux/config.json)
  * Project settings override global, global overrides defaults.
  */
-export function loadConfig(): AimuxConfig {
+export function loadConfig(opts: { includeGlobal?: boolean } = {}): AimuxConfig {
   let config = cloneJson(DEFAULT_CONFIG);
 
   // Layer 1: global config
   const globalPath = getGlobalConfigPath();
-  if (existsSync(globalPath)) {
+  if (opts.includeGlobal !== false && existsSync(globalPath)) {
     try {
       const globalRaw = JSON.parse(readFileSync(globalPath, "utf-8"));
       config = deepMerge(config, globalRaw) as AimuxConfig;
