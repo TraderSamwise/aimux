@@ -10,14 +10,14 @@ describe("RelayClient runtime compatibility", () => {
   it("fails fast when the Node runtime has no global WebSocket", () => {
     vi.stubGlobal("WebSocket", undefined);
     const daemon = { routeRequest: vi.fn() } as unknown as AimuxDaemon;
-    const client = new RelayClient("wss://relay.aimux.com/", "token", daemon);
+    const client = new RelayClient("wss://relay.aimux.app/", "token", daemon);
 
     client.connect();
 
     const status = client.getStatus();
     expect(status).toMatchObject({
       status: "disconnected",
-      relayUrl: "wss://relay.aimux.com",
+      relayUrl: "wss://relay.aimux.app",
       lastConnectedAt: null,
     });
     expect(status.lastError).toContain("Node 22+");

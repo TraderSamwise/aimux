@@ -1437,7 +1437,7 @@ program
 
 program
   .command("login")
-  .description("Sign in to enable remote access via aimux.com")
+  .description("Sign in to enable remote access via aimux.app")
   .option("--web-app-url <url>", "Override the web app URL")
   // No --relay-url here: the token is minted by whichever relay the web app
   // points at, so a CLI override would just store a relay URL that rejects
