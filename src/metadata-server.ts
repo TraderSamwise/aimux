@@ -220,7 +220,6 @@ interface MetadataServerOptions {
       worktreePath?: string;
       open?: boolean;
       extraArgs?: string[];
-      initialPrompt?: string;
       order?: number;
     }) =>
       | Promise<{
@@ -459,6 +458,14 @@ type DesktopSessionRecord = Record<string, unknown> & {
   team?: SessionTeamMetadata;
 };
 
+interface TeammateTaskBody {
+  title?: string;
+  description?: string;
+  body?: string;
+  prompt?: string;
+  worktreePath?: string;
+}
+
 function isDesktopSessionRecord(value: unknown): value is DesktopSessionRecord {
   return Boolean(value && typeof value === "object" && typeof (value as { id?: unknown }).id === "string");
 }
@@ -477,12 +484,7 @@ function firstLine(value: string): string {
   );
 }
 
-function teammateTaskDescription(body: {
-  title?: string;
-  description?: string;
-  body?: string;
-  prompt?: string;
-}): string {
+function teammateTaskDescription(body: TeammateTaskBody): string {
   const explicitTitle = typeof body.title === "string" ? body.title.trim() : "";
   if (explicitTitle) return explicitTitle;
   const explicitDescription = typeof body.description === "string" ? body.description.trim() : "";
@@ -493,7 +495,7 @@ function teammateTaskDescription(body: {
   return line ? line.slice(0, 120) : "Teammate task";
 }
 
-function teammateTaskPrompt(body: { body?: string; prompt?: string }): string | undefined {
+function teammateTaskPrompt(body: TeammateTaskBody): string | undefined {
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
   if (prompt) return prompt;
   const text = typeof body.body === "string" ? body.body.trim() : "";
@@ -2143,7 +2145,7 @@ export class MetadataServer {
           worktreePath?: string;
           open?: boolean;
           extraArgs?: string[];
-          initialPrompt?: string;
+          initialTask?: TeammateTaskBody;
           order?: number;
         };
         const parentSessionId = body.parentSessionId?.trim() ?? "";
@@ -2159,13 +2161,41 @@ export class MetadataServer {
             return;
           }
         }
+        const initialTaskPrompt = body.initialTask ? teammateTaskPrompt(body.initialTask) : undefined;
+        if (body.initialTask && !initialTaskPrompt) {
+          send(res, 400, { ok: false, error: "initialTask requires body or prompt" });
+          return;
+        }
         if (!this.options.lifecycle?.createTeammateAgent) {
           send(res, 501, { ok: false, error: "teammate creation not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.createTeammateAgent(body);
+        const result = await this.options.lifecycle.createTeammateAgent({
+          parentSessionId: body.parentSessionId,
+          role: body.role,
+          label: body.label,
+          tool: body.tool,
+          sessionId: body.sessionId,
+          worktreePath: body.worktreePath,
+          open: body.open,
+          extraArgs: body.extraArgs,
+          order: body.order,
+        });
+        const taskResult =
+          body.initialTask && initialTaskPrompt
+            ? await assignTask({
+                from: result.parentSessionId,
+                to: result.sessionId,
+                description: teammateTaskDescription(body.initialTask),
+                prompt: initialTaskPrompt,
+                worktreePath: optionalString(body.initialTask.worktreePath) ?? optionalString(body.worktreePath),
+              })
+            : undefined;
+        if (taskResult) {
+          this.emitAssignedTaskAlert(taskResult);
+        }
         this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        send(res, 200, { ok: true, ...result, task: taskResult?.task, thread: taskResult?.thread });
         return;
       }
 

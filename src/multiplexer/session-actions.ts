@@ -257,7 +257,6 @@ export async function createTeammateAgent(
     targetWorktreePath?: string;
     open?: boolean;
     extraArgs?: string[];
-    initialPrompt?: string;
     order?: number;
   },
 ): Promise<{
@@ -269,10 +268,6 @@ export async function createTeammateAgent(
   reused?: true;
 }> {
   host.syncSessionsFromState();
-  const initialPrompt = opts.initialPrompt?.trim();
-  if (initialPrompt && typeof host.writeAgentInput !== "function") {
-    throw new Error("Initial teammate prompt requires agent input support");
-  }
 
   const parent = host.sessions.find((session: any) => session.id === opts.parentSessionId && !session.exited);
   if (!parent) {
@@ -378,10 +373,6 @@ export async function createTeammateAgent(
     if (openResult === "missing") {
       host.tmuxRuntimeManager.openTarget(target, { insideTmux: host.tmuxRuntimeManager.isInsideTmux() });
     }
-  }
-
-  if (initialPrompt) {
-    await host.writeAgentInput(transport.id, initialPrompt, undefined, undefined, true);
   }
 
   return {
