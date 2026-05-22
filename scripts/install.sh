@@ -58,8 +58,8 @@ download_optional() {
 need node
 need tar
 
-node -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(major >= 18 ? 0 : 1)' \
-  || fail "Node.js >= 18 is required"
+node -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(major >= 22 ? 0 : 1)' \
+  || fail "Node.js >= 22 is required"
 
 PLATFORM="$(detect_platform)"
 ARCH="$(detect_arch)"
