@@ -31,6 +31,8 @@ import { sidebarShowProjectPickerAtom } from "@/stores/ui";
 //   - Row secondary (tool, status, detail)      → text-[11px] text-muted-foreground
 //   - Path / branch chip                        → text-[11px] muted
 
+const SIDEBAR_WIDTH = 320;
+
 // ─── Project picker ───────────────────────────────────────────────────────
 
 function ProjectPicker({
@@ -486,7 +488,10 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
   }
 
   return (
-    <View className="w-80 flex-1 border-r border-border bg-background">
+    <View
+      className="border-r border-border bg-background"
+      style={{ width: SIDEBAR_WIDTH, height: "100%" }}
+    >
       <ScrollView className="flex-1">
         {pickerMode ? (
           <ProjectPicker
