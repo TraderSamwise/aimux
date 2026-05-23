@@ -42,6 +42,34 @@ describe("parsed transcript conversion", () => {
     ]);
   });
 
+  it("accepts kind-based prompt and response blocks", () => {
+    const messages = messagesFromParsedAgentOutput({
+      blocks: [
+        { kind: "prompt", text: "legacy hello" },
+        { type: "response", text: "modern reply" },
+        { kind: "response", text: "legacy reply" },
+      ],
+    });
+
+    expect(messages).toEqual([
+      {
+        id: "parsed-0-prompt",
+        role: "user",
+        parts: [{ type: "text", text: "legacy hello" }],
+      },
+      {
+        id: "parsed-1-response",
+        role: "assistant",
+        parts: [{ type: "text", text: "modern reply" }],
+      },
+      {
+        id: "parsed-2-response",
+        role: "assistant",
+        parts: [{ type: "text", text: "legacy reply" }],
+      },
+    ]);
+  });
+
   it("filters pending prompts already visible in the parsed transcript", () => {
     const rendered = messagesFromParsedAgentOutput({
       blocks: [{ type: "prompt", text: "hi" }],
