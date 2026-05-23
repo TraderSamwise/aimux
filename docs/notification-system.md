@@ -25,10 +25,14 @@ interface NotificationEvent {
 }
 ```
 
-The current app-side implementation derives initial agent events from
-`/desktop-state` transitions. The daemon already stores durable notification
-records in `src/notifications.ts`; future work should make those records the
-canonical source for cross-device delivery.
+The app polls the selected project's `/notifications?unread=1` endpoint and
+uses daemon records as the primary delivery source. It baselines existing record
+IDs on the first fetch for each project so old unread records do not fire as new
+browser notifications on startup or project switch.
+
+The app still keeps a `/desktop-state` transition fallback for the period before
+the durable notification feed has loaded. Once a feed has been fetched for the
+selected project, notification delivery should prefer daemon records.
 
 ## Settings Model
 
@@ -53,13 +57,15 @@ turns them on.
 
 ## Web Delivery
 
-The web app uses the Browser Notification API only when:
+The web app uses the Browser Notification API for daemon-backed records only
+when:
 
 - notifications are globally enabled,
 - the browser channel is enabled,
 - browser permission is already granted by a user gesture,
 - the document is not visible,
-- the event is a new state transition instead of a repeated poll result.
+- the daemon record ID has not been seen before for the selected project,
+- the daemon record is unread and not cleared.
 
 The app must not request notification permission on load.
 
