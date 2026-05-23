@@ -322,7 +322,7 @@ For GUI and daemon development, use the isolated `aimux-dev` runtime so your rea
 aimux-dev daemon restart
 aimux-dev daemon project-ensure --project /Users/sam/cs/glyde-frontend
 cd app
-yarn dev:local
+yarn dev:web:local
 ```
 
 See [docs/dev-runtime.md](docs/dev-runtime.md) for the full local GUI/backend loop.
@@ -330,9 +330,10 @@ See [docs/dev-runtime.md](docs/dev-runtime.md) for the full local GUI/backend lo
 ```bash
 cd app
 yarn install
-yarn web                  # open browser client (Metro serves it on http://localhost:8081)
-yarn ios                  # iOS simulator
-yarn android              # Android emulator
+yarn dev:web:local        # browser client on http://localhost:8081
+yarn dev:native:local     # Metro for an installed native dev build
+yarn dev:ios:local        # build/install/open iOS simulator dev build, not Expo Go
+yarn dev:android:local    # build/install/open Android emulator dev build
 ```
 
 The app talks to two HTTP surfaces:
@@ -340,7 +341,9 @@ The app talks to two HTTP surfaces:
 - the global aimux daemon at `http://localhost:43190` for project discovery
 - per-project metadata servers (port supplied via `/projects` response) for state, agent I/O, plans, and the `/events` SSE stream
 
-For mobile use against a remote machine, set `EXPO_PUBLIC_AIMUX_DAEMON_URL=http://<machine>:43190` in `app/.env`.
+For simulator-local development, the helper scripts use `http://127.0.0.1:43191`
+for iOS and `http://10.0.2.2:43191` for Android. For mobile use against a remote
+machine, set `EXPO_PUBLIC_AIMUX_DAEMON_URL=http://<machine>:43190` in `app/.env`.
 
 Release pipeline (uses EAS):
 
