@@ -40,6 +40,28 @@ describe("settings store", () => {
     expect(settingsModule.defaultSettings).toEqual({
       theme: "dark",
       chatTerminalSplit: false,
+      notifications: {
+        enabled: false,
+        channels: {
+          browser: true,
+          push: false,
+        },
+        categories: {
+          agent: {
+            enabled: true,
+            needsInput: true,
+            blocked: true,
+            errors: true,
+            completed: false,
+            activity: false,
+          },
+          system: {
+            enabled: false,
+            relayStatus: false,
+            projectHealth: false,
+          },
+        },
+      },
     });
   });
 
@@ -48,11 +70,30 @@ describe("settings store", () => {
 
     expect(store.get(settingsModule.themePreferenceAtom)).toBe("dark");
     expect(store.get(settingsModule.chatTerminalSplitAtom)).toBe(false);
+    expect(store.get(settingsModule.notificationSettingsAtom).enabled).toBe(false);
 
     store.set(settingsModule.chatTerminalSplitAtom, true);
+    store.set(settingsModule.notificationSettingsAtom, {
+      ...store.get(settingsModule.notificationSettingsAtom),
+      enabled: true,
+    });
 
     expect(store.get(settingsModule.chatTerminalSplitAtom)).toBe(true);
     expect(store.get(settingsModule.settingsAtom).chatTerminalSplit).toBe(true);
+    expect(store.get(settingsModule.settingsAtom).notifications.enabled).toBe(true);
+  });
+
+  it("normalizes older persisted settings without notification keys", () => {
+    expect(
+      settingsModule.normalizeAppSettings({
+        theme: "light",
+        chatTerminalSplit: true,
+      } as import("./settings").AppSettings),
+    ).toEqual({
+      ...settingsModule.defaultSettings,
+      theme: "light",
+      chatTerminalSplit: true,
+    });
   });
 
   it("persists focused atom writes to aimux-settings", async () => {
@@ -60,6 +101,17 @@ describe("settings store", () => {
 
     store.set(settingsModule.themePreferenceAtom, "light");
     store.set(settingsModule.chatTerminalSplitAtom, true);
+    store.set(settingsModule.notificationSettingsAtom, {
+      ...store.get(settingsModule.notificationSettingsAtom),
+      enabled: true,
+      categories: {
+        ...store.get(settingsModule.notificationSettingsAtom).categories,
+        agent: {
+          ...store.get(settingsModule.notificationSettingsAtom).categories.agent,
+          completed: true,
+        },
+      },
+    });
 
     await vi.waitFor(async () => {
       const raw = await AsyncStorage.getItem("aimux-settings");
@@ -67,6 +119,28 @@ describe("settings store", () => {
       expect(JSON.parse(raw ?? "{}")).toEqual({
         theme: "light",
         chatTerminalSplit: true,
+        notifications: {
+          enabled: true,
+          channels: {
+            browser: true,
+            push: false,
+          },
+          categories: {
+            agent: {
+              enabled: true,
+              needsInput: true,
+              blocked: true,
+              errors: true,
+              completed: true,
+              activity: false,
+            },
+            system: {
+              enabled: false,
+              relayStatus: false,
+              projectHealth: false,
+            },
+          },
+        },
       });
     });
   });

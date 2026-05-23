@@ -2,6 +2,7 @@ import React, { useEffect } from "react";
 import { Stack } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
+import { NotificationProvider } from "@/components/NotificationProvider";
 import { getDesktopState, listProjects, setApiRelay } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { env } from "@/lib/env";
@@ -122,16 +123,19 @@ export default function MainLayout() {
   }, [selectedProjectPath, endpointKey, refreshNonce, getToken, store]);
 
   return (
-    <AppShell>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="index" />
-        <Stack.Screen name="agent/[sessionId]/chat" />
-        <Stack.Screen name="plans/[sessionId]" />
-        <Stack.Screen name="service/[serviceId]" />
-        <Stack.Screen name="threads" />
-        <Stack.Screen name="graveyard" />
-        <Stack.Screen name="settings" />
-      </Stack>
-    </AppShell>
+    <>
+      <NotificationProvider />
+      <AppShell>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="agent/[sessionId]/chat" />
+          <Stack.Screen name="plans/[sessionId]" />
+          <Stack.Screen name="service/[serviceId]" />
+          <Stack.Screen name="threads" />
+          <Stack.Screen name="graveyard" />
+          <Stack.Screen name="settings" />
+        </Stack>
+      </AppShell>
+    </>
   );
 }
