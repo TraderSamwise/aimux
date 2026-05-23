@@ -1,17 +1,17 @@
 import React from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 import { useAtomValue } from "jotai";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AuthMenu } from "@/components/AuthMenu";
 import { RelayIndicator } from "@/components/RelayIndicator";
+import { resolveChromeTopInset } from "@/lib/native-safe-area";
 import { Text } from "@/components/ui/text";
 import { relayConfiguredAtom } from "@/stores/relay";
 
 export function TopBar({ left }: { left?: React.ReactNode }) {
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const insets = useSafeAreaInsets();
-  const topInset =
-    Platform.OS === "web" ? 0 : Platform.OS === "ios" ? Math.max(insets.top, 54) : insets.top;
+  const topInset = resolveChromeTopInset(insets.top);
 
   return (
     <View

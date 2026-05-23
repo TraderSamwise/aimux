@@ -1,8 +1,9 @@
 import React from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { Home, MessageSquare, Settings } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { resolveChromeBottomInset } from "@/lib/native-safe-area";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 
@@ -21,12 +22,7 @@ export function MobileTabBar() {
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const bottomInset =
-    Platform.OS === "web"
-      ? 0
-      : Platform.OS === "ios"
-        ? Math.max(insets.bottom, 24)
-        : insets.bottom;
+  const bottomInset = resolveChromeBottomInset(insets.bottom);
 
   return (
     <View
