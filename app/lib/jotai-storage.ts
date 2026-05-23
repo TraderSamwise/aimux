@@ -19,3 +19,15 @@ export function createSsrSafeJsonStorage<T>() {
     () => (isServer() ? noopStorage : AsyncStorage) as any,
   );
 }
+
+export function createSsrSafeMergingJsonStorage<T extends object>(defaults: T) {
+  const base = createSsrSafeJsonStorage<T>();
+  return {
+    ...base,
+    getItem: async (key: string, initialValue: T) => {
+      if (isServer()) return initialValue;
+      const stored = await base.getItem(key, initialValue);
+      return { ...defaults, ...stored };
+    },
+  };
+}
