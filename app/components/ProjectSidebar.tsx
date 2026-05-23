@@ -109,7 +109,7 @@ function ProjectHeader({
       </View>
       <View className="flex-1 min-w-0">
         <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
-          Project
+          All projects
         </Text>
         <Text
           className="text-[16px] font-bold text-foreground"
