@@ -153,10 +153,17 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   if (res.headersSent || res.writableEnded) return;
   const payload = JSON.stringify(body);
   res.statusCode = status;
+  setCorsHeaders(res);
   res.setHeader("content-type", "application/json");
   res.setHeader("content-length", Buffer.byteLength(payload));
   res.setHeader("connection", "close");
   res.end(payload);
+}
+
+function setCorsHeaders(res: ServerResponse): void {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
 export function loadDaemonInfo(): AimuxDaemonInfo | null {
@@ -737,6 +744,13 @@ export class AimuxDaemon {
     // app requests come in over the relay (which performs Clerk/HS256 verify
     // before forwarding) and call routeRequest() directly in-process. Local
     // CLI is trusted with the daemon's user.
+    setCorsHeaders(res);
+    if (req.method === "OPTIONS") {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
     const url = new URL(req.url ?? "/", getDaemonBaseUrl());
     const body = req.method === "POST" ? await readJson(req) : undefined;
     const result = await this.routeRequest(req.method ?? "GET", `${url.pathname}${url.search}`, body);
