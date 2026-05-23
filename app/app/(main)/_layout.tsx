@@ -12,7 +12,11 @@ import {
   desktopStateFamily,
   desktopStateRefreshNonceAtom,
 } from "@/stores/desktopState";
-import { notificationFeedErrorFamily, notificationFeedFamily } from "@/stores/notifications";
+import {
+  notificationFeedErrorFamily,
+  notificationFeedFamily,
+  notificationFeedRefreshNonceAtom,
+} from "@/stores/notifications";
 import {
   reconcileProjectsAtom,
   selectedProjectEndpointAtom,
@@ -27,6 +31,7 @@ export default function MainLayout() {
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
+  const notificationRefreshNonce = useAtomValue(notificationFeedRefreshNonceAtom);
   const store = useStore();
   const { getToken } = useAuth();
 
@@ -123,7 +128,7 @@ export default function MainLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProjectPath, endpointKey, refreshNonce, getToken, store]);
 
-  // Poll unread durable notifications for the selected project. This mirrors
+  // Poll durable notifications for the selected project. This mirrors
   // desktop-state polling but uses the daemon's notification records as the
   // canonical feed for cross-device delivery work.
   useEffect(() => {
@@ -140,7 +145,7 @@ export default function MainLayout() {
       if (cancelled) return;
       try {
         const token = await getToken();
-        const feed = await listNotifications(endpoint!, { token, unreadOnly: true });
+        const feed = await listNotifications(endpoint!, { token });
         if (cancelled) return;
         store.set(notificationFeedFamily(selectedProjectPath!), {
           notifications: feed.notifications,
@@ -166,7 +171,7 @@ export default function MainLayout() {
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProjectPath, endpointKey, refreshNonce, getToken, store]);
+  }, [selectedProjectPath, endpointKey, notificationRefreshNonce, getToken, store]);
 
   return (
     <>
@@ -177,6 +182,7 @@ export default function MainLayout() {
           <Stack.Screen name="agent/[sessionId]/chat" />
           <Stack.Screen name="plans/[sessionId]" />
           <Stack.Screen name="service/[serviceId]" />
+          <Stack.Screen name="notifications" />
           <Stack.Screen name="threads" />
           <Stack.Screen name="graveyard" />
           <Stack.Screen name="settings" />
