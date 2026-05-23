@@ -2,6 +2,8 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import React, { useEffect } from "react";
 import { useColorScheme } from "nativewind";
 import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
+import { StatusBar } from "expo-status-bar";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, LOCAL_MODE, useAuth } from "@/lib/auth";
 import { useThemeEffect } from "@/lib/theme-effect";
 
@@ -35,19 +37,28 @@ export default function RootLayout() {
   const navTheme = colorScheme === "dark" ? DarkTheme : DefaultTheme;
 
   return (
-    <ThemeProvider value={navTheme}>
-      <AuthProvider>
-        <AuthGate>
-          <Stack>
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="(main)" options={{ headerShown: false }} />
-            <Stack.Screen name="landing" options={{ headerShown: false }} />
-            <Stack.Screen name="cli-auth" options={{ headerShown: false }} />
-            <Stack.Screen name="sign-in" options={{ headerShown: false, presentation: "modal" }} />
-            <Stack.Screen name="sign-up" options={{ headerShown: false, presentation: "modal" }} />
-          </Stack>
-        </AuthGate>
-      </AuthProvider>
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider value={navTheme}>
+        <AuthProvider>
+          <AuthGate>
+            <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+            <Stack>
+              <Stack.Screen name="index" options={{ headerShown: false }} />
+              <Stack.Screen name="(main)" options={{ headerShown: false }} />
+              <Stack.Screen name="landing" options={{ headerShown: false }} />
+              <Stack.Screen name="cli-auth" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="sign-in"
+                options={{ headerShown: false, presentation: "modal" }}
+              />
+              <Stack.Screen
+                name="sign-up"
+                options={{ headerShown: false, presentation: "modal" }}
+              />
+            </Stack>
+          </AuthGate>
+        </AuthProvider>
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }

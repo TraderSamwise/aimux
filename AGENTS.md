@@ -23,9 +23,10 @@ The browser and native clients live in `app/`. Single Expo codebase targeting we
 
 ```bash
 cd app
-yarn web      # web client served by Metro on http://localhost:8081, HMR
-yarn ios      # iOS simulator (Expo Go or dev client)
-yarn android  # Android emulator
+yarn dev:web:local      # web client on http://localhost:8081, HMR, aimux-dev daemon
+yarn dev:native:local   # Metro for an already-installed native dev build
+yarn dev:ios:local      # build/install/open the iOS simulator dev build, not Expo Go
+yarn dev:android:local  # build/install/open the Android emulator dev build
 ```
 
 What triggers what:
@@ -99,6 +100,8 @@ For distribution, EAS produces native bundles via the `app/scripts/build.sh` pip
 ```bash
 cd app
 yarn build:testflight   # TestFlight, iOS default channel
+yarn build --android    # Play/internal Android build
+yarn build --all        # iOS + Android
 yarn build:production   # production, App Store / Play
 ```
 

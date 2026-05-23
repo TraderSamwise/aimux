@@ -81,7 +81,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               transform: [{ translateX }],
             }}
           >
-            <ProjectSidebar />
+            <ProjectSidebar showBottomNav={false} />
           </Animated.View>
         ) : null}
       </View>
