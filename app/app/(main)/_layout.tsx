@@ -3,7 +3,7 @@ import { Stack } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
 import { NotificationProvider } from "@/components/NotificationProvider";
-import { getDesktopState, listProjects, setApiRelay } from "@/lib/api";
+import { getDesktopState, listNotifications, listProjects, setApiRelay } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { RelayTransport } from "@/lib/relay-transport";
@@ -12,6 +12,7 @@ import {
   desktopStateFamily,
   desktopStateRefreshNonceAtom,
 } from "@/stores/desktopState";
+import { notificationFeedErrorFamily, notificationFeedFamily } from "@/stores/notifications";
 import {
   reconcileProjectsAtom,
   selectedProjectEndpointAtom,
@@ -107,6 +108,51 @@ export default function MainLayout() {
           const msg = err instanceof Error ? err.message : String(err);
           store.set(desktopStateErrorFamily(selectedProjectPath!), msg);
           console.warn("desktop-state fetch failed:", err);
+        }
+      }
+      if (cancelled) return;
+      timer = setTimeout(poll, POLL_INTERVAL_MS);
+    }
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+    // endpoint is included as a value but we depend on endpointKey for stable identity
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectPath, endpointKey, refreshNonce, getToken, store]);
+
+  // Poll unread durable notifications for the selected project. This mirrors
+  // desktop-state polling but uses the daemon's notification records as the
+  // canonical feed for cross-device delivery work.
+  useEffect(() => {
+    if (!selectedProjectPath) return;
+    if (!endpoint) {
+      store.set(notificationFeedFamily(selectedProjectPath), null);
+      store.set(notificationFeedErrorFamily(selectedProjectPath), null);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function poll() {
+      if (cancelled) return;
+      try {
+        const token = await getToken();
+        const feed = await listNotifications(endpoint!, { token, unreadOnly: true });
+        if (cancelled) return;
+        store.set(notificationFeedFamily(selectedProjectPath!), {
+          notifications: feed.notifications,
+          unreadCount: feed.unreadCount,
+          fetchedAt: new Date().toISOString(),
+        });
+        store.set(notificationFeedErrorFamily(selectedProjectPath!), null);
+      } catch (err) {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : String(err);
+          store.set(notificationFeedErrorFamily(selectedProjectPath!), msg);
+          console.warn("notification fetch failed:", err);
         }
       }
       if (cancelled) return;
