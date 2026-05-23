@@ -1,6 +1,6 @@
 import { atom } from "jotai";
 import { atomFamily } from "jotai/utils";
-import type { ChatMessage, HistoryPart, StreamEvent } from "@/lib/events";
+import type { ChatMessage, HistoryPart, ParsedAgentOutput, StreamEvent } from "@/lib/events";
 
 export interface PendingMessage {
   clientMessageId: string;
@@ -15,6 +15,9 @@ export interface PendingMessage {
 export const chatHistoryFamily = atomFamily((_sessionId: string) => atom<ChatMessage[]>([]));
 export const pendingMessagesFamily = atomFamily((_sessionId: string) => atom<PendingMessage[]>([]));
 export const outputBufferFamily = atomFamily((_sessionId: string) => atom<string>(""));
+export const parsedOutputFamily = atomFamily((_sessionId: string) =>
+  atom<ParsedAgentOutput | null>(null),
+);
 export const streamingFamily = atomFamily((_sessionId: string) => atom<boolean>(false));
 // Kept for future stream-token dedup; not wired up yet — see Task 3 deviation #6.
 export const streamTokenFamily = atomFamily((_sessionId: string) => atom<number>(0));
@@ -95,6 +98,7 @@ export const ingestEventAtom = atom(null, (_get, set, event: StreamEvent) => {
       return;
     case "agent_output":
       set(outputBufferFamily(event.sessionId), event.output);
+      set(parsedOutputFamily(event.sessionId), event.parsed ?? null);
       set(streamingFamily(event.sessionId), true);
       return;
     case "alert":

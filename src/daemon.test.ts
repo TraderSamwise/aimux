@@ -21,6 +21,7 @@ vi.mock("./paths.js", () => ({
   getDaemonInfoPath: () => join(tmpRoot, ".aimux", "daemon", "daemon.json"),
   getDaemonStatePath: () => join(tmpRoot, ".aimux", "daemon", "state.json"),
   getDaemonStdioLogPath: () => join(tmpRoot, ".aimux", "daemon", "logs", "daemon-stdio.log"),
+  getAuthPath: () => join(tmpRoot, ".aimux", "auth.json"),
   getProjectStateDir: () => join(tmpRoot, ".aimux", "projects", "global"),
   getProjectStateDirFor: (cwd: string) => join(tmpRoot, ".aimux", "projects", `proj-${basename(cwd)}`),
   getProjectIdFor: (cwd: string) => `proj-${basename(cwd)}`,
@@ -419,5 +420,71 @@ describe("daemon routing (relay + proxy)", () => {
 
     expect(res.status).toBe(504);
     expect(res.body).toMatchObject({ ok: false });
+  });
+
+  it("allows browser preflight requests to daemon routes", async () => {
+    const originalPort = process.env.AIMUX_DAEMON_PORT;
+    const port = "49191";
+    process.env.AIMUX_DAEMON_PORT = port;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    try {
+      await daemon.start();
+
+      const res = await fetch(`http://127.0.0.1:${port}/projects`, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://localhost:8081",
+          "Access-Control-Request-Method": "GET",
+        },
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8081");
+      expect(res.headers.get("access-control-allow-methods")).toContain("GET");
+    } finally {
+      daemon.stop();
+      if (originalPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = originalPort;
+      }
+    }
+  });
+
+  it("rejects browser requests from disallowed origins", async () => {
+    const originalPort = process.env.AIMUX_DAEMON_PORT;
+    const port = "49192";
+    process.env.AIMUX_DAEMON_PORT = port;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    try {
+      await daemon.start();
+
+      const preflight = await fetch(`http://127.0.0.1:${port}/projects`, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "https://example.com",
+          "Access-Control-Request-Method": "GET",
+        },
+      });
+      const actual = await fetch(`http://127.0.0.1:${port}/projects`, {
+        headers: { Origin: "https://example.com" },
+      });
+
+      expect(preflight.status).toBe(403);
+      expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
+      expect(actual.status).toBe(403);
+      expect(actual.headers.get("access-control-allow-origin")).toBeNull();
+    } finally {
+      daemon.stop();
+      if (originalPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = originalPort;
+      }
+    }
   });
 });

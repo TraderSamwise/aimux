@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Appearance, Platform } from "react-native";
 import { useAtomValue } from "jotai";
 import { colorScheme } from "nativewind";
-import { themePreferenceAtom } from "@/stores/ui";
+import { themePreferenceAtom } from "@/stores/settings";
 
 // NativeWind manages the dark class on its own styled components, but the HTML
 // root needs explicit toggling so global.css's :root / .dark CSS-variable

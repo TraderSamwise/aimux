@@ -1,24 +1,36 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { Columns2, MessageSquare } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { ChatComposer } from "@/components/ChatComposer";
 import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
 import { getAgentHistory, getAgentOutput } from "@/lib/api";
+import {
+  messagesFromParsedAgentOutput,
+  pendingPromptAlreadyRendered,
+} from "@/lib/parsed-transcript";
 import { singleRouteParam } from "@/lib/route-params";
 import {
   chatHistoryFamily,
   ingestEventAtom,
   lastErrorFamily,
   outputBufferFamily,
+  parsedOutputFamily,
   pendingMessagesFamily,
   setHistoryAtom,
 } from "@/stores/chat";
-import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
+import {
+  projectsAtom,
+  selectedProjectAtom,
+  selectedSessionIdAtom,
+  selectProjectAtom,
+} from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { chatTerminalSplitAtom } from "@/stores/settings";
 import type { ChatMessage } from "@/lib/events";
 
 const RELAY_CHAT_POLL_INTERVAL_MS = 2000;
@@ -28,6 +40,8 @@ export default function ChatScreen() {
   const sessionId = singleRouteParam(params.sessionId);
   const sessionKey = sessionId ?? "";
   const project = useAtomValue(selectedProjectAtom);
+  const projects = useAtomValue(projectsAtom);
+  const selectProject = useSetAtom(selectProjectAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const ingestEvent = useSetAtom(ingestEventAtom);
   const setHistory = useSetAtom(setHistoryAtom);
@@ -35,6 +49,8 @@ export default function ChatScreen() {
   const pendingMessages = useAtomValue(pendingMessagesFamily(sessionKey));
   const output = useAtomValue(outputBufferFamily(sessionKey));
   const setOutput = useSetAtom(outputBufferFamily(sessionKey));
+  const parsedOutput = useAtomValue(parsedOutputFamily(sessionKey));
+  const setParsedOutput = useSetAtom(parsedOutputFamily(sessionKey));
   const lastError = useAtomValue(lastErrorFamily(sessionKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
@@ -42,13 +58,29 @@ export default function ChatScreen() {
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const scrollRef = useRef<ScrollView>(null);
+  const terminalScrollRef = useRef<ScrollView>(null);
 
   // Keep selectedSessionId in the projects store in sync with the route param so the sidebar highlights it.
   useEffect(() => {
     if (!sessionId) return;
     selectSession(sessionId);
   }, [sessionId, selectSession]);
+
+  // The route is the source of truth on refresh/deep link. If persisted project
+  // state points elsewhere, recover the project that owns this session.
+  useEffect(() => {
+    if (!sessionId || projects.length === 0) return;
+    if (project?.sessions.some((session) => session.id === sessionId)) return;
+    const owner = projects.find((candidate) =>
+      candidate.sessions.some((session) => session.id === sessionId),
+    );
+    if (owner) {
+      selectProject(owner.path);
+      selectSession(sessionId);
+    }
+  }, [sessionId, projects, project, selectProject, selectSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,6 +167,7 @@ export default function ChatScreen() {
         if (cancelled) return;
         setHistory({ sessionId: sessionId!, messages: historyResult.messages ?? [] });
         setOutput(outputResult.output ?? "");
+        setParsedOutput(outputResult.parsed ?? null);
       } catch (err) {
         if (!cancelled) console.warn("relay chat poll failed:", err);
       }
@@ -158,7 +191,10 @@ export default function ChatScreen() {
     useRelayPolling,
     setHistory,
     setOutput,
+    setParsedOutput,
   ]);
+
+  const parsedMessages = useMemo(() => messagesFromParsedAgentOutput(parsedOutput), [parsedOutput]);
 
   const allMessages = useMemo<ChatMessage[]>(() => {
     const pending = pendingMessages.map((p) => ({
@@ -170,16 +206,28 @@ export default function ChatScreen() {
       deliveryState: p.deliveryState,
       deliveryError: p.deliveryError,
     }));
+    if (parsedMessages.length > 0) {
+      return [
+        ...parsedMessages,
+        ...pending.filter((message) => !pendingPromptAlreadyRendered(message, parsedMessages)),
+      ];
+    }
     return [...history, ...pending].sort((a, b) =>
       String(a.ts ?? "").localeCompare(String(b.ts ?? "")),
     );
-  }, [history, pendingMessages]);
+  }, [history, parsedMessages, pendingMessages]);
 
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: true });
   }, [allMessages.length, output]);
 
+  useEffect(() => {
+    terminalScrollRef.current?.scrollToEnd({ animated: false });
+  }, [output, showTerminalSplit]);
+
   const session = sessionId ? (project?.sessions.find((s) => s.id === sessionId) ?? null) : null;
+  const canShowTerminalSplit = Platform.OS === "web" && Boolean(output);
+  const showSplit = canShowTerminalSplit && showTerminalSplit;
 
   return (
     <View className="flex-1 bg-background">
@@ -195,18 +243,34 @@ export default function ChatScreen() {
                 {session?.tool ?? ""} · {session?.status ?? "unknown"}
               </Text>
             </View>
-            <Pressable
-              onPress={() =>
-                sessionId
-                  ? router.push({
-                      pathname: "/(main)/plans/[sessionId]",
-                      params: { sessionId },
-                    })
-                  : undefined
-              }
-            >
-              <Text className="text-sm text-primary">Plan</Text>
-            </Pressable>
+            <View className="flex-row items-center">
+              {Platform.OS === "web" ? (
+                <Pressable
+                  onPress={() => setShowTerminalSplit((current) => !current)}
+                  disabled={!canShowTerminalSplit}
+                  accessibilityLabel={showSplit ? "Show chat only" : "Show split terminal view"}
+                  className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
+                >
+                  {showSplit ? (
+                    <MessageSquare size={15} color="#a1a1aa" />
+                  ) : (
+                    <Columns2 size={15} color="#a1a1aa" />
+                  )}
+                </Pressable>
+              ) : null}
+              <Pressable
+                onPress={() =>
+                  sessionId
+                    ? router.push({
+                        pathname: "/(main)/plans/[sessionId]",
+                        params: { sessionId },
+                      })
+                    : undefined
+                }
+              >
+                <Text className="text-sm text-primary">Plan</Text>
+              </Pressable>
+            </View>
           </View>
 
           {!serviceEndpoint ? (
@@ -217,34 +281,52 @@ export default function ChatScreen() {
             </View>
           ) : (
             <>
-              <ScrollView ref={scrollRef} className="flex-1 px-4 py-2">
-                {loadingHistory && allMessages.length === 0 ? (
-                  <Text className="text-sm text-muted-foreground">Loading history…</Text>
-                ) : null}
-                {allMessages.map((m, idx) => (
-                  <MessageBlock
-                    key={m.id ?? m.clientMessageId ?? `idx-${idx}`}
-                    message={m}
-                    serviceEndpoint={serviceEndpoint}
-                  />
-                ))}
-                {output ? (
-                  <View className="self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1">
-                    <Text className="text-xs text-muted-foreground mb-1">Live output</Text>
-                    <Text className="text-secondary-foreground text-xs font-mono">{output}</Text>
+              <View className="flex-1" style={showSplit ? { flexDirection: "row" } : undefined}>
+                {showSplit ? (
+                  <View className="flex-1 border-r border-border bg-card">
+                    <ScrollView
+                      ref={terminalScrollRef}
+                      className="flex-1 px-4 py-3"
+                      horizontal={false}
+                    >
+                      <Text className="text-xs text-muted-foreground mb-2">Live output</Text>
+                      <Text className="text-secondary-foreground text-xs font-mono">{output}</Text>
+                    </ScrollView>
                   </View>
                 ) : null}
-                {lastError ? (
-                  <Text className="text-xs text-destructive my-2">{lastError}</Text>
-                ) : null}
-              </ScrollView>
-              {sessionId ? (
-                <ChatComposer
-                  serviceEndpoint={serviceEndpoint}
-                  sessionId={sessionId}
-                  token={token}
-                />
-              ) : null}
+                <View className="flex-1">
+                  <ScrollView ref={scrollRef} className="flex-1 px-4 py-2">
+                    {loadingHistory && allMessages.length === 0 ? (
+                      <Text className="text-sm text-muted-foreground">Loading history…</Text>
+                    ) : null}
+                    {allMessages.map((m, idx) => (
+                      <MessageBlock
+                        key={m.id ?? m.clientMessageId ?? `idx-${idx}`}
+                        message={m}
+                        serviceEndpoint={serviceEndpoint}
+                      />
+                    ))}
+                    {output && parsedMessages.length === 0 && !showSplit ? (
+                      <View className="self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1">
+                        <Text className="text-xs text-muted-foreground mb-1">Live output</Text>
+                        <Text className="text-secondary-foreground text-xs font-mono">
+                          {output}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {lastError ? (
+                      <Text className="text-xs text-destructive my-2">{lastError}</Text>
+                    ) : null}
+                  </ScrollView>
+                  {sessionId ? (
+                    <ChatComposer
+                      serviceEndpoint={serviceEndpoint}
+                      sessionId={sessionId}
+                      token={token}
+                    />
+                  ) : null}
+                </View>
+              </View>
             </>
           )}
         </View>
