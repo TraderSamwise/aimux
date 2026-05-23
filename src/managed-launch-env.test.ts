@@ -8,6 +8,7 @@ describe("managed launch env", () => {
         HOME: "/Users/sam",
         PATH: "/Users/sam/.volta/bin:/usr/bin",
         TERM: "xterm-256color",
+        COLORTERM: "truecolor",
         LANG: "en_US.UTF-8",
         VOLTA_HOME: "/Users/sam/.volta",
         TMUX: "/tmp/tmux-501/default,123,0",
@@ -25,6 +26,8 @@ describe("managed launch env", () => {
       HOME: "/Users/sam",
       PATH: "/Users/sam/.volta/bin:/usr/bin",
       TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      CLICOLOR: "1",
       LANG: "en_US.UTF-8",
       VOLTA_HOME: "/Users/sam/.volta",
       BUNDLE_GEMFILE: "/repo/Gemfile",
@@ -36,6 +39,20 @@ describe("managed launch env", () => {
     expect(env.SHLVL).toBeUndefined();
     expect(env._VOLTA_TOOL_RECURSION).toBeUndefined();
     expect(env.FOO_RECURSION_STATE).toBeUndefined();
+  });
+
+  it("normalizes control-process terminal env for interactive agents", () => {
+    const env = buildManagedLaunchEnv({
+      HOME: "/Users/sam",
+      PATH: "/usr/bin",
+      TERM: "dumb",
+      NO_COLOR: "1",
+    });
+
+    expect(env.TERM).toBe("xterm-256color");
+    expect(env.COLORTERM).toBe("truecolor");
+    expect(env.CLICOLOR).toBe("1");
+    expect(env.NO_COLOR).toBeUndefined();
   });
 
   it("wraps managed launches through env -i", () => {
