@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Pressable, TextInput, View } from "react-native";
+import { Platform, Pressable, TextInput, View } from "react-native";
 import { useSetAtom } from "jotai";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,14 @@ interface DraftImage {
   mimeType?: string;
   contentUrl?: string;
 }
+
+type ComposerKeyPressEvent = {
+  nativeEvent: {
+    key?: string;
+    shiftKey?: boolean;
+  };
+  preventDefault?: () => void;
+};
 
 function uuid(): string {
   // crypto.randomUUID is available on modern web + Hermes on RN 0.74+
@@ -163,6 +171,13 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
     }
   }
 
+  function handleComposerKeyPress(event: ComposerKeyPressEvent) {
+    if (Platform.OS !== "web") return;
+    if (event.nativeEvent.key !== "Enter" || event.nativeEvent.shiftKey) return;
+    event.preventDefault?.();
+    void handleSend();
+  }
+
   return (
     <View className="border-t border-border bg-background p-3">
       {draftImages.length > 0 ? (
@@ -186,6 +201,7 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
           placeholderTextColor="#9ca3af"
           value={draft}
           onChangeText={setDraft}
+          onKeyPress={handleComposerKeyPress}
           multiline
           editable={!sending}
         />
