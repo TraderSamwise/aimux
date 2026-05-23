@@ -58,32 +58,68 @@ Run the local web app with Expo HMR:
 
 ```sh
 cd app
-yarn dev:local
+yarn dev:web:local
 ```
 
-`yarn dev:local` disables relay mode and points the app at:
+`yarn dev:web:local` disables relay mode and points the web app at:
 
 ```sh
 http://localhost:43191
+```
+
+Run native dev builds without Expo Go:
+
+```sh
+cd app
+yarn dev:ios:local
+yarn dev:android:local
+```
+
+After a native dev build is installed, use Metro-only native HMR:
+
+```sh
+cd app
+yarn dev:native:local
+```
+
+The iOS simulator helper points at:
+
+```sh
+http://127.0.0.1:43191
+```
+
+The Android emulator helper points at:
+
+```sh
+http://10.0.2.2:43191
 ```
 
 The root helper does the build, ensures the dev daemon, and starts the app:
 
 ```sh
 yarn dev:gui
+yarn dev:gui:native
+yarn dev:gui:ios
+yarn dev:gui:android
 ```
 
 To run the local app against the production relay instead:
 
 ```sh
 cd app
-yarn dev:relay
+yarn dev:web:relay
+yarn dev:native:relay
+yarn dev:ios:relay
+yarn dev:android:relay
 ```
 
 or from the repo root:
 
 ```sh
-yarn dev:gui:relay
+yarn dev:gui:web:relay
+yarn dev:gui:native:relay
+yarn dev:gui:ios:relay
+yarn dev:gui:android:relay
 ```
 
 The app connection target is controlled with:
