@@ -48,7 +48,7 @@ export interface HistoryUpdateEvent {
 }
 
 export interface ParsedAgentOutput {
-  blocks?: Array<{ kind: string; text?: string; [k: string]: unknown }>;
+  blocks?: Array<{ type?: string; kind?: string; text?: string; [k: string]: unknown }>;
   [k: string]: unknown;
 }
 
