@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import type { LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Columns2, MessageSquare } from "lucide-react-native";
+import { Columns2, MessageSquare, SquareTerminal } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { ChatComposer } from "@/components/ChatComposer";
 import { MessageBlock } from "@/components/MessageBlock";
@@ -14,6 +15,7 @@ import {
   pendingPromptAlreadyRendered,
 } from "@/lib/parsed-transcript";
 import { singleRouteParam } from "@/lib/route-params";
+import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import {
   chatHistoryFamily,
   ingestEventAtom,
@@ -34,6 +36,12 @@ import { chatTerminalSplitAtom } from "@/stores/settings";
 import type { ChatMessage } from "@/lib/events";
 
 const RELAY_CHAT_POLL_INTERVAL_MS = 2000;
+const SPLIT_VIEW_MIN_WIDTH = 900;
+const NARROW_TERMINAL_DIVIDER_WIDTH = 36;
+const WIDE_TERMINAL_DIVIDER_WIDTH = 96;
+const MIN_TERMINAL_DIVIDER_WIDTH = 24;
+const TERMINAL_HORIZONTAL_PADDING = 32;
+const APPROX_TERMINAL_CHAR_WIDTH = 8;
 
 export default function ChatScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
@@ -56,8 +64,10 @@ export default function ChatScreen() {
   const relayStatus = useAtomValue(relayStatusAtom);
   const { getToken } = useAuth();
   const router = useRouter();
+  const { width } = useWindowDimensions();
   const [token, setToken] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const scrollRef = useRef<ScrollView>(null);
   const terminalScrollRef = useRef<ScrollView>(null);
@@ -226,8 +236,45 @@ export default function ChatScreen() {
   }, [output, showTerminalSplit]);
 
   const session = sessionId ? (project?.sessions.find((s) => s.id === sessionId) ?? null) : null;
-  const canShowTerminalSplit = Platform.OS === "web" && Boolean(output);
-  const showSplit = canShowTerminalSplit && showTerminalSplit;
+  const canShowTerminal = Boolean(output);
+  const viewportWidth =
+    Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
+  const canUseSplitView = Platform.OS === "web" && viewportWidth >= SPLIT_VIEW_MIN_WIDTH;
+  const showSplit = canUseSplitView && canShowTerminal && showTerminalSplit;
+  const showTerminalOnly = !canUseSplitView && canShowTerminal && showTerminalSplit;
+  const terminalToggleLabel =
+    showSplit || showTerminalOnly ? "Show chat view" : "Show terminal view";
+  const measuredDividerWidth = terminalPaneWidth
+    ? Math.max(
+        MIN_TERMINAL_DIVIDER_WIDTH,
+        Math.floor((terminalPaneWidth - TERMINAL_HORIZONTAL_PADDING) / APPROX_TERMINAL_CHAR_WIDTH),
+      )
+    : null;
+  const terminalDividerWidth = Math.min(
+    canUseSplitView ? WIDE_TERMINAL_DIVIDER_WIDTH : NARROW_TERMINAL_DIVIDER_WIDTH,
+    measuredDividerWidth ??
+      (canUseSplitView ? WIDE_TERMINAL_DIVIDER_WIDTH : NARROW_TERMINAL_DIVIDER_WIDTH),
+  );
+  const terminalOutput = useMemo(
+    () =>
+      formatTerminalOutputForDisplay(output, {
+        dividerWidth: terminalDividerWidth,
+      }),
+    [output, terminalDividerWidth],
+  );
+
+  function handleTerminalPaneLayout(event: LayoutChangeEvent) {
+    setTerminalPaneWidth(event.nativeEvent.layout.width);
+  }
+
+  const terminalPane = (
+    <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
+      <ScrollView ref={terminalScrollRef} className="flex-1 px-4 py-3" horizontal={false}>
+        <Text className="text-xs text-muted-foreground mb-2">Live output</Text>
+        <Text className="text-secondary-foreground text-xs font-mono">{terminalOutput}</Text>
+      </ScrollView>
+    </View>
+  );
 
   return (
     <View className="flex-1 bg-background">
@@ -244,20 +291,20 @@ export default function ChatScreen() {
               </Text>
             </View>
             <View className="flex-row items-center">
-              {Platform.OS === "web" ? (
-                <Pressable
-                  onPress={() => setShowTerminalSplit((current) => !current)}
-                  disabled={!canShowTerminalSplit}
-                  accessibilityLabel={showSplit ? "Show chat only" : "Show split terminal view"}
-                  className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
-                >
-                  {showSplit ? (
-                    <MessageSquare size={15} color="#a1a1aa" />
-                  ) : (
-                    <Columns2 size={15} color="#a1a1aa" />
-                  )}
-                </Pressable>
-              ) : null}
+              <Pressable
+                onPress={() => setShowTerminalSplit((current) => !current)}
+                disabled={!canShowTerminal}
+                accessibilityLabel={terminalToggleLabel}
+                className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
+              >
+                {showSplit || showTerminalOnly ? (
+                  <MessageSquare size={15} color="#a1a1aa" />
+                ) : canUseSplitView ? (
+                  <Columns2 size={15} color="#a1a1aa" />
+                ) : (
+                  <SquareTerminal size={15} color="#a1a1aa" />
+                )}
+              </Pressable>
               <Pressable
                 onPress={() =>
                   sessionId
@@ -283,49 +330,53 @@ export default function ChatScreen() {
             <>
               <View className="flex-1" style={showSplit ? { flexDirection: "row" } : undefined}>
                 {showSplit ? (
-                  <View className="flex-1 border-r border-border bg-card">
-                    <ScrollView
-                      ref={terminalScrollRef}
-                      className="flex-1 px-4 py-3"
-                      horizontal={false}
-                    >
-                      <Text className="text-xs text-muted-foreground mb-2">Live output</Text>
-                      <Text className="text-secondary-foreground text-xs font-mono">{output}</Text>
-                    </ScrollView>
-                  </View>
+                  <View className="flex-1 border-r border-border">{terminalPane}</View>
                 ) : null}
-                <View className="flex-1">
-                  <ScrollView ref={scrollRef} className="flex-1 px-4 py-2">
-                    {loadingHistory && allMessages.length === 0 ? (
-                      <Text className="text-sm text-muted-foreground">Loading history…</Text>
-                    ) : null}
-                    {allMessages.map((m, idx) => (
-                      <MessageBlock
-                        key={m.id ?? m.clientMessageId ?? `idx-${idx}`}
-                        message={m}
+                {showTerminalOnly ? (
+                  <View className="flex-1">
+                    {terminalPane}
+                    {sessionId ? (
+                      <ChatComposer
                         serviceEndpoint={serviceEndpoint}
+                        sessionId={sessionId}
+                        token={token}
                       />
-                    ))}
-                    {output && parsedMessages.length === 0 && !showSplit ? (
-                      <View className="self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1">
-                        <Text className="text-xs text-muted-foreground mb-1">Live output</Text>
-                        <Text className="text-secondary-foreground text-xs font-mono">
-                          {output}
-                        </Text>
-                      </View>
                     ) : null}
-                    {lastError ? (
-                      <Text className="text-xs text-destructive my-2">{lastError}</Text>
+                  </View>
+                ) : (
+                  <View className="flex-1">
+                    <ScrollView ref={scrollRef} className="flex-1 px-4 py-2">
+                      {loadingHistory && allMessages.length === 0 ? (
+                        <Text className="text-sm text-muted-foreground">Loading history…</Text>
+                      ) : null}
+                      {allMessages.map((m, idx) => (
+                        <MessageBlock
+                          key={m.id ?? m.clientMessageId ?? `idx-${idx}`}
+                          message={m}
+                          serviceEndpoint={serviceEndpoint}
+                        />
+                      ))}
+                      {output && parsedMessages.length === 0 && !showSplit ? (
+                        <View className="self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1">
+                          <Text className="text-xs text-muted-foreground mb-1">Live output</Text>
+                          <Text className="text-secondary-foreground text-xs font-mono">
+                            {output}
+                          </Text>
+                        </View>
+                      ) : null}
+                      {lastError ? (
+                        <Text className="text-xs text-destructive my-2">{lastError}</Text>
+                      ) : null}
+                    </ScrollView>
+                    {sessionId ? (
+                      <ChatComposer
+                        serviceEndpoint={serviceEndpoint}
+                        sessionId={sessionId}
+                        token={token}
+                      />
                     ) : null}
-                  </ScrollView>
-                  {sessionId ? (
-                    <ChatComposer
-                      serviceEndpoint={serviceEndpoint}
-                      sessionId={sessionId}
-                      token={token}
-                    />
-                  ) : null}
-                </View>
+                  </View>
+                )}
               </View>
             </>
           )}
