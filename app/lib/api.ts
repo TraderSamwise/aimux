@@ -10,6 +10,7 @@
 // hosted/Clerk-enabled deployments.
 
 import { getDaemonUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
+import { env } from "@/lib/env";
 import type { RelayTransport } from "@/lib/relay-transport";
 import type { DesktopState } from "@/lib/desktop-state";
 import type { AgentInputPart, ChatMessage, ParsedAgentOutput } from "@/lib/events";
@@ -74,6 +75,10 @@ async function callServiceViaRelay<T>(
   return callDaemonViaRelay<T>(method, proxyPath, body);
 }
 
+function shouldRouteViaRelay(): boolean {
+  return _relay !== null || env.AIMUX_CONNECTION_MODE === "relay";
+}
+
 async function callProjectJson<T>(
   endpoint: ServiceEndpoint,
   method: string,
@@ -81,7 +86,7 @@ async function callProjectJson<T>(
   opts?: ApiOpts,
   body?: unknown,
 ): Promise<T> {
-  if (_relay?.wsConnected) return callServiceViaRelay<T>(endpoint, method, path, body);
+  if (shouldRouteViaRelay()) return callServiceViaRelay<T>(endpoint, method, path, body);
   return callJson<T>(
     `${getServiceUrl(endpoint)}${path}`,
     {
@@ -124,12 +129,12 @@ export interface DaemonProject {
 }
 
 export async function getDaemonHealth(opts?: ApiOpts): Promise<DaemonHealth> {
-  if (_relay?.wsConnected) return callDaemonViaRelay<DaemonHealth>("GET", "/health");
+  if (shouldRouteViaRelay()) return callDaemonViaRelay<DaemonHealth>("GET", "/health");
   return callJson<DaemonHealth>(`${getDaemonUrl()}/health`, { method: "GET" }, opts);
 }
 
 export async function listProjects(opts?: ApiOpts): Promise<DaemonProject[]> {
-  if (_relay?.wsConnected) {
+  if (shouldRouteViaRelay()) {
     const data = await callDaemonViaRelay<{ ok: boolean; projects: DaemonProject[] }>(
       "GET",
       "/projects",
@@ -154,7 +159,7 @@ export async function ensureProject(
   projectRoot: string,
   opts?: ApiOpts,
 ): Promise<EnsureProjectResponse> {
-  if (_relay?.wsConnected)
+  if (shouldRouteViaRelay())
     return callDaemonViaRelay<EnsureProjectResponse>("POST", "/projects/ensure", { projectRoot });
   return callJson<EnsureProjectResponse>(
     `${getDaemonUrl()}/projects/ensure`,

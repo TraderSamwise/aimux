@@ -2,11 +2,12 @@ const defaultedRuntimeEnvKeys = [];
 
 const optionalRuntimeEnvKeys = [
   "EXPO_PUBLIC_AIMUX_DAEMON_URL",
+  "EXPO_PUBLIC_AIMUX_CONNECTION_MODE",
   "EXPO_PUBLIC_AIMUX_RELAY_URL",
   "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
 ];
 
-const requiredReleaseEnvKeys = [];
+const requiredReleaseEnvKeys = ["EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY"];
 const buildOnlyEnvKeys = [];
 
 const allKnownEnvKeys = Array.from(
