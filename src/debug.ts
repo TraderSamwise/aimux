@@ -50,6 +50,9 @@ interface LogRecord {
   fields?: LogFields;
 }
 
+const SENSITIVE_ASSIGNMENT_PATTERN =
+  /\b([A-Za-z_][A-Za-z0-9_]*=)(?:\\"(?:[^"\\]|\\.)*\\"|\\'(?:[^'\\]|\\.)*\\'|"[^"]*"|'[^']*'|[^"',\s\]]+)/g;
+
 const DEFAULT_RUNTIME_CONFIG: LoggingRuntimeConfig = {
   enabled: false,
   level: "info",
@@ -198,18 +201,67 @@ function writeRecord(record: LogRecord): void {
   }
 }
 
+function sanitizeLogString(value: string): string {
+  return value.replace(SENSITIVE_ASSIGNMENT_PATTERN, (match, assignment: string) => {
+    const name = assignment.slice(0, -1);
+    return isSensitiveLogName(name) ? `${assignment}<redacted>` : match;
+  });
+}
+
+function isSensitiveLogName(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return (
+    normalized.includes("token") ||
+    normalized.includes("secret") ||
+    normalized.includes("password") ||
+    normalized.includes("credential") ||
+    normalized.includes("authorization") ||
+    normalized.includes("auth") ||
+    normalized === "key" ||
+    normalized.endsWith("key") ||
+    normalized.includes("_key")
+  );
+}
+
+function sanitizeLogValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (typeof value === "string") return sanitizeLogString(value);
+  if (value === null || typeof value !== "object") return value;
+  const jsonLike = value as { toJSON?: () => unknown };
+  if (typeof jsonLike.toJSON === "function") {
+    try {
+      const serialized = jsonLike.toJSON();
+      if (serialized !== value) return sanitizeLogValue(serialized, seen);
+    } catch {
+      // Fall through to structural sanitization.
+    }
+  }
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((entry) => sanitizeLogValue(entry, seen));
+  const output: Record<string, unknown> = {};
+  for (const [key, fieldValue] of Object.entries(value as Record<string, unknown>)) {
+    output[key] = isSensitiveLogName(key) ? "<redacted>" : sanitizeLogValue(fieldValue, seen);
+  }
+  return output;
+}
+
+function sanitizeLogFields(fields: LogFields | undefined): LogFields | undefined {
+  if (!fields) return undefined;
+  return sanitizeLogValue(fields) as LogFields;
+}
+
 export function logAt(level: LogLevel, message: string, category = "general", fields?: LogFields): void {
   if (!shouldLog(level, category)) return;
   writeRecord({
     ts: new Date().toISOString(),
     level,
     category,
-    message,
+    message: sanitizeLogString(message),
     pid: process.pid,
     processKind: runtimeConfig.processKind,
     projectId: runtimeConfig.projectId,
     projectRoot: runtimeConfig.projectRoot,
-    fields,
+    fields: sanitizeLogFields(fields),
   });
 }
 
