@@ -15,3 +15,13 @@ export const notificationFeedFamily = atomFamily((_projectPath: string) =>
 export const notificationFeedErrorFamily = atomFamily((_projectPath: string) =>
   atom<string | null>(null),
 );
+
+export const notificationFeedRefreshNonceAtom = atom(0);
+
+export const kickNotificationFeedRefreshAtom = atom(null, (get, set) => {
+  set(notificationFeedRefreshNonceAtom, get(notificationFeedRefreshNonceAtom) + 1);
+});
+
+export const notificationUnreadCountFamily = atomFamily((projectPath: string) =>
+  atom((get) => get(notificationFeedFamily(projectPath))?.unreadCount ?? 0),
+);
