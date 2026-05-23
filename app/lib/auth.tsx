@@ -12,8 +12,14 @@ export interface AuthState {
   getToken: () => Promise<string | null>;
 }
 
-/** true when no Clerk key is configured — app runs fully local */
-export const LOCAL_MODE = !env.CLERK_PUBLISHABLE_KEY;
+export function assertAuthConfiguredForConnectionMode(): void {
+  if (env.AIMUX_CONNECTION_MODE === "relay" && !env.CLERK_PUBLISHABLE_KEY) {
+    throw new Error("EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY is required when aimux is in relay mode.");
+  }
+}
+
+/** true when no Clerk key is configured and the app is using local daemon HTTP */
+export const LOCAL_MODE = env.AIMUX_CONNECTION_MODE === "local" && !env.CLERK_PUBLISHABLE_KEY;
 
 const noop = async () => {};
 const noopToken = async () => null;
@@ -45,6 +51,8 @@ function useClerkAuthAdapter(): AuthState {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  assertAuthConfiguredForConnectionMode();
+
   if (LOCAL_MODE) {
     return (
       <LocalAuthContext.Provider
@@ -70,6 +78,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 /* eslint-disable react-hooks/rules-of-hooks -- LOCAL_MODE is a build-time constant */
 export function useAuth(): AuthState {
+  assertAuthConfiguredForConnectionMode();
+
   if (LOCAL_MODE) {
     return useLocalAuth();
   }
@@ -78,6 +88,8 @@ export function useAuth(): AuthState {
 
 /** Safe useUser — returns { user: null } when Clerk is absent or user is not signed in. */
 export function useUser() {
+  assertAuthConfiguredForConnectionMode();
+
   if (LOCAL_MODE) return { user: null };
   const { user } = useClerkUser();
   return { user: user ?? null };

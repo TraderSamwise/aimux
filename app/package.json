@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "start": "expo start",
-    "dev:local": "EXPO_PUBLIC_AIMUX_RELAY_URL= EXPO_PUBLIC_AIMUX_DAEMON_URL=http://localhost:43191 expo start --web",
+    "dev:local": "EXPO_PUBLIC_AIMUX_CONNECTION_MODE=local EXPO_PUBLIC_AIMUX_DAEMON_URL=http://localhost:43191 expo start --web",
+    "dev:relay": "EXPO_PUBLIC_AIMUX_CONNECTION_MODE=relay EXPO_PUBLIC_AIMUX_RELAY_URL=wss://relay.aimux.app expo start --web",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",

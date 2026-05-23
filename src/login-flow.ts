@@ -12,9 +12,8 @@ import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import { saveCredentials } from "./credentials.js";
+import { resolveRelayUrl, resolveWebAppUrl } from "./connection-targets.js";
 
-const DEFAULT_WEB_APP_URL = "https://aimux.app";
-const DEFAULT_RELAY_URL = "wss://relay.aimux.app";
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 const HTML_CONTENT_TYPE = "text/html; charset=utf-8";
 
@@ -37,8 +36,8 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
   // minted by whichever relay the web app uses, so it has to be the same
   // one the daemon then connects to — pinning it to env keeps both ends in
   // sync.
-  const webAppUrl = (opts.webAppUrl ?? process.env.AIMUX_WEB_APP_URL ?? DEFAULT_WEB_APP_URL).replace(/\/$/, "");
-  const relayUrl = (process.env.AIMUX_RELAY_URL ?? DEFAULT_RELAY_URL).replace(/\/$/, "");
+  const webAppUrl = resolveWebAppUrl(opts.webAppUrl);
+  const relayUrl = resolveRelayUrl();
 
   const state = randomBytes(16).toString("hex");
 

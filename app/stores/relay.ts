@@ -5,5 +5,6 @@ import type { RelayStatus } from "@/lib/relay-transport";
 // Set by the relay lifecycle effect in (main)/_layout.tsx.
 export const relayStatusAtom = atom<RelayStatus>("disconnected");
 
-// True when the deployment is configured for relay use (EXPO_PUBLIC_AIMUX_RELAY_URL set).
+// True when the app is running in relay mode, either by production default or
+// EXPO_PUBLIC_AIMUX_CONNECTION_MODE=relay.
 export const relayConfiguredAtom = atom<boolean>(false);

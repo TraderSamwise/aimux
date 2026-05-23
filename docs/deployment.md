@@ -71,8 +71,16 @@ Set in your hosting platform (Vercel, etc.):
 
 ```env
 EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
-EXPO_PUBLIC_AIMUX_RELAY_URL=wss://relay.aimux.app
+# Optional overrides:
+# EXPO_PUBLIC_AIMUX_CONNECTION_MODE=relay
+# EXPO_PUBLIC_AIMUX_RELAY_URL=wss://relay.aimux.app
 ```
+
+`EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` is required for relay/production builds.
+Local mode may omit it and will run with local-only auth.
+Production builds default `EXPO_PUBLIC_AIMUX_CONNECTION_MODE` to `relay`, so
+only set it when forcing a local build. Set `EXPO_PUBLIC_AIMUX_RELAY_URL` only
+when pointing the app at a staging or self-hosted relay.
 
 ### Deploy to Vercel
 
@@ -108,12 +116,13 @@ their local daemon via the browser:
 aimux login
 ```
 
-This opens the web app at `${AIMUX_WEB_APP_URL}/cli-auth` (defaulting to `https://aimux.app`), mints a
+This opens the web app at `${AIMUX_WEB_APP_URL}/cli-auth` (defaulting to `https://aimux.app`, or `http://localhost:8081` for `aimux-dev`), mints a
 long-lived (~90d) HS256 daemon token at the relay, and stores it locally
 at `~/.aimux/auth.json`. The daemon picks it up on next start, or
 `aimux remote enable` connects without a restart.
 
-`AIMUX_RELAY_URL` may also be set in the environment as an override.
+The relay URL may also be overridden by setting `AIMUX_RELAY_URL` in the
+environment; it defaults to `wss://relay.aimux.app`.
 Server-side, the relay needs `CLERK_SECRET_KEY` (verifies the user's
 Clerk session during `aimux login`) and `RELAY_TOKEN_SECRET` (signs the
 HS256 daemon tokens it mints).
