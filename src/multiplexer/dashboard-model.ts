@@ -381,6 +381,16 @@ async function resumeOfflineAgentWithPending(
   );
 }
 
+async function resumeOfflineAgentWithPendingAndSettle(
+  host: DashboardModelHost,
+  sessionId: string,
+  sessionSeed?: any,
+): Promise<{ sessionId: string; status: "running" }> {
+  const result = await resumeOfflineAgentWithPending(host, sessionId, sessionSeed);
+  await waitForMetadataSessionRunning(host, sessionId);
+  return result;
+}
+
 async function resumeAgentAndDirectTeammates(
   host: DashboardModelHost,
   sessionId: string,
@@ -397,12 +407,12 @@ async function resumeAgentAndDirectTeammates(
   }
 
   const teammates = isTeammateSession(offline) ? [] : selectDirectTeammates(host.offlineSessions ?? [], sessionId);
-  const result = await resumeOfflineAgentWithPending(host, sessionId, sessionSeed);
+  const result = await resumeOfflineAgentWithPendingAndSettle(host, sessionId, sessionSeed);
   const teammateFailures: Array<{ sessionId: string; error: unknown }> = [];
 
   for (const teammate of teammates) {
     try {
-      await resumeOfflineAgentWithPending(host, teammate.id, toDashboardSessionSeed(teammate) ?? teammate);
+      await resumeOfflineAgentWithPendingAndSettle(host, teammate.id, toDashboardSessionSeed(teammate) ?? teammate);
     } catch (error) {
       teammateFailures.push({ sessionId: teammate.id, error });
     }
@@ -426,6 +436,22 @@ function runProjectServiceUiRefresh(host: DashboardModelHost): void {
   if (host.mode === "dashboard") {
     host.renderCurrentDashboardView();
   }
+}
+
+const projectServiceAgentResumeQueues = new WeakMap<object, Promise<unknown>>();
+
+async function enqueueProjectServiceAgentResume<T>(host: object, work: () => Promise<T>): Promise<T> {
+  const previous = projectServiceAgentResumeQueues.get(host) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(work);
+  const tracked = current
+    .catch(() => undefined)
+    .finally(() => {
+      if (projectServiceAgentResumeQueues.get(host) === tracked) {
+        projectServiceAgentResumeQueues.delete(host);
+      }
+    });
+  projectServiceAgentResumeQueues.set(host, tracked);
+  return current;
 }
 
 function scheduleProjectServiceUiRefresh(host: DashboardModelHost): void {
@@ -890,7 +916,7 @@ export async function refreshDashboardModelFromService(host: DashboardModelHost,
       if (endpoint) {
         try {
           const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/desktop-state`, {
-            timeoutMs: 250,
+            timeoutMs: force ? 2000 : 750,
           });
           if (status >= 200 && status < 300) {
             const body = json as {
@@ -1036,7 +1062,8 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           () => host.removeOfflineService(serviceId),
           () => waitForMetadataCondition(host, () => isMetadataServiceRemoved(host, serviceId)),
         ),
-      resumeAgent: ({ sessionId, session }: any) => resumeAgentAndDirectTeammates(host, sessionId, session),
+      resumeAgent: ({ sessionId, session }: any) =>
+        enqueueProjectServiceAgentResume(host, () => resumeAgentAndDirectTeammates(host, sessionId, session)),
       listGraveyard: () => host.listGraveyardEntries(),
       resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
     },

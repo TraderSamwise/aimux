@@ -21,6 +21,36 @@ type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
 type DashboardSessionMutationPendingAction = Exclude<PendingSessionActionKind, "renaming">;
 
+const dashboardAgentRestoreQueues = new WeakMap<object, Promise<void>>();
+const dashboardQueuedAgentRestores = new WeakMap<object, Set<string>>();
+
+function queuedAgentRestoresFor(host: object): Set<string> {
+  let queued = dashboardQueuedAgentRestores.get(host);
+  if (!queued) {
+    queued = new Set();
+    dashboardQueuedAgentRestores.set(host, queued);
+  }
+  return queued;
+}
+
+async function enqueueDashboardAgentRestore(host: object, sessionId: string, work: () => Promise<void>): Promise<void> {
+  const queued = queuedAgentRestoresFor(host);
+  if (queued.has(sessionId)) return;
+  queued.add(sessionId);
+  const previous = dashboardAgentRestoreQueues.get(host) ?? Promise.resolve();
+  const current = previous
+    .catch(() => undefined)
+    .then(work)
+    .finally(() => {
+      queued.delete(sessionId);
+      if (dashboardAgentRestoreQueues.get(host) === current) {
+        dashboardAgentRestoreQueues.delete(host);
+      }
+    });
+  dashboardAgentRestoreQueues.set(host, current);
+  await current;
+}
+
 function buildPendingSessionSeed(input: {
   sessionId: string;
   tool: string;
@@ -656,7 +686,10 @@ export async function graveyardSessionWithFeedback(
 export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
   if (host.mode === "dashboard") {
     const label = session.label ?? session.command;
-    if (host.dashboardPendingActions.getSessionAction(session.id) === "starting") {
+    if (
+      host.dashboardPendingActions.getSessionAction(session.id) === "starting" ||
+      queuedAgentRestoresFor(host).has(session.id)
+    ) {
       return;
     }
     const sessionSeed =
@@ -672,25 +705,31 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         team: session.team,
       } satisfies DashboardSession);
     let resumeResult: any;
-    await runDashboardSessionMutation(host, {
-      sessionId: session.id,
-      pendingAction: "starting",
-      sessionSeed,
-      onBeforeRequest: () => {
-        host.footerFlash = `Restoring ${label}`;
-        host.footerFlashTicks = 3;
-      },
-      request: async () => {
-        resumeResult = await host.postToProjectService(
-          "/agents/resume",
-          { sessionId: session.id, session: sessionSeed },
-          { timeoutMs: 10_000 },
-        );
-      },
-      settle: () => waitForDashboardSessionResumeSettle(host, session.id),
-      successFlash: { message: `Restored ${label}` },
-      onError: () => host.refreshDashboardModelFromService(true),
-      errorTitle: `Failed to restore "${label}"`,
+    host.footerFlash = `Queued restore ${label}`;
+    host.footerFlashTicks = 3;
+    host.setPendingDashboardSessionAction(session.id, "starting", { sessionSeed });
+    host.renderDashboard();
+    await enqueueDashboardAgentRestore(host, session.id, async () => {
+      await runDashboardSessionMutation(host, {
+        sessionId: session.id,
+        pendingAction: "starting",
+        sessionSeed,
+        onBeforeRequest: () => {
+          host.footerFlash = `Restoring ${label}`;
+          host.footerFlashTicks = 3;
+        },
+        request: async () => {
+          resumeResult = await host.postToProjectService(
+            "/agents/resume",
+            { sessionId: session.id, session: sessionSeed },
+            { timeoutMs: 60_000 },
+          );
+        },
+        settle: () => waitForDashboardSessionResumeSettle(host, session.id),
+        successFlash: { message: `Restored ${label}` },
+        onError: () => host.refreshDashboardModelFromService(true),
+        errorTitle: `Failed to restore "${label}"`,
+      });
     });
     const warningLines = restoreWarningLines(resumeResult);
     if (warningLines.length > 0) {
