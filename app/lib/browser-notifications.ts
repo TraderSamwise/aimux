@@ -40,10 +40,14 @@ export function isBrowserDocumentVisible(): boolean {
 export function showBrowserNotification(event: ClientNotificationEvent): boolean {
   const api = browserNotificationApi();
   if (!api || api.permission !== "granted") return false;
-  new api(event.title, {
-    body: event.body,
-    tag: event.dedupeKey,
-    renotify: false,
-  });
-  return true;
+  try {
+    new api(event.title, {
+      body: event.body,
+      tag: event.dedupeKey,
+      renotify: false,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }

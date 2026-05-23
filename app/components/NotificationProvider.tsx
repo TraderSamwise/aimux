@@ -22,14 +22,16 @@ export function NotificationProvider() {
   useEffect(() => {
     const nextSnapshots = new Map<string, SessionNotificationSnapshot>();
     const previousSnapshots = snapshotsRef.current;
+    const projectScope = selectedProjectPath ?? EMPTY_PROJECT_PATH;
 
     for (const session of desktopState?.sessions ?? []) {
       const current = snapshotSessionForNotifications(session);
-      nextSnapshots.set(session.id, current);
+      const sessionKey = `${projectScope}:${session.id}`;
+      nextSnapshots.set(sessionKey, current);
 
       const event = evaluateAgentNotification(
         session,
-        previousSnapshots.get(session.id),
+        previousSnapshots.get(sessionKey),
         notificationSettings,
         {
           projectName: selectedProject?.name,
