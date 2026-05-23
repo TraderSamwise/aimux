@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createStore } from "jotai";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -25,6 +25,10 @@ let settingsModule: typeof import("./settings");
 beforeAll(async () => {
   vi.stubGlobal("window", globalThis);
   settingsModule = await import("./settings");
+});
+
+afterAll(() => {
+  vi.unstubAllGlobals();
 });
 
 beforeEach(async () => {
@@ -56,13 +60,14 @@ describe("settings store", () => {
 
     store.set(settingsModule.themePreferenceAtom, "light");
     store.set(settingsModule.chatTerminalSplitAtom, true);
-    await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const raw = await AsyncStorage.getItem("aimux-settings");
-    expect(raw).not.toBeNull();
-    expect(JSON.parse(raw ?? "{}")).toEqual({
-      theme: "light",
-      chatTerminalSplit: true,
+    await vi.waitFor(async () => {
+      const raw = await AsyncStorage.getItem("aimux-settings");
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw ?? "{}")).toEqual({
+        theme: "light",
+        chatTerminalSplit: true,
+      });
     });
   });
 });

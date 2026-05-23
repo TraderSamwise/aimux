@@ -244,18 +244,20 @@ export default function ChatScreen() {
               </Text>
             </View>
             <View className="flex-row items-center">
-              <Pressable
-                onPress={() => setShowTerminalSplit((current) => !current)}
-                disabled={!canShowTerminalSplit}
-                accessibilityLabel={showSplit ? "Show chat only" : "Show split terminal view"}
-                className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
-              >
-                {showSplit ? (
-                  <MessageSquare size={15} color="#a1a1aa" />
-                ) : (
-                  <Columns2 size={15} color="#a1a1aa" />
-                )}
-              </Pressable>
+              {Platform.OS === "web" ? (
+                <Pressable
+                  onPress={() => setShowTerminalSplit((current) => !current)}
+                  disabled={!canShowTerminalSplit}
+                  accessibilityLabel={showSplit ? "Show chat only" : "Show split terminal view"}
+                  className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2 disabled:opacity-40"
+                >
+                  {showSplit ? (
+                    <MessageSquare size={15} color="#a1a1aa" />
+                  ) : (
+                    <Columns2 size={15} color="#a1a1aa" />
+                  )}
+                </Pressable>
+              ) : null}
               <Pressable
                 onPress={() =>
                   sessionId
