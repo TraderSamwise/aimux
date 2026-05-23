@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import type { LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Columns2, MessageSquare, SquareTerminal } from "lucide-react-native";
@@ -38,6 +39,9 @@ const RELAY_CHAT_POLL_INTERVAL_MS = 2000;
 const SPLIT_VIEW_MIN_WIDTH = 900;
 const NARROW_TERMINAL_DIVIDER_WIDTH = 36;
 const WIDE_TERMINAL_DIVIDER_WIDTH = 96;
+const MIN_TERMINAL_DIVIDER_WIDTH = 24;
+const TERMINAL_HORIZONTAL_PADDING = 32;
+const APPROX_TERMINAL_CHAR_WIDTH = 8;
 
 export default function ChatScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
@@ -63,6 +67,7 @@ export default function ChatScreen() {
   const { width } = useWindowDimensions();
   const [token, setToken] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const scrollRef = useRef<ScrollView>(null);
   const terminalScrollRef = useRef<ScrollView>(null);
@@ -239,16 +244,31 @@ export default function ChatScreen() {
   const showTerminalOnly = !canUseSplitView && canShowTerminal && showTerminalSplit;
   const terminalToggleLabel =
     showSplit || showTerminalOnly ? "Show chat view" : "Show terminal view";
+  const measuredDividerWidth = terminalPaneWidth
+    ? Math.max(
+        MIN_TERMINAL_DIVIDER_WIDTH,
+        Math.floor((terminalPaneWidth - TERMINAL_HORIZONTAL_PADDING) / APPROX_TERMINAL_CHAR_WIDTH),
+      )
+    : null;
+  const terminalDividerWidth = Math.min(
+    canUseSplitView ? WIDE_TERMINAL_DIVIDER_WIDTH : NARROW_TERMINAL_DIVIDER_WIDTH,
+    measuredDividerWidth ??
+      (canUseSplitView ? WIDE_TERMINAL_DIVIDER_WIDTH : NARROW_TERMINAL_DIVIDER_WIDTH),
+  );
   const terminalOutput = useMemo(
     () =>
       formatTerminalOutputForDisplay(output, {
-        dividerWidth: canUseSplitView ? WIDE_TERMINAL_DIVIDER_WIDTH : NARROW_TERMINAL_DIVIDER_WIDTH,
+        dividerWidth: terminalDividerWidth,
       }),
-    [canUseSplitView, output],
+    [output, terminalDividerWidth],
   );
 
+  function handleTerminalPaneLayout(event: LayoutChangeEvent) {
+    setTerminalPaneWidth(event.nativeEvent.layout.width);
+  }
+
   const terminalPane = (
-    <View className="flex-1 bg-card">
+    <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
       <ScrollView ref={terminalScrollRef} className="flex-1 px-4 py-3" horizontal={false}>
         <Text className="text-xs text-muted-foreground mb-2">Live output</Text>
         <Text className="text-secondary-foreground text-xs font-mono">{terminalOutput}</Text>
