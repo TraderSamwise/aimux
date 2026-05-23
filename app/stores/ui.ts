@@ -1,16 +1,4 @@
 import { atom } from "jotai";
-import { atomWithStorage } from "jotai/utils";
-import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
-
-export type ThemePreference = "system" | "light" | "dark";
-
-// Persisted theme preference. Default is "dark" per Task 5.
-export const themePreferenceAtom = atomWithStorage<ThemePreference>(
-  "aimux-theme",
-  "dark",
-  createSsrSafeJsonStorage<ThemePreference>(),
-  { getOnInit: true },
-);
 
 // Ephemeral — not persisted across reloads.
 export const sidebarOpenAtom = atom<boolean>(true);
