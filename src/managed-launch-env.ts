@@ -12,6 +12,7 @@ const EXCLUDED_ENV_KEYS = new Set([
   "AIMUX_TOOL",
   "AIMUX_METADATA_ENDPOINT_FILE",
   "AIMUX_SHELL_INTEGRATION_SCRIPT",
+  "NO_COLOR",
 ]);
 
 const TRANSIENT_CONTROL_PATTERNS = [
@@ -28,6 +29,19 @@ function shouldExcludeEnvKey(key: string): boolean {
   return TRANSIENT_CONTROL_PATTERNS.some((pattern) => pattern.test(key));
 }
 
+function normalizeInteractiveColorEnv(env: Record<string, string>): void {
+  delete env.NO_COLOR;
+  if (!env.TERM || env.TERM === "dumb") {
+    env.TERM = "xterm-256color";
+  }
+  if (!env.COLORTERM) {
+    env.COLORTERM = "truecolor";
+  }
+  if (!env.CLICOLOR) {
+    env.CLICOLOR = "1";
+  }
+}
+
 export function buildManagedLaunchEnv(
   baseEnv: NodeJS.ProcessEnv = process.env,
   extraEnv: Record<string, string> = {},
@@ -41,6 +55,7 @@ export function buildManagedLaunchEnv(
   for (const [key, value] of Object.entries(extraEnv)) {
     env[key] = value;
   }
+  normalizeInteractiveColorEnv(env);
   return env;
 }
 
