@@ -427,7 +427,7 @@ function SidebarBottomNav() {
 
 // ─── Top-level component ──────────────────────────────────────────────────
 
-export function ProjectSidebar() {
+export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boolean }) {
   const projects = useAtomValue(projectsAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
@@ -486,7 +486,7 @@ export function ProjectSidebar() {
   }
 
   return (
-    <View className="w-80 border-r border-border bg-background">
+    <View className="w-80 flex-1 border-r border-border bg-background">
       <ScrollView className="flex-1">
         {pickerMode ? (
           <ProjectPicker
@@ -508,7 +508,7 @@ export function ProjectSidebar() {
           </>
         )}
       </ScrollView>
-      <SidebarBottomNav />
+      {showBottomNav ? <SidebarBottomNav /> : null}
     </View>
   );
 }
