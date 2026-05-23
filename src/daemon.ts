@@ -28,6 +28,7 @@ const PROXY_TIMEOUT_MS = 10_000;
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
+const CORS_ALLOWED_ORIGINS = new Set(["http://localhost:8081", "http://127.0.0.1:8081"]);
 
 export function getDaemonHost(): string {
   const host = process.env.AIMUX_DAEMON_HOST?.trim();
@@ -153,17 +154,26 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   if (res.headersSent || res.writableEnded) return;
   const payload = JSON.stringify(body);
   res.statusCode = status;
-  setCorsHeaders(res);
   res.setHeader("content-type", "application/json");
   res.setHeader("content-length", Buffer.byteLength(payload));
   res.setHeader("connection", "close");
   res.end(payload);
 }
 
-function setCorsHeaders(res: ServerResponse): void {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+function setCorsHeaders(req: IncomingMessage, res: ServerResponse): boolean {
+  const origin = req.headers.origin;
+  if (origin && !CORS_ALLOWED_ORIGINS.has(origin)) return false;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  return true;
+}
+
+function rejectCors(res: ServerResponse): void {
+  send(res, 403, { ok: false, error: "origin not allowed" });
 }
 
 export function loadDaemonInfo(): AimuxDaemonInfo | null {
@@ -744,7 +754,10 @@ export class AimuxDaemon {
     // app requests come in over the relay (which performs Clerk/HS256 verify
     // before forwarding) and call routeRequest() directly in-process. Local
     // CLI is trusted with the daemon's user.
-    setCorsHeaders(res);
+    if (!setCorsHeaders(req, res)) {
+      rejectCors(res);
+      return;
+    }
     if (req.method === "OPTIONS") {
       res.statusCode = 204;
       res.end();
