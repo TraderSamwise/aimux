@@ -8,16 +8,26 @@ import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
 import { getAgentHistory, getAgentOutput } from "@/lib/api";
+import {
+  messagesFromParsedAgentOutput,
+  pendingPromptAlreadyRendered,
+} from "@/lib/parsed-transcript";
 import { singleRouteParam } from "@/lib/route-params";
 import {
   chatHistoryFamily,
   ingestEventAtom,
   lastErrorFamily,
   outputBufferFamily,
+  parsedOutputFamily,
   pendingMessagesFamily,
   setHistoryAtom,
 } from "@/stores/chat";
-import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
+import {
+  projectsAtom,
+  selectedProjectAtom,
+  selectedSessionIdAtom,
+  selectProjectAtom,
+} from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import type { ChatMessage } from "@/lib/events";
 
@@ -28,6 +38,8 @@ export default function ChatScreen() {
   const sessionId = singleRouteParam(params.sessionId);
   const sessionKey = sessionId ?? "";
   const project = useAtomValue(selectedProjectAtom);
+  const projects = useAtomValue(projectsAtom);
+  const selectProject = useSetAtom(selectProjectAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const ingestEvent = useSetAtom(ingestEventAtom);
   const setHistory = useSetAtom(setHistoryAtom);
@@ -35,6 +47,8 @@ export default function ChatScreen() {
   const pendingMessages = useAtomValue(pendingMessagesFamily(sessionKey));
   const output = useAtomValue(outputBufferFamily(sessionKey));
   const setOutput = useSetAtom(outputBufferFamily(sessionKey));
+  const parsedOutput = useAtomValue(parsedOutputFamily(sessionKey));
+  const setParsedOutput = useSetAtom(parsedOutputFamily(sessionKey));
   const lastError = useAtomValue(lastErrorFamily(sessionKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
@@ -49,6 +63,20 @@ export default function ChatScreen() {
     if (!sessionId) return;
     selectSession(sessionId);
   }, [sessionId, selectSession]);
+
+  // The route is the source of truth on refresh/deep link. If persisted project
+  // state points elsewhere, recover the project that owns this session.
+  useEffect(() => {
+    if (!sessionId || projects.length === 0) return;
+    if (project?.sessions.some((session) => session.id === sessionId)) return;
+    const owner = projects.find((candidate) =>
+      candidate.sessions.some((session) => session.id === sessionId),
+    );
+    if (owner) {
+      selectProject(owner.path);
+      selectSession(sessionId);
+    }
+  }, [sessionId, projects, project, selectProject, selectSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,6 +163,7 @@ export default function ChatScreen() {
         if (cancelled) return;
         setHistory({ sessionId: sessionId!, messages: historyResult.messages ?? [] });
         setOutput(outputResult.output ?? "");
+        setParsedOutput(outputResult.parsed ?? null);
       } catch (err) {
         if (!cancelled) console.warn("relay chat poll failed:", err);
       }
@@ -158,7 +187,10 @@ export default function ChatScreen() {
     useRelayPolling,
     setHistory,
     setOutput,
+    setParsedOutput,
   ]);
+
+  const parsedMessages = useMemo(() => messagesFromParsedAgentOutput(parsedOutput), [parsedOutput]);
 
   const allMessages = useMemo<ChatMessage[]>(() => {
     const pending = pendingMessages.map((p) => ({
@@ -170,10 +202,16 @@ export default function ChatScreen() {
       deliveryState: p.deliveryState,
       deliveryError: p.deliveryError,
     }));
+    if (parsedMessages.length > 0) {
+      return [
+        ...parsedMessages,
+        ...pending.filter((message) => !pendingPromptAlreadyRendered(message, parsedMessages)),
+      ];
+    }
     return [...history, ...pending].sort((a, b) =>
       String(a.ts ?? "").localeCompare(String(b.ts ?? "")),
     );
-  }, [history, pendingMessages]);
+  }, [history, parsedMessages, pendingMessages]);
 
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: true });
@@ -228,7 +266,7 @@ export default function ChatScreen() {
                     serviceEndpoint={serviceEndpoint}
                   />
                 ))}
-                {output ? (
+                {output && parsedMessages.length === 0 ? (
                   <View className="self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1">
                     <Text className="text-xs text-muted-foreground mb-1">Live output</Text>
                     <Text className="text-secondary-foreground text-xs font-mono">{output}</Text>
