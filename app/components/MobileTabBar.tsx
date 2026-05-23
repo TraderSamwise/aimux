@@ -2,6 +2,8 @@ import React from "react";
 import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { Home, MessageSquare, Settings } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { resolveChromeBottomInset } from "@/lib/native-safe-area";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 
@@ -19,9 +21,14 @@ function isActive(pathname: string, route: string): boolean {
 export function MobileTabBar() {
   const router = useRouter();
   const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+  const bottomInset = resolveChromeBottomInset(insets.bottom);
 
   return (
-    <View className="h-14 flex-row border-t border-border bg-card">
+    <View
+      className="flex-row border-t border-border bg-card"
+      style={{ height: 56 + bottomInset, paddingBottom: bottomInset }}
+    >
       {TABS.map(({ label, route, Icon }) => {
         const active = isActive(pathname, route);
         return (
