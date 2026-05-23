@@ -57,6 +57,52 @@ describe("debug logging", () => {
     expect(typeof records[0].pid).toBe("number");
   });
 
+  it("redacts secret-like env assignments and fields", () => {
+    configureLogging({ enabled: true, path: logPath, level: "debug", processKind: "test" });
+
+    log.debug(
+      'spawn args: ["AWS_SECRET_ACCESS_KEY=real-secret","PATH=/usr/bin","OPENAI_API_KEY=real-key","SENTRY_AUTH_TOKEN=\\"quoted-secret\\""]',
+      "session",
+      {
+        token: "real-token",
+        apiKey: "real-api-key",
+        authToken: "real-auth-token",
+        authorization: "real-authorization",
+        nested: { password: "real-password", privateKey: "real-private-key", command: "SENTRY_AUTH_TOKEN=real-auth" },
+      },
+    );
+
+    const record = JSON.parse(readFileSync(logPath, "utf-8").trim()) as Record<string, any>;
+    expect(record.message).toContain("AWS_SECRET_ACCESS_KEY=<redacted>");
+    expect(record.message).toContain("OPENAI_API_KEY=<redacted>");
+    expect(record.message).toContain("PATH=/usr/bin");
+    expect(record.message).not.toContain("real-secret");
+    expect(record.message).not.toContain("real-key");
+    expect(record.message).not.toContain("quoted-secret");
+    expect(record.fields.token).toBe("<redacted>");
+    expect(record.fields.apiKey).toBe("<redacted>");
+    expect(record.fields.authToken).toBe("<redacted>");
+    expect(record.fields.authorization).toBe("<redacted>");
+    expect(record.fields.nested.password).toBe("<redacted>");
+    expect(record.fields.nested.privateKey).toBe("<redacted>");
+    expect(record.fields.nested.command).toBe("SENTRY_AUTH_TOKEN=<redacted>");
+  });
+
+  it("preserves toJSON field values while sanitizing fields", () => {
+    configureLogging({ enabled: true, path: logPath, level: "debug", processKind: "test" });
+
+    log.debug("dated", "session", {
+      at: new Date("2026-05-23T01:02:03.000Z"),
+      custom: {
+        toJSON: () => ({ apiKey: "real-key", label: "ok" }),
+      },
+    });
+
+    const record = JSON.parse(readFileSync(logPath, "utf-8").trim()) as Record<string, any>;
+    expect(record.fields.at).toBe("2026-05-23T01:02:03.000Z");
+    expect(record.fields.custom).toEqual({ apiKey: "<redacted>", label: "ok" });
+  });
+
   it("filters by level and category", () => {
     configureLogging({ enabled: true, path: logPath, level: "info", categories: ["daemon"] });
 

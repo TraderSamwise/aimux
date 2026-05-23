@@ -411,6 +411,93 @@ describe("metadata pending actions", () => {
     }
   });
 
+  it("serializes project-service agent resumes until each launch settles", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-resume-queue-"));
+    const pending = new DashboardPendingActions(() => {});
+    const resumeOrder: string[] = [];
+    const firstSettled = deferred<boolean>();
+    const host: any = {
+      dashboardPendingActions: pending,
+      reapplyDashboardPendingActions: vi.fn(),
+      eventBus: undefined,
+      buildDesktopState: vi.fn(),
+      listProjectedDesktopWorktrees: vi.fn(),
+      dashboardSessionsCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      sessions: [],
+      services: [],
+      offlineSessions: [
+        { id: "claude-first", command: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline" },
+        { id: "codex-second", command: "codex", toolConfigKey: "codex", args: [], lifecycle: "offline" },
+      ],
+      offlineServices: [],
+      sessionWorktreePaths: new Map(),
+      sessionTmuxTargets: new Map(),
+      getSessionLabel: vi.fn(),
+      serviceLabelForCommand: vi.fn(),
+      refreshProjectStatusline: vi.fn(),
+      createDesktopWorktree: vi.fn(),
+      removeDesktopWorktree: vi.fn(),
+      graveyardDesktopWorktree: vi.fn(),
+      listWorktreeGraveyardEntries: vi.fn(),
+      resurrectGraveyardWorktree: vi.fn(),
+      deleteGraveyardWorktree: vi.fn(),
+      createService: vi.fn(),
+      stopService: vi.fn(),
+      resumeOfflineServiceById: vi.fn(),
+      removeOfflineService: vi.fn(),
+      resumeOfflineSession: vi.fn((session: any) => {
+        resumeOrder.push(session.id);
+        host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== session.id);
+        host.sessions.push({ ...session, lifecycle: "live", exited: false });
+      }),
+      waitForSessionStart: vi.fn((sessionId: string) => {
+        if (sessionId === "claude-first") return firstSettled.promise;
+        return Promise.resolve(true);
+      }),
+      listGraveyardEntries: vi.fn(),
+      resurrectGraveyardSession: vi.fn(),
+      sendOrchestrationMessage: vi.fn(),
+      sendHandoffMessage: vi.fn(),
+      spawnAgent: vi.fn(),
+      createTeammateAgent: vi.fn(),
+      forkAgent: vi.fn(),
+      stopAgent: vi.fn(),
+      interruptAgent: vi.fn(),
+      renameAgent: vi.fn(),
+      migrateAgent: vi.fn(),
+      killAgent: vi.fn(),
+      recordBackendSessionId: vi.fn(),
+      writeAgentInput: vi.fn(),
+      readAgentOutput: vi.fn(),
+      readAgentHistory: vi.fn(),
+    };
+
+    try {
+      await initPaths(repoRoot);
+      await startProjectServices(host);
+      const desktop = (host.metadataServer as any).options.desktop;
+
+      const first = desktop.resumeAgent({ sessionId: "claude-first" });
+      await nextTick();
+      const second = desktop.resumeAgent({ sessionId: "codex-second" });
+      await nextTick();
+
+      expect(resumeOrder).toEqual(["claude-first"]);
+
+      firstSettled.resolve(true);
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        { sessionId: "claude-first", status: "running" },
+        { sessionId: "codex-second", status: "running" },
+      ]);
+      expect(resumeOrder).toEqual(["claude-first", "codex-second"]);
+    } finally {
+      host.metadataServer?.stop?.();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not propagate resume upward when resuming a teammate directly", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-resume-teammate-"));
     const pending = new DashboardPendingActions(() => {});

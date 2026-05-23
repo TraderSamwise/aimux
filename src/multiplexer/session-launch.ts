@@ -46,6 +46,37 @@ const CODEX_OPTIONS_WITH_VALUE = new Set([
   "--sandbox",
 ]);
 
+const SENSITIVE_ENV_ARG_PATTERN =
+  /^[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|KEY|CREDENTIAL|AUTH)[A-Za-z0-9_]*=/i;
+const SENSITIVE_OPTION_ARG_PATTERN =
+  /^--?[A-Za-z0-9-]*(?:token|secret|password|pass|key|credential|auth)[A-Za-z0-9-]*(?:=.*)?$/i;
+const SENSITIVE_OPTION_ASSIGNMENT_PATTERN =
+  /^(--?[A-Za-z0-9-]*(?:token|secret|password|pass|key|credential|auth)[A-Za-z0-9-]*=).+/i;
+
+function summarizeLaunchArg(arg: string): string {
+  const sensitiveOptionAssignment = arg.match(SENSITIVE_OPTION_ASSIGNMENT_PATTERN);
+  if (sensitiveOptionAssignment) {
+    return `${sensitiveOptionAssignment[1]}<redacted>`;
+  }
+  if (SENSITIVE_ENV_ARG_PATTERN.test(arg)) {
+    return `${arg.slice(0, arg.indexOf("=") + 1)}<redacted>`;
+  }
+  return arg.length > 100 ? `${arg.slice(0, 100)}...` : arg;
+}
+
+export function summarizeLaunchArgs(args: string[]): string[] {
+  let redactNext = false;
+  return args.map((arg) => {
+    if (redactNext) {
+      redactNext = false;
+      return "<redacted>";
+    }
+    const summarized = summarizeLaunchArg(arg);
+    redactNext = SENSITIVE_OPTION_ARG_PATTERN.test(arg) && !arg.includes("=");
+    return summarized;
+  });
+}
+
 function scheduleBackendSessionCapture(input: {
   host: SessionLaunchHost;
   sessionId: string;
@@ -543,10 +574,7 @@ export function createSession(
     `creating session: ${command} (configKey=${toolConfigKey ?? "cli"}, backendId=${backendSessionId ?? "none"}, cwd=${worktreePath ?? process.cwd()}, args=${finalArgs.length})`,
     "session",
   );
-  debug(
-    `spawn args: ${JSON.stringify(finalArgs.map((a) => (a.length > 100 ? a.slice(0, 100) + "..." : a)))}`,
-    "session",
-  );
+  debug(`spawn args: ${JSON.stringify(summarizeLaunchArgs(finalArgs))}`, "session");
 
   const sessionStartTime = Date.now();
   const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(process.cwd());

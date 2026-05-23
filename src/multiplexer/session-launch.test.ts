@@ -21,11 +21,34 @@ import {
   resumeSessions,
   runDashboard,
   runProjectService,
+  summarizeLaunchArgs,
 } from "./session-launch.js";
 import { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
 import { loadMetadataState, recordSessionBackendSessionIdMetadata, updateSessionMetadata } from "../metadata-store.js";
 
 describe("createSession", () => {
+  it("redacts sensitive launch arg values in debug summaries", () => {
+    expect(
+      summarizeLaunchArgs([
+        "--api-key",
+        "sk-real-secret",
+        "--model",
+        "gpt-5",
+        "--auth-token=real-token",
+        "OPENAI_API_KEY=real-key",
+        "PATH=/usr/bin",
+      ]),
+    ).toEqual([
+      "--api-key",
+      "<redacted>",
+      "--model",
+      "gpt-5",
+      "--auth-token=<redacted>",
+      "OPENAI_API_KEY=<redacted>",
+      "PATH=/usr/bin",
+    ]);
+  });
+
   it("captures a Codex backend session id from the native session file containing the aimux session id", () => {
     const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-home-"));
     const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");

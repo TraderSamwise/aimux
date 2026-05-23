@@ -36,6 +36,24 @@ function makePendingActionsFake() {
   };
 }
 
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function nextTick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("dashboard-ops", () => {
   it("creates a service through the project service and clears creating when a live row appears", async () => {
     let createdServiceId = "";
@@ -264,10 +282,55 @@ describe("dashboard-ops", () => {
     expect(host.postToProjectService).toHaveBeenCalledWith(
       "/agents/resume",
       { sessionId: "sess-1", session: expect.objectContaining({ id: "sess-1", command: "claude" }) },
-      { timeoutMs: 10_000 },
+      { timeoutMs: 60_000 },
     );
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
     expect(host.footerFlash).toBe("Restored claude");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
+  });
+
+  it("serializes concurrent dashboard agent restores", async () => {
+    const first = deferred();
+    const liveIds = new Set<string>();
+    const postOrder: string[] = [];
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(async (_path: string, body: any) => {
+        postOrder.push(body.sessionId);
+        if (body.sessionId === "sess-1") {
+          await first.promise;
+        }
+        liveIds.add(body.sessionId);
+      }),
+      refreshDashboardModelFromService: vi.fn(async () => true),
+      waitForSessionStart: vi.fn(async () => false),
+      getDashboardSessions: vi.fn(() =>
+        [...liveIds].map((id) => ({ id, command: "claude", status: "waiting", tmuxWindowId: `@${id}` })),
+      ),
+      showDashboardError: vi.fn(),
+    };
+
+    const restoreOne = resumeOfflineSessionWithFeedback(host, { id: "sess-1", command: "claude", args: [] });
+    await nextTick();
+    const restoreTwo = resumeOfflineSessionWithFeedback(host, { id: "sess-2", command: "claude", args: [] });
+    await nextTick();
+
+    expect(postOrder).toEqual(["sess-1"]);
+    expect(host.dashboardPendingActions.getSessionAction("sess-2")).toBe("starting");
+
+    first.resolve();
+    await Promise.all([restoreOne, restoreTwo]);
+
+    expect(postOrder).toEqual(["sess-1", "sess-2"]);
+    expect(host.dashboardPendingActions.getSessionAction("sess-2")).toBeNull();
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
@@ -459,7 +522,7 @@ describe("dashboard-ops", () => {
           team: session.team,
         }),
       },
-      { timeoutMs: 10_000 },
+      { timeoutMs: 60_000 },
     );
   });
 
