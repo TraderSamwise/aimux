@@ -83,6 +83,11 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
     setDraftImages((prev) => prev.filter((img) => img.attachmentId !== attachmentId));
   }
 
+  function restoreDraftIfUntouched(text: string, images: DraftImage[]) {
+    setDraft((current) => (current.length > 0 ? current : text));
+    setDraftImages((current) => (current.length > 0 ? current : images));
+  }
+
   async function handleSend() {
     const trimmed = draft.trim();
     if (!trimmed && draftImages.length === 0) return;
@@ -92,14 +97,16 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
     setError(null);
     setSending(true);
 
+    const submittedText = trimmed;
+    const submittedImages = draftImages;
     const clientMessageId = uuid();
     const sendParts: AgentInputPart[] = [];
     const historyParts: HistoryPart[] = [];
-    if (trimmed) {
-      sendParts.push({ type: "text", text: trimmed });
-      historyParts.push({ type: "text", text: trimmed });
+    if (submittedText) {
+      sendParts.push({ type: "text", text: submittedText });
+      historyParts.push({ type: "text", text: submittedText });
     }
-    for (const img of draftImages) {
+    for (const img of submittedImages) {
       sendParts.push({ type: "image", attachmentId: img.attachmentId, alt: img.filename });
       historyParts.push({
         type: "image",
@@ -119,6 +126,8 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
         deliveryState: "sending",
       },
     });
+    setDraft("");
+    setDraftImages([]);
 
     try {
       const result = await sendAgentInput(
@@ -134,6 +143,7 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
           patch: { deliveryState: "failed", deliveryError: msg },
         });
         setError(msg);
+        restoreDraftIfUntouched(submittedText, submittedImages);
         return;
       }
       // Server operation state is queued|applied|submitted|failed; client tracks
@@ -152,11 +162,9 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
               : undefined,
         },
       });
-      if (deliveryState === "submitted") {
-        setDraft("");
-        setDraftImages([]);
-      } else {
+      if (deliveryState === "failed") {
         setError(result.error ?? "The agent input operation failed.");
+        restoreDraftIfUntouched(submittedText, submittedImages);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -166,6 +174,7 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
         patch: { deliveryState: "failed", deliveryError: msg },
       });
       setError(msg);
+      restoreDraftIfUntouched(submittedText, submittedImages);
     } finally {
       setSending(false);
     }
@@ -203,7 +212,6 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
           onChangeText={setDraft}
           onKeyPress={handleComposerKeyPress}
           multiline
-          editable={!sending}
         />
         <Button
           variant="outline"
