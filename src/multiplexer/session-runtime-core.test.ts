@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { initPaths } from "../paths.js";
 import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
 import { readSessionInputOperation } from "../session-input-operations.js";
+import { readSessionMessages } from "../session-message-history.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import {
   buildTmuxWindowMetadata,
@@ -171,6 +172,56 @@ describe("session runtime prompt submission", () => {
     } finally {
       transport.destroy();
       vi.useRealTimers();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("prefixes multi-user input for the agent while storing original message metadata", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
+    try {
+      await initPaths(repoRoot);
+      const writes: string[] = [];
+      const host: any = {
+        sessions: [
+          {
+            id: "claude-1",
+            exited: false,
+            write: (data: string) => writes.push(data),
+          },
+        ],
+        sessionToolKeys: new Map([["claude-1", "claude"]]),
+      };
+
+      const result = await writeAgentInput(host, "claude-1", "Can you check this?", undefined, "client-1", true, {
+        shareId: "share_123",
+        mode: "multi",
+        actor: {
+          userId: "user_123",
+          displayName: "Sam Steady",
+          email: "sam@example.com",
+          role: "owner",
+        },
+      });
+
+      expect(result.accepted).toBe(true);
+      expect(writes).toEqual(["[Sam Steady]: Can you check this?\r"]);
+      expect(readSessionMessages("claude-1")).toMatchObject([
+        {
+          clientMessageId: "client-1",
+          sessionId: "claude-1",
+          role: "user",
+          parts: [{ type: "text", text: "Can you check this?" }],
+          actor: {
+            userId: "user_123",
+            displayName: "Sam Steady",
+            email: "sam@example.com",
+            role: "owner",
+          },
+          shareId: "share_123",
+          chatMode: "multi",
+        },
+      ]);
+    } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
   });

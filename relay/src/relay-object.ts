@@ -25,6 +25,7 @@ import {
   saveSharingState,
   sharedRelayRequestAccess,
   summarizeShare,
+  stripTrustedAimuxHeaders,
 } from "./sharing.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -460,7 +461,7 @@ export class RelayObject extends DurableObject<Env> {
       ok: true,
       requestPatch: {
         headers: {
-          ...(request.headers ?? {}),
+          ...stripTrustedAimuxHeaders(request.headers),
           "X-Aimux-Share-Id": share.id,
           "X-Aimux-Share-Mode": getShareChatMode(share),
           "X-Aimux-Actor-User-Id": participant.userId,
