@@ -3,6 +3,7 @@ import type { DesktopSession } from "@/lib/desktop-state";
 import { defaultNotificationSettings } from "@/lib/notification-settings";
 import {
   evaluateAgentNotification,
+  evaluateNotificationRecord,
   snapshotSessionForNotifications,
 } from "@/lib/notification-policy";
 
@@ -92,5 +93,64 @@ describe("notification policy", () => {
       kind: "completed",
       title: "Agent completed",
     });
+  });
+
+  it("maps daemon notification records through the same category settings", () => {
+    const event = evaluateNotificationRecord(
+      {
+        id: "notice-1",
+        title: "Need input",
+        body: "Approve deploy",
+        sessionId: "claude-a1",
+        kind: "needs_input",
+        unread: true,
+        cleared: false,
+        createdAt: "2026-05-23T00:00:00.000Z",
+        updatedAt: "2026-05-23T00:00:00.000Z",
+      },
+      enabledSettings,
+      { projectName: "glyde-frontend", projectPath: "/Users/sam/cs/glyde-frontend" },
+    );
+
+    expect(event).toMatchObject({
+      id: "notice-1",
+      category: "agent",
+      kind: "needs_input",
+      title: "glyde-frontend: Need input",
+      body: "Approve deploy",
+      dedupeKey: "notification:notice-1",
+      target: {
+        projectPath: "/Users/sam/cs/glyde-frontend",
+        sessionId: "claude-a1",
+      },
+    });
+  });
+
+  it("does not emit read, cleared, or disabled daemon records", () => {
+    const baseRecord = {
+      id: "notice-1",
+      title: "Done",
+      body: "Task completed",
+      sessionId: "claude-a1",
+      kind: "task_done",
+      unread: true,
+      cleared: false,
+      createdAt: "2026-05-23T00:00:00.000Z",
+      updatedAt: "2026-05-23T00:00:00.000Z",
+    };
+
+    expect(evaluateNotificationRecord(baseRecord, enabledSettings)).toBeNull();
+    expect(
+      evaluateNotificationRecord(
+        { ...baseRecord, kind: "needs_input", unread: false },
+        enabledSettings,
+      ),
+    ).toBeNull();
+    expect(
+      evaluateNotificationRecord(
+        { ...baseRecord, kind: "needs_input", cleared: true },
+        enabledSettings,
+      ),
+    ).toBeNull();
   });
 });

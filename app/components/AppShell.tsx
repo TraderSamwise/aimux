@@ -3,7 +3,6 @@ import { Animated, Platform, Pressable, View, useWindowDimensions } from "react-
 import { usePathname } from "expo-router";
 import { useAtom } from "jotai";
 import { Menu } from "lucide-react-native";
-import { MobileTabBar } from "@/components/MobileTabBar";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
@@ -85,7 +84,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Animated.View>
         ) : null}
       </View>
-      {isMobile ? <MobileTabBar /> : null}
     </View>
   );
 }

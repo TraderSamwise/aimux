@@ -1,4 +1,5 @@
 import type { DesktopSession } from "@/lib/desktop-state";
+import type { NotificationRecord } from "@/lib/api";
 import {
   isAgentNotificationEnabled,
   type AgentNotificationKind,
@@ -36,6 +37,9 @@ export interface SessionNotificationContext {
 }
 
 const ACTIVE_ATTENTIONS = new Set(["needs_input", "blocked", "error"]);
+const ERROR_KINDS = new Set(["error", "task_failed"]);
+const COMPLETED_KINDS = new Set(["completed", "task_done"]);
+const ACTIVITY_KINDS = new Set(["activity", "notification", "notify"]);
 
 export function snapshotSessionForNotifications(
   session: DesktopSession,
@@ -88,6 +92,30 @@ export function evaluateAgentNotification(
   return null;
 }
 
+export function evaluateNotificationRecord(
+  record: NotificationRecord,
+  settings: NotificationSettings,
+  context: SessionNotificationContext = {},
+): ClientNotificationEvent | null {
+  if (!record.unread || record.cleared) return null;
+  const kind = mapNotificationRecordKind(record.kind);
+  if (!kind || !isAgentNotificationEnabled(settings, kind)) return null;
+
+  const projectPrefix = context.projectName ? `${context.projectName}: ` : "";
+  return {
+    id: record.id,
+    dedupeKey: record.dedupeKey || `notification:${record.id}`,
+    category: "agent",
+    kind,
+    title: `${projectPrefix}${record.title}`,
+    body: record.body || record.subtitle || record.title,
+    target: {
+      projectPath: context.projectPath,
+      sessionId: record.sessionId,
+    },
+  };
+}
+
 function evaluateAttentionTransition(
   current: SessionNotificationSnapshot,
   previous: SessionNotificationSnapshot,
@@ -137,4 +165,14 @@ function buildAgentEvent(
 
 function normalizeState(value: string | undefined): string {
   return value?.trim() || "none";
+}
+
+function mapNotificationRecordKind(kind: string | undefined): AgentNotificationKind | null {
+  const normalized = kind?.trim();
+  if (normalized === "needs_input") return "needs_input";
+  if (normalized === "blocked") return "blocked";
+  if (normalized && ERROR_KINDS.has(normalized)) return "error";
+  if (normalized && COMPLETED_KINDS.has(normalized)) return "completed";
+  if (normalized && ACTIVITY_KINDS.has(normalized)) return "activity";
+  return null;
 }
