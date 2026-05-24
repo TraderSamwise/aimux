@@ -1,3 +1,5 @@
+import { getClientDeviceInfo, type ClientDeviceInfo } from "@/lib/client-device";
+
 type PendingRequest = {
   resolve: (value: { status: number; body: unknown }) => void;
   reject: (error: Error) => void;
@@ -12,7 +14,7 @@ interface RelayResponse {
 }
 
 interface RelayControl {
-  type: "ping" | "pong" | "connected" | "error" | "daemon_status";
+  type: "ping" | "pong" | "connected" | "error" | "daemon_status" | "security_event";
   online?: boolean;
   message?: string;
 }
@@ -45,6 +47,7 @@ export class RelayTransport {
   constructor(
     relayUrl: string,
     private readonly getToken: () => Promise<string | null>,
+    private readonly getDeviceInfo: () => Promise<ClientDeviceInfo> = getClientDeviceInfo,
   ) {
     this.relayUrl = relayUrl.replace(/\/+$/, "");
   }
@@ -77,7 +80,8 @@ export class RelayTransport {
       return;
     }
 
-    const url = `${this.relayUrl}/client/connect`;
+    const deviceInfo = await this.getDeviceInfo();
+    const url = this.clientConnectUrl(deviceInfo);
     try {
       this.ws = new WebSocket(url, ["aimux", `${TOKEN_PROTOCOL_PREFIX}${token}`]);
     } catch {
@@ -191,6 +195,10 @@ export class RelayTransport {
       return;
     }
 
+    if (msg.type === "security_event") {
+      return;
+    }
+
     if (msg.type === "response") {
       const entry = this.pending.get(msg.id);
       if (entry) {
@@ -199,6 +207,16 @@ export class RelayTransport {
         entry.resolve({ status: msg.status, body: msg.body });
       }
     }
+  }
+
+  private clientConnectUrl(device: ClientDeviceInfo): string {
+    const url = new URL(`${this.relayUrl}/client/connect`);
+    url.searchParams.set("deviceId", device.deviceId);
+    url.searchParams.set("deviceKind", device.kind);
+    url.searchParams.set("deviceName", device.name);
+    url.searchParams.set("devicePlatform", device.platform);
+    if (device.appVersion) url.searchParams.set("appVersion", device.appVersion);
+    return url.toString();
   }
 
   private rejectAllPending(reason: string): void {
