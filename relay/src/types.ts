@@ -17,6 +17,7 @@ export interface Env {
   RESEND_API_KEY?: string;
   SECURITY_EMAIL_FROM?: string;
   SECURITY_ACTION_BASE_URL?: string;
+  SECURITY_IP_HASH_SECRET?: string;
 }
 
 export interface RelayRequest {

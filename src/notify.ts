@@ -93,6 +93,8 @@ export function notifyAlert(event: AlertEvent): void {
   send(event.title || "aimux", event.message || event.sessionId || event.kind);
 }
 
-export function notifyRemoteClientConnected(input: { title: string; body: string }): void {
-  sendSecurity(input.title || "aimux remote access", input.body || "Remote client connected");
+export function notifyRemoteClientConnected(input: { title?: unknown; body?: unknown }): void {
+  const title = typeof input.title === "string" && input.title.trim().length > 0 ? input.title : "aimux remote access";
+  const body = typeof input.body === "string" && input.body.trim().length > 0 ? input.body : "Remote client connected";
+  sendSecurity(title, body);
 }

@@ -65,16 +65,20 @@ export class RelayObject extends DurableObject<Env> {
       }
     }
 
-    const clientDevice =
-      role === "client"
-        ? sanitizeDeviceInfo({
-            deviceId: url.searchParams.get("deviceId") ?? undefined,
-            kind: url.searchParams.get("deviceKind") ?? undefined,
-            name: url.searchParams.get("deviceName") ?? undefined,
-            platform: url.searchParams.get("devicePlatform") ?? undefined,
-            appVersion: url.searchParams.get("appVersion") ?? undefined,
-          })
-        : null;
+    let clientDevice: ReturnType<typeof sanitizeDeviceInfo> | null = null;
+    if (role === "client") {
+      try {
+        clientDevice = sanitizeDeviceInfo({
+          deviceId: url.searchParams.get("deviceId") ?? undefined,
+          kind: url.searchParams.get("deviceKind") ?? undefined,
+          name: url.searchParams.get("deviceName") ?? undefined,
+          platform: url.searchParams.get("devicePlatform") ?? undefined,
+          appVersion: url.searchParams.get("appVersion") ?? undefined,
+        });
+      } catch {
+        return new Response("Missing or invalid deviceId", { status: 400 });
+      }
+    }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
@@ -311,7 +315,7 @@ export class RelayObject extends DurableObject<Env> {
   ): Promise<void> {
     const userId = request.headers.get("X-Aimux-User-Id") ?? "";
     const state = await loadSecurityState(this.ctx.storage);
-    const ipHash = await hashIpAddress(request.headers.get("CF-Connecting-IP"));
+    const ipHash = await hashIpAddress(request.headers.get("CF-Connecting-IP"), this.env.SECURITY_IP_HASH_SECRET);
     const context = {
       ipHash,
       country: request.headers.get("CF-IPCountry") ?? undefined,

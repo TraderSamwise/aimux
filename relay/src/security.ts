@@ -2,6 +2,7 @@ const SECURITY_STATE_KEY = "security-state:v1";
 const SECURITY_ACTION_TOKEN_BYTES = 32;
 export const SECURITY_ACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_SECURITY_EVENTS = 100;
+const MAX_SECURITY_ACTIONS = 100;
 
 export type SecurityDeviceKind = "web" | "ios" | "android" | "daemon" | "unknown";
 
@@ -111,11 +112,23 @@ export async function saveSecurityState(storage: DurableObjectStorage, state: Se
 }
 
 export function normalizeSecurityState(state: SecurityState): SecurityState {
+  const nowMs = Date.now();
+  const actions = Object.fromEntries(
+    Object.entries(state.actions ?? {})
+      .filter(([, action]) => {
+        if (action.usedAt) return false;
+        const expiresAtMs = Date.parse(action.expiresAt);
+        return Number.isFinite(expiresAtMs) && expiresAtMs > nowMs;
+      })
+      .sort(([, a], [, b]) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      .slice(0, MAX_SECURITY_ACTIONS),
+  );
+
   return {
     version: 1,
     devices: state.devices ?? {},
     pushTokens: state.pushTokens ?? {},
-    actions: state.actions ?? {},
+    actions,
     events: Array.isArray(state.events) ? state.events.slice(0, MAX_SECURITY_EVENTS) : [],
     lockdown: state.lockdown,
     revokedBefore: state.revokedBefore,
@@ -137,8 +150,12 @@ export function sanitizeDeviceInfo(
   const rawKind = input?.kind;
   const kind: SecurityDeviceKind =
     rawKind === "web" || rawKind === "ios" || rawKind === "android" || rawKind === "daemon" ? rawKind : "unknown";
+  const deviceId = sanitizeId(input?.deviceId);
+  if (!deviceId) {
+    throw new Error("Missing or invalid deviceId");
+  }
   return {
-    deviceId: sanitizeId(input?.deviceId) || "unknown",
+    deviceId,
     kind,
     name: sanitizeText(input?.name, 80),
     platform: sanitizeText(input?.platform, 80),
@@ -146,10 +163,14 @@ export function sanitizeDeviceInfo(
   };
 }
 
-export async function hashIpAddress(ip: string | null | undefined): Promise<string | undefined> {
+export async function hashIpAddress(
+  ip: string | null | undefined,
+  secret: string | null | undefined,
+): Promise<string | undefined> {
   const normalized = ip?.trim();
-  if (!normalized) return undefined;
-  return sha256Base64Url(normalized);
+  const key = secret?.trim();
+  if (!normalized || !key) return undefined;
+  return hmacSha256Base64Url(key, normalized);
 }
 
 export function recordClientConnection(
@@ -325,6 +346,15 @@ function randomBase64Url(byteLength: number): string {
 async function sha256Base64Url(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return base64UrlEncode(new Uint8Array(digest));
+}
+
+async function hmacSha256Base64Url(secret: string, value: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, [
+    "sign",
+  ]);
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(value));
+  return base64UrlEncode(new Uint8Array(signature));
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {
