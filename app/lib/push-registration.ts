@@ -2,10 +2,12 @@ import { Platform } from "react-native";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { getClientDeviceInfo } from "@/lib/client-device";
+import { buildSecurityPushRegistrationUrl } from "@/lib/push-registration-url";
 
 export async function registerSecurityPushToken(
   relayUrl: string,
   getToken: () => Promise<string | null>,
+  options: { ownerUserId?: string; shareId?: string } = {},
 ): Promise<void> {
   if (Platform.OS === "web") return;
   const permission = await Notifications.getPermissionsAsync();
@@ -29,21 +31,19 @@ export async function registerSecurityPushToken(
   const token = await getToken();
   if (!token) return;
 
-  const res = await fetch(
-    `${relayUrl.replace(/^ws/, "http").replace(/\/+$/, "")}/security/push-token`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        deviceId: device.deviceId,
-        token: expoToken.data,
-        platform: device.kind,
-      }),
+  const url = buildSecurityPushRegistrationUrl(relayUrl, options);
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({
+      deviceId: device.deviceId,
+      token: expoToken.data,
+      platform: device.kind,
+    }),
+  });
   if (!res.ok) {
     throw new Error(`Push token registration failed (${res.status})`);
   }
