@@ -7,6 +7,7 @@ import {
   getShareChatMode,
   isSharedRelayRequestAllowed,
   removeShareParticipant,
+  summarizeShare,
 } from "./sharing";
 
 const owner = {
@@ -163,5 +164,18 @@ describe("sharing state", () => {
   it("sanitizes actor display prefixes", () => {
     expect(actorDisplayPrefix({ userId: "u", displayName: "  Sam   Teady  ", role: "owner" })).toBe("[Sam Teady]:");
     expect(actorDisplayPrefix({ userId: "u", displayName: "", role: "guest" })).toBe("[User]:");
+  });
+
+  it("redacts invite token hashes from public summaries", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+    });
+    const summary = summarizeShare(Object.values(created.state.shares)[0]);
+
+    expect(summary.invites[0]).toMatchObject({ email: "alex@example.com", status: "pending" });
+    expect(summary.invites[0]).not.toHaveProperty("tokenHash");
   });
 });

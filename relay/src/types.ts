@@ -18,6 +18,8 @@ export interface Env {
   SECURITY_EMAIL_FROM?: string;
   SECURITY_ACTION_BASE_URL?: string;
   SECURITY_IP_HASH_SECRET?: string;
+  COLLAB_EMAIL_FROM?: string;
+  SHARE_INVITE_BASE_URL?: string;
 }
 
 export interface RelayRequest {

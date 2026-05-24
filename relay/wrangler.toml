@@ -26,6 +26,8 @@ SECURITY_ACTION_BASE_URL = "https://relay.aimux.app"
 # Switch to "enforce" after a device approval UI/flow is available.
 SECURITY_DEVICE_POLICY = "warn"
 SECURITY_EMAIL_FROM = "aimux security <security@aimux.app>"
+COLLAB_EMAIL_FROM = "aimux invites <invites@aimux.app>"
+SHARE_INVITE_BASE_URL = "https://aimux.app"
 
 [env.production.durable_objects]
 bindings = [
