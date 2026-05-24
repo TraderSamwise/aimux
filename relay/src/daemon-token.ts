@@ -58,7 +58,7 @@ export async function mintDaemonToken(userId: string, secret: string): Promise<s
   return `${signingInput}.${sigB64}`;
 }
 
-export async function verifyDaemonToken(token: string, secret: string): Promise<string> {
+export async function verifyDaemonTokenPayload(token: string, secret: string): Promise<DaemonTokenPayload> {
   const parts = token.split(".");
   if (parts.length !== 3) throw new Error("Malformed token");
   const [headerB64, payloadB64, sigB64] = parts;
@@ -83,6 +83,11 @@ export async function verifyDaemonToken(token: string, secret: string): Promise<
   const payload = JSON.parse(base64UrlDecodeToString(payloadB64)) as DaemonTokenPayload;
   if (payload.type !== "daemon") throw new Error("Wrong token type");
   if (payload.exp < Math.floor(Date.now() / 1000)) throw new Error("Token expired");
+  return payload;
+}
+
+export async function verifyDaemonToken(token: string, secret: string): Promise<string> {
+  const payload = await verifyDaemonTokenPayload(token, secret);
   return payload.sub;
 }
 

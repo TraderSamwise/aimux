@@ -8,6 +8,7 @@ import { useMainTabNavigation } from "@/lib/main-tabs";
 import { cn } from "@/lib/utils";
 import { notificationUnreadCountFamily } from "@/stores/notifications";
 import { selectedProjectPathAtom } from "@/stores/projects";
+import { securityUnreadCountAtom } from "@/stores/security";
 
 const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 
@@ -22,11 +23,15 @@ export function NotificationBellButton({ compact = false }: { compact?: boolean 
   const unreadCount = useAtomValue(
     notificationUnreadCountFamily(selectedProjectPath ?? EMPTY_PROJECT_PATH),
   );
+  const securityUnreadCount = useAtomValue(securityUnreadCountAtom);
+  const inboxUnreadCount = unreadCount + securityUnreadCount;
   const active = pathname.startsWith("/notifications");
 
   return (
     <Pressable
-      accessibilityLabel={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
+      accessibilityLabel={
+        inboxUnreadCount > 0 ? `${inboxUnreadCount} unread notifications` : "Notifications"
+      }
       onPress={() => {
         if (!active) navigateTab("inbox");
       }}
@@ -37,10 +42,10 @@ export function NotificationBellButton({ compact = false }: { compact?: boolean 
       )}
     >
       <Bell size={compact ? 17 : 19} color={active ? "#fafafa" : "#a1a1aa"} />
-      {unreadCount > 0 ? (
+      {inboxUnreadCount > 0 ? (
         <View className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-emerald-500 px-1.5 py-0.5">
           <Text className="text-center text-[10px] font-bold leading-none text-black">
-            {formatCount(unreadCount)}
+            {formatCount(inboxUnreadCount)}
           </Text>
         </View>
       ) : null}

@@ -1506,6 +1506,7 @@ program
   });
 
 const remoteCmd = program.command("remote").description("Manage remote access via the relay");
+const securityCmd = program.command("security").description("Manage aimux security controls");
 
 remoteCmd
   .command("status")
@@ -1562,6 +1563,21 @@ remoteCmd
     }
     setRemoteEnabled(false);
     console.log("✓ Remote access disabled.");
+  });
+
+securityCmd
+  .command("unlock")
+  .description("Clear relay security lockdown after re-authenticating")
+  .option("--web-app-url <url>", "Override the web app URL")
+  .action(async (opts: { webAppUrl?: string }) => {
+    try {
+      const { userId } = await runLoginFlow({ webAppUrl: opts.webAppUrl, action: "security-unlock" });
+      console.log(`\n✓ Security unlocked for ${userId}`);
+      console.log("Remote access is enabled with a fresh daemon token. Restart the daemon to reconnect immediately.");
+    } catch (err) {
+      console.error(`Security unlock failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
   });
 
 async function prepareProjectContext(requestedProject?: string): Promise<string> {

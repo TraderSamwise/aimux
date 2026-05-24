@@ -4,6 +4,11 @@ aimux notifications are a product-level system, not a chat-screen side effect.
 The client settings, daemon records, relay delivery, and mobile push token flow
 should all use the same event vocabulary.
 
+Account-security events are a separate class. Remote-client connections,
+first-time device detection, emergency lockdown, and recovery alerts are owned
+by the relay and documented in `docs/security-notifications.md`. They should not
+be suppressed by ordinary agent notification settings.
+
 ## Event Shape
 
 Notification producers should emit normalized events:
@@ -43,6 +48,10 @@ App settings persist a global `notifications` object:
 - `channels.push`: native/mobile push delivery.
 - `categories.agent`: per-agent-event controls.
 - `categories.system`: reserved for relay and project health events.
+
+Security notifications are intentionally outside this settings object. They are
+account-safety alerts and should continue to deliver through available channels
+even if optional agent/system notification categories are disabled.
 
 Agent event controls currently include:
 
@@ -85,3 +94,6 @@ Planned flow:
 
 The relay should own remote delivery because mobile devices may be offline or
 outside the daemon's local network.
+
+Security push delivery follows the same relay-owned native push path, but uses
+the security-device registry rather than project notification records.
