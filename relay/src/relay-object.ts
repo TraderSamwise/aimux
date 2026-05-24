@@ -416,16 +416,22 @@ export class RelayObject extends DurableObject<Env> {
       });
       await saveSharingState(this.ctx.storage, result.state);
       const acceptUrl = `${this.shareInviteBaseUrl(request)}/shares/invite/${encodeURIComponent(owner.userId)}/${encodeURIComponent(result.token.token)}/accept`;
-      await deliverShareInvite({
-        env: this.env,
-        owner,
-        share: result.token.share,
-        inviteEmail: result.token.invite.email,
-        acceptUrl,
-      });
+      let emailDelivered = false;
+      try {
+        emailDelivered = await deliverShareInvite({
+          env: this.env,
+          owner,
+          share: result.token.share,
+          inviteEmail: result.token.invite.email,
+          acceptUrl,
+        });
+      } catch {
+        emailDelivered = false;
+      }
       return json(
         {
           ok: true,
+          emailDelivered,
           share: summarizeShare(result.token.share),
           invite: {
             ...result.token.invite,

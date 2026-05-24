@@ -9,11 +9,11 @@ export interface ShareInviteDeliveryInput {
   acceptUrl: string;
 }
 
-export async function deliverShareInvite(input: ShareInviteDeliveryInput): Promise<void> {
-  if (!input.env.RESEND_API_KEY) return;
+export async function deliverShareInvite(input: ShareInviteDeliveryInput): Promise<boolean> {
+  if (!input.env.RESEND_API_KEY) return false;
   const from = input.env.COLLAB_EMAIL_FROM ?? input.env.SECURITY_EMAIL_FROM;
-  if (!from) return;
-  await fetch("https://api.resend.com/emails", {
+  if (!from) return false;
+  const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${input.env.RESEND_API_KEY}`,
@@ -27,6 +27,11 @@ export async function deliverShareInvite(input: ShareInviteDeliveryInput): Promi
       text: shareInviteEmailText(input),
     }),
   });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Share invite email failed: ${response.status}${body ? ` ${body.slice(0, 200)}` : ""}`);
+  }
+  return true;
 }
 
 function renderShareInviteEmail(input: ShareInviteDeliveryInput): string {

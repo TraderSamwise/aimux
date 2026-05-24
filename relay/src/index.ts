@@ -114,7 +114,12 @@ export default {
       } catch {
         return corsResponse(JSON.stringify({ ok: false, error: "Invalid token" }), 401);
       }
-      const profile = await fetchClerkUserProfile(env, userId);
+      let profile: { userId: string; displayName: string; email?: string };
+      try {
+        profile = await fetchClerkUserProfile(env, userId);
+      } catch {
+        profile = { userId, displayName: userId };
+      }
       const inviteAcceptMatch = url.pathname.match(/^\/shares\/invite\/([^/]+)\/([^/]+)\/accept$/);
       const ownerUserId = inviteAcceptMatch ? decodeURIComponent(inviteAcceptMatch[1]) : userId;
       const relayId = env.RELAY.idFromName(ownerUserId);
