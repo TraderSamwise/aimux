@@ -7,6 +7,7 @@ import {
   getShareChatMode,
   isSharedRelayRequestAllowed,
   removeShareParticipant,
+  sharedRelayRequestAccess,
   summarizeShare,
 } from "./sharing";
 
@@ -159,6 +160,29 @@ describe("sharing state", () => {
     expect(isSharedRelayRequestAllowed({ method: "POST", path: "/agents/input", sessionId: "other" }, share)).toBe(
       false,
     );
+  });
+
+  it("unwraps proxied project routes before shared-route authorization", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+    });
+    const share = Object.values(created.state.shares)[0];
+
+    expect(
+      sharedRelayRequestAccess(
+        { method: "GET", path: "/proxy/127.0.0.1/43192/agents/history?sessionId=claude-abc" },
+        share,
+      ),
+    ).toMatchObject({ allowed: true, path: "/agents/history?sessionId=claude-abc", sessionId: "claude-abc" });
+    expect(
+      sharedRelayRequestAccess(
+        { method: "POST", path: "/proxy/127.0.0.1/43192/agents/input", body: { sessionId: "other" } },
+        share,
+      ),
+    ).toMatchObject({ allowed: false, path: "/agents/input", sessionId: "other" });
   });
 
   it("sanitizes actor display prefixes", () => {

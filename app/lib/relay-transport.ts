@@ -35,6 +35,11 @@ export type RelayStatus = "disconnected" | "connecting" | "connected" | "daemon_
 export type RelayStatusListener = (status: RelayStatus) => void;
 export type RelaySecurityEventListener = (event: SecurityEventRecord) => void;
 
+export interface RelayTransportOptions {
+  ownerUserId?: string;
+  shareId?: string;
+}
+
 export class RelayTransport {
   private ws: WebSocket | null = null;
   private pending = new Map<string, PendingRequest>();
@@ -52,6 +57,7 @@ export class RelayTransport {
     relayUrl: string,
     private readonly getToken: () => Promise<string | null>,
     private readonly getDeviceInfo: () => Promise<ClientDeviceInfo> = getClientDeviceInfo,
+    private readonly options: RelayTransportOptions = {},
   ) {
     this.relayUrl = relayUrl.replace(/\/+$/, "");
   }
@@ -230,6 +236,8 @@ export class RelayTransport {
     url.searchParams.set("deviceName", device.name);
     url.searchParams.set("devicePlatform", device.platform);
     if (device.appVersion) url.searchParams.set("appVersion", device.appVersion);
+    if (this.options.ownerUserId) url.searchParams.set("ownerUserId", this.options.ownerUserId);
+    if (this.options.shareId) url.searchParams.set("shareId", this.options.shareId);
     return url.toString();
   }
 

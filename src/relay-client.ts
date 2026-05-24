@@ -6,6 +6,7 @@ interface RelayRequest {
   type: "request";
   method: string;
   path: string;
+  headers?: Record<string, string>;
   body?: unknown;
 }
 
@@ -184,7 +185,7 @@ export class RelayClient {
 
     if (msg.type === "request") {
       try {
-        const result = await this.daemon.routeRequest(msg.method, msg.path, msg.body);
+        const result = await this.daemon.routeRequest(msg.method, msg.path, msg.body, msg.headers);
         this.sendRaw(JSON.stringify({ id: msg.id, type: "response", status: result.status, body: result.body }));
       } catch (err) {
         this.sendRaw(

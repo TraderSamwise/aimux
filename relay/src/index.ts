@@ -238,6 +238,7 @@ export default {
     }
     let userId: string;
     let daemonIssuedAt: number | undefined;
+    let clientProfile: { userId: string; displayName: string; email?: string } | undefined;
     try {
       if (tokenIsDaemon) {
         const payload = await verifyDaemonTokenPayload(token, env.RELAY_TOKEN_SECRET!);
@@ -245,12 +246,28 @@ export default {
         daemonIssuedAt = payload.iat;
       } else {
         userId = await verifyWsToken(token, env);
+        try {
+          clientProfile = await fetchClerkUserProfile(env, userId);
+        } catch {
+          clientProfile = { userId, displayName: userId };
+        }
       }
     } catch {
       return corsResponse(JSON.stringify({ ok: false, error: "Invalid token" }), 401);
     }
 
-    const relayId = env.RELAY.idFromName(userId);
+    const sharedOwnerUserId =
+      !tokenIsDaemon && url.pathname === "/client/connect" ? url.searchParams.get("ownerUserId")?.trim() : undefined;
+    const sharedShareId =
+      !tokenIsDaemon && url.pathname === "/client/connect" ? url.searchParams.get("shareId")?.trim() : undefined;
+    if (Boolean(sharedOwnerUserId) !== Boolean(sharedShareId)) {
+      return corsResponse(
+        JSON.stringify({ ok: false, error: "ownerUserId and shareId must be provided together" }),
+        400,
+      );
+    }
+    const relayOwnerUserId = sharedOwnerUserId || userId;
+    const relayId = env.RELAY.idFromName(relayOwnerUserId);
     const stub = env.RELAY.get(relayId);
 
     const doUrl = new URL(request.url);
@@ -258,6 +275,11 @@ export default {
 
     const headers = new Headers(request.headers);
     headers.set("X-Aimux-User-Id", userId);
+    if (clientProfile) {
+      headers.set("X-Aimux-User-Name", clientProfile.displayName);
+      if (clientProfile.email) headers.set("X-Aimux-User-Email", clientProfile.email);
+    }
+    if (sharedOwnerUserId) headers.set("X-Aimux-Share-Owner-Id", sharedOwnerUserId);
     if (daemonIssuedAt !== undefined) headers.set("X-Aimux-Daemon-Iat", String(daemonIssuedAt));
     return stub.fetch(new Request(doUrl.toString(), { headers }));
   },

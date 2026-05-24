@@ -246,6 +246,19 @@ export function isSharedRelayRequestAllowed(
   return false;
 }
 
+export function sharedRelayRequestAccess(
+  input: { method: string; path: string; body?: unknown },
+  share: SharedSessionRecord,
+): { allowed: boolean; path: string; sessionId?: string } {
+  const path = unwrapProxyPath(input.path);
+  const sessionId = sessionIdFromRequest(path, input.body);
+  return {
+    allowed: isSharedRelayRequestAllowed({ method: input.method, path, sessionId }, share),
+    path,
+    sessionId,
+  };
+}
+
 export function actorDisplayPrefix(actor: ShareActor): string {
   return `[${sanitizeDisplayName(actor.displayName)}]:`;
 }
@@ -361,6 +374,24 @@ function isAllowedAttachmentPath(path: string): boolean {
 function normalizePath(path: string): string {
   const pathname = new URL(path, "https://relay.local").pathname;
   return pathname.replace(/\/+$/, "") || "/";
+}
+
+function unwrapProxyPath(path: string): string {
+  const url = new URL(path, "https://relay.local");
+  const pathname = normalizePath(`${url.pathname}${url.search}`);
+  const match = pathname.match(/^\/proxy\/[^/]+\/\d+(\/.*)$/);
+  const unwrapped = match ? match[1] : pathname;
+  return `${unwrapped}${url.search}`;
+}
+
+function sessionIdFromRequest(path: string, body: unknown): string | undefined {
+  const bodySessionId =
+    body && typeof body === "object" && "sessionId" in body
+      ? String((body as { sessionId?: unknown }).sessionId ?? "")
+      : "";
+  if (bodySessionId.trim()) return bodySessionId.trim();
+  const url = new URL(path, "https://relay.local");
+  return url.searchParams.get("sessionId")?.trim() || undefined;
 }
 
 function randomBase64Url(byteLength: number): string {
