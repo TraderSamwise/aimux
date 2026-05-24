@@ -74,7 +74,11 @@ export default function MainLayout() {
     });
     setApiRelay(transport);
     void transport.connect();
-    void registerSecurityPushToken(relayUrl, getToken).catch((err) => {
+    void registerSecurityPushToken(
+      relayUrl,
+      getToken,
+      activeShare ? { ownerUserId: activeShare.ownerUserId, shareId: activeShare.shareId } : {},
+    ).catch((err) => {
       console.warn("security push registration failed:", err);
     });
     return () => {

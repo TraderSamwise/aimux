@@ -4,6 +4,8 @@ import { deliverSecurityAlert } from "./security-delivery.js";
 import { deliverShareInvite } from "./sharing-delivery.js";
 import {
   activateSecurityLockdown,
+  appendSecurityEvent,
+  createShareSecurityEvent,
   createSecurityActionToken,
   deactivateSecurityLockdown,
   findSecurityActionByToken,
@@ -29,6 +31,7 @@ import {
   stripTrustedAimuxHeaders,
 } from "./sharing.js";
 import type { SharedSessionRecord } from "./sharing.js";
+import type { SecurityEventRecord } from "./security.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // In-flight requests: response with this id will be routed back to the
@@ -416,11 +419,34 @@ export class RelayObject extends DurableObject<Env> {
     }
     const now = new Date().toISOString();
     const state = await loadSecurityState(this.ctx.storage);
-    state.pushTokens[deviceId] = {
+    const userId = request.headers.get("X-Aimux-User-Id")?.trim() || undefined;
+    const ownerUserId = request.headers.get("X-Aimux-Share-Owner-Id")?.trim();
+    const shareId = request.headers.get("X-Aimux-Share-Id")?.trim();
+    if (ownerUserId || shareId) {
+      if (!userId || !ownerUserId || !shareId) {
+        return json({ ok: false, error: "Missing shared push registration context" }, 401);
+      }
+      const sharingState = await loadSharingState(this.ctx.storage);
+      const share = sharingState.shares[shareId];
+      if (!share || share.ownerUserId !== ownerUserId) {
+        return json({ ok: false, error: "Shared chat not found" }, 404);
+      }
+      const participant = share.participants[userId];
+      if (!participant || participant.status !== "active") {
+        return json({ ok: false, error: "Not a participant in this shared chat" }, 403);
+      }
+    }
+    const tokenKey = userId ? `${userId}:${deviceId}` : deviceId;
+    const createdAt = state.pushTokens[tokenKey]?.createdAt ?? state.pushTokens[deviceId]?.createdAt ?? now;
+    if (userId && state.pushTokens[deviceId]) {
+      delete state.pushTokens[deviceId];
+    }
+    state.pushTokens[tokenKey] = {
+      userId,
       deviceId,
       token,
       platform: body.platform ?? "unknown",
-      createdAt: state.pushTokens[deviceId]?.createdAt ?? now,
+      createdAt,
       updatedAt: now,
     };
     await saveSecurityState(this.ctx.storage, state);
@@ -522,6 +548,17 @@ export class RelayObject extends DurableObject<Env> {
     }
     const result = removeShareParticipant(state, share.id, actor.userId);
     await saveSharingState(this.ctx.storage, result.state);
+    const event = createShareSecurityEvent({
+      kind: "shared_participant_left",
+      shareId: share.id,
+      sessionId: share.sessionId,
+      actor,
+    });
+    await this.recordAndDeliverShareSecurityEvent(request, event, {
+      ownerUserId: share.ownerUserId,
+      broadcast: true,
+      deliverToOwner: true,
+    });
     return json({ ok: true, share: summarizeShare(result.share ?? share) }, 200);
   }
 
@@ -539,8 +576,23 @@ export class RelayObject extends DurableObject<Env> {
     if (!share.participants[parsed.participantUserId]) {
       return json({ ok: false, error: "Participant not found" }, 404);
     }
+    const target = share.participants[parsed.participantUserId]!;
     const result = removeShareParticipant(state, share.id, parsed.participantUserId);
     await saveSharingState(this.ctx.storage, result.state);
+    const event = createShareSecurityEvent({
+      kind: "shared_participant_removed",
+      shareId: share.id,
+      sessionId: share.sessionId,
+      actor,
+      target,
+    });
+    await this.recordAndDeliverShareSecurityEvent(request, event, {
+      ownerUserId: share.ownerUserId,
+      broadcast: true,
+      deliverToOwner: true,
+      deliverToUserId: target.userId,
+    });
+    this.closeClientSocketsForUser(target.userId, "Shared chat access removed");
     return json({ ok: true, share: summarizeShare(result.share ?? share) }, 200);
   }
 
@@ -617,6 +669,18 @@ export class RelayObject extends DurableObject<Env> {
         return json({ ok: false, error: "Invite owner mismatch" }, 403);
       }
       await saveSharingState(this.ctx.storage, result.state);
+      const event = createShareSecurityEvent({
+        kind: "shared_invite_accepted",
+        shareId: result.share.id,
+        sessionId: result.share.sessionId,
+        actor,
+      });
+      await this.recordAndDeliverShareSecurityEvent(request, event, {
+        ownerUserId: result.share.ownerUserId,
+        broadcast: true,
+        deliverToOwner: true,
+        emergencyLockdown: true,
+      });
       return json({ ok: true, share: summarizeShare(result.share), participant: result.participant }, 200);
     } catch (error) {
       return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
@@ -650,6 +714,56 @@ export class RelayObject extends DurableObject<Env> {
     if (!deviceId) return true;
     const state = await loadSecurityState(this.ctx.storage);
     return !isDeviceApproved(state.devices[deviceId]);
+  }
+
+  private async recordAndDeliverShareSecurityEvent(
+    request: Request,
+    event: SecurityEventRecord,
+    options: {
+      ownerUserId: string;
+      broadcast?: boolean;
+      deliverToOwner?: boolean;
+      deliverToUserId?: string;
+      emergencyLockdown?: boolean;
+    },
+  ): Promise<void> {
+    const state = await loadSecurityState(this.ctx.storage);
+    let emergencyUrl: string | undefined;
+    if (options.emergencyLockdown && options.ownerUserId) {
+      const action = await createSecurityActionToken("emergency_lockdown");
+      state.actions[action.action.id] = action.action;
+      emergencyUrl = `${this.securityActionBaseUrl(request)}/security/action/${encodeURIComponent(options.ownerUserId)}/${encodeURIComponent(action.token)}`;
+    }
+    appendSecurityEvent(state, event);
+    await saveSecurityState(this.ctx.storage, state);
+
+    if (options.broadcast) {
+      this.broadcastToClients({ type: "security_event", event });
+      if (this.daemonWs) {
+        try {
+          this.send(this.daemonWs, { type: "security_event", event });
+        } catch {}
+      }
+    }
+
+    const pushTokens = Object.values(state.pushTokens);
+    if (options.deliverToOwner) {
+      await deliverSecurityAlert({
+        env: this.env,
+        userId: options.ownerUserId,
+        event,
+        pushTokens,
+        emergencyUrl,
+      });
+    }
+    if (options.deliverToUserId && options.deliverToUserId !== options.ownerUserId) {
+      await deliverSecurityAlert({
+        env: this.env,
+        userId: options.deliverToUserId,
+        event,
+        pushTokens,
+      });
+    }
   }
 
   private ensureHeartbeat(): void {
@@ -717,6 +831,18 @@ export class RelayObject extends DurableObject<Env> {
     this.daemonWs = null;
     this.clientSockets.clear();
     this.clientDeviceIds.clear();
+  }
+
+  private closeClientSocketsForUser(userId: string, reason: string): void {
+    for (const ws of this.clientSockets) {
+      const tags = this.ctx.getTags(ws);
+      if (!tags.includes(`user:${userId}`)) continue;
+      try {
+        ws.close(1008, reason);
+      } catch {}
+      this.clientSockets.delete(ws);
+      this.clientDeviceIds.delete(ws);
+    }
   }
 }
 
