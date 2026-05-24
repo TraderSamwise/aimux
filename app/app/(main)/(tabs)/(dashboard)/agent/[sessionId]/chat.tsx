@@ -371,7 +371,14 @@ export default function ChatScreen() {
                 <Button
                   size="sm"
                   label={inviteBusy ? "Sending..." : "Invite"}
-                  disabled={inviteBusy || !relayConfigured || !token || !inviteEmail.trim()}
+                  disabled={
+                    inviteBusy ||
+                    !relayConfigured ||
+                    !token ||
+                    !project?.path ||
+                    !sessionId ||
+                    !inviteEmail.trim()
+                  }
                   onPress={handleSendInvite}
                 />
               </View>
