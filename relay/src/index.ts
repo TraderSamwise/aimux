@@ -121,14 +121,19 @@ export default {
         profile = { userId, displayName: userId };
       }
       const inviteAcceptMatch = url.pathname.match(/^\/shares\/invite\/([^/]+)\/([^/]+)\/accept$/);
-      const ownerUserId = inviteAcceptMatch ? decodeURIComponent(inviteAcceptMatch[1]) : userId;
+      const ownerScopedMatch = url.pathname.match(/^\/shares\/([^/]+)(?:\/|$)/);
+      const ownerUserId = inviteAcceptMatch
+        ? decodeURIComponent(inviteAcceptMatch[1])
+        : ownerScopedMatch && decodeURIComponent(ownerScopedMatch[1]) !== "invite"
+          ? decodeURIComponent(ownerScopedMatch[1])
+          : userId;
       const relayId = env.RELAY.idFromName(ownerUserId);
       const stub = env.RELAY.get(relayId);
       const headers = new Headers(request.headers);
       headers.set("X-Aimux-User-Id", userId);
       headers.set("X-Aimux-User-Name", profile.displayName);
       if (profile.email) headers.set("X-Aimux-User-Email", profile.email);
-      if (inviteAcceptMatch) headers.set("X-Aimux-Share-Owner-Id", ownerUserId);
+      if (ownerUserId !== userId) headers.set("X-Aimux-Share-Owner-Id", ownerUserId);
       return stub.fetch(new Request(request, { headers }));
     }
 
