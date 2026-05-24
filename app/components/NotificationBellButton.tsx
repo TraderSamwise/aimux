@@ -1,9 +1,10 @@
 import React from "react";
 import { Pressable, View } from "react-native";
-import { usePathname, useRouter } from "expo-router";
+import { usePathname } from "expo-router";
 import { useAtomValue } from "jotai";
 import { Bell } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
+import { useMainTabNavigation } from "@/lib/main-tabs";
 import { cn } from "@/lib/utils";
 import { notificationUnreadCountFamily } from "@/stores/notifications";
 import { selectedProjectPathAtom } from "@/stores/projects";
@@ -15,8 +16,8 @@ function formatCount(count: number): string {
 }
 
 export function NotificationBellButton({ compact = false }: { compact?: boolean }) {
-  const router = useRouter();
   const pathname = usePathname();
+  const navigateTab = useMainTabNavigation();
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const unreadCount = useAtomValue(
     notificationUnreadCountFamily(selectedProjectPath ?? EMPTY_PROJECT_PATH),
@@ -27,7 +28,7 @@ export function NotificationBellButton({ compact = false }: { compact?: boolean 
     <Pressable
       accessibilityLabel={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
       onPress={() => {
-        if (!active) router.push("/notifications");
+        if (!active) navigateTab("inbox");
       }}
       className={cn(
         "items-center justify-center rounded-lg border border-border active:bg-accent",

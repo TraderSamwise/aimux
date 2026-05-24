@@ -245,14 +245,14 @@ export default function DashboardIndex() {
   function handlePickSession(sessionId: string) {
     selectSession(sessionId);
     router.push({
-      pathname: "/(main)/agent/[sessionId]/chat",
+      pathname: "/agent/[sessionId]/chat",
       params: { sessionId },
     });
   }
 
   function handlePickService(serviceId: string) {
     router.push({
-      pathname: "/(main)/service/[serviceId]",
+      pathname: "/service/[serviceId]",
       params: { serviceId },
     });
   }
