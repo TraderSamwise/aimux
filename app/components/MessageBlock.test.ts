@@ -7,7 +7,7 @@ vi.mock("react-native", () => ({
   View: "View",
 }));
 
-import { resolveImageUrl } from "@/components/MessageBlock";
+import { messageSpeakerLabel, resolveImageUrl } from "@/components/MessageBlock";
 
 const endpoint = { host: "127.0.0.1", port: 43210 };
 const originalConnectionMode = process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
@@ -52,5 +52,23 @@ describe("MessageBlock image URLs", () => {
         endpoint,
       ),
     ).toBe("https://example.test/shot.png");
+  });
+});
+
+describe("MessageBlock speaker labels", () => {
+  it("normalizes actor display names from shared chat history", () => {
+    expect(
+      messageSpeakerLabel({
+        actor: {
+          userId: "user_123",
+          displayName: "  Sam   Steady  ",
+          role: "owner",
+        },
+      }),
+    ).toBe("Sam Steady");
+  });
+
+  it("omits labels when history has no actor metadata", () => {
+    expect(messageSpeakerLabel({})).toBeNull();
   });
 });

@@ -19,9 +19,15 @@ export function resolveImageUrl(part: HistoryImagePart, endpoint: ServiceEndpoin
   return `${getServiceUrl(endpoint)}${part.contentUrl}`;
 }
 
+export function messageSpeakerLabel(message: Pick<ChatMessage, "actor">): string | null {
+  const name = message.actor?.displayName?.trim().replace(/\s+/g, " ");
+  return name || null;
+}
+
 export function MessageBlock({ message, serviceEndpoint }: Props) {
   const role = message.role ?? "assistant";
   const isUser = role === "user";
+  const speakerLabel = isUser ? messageSpeakerLabel(message) : null;
 
   return (
     <View
@@ -31,6 +37,17 @@ export function MessageBlock({ message, serviceEndpoint }: Props) {
           : "self-start max-w-[90%] rounded-lg bg-secondary px-3 py-2 my-1"
       }
     >
+      {speakerLabel ? (
+        <Text
+          className={
+            isUser
+              ? "text-xs font-semibold text-primary-foreground mb-1"
+              : "text-xs font-semibold text-secondary-foreground mb-1"
+          }
+        >
+          {speakerLabel}
+        </Text>
+      ) : null}
       {message.deliveryState === "failed" ? (
         <Text className="text-xs text-destructive mb-1">
           {message.deliveryError ?? "Failed to deliver"}
