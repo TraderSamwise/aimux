@@ -9,7 +9,7 @@ import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
-import { serializeAgentInput } from "../agent-message-parts.js";
+import { serializeAgentInput, type AgentInputPart } from "../agent-message-parts.js";
 import { resolveAttachmentPath } from "../attachment-store.js";
 import { applyAgentCollaborationPrefix, type AgentCollaborationContext } from "../collaboration.js";
 import { appendSessionMessage, readSessionMessages } from "../session-message-history.js";
@@ -264,7 +264,12 @@ export async function writeAgentInput(
   error?: string;
 }> {
   const session = resolveRunningSession(host, sessionId);
-  const agentInput = applyAgentCollaborationPrefix({ data, parts }, collaboration);
+  const agentInput = applyCollaborationContextForAgent(
+    host,
+    sessionId,
+    applyAgentCollaborationPrefix({ data, parts }, collaboration),
+    collaboration,
+  );
   const serializedData = serializeAgentInput(agentInput, {
     tool: host.sessionToolKeys.get(sessionId),
     resolveAttachmentPath,
@@ -326,6 +331,43 @@ export async function writeAgentInput(
       error: operation.error,
     };
   }
+}
+
+function applyCollaborationContextForAgent(
+  host: SessionRuntimeHost,
+  sessionId: string,
+  input: { data?: string; parts?: AgentInputPart[] },
+  collaboration?: AgentCollaborationContext,
+): { data?: string; parts?: AgentInputPart[] } {
+  const notice = consumeCollaborationModeNotice(host, sessionId, collaboration);
+  if (!notice) return input;
+  if (Array.isArray(input.parts) && input.parts.length > 0) {
+    return {
+      data: input.data,
+      parts: [{ type: "text", text: notice }, ...input.parts],
+    };
+  }
+  const data = String(input.data ?? "");
+  return {
+    data: data.trim() ? `${notice}\n\n${data}` : notice,
+    parts: input.parts,
+  };
+}
+
+function consumeCollaborationModeNotice(
+  host: SessionRuntimeHost,
+  sessionId: string,
+  collaboration?: AgentCollaborationContext,
+): string | null {
+  if (!collaboration?.shareId || !collaboration.mode) return null;
+  const modes: Map<string, string> = (host.collaborationModesBySession ??= new Map());
+  const next = `${collaboration.shareId}:${collaboration.mode}`;
+  if (modes.get(sessionId) === next) return null;
+  modes.set(sessionId, next);
+  if (collaboration.mode === "multi") {
+    return "Aimux collaboration note: This shared chat is now multi-user. Human messages are prefixed as [Name]: message so you can distinguish participants.";
+  }
+  return "Aimux collaboration note: This shared chat is back to single-user mode. Future unprefixed user messages are from the remaining participant.";
 }
 
 export async function readAgentHistory(
