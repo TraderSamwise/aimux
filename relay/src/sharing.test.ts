@@ -216,4 +216,33 @@ describe("sharing state", () => {
     expect(summary.invites[0]).not.toHaveProperty("tokenHash");
     expect(summary.serviceEndpoint).toBeUndefined();
   });
+
+  it("normalizes persisted service endpoints when reusing shares", async () => {
+    const created = await createShareInvite(
+      {
+        shares: {
+          share_existing: {
+            id: "share_existing",
+            ownerUserId: owner.userId,
+            projectRoot: "/Users/sam/cs/example",
+            serviceEndpoint: { host: "", port: 99999 },
+            sessionId: "claude-abc",
+            createdAt: "2026-05-24T00:00:00.000Z",
+            updatedAt: "2026-05-24T00:00:00.000Z",
+            version: 1,
+            participants: { [owner.userId]: owner },
+            invites: {},
+          },
+        },
+      },
+      {
+        owner,
+        projectRoot: "/Users/sam/cs/example",
+        sessionId: "claude-abc",
+        email: "alex@example.com",
+      },
+    );
+
+    expect(Object.values(created.state.shares)[0].serviceEndpoint).toBeUndefined();
+  });
 });

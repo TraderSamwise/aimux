@@ -31,7 +31,7 @@ export default function SignInScreen() {
       });
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
-        if (redirect) router.replace(redirect);
+        router.replace(redirect ?? "/");
       } else if (
         result.status === "needs_second_factor" ||
         (result.status as string) === "needs_client_trust"
@@ -62,7 +62,7 @@ export default function SignInScreen() {
       });
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
-        if (redirect) router.replace(redirect);
+        router.replace(redirect ?? "/");
       }
     } catch (err: unknown) {
       setError(clerkErrorMessage(err, "Verification failed"));

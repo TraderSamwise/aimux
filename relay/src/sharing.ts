@@ -316,6 +316,7 @@ function createShare(input: {
 
 function normalizeShare(share: SharedSessionRecord): SharedSessionRecord {
   const nowMs = Date.now();
+  const serviceEndpoint = sanitizeServiceEndpoint(share.serviceEndpoint);
   const invites = Object.fromEntries(
     Object.values(share.invites ?? {})
       .filter((invite) => {
@@ -329,6 +330,7 @@ function normalizeShare(share: SharedSessionRecord): SharedSessionRecord {
   );
   return {
     ...share,
+    serviceEndpoint,
     version: Number.isFinite(share.version) ? share.version : 1,
     participants: share.participants ?? {},
     invites,
