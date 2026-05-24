@@ -6,12 +6,16 @@ import {
   acceptShareInvite,
   clearNotifications,
   createShareInvite,
+  getShare,
   getAgentHistory,
   getAgentOutput,
+  leaveShare,
+  listShares,
   listProjects,
   listNotifications,
   listThreads,
   markNotificationsRead,
+  removeShareParticipant,
   putPlan,
   sendAgentInput,
   setApiRelay,
@@ -266,5 +270,33 @@ describe("api relay routing", () => {
     );
     expect(init.method).toBe("POST");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer clerk-token");
+  });
+
+  it("manages shares through owner-scoped relay HTTP routes", async () => {
+    process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
+    process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = "wss://relay-preview.example.com/";
+    const fetchMock = installFetchMock({ ok: true, share: { id: "share_1" } });
+
+    await listShares({ token: "clerk-token" });
+    await getShare("user/owner", "share/1", { token: "clerk-token" });
+    await leaveShare("user/owner", "share/1", { token: "clerk-token" });
+    await removeShareParticipant("user/owner", "share/1", "user/guest", {
+      token: "clerk-token",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://relay-preview.example.com/shares",
+      "https://relay-preview.example.com/shares/user%2Fowner/share%2F1",
+      "https://relay-preview.example.com/shares/user%2Fowner/share%2F1/leave",
+      "https://relay-preview.example.com/shares/user%2Fowner/share%2F1/participants/user%2Fguest",
+    ]);
+    expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe("POST");
+    expect((fetchMock.mock.calls[3][1] as RequestInit).method).toBe("DELETE");
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(new Headers((init as RequestInit).headers).get("authorization")).toBe(
+        "Bearer clerk-token",
+      );
+    }
   });
 });
