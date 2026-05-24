@@ -3,7 +3,14 @@ export function buildSecurityPushRegistrationUrl(
   options: { ownerUserId?: string; shareId?: string } = {},
 ): URL {
   const url = new URL(`${relayUrl.replace(/^ws/, "http").replace(/\/+$/, "")}/security/push-token`);
-  if (options.ownerUserId) url.searchParams.set("ownerUserId", options.ownerUserId);
-  if (options.shareId) url.searchParams.set("shareId", options.shareId);
+  const ownerUserId = options.ownerUserId?.trim();
+  const shareId = options.shareId?.trim();
+  if (Boolean(ownerUserId) !== Boolean(shareId)) {
+    throw new Error("ownerUserId and shareId must be provided together");
+  }
+  if (ownerUserId && shareId) {
+    url.searchParams.set("ownerUserId", ownerUserId);
+    url.searchParams.set("shareId", shareId);
+  }
   return url;
 }

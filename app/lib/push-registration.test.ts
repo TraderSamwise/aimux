@@ -11,9 +11,18 @@ describe("push registration", () => {
   it("routes shared push registration through the owner relay context", () => {
     expect(
       buildSecurityPushRegistrationUrl("wss://relay.aimux.app", {
-        ownerUserId: "user_owner",
-        shareId: "share_123",
+        ownerUserId: " user_owner ",
+        shareId: " share_123 ",
       }).toString(),
     ).toBe("https://relay.aimux.app/security/push-token?ownerUserId=user_owner&shareId=share_123");
+  });
+
+  it("rejects partial shared push registration context", () => {
+    expect(() =>
+      buildSecurityPushRegistrationUrl("wss://relay.aimux.app", { ownerUserId: "user_owner" }),
+    ).toThrow("ownerUserId and shareId must be provided together");
+    expect(() =>
+      buildSecurityPushRegistrationUrl("wss://relay.aimux.app", { shareId: "share_123" }),
+    ).toThrow("ownerUserId and shareId must be provided together");
   });
 });
