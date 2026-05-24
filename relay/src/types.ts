@@ -11,6 +11,9 @@ export interface Env {
   // token-issuing endpoint. When unset, /cli/issue-token rejects all
   // cross-origin requests outright.
   CLI_TOKEN_ALLOWED_ORIGINS?: string;
+  // warn: record and notify about first-time devices but allow requests.
+  // enforce: deny client requests until the device has been approved.
+  SECURITY_DEVICE_POLICY?: "warn" | "enforce";
 }
 
 export interface RelayRequest {

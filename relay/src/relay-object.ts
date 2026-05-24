@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
 import {
   hashIpAddress,
+  isDeviceApproved,
   loadSecurityState,
   recordClientConnection,
   sanitizeDeviceInfo,
@@ -17,6 +18,7 @@ const PENDING_REQUEST_TTL_MS = 60_000;
 export class RelayObject extends DurableObject<Env> {
   private daemonWs: WebSocket | null = null;
   private clientSockets = new Set<WebSocket>();
+  private clientDeviceIds = new Map<WebSocket, string>();
   private pendingRequests = new Map<string, { client: WebSocket; clientRequestId: string; expiresAt: number }>();
   private requestCounter = 0;
 
@@ -29,10 +31,20 @@ export class RelayObject extends DurableObject<Env> {
     }
 
     const role = url.pathname === "/daemon/connect" ? "daemon" : "client";
+    const clientDevice =
+      role === "client"
+        ? sanitizeDeviceInfo({
+            deviceId: url.searchParams.get("deviceId") ?? undefined,
+            kind: url.searchParams.get("deviceKind") ?? undefined,
+            name: url.searchParams.get("deviceName") ?? undefined,
+            platform: url.searchParams.get("devicePlatform") ?? undefined,
+            appVersion: url.searchParams.get("appVersion") ?? undefined,
+          })
+        : null;
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
-    this.ctx.acceptWebSocket(server, [role]);
+    this.ctx.acceptWebSocket(server, clientDevice ? [role, `device:${clientDevice.deviceId}`] : [role]);
 
     if (role === "daemon") {
       if (this.daemonWs) {
@@ -47,9 +59,10 @@ export class RelayObject extends DurableObject<Env> {
       this.broadcastToClients({ type: "daemon_status", online: true });
     } else {
       this.clientSockets.add(server);
+      if (clientDevice) this.clientDeviceIds.set(server, clientDevice.deviceId);
       this.send(server, { type: "connected", role: "client" });
       this.send(server, { type: "daemon_status", online: this.daemonWs !== null });
-      await this.recordClientConnected(request, url);
+      await this.recordClientConnected(request, server, clientDevice!);
     }
 
     this.ensureHeartbeat();
@@ -95,6 +108,15 @@ export class RelayObject extends DurableObject<Env> {
         }
       }
     } else if (!isDaemon && parsed.type === "request") {
+      if (await this.shouldRejectClientRequest(ws)) {
+        this.send(ws, {
+          id: parsed.id,
+          type: "response",
+          status: 403,
+          body: { ok: false, error: "Remote client pending security approval" },
+        });
+        return;
+      }
       if (this.daemonWs) {
         const relayRequestId = this.nextRelayRequestId();
         this.pendingRequests.set(relayRequestId, {
@@ -184,6 +206,7 @@ export class RelayObject extends DurableObject<Env> {
       this.broadcastToClients({ type: "daemon_status", online: false });
     } else {
       this.clientSockets.delete(ws);
+      this.clientDeviceIds.delete(ws);
       for (const [id, entry] of this.pendingRequests) {
         if (entry.client === ws) this.pendingRequests.delete(id);
       }
@@ -193,9 +216,10 @@ export class RelayObject extends DurableObject<Env> {
     } catch {}
   }
 
-  private broadcastToClients(msg: RelayMessage): void {
+  private broadcastToClients(msg: RelayMessage, exclude?: WebSocket): void {
     const data = JSON.stringify(msg);
     for (const client of this.clientSockets) {
+      if (client === exclude) continue;
       try {
         client.send(data);
       } catch {
@@ -208,14 +232,11 @@ export class RelayObject extends DurableObject<Env> {
     ws.send(JSON.stringify(msg));
   }
 
-  private async recordClientConnected(request: Request, url: URL): Promise<void> {
-    const device = sanitizeDeviceInfo({
-      deviceId: url.searchParams.get("deviceId") ?? undefined,
-      kind: url.searchParams.get("deviceKind") ?? undefined,
-      name: url.searchParams.get("deviceName") ?? undefined,
-      platform: url.searchParams.get("devicePlatform") ?? undefined,
-      appVersion: url.searchParams.get("appVersion") ?? undefined,
-    });
+  private async recordClientConnected(
+    request: Request,
+    ws: WebSocket,
+    device: ReturnType<typeof sanitizeDeviceInfo>,
+  ): Promise<void> {
     const state = await loadSecurityState(this.ctx.storage);
     const ipHash = await hashIpAddress(request.headers.get("CF-Connecting-IP"));
     const context = {
@@ -231,7 +252,18 @@ export class RelayObject extends DurableObject<Env> {
           this.send(this.daemonWs, { type: "security_event", event });
         } catch {}
       }
+      if (event.kind === "new_client_detected") {
+        this.broadcastToClients({ type: "security_event", event }, ws);
+      }
     }
+  }
+
+  private async shouldRejectClientRequest(ws: WebSocket): Promise<boolean> {
+    if (this.env.SECURITY_DEVICE_POLICY !== "enforce") return false;
+    const deviceId = this.clientDeviceIds.get(ws) ?? this.deviceIdFromTags(ws);
+    if (!deviceId) return true;
+    const state = await loadSecurityState(this.ctx.storage);
+    return !isDeviceApproved(state.devices[deviceId]);
   }
 
   private ensureHeartbeat(): void {
@@ -241,6 +273,7 @@ export class RelayObject extends DurableObject<Env> {
   private rehydrateSockets(exclude?: WebSocket): void {
     this.daemonWs = null;
     this.clientSockets.clear();
+    this.clientDeviceIds.clear();
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === exclude) continue;
       const tags = this.ctx.getTags(ws);
@@ -254,8 +287,15 @@ export class RelayObject extends DurableObject<Env> {
         }
       } else if (tags.includes("client")) {
         this.clientSockets.add(ws);
+        const deviceId = this.deviceIdFromTags(ws);
+        if (deviceId) this.clientDeviceIds.set(ws, deviceId);
       }
     }
+  }
+
+  private deviceIdFromTags(ws: WebSocket): string | undefined {
+    const deviceTag = this.ctx.getTags(ws).find((tag) => tag.startsWith("device:"));
+    return deviceTag?.slice("device:".length);
   }
 
   private nextRelayRequestId(): string {
