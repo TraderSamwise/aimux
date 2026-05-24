@@ -3,13 +3,15 @@ import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "reac
 import type { LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Columns2, MessageSquare, SquareTerminal } from "lucide-react-native";
+import { Columns2, MessageSquare, SquareTerminal, UserPlus } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
+import { Button } from "@/components/ui/button";
 import { ChatComposer } from "@/components/ChatComposer";
+import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
-import { getAgentHistory, getAgentOutput } from "@/lib/api";
+import { createShareInvite, getAgentHistory, getAgentOutput } from "@/lib/api";
 import {
   messagesFromParsedAgentOutput,
   pendingPromptAlreadyRendered,
@@ -67,6 +69,10 @@ export default function ChatScreen() {
   const { width } = useWindowDimensions();
   const [token, setToken] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [sharePanelOpen, setSharePanelOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteStatus, setInviteStatus] = useState<string | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const scrollRef = useRef<ScrollView>(null);
@@ -267,6 +273,30 @@ export default function ChatScreen() {
     setTerminalPaneWidth(event.nativeEvent.layout.width);
   }
 
+  async function handleSendInvite() {
+    const email = inviteEmail.trim();
+    if (!project?.path || !sessionId || !email || inviteBusy) return;
+    if (!token) {
+      setInviteStatus("Sign in is required to send invites.");
+      return;
+    }
+    setInviteBusy(true);
+    setInviteStatus(null);
+    try {
+      const result = await createShareInvite(project.path, sessionId, email, { token });
+      setInviteEmail("");
+      setInviteStatus(
+        result.emailDelivered
+          ? `Invite sent to ${result.invite.email}.`
+          : `Invite created for ${result.invite.email}; email delivery is not configured.`,
+      );
+    } catch (err) {
+      setInviteStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+
   const terminalPane = (
     <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
       <ScrollView ref={terminalScrollRef} className="flex-1 px-4 py-3" horizontal={false}>
@@ -291,6 +321,13 @@ export default function ChatScreen() {
               </Text>
             </View>
             <View className="flex-row items-center">
+              <Pressable
+                onPress={() => setSharePanelOpen((open) => !open)}
+                accessibilityLabel="Invite collaborator"
+                className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
+              >
+                <UserPlus size={15} color="#a1a1aa" />
+              </Pressable>
               <Pressable
                 onPress={() => setShowTerminalSplit((current) => !current)}
                 disabled={!canShowTerminal}
@@ -319,6 +356,38 @@ export default function ChatScreen() {
               </Pressable>
             </View>
           </View>
+          {sharePanelOpen ? (
+            <View className="border-b border-border bg-card px-4 py-3">
+              <View className="flex-row items-center gap-2">
+                <Input
+                  value={inviteEmail}
+                  onChangeText={setInviteEmail}
+                  placeholder="Email address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  className="flex-1 h-9 text-sm"
+                />
+                <Button
+                  size="sm"
+                  label={inviteBusy ? "Sending..." : "Invite"}
+                  disabled={inviteBusy || !relayConfigured || !token || !inviteEmail.trim()}
+                  onPress={handleSendInvite}
+                />
+              </View>
+              {!relayConfigured ? (
+                <Text className="text-xs text-muted-foreground mt-2">
+                  Remote mode is required for shared chats.
+                </Text>
+              ) : !token ? (
+                <Text className="text-xs text-muted-foreground mt-2">
+                  Sign in is required to send invites.
+                </Text>
+              ) : inviteStatus ? (
+                <Text className="text-xs text-muted-foreground mt-2">{inviteStatus}</Text>
+              ) : null}
+            </View>
+          ) : null}
 
           {!serviceEndpoint ? (
             <View className="p-4">

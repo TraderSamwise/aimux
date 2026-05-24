@@ -246,6 +246,69 @@ export async function sendAgentInput(
   return callProjectJson<AgentInputResult>(endpoint, "POST", "/agents/input", opts, input);
 }
 
+// ── Relay sharing ────────────────────────────────────────────────────────
+
+export interface ShareParticipant {
+  userId: string;
+  displayName: string;
+  email?: string;
+  role: "owner" | "guest";
+  status: "active" | "removed";
+  joinedAt: string;
+  removedAt?: string;
+  lastSeenAt?: string;
+}
+
+export interface ShareInvite {
+  id: string;
+  email: string;
+  status: "pending" | "accepted" | "revoked";
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt?: string;
+  acceptedByUserId?: string;
+  revokedAt?: string;
+}
+
+export interface SharedSessionSummary {
+  id: string;
+  ownerUserId: string;
+  projectRoot: string;
+  sessionId: string;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+  mode: "single" | "multi";
+  participants: ShareParticipant[];
+  invites: ShareInvite[];
+}
+
+export interface ShareInviteResponse {
+  ok: boolean;
+  emailDelivered: boolean;
+  share: SharedSessionSummary;
+  invite: ShareInvite;
+  acceptUrl: string;
+}
+
+export async function createShareInvite(
+  projectRoot: string,
+  sessionId: string,
+  email: string,
+  opts?: ApiOpts,
+): Promise<ShareInviteResponse> {
+  const relayUrl = env.AIMUX_RELAY_URL;
+  if (!relayUrl) throw new ApiError(0, null, "Relay sharing is not configured");
+  return callJson<ShareInviteResponse>(
+    `${relayUrl.replace(/^ws/, "http")}/shares/invite`,
+    {
+      method: "POST",
+      body: JSON.stringify({ projectRoot, sessionId, email }),
+    },
+    opts,
+  );
+}
+
 // ── Plans (Task 2 endpoints) ─────────────────────────────────────────────
 
 export interface PlanResponse {
