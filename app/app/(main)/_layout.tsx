@@ -5,6 +5,7 @@ import { AppShell } from "@/components/AppShell";
 import { NotificationProvider } from "@/components/NotificationProvider";
 import { getDesktopState, listNotifications, listProjects, setApiRelay } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser-notifications";
 import { env } from "@/lib/env";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
@@ -24,6 +25,7 @@ import {
   selectedProjectPathAtom,
 } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { addSecurityEventAtom } from "@/stores/security";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -49,6 +51,19 @@ export default function MainLayout() {
     store.set(relayConfiguredAtom, true);
     const transport = new RelayTransport(relayUrl, getToken);
     const unsub = transport.onStatusChange((status) => store.set(relayStatusAtom, status));
+    const unsubSecurity = transport.onSecurityEvent((event) => {
+      store.set(addSecurityEventAtom, event);
+      if (!isBrowserDocumentVisible()) {
+        showBrowserNotification({
+          id: event.id,
+          category: "system",
+          kind: event.kind,
+          title: event.title,
+          body: event.body,
+          dedupeKey: `security:${event.id}`,
+        });
+      }
+    });
     setApiRelay(transport);
     void transport.connect();
     void registerSecurityPushToken(relayUrl, getToken).catch((err) => {
@@ -56,6 +71,7 @@ export default function MainLayout() {
     });
     return () => {
       unsub();
+      unsubSecurity();
       setApiRelay(null);
       transport.disconnect();
       store.set(relayStatusAtom, "disconnected");

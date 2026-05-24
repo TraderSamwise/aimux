@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { ScrollView, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Check, ExternalLink, RotateCw, Trash2 } from "lucide-react-native";
+import { Check, ExternalLink, RotateCw, ShieldAlert, Trash2 } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
@@ -25,6 +25,13 @@ import {
   selectedProjectPathAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
+import {
+  clearSecurityEventsAtom,
+  markSecurityEventsReadAtom,
+  securityEventsAtom,
+  securityUnreadCountAtom,
+  type SecurityInboxEvent,
+} from "@/stores/security";
 
 const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 
@@ -137,6 +144,40 @@ function NotificationRow({
   );
 }
 
+function SecurityEventRow({ event }: { event: SecurityInboxEvent }) {
+  return (
+    <Card
+      className={cn(
+        "mb-3 rounded-lg p-4",
+        event.readAt ? "bg-card" : "border-red-500/40 bg-red-950/20",
+      )}
+    >
+      <View className="flex-row items-start gap-3">
+        <View className="mt-0.5 rounded-full bg-red-500/15 p-2">
+          <ShieldAlert size={18} color="#f87171" />
+        </View>
+        <View className="min-w-0 flex-1">
+          <View className="flex-row items-center">
+            {!event.readAt ? <View className="mr-2 h-2 w-2 rounded-full bg-red-400" /> : null}
+            <Text
+              className="min-w-0 flex-1 text-[15px] font-semibold text-foreground"
+              numberOfLines={2}
+            >
+              {event.title || "Security alert"}
+            </Text>
+          </View>
+          <Text className="mt-2 text-[13px] leading-snug text-foreground/90">{event.body}</Text>
+          <Text className="mt-3 text-[11px] uppercase tracking-widest text-muted-foreground">
+            {event.kind.replace(/_/g, " ")}
+            {event.country ? ` · ${event.country}` : ""}
+            {relativeTime(event.createdAt) ? ` · ${relativeTime(event.createdAt)}` : ""}
+          </Text>
+        </View>
+      </View>
+    </Card>
+  );
+}
+
 export default function NotificationsScreen() {
   const router = useRouter();
   const project = useAtomValue(selectedProjectAtom);
@@ -149,6 +190,10 @@ export default function NotificationsScreen() {
   const setFeedError = useSetAtom(notificationFeedErrorFamily(projectPathKey));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const kickRefresh = useSetAtom(kickNotificationFeedRefreshAtom);
+  const securityEvents = useAtomValue(securityEventsAtom);
+  const securityUnreadCount = useAtomValue(securityUnreadCountAtom);
+  const markSecurityEventsRead = useSetAtom(markSecurityEventsReadAtom);
+  const clearSecurityEvents = useSetAtom(clearSecurityEventsAtom);
   const { getToken } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -165,6 +210,7 @@ export default function NotificationsScreen() {
     });
   }, [feed?.notifications]);
   const hasNotifications = groupedNotifications.length > 0;
+  const hasSecurityEvents = securityEvents.length > 0;
 
   const refresh = useCallback(async () => {
     if (!endpoint) return;
@@ -255,6 +301,13 @@ export default function NotificationsScreen() {
         </View>
 
         <View className="mb-4 flex-row flex-wrap items-center gap-2">
+          {hasSecurityEvents ? (
+            <View className="rounded-full border border-red-500/40 bg-red-950/20 px-3 py-1.5">
+              <Text className="text-xs font-medium text-foreground">
+                {securityUnreadCount} security unread
+              </Text>
+            </View>
+          ) : null}
           <View className="rounded-full border border-border bg-card px-3 py-1.5">
             <Text className="text-xs font-medium text-foreground">
               {unreadCount} unread
@@ -288,6 +341,40 @@ export default function NotificationsScreen() {
             <Text className="text-sm font-semibold text-foreground">Notification feed failed</Text>
             <Text className="mt-1 text-xs text-muted-foreground">{feedError}</Text>
           </Card>
+        ) : null}
+
+        {hasSecurityEvents ? (
+          <View className="mb-5">
+            <View className="mb-3 flex-row items-center justify-between gap-3">
+              <View className="min-w-0 flex-1">
+                <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Security
+                </Text>
+              </View>
+              <View className="flex-row gap-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  disabled={securityUnreadCount === 0}
+                  onPress={() => markSecurityEventsRead()}
+                  accessibilityLabel="Mark security alerts read"
+                >
+                  <Check size={14} color="#fafafa" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onPress={() => clearSecurityEvents()}
+                  accessibilityLabel="Clear security alerts"
+                >
+                  <Trash2 size={14} color="#a1a1aa" />
+                </Button>
+              </View>
+            </View>
+            {securityEvents.map((event) => (
+              <SecurityEventRow key={event.id} event={event} />
+            ))}
+          </View>
         ) : null}
 
         {!project ? (
