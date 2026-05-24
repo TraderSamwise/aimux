@@ -1,4 +1,5 @@
 import { getClientDeviceInfo, type ClientDeviceInfo } from "@/lib/client-device";
+import type { SecurityEventRecord } from "@/stores/security";
 
 type PendingRequest = {
   resolve: (value: { status: number; body: unknown }) => void;
@@ -17,6 +18,7 @@ interface RelayControl {
   type: "ping" | "pong" | "connected" | "error" | "daemon_status" | "security_event";
   online?: boolean;
   message?: string;
+  event?: SecurityEventRecord;
 }
 
 type RelayMessage = RelayResponse | RelayControl;
@@ -31,6 +33,7 @@ let idCounter = 0;
 export type RelayStatus = "disconnected" | "connecting" | "connected" | "daemon_offline";
 
 export type RelayStatusListener = (status: RelayStatus) => void;
+export type RelaySecurityEventListener = (event: SecurityEventRecord) => void;
 
 export class RelayTransport {
   private ws: WebSocket | null = null;
@@ -41,6 +44,7 @@ export class RelayTransport {
   private daemonOnline = false;
   private _status: RelayStatus = "disconnected";
   private listeners = new Set<RelayStatusListener>();
+  private securityEventListeners = new Set<RelaySecurityEventListener>();
 
   private readonly relayUrl: string;
 
@@ -59,6 +63,11 @@ export class RelayTransport {
   onStatusChange(listener: RelayStatusListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onSecurityEvent(listener: RelaySecurityEventListener): () => void {
+    this.securityEventListeners.add(listener);
+    return () => this.securityEventListeners.delete(listener);
   }
 
   private setStatus(status: RelayStatus): void {
@@ -196,6 +205,11 @@ export class RelayTransport {
     }
 
     if (msg.type === "security_event") {
+      if (msg.event) {
+        for (const listener of this.securityEventListeners) {
+          listener(msg.event);
+        }
+      }
       return;
     }
 

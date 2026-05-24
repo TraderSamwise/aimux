@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { MAIN_TAB_ROUTES, type MainTabId } from "@/lib/main-tabs";
 import { notificationUnreadCountFamily } from "@/stores/notifications";
 import { selectedProjectPathAtom } from "@/stores/projects";
+import { securityUnreadCountAtom } from "@/stores/security";
 
 const TABS = [
   { id: "dashboard", label: "Dashboard", Icon: Home },
@@ -33,6 +34,8 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
   const unreadCount = useAtomValue(
     notificationUnreadCountFamily(selectedProjectPath ?? EMPTY_PROJECT_PATH),
   );
+  const securityUnreadCount = useAtomValue(securityUnreadCountAtom);
+  const inboxUnreadCount = unreadCount + securityUnreadCount;
 
   if (!isMobile) return null;
 
@@ -65,10 +68,10 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
             {active ? <View className="absolute top-0 h-0.5 w-full bg-foreground" /> : null}
             <View>
               <Icon size={20} color="#a1a1aa" />
-              {id === "inbox" && unreadCount > 0 ? (
+              {id === "inbox" && inboxUnreadCount > 0 ? (
                 <View className="absolute -right-2 -top-1 min-w-[17px] rounded-full bg-emerald-500 px-1">
                   <Text className="text-center text-[9px] font-bold leading-none text-black">
-                    {formatCount(unreadCount)}
+                    {formatCount(inboxUnreadCount)}
                   </Text>
                 </View>
               ) : null}

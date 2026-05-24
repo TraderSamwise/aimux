@@ -24,6 +24,7 @@ import {
   selectProjectAtom,
 } from "@/stores/projects";
 import { notificationUnreadCountFamily } from "@/stores/notifications";
+import { securityUnreadCountAtom } from "@/stores/security";
 import { sidebarShowProjectPickerAtom } from "@/stores/ui";
 
 // Type ladder used throughout the sidebar:
@@ -405,6 +406,8 @@ function SidebarBottomNav() {
   const unreadCount = useAtomValue(
     notificationUnreadCountFamily(selectedProjectPath ?? EMPTY_PROJECT_PATH),
   );
+  const securityUnreadCount = useAtomValue(securityUnreadCountAtom);
+  const inboxUnreadCount = unreadCount + securityUnreadCount;
   return (
     <View className="flex-row border-t border-border">
       {BOTTOM_NAV.map(({ id, label, Icon }) => {
@@ -418,10 +421,10 @@ function SidebarBottomNav() {
           >
             <View>
               <Icon size={15} color="#a1a1aa" />
-              {id === "inbox" && unreadCount > 0 ? (
+              {id === "inbox" && inboxUnreadCount > 0 ? (
                 <View className="absolute -right-2 -top-1 min-w-[16px] rounded-full bg-emerald-500 px-1">
                   <Text className="text-center text-[8px] font-bold leading-none text-black">
-                    {unreadCount > 99 ? "99+" : unreadCount}
+                    {inboxUnreadCount > 99 ? "99+" : inboxUnreadCount}
                   </Text>
                 </View>
               ) : null}
