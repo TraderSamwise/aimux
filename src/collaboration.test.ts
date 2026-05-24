@@ -6,12 +6,12 @@ describe("collaboration context", () => {
   it("parses relay-injected actor headers", () => {
     expect(
       collaborationContextFromHeaders({
-        "x-aimux-share-id": "share_123",
-        "x-aimux-share-mode": "multi",
-        "x-aimux-actor-user-id": "user_123",
-        "x-aimux-actor-name": "Sam Steady",
-        "x-aimux-actor-email": "sam@example.com",
-        "x-aimux-actor-role": "owner",
+        "X-Aimux-Share-Id": "share_123",
+        "X-Aimux-Share-Mode": "multi",
+        "X-Aimux-Actor-User-Id": "user_123",
+        "X-Aimux-Actor-Name": "Sam Steady",
+        "X-Aimux-Actor-Email": "sam@example.com",
+        "X-Aimux-Actor-Role": "owner",
       }),
     ).toEqual({
       shareId: "share_123",

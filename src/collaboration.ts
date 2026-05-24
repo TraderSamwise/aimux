@@ -79,7 +79,8 @@ export function applyAgentCollaborationPrefix(
 }
 
 function headerValue(headers: HeaderMap, name: string): string | undefined {
-  const raw = headers[name] ?? headers[name.toLowerCase()];
+  const target = name.toLowerCase();
+  const raw = Object.entries(headers).find(([key]) => key.toLowerCase() === target)?.[1];
   const value = Array.isArray(raw) ? raw[0] : raw;
   const trimmed = value?.trim();
   return trimmed || undefined;
