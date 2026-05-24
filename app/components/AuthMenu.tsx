@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { LOCAL_MODE, useAuth, useUser } from "@/lib/auth";
+import { useMainTabNavigation } from "@/lib/main-tabs";
 
 function initialsFromUser(user: ReturnType<typeof useUser>["user"]): string {
   if (!user) return "?";
@@ -18,6 +19,7 @@ function initialsFromUser(user: ReturnType<typeof useUser>["user"]): string {
 
 export function AuthMenu() {
   const router = useRouter();
+  const navigateTab = useMainTabNavigation();
   const { isSignedIn, signOut } = useAuth();
   const { user } = useUser();
   const [open, setOpen] = useState(false);
@@ -40,7 +42,7 @@ export function AuthMenu() {
         className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
         onPress={() => {
           close();
-          router.push("/settings");
+          navigateTab("settings");
         }}
       >
         <Text className="text-sm text-foreground">Settings</Text>

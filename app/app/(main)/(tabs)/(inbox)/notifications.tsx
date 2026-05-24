@@ -224,7 +224,7 @@ export default function NotificationsScreen() {
     if (record.unread) await mutate(`open:${record.id}`, "read", { id: record.id });
     selectSession(record.sessionId);
     router.push({
-      pathname: "/(main)/agent/[sessionId]/chat",
+      pathname: "/agent/[sessionId]/chat",
       params: { sessionId: record.sessionId },
     });
   }
