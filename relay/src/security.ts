@@ -125,7 +125,18 @@ export function normalizeSecurityState(state: SecurityState): SecurityState {
   };
 }
 
-export function sanitizeDeviceInfo(input: Partial<SecurityDeviceInfo> | null | undefined): SecurityDeviceInfo {
+export function sanitizeDeviceInfo(
+  input:
+    | {
+        deviceId?: string;
+        kind?: string;
+        name?: string;
+        platform?: string;
+        appVersion?: string;
+      }
+    | null
+    | undefined,
+): SecurityDeviceInfo {
   const rawKind = input?.kind;
   const kind: SecurityDeviceKind =
     rawKind === "web" || rawKind === "ios" || rawKind === "android" || rawKind === "daemon"

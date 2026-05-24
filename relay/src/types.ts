@@ -1,3 +1,5 @@
+import type { SecurityEventRecord } from "./security.js";
+
 export interface Env {
   RELAY: DurableObjectNamespace;
   // Secrets are configured via `wrangler secret put` at deploy time. They
@@ -33,4 +35,9 @@ export interface RelayControl {
   online?: boolean;
 }
 
-export type RelayMessage = RelayRequest | RelayResponse | RelayControl;
+export interface RelaySecurityEventControl {
+  type: "security_event";
+  event: SecurityEventRecord;
+}
+
+export type RelayMessage = RelayRequest | RelayResponse | RelayControl | RelaySecurityEventControl;

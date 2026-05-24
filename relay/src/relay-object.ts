@@ -1,5 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
+import {
+  hashIpAddress,
+  loadSecurityState,
+  recordClientConnection,
+  sanitizeDeviceInfo,
+  saveSecurityState,
+} from "./security.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // In-flight requests: response with this id will be routed back to the
@@ -42,6 +49,7 @@ export class RelayObject extends DurableObject<Env> {
       this.clientSockets.add(server);
       this.send(server, { type: "connected", role: "client" });
       this.send(server, { type: "daemon_status", online: this.daemonWs !== null });
+      await this.recordClientConnected(request, url);
     }
 
     this.ensureHeartbeat();
@@ -198,6 +206,32 @@ export class RelayObject extends DurableObject<Env> {
 
   private send(ws: WebSocket, msg: RelayMessage): void {
     ws.send(JSON.stringify(msg));
+  }
+
+  private async recordClientConnected(request: Request, url: URL): Promise<void> {
+    const device = sanitizeDeviceInfo({
+      deviceId: url.searchParams.get("deviceId") ?? undefined,
+      kind: url.searchParams.get("deviceKind") ?? undefined,
+      name: url.searchParams.get("deviceName") ?? undefined,
+      platform: url.searchParams.get("devicePlatform") ?? undefined,
+      appVersion: url.searchParams.get("appVersion") ?? undefined,
+    });
+    const state = await loadSecurityState(this.ctx.storage);
+    const ipHash = await hashIpAddress(request.headers.get("CF-Connecting-IP"));
+    const context = {
+      ipHash,
+      country: request.headers.get("CF-IPCountry") ?? undefined,
+      userAgent: request.headers.get("User-Agent") ?? undefined,
+    };
+    const result = recordClientConnection(state, device, context);
+    await saveSecurityState(this.ctx.storage, result.state);
+    for (const event of result.events) {
+      if (this.daemonWs) {
+        try {
+          this.send(this.daemonWs, { type: "security_event", event });
+        } catch {}
+      }
+    }
   }
 
   private ensureHeartbeat(): void {
