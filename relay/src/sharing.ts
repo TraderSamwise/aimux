@@ -169,6 +169,10 @@ export async function acceptShareInvite(
     joinedAt: now,
     lastSeenAt: now,
   };
+  const existing = share.participants[participant.userId];
+  if (existing?.role === "owner") {
+    throw new Error("Owner cannot accept a guest invite");
+  }
   invite.status = "accepted";
   invite.acceptedAt = now;
   invite.acceptedByUserId = actor.userId;
@@ -208,7 +212,7 @@ export function isSharedRelayRequestAllowed(
   if (sessionId && sessionId !== share.sessionId) return false;
   if (method === "GET" && (path === "/agents/history" || path === "/agents/output" || path === "/events")) return true;
   if (method === "POST" && path === "/agents/input") return true;
-  if ((method === "GET" || method === "POST") && (path === "/attachments" || path.startsWith("/attachments/"))) {
+  if ((method === "GET" || method === "POST") && isAllowedAttachmentPath(path)) {
     return true;
   }
   return false;
@@ -309,8 +313,25 @@ function normalizeEmail(value: string | undefined): string | undefined {
   return trimmed.slice(0, 254);
 }
 
+function isAllowedAttachmentPath(path: string): boolean {
+  if (path === "/attachments") return true;
+  if (!path.startsWith("/attachments/")) return false;
+  const rest = path.slice("/attachments/".length);
+  for (const segment of rest.split("/")) {
+    if (!segment) continue;
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return false;
+    }
+    if (decoded === "." || decoded === "..") return false;
+  }
+  return true;
+}
+
 function normalizePath(path: string): string {
-  const pathname = path.startsWith("http") ? new URL(path).pathname : path.split("?")[0];
+  const pathname = new URL(path, "https://relay.local").pathname;
   return pathname.replace(/\/+$/, "") || "/";
 }
 

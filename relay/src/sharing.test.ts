@@ -69,6 +69,22 @@ describe("sharing state", () => {
     ).rejects.toThrow("Invite email does not match authenticated user");
   });
 
+  it("rejects accepting a guest invite as the owner", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "sam@example.com",
+    });
+
+    await expect(
+      acceptShareInvite(created.state, {
+        token: created.token.token,
+        actor: owner,
+      }),
+    ).rejects.toThrow("Owner cannot accept a guest invite");
+  });
+
   it("rejects expired invites", async () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
@@ -134,6 +150,8 @@ describe("sharing state", () => {
     );
     expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/file.png" }, share)).toBe(true);
     expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments-private/file.png" }, share)).toBe(false);
+    expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/../agents/input" }, share)).toBe(false);
+    expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/%2e%2e/agents/input" }, share)).toBe(false);
     expect(isSharedRelayRequestAllowed({ method: "POST", path: "/agents/kill", sessionId: "claude-abc" }, share)).toBe(
       false,
     );

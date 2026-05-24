@@ -39,7 +39,9 @@ The share record is scoped to one project session:
 - `projectRoot`: owner-local project root shown for context only.
 - `sessionId`: agent session ID.
 - `participants`: owner and accepted guests.
-- `invites`: pending, accepted, revoked, or expired invite records.
+- `invites`: pending, accepted, or revoked invite records. Expired pending
+  invites are pruned during sharing-state normalization instead of being
+  persisted as `expired`.
 - `version`: optimistic state version for UI refreshes and future migrations.
 
 ## Invite Flow
