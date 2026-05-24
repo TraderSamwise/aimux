@@ -670,7 +670,12 @@ export class AimuxDaemon {
     return existing;
   }
 
-  async routeRequest(method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+  async routeRequest(
+    method: string,
+    path: string,
+    body?: unknown,
+    headers?: Record<string, string>,
+  ): Promise<{ status: number; body: unknown }> {
     this.refreshState();
     const routeUrl = new URL(path, getDaemonBaseUrl());
     const pathname = routeUrl.pathname;
@@ -735,6 +740,7 @@ export class AimuxDaemon {
       try {
         const { status, json } = await requestJson(`http://${host}:${portStr}${subPath}${routeUrl.search}`, {
           method,
+          headers,
           body: body !== undefined ? body : undefined,
           timeoutMs: PROXY_TIMEOUT_MS,
         });

@@ -17,7 +17,15 @@ import {
   sanitizeDeviceInfo,
   saveSecurityState,
 } from "./security.js";
-import { acceptShareInvite, createShareInvite, loadSharingState, saveSharingState, summarizeShare } from "./sharing.js";
+import {
+  acceptShareInvite,
+  createShareInvite,
+  getShareChatMode,
+  loadSharingState,
+  saveSharingState,
+  sharedRelayRequestAccess,
+  summarizeShare,
+} from "./sharing.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // In-flight requests: response with this id will be routed back to the
@@ -79,6 +87,7 @@ export class RelayObject extends DurableObject<Env> {
     }
 
     let clientDevice: ReturnType<typeof sanitizeDeviceInfo> | null = null;
+    let sharedClientTags: string[] = [];
     if (role === "client") {
       try {
         clientDevice = sanitizeDeviceInfo({
@@ -91,11 +100,20 @@ export class RelayObject extends DurableObject<Env> {
       } catch {
         return new Response("Missing or invalid deviceId", { status: 400 });
       }
+      const shareId = url.searchParams.get("shareId")?.trim();
+      if (shareId) {
+        const sharedAuth = await this.authorizeSharedClientConnect(request, shareId);
+        if (!sharedAuth.ok) return new Response(sharedAuth.error, { status: sharedAuth.status });
+        sharedClientTags = [`share:${shareId}`, `user:${sharedAuth.userId}`];
+      }
     }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
-    this.ctx.acceptWebSocket(server, clientDevice ? [role, `device:${clientDevice.deviceId}`] : [role]);
+    this.ctx.acceptWebSocket(
+      server,
+      clientDevice ? [role, `device:${clientDevice.deviceId}`, ...sharedClientTags] : [role],
+    );
 
     if (role === "daemon") {
       if (this.daemonWs) {
@@ -159,6 +177,16 @@ export class RelayObject extends DurableObject<Env> {
         }
       }
     } else if (!isDaemon && parsed.type === "request") {
+      const sharedResult = await this.prepareSharedClientRequest(ws, parsed);
+      if (!sharedResult.ok) {
+        this.send(ws, {
+          id: parsed.id,
+          type: "response",
+          status: sharedResult.status,
+          body: { ok: false, error: sharedResult.error },
+        });
+        return;
+      }
       if (await this.shouldRejectClientRequest(ws)) {
         this.send(ws, {
           id: parsed.id,
@@ -175,7 +203,7 @@ export class RelayObject extends DurableObject<Env> {
           clientRequestId: parsed.id,
           expiresAt: Date.now() + PENDING_REQUEST_TTL_MS,
         });
-        const daemonMessage = JSON.stringify({ ...parsed, id: relayRequestId });
+        const daemonMessage = JSON.stringify({ ...parsed, ...sharedResult.requestPatch, id: relayRequestId });
         try {
           this.daemonWs.send(daemonMessage);
         } catch {
@@ -387,6 +415,63 @@ export class RelayObject extends DurableObject<Env> {
     return json({ ok: true }, 200);
   }
 
+  private async authorizeSharedClientConnect(
+    request: Request,
+    shareId: string,
+  ): Promise<{ ok: true; userId: string } | { ok: false; status: number; error: string }> {
+    const userId = request.headers.get("X-Aimux-User-Id")?.trim();
+    const ownerUserId = request.headers.get("X-Aimux-Share-Owner-Id")?.trim();
+    if (!userId || !ownerUserId) return { ok: false, status: 401, error: "Missing share user context" };
+    const state = await loadSharingState(this.ctx.storage);
+    const share = state.shares[shareId];
+    if (!share || share.ownerUserId !== ownerUserId) {
+      return { ok: false, status: 404, error: "Shared chat not found" };
+    }
+    const participant = share.participants[userId];
+    if (!participant || participant.status !== "active") {
+      return { ok: false, status: 403, error: "Not a participant in this shared chat" };
+    }
+    return { ok: true, userId };
+  }
+
+  private async prepareSharedClientRequest(
+    ws: WebSocket,
+    request: Extract<RelayMessage, { type: "request" }>,
+  ): Promise<
+    { ok: true; requestPatch?: { headers?: Record<string, string> } } | { ok: false; status: number; error: string }
+  > {
+    const tags = this.ctx.getTags(ws);
+    const shareId = tagValue(tags, "share:");
+    if (!shareId) return { ok: true };
+    const userId = tagValue(tags, "user:");
+    if (!userId) return { ok: false, status: 401, error: "Missing shared user context" };
+    const state = await loadSharingState(this.ctx.storage);
+    const share = state.shares[shareId];
+    if (!share) return { ok: false, status: 404, error: "Shared chat not found" };
+    const participant = share.participants[userId];
+    if (!participant || participant.status !== "active") {
+      return { ok: false, status: 403, error: "Not a participant in this shared chat" };
+    }
+    const access = sharedRelayRequestAccess(request, share);
+    if (!access.allowed) {
+      return { ok: false, status: 403, error: "Route is not allowed for this shared chat" };
+    }
+    return {
+      ok: true,
+      requestPatch: {
+        headers: {
+          ...(request.headers ?? {}),
+          "X-Aimux-Share-Id": share.id,
+          "X-Aimux-Share-Mode": getShareChatMode(share),
+          "X-Aimux-Actor-User-Id": participant.userId,
+          "X-Aimux-Actor-Name": participant.displayName,
+          "X-Aimux-Actor-Role": participant.role,
+          ...(participant.email ? { "X-Aimux-Actor-Email": participant.email } : {}),
+        },
+      },
+    };
+  }
+
   private async listShares(request: Request): Promise<Response> {
     const userId = request.headers.get("X-Aimux-User-Id") ?? "";
     if (!userId) return json({ ok: false, error: "Missing user context" }, 401);
@@ -570,6 +655,10 @@ function json(body: unknown, status: number): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function tagValue(tags: string[], prefix: string): string | undefined {
+  return tags.find((tag) => tag.startsWith(prefix))?.slice(prefix.length);
 }
 
 function securityActionConfirmPage(userId: string, token: string): Response {
