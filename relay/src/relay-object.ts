@@ -437,12 +437,16 @@ export class RelayObject extends DurableObject<Env> {
       }
     }
     const tokenKey = userId ? `${userId}:${deviceId}` : deviceId;
+    const createdAt = state.pushTokens[tokenKey]?.createdAt ?? state.pushTokens[deviceId]?.createdAt ?? now;
+    if (userId && state.pushTokens[deviceId]) {
+      delete state.pushTokens[deviceId];
+    }
     state.pushTokens[tokenKey] = {
       userId,
       deviceId,
       token,
       platform: body.platform ?? "unknown",
-      createdAt: state.pushTokens[tokenKey]?.createdAt ?? now,
+      createdAt,
       updatedAt: now,
     };
     await saveSecurityState(this.ctx.storage, state);
@@ -757,7 +761,7 @@ export class RelayObject extends DurableObject<Env> {
         env: this.env,
         userId: options.deliverToUserId,
         event,
-        pushTokens: [],
+        pushTokens,
       });
     }
   }
