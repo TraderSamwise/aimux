@@ -29,6 +29,7 @@ function openBrowser(url: string): void {
 
 export interface LoginOptions {
   webAppUrl?: string;
+  action?: "security-unlock";
 }
 
 export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: string }> {
@@ -127,7 +128,12 @@ export async function runLoginFlow(opts: LoginOptions = {}): Promise<{ userId: s
       const address = server.address();
       const port = typeof address === "object" && address ? address.port : 0;
       const callback = `http://127.0.0.1:${port}/callback`;
-      const authUrl = `${webAppUrl}/cli-auth?callback=${encodeURIComponent(callback)}&state=${encodeURIComponent(state)}`;
+      const qs = new URLSearchParams({
+        callback,
+        state,
+      });
+      if (opts.action) qs.set("action", opts.action);
+      const authUrl = `${webAppUrl}/cli-auth?${qs.toString()}`;
       console.log("Opening your browser to sign in...");
       console.log(`If it doesn't open, visit:\n  ${authUrl}\n`);
       openBrowser(authUrl);

@@ -1,5 +1,5 @@
 import { verifyWsToken } from "./auth.js";
-import { isDaemonToken, mintDaemonToken, verifyDaemonToken } from "./daemon-token.js";
+import { isDaemonToken, mintDaemonToken, verifyDaemonTokenPayload } from "./daemon-token.js";
 import type { Env } from "./types.js";
 
 export { RelayObject } from "./relay-object.js";
@@ -69,6 +69,14 @@ export default {
       return corsResponse(JSON.stringify({ ok: true }), 200);
     }
 
+    if (url.pathname.startsWith("/security/action/")) {
+      const [, , , userId] = url.pathname.split("/");
+      if (!userId) return corsResponse(JSON.stringify({ ok: false, error: "Invalid security action URL" }), 400);
+      const relayId = env.RELAY.idFromName(decodeURIComponent(userId));
+      const stub = env.RELAY.get(relayId);
+      return stub.fetch(request);
+    }
+
     if (url.pathname === "/security/push-token" && request.method === "POST") {
       const authHeader = request.headers.get("Authorization");
       const clerkToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
@@ -133,6 +141,34 @@ export default {
       } catch {
         return tokenIssueResponse(JSON.stringify({ ok: false, error: "Invalid token" }), 401, corsHeaders);
       }
+      let body: { unlockSecurity?: boolean } = {};
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        // Older clients sent an empty body. Keep token issuance backward-compatible.
+      }
+      const relayId = env.RELAY.idFromName(userId);
+      const stub = env.RELAY.get(relayId);
+      if (body.unlockSecurity) {
+        const res = await stub.fetch(new Request(new URL("/security/unlock", request.url), { method: "POST" }));
+        if (!res.ok) {
+          return tokenIssueResponse(
+            JSON.stringify({ ok: false, error: "Could not unlock relay security state" }),
+            502,
+            corsHeaders,
+          );
+        }
+      } else {
+        const res = await stub.fetch(new Request(new URL("/security/status", request.url), { method: "GET" }));
+        const status = res.ok ? ((await res.json()) as { locked?: boolean }) : {};
+        if (status.locked) {
+          return tokenIssueResponse(
+            JSON.stringify({ ok: false, error: "Remote access is locked. Run `aimux security unlock`." }),
+            423,
+            corsHeaders,
+          );
+        }
+      }
       const daemonToken = await mintDaemonToken(userId, env.RELAY_TOKEN_SECRET);
       return tokenIssueResponse(JSON.stringify({ ok: true, token: daemonToken }), 200, corsHeaders);
     }
@@ -168,9 +204,12 @@ export default {
       return corsResponse(JSON.stringify({ ok: false, error: "Relay not configured: CLERK_SECRET_KEY unset" }), 500);
     }
     let userId: string;
+    let daemonIssuedAt: number | undefined;
     try {
       if (tokenIsDaemon) {
-        userId = await verifyDaemonToken(token, env.RELAY_TOKEN_SECRET!);
+        const payload = await verifyDaemonTokenPayload(token, env.RELAY_TOKEN_SECRET!);
+        userId = payload.sub;
+        daemonIssuedAt = payload.iat;
       } else {
         userId = await verifyWsToken(token, env);
       }
@@ -186,6 +225,7 @@ export default {
 
     const headers = new Headers(request.headers);
     headers.set("X-Aimux-User-Id", userId);
+    if (daemonIssuedAt !== undefined) headers.set("X-Aimux-Daemon-Iat", String(daemonIssuedAt));
     return stub.fetch(new Request(doUrl.toString(), { headers }));
   },
 };

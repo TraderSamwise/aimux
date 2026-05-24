@@ -120,8 +120,8 @@ can fetch URLs.
 
 Recommended flow:
 
-1. `GET /security/action/:token` renders a confirmation page.
-2. `POST /security/action/:token` performs the action.
+1. `GET /security/action/:userId/:token` renders a confirmation page.
+2. `POST /security/action/:userId/:token` performs the action.
 3. Tokens are random, stored hashed, single-use, and expire after seven days.
 
 Emergency shutdown action:
@@ -139,13 +139,14 @@ After lockdown, remote access remains disabled until the user performs an
 explicit CLI action:
 
 ```bash
-aimux security status
 aimux security unlock
 ```
 
 `unlock` should run the browser auth flow again and require a verified Clerk
-session. Native MFA should come from Clerk/passkeys rather than a custom aimux
-2FA implementation.
+session. The successful unlock clears relay lockdown state and mints a fresh
+daemon token. Plain `aimux login` should not mint fresh daemon credentials
+while lockdown is active. Native MFA should come from Clerk/passkeys rather
+than a custom aimux 2FA implementation.
 
 ## Audit Events
 

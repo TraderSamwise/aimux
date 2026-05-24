@@ -39,9 +39,10 @@ function isAllowedCallback(raw: string): boolean {
 }
 
 export default function CliAuthScreen() {
-  const params = useLocalSearchParams<{ callback?: string; state?: string }>();
+  const params = useLocalSearchParams<{ callback?: string; state?: string; action?: string }>();
   const callback = typeof params.callback === "string" ? params.callback : null;
   const loginState = typeof params.state === "string" ? params.state : null;
+  const unlockSecurity = params.action === "security-unlock";
   const { isSignedIn, isLoaded, getToken, userId } = useAuth();
   const [phase, setPhase] = useState<Phase>("checking");
   const [error, setError] = useState<string>("");
@@ -96,7 +97,11 @@ export default function CliAuthScreen() {
         try {
           res = await fetch(`${base}/cli/issue-token`, {
             method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ unlockSecurity }),
             signal: controller.signal,
           });
         } finally {
