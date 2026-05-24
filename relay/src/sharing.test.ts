@@ -1,0 +1,167 @@
+import { describe, expect, it } from "vitest";
+import {
+  acceptShareInvite,
+  actorDisplayPrefix,
+  createShareInvite,
+  emptySharingState,
+  getShareChatMode,
+  isSharedRelayRequestAllowed,
+  removeShareParticipant,
+} from "./sharing";
+
+const owner = {
+  userId: "user_owner",
+  displayName: "Sam",
+  email: "sam@example.com",
+  role: "owner" as const,
+};
+
+describe("sharing state", () => {
+  it("creates hashed invites and enters multi mode after acceptance", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "ALEX@EXAMPLE.COM",
+      now: "2026-05-24T00:00:00.000Z",
+    });
+
+    const share = Object.values(created.state.shares)[0];
+    const invite = Object.values(share.invites)[0];
+    expect(invite.email).toBe("alex@example.com");
+    expect(invite.tokenHash).not.toBe(created.token.token);
+    expect(getShareChatMode(share)).toBe("single");
+
+    const accepted = await acceptShareInvite(created.state, {
+      token: created.token.token,
+      actor: {
+        userId: "user_guest",
+        displayName: "Alex",
+        email: "alex@example.com",
+        role: "guest",
+      },
+      now: "2026-05-24T00:01:00.000Z",
+    });
+
+    expect(accepted.participant.email).toBe("alex@example.com");
+    expect(getShareChatMode(accepted.share)).toBe("multi");
+    expect(Object.values(accepted.share.invites)[0].status).toBe("accepted");
+  });
+
+  it("rejects accepting an invite for a different authenticated email", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+    });
+
+    await expect(
+      acceptShareInvite(created.state, {
+        token: created.token.token,
+        actor: {
+          userId: "user_other",
+          displayName: "Mallory",
+          email: "mallory@example.com",
+          role: "guest",
+        },
+      }),
+    ).rejects.toThrow("Invite email does not match authenticated user");
+  });
+
+  it("rejects accepting a guest invite as the owner", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "sam@example.com",
+    });
+
+    await expect(
+      acceptShareInvite(created.state, {
+        token: created.token.token,
+        actor: owner,
+      }),
+    ).rejects.toThrow("Owner cannot accept a guest invite");
+  });
+
+  it("rejects expired invites", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+    });
+    const share = Object.values(created.state.shares)[0];
+    const invite = Object.values(share.invites)[0];
+    invite.expiresAt = "2020-01-01T00:00:00.000Z";
+
+    await expect(
+      acceptShareInvite(created.state, {
+        token: created.token.token,
+        actor: {
+          userId: "user_guest",
+          displayName: "Alex",
+          email: "alex@example.com",
+          role: "guest",
+        },
+      }),
+    ).rejects.toThrow("Invite is invalid, expired, or already used");
+  });
+
+  it("downgrades back to single mode when a guest is removed", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+    });
+    const accepted = await acceptShareInvite(created.state, {
+      token: created.token.token,
+      actor: {
+        userId: "user_guest",
+        displayName: "Alex",
+        email: "alex@example.com",
+        role: "guest",
+      },
+    });
+
+    const removed = removeShareParticipant(accepted.state, accepted.share.id, "user_guest");
+
+    expect(removed.share).toBeDefined();
+    expect(getShareChatMode(removed.share!)).toBe("single");
+    expect(removed.share!.participants.user_guest.status).toBe("removed");
+  });
+
+  it("allows only chat-scoped relay routes for guests", async () => {
+    const created = await createShareInvite(emptySharingState(), {
+      owner,
+      projectRoot: "/Users/sam/cs/example",
+      sessionId: "claude-abc",
+      email: "alex@example.com",
+    });
+    const share = Object.values(created.state.shares)[0];
+
+    expect(
+      isSharedRelayRequestAllowed({ method: "GET", path: "/agents/history", sessionId: "claude-abc" }, share),
+    ).toBe(true);
+    expect(isSharedRelayRequestAllowed({ method: "POST", path: "/agents/input", sessionId: "claude-abc" }, share)).toBe(
+      true,
+    );
+    expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/file.png" }, share)).toBe(true);
+    expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments-private/file.png" }, share)).toBe(false);
+    expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/../agents/input" }, share)).toBe(false);
+    expect(isSharedRelayRequestAllowed({ method: "GET", path: "/attachments/%2e%2e/agents/input" }, share)).toBe(false);
+    expect(isSharedRelayRequestAllowed({ method: "POST", path: "/agents/kill", sessionId: "claude-abc" }, share)).toBe(
+      false,
+    );
+    expect(isSharedRelayRequestAllowed({ method: "POST", path: "/agents/input", sessionId: "other" }, share)).toBe(
+      false,
+    );
+  });
+
+  it("sanitizes actor display prefixes", () => {
+    expect(actorDisplayPrefix({ userId: "u", displayName: "  Sam   Teady  ", role: "owner" })).toBe("[Sam Teady]:");
+    expect(actorDisplayPrefix({ userId: "u", displayName: "", role: "guest" })).toBe("[User]:");
+  });
+});
