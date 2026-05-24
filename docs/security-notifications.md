@@ -93,9 +93,11 @@ When a client device is first seen:
 6. Send push notifications to registered push tokens for other approved
    devices if configured.
 
-The production policy should be `enforce`: pending devices may connect far
-enough to display an approval-required state, but proxy/API requests are denied
-until the device is approved. Development may use `warn` while testing.
+The MVP production policy should be `warn`: pending devices may connect while
+the user receives daemon, in-app, email, and push alerts. `enforce` is the
+target policy after a device approval UI or CLI approval flow exists; in
+enforce mode proxy/API requests from pending devices are denied until the device
+is approved.
 
 ## Delivery Channels
 
