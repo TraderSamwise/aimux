@@ -4,6 +4,7 @@ vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 
 import {
   clearNotifications,
+  createShareInvite,
   getAgentHistory,
   getAgentOutput,
   listProjects,
@@ -20,6 +21,7 @@ import type { RelayTransport } from "@/lib/relay-transport";
 
 const endpoint = { host: "127.0.0.1", port: 43210 };
 const originalConnectionMode = process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
+const originalRelayUrl = process.env.EXPO_PUBLIC_AIMUX_RELAY_URL;
 
 function installFetchMock(body: unknown = { ok: true }): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async () => new Response(JSON.stringify(body)));
@@ -46,6 +48,11 @@ describe("api relay routing", () => {
       delete process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
     } else {
       process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = originalConnectionMode;
+    }
+    if (originalRelayUrl === undefined) {
+      delete process.env.EXPO_PUBLIC_AIMUX_RELAY_URL;
+    } else {
+      process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = originalRelayUrl;
     }
     vi.restoreAllMocks();
   });
@@ -176,5 +183,47 @@ describe("api relay routing", () => {
     await expect(listProjects()).rejects.toThrow("Relay not connected");
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("creates share invites through relay HTTP with auth", async () => {
+    process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
+    process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = "wss://relay-preview.example.com/";
+    const fetchMock = installFetchMock({
+      ok: true,
+      emailDelivered: true,
+      share: {
+        id: "share_1",
+        ownerUserId: "user_owner",
+        projectRoot: "/repo",
+        sessionId: "claude-1",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        updatedAt: "2026-05-24T00:00:00.000Z",
+        version: 1,
+        mode: "single",
+        participants: [],
+        invites: [],
+      },
+      invite: {
+        id: "invite_1",
+        email: "guest@example.com",
+        status: "pending",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        expiresAt: "2026-05-31T00:00:00.000Z",
+      },
+      acceptUrl: "https://aimux.app/shares/invite/user_owner/token/accept",
+    });
+
+    await createShareInvite("/repo", "claude-1", "guest@example.com", { token: "clerk-token" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://relay-preview.example.com/shares/invite");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      projectRoot: "/repo",
+      sessionId: "claude-1",
+      email: "guest@example.com",
+    });
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer clerk-token");
   });
 });
