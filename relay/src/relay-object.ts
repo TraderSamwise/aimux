@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
 import { deliverSecurityAlert } from "./security-delivery.js";
+import { deliverShareInvite } from "./sharing-delivery.js";
 import {
   activateSecurityLockdown,
   createSecurityActionToken,
@@ -16,6 +17,7 @@ import {
   sanitizeDeviceInfo,
   saveSecurityState,
 } from "./security.js";
+import { acceptShareInvite, createShareInvite, loadSharingState, saveSharingState, summarizeShare } from "./sharing.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // In-flight requests: response with this id will be routed back to the
@@ -46,6 +48,17 @@ export class RelayObject extends DurableObject<Env> {
     if (url.pathname === "/security/push-token" && request.method === "POST") {
       if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
       return this.registerPushToken(request);
+    }
+    if (url.pathname === "/shares" && request.method === "GET") {
+      return this.listShares(request);
+    }
+    if (url.pathname === "/shares/invite" && request.method === "POST") {
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
+      return this.createShareInvite(request);
+    }
+    if (url.pathname.startsWith("/shares/invite/") && url.pathname.endsWith("/accept")) {
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
+      return this.acceptShareInvite(request, url);
     }
 
     const upgradeHeader = request.headers.get("Upgrade")?.toLowerCase();
@@ -374,8 +387,95 @@ export class RelayObject extends DurableObject<Env> {
     return json({ ok: true }, 200);
   }
 
+  private async listShares(request: Request): Promise<Response> {
+    const userId = request.headers.get("X-Aimux-User-Id") ?? "";
+    if (!userId) return json({ ok: false, error: "Missing user context" }, 401);
+    const state = await loadSharingState(this.ctx.storage);
+    const shares = Object.values(state.shares)
+      .filter((share) => share.ownerUserId === userId || share.participants[userId]?.status === "active")
+      .map(summarizeShare);
+    return json({ ok: true, shares }, 200);
+  }
+
+  private async createShareInvite(request: Request): Promise<Response> {
+    const owner = this.actorFromHeaders(request, "owner");
+    if (!owner) return json({ ok: false, error: "Missing owner context" }, 401);
+    let body: { projectRoot?: string; sessionId?: string; email?: string };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return json({ ok: false, error: "Invalid JSON" }, 400);
+    }
+    const state = await loadSharingState(this.ctx.storage);
+    try {
+      const result = await createShareInvite(state, {
+        owner,
+        projectRoot: body.projectRoot ?? "",
+        sessionId: body.sessionId ?? "",
+        email: body.email ?? "",
+      });
+      await saveSharingState(this.ctx.storage, result.state);
+      const acceptUrl = `${this.shareInviteBaseUrl(request)}/shares/invite/${encodeURIComponent(owner.userId)}/${encodeURIComponent(result.token.token)}/accept`;
+      await deliverShareInvite({
+        env: this.env,
+        owner,
+        share: result.token.share,
+        inviteEmail: result.token.invite.email,
+        acceptUrl,
+      });
+      return json(
+        {
+          ok: true,
+          share: summarizeShare(result.token.share),
+          invite: {
+            ...result.token.invite,
+            tokenHash: undefined,
+          },
+          acceptUrl,
+        },
+        201,
+      );
+    } catch (error) {
+      return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  }
+
+  private async acceptShareInvite(request: Request, url: URL): Promise<Response> {
+    if (request.method !== "POST") return json({ ok: false, error: "Unsupported method" }, 405);
+    const actor = this.actorFromHeaders(request, "guest");
+    if (!actor) return json({ ok: false, error: "Missing user context" }, 401);
+    if (!actor.email) return json({ ok: false, error: "Authenticated user has no email" }, 403);
+    const match = url.pathname.match(/^\/shares\/invite\/([^/]+)\/([^/]+)\/accept$/);
+    const ownerUserId = match ? decodeURIComponent(match[1]) : "";
+    const token = match ? decodeURIComponent(match[2]) : "";
+    if (!ownerUserId || !token) return json({ ok: false, error: "Invalid invite URL" }, 400);
+    const state = await loadSharingState(this.ctx.storage);
+    try {
+      const result = await acceptShareInvite(state, { token, actor });
+      if (result.share.ownerUserId !== ownerUserId) {
+        return json({ ok: false, error: "Invite owner mismatch" }, 403);
+      }
+      await saveSharingState(this.ctx.storage, result.state);
+      return json({ ok: true, share: summarizeShare(result.share), participant: result.participant }, 200);
+    } catch (error) {
+      return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  }
+
+  private actorFromHeaders(request: Request, role: "owner" | "guest") {
+    const userId = request.headers.get("X-Aimux-User-Id")?.trim();
+    if (!userId) return null;
+    const displayName = request.headers.get("X-Aimux-User-Name")?.trim() || userId;
+    const email = request.headers.get("X-Aimux-User-Email")?.trim() || undefined;
+    return { userId, displayName, email, role };
+  }
+
   private securityActionBaseUrl(request: Request): string {
     return (this.env.SECURITY_ACTION_BASE_URL ?? new URL(request.url).origin).replace(/\/+$/, "");
+  }
+
+  private shareInviteBaseUrl(request: Request): string {
+    return (this.env.SHARE_INVITE_BASE_URL ?? new URL(request.url).origin).replace(/\/+$/, "");
   }
 
   private async isLockedDown(): Promise<boolean> {

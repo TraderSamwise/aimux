@@ -1,4 +1,4 @@
-import { verifyWsToken } from "./auth.js";
+import { fetchClerkUserProfile, verifyWsToken } from "./auth.js";
 import { isDaemonToken, mintDaemonToken, verifyDaemonTokenPayload } from "./daemon-token.js";
 import type { Env } from "./types.js";
 
@@ -96,6 +96,34 @@ export default {
       const stub = env.RELAY.get(relayId);
       const headers = new Headers(request.headers);
       headers.set("X-Aimux-User-Id", userId);
+      return stub.fetch(new Request(request, { headers }));
+    }
+
+    if (url.pathname === "/shares" || url.pathname === "/shares/invite" || url.pathname.startsWith("/shares/invite/")) {
+      const authHeader = request.headers.get("Authorization");
+      const clerkToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+      if (!clerkToken) {
+        return corsResponse(JSON.stringify({ ok: false, error: "Missing authorization" }), 401);
+      }
+      if (!env.CLERK_SECRET_KEY) {
+        return corsResponse(JSON.stringify({ ok: false, error: "Relay not configured: CLERK_SECRET_KEY unset" }), 500);
+      }
+      let userId: string;
+      try {
+        userId = await verifyWsToken(clerkToken, env);
+      } catch {
+        return corsResponse(JSON.stringify({ ok: false, error: "Invalid token" }), 401);
+      }
+      const profile = await fetchClerkUserProfile(env, userId);
+      const inviteAcceptMatch = url.pathname.match(/^\/shares\/invite\/([^/]+)\/([^/]+)\/accept$/);
+      const ownerUserId = inviteAcceptMatch ? decodeURIComponent(inviteAcceptMatch[1]) : userId;
+      const relayId = env.RELAY.idFromName(ownerUserId);
+      const stub = env.RELAY.get(relayId);
+      const headers = new Headers(request.headers);
+      headers.set("X-Aimux-User-Id", userId);
+      headers.set("X-Aimux-User-Name", profile.displayName);
+      if (profile.email) headers.set("X-Aimux-User-Email", profile.email);
+      if (inviteAcceptMatch) headers.set("X-Aimux-Share-Owner-Id", ownerUserId);
       return stub.fetch(new Request(request, { headers }));
     }
 

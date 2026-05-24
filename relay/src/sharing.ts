@@ -58,6 +58,19 @@ export interface ShareInviteToken {
   invite: ShareInviteRecord;
 }
 
+export interface SharedSessionSummary {
+  id: string;
+  ownerUserId: string;
+  projectRoot: string;
+  sessionId: string;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+  mode: ShareChatMode;
+  participants: ShareParticipantRecord[];
+  invites: Array<Omit<ShareInviteRecord, "tokenHash">>;
+}
+
 export interface CreateShareInviteInput {
   owner: ShareActor;
   projectRoot: string;
@@ -99,6 +112,21 @@ export function normalizeSharingState(state: SharingState): SharingState {
 
 export function getShareChatMode(share: SharedSessionRecord): ShareChatMode {
   return activeParticipants(share).length >= 2 ? "multi" : "single";
+}
+
+export function summarizeShare(share: SharedSessionRecord): SharedSessionSummary {
+  return {
+    id: share.id,
+    ownerUserId: share.ownerUserId,
+    projectRoot: share.projectRoot,
+    sessionId: share.sessionId,
+    createdAt: share.createdAt,
+    updatedAt: share.updatedAt,
+    version: share.version,
+    mode: getShareChatMode(share),
+    participants: Object.values(share.participants),
+    invites: Object.values(share.invites).map(({ tokenHash, ...invite }) => invite),
+  };
 }
 
 export function activeParticipants(share: SharedSessionRecord): ShareParticipantRecord[] {
