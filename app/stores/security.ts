@@ -8,6 +8,14 @@ export interface SecurityEventRecord {
   id: string;
   kind: string;
   deviceId?: string;
+  shareId?: string;
+  sessionId?: string;
+  actorUserId?: string;
+  actorName?: string;
+  actorEmail?: string;
+  targetUserId?: string;
+  targetName?: string;
+  targetEmail?: string;
   title: string;
   body: string;
   createdAt: string;

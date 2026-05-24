@@ -92,10 +92,21 @@ export default {
       } catch {
         return corsResponse(JSON.stringify({ ok: false, error: "Invalid token" }), 401);
       }
-      const relayId = env.RELAY.idFromName(userId);
+      const sharedOwnerUserId = url.searchParams.get("ownerUserId")?.trim();
+      const sharedShareId = url.searchParams.get("shareId")?.trim();
+      if (Boolean(sharedOwnerUserId) !== Boolean(sharedShareId)) {
+        return corsResponse(
+          JSON.stringify({ ok: false, error: "ownerUserId and shareId must be provided together" }),
+          400,
+        );
+      }
+      const relayOwnerUserId = sharedOwnerUserId || userId;
+      const relayId = env.RELAY.idFromName(relayOwnerUserId);
       const stub = env.RELAY.get(relayId);
       const headers = new Headers(request.headers);
       headers.set("X-Aimux-User-Id", userId);
+      if (sharedOwnerUserId) headers.set("X-Aimux-Share-Owner-Id", sharedOwnerUserId);
+      if (sharedShareId) headers.set("X-Aimux-Share-Id", sharedShareId);
       return stub.fetch(new Request(request, { headers }));
     }
 

@@ -420,12 +420,29 @@ export class RelayObject extends DurableObject<Env> {
     const now = new Date().toISOString();
     const state = await loadSecurityState(this.ctx.storage);
     const userId = request.headers.get("X-Aimux-User-Id")?.trim() || undefined;
-    state.pushTokens[deviceId] = {
+    const ownerUserId = request.headers.get("X-Aimux-Share-Owner-Id")?.trim();
+    const shareId = request.headers.get("X-Aimux-Share-Id")?.trim();
+    if (ownerUserId || shareId) {
+      if (!userId || !ownerUserId || !shareId) {
+        return json({ ok: false, error: "Missing shared push registration context" }, 401);
+      }
+      const sharingState = await loadSharingState(this.ctx.storage);
+      const share = sharingState.shares[shareId];
+      if (!share || share.ownerUserId !== ownerUserId) {
+        return json({ ok: false, error: "Shared chat not found" }, 404);
+      }
+      const participant = share.participants[userId];
+      if (!participant || participant.status !== "active") {
+        return json({ ok: false, error: "Not a participant in this shared chat" }, 403);
+      }
+    }
+    const tokenKey = userId ? `${userId}:${deviceId}` : deviceId;
+    state.pushTokens[tokenKey] = {
       userId,
       deviceId,
       token,
       platform: body.platform ?? "unknown",
-      createdAt: state.pushTokens[deviceId]?.createdAt ?? now,
+      createdAt: state.pushTokens[tokenKey]?.createdAt ?? now,
       updatedAt: now,
     };
     await saveSecurityState(this.ctx.storage, state);
