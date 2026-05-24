@@ -89,6 +89,13 @@ export interface HistoryImagePart {
 
 export type HistoryPart = { type: "text"; text: string } | HistoryImagePart;
 
+export interface ChatActor {
+  userId: string;
+  displayName: string;
+  email?: string;
+  role?: "owner" | "guest";
+}
+
 export interface ChatMessage {
   id?: string;
   clientMessageId?: string;
@@ -96,6 +103,9 @@ export interface ChatMessage {
   ts?: string;
   parts?: HistoryPart[];
   text?: string;
+  actor?: ChatActor;
+  shareId?: string;
+  chatMode?: "single" | "multi";
   deliveryState?: "sending" | "submitted" | "failed";
   deliveryError?: string;
   [k: string]: unknown;
