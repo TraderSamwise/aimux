@@ -6,6 +6,7 @@ import { NotificationProvider } from "@/components/NotificationProvider";
 import { getDesktopState, listNotifications, listProjects, setApiRelay } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
 import {
   desktopStateErrorFamily,
@@ -50,6 +51,9 @@ export default function MainLayout() {
     const unsub = transport.onStatusChange((status) => store.set(relayStatusAtom, status));
     setApiRelay(transport);
     void transport.connect();
+    void registerSecurityPushToken(relayUrl, getToken).catch((err) => {
+      console.warn("security push registration failed:", err);
+    });
     return () => {
       unsub();
       setApiRelay(null);
