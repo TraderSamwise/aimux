@@ -11,7 +11,16 @@ import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
-import { createShareInvite, getAgentHistory, getAgentOutput } from "@/lib/api";
+import {
+  createShareInvite,
+  getAgentHistory,
+  getAgentOutput,
+  getShare,
+  leaveShare,
+  listShares,
+  removeShareParticipant,
+  type SharedSessionSummary,
+} from "@/lib/api";
 import {
   messagesFromParsedAgentOutput,
   pendingPromptAlreadyRendered,
@@ -34,7 +43,7 @@ import {
   selectProjectAtom,
 } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
-import { chatTerminalSplitAtom } from "@/stores/settings";
+import { activeSharedSessionAtom, chatTerminalSplitAtom } from "@/stores/settings";
 import type { ChatMessage } from "@/lib/events";
 
 const RELAY_CHAT_POLL_INTERVAL_MS = 2000;
@@ -64,6 +73,7 @@ export default function ChatScreen() {
   const lastError = useAtomValue(lastErrorFamily(sessionKey));
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
+  const [activeShare, setActiveShare] = useAtom(activeSharedSessionAtom);
   const { getToken } = useAuth();
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -73,6 +83,8 @@ export default function ChatScreen() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteStatus, setInviteStatus] = useState<string | null>(null);
+  const [shareSummary, setShareSummary] = useState<SharedSessionSummary | null>(null);
+  const [shareAction, setShareAction] = useState<string | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const scrollRef = useRef<ScrollView>(null);
@@ -273,6 +285,34 @@ export default function ChatScreen() {
     setTerminalPaneWidth(event.nativeEvent.layout.width);
   }
 
+  useEffect(() => {
+    if (!sharePanelOpen) return;
+    let cancelled = false;
+    async function refreshShareSummary() {
+      if (!token || !sessionId) return;
+      if (activeShare?.sessionId === sessionId) {
+        const result = await getShare(activeShare.ownerUserId, activeShare.shareId, { token });
+        if (!cancelled) setShareSummary(result.share);
+        return;
+      }
+      if (!project?.path) return;
+      const result = await listShares({ token });
+      if (!cancelled) {
+        setShareSummary(
+          result.shares.find(
+            (share) => share.projectRoot === project.path && share.sessionId === sessionId,
+          ) ?? null,
+        );
+      }
+    }
+    void refreshShareSummary().catch((err) => {
+      if (!cancelled) setInviteStatus(err instanceof Error ? err.message : String(err));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeShare, project, sessionId, sharePanelOpen, token]);
+
   async function handleSendInvite() {
     const email = inviteEmail.trim();
     if (!project?.path || !sessionId || !email || inviteBusy) return;
@@ -286,6 +326,7 @@ export default function ChatScreen() {
       const result = await createShareInvite(project.path, sessionId, email, serviceEndpoint, {
         token,
       });
+      setShareSummary(result.share);
       setInviteEmail("");
       setInviteStatus(
         result.emailDelivered
@@ -296,6 +337,44 @@ export default function ChatScreen() {
       setInviteStatus(err instanceof Error ? err.message : String(err));
     } finally {
       setInviteBusy(false);
+    }
+  }
+
+  async function handleRemoveParticipant(participantUserId: string) {
+    if (!token || !shareSummary || shareAction) return;
+    setShareAction(participantUserId);
+    setInviteStatus(null);
+    try {
+      const result = await removeShareParticipant(
+        shareSummary.ownerUserId,
+        shareSummary.id,
+        participantUserId,
+        {
+          token,
+        },
+      );
+      setShareSummary(result.share);
+      setInviteStatus("Participant removed.");
+    } catch (err) {
+      setInviteStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setShareAction(null);
+    }
+  }
+
+  async function handleLeaveShare() {
+    if (!token || !activeShare || shareAction) return;
+    setShareAction(activeShare.shareId);
+    setInviteStatus(null);
+    try {
+      await leaveShare(activeShare.ownerUserId, activeShare.shareId, { token });
+      setActiveShare(null);
+      setShareSummary(null);
+      router.replace("/");
+    } catch (err) {
+      setInviteStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setShareAction(null);
     }
   }
 
@@ -360,30 +439,101 @@ export default function ChatScreen() {
           </View>
           {sharePanelOpen ? (
             <View className="border-b border-border bg-card px-4 py-3">
-              <View className="flex-row items-center gap-2">
-                <Input
-                  value={inviteEmail}
-                  onChangeText={setInviteEmail}
-                  placeholder="Email address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="email-address"
-                  className="flex-1 h-9 text-sm"
-                />
-                <Button
-                  size="sm"
-                  label={inviteBusy ? "Sending..." : "Invite"}
-                  disabled={
-                    inviteBusy ||
-                    !relayConfigured ||
-                    !token ||
-                    !project?.path ||
-                    !sessionId ||
-                    !inviteEmail.trim()
-                  }
-                  onPress={handleSendInvite}
-                />
-              </View>
+              {activeShare ? (
+                <View className="flex-row items-center justify-between gap-3">
+                  <View className="flex-1">
+                    <Text className="text-sm font-medium text-foreground">Shared chat</Text>
+                    <Text className="text-xs text-muted-foreground mt-1" numberOfLines={1}>
+                      Connected to {activeShare.ownerUserId}
+                    </Text>
+                  </View>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    label={shareAction ? "Leaving..." : "Leave"}
+                    disabled={!token || Boolean(shareAction)}
+                    onPress={handleLeaveShare}
+                  />
+                </View>
+              ) : (
+                <View className="flex-row items-center gap-2">
+                  <Input
+                    value={inviteEmail}
+                    onChangeText={setInviteEmail}
+                    placeholder="Email address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="email-address"
+                    className="flex-1 h-9 text-sm"
+                  />
+                  <Button
+                    size="sm"
+                    label={inviteBusy ? "Sending..." : "Invite"}
+                    disabled={
+                      inviteBusy ||
+                      !relayConfigured ||
+                      !token ||
+                      !project?.path ||
+                      !sessionId ||
+                      !inviteEmail.trim()
+                    }
+                    onPress={handleSendInvite}
+                  />
+                </View>
+              )}
+              {shareSummary ? (
+                <View className="mt-3 border-t border-border pt-3">
+                  <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                    Participants
+                  </Text>
+                  {shareSummary.participants.map((participant) => (
+                    <View
+                      key={participant.userId}
+                      className="mt-2 flex-row items-center justify-between gap-3"
+                    >
+                      <View className="flex-1">
+                        <Text className="text-sm text-foreground" numberOfLines={1}>
+                          {participant.displayName}
+                        </Text>
+                        <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                          {participant.role} · {participant.status}
+                          {participant.email ? ` · ${participant.email}` : ""}
+                        </Text>
+                      </View>
+                      {!activeShare &&
+                      participant.role !== "owner" &&
+                      participant.status === "active" ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          label={shareAction === participant.userId ? "Removing..." : "Remove"}
+                          disabled={!token || Boolean(shareAction)}
+                          onPress={() => handleRemoveParticipant(participant.userId)}
+                        />
+                      ) : null}
+                    </View>
+                  ))}
+                  {!activeShare &&
+                  shareSummary.invites.some((invite) => invite.status === "pending") ? (
+                    <View className="mt-3">
+                      <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                        Pending invites
+                      </Text>
+                      {shareSummary.invites
+                        .filter((invite) => invite.status === "pending")
+                        .map((invite) => (
+                          <Text
+                            key={invite.id}
+                            className="text-xs text-muted-foreground mt-2"
+                            numberOfLines={1}
+                          >
+                            {invite.email}
+                          </Text>
+                        ))}
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
               {!relayConfigured ? (
                 <Text className="text-xs text-muted-foreground mt-2">
                   Remote mode is required for shared chats.

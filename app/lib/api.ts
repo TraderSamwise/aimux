@@ -292,6 +292,22 @@ export interface ShareInviteResponse {
   acceptUrl: string;
 }
 
+export interface ShareResponse {
+  ok: boolean;
+  share: SharedSessionSummary;
+}
+
+export interface SharesResponse {
+  ok: boolean;
+  shares: SharedSessionSummary[];
+}
+
+function relayHttpUrl(): string {
+  const relayUrl = env.AIMUX_RELAY_URL;
+  if (!relayUrl) throw new ApiError(0, null, "Relay sharing is not configured");
+  return relayUrl.replace(/^ws/, "http").replace(/\/+$/, "");
+}
+
 export async function createShareInvite(
   projectRoot: string,
   sessionId: string,
@@ -299,14 +315,55 @@ export async function createShareInvite(
   serviceEndpoint?: ServiceEndpoint | null,
   opts?: ApiOpts,
 ): Promise<ShareInviteResponse> {
-  const relayUrl = env.AIMUX_RELAY_URL;
-  if (!relayUrl) throw new ApiError(0, null, "Relay sharing is not configured");
   return callJson<ShareInviteResponse>(
-    `${relayUrl.replace(/^ws/, "http")}/shares/invite`,
+    `${relayHttpUrl()}/shares/invite`,
     {
       method: "POST",
       body: JSON.stringify({ projectRoot, sessionId, email, serviceEndpoint }),
     },
+    opts,
+  );
+}
+
+export async function listShares(opts?: ApiOpts): Promise<SharesResponse> {
+  return callJson<SharesResponse>(`${relayHttpUrl()}/shares`, {}, opts);
+}
+
+export async function getShare(
+  ownerUserId: string,
+  shareId: string,
+  opts?: ApiOpts,
+): Promise<ShareResponse> {
+  return callJson<ShareResponse>(
+    `${relayHttpUrl()}/shares/${encodeURIComponent(ownerUserId)}/${encodeURIComponent(shareId)}`,
+    {},
+    opts,
+  );
+}
+
+export async function leaveShare(
+  ownerUserId: string,
+  shareId: string,
+  opts?: ApiOpts,
+): Promise<ShareResponse> {
+  return callJson<ShareResponse>(
+    `${relayHttpUrl()}/shares/${encodeURIComponent(ownerUserId)}/${encodeURIComponent(shareId)}/leave`,
+    { method: "POST" },
+    opts,
+  );
+}
+
+export async function removeShareParticipant(
+  ownerUserId: string,
+  shareId: string,
+  participantUserId: string,
+  opts?: ApiOpts,
+): Promise<ShareResponse> {
+  return callJson<ShareResponse>(
+    `${relayHttpUrl()}/shares/${encodeURIComponent(ownerUserId)}/${encodeURIComponent(shareId)}/participants/${encodeURIComponent(
+      participantUserId,
+    )}`,
+    { method: "DELETE" },
     opts,
   );
 }
@@ -322,10 +379,8 @@ export async function acceptShareInvite(
   token: string,
   opts?: ApiOpts,
 ): Promise<AcceptShareInviteResponse> {
-  const relayUrl = env.AIMUX_RELAY_URL;
-  if (!relayUrl) throw new ApiError(0, null, "Relay sharing is not configured");
   return callJson<AcceptShareInviteResponse>(
-    `${relayUrl.replace(/^ws/, "http")}/shares/invite/${encodeURIComponent(ownerUserId)}/${encodeURIComponent(
+    `${relayHttpUrl()}/shares/invite/${encodeURIComponent(ownerUserId)}/${encodeURIComponent(
       token,
     )}/accept`,
     { method: "POST" },

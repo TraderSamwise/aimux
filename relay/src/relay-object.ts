@@ -22,11 +22,13 @@ import {
   createShareInvite,
   getShareChatMode,
   loadSharingState,
+  removeShareParticipant,
   saveSharingState,
   sharedRelayRequestAccess,
   summarizeShare,
   stripTrustedAimuxHeaders,
 } from "./sharing.js";
+import type { SharedSessionRecord } from "./sharing.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // In-flight requests: response with this id will be routed back to the
@@ -60,6 +62,15 @@ export class RelayObject extends DurableObject<Env> {
     }
     if (url.pathname === "/shares" && request.method === "GET") {
       return this.listShares(request);
+    }
+    if (url.pathname.startsWith("/shares/") && request.method === "GET") {
+      return this.getShare(request, url);
+    }
+    if (url.pathname.startsWith("/shares/") && url.pathname.endsWith("/leave") && request.method === "POST") {
+      return this.leaveShare(request, url);
+    }
+    if (url.pathname.startsWith("/shares/") && url.pathname.includes("/participants/") && request.method === "DELETE") {
+      return this.removeShareParticipant(request, url);
     }
     if (url.pathname === "/shares/invite" && request.method === "POST") {
       if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
@@ -483,6 +494,56 @@ export class RelayObject extends DurableObject<Env> {
     return json({ ok: true, shares }, 200);
   }
 
+  private async getShare(request: Request, url: URL): Promise<Response> {
+    const actor = this.actorFromHeaders(request, "guest");
+    if (!actor) return json({ ok: false, error: "Missing user context" }, 401);
+    const parsed = parseOwnerSharePath(url.pathname);
+    if (!parsed) return json({ ok: false, error: "Invalid share URL" }, 400);
+    const state = await loadSharingState(this.ctx.storage);
+    const share = state.shares[parsed.shareId];
+    if (!share || share.ownerUserId !== parsed.ownerUserId) return json({ ok: false, error: "Share not found" }, 404);
+    if (!canReadShare(share, actor.userId))
+      return json({ ok: false, error: "Not a participant in this shared chat" }, 403);
+    return json({ ok: true, share: summarizeShare(share) }, 200);
+  }
+
+  private async leaveShare(request: Request, url: URL): Promise<Response> {
+    const actor = this.actorFromHeaders(request, "guest");
+    if (!actor) return json({ ok: false, error: "Missing user context" }, 401);
+    const parsed = parseOwnerSharePath(url.pathname.replace(/\/leave$/, ""));
+    if (!parsed) return json({ ok: false, error: "Invalid share URL" }, 400);
+    const state = await loadSharingState(this.ctx.storage);
+    const share = state.shares[parsed.shareId];
+    if (!share || share.ownerUserId !== parsed.ownerUserId) return json({ ok: false, error: "Share not found" }, 404);
+    if (share.ownerUserId === actor.userId)
+      return json({ ok: false, error: "Owner cannot leave their own share" }, 400);
+    if (share.participants[actor.userId]?.status !== "active") {
+      return json({ ok: false, error: "Not a participant in this shared chat" }, 403);
+    }
+    const result = removeShareParticipant(state, share.id, actor.userId);
+    await saveSharingState(this.ctx.storage, result.state);
+    return json({ ok: true, share: summarizeShare(result.share ?? share) }, 200);
+  }
+
+  private async removeShareParticipant(request: Request, url: URL): Promise<Response> {
+    const actor = this.actorFromHeaders(request, "owner");
+    if (!actor) return json({ ok: false, error: "Missing user context" }, 401);
+    const parsed = parseParticipantPath(url.pathname);
+    if (!parsed) return json({ ok: false, error: "Invalid participant URL" }, 400);
+    const state = await loadSharingState(this.ctx.storage);
+    const share = state.shares[parsed.shareId];
+    if (!share || share.ownerUserId !== parsed.ownerUserId) return json({ ok: false, error: "Share not found" }, 404);
+    if (share.ownerUserId !== actor.userId) return json({ ok: false, error: "Only the owner can remove guests" }, 403);
+    if (parsed.participantUserId === share.ownerUserId)
+      return json({ ok: false, error: "Owner cannot be removed" }, 400);
+    if (!share.participants[parsed.participantUserId]) {
+      return json({ ok: false, error: "Participant not found" }, 404);
+    }
+    const result = removeShareParticipant(state, share.id, parsed.participantUserId);
+    await saveSharingState(this.ctx.storage, result.state);
+    return json({ ok: true, share: summarizeShare(result.share ?? share) }, 200);
+  }
+
   private async createShareInvite(request: Request): Promise<Response> {
     const owner = this.actorFromHeaders(request, "owner");
     if (!owner) return json({ ok: false, error: "Missing owner context" }, 401);
@@ -722,6 +783,33 @@ function html(body: string, status: number): Response {
     status,
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
+}
+
+function parseOwnerSharePath(pathname: string): { ownerUserId: string; shareId: string } | null {
+  const match = pathname.match(/^\/shares\/([^/]+)\/([^/]+)$/);
+  if (!match) return null;
+  return {
+    ownerUserId: decodeURIComponent(match[1]),
+    shareId: decodeURIComponent(match[2]),
+  };
+}
+
+function parseParticipantPath(pathname: string): {
+  ownerUserId: string;
+  shareId: string;
+  participantUserId: string;
+} | null {
+  const match = pathname.match(/^\/shares\/([^/]+)\/([^/]+)\/participants\/([^/]+)$/);
+  if (!match) return null;
+  return {
+    ownerUserId: decodeURIComponent(match[1]),
+    shareId: decodeURIComponent(match[2]),
+    participantUserId: decodeURIComponent(match[3]),
+  };
+}
+
+function canReadShare(share: SharedSessionRecord, userId: string): boolean {
+  return share.ownerUserId === userId || share.participants[userId]?.status === "active";
 }
 
 function securityActionCss(): string {
