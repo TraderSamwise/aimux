@@ -89,9 +89,9 @@ export class RelayTransport {
       return;
     }
 
-    const deviceInfo = await this.getDeviceInfo();
-    const url = this.clientConnectUrl(deviceInfo);
     try {
+      const deviceInfo = await this.getDeviceInfo();
+      const url = this.clientConnectUrl(deviceInfo);
       this.ws = new WebSocket(url, ["aimux", `${TOKEN_PROTOCOL_PREFIX}${token}`]);
     } catch {
       this.setStatus("disconnected");
@@ -205,7 +205,7 @@ export class RelayTransport {
     }
 
     if (msg.type === "security_event") {
-      if (msg.event) {
+      if (isSecurityEventRecord(msg.event)) {
         for (const listener of this.securityEventListeners) {
           listener(msg.event);
         }
@@ -249,4 +249,16 @@ export class RelayTransport {
     }, this.retryMs);
     this.retryMs = Math.min(this.retryMs * 2, MAX_RETRY_MS);
   }
+}
+
+function isSecurityEventRecord(value: unknown): value is SecurityEventRecord {
+  if (!value || typeof value !== "object") return false;
+  const event = value as Partial<Record<keyof SecurityEventRecord, unknown>>;
+  return (
+    typeof event.id === "string" &&
+    typeof event.kind === "string" &&
+    typeof event.title === "string" &&
+    typeof event.body === "string" &&
+    typeof event.createdAt === "string"
+  );
 }

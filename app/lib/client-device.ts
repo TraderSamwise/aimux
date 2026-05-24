@@ -15,6 +15,9 @@ export interface ClientDeviceInfo {
   appVersion?: string;
 }
 
+let cachedDeviceId: string | null = null;
+let deviceIdPromise: Promise<string> | null = null;
+
 export async function getClientDeviceInfo(): Promise<ClientDeviceInfo> {
   const deviceId = await getOrCreateDeviceId();
   const kind = platformKind();
@@ -28,11 +31,23 @@ export async function getClientDeviceInfo(): Promise<ClientDeviceInfo> {
 }
 
 async function getOrCreateDeviceId(): Promise<string> {
-  const existing = await readDeviceId();
-  if (existing) return existing;
-  const next = `client_${randomId()}`;
-  await writeDeviceId(next);
-  return next;
+  if (cachedDeviceId) return cachedDeviceId;
+  if (!deviceIdPromise) {
+    deviceIdPromise = (async () => {
+      const existing = await readDeviceId();
+      if (existing) {
+        cachedDeviceId = existing;
+        return existing;
+      }
+      const next = `client_${randomId()}`;
+      await writeDeviceId(next);
+      cachedDeviceId = next;
+      return next;
+    })().finally(() => {
+      deviceIdPromise = null;
+    });
+  }
+  return deviceIdPromise;
 }
 
 async function readDeviceId(): Promise<string | null> {

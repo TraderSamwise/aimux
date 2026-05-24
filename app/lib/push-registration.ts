@@ -16,6 +16,12 @@ export async function registerSecurityPushToken(
   const projectId =
     Constants.easConfig?.projectId ??
     (Constants.expoConfig?.extra?.eas as { projectId?: string } | undefined)?.projectId;
+  if (Platform.OS === "android") {
+    await Notifications.setNotificationChannelAsync("security", {
+      name: "Security alerts",
+      importance: Notifications.AndroidImportance.DEFAULT,
+    });
+  }
   const expoToken = await Notifications.getExpoPushTokenAsync(
     projectId ? { projectId } : undefined,
   );

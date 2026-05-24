@@ -36,6 +36,9 @@ wrangler secret put CLERK_SECRET_KEY --env production
 # e.g. `openssl rand -base64 48` or `head -c 48 /dev/urandom | base64`
 wrangler secret put RELAY_TOKEN_SECRET --env production
 
+# Set the IP pseudonymization key used for security audit/device metadata.
+wrangler secret put SECURITY_IP_HASH_SECRET --env production
+
 # Optional: enable security alert emails.
 wrangler secret put RESEND_API_KEY --env production
 
