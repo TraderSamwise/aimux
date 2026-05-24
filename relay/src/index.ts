@@ -69,6 +69,28 @@ export default {
       return corsResponse(JSON.stringify({ ok: true }), 200);
     }
 
+    if (url.pathname === "/security/push-token" && request.method === "POST") {
+      const authHeader = request.headers.get("Authorization");
+      const clerkToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+      if (!clerkToken) {
+        return corsResponse(JSON.stringify({ ok: false, error: "Missing authorization" }), 401);
+      }
+      if (!env.CLERK_SECRET_KEY) {
+        return corsResponse(JSON.stringify({ ok: false, error: "Relay not configured: CLERK_SECRET_KEY unset" }), 500);
+      }
+      let userId: string;
+      try {
+        userId = await verifyWsToken(clerkToken, env);
+      } catch {
+        return corsResponse(JSON.stringify({ ok: false, error: "Invalid token" }), 401);
+      }
+      const relayId = env.RELAY.idFromName(userId);
+      const stub = env.RELAY.get(relayId);
+      const headers = new Headers(request.headers);
+      headers.set("X-Aimux-User-Id", userId);
+      return stub.fetch(new Request(request, { headers }));
+    }
+
     // Mint a long-lived daemon token. The caller authenticates with a Clerk
     // session JWT (Authorization: Bearer) obtained in the browser. Used by the
     // web app's /cli-auth page during `aimux login`.
@@ -162,6 +184,8 @@ export default {
     const doUrl = new URL(request.url);
     doUrl.searchParams.delete("token");
 
-    return stub.fetch(new Request(doUrl.toString(), request));
+    const headers = new Headers(request.headers);
+    headers.set("X-Aimux-User-Id", userId);
+    return stub.fetch(new Request(doUrl.toString(), { headers }));
   },
 };

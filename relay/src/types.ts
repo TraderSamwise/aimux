@@ -14,6 +14,9 @@ export interface Env {
   // warn: record and notify about first-time devices but allow requests.
   // enforce: deny client requests until the device has been approved.
   SECURITY_DEVICE_POLICY?: "warn" | "enforce";
+  RESEND_API_KEY?: string;
+  SECURITY_EMAIL_FROM?: string;
+  SECURITY_ACTION_BASE_URL?: string;
 }
 
 export interface RelayRequest {

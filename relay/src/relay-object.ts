@@ -1,6 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
+import { deliverSecurityAlert } from "./security-delivery.js";
 import {
+  createSecurityActionToken,
   hashIpAddress,
   isDeviceApproved,
   loadSecurityState,
@@ -25,6 +27,10 @@ export class RelayObject extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     this.rehydrateSockets();
     const url = new URL(request.url);
+    if (url.pathname === "/security/push-token" && request.method === "POST") {
+      return this.registerPushToken(request);
+    }
+
     const upgradeHeader = request.headers.get("Upgrade")?.toLowerCase();
     if (upgradeHeader !== "websocket") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
@@ -237,6 +243,7 @@ export class RelayObject extends DurableObject<Env> {
     ws: WebSocket,
     device: ReturnType<typeof sanitizeDeviceInfo>,
   ): Promise<void> {
+    const userId = request.headers.get("X-Aimux-User-Id") ?? "";
     const state = await loadSecurityState(this.ctx.storage);
     const ipHash = await hashIpAddress(request.headers.get("CF-Connecting-IP"));
     const context = {
@@ -245,6 +252,12 @@ export class RelayObject extends DurableObject<Env> {
       userAgent: request.headers.get("User-Agent") ?? undefined,
     };
     const result = recordClientConnection(state, device, context);
+    let emergencyUrl: string | undefined;
+    if (result.firstSeen && userId) {
+      const action = await createSecurityActionToken("emergency_lockdown", { deviceId: result.device.id });
+      result.state.actions[action.action.id] = action.action;
+      emergencyUrl = `${this.securityActionBaseUrl(request)}/security/action/${encodeURIComponent(userId)}/${encodeURIComponent(action.token)}`;
+    }
     await saveSecurityState(this.ctx.storage, result.state);
     for (const event of result.events) {
       if (this.daemonWs) {
@@ -254,8 +267,45 @@ export class RelayObject extends DurableObject<Env> {
       }
       if (event.kind === "new_client_detected") {
         this.broadcastToClients({ type: "security_event", event }, ws);
+        await deliverSecurityAlert({
+          env: this.env,
+          userId,
+          event,
+          device: result.device,
+          pushTokens: Object.values(result.state.pushTokens),
+          emergencyUrl,
+        });
       }
     }
+  }
+
+  private async registerPushToken(request: Request): Promise<Response> {
+    let body: { deviceId?: string; token?: string; platform?: "ios" | "android" | "web" | "unknown" };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return json({ ok: false, error: "Invalid JSON" }, 400);
+    }
+    const deviceId = body.deviceId?.trim();
+    const token = body.token?.trim();
+    if (!deviceId || !token) {
+      return json({ ok: false, error: "Missing deviceId or token" }, 400);
+    }
+    const now = new Date().toISOString();
+    const state = await loadSecurityState(this.ctx.storage);
+    state.pushTokens[deviceId] = {
+      deviceId,
+      token,
+      platform: body.platform ?? "unknown",
+      createdAt: state.pushTokens[deviceId]?.createdAt ?? now,
+      updatedAt: now,
+    };
+    await saveSecurityState(this.ctx.storage, state);
+    return json({ ok: true }, 200);
+  }
+
+  private securityActionBaseUrl(request: Request): string {
+    return (this.env.SECURITY_ACTION_BASE_URL ?? new URL(request.url).origin).replace(/\/+$/, "");
   }
 
   private async shouldRejectClientRequest(ws: WebSocket): Promise<boolean> {
@@ -320,4 +370,11 @@ export class RelayObject extends DurableObject<Env> {
     }
     this.pendingRequests.clear();
   }
+}
+
+function json(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
