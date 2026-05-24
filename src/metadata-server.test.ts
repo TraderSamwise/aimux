@@ -1582,6 +1582,79 @@ describe("MetadataServer threads API", () => {
     expect(writes).toEqual([{ sessionId: "codex-1", data: "hello from http", submit: true }]);
   });
 
+  it("passes trusted collaboration headers with agent input over HTTP", async () => {
+    server?.stop();
+    const writes: Array<{
+      sessionId: string;
+      data?: string;
+      collaboration?: {
+        shareId?: string;
+        mode?: string;
+        actor?: { userId: string; displayName: string; email?: string; role?: string };
+      };
+    }> = [];
+    server = new MetadataServer({
+      lifecycle: {
+        writeAgentInput: ({ sessionId, data, collaboration }) => {
+          writes.push({ sessionId, data, collaboration });
+          return {
+            sessionId,
+            accepted: true,
+            operation: {
+              id: "inputop-collab",
+              sessionId,
+              submit: true,
+              state: "submitted" as const,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-aimux-share-id": "share_123",
+        "x-aimux-share-mode": "multi",
+        "x-aimux-actor-user-id": "user_123",
+        "x-aimux-actor-name": "Sam Steady",
+        "x-aimux-actor-email": "sam@example.com",
+        "x-aimux-actor-role": "owner",
+      },
+      body: JSON.stringify({
+        sessionId: "claude-1",
+        data: "hello from http",
+        submit: true,
+      }),
+    });
+
+    expect(inputRes.ok).toBe(true);
+    expect(writes).toEqual([
+      {
+        sessionId: "claude-1",
+        data: "hello from http",
+        collaboration: {
+          shareId: "share_123",
+          mode: "multi",
+          actor: {
+            userId: "user_123",
+            displayName: "Sam Steady",
+            email: "sam@example.com",
+            role: "owner",
+          },
+        },
+      },
+    ]);
+  });
+
   it("passes structured input parts with agent input over HTTP", async () => {
     server?.stop();
     const writes: Array<{

@@ -11,6 +11,7 @@ import { loadMetadataState } from "../metadata-store.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
 import { serializeAgentInput } from "../agent-message-parts.js";
 import { resolveAttachmentPath } from "../attachment-store.js";
+import { applyAgentCollaborationPrefix, type AgentCollaborationContext } from "../collaboration.js";
 import { appendSessionMessage, readSessionMessages } from "../session-message-history.js";
 import {
   createSessionInputOperation,
@@ -254,6 +255,7 @@ export async function writeAgentInput(
   parts?: any[],
   clientMessageId?: string,
   submit = false,
+  collaboration?: AgentCollaborationContext,
 ): Promise<{
   sessionId: string;
   accepted: boolean;
@@ -262,13 +264,11 @@ export async function writeAgentInput(
   error?: string;
 }> {
   const session = resolveRunningSession(host, sessionId);
-  const serializedData = serializeAgentInput(
-    { data, parts },
-    {
-      tool: host.sessionToolKeys.get(sessionId),
-      resolveAttachmentPath,
-    },
-  );
+  const agentInput = applyAgentCollaborationPrefix({ data, parts }, collaboration);
+  const serializedData = serializeAgentInput(agentInput, {
+    tool: host.sessionToolKeys.get(sessionId),
+    resolveAttachmentPath,
+  });
   const normalizedData = normalizeAgentInput(host, serializedData, submit, sessionId);
   if (!normalizedData && !submit) {
     throw new Error("input data is required");
@@ -276,7 +276,7 @@ export async function writeAgentInput(
 
   let operation = createSessionInputOperation({ sessionId, clientMessageId, submit });
   try {
-    const message = appendSessionMessage(sessionId, { data, parts, clientMessageId });
+    const message = appendSessionMessage(sessionId, { data, parts, clientMessageId, collaboration });
     if (message?.id) {
       operation = saveSessionInputOperation({
         ...operation,

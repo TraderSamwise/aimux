@@ -8,6 +8,7 @@ import {
   isSharedRelayRequestAllowed,
   removeShareParticipant,
   sharedRelayRequestAccess,
+  stripTrustedAimuxHeaders,
   summarizeShare,
 } from "./sharing";
 
@@ -188,6 +189,16 @@ describe("sharing state", () => {
   it("sanitizes actor display prefixes", () => {
     expect(actorDisplayPrefix({ userId: "u", displayName: "  Sam   Teady  ", role: "owner" })).toBe("[Sam Teady]:");
     expect(actorDisplayPrefix({ userId: "u", displayName: "", role: "guest" })).toBe("[User]:");
+  });
+
+  it("strips client-provided trusted relay headers before injection", () => {
+    expect(
+      stripTrustedAimuxHeaders({
+        "content-type": "application/json",
+        "x-aimux-actor-name": "Mallory",
+        "X-Aimux-Share-Mode": "multi",
+      }),
+    ).toEqual({ "content-type": "application/json" });
   });
 
   it("redacts invite token hashes from public summaries", async () => {

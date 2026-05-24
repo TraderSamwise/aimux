@@ -2,6 +2,7 @@ import { sendDirectMessage, sendThreadMessage } from "../orchestration.js";
 import { sendHandoff } from "../orchestration-actions.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
 import type { DashboardSession } from "../dashboard/index.js";
+import type { AgentCollaborationContext } from "../collaboration.js";
 import { markMessageDelivered, type MessageKind } from "../threads.js";
 import { stopProjectServices as stopProjectServicesImpl } from "./dashboard-model.js";
 import {
@@ -257,8 +258,9 @@ export const agentIoMethods = {
     parts?: any[],
     clientMessageId?: string,
     submit = false,
+    collaboration?: AgentCollaborationContext,
   ): Promise<{ sessionId: string }> {
-    return writeAgentInputImpl(this, sessionId, data, parts, clientMessageId, submit);
+    return writeAgentInputImpl(this, sessionId, data, parts, clientMessageId, submit, collaboration);
   },
 
   async readAgentHistory(this: any, sessionId: string, lastN?: number): Promise<any> {
