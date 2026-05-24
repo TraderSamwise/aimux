@@ -44,6 +44,15 @@ function send(title: string, message: string): void {
   debug(`notification: ${message}`, "notify");
 }
 
+function sendSecurity(title: string, message: string): void {
+  if (process.platform === "darwin") {
+    sendMacNotification(title, message);
+  } else {
+    notifier.notify({ title, message, sound: true });
+  }
+  debug(`security notification: ${message}`, "notify");
+}
+
 /** Notify that an agent is waiting for input */
 export function notifyPrompt(sessionId: string): void {
   if (!getNotifyConfig().onPrompt) return;
@@ -82,4 +91,8 @@ export function notifyAlert(event: AlertEvent): void {
   if ((event.kind === "task_failed" || event.kind === "blocked") && !config.onError) return;
 
   send(event.title || "aimux", event.message || event.sessionId || event.kind);
+}
+
+export function notifyRemoteClientConnected(input: { title: string; body: string }): void {
+  sendSecurity(input.title || "aimux remote access", input.body || "Remote client connected");
 }

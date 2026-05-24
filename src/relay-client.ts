@@ -1,4 +1,5 @@
 import type { AimuxDaemon } from "./daemon.js";
+import { notifyRemoteClientConnected } from "./notify.js";
 
 interface RelayRequest {
   id: string;
@@ -9,8 +10,15 @@ interface RelayRequest {
 }
 
 interface RelayControl {
-  type: "ping" | "pong" | "connected" | "error" | "daemon_status";
+  type: "ping" | "pong" | "connected" | "error" | "daemon_status" | "security_event";
   message?: string;
+  event?: {
+    kind: string;
+    title: string;
+    body: string;
+    deviceId?: string;
+    createdAt: string;
+  };
 }
 
 type RelayMessage = RelayRequest | RelayControl;
@@ -161,6 +169,16 @@ export class RelayClient {
 
     if (msg.type === "error") {
       console.warn("[relay] Server error:", msg.message);
+      return;
+    }
+
+    if (msg.type === "security_event") {
+      if (msg.event?.kind === "client_connected") {
+        notifyRemoteClientConnected({
+          title: msg.event.title,
+          body: msg.event.body,
+        });
+      }
       return;
     }
 
