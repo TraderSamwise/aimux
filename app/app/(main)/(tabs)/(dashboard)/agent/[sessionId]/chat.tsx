@@ -283,7 +283,9 @@ export default function ChatScreen() {
     setInviteBusy(true);
     setInviteStatus(null);
     try {
-      const result = await createShareInvite(project.path, sessionId, email, { token });
+      const result = await createShareInvite(project.path, sessionId, email, serviceEndpoint, {
+        token,
+      });
       setInviteEmail("");
       setInviteStatus(
         result.emailDelivered

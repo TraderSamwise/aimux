@@ -1,13 +1,17 @@
 import React, { useRef, useState } from "react";
 import { View, TextInput, KeyboardAvoidingView, Platform } from "react-native";
 import { useSignIn } from "@clerk/clerk-expo";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 
 export default function SignInScreen() {
   const { signIn, setActive, isLoaded } = useSignIn();
   const router = useRouter();
+  const params = useLocalSearchParams<{ redirect?: string | string[] }>();
+  const redirect = sanitizeRedirect(
+    Array.isArray(params.redirect) ? params.redirect[0] : params.redirect,
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -27,6 +31,7 @@ export default function SignInScreen() {
       });
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
+        if (redirect) router.replace(redirect);
       } else if (
         result.status === "needs_second_factor" ||
         (result.status as string) === "needs_client_trust"
@@ -39,8 +44,8 @@ export default function SignInScreen() {
       } else {
         setError(`Sign in requires additional steps: ${result.status}`);
       }
-    } catch (err: any) {
-      setError(err.errors?.[0]?.longMessage ?? "Sign in failed");
+    } catch (err: unknown) {
+      setError(clerkErrorMessage(err, "Sign in failed"));
     } finally {
       setLoading(false);
     }
@@ -57,9 +62,10 @@ export default function SignInScreen() {
       });
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
+        if (redirect) router.replace(redirect);
       }
-    } catch (err: any) {
-      setError(err.errors?.[0]?.longMessage ?? "Verification failed");
+    } catch (err: unknown) {
+      setError(clerkErrorMessage(err, "Verification failed"));
     } finally {
       setLoading(false);
     }
@@ -72,8 +78,8 @@ export default function SignInScreen() {
     try {
       await signIn.prepareSecondFactor({ strategy: "email_code" });
       setCode("");
-    } catch (err: any) {
-      setError(err.errors?.[0]?.longMessage ?? "Failed to resend code");
+    } catch (err: unknown) {
+      setError(clerkErrorMessage(err, "Failed to resend code"));
     } finally {
       setLoading(false);
     }
@@ -179,4 +185,19 @@ export default function SignInScreen() {
       </View>
     </KeyboardAvoidingView>
   );
+}
+
+function sanitizeRedirect(value: string | undefined): Href | null {
+  if (!value) return null;
+  if (!value.startsWith("/") || value.startsWith("//")) return null;
+  return value as Href;
+}
+
+function clerkErrorMessage(err: unknown, fallback: string) {
+  if (typeof err === "object" && err && "errors" in err) {
+    const errors = (err as { errors?: Array<{ longMessage?: string; message?: string }> }).errors;
+    const first = errors?.[0];
+    return first?.longMessage ?? first?.message ?? fallback;
+  }
+  return fallback;
 }
