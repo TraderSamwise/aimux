@@ -2,10 +2,16 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
 import { deliverSecurityAlert } from "./security-delivery.js";
 import {
+  activateSecurityLockdown,
   createSecurityActionToken,
+  deactivateSecurityLockdown,
+  findSecurityActionByToken,
   hashIpAddress,
+  isDaemonTokenRevoked,
   isDeviceApproved,
+  isSecurityLockedDown,
   loadSecurityState,
+  markSecurityActionUsed,
   recordClientConnection,
   sanitizeDeviceInfo,
   saveSecurityState,
@@ -27,7 +33,18 @@ export class RelayObject extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     this.rehydrateSockets();
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/security/action/")) {
+      return this.handleSecurityAction(request, url);
+    }
+    if (url.pathname === "/security/unlock" && request.method === "POST") {
+      return this.unlockSecurity();
+    }
+    if (url.pathname === "/security/status" && request.method === "GET") {
+      const state = await loadSecurityState(this.ctx.storage);
+      return json({ ok: true, locked: isSecurityLockedDown(state), lockdown: state.lockdown }, 200);
+    }
     if (url.pathname === "/security/push-token" && request.method === "POST") {
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
       return this.registerPushToken(request);
     }
 
@@ -37,6 +54,17 @@ export class RelayObject extends DurableObject<Env> {
     }
 
     const role = url.pathname === "/daemon/connect" ? "daemon" : "client";
+    const securityState = await loadSecurityState(this.ctx.storage);
+    if (isSecurityLockedDown(securityState)) {
+      return new Response("Remote access is locked. Run `aimux security unlock` from your CLI.", { status: 423 });
+    }
+    if (role === "daemon") {
+      const issuedAt = Number(request.headers.get("X-Aimux-Daemon-Iat") ?? "0");
+      if (!Number.isFinite(issuedAt) || isDaemonTokenRevoked(securityState, issuedAt)) {
+        return new Response("Daemon token has been revoked. Run `aimux security unlock`.", { status: 401 });
+      }
+    }
+
     const clientDevice =
       role === "client"
         ? sanitizeDeviceInfo({
@@ -151,6 +179,44 @@ export class RelayObject extends DurableObject<Env> {
         });
       }
     }
+  }
+
+  private async handleSecurityAction(request: Request, url: URL): Promise<Response> {
+    const [, , , userId, token] = url.pathname.split("/");
+    if (!userId || !token)
+      return securityActionPage("Invalid security link", "This security action link is malformed.", 400);
+    const state = await loadSecurityState(this.ctx.storage);
+    const action = await findSecurityActionByToken(state, decodeURIComponent(token));
+    if (!action || action.kind !== "emergency_lockdown") {
+      return securityActionPage(
+        "Security link expired",
+        "This security action link is invalid, expired, or has already been used.",
+        410,
+      );
+    }
+    if (request.method === "GET") {
+      return securityActionConfirmPage(decodeURIComponent(userId), decodeURIComponent(token));
+    }
+    if (request.method !== "POST") {
+      return securityActionPage("Unsupported method", "Use the confirmation button from the security page.", 405);
+    }
+
+    let next = markSecurityActionUsed(state, action.id);
+    next = activateSecurityLockdown(next, "Emergency lockdown triggered from a new-client security alert.");
+    await saveSecurityState(this.ctx.storage, next);
+    this.closeAllSockets("Security lockdown");
+    return securityActionPage(
+      "Remote access disabled",
+      "All relay connections were closed and daemon tokens issued before this action were revoked. Run `aimux security unlock` from your CLI to re-enable remote access.",
+      200,
+    );
+  }
+
+  private async unlockSecurity(): Promise<Response> {
+    const state = await loadSecurityState(this.ctx.storage);
+    const next = deactivateSecurityLockdown(state, "Unlocked by an authenticated CLI login.");
+    await saveSecurityState(this.ctx.storage, next);
+    return json({ ok: true }, 200);
   }
 
   private sweepExpiredPending(): void {
@@ -308,6 +374,11 @@ export class RelayObject extends DurableObject<Env> {
     return (this.env.SECURITY_ACTION_BASE_URL ?? new URL(request.url).origin).replace(/\/+$/, "");
   }
 
+  private async isLockedDown(): Promise<boolean> {
+    const state = await loadSecurityState(this.ctx.storage);
+    return isSecurityLockedDown(state);
+  }
+
   private async shouldRejectClientRequest(ws: WebSocket): Promise<boolean> {
     if (this.env.SECURITY_DEVICE_POLICY !== "enforce") return false;
     const deviceId = this.clientDeviceIds.get(ws) ?? this.deviceIdFromTags(ws);
@@ -370,6 +441,18 @@ export class RelayObject extends DurableObject<Env> {
     }
     this.pendingRequests.clear();
   }
+
+  private closeAllSockets(reason: string): void {
+    this.failPendingRequests(reason, 423);
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(1008, reason);
+      } catch {}
+    }
+    this.daemonWs = null;
+    this.clientSockets.clear();
+    this.clientDeviceIds.clear();
+  }
 }
 
 function json(body: unknown, status: number): Response {
@@ -377,4 +460,66 @@ function json(body: unknown, status: number): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function securityActionConfirmPage(userId: string, token: string): Response {
+  const actionPath = `/security/action/${encodeURIComponent(userId)}/${encodeURIComponent(token)}`;
+  return html(
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Disable aimux remote access</title>
+    <style>${securityActionCss()}</style>
+  </head>
+  <body>
+    <main>
+      <h1>Disable aimux remote access?</h1>
+      <p>This will immediately close relay connections and revoke daemon tokens issued before this alert.</p>
+      <p>Use this if you do not recognize the new remote client.</p>
+      <form method="post" action="${escapeHtml(actionPath)}">
+        <button type="submit">Disable remote access</button>
+      </form>
+    </main>
+  </body>
+</html>`,
+    200,
+  );
+}
+
+function securityActionPage(title: string, body: string, status: number): Response {
+  return html(
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>${securityActionCss()}</style>
+  </head>
+  <body>
+    <main>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(body)}</p>
+    </main>
+  </body>
+</html>`,
+    status,
+  );
+}
+
+function html(body: string, status: number): Response {
+  return new Response(body, {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+function securityActionCss(): string {
+  return "body{margin:0;background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,Segoe UI,sans-serif}main{max-width:520px;margin:18vh auto;padding:0 24px;line-height:1.5}h1{font-size:28px;margin:0 0 12px}p{color:#c4c4c7}button{border:0;border-radius:8px;background:#dc2626;color:white;font-weight:700;font-size:15px;padding:12px 16px;cursor:pointer}";
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

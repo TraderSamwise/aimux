@@ -106,10 +106,7 @@ export async function loadSecurityState(storage: DurableObjectStorage): Promise<
   return normalizeSecurityState(stored);
 }
 
-export async function saveSecurityState(
-  storage: DurableObjectStorage,
-  state: SecurityState,
-): Promise<void> {
+export async function saveSecurityState(storage: DurableObjectStorage, state: SecurityState): Promise<void> {
   await storage.put(SECURITY_STATE_KEY, normalizeSecurityState(state));
 }
 
@@ -139,9 +136,7 @@ export function sanitizeDeviceInfo(
 ): SecurityDeviceInfo {
   const rawKind = input?.kind;
   const kind: SecurityDeviceKind =
-    rawKind === "web" || rawKind === "ios" || rawKind === "android" || rawKind === "daemon"
-      ? rawKind
-      : "unknown";
+    rawKind === "web" || rawKind === "ios" || rawKind === "android" || rawKind === "daemon" ? rawKind : "unknown";
   return {
     deviceId: sanitizeId(input?.deviceId) || "unknown",
     kind,
@@ -180,9 +175,7 @@ export function recordClientConnection(
   };
   next.devices[device.id] = device;
 
-  const events: SecurityEventRecord[] = [
-    buildSecurityEvent("client_connected", device, context, now),
-  ];
+  const events: SecurityEventRecord[] = [buildSecurityEvent("client_connected", device, context, now)];
   if (firstSeen) {
     events.push(buildSecurityEvent("new_client_detected", device, context, now));
   }
@@ -268,6 +261,23 @@ export function activateSecurityLockdown(
     id: randomBase64Url(16),
     kind: "emergency_lockdown",
     title: "Remote access disabled",
+    body: reason,
+    createdAt: now,
+  });
+  return next;
+}
+
+export function deactivateSecurityLockdown(
+  state: SecurityState,
+  reason: string,
+  now = new Date().toISOString(),
+): SecurityState {
+  const next = normalizeSecurityState(state);
+  next.lockdown = next.lockdown ? { ...next.lockdown, active: false } : undefined;
+  appendSecurityEvent(next, {
+    id: randomBase64Url(16),
+    kind: "security_unlocked",
+    title: "Remote access unlocked",
     body: reason,
     createdAt: now,
   });
