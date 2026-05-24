@@ -39,6 +39,7 @@ export interface SharedSessionRecord {
   id: string;
   ownerUserId: string;
   projectRoot: string;
+  serviceEndpoint?: ShareServiceEndpoint;
   sessionId: string;
   createdAt: string;
   updatedAt: string;
@@ -62,6 +63,7 @@ export interface SharedSessionSummary {
   id: string;
   ownerUserId: string;
   projectRoot: string;
+  serviceEndpoint?: ShareServiceEndpoint;
   sessionId: string;
   createdAt: string;
   updatedAt: string;
@@ -74,9 +76,15 @@ export interface SharedSessionSummary {
 export interface CreateShareInviteInput {
   owner: ShareActor;
   projectRoot: string;
+  serviceEndpoint?: ShareServiceEndpoint;
   sessionId: string;
   email: string;
   now?: string;
+}
+
+export interface ShareServiceEndpoint {
+  host: string;
+  port: number;
 }
 
 export interface AcceptShareInviteInput {
@@ -119,6 +127,7 @@ export function summarizeShare(share: SharedSessionRecord): SharedSessionSummary
     id: share.id,
     ownerUserId: share.ownerUserId,
     projectRoot: share.projectRoot,
+    serviceEndpoint: share.serviceEndpoint,
     sessionId: share.sessionId,
     createdAt: share.createdAt,
     updatedAt: share.updatedAt,
@@ -153,9 +162,14 @@ export async function createShareInvite(
   if (!email) throw new Error("Invite email is required");
   const sessionId = sanitizeRequiredText(input.sessionId, 160, "sessionId");
   const projectRoot = sanitizeRequiredText(input.projectRoot, 600, "projectRoot");
+  const serviceEndpoint = sanitizeServiceEndpoint(input.serviceEndpoint);
   const current = normalizeSharingState(state);
   const share =
-    findShareForSession(current, owner.userId, sessionId) ?? createShare({ owner, projectRoot, sessionId, now });
+    findShareForSession(current, owner.userId, sessionId) ??
+    createShare({ owner, projectRoot, serviceEndpoint, sessionId, now });
+  if (serviceEndpoint) {
+    share.serviceEndpoint = serviceEndpoint;
+  }
 
   const token = randomBase64Url(INVITE_TOKEN_BYTES);
   const invite: ShareInviteRecord = {
@@ -275,6 +289,7 @@ export function stripTrustedAimuxHeaders(headers: Record<string, string> | undef
 function createShare(input: {
   owner: ShareActor;
   projectRoot: string;
+  serviceEndpoint?: ShareServiceEndpoint;
   sessionId: string;
   now: string;
 }): SharedSessionRecord {
@@ -289,6 +304,7 @@ function createShare(input: {
     id: randomBase64Url(16),
     ownerUserId: owner.userId,
     projectRoot: input.projectRoot,
+    serviceEndpoint: input.serviceEndpoint,
     sessionId: input.sessionId,
     createdAt: input.now,
     updatedAt: input.now,
@@ -300,6 +316,7 @@ function createShare(input: {
 
 function normalizeShare(share: SharedSessionRecord): SharedSessionRecord {
   const nowMs = Date.now();
+  const serviceEndpoint = sanitizeServiceEndpoint(share.serviceEndpoint);
   const invites = Object.fromEntries(
     Object.values(share.invites ?? {})
       .filter((invite) => {
@@ -313,6 +330,7 @@ function normalizeShare(share: SharedSessionRecord): SharedSessionRecord {
   );
   return {
     ...share,
+    serviceEndpoint,
     version: Number.isFinite(share.version) ? share.version : 1,
     participants: share.participants ?? {},
     invites,
@@ -361,6 +379,13 @@ function normalizeEmail(value: string | undefined): string | undefined {
   if (!trimmed) return undefined;
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) throw new Error("Invalid email address");
   return trimmed.slice(0, 254);
+}
+
+function sanitizeServiceEndpoint(endpoint: ShareServiceEndpoint | undefined): ShareServiceEndpoint | undefined {
+  const host = endpoint?.host?.trim();
+  const port = Number(endpoint?.port);
+  if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) return undefined;
+  return { host: host.slice(0, 253), port };
 }
 
 function isAllowedAttachmentPath(path: string): boolean {

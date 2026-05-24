@@ -40,6 +40,7 @@ describe("settings store", () => {
     expect(settingsModule.defaultSettings).toEqual({
       theme: "dark",
       chatTerminalSplit: false,
+      activeShare: null,
       notifications: {
         enabled: false,
         channels: {
@@ -70,6 +71,7 @@ describe("settings store", () => {
 
     expect(store.get(settingsModule.themePreferenceAtom)).toBe("dark");
     expect(store.get(settingsModule.chatTerminalSplitAtom)).toBe(false);
+    expect(store.get(settingsModule.activeSharedSessionAtom)).toBeNull();
     expect(store.get(settingsModule.notificationSettingsAtom).enabled).toBe(false);
 
     store.set(settingsModule.chatTerminalSplitAtom, true);
@@ -93,6 +95,7 @@ describe("settings store", () => {
       ...settingsModule.defaultSettings,
       theme: "light",
       chatTerminalSplit: true,
+      activeShare: null,
     });
   });
 
@@ -112,6 +115,14 @@ describe("settings store", () => {
         },
       },
     });
+    store.set(settingsModule.activeSharedSessionAtom, {
+      shareId: "share_1",
+      ownerUserId: "user_owner",
+      projectRoot: "/repo",
+      sessionId: "claude-1",
+      serviceEndpoint: { host: "127.0.0.1", port: 43192 },
+      acceptedAt: "2026-05-24T00:00:00.000Z",
+    });
 
     await vi.waitFor(async () => {
       const raw = await AsyncStorage.getItem("aimux-settings");
@@ -119,6 +130,14 @@ describe("settings store", () => {
       expect(JSON.parse(raw ?? "{}")).toEqual({
         theme: "light",
         chatTerminalSplit: true,
+        activeShare: {
+          shareId: "share_1",
+          ownerUserId: "user_owner",
+          projectRoot: "/repo",
+          sessionId: "claude-1",
+          serviceEndpoint: { host: "127.0.0.1", port: 43192 },
+          acceptedAt: "2026-05-24T00:00:00.000Z",
+        },
         notifications: {
           enabled: true,
           channels: {

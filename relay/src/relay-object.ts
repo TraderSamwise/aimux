@@ -486,7 +486,12 @@ export class RelayObject extends DurableObject<Env> {
   private async createShareInvite(request: Request): Promise<Response> {
     const owner = this.actorFromHeaders(request, "owner");
     if (!owner) return json({ ok: false, error: "Missing owner context" }, 401);
-    let body: { projectRoot?: string; sessionId?: string; email?: string };
+    let body: {
+      projectRoot?: string;
+      serviceEndpoint?: { host?: string; port?: number };
+      sessionId?: string;
+      email?: string;
+    };
     try {
       body = (await request.json()) as typeof body;
     } catch {
@@ -497,6 +502,9 @@ export class RelayObject extends DurableObject<Env> {
       const result = await createShareInvite(state, {
         owner,
         projectRoot: body.projectRoot ?? "",
+        serviceEndpoint: body.serviceEndpoint
+          ? { host: body.serviceEndpoint.host ?? "", port: Number(body.serviceEndpoint.port) }
+          : undefined,
         sessionId: body.sessionId ?? "",
         email: body.email ?? "",
       });

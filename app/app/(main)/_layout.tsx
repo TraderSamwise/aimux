@@ -23,8 +23,10 @@ import {
   reconcileProjectsAtom,
   selectedProjectEndpointAtom,
   selectedProjectPathAtom,
+  selectedSessionIdAtom,
 } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { activeSharedSessionAtom, type ActiveSharedSession } from "@/stores/settings";
 import { addSecurityEventAtom } from "@/stores/security";
 
 const POLL_INTERVAL_MS = 2000;
@@ -32,6 +34,7 @@ const POLL_INTERVAL_MS = 2000;
 export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const activeShare = useAtomValue(activeSharedSessionAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
   const notificationRefreshNonce = useAtomValue(notificationFeedRefreshNonceAtom);
@@ -49,7 +52,12 @@ export default function MainLayout() {
       return;
     }
     store.set(relayConfiguredAtom, true);
-    const transport = new RelayTransport(relayUrl, getToken);
+    const transport = new RelayTransport(
+      relayUrl,
+      getToken,
+      undefined,
+      activeShare ? { ownerUserId: activeShare.ownerUserId, shareId: activeShare.shareId } : {},
+    );
     const unsub = transport.onStatusChange((status) => store.set(relayStatusAtom, status));
     const unsubSecurity = transport.onSecurityEvent((event) => {
       store.set(addSecurityEventAtom, event);
@@ -76,7 +84,7 @@ export default function MainLayout() {
       transport.disconnect();
       store.set(relayStatusAtom, "disconnected");
     };
-  }, [getToken, store]);
+  }, [activeShare, getToken, store]);
 
   // Poll /projects every 2s; reconcile into the projects atom.
   useEffect(() => {
@@ -85,6 +93,13 @@ export default function MainLayout() {
 
     async function loop() {
       if (cancelled) return;
+      if (activeShare) {
+        reconcileProjects([projectFromActiveShare(activeShare)]);
+        store.set(selectedProjectPathAtom, activeShare.projectRoot);
+        store.set(selectedSessionIdAtom, activeShare.sessionId);
+        timer = setTimeout(loop, POLL_INTERVAL_MS);
+        return;
+      }
       try {
         const token = await getToken();
         const projects = await listProjects({ token });
@@ -103,7 +118,7 @@ export default function MainLayout() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [getToken, reconcileProjects]);
+  }, [activeShare, getToken, reconcileProjects, store]);
 
   // Poll /desktop-state for the selected project every 2s. Re-triggers on
   // selection change and on a refresh-nonce bump (from optimistic mutations).
@@ -111,6 +126,7 @@ export default function MainLayout() {
   // that create new array identities.
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
   useEffect(() => {
+    if (activeShare) return;
     if (!selectedProjectPath) return;
     if (!endpoint) {
       store.set(desktopStateFamily(selectedProjectPath), null);
@@ -146,12 +162,13 @@ export default function MainLayout() {
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProjectPath, endpointKey, refreshNonce, getToken, store]);
+  }, [activeShare, selectedProjectPath, endpointKey, refreshNonce, getToken, store]);
 
   // Poll durable notifications for the selected project. This mirrors
   // desktop-state polling but uses the daemon's notification records as the
   // canonical feed for cross-device delivery work.
   useEffect(() => {
+    if (activeShare) return;
     if (!selectedProjectPath) return;
     if (!endpoint) {
       store.set(notificationFeedFamily(selectedProjectPath), null);
@@ -191,7 +208,7 @@ export default function MainLayout() {
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProjectPath, endpointKey, notificationRefreshNonce, getToken, store]);
+  }, [activeShare, selectedProjectPath, endpointKey, notificationRefreshNonce, getToken, store]);
 
   return (
     <>
@@ -203,4 +220,26 @@ export default function MainLayout() {
       </AppShell>
     </>
   );
+}
+
+function projectFromActiveShare(activeShare: ActiveSharedSession) {
+  const name = activeShare.projectRoot.split("/").filter(Boolean).pop() || "shared project";
+  return {
+    id: `shared:${activeShare.shareId}`,
+    name,
+    path: activeShare.projectRoot,
+    lastSeen: activeShare.acceptedAt,
+    dashboardSessionName: `shared:${activeShare.shareId}`,
+    sessions: [
+      {
+        id: activeShare.sessionId,
+        tool: "shared",
+        status: "running" as const,
+        label: "Shared chat",
+      },
+    ],
+    service: null,
+    serviceAlive: true,
+    serviceEndpoint: activeShare.serviceEndpoint,
+  };
 }
