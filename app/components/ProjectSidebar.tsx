@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { ChevronLeft, GitBranch, Home, MessageSquare, Settings } from "lucide-react-native";
+import { Bell, ChevronLeft, GitBranch, Home, MessageSquare, Settings } from "lucide-react-native";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
@@ -10,6 +10,7 @@ import { StatusDot } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
+import { mainTabForPath, useMainTabNavigation, type MainTabId } from "@/lib/main-tabs";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
@@ -22,6 +23,7 @@ import {
   selectedSessionIdAtom,
   selectProjectAtom,
 } from "@/stores/projects";
+import { notificationUnreadCountFamily } from "@/stores/notifications";
 import { sidebarShowProjectPickerAtom } from "@/stores/ui";
 
 // Type ladder used throughout the sidebar:
@@ -32,6 +34,7 @@ import { sidebarShowProjectPickerAtom } from "@/stores/ui";
 //   - Path / branch chip                        → text-[11px] muted
 
 const SIDEBAR_WIDTH = 320;
+const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 
 // ─── Project picker ───────────────────────────────────────────────────────
 
@@ -388,30 +391,41 @@ function WorktreeTree({
 // ─── Bottom nav (tablet/desktop) ──────────────────────────────────────────
 
 const BOTTOM_NAV = [
-  { label: "Dashboard", route: "/" as const, Icon: Home },
-  { label: "Threads", route: "/threads" as const, Icon: MessageSquare },
-  { label: "Settings", route: "/settings" as const, Icon: Settings },
+  { id: "dashboard", label: "Dashboard", Icon: Home },
+  { id: "inbox", label: "Inbox", Icon: Bell },
+  { id: "threads", label: "Threads", Icon: MessageSquare },
+  { id: "settings", label: "Settings", Icon: Settings },
 ];
 
-function navItemActive(pathname: string, route: string): boolean {
-  if (route === "/") return pathname === "/" || pathname === "/(main)";
-  return pathname.startsWith(route);
-}
-
 function SidebarBottomNav() {
-  const router = useRouter();
   const pathname = usePathname();
+  const navigateTab = useMainTabNavigation();
+  const activeTab = mainTabForPath(pathname);
+  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const unreadCount = useAtomValue(
+    notificationUnreadCountFamily(selectedProjectPath ?? EMPTY_PROJECT_PATH),
+  );
   return (
     <View className="flex-row border-t border-border">
-      {BOTTOM_NAV.map(({ label, route, Icon }) => {
-        const active = navItemActive(pathname, route);
+      {BOTTOM_NAV.map(({ id, label, Icon }) => {
+        const tabId = id as MainTabId;
+        const active = activeTab === tabId;
         return (
           <Pressable
-            key={route}
-            onPress={() => router.push(route)}
+            key={id}
+            onPress={() => navigateTab(tabId)}
             className="flex-1 items-center py-2.5 active:bg-accent/50"
           >
-            <Icon size={15} color="#a1a1aa" />
+            <View>
+              <Icon size={15} color="#a1a1aa" />
+              {id === "inbox" && unreadCount > 0 ? (
+                <View className="absolute -right-2 -top-1 min-w-[16px] rounded-full bg-emerald-500 px-1">
+                  <Text className="text-center text-[8px] font-bold leading-none text-black">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
             <Text
               className={cn(
                 "mt-0.5 text-[10px]",
@@ -475,14 +489,14 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
   function handlePickSession(sessionId: string) {
     setSelectedSession(sessionId);
     router.push({
-      pathname: "/(main)/agent/[sessionId]/chat",
+      pathname: "/agent/[sessionId]/chat",
       params: { sessionId },
     });
   }
 
   function handlePickService(serviceId: string) {
     router.push({
-      pathname: "/(main)/service/[serviceId]",
+      pathname: "/service/[serviceId]",
       params: { serviceId },
     });
   }

@@ -68,7 +68,7 @@ export default function ServiceDetailScreen() {
 
   function goBack() {
     if (router.canGoBack()) router.back();
-    else router.replace("/(main)");
+    else router.replace("/");
   }
 
   return (

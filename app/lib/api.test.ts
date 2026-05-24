@@ -3,10 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 
 import {
+  clearNotifications,
   getAgentHistory,
   getAgentOutput,
   listProjects,
+  listNotifications,
   listThreads,
+  markNotificationsRead,
   putPlan,
   sendAgentInput,
   setApiRelay,
@@ -109,12 +112,46 @@ describe("api relay routing", () => {
     const request = installRelayMock([]);
 
     await listThreads(endpoint, "agent/1");
+    await listNotifications(endpoint, { unreadOnly: true, sessionId: "agent/1" });
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(request).toHaveBeenCalledWith(
+    expect(request).toHaveBeenNthCalledWith(
+      1,
       "GET",
       "/proxy/127.0.0.1/43210/threads?session=agent%2F1",
       undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      "GET",
+      "/proxy/127.0.0.1/43210/notifications?unread=1&sessionId=agent%2F1",
+      undefined,
+    );
+  });
+
+  it("routes notification mutations through the relay proxy", async () => {
+    const fetchMock = installFetchMock();
+    const request = installRelayMock({ ok: true, updated: 1 });
+
+    await markNotificationsRead(endpoint, { id: "notice-1" });
+    await clearNotifications(endpoint, { sessionId: "agent-1" });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(request).toHaveBeenNthCalledWith(
+      1,
+      "POST",
+      "/proxy/127.0.0.1/43210/notifications/read",
+      {
+        id: "notice-1",
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      "POST",
+      "/proxy/127.0.0.1/43210/notifications/clear",
+      {
+        sessionId: "agent-1",
+      },
     );
   });
 

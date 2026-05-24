@@ -3,6 +3,7 @@ import { View } from "react-native";
 import { useAtomValue } from "jotai";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AuthMenu } from "@/components/AuthMenu";
+import { NotificationBellButton } from "@/components/NotificationBellButton";
 import { RelayIndicator } from "@/components/RelayIndicator";
 import { resolveChromeTopInset } from "@/lib/native-safe-area";
 import { Text } from "@/components/ui/text";
@@ -26,6 +27,9 @@ export function TopBar({ left }: { left?: React.ReactNode }) {
           <RelayIndicator />
         </View>
       ) : null}
+      <View className="mr-3">
+        <NotificationBellButton compact />
+      </View>
       <AuthMenu />
     </View>
   );

@@ -311,6 +311,62 @@ export async function getDesktopState(
   return callProjectJson<DesktopState>(endpoint, "GET", "/desktop-state", opts);
 }
 
+// ── Notifications ────────────────────────────────────────────────────────
+
+export interface NotificationRecord {
+  id: string;
+  title: string;
+  subtitle?: string;
+  body: string;
+  sessionId?: string;
+  targetKey?: string;
+  targetKind?: "session" | "generic";
+  kind?: string;
+  unread: boolean;
+  cleared: boolean;
+  createdAt: string;
+  updatedAt: string;
+  dedupeKey?: string;
+}
+
+export interface NotificationsResponse {
+  ok: boolean;
+  notifications: NotificationRecord[];
+  unreadCount: number;
+}
+
+export async function listNotifications(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts & { unreadOnly?: boolean; sessionId?: string },
+): Promise<NotificationsResponse> {
+  const params = new URLSearchParams();
+  if (opts?.unreadOnly) params.set("unread", "1");
+  if (opts?.sessionId) params.set("sessionId", opts.sessionId);
+  const query = params.toString();
+  return callProjectJson<NotificationsResponse>(
+    endpoint,
+    "GET",
+    `/notifications${query ? `?${query}` : ""}`,
+    opts,
+  );
+}
+
+export async function markNotificationsRead(
+  endpoint: ServiceEndpoint,
+  input: { id?: string; sessionId?: string } = {},
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; updated: number }> {
+  return callProjectJson(endpoint, "POST", "/notifications/read", opts, input);
+}
+
+export async function clearNotifications(
+  endpoint: ServiceEndpoint,
+  input: { id?: string; sessionId?: string } = {},
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; cleared: number }> {
+  return callProjectJson(endpoint, "POST", "/notifications/clear", opts, input);
+}
+
 // ── Agent actions ────────────────────────────────────────────────────────
 
 export interface AgentSpawnInput {

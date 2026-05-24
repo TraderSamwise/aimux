@@ -4,6 +4,6 @@ import { LOCAL_MODE, useAuth } from "@/lib/auth";
 export default function RootIndex() {
   const { isSignedIn, isLoaded } = useAuth();
   if (!isLoaded) return null;
-  if (isSignedIn || LOCAL_MODE) return <Redirect href="/(main)" />;
+  if (isSignedIn || LOCAL_MODE) return <Redirect href="/" />;
   return <Redirect href="/landing" />;
 }

@@ -309,7 +309,7 @@ export default function ChatScreen() {
                 onPress={() =>
                   sessionId
                     ? router.push({
-                        pathname: "/(main)/plans/[sessionId]",
+                        pathname: "/plans/[sessionId]",
                         params: { sessionId },
                       })
                     : undefined
