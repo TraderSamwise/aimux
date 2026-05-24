@@ -36,15 +36,29 @@ wrangler secret put CLERK_SECRET_KEY --env production
 # e.g. `openssl rand -base64 48` or `head -c 48 /dev/urandom | base64`
 wrangler secret put RELAY_TOKEN_SECRET --env production
 
-# Set allowed origins for the /cli/issue-token endpoint. This restricts
-# which web-app origins can mint daemon tokens via cross-origin POST.
-# Comma-separated list of origins (scheme + host + port).
-wrangler secret put CLI_TOKEN_ALLOWED_ORIGINS --env production
-# e.g. https://aimux.app,https://staging.aimux.app
+# Set the IP pseudonymization key used for security audit/device metadata.
+wrangler secret put SECURITY_IP_HASH_SECRET --env production
+
+# Optional: enable security alert emails.
+wrangler secret put RESEND_API_KEY --env production
 
 # Deploy (production with custom domain)
 wrangler deploy --env production
 ```
+
+Production non-secret relay variables are committed in `relay/wrangler.toml`:
+
+```toml
+CLI_TOKEN_ALLOWED_ORIGINS = "https://aimux.app,https://www.aimux.app"
+SECURITY_ACTION_BASE_URL = "https://relay.aimux.app"
+SECURITY_DEVICE_POLICY = "warn"
+SECURITY_EMAIL_FROM = "aimux security <security@aimux.app>"
+```
+
+Use `SECURITY_DEVICE_POLICY=warn` for the MVP so a first-time phone or browser
+can still connect while the user receives alerts. Switch it to `enforce` only
+after there is a device approval UI or CLI flow; enforce mode denies proxy/API
+requests from pending devices.
 
 The relay will be available at:
 
@@ -162,6 +176,14 @@ User's machine                    Cloud                        User's phone/lapt
   JWT (verified with `@clerk/backend` against `CLERK_SECRET_KEY`); daemon
   connections present a relay-minted HS256 token signed with `RELAY_TOKEN_SECRET`
   (issued via `POST /cli/issue-token` during `aimux login`).
+- Every remote client connection sends a local daemon notification. First-time
+  clients also create a security event, notify other connected clients, send
+  Expo push notifications to registered native clients, and send email when
+  `RESEND_API_KEY` and `SECURITY_EMAIL_FROM` are configured.
+- Security alert emails and push payloads include a single-use emergency
+  lockdown link. Lockdown closes relay sockets, revokes existing daemon tokens,
+  and blocks remote access until the user runs `aimux security unlock` from a
+  local CLI.
 - Each user gets an isolated Durable Object — no cross-user data leakage.
 - Within a user's DO, in-flight request IDs are routed back to the requesting
   client only, so multiple clients (e.g. desktop + phone) don't see each other's

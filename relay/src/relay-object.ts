@@ -1,5 +1,21 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
+import { deliverSecurityAlert } from "./security-delivery.js";
+import {
+  activateSecurityLockdown,
+  createSecurityActionToken,
+  deactivateSecurityLockdown,
+  findSecurityActionByToken,
+  hashIpAddress,
+  isDaemonTokenRevoked,
+  isDeviceApproved,
+  isSecurityLockedDown,
+  loadSecurityState,
+  markSecurityActionUsed,
+  recordClientConnection,
+  sanitizeDeviceInfo,
+  saveSecurityState,
+} from "./security.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // In-flight requests: response with this id will be routed back to the
@@ -10,22 +26,63 @@ const PENDING_REQUEST_TTL_MS = 60_000;
 export class RelayObject extends DurableObject<Env> {
   private daemonWs: WebSocket | null = null;
   private clientSockets = new Set<WebSocket>();
+  private clientDeviceIds = new Map<WebSocket, string>();
   private pendingRequests = new Map<string, { client: WebSocket; clientRequestId: string; expiresAt: number }>();
   private requestCounter = 0;
 
   async fetch(request: Request): Promise<Response> {
     this.rehydrateSockets();
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/security/action/")) {
+      return this.handleSecurityAction(request, url);
+    }
+    if (url.pathname === "/security/unlock" && request.method === "POST") {
+      return this.unlockSecurity();
+    }
+    if (url.pathname === "/security/status" && request.method === "GET") {
+      const state = await loadSecurityState(this.ctx.storage);
+      return json({ ok: true, locked: isSecurityLockedDown(state), lockdown: state.lockdown }, 200);
+    }
+    if (url.pathname === "/security/push-token" && request.method === "POST") {
+      if (await this.isLockedDown()) return json({ ok: false, error: "Remote access is locked" }, 423);
+      return this.registerPushToken(request);
+    }
+
     const upgradeHeader = request.headers.get("Upgrade")?.toLowerCase();
     if (upgradeHeader !== "websocket") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }
 
     const role = url.pathname === "/daemon/connect" ? "daemon" : "client";
+    const securityState = await loadSecurityState(this.ctx.storage);
+    if (isSecurityLockedDown(securityState)) {
+      return new Response("Remote access is locked. Run `aimux security unlock` from your CLI.", { status: 423 });
+    }
+    if (role === "daemon") {
+      const issuedAt = Number(request.headers.get("X-Aimux-Daemon-Iat") ?? "0");
+      if (!Number.isFinite(issuedAt) || isDaemonTokenRevoked(securityState, issuedAt)) {
+        return new Response("Daemon token has been revoked. Run `aimux security unlock`.", { status: 401 });
+      }
+    }
+
+    let clientDevice: ReturnType<typeof sanitizeDeviceInfo> | null = null;
+    if (role === "client") {
+      try {
+        clientDevice = sanitizeDeviceInfo({
+          deviceId: url.searchParams.get("deviceId") ?? undefined,
+          kind: url.searchParams.get("deviceKind") ?? undefined,
+          name: url.searchParams.get("deviceName") ?? undefined,
+          platform: url.searchParams.get("devicePlatform") ?? undefined,
+          appVersion: url.searchParams.get("appVersion") ?? undefined,
+        });
+      } catch {
+        return new Response("Missing or invalid deviceId", { status: 400 });
+      }
+    }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
-    this.ctx.acceptWebSocket(server, [role]);
+    this.ctx.acceptWebSocket(server, clientDevice ? [role, `device:${clientDevice.deviceId}`] : [role]);
 
     if (role === "daemon") {
       if (this.daemonWs) {
@@ -40,8 +97,10 @@ export class RelayObject extends DurableObject<Env> {
       this.broadcastToClients({ type: "daemon_status", online: true });
     } else {
       this.clientSockets.add(server);
+      if (clientDevice) this.clientDeviceIds.set(server, clientDevice.deviceId);
       this.send(server, { type: "connected", role: "client" });
       this.send(server, { type: "daemon_status", online: this.daemonWs !== null });
+      await this.recordClientConnected(request, server, clientDevice!);
     }
 
     this.ensureHeartbeat();
@@ -87,6 +146,15 @@ export class RelayObject extends DurableObject<Env> {
         }
       }
     } else if (!isDaemon && parsed.type === "request") {
+      if (await this.shouldRejectClientRequest(ws)) {
+        this.send(ws, {
+          id: parsed.id,
+          type: "response",
+          status: 403,
+          body: { ok: false, error: "Remote client pending security approval" },
+        });
+        return;
+      }
       if (this.daemonWs) {
         const relayRequestId = this.nextRelayRequestId();
         this.pendingRequests.set(relayRequestId, {
@@ -115,6 +183,44 @@ export class RelayObject extends DurableObject<Env> {
         });
       }
     }
+  }
+
+  private async handleSecurityAction(request: Request, url: URL): Promise<Response> {
+    const [, , , userId, token] = url.pathname.split("/");
+    if (!userId || !token)
+      return securityActionPage("Invalid security link", "This security action link is malformed.", 400);
+    const state = await loadSecurityState(this.ctx.storage);
+    const action = await findSecurityActionByToken(state, decodeURIComponent(token));
+    if (!action || action.kind !== "emergency_lockdown") {
+      return securityActionPage(
+        "Security link expired",
+        "This security action link is invalid, expired, or has already been used.",
+        410,
+      );
+    }
+    if (request.method === "GET") {
+      return securityActionConfirmPage(decodeURIComponent(userId), decodeURIComponent(token));
+    }
+    if (request.method !== "POST") {
+      return securityActionPage("Unsupported method", "Use the confirmation button from the security page.", 405);
+    }
+
+    let next = markSecurityActionUsed(state, action.id);
+    next = activateSecurityLockdown(next, "Emergency lockdown triggered from a new-client security alert.");
+    await saveSecurityState(this.ctx.storage, next);
+    this.closeAllSockets("Security lockdown");
+    return securityActionPage(
+      "Remote access disabled",
+      "All relay connections were closed and daemon tokens issued before this action were revoked. Run `aimux security unlock` from your CLI to re-enable remote access.",
+      200,
+    );
+  }
+
+  private async unlockSecurity(): Promise<Response> {
+    const state = await loadSecurityState(this.ctx.storage);
+    const next = deactivateSecurityLockdown(state, "Unlocked by an authenticated CLI login.");
+    await saveSecurityState(this.ctx.storage, next);
+    return json({ ok: true }, 200);
   }
 
   private sweepExpiredPending(): void {
@@ -176,6 +282,7 @@ export class RelayObject extends DurableObject<Env> {
       this.broadcastToClients({ type: "daemon_status", online: false });
     } else {
       this.clientSockets.delete(ws);
+      this.clientDeviceIds.delete(ws);
       for (const [id, entry] of this.pendingRequests) {
         if (entry.client === ws) this.pendingRequests.delete(id);
       }
@@ -185,9 +292,10 @@ export class RelayObject extends DurableObject<Env> {
     } catch {}
   }
 
-  private broadcastToClients(msg: RelayMessage): void {
+  private broadcastToClients(msg: RelayMessage, exclude?: WebSocket): void {
     const data = JSON.stringify(msg);
     for (const client of this.clientSockets) {
+      if (client === exclude) continue;
       try {
         client.send(data);
       } catch {
@@ -200,6 +308,89 @@ export class RelayObject extends DurableObject<Env> {
     ws.send(JSON.stringify(msg));
   }
 
+  private async recordClientConnected(
+    request: Request,
+    ws: WebSocket,
+    device: ReturnType<typeof sanitizeDeviceInfo>,
+  ): Promise<void> {
+    const userId = request.headers.get("X-Aimux-User-Id") ?? "";
+    const state = await loadSecurityState(this.ctx.storage);
+    const ipHash = await hashIpAddress(request.headers.get("CF-Connecting-IP"), this.env.SECURITY_IP_HASH_SECRET);
+    const context = {
+      ipHash,
+      country: request.headers.get("CF-IPCountry") ?? undefined,
+      userAgent: request.headers.get("User-Agent") ?? undefined,
+    };
+    const result = recordClientConnection(state, device, context);
+    let emergencyUrl: string | undefined;
+    if (result.firstSeen && userId) {
+      const action = await createSecurityActionToken("emergency_lockdown", { deviceId: result.device.id });
+      result.state.actions[action.action.id] = action.action;
+      emergencyUrl = `${this.securityActionBaseUrl(request)}/security/action/${encodeURIComponent(userId)}/${encodeURIComponent(action.token)}`;
+    }
+    await saveSecurityState(this.ctx.storage, result.state);
+    for (const event of result.events) {
+      if (this.daemonWs) {
+        try {
+          this.send(this.daemonWs, { type: "security_event", event });
+        } catch {}
+      }
+      if (event.kind === "new_client_detected") {
+        this.broadcastToClients({ type: "security_event", event }, ws);
+        await deliverSecurityAlert({
+          env: this.env,
+          userId,
+          event,
+          device: result.device,
+          pushTokens: Object.values(result.state.pushTokens),
+          emergencyUrl,
+        });
+      }
+    }
+  }
+
+  private async registerPushToken(request: Request): Promise<Response> {
+    let body: { deviceId?: string; token?: string; platform?: "ios" | "android" | "web" | "unknown" };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return json({ ok: false, error: "Invalid JSON" }, 400);
+    }
+    const deviceId = body.deviceId?.trim();
+    const token = body.token?.trim();
+    if (!deviceId || !token) {
+      return json({ ok: false, error: "Missing deviceId or token" }, 400);
+    }
+    const now = new Date().toISOString();
+    const state = await loadSecurityState(this.ctx.storage);
+    state.pushTokens[deviceId] = {
+      deviceId,
+      token,
+      platform: body.platform ?? "unknown",
+      createdAt: state.pushTokens[deviceId]?.createdAt ?? now,
+      updatedAt: now,
+    };
+    await saveSecurityState(this.ctx.storage, state);
+    return json({ ok: true }, 200);
+  }
+
+  private securityActionBaseUrl(request: Request): string {
+    return (this.env.SECURITY_ACTION_BASE_URL ?? new URL(request.url).origin).replace(/\/+$/, "");
+  }
+
+  private async isLockedDown(): Promise<boolean> {
+    const state = await loadSecurityState(this.ctx.storage);
+    return isSecurityLockedDown(state);
+  }
+
+  private async shouldRejectClientRequest(ws: WebSocket): Promise<boolean> {
+    if (this.env.SECURITY_DEVICE_POLICY !== "enforce") return false;
+    const deviceId = this.clientDeviceIds.get(ws) ?? this.deviceIdFromTags(ws);
+    if (!deviceId) return true;
+    const state = await loadSecurityState(this.ctx.storage);
+    return !isDeviceApproved(state.devices[deviceId]);
+  }
+
   private ensureHeartbeat(): void {
     this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_INTERVAL_MS);
   }
@@ -207,6 +398,7 @@ export class RelayObject extends DurableObject<Env> {
   private rehydrateSockets(exclude?: WebSocket): void {
     this.daemonWs = null;
     this.clientSockets.clear();
+    this.clientDeviceIds.clear();
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === exclude) continue;
       const tags = this.ctx.getTags(ws);
@@ -220,8 +412,15 @@ export class RelayObject extends DurableObject<Env> {
         }
       } else if (tags.includes("client")) {
         this.clientSockets.add(ws);
+        const deviceId = this.deviceIdFromTags(ws);
+        if (deviceId) this.clientDeviceIds.set(ws, deviceId);
       }
     }
+  }
+
+  private deviceIdFromTags(ws: WebSocket): string | undefined {
+    const deviceTag = this.ctx.getTags(ws).find((tag) => tag.startsWith("device:"));
+    return deviceTag?.slice("device:".length);
   }
 
   private nextRelayRequestId(): string {
@@ -246,4 +445,85 @@ export class RelayObject extends DurableObject<Env> {
     }
     this.pendingRequests.clear();
   }
+
+  private closeAllSockets(reason: string): void {
+    this.failPendingRequests(reason, 423);
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(1008, reason);
+      } catch {}
+    }
+    this.daemonWs = null;
+    this.clientSockets.clear();
+    this.clientDeviceIds.clear();
+  }
+}
+
+function json(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function securityActionConfirmPage(userId: string, token: string): Response {
+  const actionPath = `/security/action/${encodeURIComponent(userId)}/${encodeURIComponent(token)}`;
+  return html(
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Disable aimux remote access</title>
+    <style>${securityActionCss()}</style>
+  </head>
+  <body>
+    <main>
+      <h1>Disable aimux remote access?</h1>
+      <p>This will immediately close relay connections and revoke daemon tokens issued before this alert.</p>
+      <p>Use this if you do not recognize the new remote client.</p>
+      <form method="post" action="${escapeHtml(actionPath)}">
+        <button type="submit">Disable remote access</button>
+      </form>
+    </main>
+  </body>
+</html>`,
+    200,
+  );
+}
+
+function securityActionPage(title: string, body: string, status: number): Response {
+  return html(
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>${securityActionCss()}</style>
+  </head>
+  <body>
+    <main>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(body)}</p>
+    </main>
+  </body>
+</html>`,
+    status,
+  );
+}
+
+function html(body: string, status: number): Response {
+  return new Response(body, {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+function securityActionCss(): string {
+  return "body{margin:0;background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,Segoe UI,sans-serif}main{max-width:520px;margin:18vh auto;padding:0 24px;line-height:1.5}h1{font-size:28px;margin:0 0 12px}p{color:#c4c4c7}button{border:0;border-radius:8px;background:#dc2626;color:white;font-weight:700;font-size:15px;padding:12px 16px;cursor:pointer}";
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

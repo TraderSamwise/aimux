@@ -19,6 +19,14 @@ routes = [
   { pattern = "relay.aimux.app", custom_domain = true }
 ]
 
+[env.production.vars]
+CLI_TOKEN_ALLOWED_ORIGINS = "https://aimux.app,https://www.aimux.app"
+SECURITY_ACTION_BASE_URL = "https://relay.aimux.app"
+# MVP default: record and alert on first-time devices without blocking them.
+# Switch to "enforce" after a device approval UI/flow is available.
+SECURITY_DEVICE_POLICY = "warn"
+SECURITY_EMAIL_FROM = "aimux security <security@aimux.app>"
+
 [env.production.durable_objects]
 bindings = [
   { name = "RELAY", class_name = "RelayObject" }

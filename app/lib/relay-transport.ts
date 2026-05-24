@@ -1,3 +1,6 @@
+import { getClientDeviceInfo, type ClientDeviceInfo } from "@/lib/client-device";
+import type { SecurityEventRecord } from "@/stores/security";
+
 type PendingRequest = {
   resolve: (value: { status: number; body: unknown }) => void;
   reject: (error: Error) => void;
@@ -12,9 +15,10 @@ interface RelayResponse {
 }
 
 interface RelayControl {
-  type: "ping" | "pong" | "connected" | "error" | "daemon_status";
+  type: "ping" | "pong" | "connected" | "error" | "daemon_status" | "security_event";
   online?: boolean;
   message?: string;
+  event?: SecurityEventRecord;
 }
 
 type RelayMessage = RelayResponse | RelayControl;
@@ -29,6 +33,7 @@ let idCounter = 0;
 export type RelayStatus = "disconnected" | "connecting" | "connected" | "daemon_offline";
 
 export type RelayStatusListener = (status: RelayStatus) => void;
+export type RelaySecurityEventListener = (event: SecurityEventRecord) => void;
 
 export class RelayTransport {
   private ws: WebSocket | null = null;
@@ -39,12 +44,14 @@ export class RelayTransport {
   private daemonOnline = false;
   private _status: RelayStatus = "disconnected";
   private listeners = new Set<RelayStatusListener>();
+  private securityEventListeners = new Set<RelaySecurityEventListener>();
 
   private readonly relayUrl: string;
 
   constructor(
     relayUrl: string,
     private readonly getToken: () => Promise<string | null>,
+    private readonly getDeviceInfo: () => Promise<ClientDeviceInfo> = getClientDeviceInfo,
   ) {
     this.relayUrl = relayUrl.replace(/\/+$/, "");
   }
@@ -56,6 +63,11 @@ export class RelayTransport {
   onStatusChange(listener: RelayStatusListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onSecurityEvent(listener: RelaySecurityEventListener): () => void {
+    this.securityEventListeners.add(listener);
+    return () => this.securityEventListeners.delete(listener);
   }
 
   private setStatus(status: RelayStatus): void {
@@ -77,8 +89,9 @@ export class RelayTransport {
       return;
     }
 
-    const url = `${this.relayUrl}/client/connect`;
     try {
+      const deviceInfo = await this.getDeviceInfo();
+      const url = this.clientConnectUrl(deviceInfo);
       this.ws = new WebSocket(url, ["aimux", `${TOKEN_PROTOCOL_PREFIX}${token}`]);
     } catch {
       this.setStatus("disconnected");
@@ -191,6 +204,15 @@ export class RelayTransport {
       return;
     }
 
+    if (msg.type === "security_event") {
+      if (isSecurityEventRecord(msg.event)) {
+        for (const listener of this.securityEventListeners) {
+          listener(msg.event);
+        }
+      }
+      return;
+    }
+
     if (msg.type === "response") {
       const entry = this.pending.get(msg.id);
       if (entry) {
@@ -199,6 +221,16 @@ export class RelayTransport {
         entry.resolve({ status: msg.status, body: msg.body });
       }
     }
+  }
+
+  private clientConnectUrl(device: ClientDeviceInfo): string {
+    const url = new URL(`${this.relayUrl}/client/connect`);
+    url.searchParams.set("deviceId", device.deviceId);
+    url.searchParams.set("deviceKind", device.kind);
+    url.searchParams.set("deviceName", device.name);
+    url.searchParams.set("devicePlatform", device.platform);
+    if (device.appVersion) url.searchParams.set("appVersion", device.appVersion);
+    return url.toString();
   }
 
   private rejectAllPending(reason: string): void {
@@ -217,4 +249,16 @@ export class RelayTransport {
     }, this.retryMs);
     this.retryMs = Math.min(this.retryMs * 2, MAX_RETRY_MS);
   }
+}
+
+function isSecurityEventRecord(value: unknown): value is SecurityEventRecord {
+  if (!value || typeof value !== "object") return false;
+  const event = value as Partial<Record<keyof SecurityEventRecord, unknown>>;
+  return (
+    typeof event.id === "string" &&
+    typeof event.kind === "string" &&
+    typeof event.title === "string" &&
+    typeof event.body === "string" &&
+    typeof event.createdAt === "string"
+  );
 }

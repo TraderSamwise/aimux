@@ -1,3 +1,5 @@
+import type { SecurityEventRecord } from "./security.js";
+
 export interface Env {
   RELAY: DurableObjectNamespace;
   // Secrets are configured via `wrangler secret put` at deploy time. They
@@ -9,6 +11,13 @@ export interface Env {
   // token-issuing endpoint. When unset, /cli/issue-token rejects all
   // cross-origin requests outright.
   CLI_TOKEN_ALLOWED_ORIGINS?: string;
+  // warn: record and notify about first-time devices but allow requests.
+  // enforce: deny client requests until the device has been approved.
+  SECURITY_DEVICE_POLICY?: "warn" | "enforce";
+  RESEND_API_KEY?: string;
+  SECURITY_EMAIL_FROM?: string;
+  SECURITY_ACTION_BASE_URL?: string;
+  SECURITY_IP_HASH_SECRET?: string;
 }
 
 export interface RelayRequest {
@@ -33,4 +42,9 @@ export interface RelayControl {
   online?: boolean;
 }
 
-export type RelayMessage = RelayRequest | RelayResponse | RelayControl;
+export interface RelaySecurityEventControl {
+  type: "security_event";
+  event: SecurityEventRecord;
+}
+
+export type RelayMessage = RelayRequest | RelayResponse | RelayControl | RelaySecurityEventControl;
