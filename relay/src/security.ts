@@ -34,6 +34,9 @@ export interface SecurityDeviceRecord extends SecurityDeviceInfo {
 export type SecurityEventKind =
   | "client_connected"
   | "new_client_detected"
+  | "shared_invite_accepted"
+  | "shared_participant_left"
+  | "shared_participant_removed"
   | "device_approved"
   | "device_blocked"
   | "emergency_lockdown"
@@ -43,6 +46,14 @@ export interface SecurityEventRecord {
   id: string;
   kind: SecurityEventKind;
   deviceId?: string;
+  shareId?: string;
+  sessionId?: string;
+  actorUserId?: string;
+  actorName?: string;
+  actorEmail?: string;
+  targetUserId?: string;
+  targetName?: string;
+  targetEmail?: string;
   title: string;
   body: string;
   createdAt: string;
@@ -69,6 +80,7 @@ export interface SecurityLockdownRecord {
 }
 
 export interface SecurityPushTokenRecord {
+  userId?: string;
   deviceId: string;
   token: string;
   platform: "ios" | "android" | "web" | "unknown";
@@ -268,6 +280,47 @@ export function markSecurityActionUsed(
 export function appendSecurityEvent(state: SecurityState, event: SecurityEventRecord): SecurityState {
   state.events = [event, ...(state.events ?? [])].slice(0, MAX_SECURITY_EVENTS);
   return state;
+}
+
+export function createShareSecurityEvent(input: {
+  kind: Extract<SecurityEventKind, "shared_invite_accepted" | "shared_participant_left" | "shared_participant_removed">;
+  shareId: string;
+  sessionId: string;
+  actor: { userId: string; displayName: string; email?: string };
+  target?: { userId: string; displayName: string; email?: string };
+  now?: string;
+}): SecurityEventRecord {
+  const now = input.now ?? new Date().toISOString();
+  const actorName = sanitizeText(input.actor.displayName, 80) || input.actor.userId;
+  const targetName = input.target ? sanitizeText(input.target.displayName, 80) || input.target.userId : undefined;
+  const session = sanitizeText(input.sessionId, 160) || "shared chat";
+  const titles: Record<typeof input.kind, string> = {
+    shared_invite_accepted: "Shared chat invite accepted",
+    shared_participant_left: "Shared chat participant left",
+    shared_participant_removed: "Shared chat access removed",
+  };
+  const bodies: Record<typeof input.kind, string> = {
+    shared_invite_accepted: `${actorName} joined ${session}.`,
+    shared_participant_left: `${actorName} left ${session}.`,
+    shared_participant_removed: targetName
+      ? `${targetName} was removed from ${session} by ${actorName}.`
+      : `${actorName} removed a participant from ${session}.`,
+  };
+  return {
+    id: randomBase64Url(16),
+    kind: input.kind,
+    shareId: sanitizeText(input.shareId, 160),
+    sessionId: session,
+    actorUserId: sanitizeText(input.actor.userId, 160),
+    actorName,
+    actorEmail: sanitizeText(input.actor.email, 160),
+    targetUserId: sanitizeText(input.target?.userId, 160),
+    targetName,
+    targetEmail: sanitizeText(input.target?.email, 160),
+    title: titles[input.kind],
+    body: bodies[input.kind],
+    createdAt: now,
+  };
 }
 
 export function activateSecurityLockdown(
