@@ -220,6 +220,7 @@ describe("sharing state", () => {
   it("normalizes persisted service endpoints when reusing shares", async () => {
     const created = await createShareInvite(
       {
+        version: 1,
         shares: {
           share_existing: {
             id: "share_existing",
@@ -230,7 +231,14 @@ describe("sharing state", () => {
             createdAt: "2026-05-24T00:00:00.000Z",
             updatedAt: "2026-05-24T00:00:00.000Z",
             version: 1,
-            participants: { [owner.userId]: owner },
+            participants: {
+              [owner.userId]: {
+                ...owner,
+                status: "active",
+                joinedAt: "2026-05-24T00:00:00.000Z",
+                lastSeenAt: "2026-05-24T00:00:00.000Z",
+              },
+            },
             invites: {},
           },
         },
