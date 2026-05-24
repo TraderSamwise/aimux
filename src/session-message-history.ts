@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { getSessionMessagesDir } from "./paths.js";
 import type { AgentInputPart } from "./agent-message-parts.js";
 import { getAttachment } from "./attachment-store.js";
+import type { AgentCollaborationContext, CollaborationChatMode, CollaborationRole } from "./collaboration.js";
 
 export interface SessionMessagePart {
   type: "text" | "image";
@@ -22,6 +23,14 @@ export interface SessionMessageRecord {
   role: "user";
   ts: string;
   parts: SessionMessagePart[];
+  actor?: {
+    userId: string;
+    displayName: string;
+    email?: string;
+    role?: CollaborationRole;
+  };
+  shareId?: string;
+  chatMode?: CollaborationChatMode;
 }
 
 function historyPath(sessionId: string): string {
@@ -34,6 +43,7 @@ export function appendSessionMessage(
     data?: string;
     parts?: AgentInputPart[];
     clientMessageId?: string;
+    collaboration?: AgentCollaborationContext;
   },
 ): SessionMessageRecord | null {
   const parts = normalizeMessageParts(input);
@@ -49,6 +59,9 @@ export function appendSessionMessage(
     role: "user",
     ts: new Date().toISOString(),
     parts,
+    actor: input.collaboration?.actor,
+    shareId: input.collaboration?.shareId,
+    chatMode: input.collaboration?.mode,
   };
   appendFileSync(historyPath(sessionId), `${JSON.stringify(record)}\n`);
   return record;

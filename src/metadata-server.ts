@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir } from "./paths.js";
+import { collaborationContextFromHeaders, type AgentCollaborationContext } from "./collaboration.js";
 import {
   type MetadataTone,
   updateSessionMetadata,
@@ -282,6 +283,7 @@ interface MetadataServerOptions {
       parts?: AgentInputPart[];
       clientMessageId?: string;
       submit?: boolean;
+      collaboration?: AgentCollaborationContext;
     }) =>
       | Promise<{
           sessionId: string;
@@ -2484,7 +2486,8 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent input not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.writeAgentInput(body);
+        const collaboration = collaborationContextFromHeaders(req.headers);
+        const result = await this.options.lifecycle.writeAgentInput({ ...body, collaboration });
         if (this.options.lifecycle.readAgentHistory) {
           try {
             const history = await this.options.lifecycle.readAgentHistory({ sessionId: body.sessionId, lastN: 20 });

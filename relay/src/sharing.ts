@@ -263,6 +263,15 @@ export function actorDisplayPrefix(actor: ShareActor): string {
   return `[${sanitizeDisplayName(actor.displayName)}]:`;
 }
 
+export function stripTrustedAimuxHeaders(headers: Record<string, string> | undefined): Record<string, string> {
+  const safeHeaders: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    if (key.toLowerCase().startsWith("x-aimux-")) continue;
+    safeHeaders[key] = value;
+  }
+  return safeHeaders;
+}
+
 function createShare(input: {
   owner: ShareActor;
   projectRoot: string;
