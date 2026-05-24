@@ -9,9 +9,10 @@ interface DeliveryInput {
   env: Env;
   userId: string;
   event: SecurityEventRecord;
-  device: SecurityDeviceRecord;
+  device?: SecurityDeviceRecord;
   pushTokens: SecurityPushTokenRecord[];
   emergencyUrl?: string;
+  excludeDeviceId?: string;
 }
 
 interface ClerkUserResponse {
@@ -55,8 +56,10 @@ async function fetchPrimaryEmail(env: Env, userId: string): Promise<string | nul
 }
 
 async function sendSecurityPush(input: DeliveryInput): Promise<void> {
+  const excludeDeviceId = input.excludeDeviceId ?? input.device?.id;
   const messages = input.pushTokens
-    .filter((record) => record.deviceId !== input.device.id)
+    .filter((record) => !record.userId || record.userId === input.userId)
+    .filter((record) => record.deviceId !== excludeDeviceId)
     .map((record) => ({
       to: record.token,
       title: input.event.title,
@@ -64,7 +67,9 @@ async function sendSecurityPush(input: DeliveryInput): Promise<void> {
       data: {
         category: "security",
         kind: input.event.kind,
-        deviceId: input.device.id,
+        deviceId: input.device?.id,
+        shareId: input.event.shareId,
+        sessionId: input.event.sessionId,
         emergencyUrl: input.emergencyUrl,
       },
     }));
@@ -81,19 +86,20 @@ async function sendSecurityPush(input: DeliveryInput): Promise<void> {
 
 function renderSecurityEmail(
   event: SecurityEventRecord,
-  device: SecurityDeviceRecord,
+  device: SecurityDeviceRecord | undefined,
   emergencyUrl: string | undefined,
 ): string {
-  const deviceName = escapeHtml(device.name || device.platform || device.kind);
+  const deviceName = device ? escapeHtml(device.name || device.platform || device.kind) : null;
   const body = escapeHtml(event.body);
   const emergency = emergencyUrl
     ? `<p><a href="${escapeHtml(emergencyUrl)}" style="color:#b91c1c;font-weight:700">This was not me - disable remote access</a></p>`
     : "";
+  const deviceRow = deviceName ? `<p><strong>Device:</strong> ${deviceName}</p>` : "";
   return `
     <div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;line-height:1.5">
       <h2>${escapeHtml(event.title)}</h2>
       <p>${body}</p>
-      <p><strong>Device:</strong> ${deviceName}</p>
+      ${deviceRow}
       <p><strong>Time:</strong> ${escapeHtml(event.createdAt)}</p>
       ${emergency}
       <p style="color:#666;font-size:13px">If this was you, no action is needed.</p>
