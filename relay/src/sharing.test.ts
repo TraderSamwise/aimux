@@ -24,6 +24,7 @@ describe("sharing state", () => {
     const created = await createShareInvite(emptySharingState(), {
       owner,
       projectRoot: "/Users/sam/cs/example",
+      serviceEndpoint: { host: "127.0.0.1", port: 43192 },
       sessionId: "claude-abc",
       email: "ALEX@EXAMPLE.COM",
       now: "2026-05-24T00:00:00.000Z",
@@ -31,6 +32,7 @@ describe("sharing state", () => {
 
     const share = Object.values(created.state.shares)[0];
     const invite = Object.values(share.invites)[0];
+    expect(share.serviceEndpoint).toEqual({ host: "127.0.0.1", port: 43192 });
     expect(invite.email).toBe("alex@example.com");
     expect(invite.tokenHash).not.toBe(created.token.token);
     expect(getShareChatMode(share)).toBe("single");
@@ -212,5 +214,43 @@ describe("sharing state", () => {
 
     expect(summary.invites[0]).toMatchObject({ email: "alex@example.com", status: "pending" });
     expect(summary.invites[0]).not.toHaveProperty("tokenHash");
+    expect(summary.serviceEndpoint).toBeUndefined();
+  });
+
+  it("normalizes persisted service endpoints when reusing shares", async () => {
+    const created = await createShareInvite(
+      {
+        version: 1,
+        shares: {
+          share_existing: {
+            id: "share_existing",
+            ownerUserId: owner.userId,
+            projectRoot: "/Users/sam/cs/example",
+            serviceEndpoint: { host: "", port: 99999 },
+            sessionId: "claude-abc",
+            createdAt: "2026-05-24T00:00:00.000Z",
+            updatedAt: "2026-05-24T00:00:00.000Z",
+            version: 1,
+            participants: {
+              [owner.userId]: {
+                ...owner,
+                status: "active",
+                joinedAt: "2026-05-24T00:00:00.000Z",
+                lastSeenAt: "2026-05-24T00:00:00.000Z",
+              },
+            },
+            invites: {},
+          },
+        },
+      },
+      {
+        owner,
+        projectRoot: "/Users/sam/cs/example",
+        sessionId: "claude-abc",
+        email: "alex@example.com",
+      },
+    );
+
+    expect(Object.values(created.state.shares)[0].serviceEndpoint).toBeUndefined();
   });
 });

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 
 import {
+  acceptShareInvite,
   clearNotifications,
   createShareInvite,
   getAgentHistory,
@@ -213,7 +214,9 @@ describe("api relay routing", () => {
       acceptUrl: "https://aimux.app/shares/invite/user_owner/token/accept",
     });
 
-    await createShareInvite("/repo", "claude-1", "guest@example.com", { token: "clerk-token" });
+    await createShareInvite("/repo", "claude-1", "guest@example.com", endpoint, {
+      token: "clerk-token",
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -223,7 +226,45 @@ describe("api relay routing", () => {
       projectRoot: "/repo",
       sessionId: "claude-1",
       email: "guest@example.com",
+      serviceEndpoint: endpoint,
     });
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer clerk-token");
+  });
+
+  it("accepts share invites through relay HTTP with auth", async () => {
+    process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
+    process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = "wss://relay-preview.example.com/";
+    const fetchMock = installFetchMock({
+      ok: true,
+      share: {
+        id: "share_1",
+        ownerUserId: "user_owner",
+        projectRoot: "/repo",
+        serviceEndpoint: endpoint,
+        sessionId: "claude-1",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        updatedAt: "2026-05-24T00:00:00.000Z",
+        version: 2,
+        mode: "multi",
+        participants: [],
+        invites: [],
+      },
+      participant: {
+        userId: "user_guest",
+        displayName: "Guest",
+        role: "guest",
+        status: "active",
+        joinedAt: "2026-05-24T00:00:00.000Z",
+      },
+    });
+
+    await acceptShareInvite("user/owner", "token/value", { token: "clerk-token" });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      "https://relay-preview.example.com/shares/invite/user%2Fowner/token%2Fvalue/accept",
+    );
+    expect(init.method).toBe("POST");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer clerk-token");
   });
 });

@@ -274,6 +274,7 @@ export interface SharedSessionSummary {
   id: string;
   ownerUserId: string;
   projectRoot: string;
+  serviceEndpoint?: ServiceEndpoint;
   sessionId: string;
   createdAt: string;
   updatedAt: string;
@@ -295,6 +296,7 @@ export async function createShareInvite(
   projectRoot: string,
   sessionId: string,
   email: string,
+  serviceEndpoint?: ServiceEndpoint | null,
   opts?: ApiOpts,
 ): Promise<ShareInviteResponse> {
   const relayUrl = env.AIMUX_RELAY_URL;
@@ -303,8 +305,30 @@ export async function createShareInvite(
     `${relayUrl.replace(/^ws/, "http")}/shares/invite`,
     {
       method: "POST",
-      body: JSON.stringify({ projectRoot, sessionId, email }),
+      body: JSON.stringify({ projectRoot, sessionId, email, serviceEndpoint }),
     },
+    opts,
+  );
+}
+
+export interface AcceptShareInviteResponse {
+  ok: boolean;
+  share: SharedSessionSummary;
+  participant: ShareParticipant;
+}
+
+export async function acceptShareInvite(
+  ownerUserId: string,
+  token: string,
+  opts?: ApiOpts,
+): Promise<AcceptShareInviteResponse> {
+  const relayUrl = env.AIMUX_RELAY_URL;
+  if (!relayUrl) throw new ApiError(0, null, "Relay sharing is not configured");
+  return callJson<AcceptShareInviteResponse>(
+    `${relayUrl.replace(/^ws/, "http")}/shares/invite/${encodeURIComponent(ownerUserId)}/${encodeURIComponent(
+      token,
+    )}/accept`,
+    { method: "POST" },
     opts,
   );
 }
