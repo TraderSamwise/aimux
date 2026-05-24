@@ -203,8 +203,35 @@ describe("session runtime prompt submission", () => {
         },
       });
 
+      const repeat = await writeAgentInput(host, "claude-1", "Second question", undefined, "client-2", true, {
+        shareId: "share_123",
+        mode: "multi",
+        actor: {
+          userId: "user_123",
+          displayName: "Sam Steady",
+          email: "sam@example.com",
+          role: "owner",
+        },
+      });
+      const downgraded = await writeAgentInput(host, "claude-1", "Back to normal", undefined, "client-3", true, {
+        shareId: "share_123",
+        mode: "single",
+        actor: {
+          userId: "user_123",
+          displayName: "Sam Steady",
+          email: "sam@example.com",
+          role: "owner",
+        },
+      });
+
       expect(result.accepted).toBe(true);
-      expect(writes).toEqual(["[Sam Steady]: Can you check this?\r"]);
+      expect(repeat.accepted).toBe(true);
+      expect(downgraded.accepted).toBe(true);
+      expect(writes).toEqual([
+        "Aimux collaboration note: This shared chat is now multi-user. Human messages are prefixed as [Name]: message so you can distinguish participants.\n\n[Sam Steady]: Can you check this?\r",
+        "[Sam Steady]: Second question\r",
+        "Aimux collaboration note: This shared chat is back to single-user mode. Future unprefixed user messages are from the remaining participant.\n\nBack to normal\r",
+      ]);
       expect(readSessionMessages("claude-1")).toMatchObject([
         {
           clientMessageId: "client-1",
@@ -219,6 +246,16 @@ describe("session runtime prompt submission", () => {
           },
           shareId: "share_123",
           chatMode: "multi",
+        },
+        {
+          clientMessageId: "client-2",
+          parts: [{ type: "text", text: "Second question" }],
+          chatMode: "multi",
+        },
+        {
+          clientMessageId: "client-3",
+          parts: [{ type: "text", text: "Back to normal" }],
+          chatMode: "single",
         },
       ]);
     } finally {
