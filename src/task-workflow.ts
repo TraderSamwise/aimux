@@ -100,20 +100,30 @@ export class TaskWorkflow {
   }
 }
 
-export function requestReview(
+export async function requestReview(
   agentSessionId: string,
   agentRole: string,
   diff: string | undefined,
   summary: string,
-): Task | null {
+): Promise<Task | null> {
   const config = loadTeamConfig();
   const roleConfig = config.roles[agentRole];
   let reviewerRole = roleConfig?.reviewedBy;
 
   if (!reviewerRole) {
-    const fallback = Object.entries(config.roles).find(
-      ([_, role]) => role.canEdit || role.description.toLowerCase().includes("review"),
-    );
+    const roles = Object.entries(config.roles).filter(([roleKey]) => roleKey !== agentRole);
+    const fallback =
+      roles.find(([, role]) => role.description.toLowerCase().includes("review")) ??
+      roles.find(([, role]) => role.canEdit);
+    if (!fallback) return null;
+    reviewerRole = fallback[0];
+  }
+
+  if (reviewerRole === agentRole) {
+    const roles = Object.entries(config.roles).filter(([roleKey]) => roleKey !== agentRole);
+    const fallback =
+      roles.find(([, role]) => role.description.toLowerCase().includes("review")) ??
+      roles.find(([, role]) => role.canEdit);
     if (!fallback) return null;
     reviewerRole = fallback[0];
   }
@@ -134,6 +144,6 @@ export function requestReview(
     iteration: 1,
   };
 
-  writeTask(reviewTask);
+  await writeTask(reviewTask);
   return reviewTask;
 }

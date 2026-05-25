@@ -45,17 +45,33 @@ describe("topology session lifecycle", () => {
 
     expect(store.read().bindings).toHaveLength(1);
     const moved = moveTopologySessionToGraveyard("codex-1", { store });
-    expect(moved?.tmuxTarget).toEqual({
-      sessionName: "aimux-repo",
-      windowId: "@1",
-      windowIndex: 1,
-      windowName: "codex",
-    });
+    expect(moved?.status).toBe("graveyard");
+    expect(moved?.tmuxTarget).toBeUndefined();
     expect(store.read().bindings).toEqual([]);
 
     const restored = resurrectTopologySession("codex-1", { store });
     expect(restored?.tmuxTarget).toBeUndefined();
     expect(store.read().bindings).toEqual([]);
+  });
+
+  it("removes tmux bindings when an explicit status makes a session non-live", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const session = {
+      id: "codex-1",
+      tool: "codex",
+      toolConfigKey: "codex",
+      command: "codex",
+      args: [],
+      tmuxTarget: { sessionName: "aimux-repo", windowId: "@1", windowIndex: 1, windowName: "codex" },
+    };
+    upsertTopologySession(session, "running", { store, projectRoot: repoRoot });
+
+    expect(store.read().bindings).toHaveLength(1);
+
+    upsertTopologySession(session, "offline", { store, projectRoot: repoRoot });
+
+    expect(store.read().bindings).toEqual([]);
+    expect(topologySessionToSessionState(store.read().sessions[0]!, store.read()).status).toBe("offline");
   });
 
   it("does not mint graveyard sessions from caller-provided seeds", () => {

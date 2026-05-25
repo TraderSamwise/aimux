@@ -243,7 +243,7 @@ Aimux should standardize on three top-level orchestration actions, directly insp
 
 1. `send_message`
 - lightweight communication with an existing agent
-- queued if the target is busy
+- appends to the target thread/inbox and places the recipient in a waiting state
 - ideal for clarification, follow-up, or status checks
 
 2. `assign_task`
@@ -301,9 +301,9 @@ Aimux already has these layers:
 
 - path: `.aimux/tasks/*.json`
 - implementation:
-  - [`src/tasks.ts`](/Users/sam/cs/aimux/src/tasks.ts)
-  - [`src/orchestration-actions.ts`](/Users/sam/cs/aimux/src/orchestration-actions.ts)
-  - [`src/task-workflow.ts`](/Users/sam/cs/aimux/src/task-workflow.ts)
+  - [`src/tasks.ts`](../src/tasks.ts)
+  - [`src/orchestration-actions.ts`](../src/orchestration-actions.ts)
+  - [`src/task-workflow.ts`](../src/task-workflow.ts)
 - role:
   - record explicit handoffs and assignments
   - review loops
@@ -312,8 +312,8 @@ Aimux already has these layers:
 ### 3. Context / History
 
 - implementation:
-  - [`src/context/history.ts`](/Users/sam/cs/aimux/src/context/history.ts)
-  - [`src/context/context-bridge.ts`](/Users/sam/cs/aimux/src/context/context-bridge.ts)
+  - [`src/context/history.ts`](../src/context/history.ts)
+  - [`src/context/context-bridge.ts`](../src/context/context-bridge.ts)
 - role:
   - continuity
   - migration handoff
@@ -322,9 +322,9 @@ Aimux already has these layers:
 ### 4. Metadata / Events / Tracker
 
 - implementation:
-  - [`src/metadata-store.ts`](/Users/sam/cs/aimux/src/metadata-store.ts)
-  - [`src/metadata-server.ts`](/Users/sam/cs/aimux/src/metadata-server.ts)
-  - [`src/agent-tracker.ts`](/Users/sam/cs/aimux/src/agent-tracker.ts)
+  - [`src/metadata-store.ts`](../src/metadata-store.ts)
+  - [`src/metadata-server.ts`](../src/metadata-server.ts)
+  - [`src/agent-tracker.ts`](../src/agent-tracker.ts)
 - role:
   - status
   - progress
@@ -337,7 +337,7 @@ Aimux already has these layers:
 ### 5. Team / Role Routing
 
 - implementation:
-  - [`src/team.ts`](/Users/sam/cs/aimux/src/team.ts)
+  - [`src/team.ts`](../src/team.ts)
 - role:
   - role-aware assignment
   - review topology

@@ -415,6 +415,7 @@ function sendSseEvent(res: ServerResponse, event: string, data: unknown): void {
 type DesktopSessionRecord = Record<string, unknown> & {
   id: string;
   createdAt?: string;
+  status?: string;
   team?: SessionTeamMetadata;
 };
 
@@ -431,7 +432,7 @@ function topologyDesktopSessionList(
 ): DesktopSessionRecord[] {
   return listTopologySessionStates({ statuses }).map((session: RuntimeTopologySessionState) => ({
     ...session,
-    status: session.lifecycle ?? "offline",
+    status: session.status ?? "offline",
     team: session.team as SessionTeamMetadata | undefined,
   }));
 }

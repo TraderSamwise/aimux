@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -79,6 +79,49 @@ describe("RuntimeTopologyStore", () => {
       const path = join(dir, "runtime-topology.yaml");
       writeFileSync(path, "version: nope\n");
       expect(() => new RuntimeTopologyStore(path).read()).toThrow("unsupported runtime topology version");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes update with a filesystem lock and releases it after writing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-topology-"));
+    try {
+      const path = join(dir, "runtime-topology.yaml");
+      const store = new RuntimeTopologyStore(path);
+
+      store.update((topology) => ({
+        ...topology,
+        rigs: [
+          {
+            id: "rig-main",
+            name: "repo",
+            projectRoot: "/repo",
+            createdAt: topology.generatedAt,
+            updatedAt: topology.generatedAt,
+          },
+        ],
+        nodes: [
+          {
+            id: "agent:codex-1",
+            rigId: "rig-main",
+            logicalId: "codex-1",
+            createdAt: topology.generatedAt,
+          },
+        ],
+        sessions: [
+          {
+            id: "codex-1",
+            nodeId: "agent:codex-1",
+            status: "offline",
+            createdAt: topology.generatedAt,
+            updatedAt: topology.generatedAt,
+          },
+        ],
+      }));
+
+      expect(existsSync(`${path}.lock`)).toBe(false);
+      expect(store.read().sessions.map((session) => session.id)).toEqual(["codex-1"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

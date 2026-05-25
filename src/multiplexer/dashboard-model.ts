@@ -40,11 +40,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function listOfflineSessionsForAction(host: DashboardModelHost): any[] {
+  const sessionsById = new Map<string, any>();
+  for (const session of host.offlineSessions ?? []) {
+    if (session?.id) sessionsById.set(session.id, session);
+  }
+  for (const session of listTopologySessionStates({ statuses: ["offline"] })) {
+    if (session?.id && !sessionsById.has(session.id)) sessionsById.set(session.id, session);
+  }
+  return [...sessionsById.values()];
+}
+
 function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: string): any | undefined {
-  return (
-    host.offlineSessions.find((session: any) => session.id === sessionId) ??
-    listTopologySessionStates({ statuses: ["offline"] }).find((session) => session.id === sessionId)
-  );
+  return listOfflineSessionsForAction(host).find((session: any) => session.id === sessionId);
 }
 
 function findDashboardSessionSeed(
@@ -371,7 +379,9 @@ async function resumeAgentAndDirectTeammates(
     throw new Error(`Agent "${sessionId}" not found`);
   }
 
-  const teammates = isTeammateSession(offline) ? [] : selectDirectTeammates(host.offlineSessions ?? [], sessionId);
+  const teammates = isTeammateSession(offline)
+    ? []
+    : selectDirectTeammates(listOfflineSessionsForAction(host), sessionId);
   const result = await resumeOfflineAgentWithPendingAndSettle(host, sessionId);
   const teammateFailures: Array<{ sessionId: string; error: unknown }> = [];
 

@@ -875,7 +875,7 @@ export const dashboardInteractionMethods = {
     }
   },
 
-  handleReviewRequest(this: any): void {
+  async handleReviewRequest(this: any): Promise<void> {
     const session = this.activeSession;
     if (!session) return;
 
@@ -885,7 +885,7 @@ export const dashboardInteractionMethods = {
       diff = execSync("git diff HEAD", { encoding: "utf-8", timeout: 5000 }).slice(0, 5000) || undefined;
     } catch {}
 
-    const reviewTask = requestReview(session.id, role, diff, `Review ${session.command} agent's recent work`);
+    const reviewTask = await requestReview(session.id, role, diff, `Review ${session.command} agent's recent work`);
 
     if (reviewTask) {
       this.footerFlash = `⧫ Review requested → ${reviewTask.assignee ?? "reviewer"}`;

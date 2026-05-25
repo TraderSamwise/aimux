@@ -17,6 +17,7 @@ export type RuntimeTopologySessionState = {
   toolConfigKey: string;
   command: string;
   args: string[];
+  status?: RuntimeTopologySessionStatus;
   lifecycle?: "live" | "offline";
   createdAt?: string;
   backendSessionId?: string;
@@ -161,6 +162,7 @@ export function topologySessionToSessionState(
     toolConfigKey: node?.toolConfigKey ?? tool,
     command: session.command ?? tool,
     args: session.args ?? [],
+    status: session.status,
     lifecycle: lifecycleFromStatus(session.status),
     createdAt: session.createdAt,
     backendSessionId: session.backendSessionId,
@@ -248,7 +250,8 @@ export function upsertTopologySession(
     const node = upsertNode(topology, session, rigId, now);
     const nextSession = { ...sessionToTopologySession(session, node.id, now), status };
     topology.sessions = [...topology.sessions.filter((entry) => entry.id !== session.id), nextSession];
-    const binding = sessionToBinding(session, node.id, now);
+    const shouldBind = status === "running" || status === "idle" || status === "starting";
+    const binding = shouldBind ? sessionToBinding({ ...session, lifecycle: "live" }, node.id, now) : undefined;
     topology.bindings = binding
       ? [...topology.bindings.filter((entry) => entry.id !== binding.id), binding]
       : topology.bindings.filter((entry) => entry.nodeId !== node.id);
@@ -266,10 +269,10 @@ export function moveTopologySessionToGraveyard(
   store.update((topology) => {
     const existing = topology.sessions.find((entry) => entry.id === sessionId);
     if (existing) {
-      moved = topologySessionToSessionState(existing, topology);
       existing.status = "graveyard";
       existing.updatedAt = now;
       topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
+      moved = topologySessionToSessionState(existing, topology);
       return topology;
     }
     return topology;

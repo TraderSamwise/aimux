@@ -7,7 +7,11 @@ import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState } from "./metadata-store.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
-import { moveTopologySessionToGraveyard, saveRuntimeTopologySessions } from "./runtime-core/topology-sessions.js";
+import {
+  moveTopologySessionToGraveyard,
+  saveRuntimeTopologySessions,
+  upsertTopologySession,
+} from "./runtime-core/topology-sessions.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -265,6 +269,45 @@ describe("MetadataServer threads API", () => {
       tool: "claude",
       role: "reviewer",
     });
+  });
+
+  it("preserves topology status values in teammate API records", async () => {
+    server?.stop();
+    seedAgentTopology([{ id: "parent", command: "claude", status: "running" }]);
+    upsertTopologySession(
+      {
+        id: "idle-child",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+      },
+      "idle",
+    );
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [],
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates?parentSessionId=parent`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      teammates: Array<{ id: string; status?: string }>;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.teammates).toEqual([expect.objectContaining({ id: "idle-child", status: "idle" })]);
   });
 
   it("opens notification targets from hidden teammate desktop state", async () => {

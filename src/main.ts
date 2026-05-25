@@ -821,6 +821,7 @@ program
             2,
           ),
         );
+        process.exitCode = 1;
         return;
       }
       console.log(`Stopped project runtime for ${projectRoot}`);

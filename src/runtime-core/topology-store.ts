@@ -1,9 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { getRuntimeTopologyPath } from "../paths.js";
 
 export const RUNTIME_TOPOLOGY_VERSION = 1;
+const UPDATE_LOCK_TIMEOUT_MS = 5_000;
+const UPDATE_LOCK_RETRY_MS = 25;
 
 export type RuntimeTopologySessionStatus =
   | "planned"
@@ -292,6 +294,10 @@ function asQueueKind(value: unknown): RuntimeTopologyQueueItem["kind"] {
   return "task";
 }
 
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 export class RuntimeTopologyStore {
   constructor(readonly path = getRuntimeTopologyPath()) {}
 
@@ -316,8 +322,31 @@ export class RuntimeTopologyStore {
     return normalized;
   }
 
+  private acquireUpdateLock(): () => void {
+    mkdirSync(dirname(this.path), { recursive: true });
+    const lockPath = `${this.path}.lock`;
+    const deadline = Date.now() + UPDATE_LOCK_TIMEOUT_MS;
+    while (true) {
+      try {
+        mkdirSync(lockPath);
+        writeFileSync(join(lockPath, "owner"), `${process.pid}\n`);
+        return () => rmSync(lockPath, { recursive: true, force: true });
+      } catch (error) {
+        if (Date.now() >= deadline) {
+          throw new Error(`Timed out acquiring runtime topology update lock at ${lockPath}`, { cause: error });
+        }
+        sleepSync(UPDATE_LOCK_RETRY_MS);
+      }
+    }
+  }
+
   update(mutator: (topology: RuntimeTopology) => RuntimeTopology): RuntimeTopology {
-    return this.write(mutator(this.read()));
+    const release = this.acquireUpdateLock();
+    try {
+      return this.write(mutator(this.read()));
+    } finally {
+      release();
+    }
   }
 }
 

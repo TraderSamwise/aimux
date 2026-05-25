@@ -793,6 +793,10 @@ describe("resumeOfflineSession", () => {
   it("graveyards stale visible seed rows even when they are not loaded as offline", () => {
     const host: any = {
       offlineSessions: [],
+      mode: "dashboard",
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      renderCurrentDashboardView: vi.fn(),
       noteLastUsedItem: vi.fn(),
       debug: vi.fn(),
     };
@@ -822,6 +826,9 @@ describe("resumeOfflineSession", () => {
     const graveyard = listTopologySessionStates({ statuses: ["graveyard"] });
     expect(listTopologySessionStates({ statuses: ["offline"] }).map((entry) => entry.id)).toEqual([]);
     expect(graveyard.map((entry) => entry.id)).toContain("codex-stale");
+    expect(host.invalidateDesktopStateSnapshot).toHaveBeenCalledOnce();
+    expect(host.writeStatuslineFile).toHaveBeenCalledOnce();
+    expect(host.renderCurrentDashboardView).toHaveBeenCalledOnce();
   });
 
   it("restores team role from tmux metadata", () => {

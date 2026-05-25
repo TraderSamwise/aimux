@@ -419,6 +419,11 @@ export function graveyardSession(host: RuntimeStateHost, sessionId: string, _ses
   host.offlineSessions = host.offlineSessions.filter((s: any) => s.id !== sessionId);
 
   moveTopologySessionToGraveyard(sessionId);
+  host.invalidateDesktopStateSnapshot?.();
+  host.writeStatuslineFile?.();
+  if (host.mode === "dashboard") {
+    host.renderCurrentDashboardView?.();
+  }
 
   host.debug?.(`graveyarded session ${sessionId}`, "session");
 }

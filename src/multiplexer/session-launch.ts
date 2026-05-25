@@ -779,7 +779,7 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
       host.showWorktreeList();
       break;
     case "review":
-      host.handleReviewRequest();
+      void host.handleReviewRequest();
       break;
   }
 }

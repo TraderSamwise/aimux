@@ -670,7 +670,6 @@ The dashboard and metadata APIs expose teammate and task workflow state where th
 Ask your agent to delegate or hand off when you want a task file created. For example:
 
 > "Delegate the test writing to another agent"
-
 > "Hand off the CSS cleanup to the codex agent"
 
 The agent creates the task file. Control-plane callers may expose teammate workflow APIs where configured, but agents should not call aimux metadata APIs themselves. This is separate from any native task system in the underlying tools (like Claude Code's internal tasks).
