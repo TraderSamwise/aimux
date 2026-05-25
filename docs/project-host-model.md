@@ -39,3 +39,5 @@ If you are reading older notes, PRs, or comments that mention:
 - `aimux serve` as a host-election path
 
 treat them as historical only.
+
+The legacy takeover pieces were cut during the runtime-core replacement. The remaining heartbeat file is liveness-only; session lifecycle and ownership are topology-owned.

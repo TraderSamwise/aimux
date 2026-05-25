@@ -62,22 +62,13 @@ import {
 import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
-import { loadConfig } from "../config.js";
 import type { SessionRuntime } from "../session-runtime.js";
-import type { InstanceSessionRef } from "../instance-registry.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";
   dashboardSessionsCache: DashboardSession[];
   dashboardServicesCache: DashboardService[];
   dashboardWorktreeGroupsCache: Array<{ sessions: DashboardSession[] }>;
-  instanceDirectory: {
-    claimSession(sessionId: string, fromInstanceId: string, cwd: string): Promise<InstanceSessionRef | null>;
-  };
-  sessionBootstrap: {
-    canResumeWithBackendSessionId(toolCfg: { resumeArgs?: string[] }, backendSessionId?: string): boolean;
-    composeToolArgs(toolCfg: { args: string[] }, args: string[]): string[];
-  };
 };
 
 export type DashboardTailMethods = {
@@ -456,57 +447,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
   },
   async takeoverSessionFromDashEntry(entry) {
     if (!entry.remoteInstanceId || !entry.remoteBackendSessionId) return;
-    await this.takeoverSession({
-      id: entry.id,
-      tool: entry.command,
-      backendSessionId: entry.remoteBackendSessionId,
-      fromInstanceId: entry.remoteInstanceId,
-    });
+    debug(`takeover disabled for ${entry.id}: session ownership is topology-owned`, "instance");
   },
   async takeoverSession(target) {
-    const mux = this as unknown as DashboardTailHost;
-    const claimed = await mux.instanceDirectory.claimSession(target.id, target.fromInstanceId, process.cwd());
-    if (!claimed) {
-      debug(`takeover: session ${target.id} not found in instance ${target.fromInstanceId}`, "instance");
-      return;
-    }
-
-    const config = loadConfig();
-    const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === target.tool);
-    const toolCfg = toolEntry?.[1];
-    const toolConfigKey = toolEntry?.[0];
-
-    if (!toolCfg?.resumeArgs) {
-      debug(`takeover: no resumeArgs configured for tool ${target.tool}`, "instance");
-      return;
-    }
-    if (!mux.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, target.backendSessionId)) {
-      debug(`takeover: tool ${target.tool} does not support backendSessionId resume`, "instance");
-      return;
-    }
-
-    const resumeArgs = toolCfg.resumeArgs.map((a: string) => a.replace("{sessionId}", target.backendSessionId));
-    const args = mux.sessionBootstrap.composeToolArgs(toolCfg, resumeArgs);
-
-    debug(
-      `taking over session ${target.id} (backend=${target.backendSessionId}) from instance ${target.fromInstanceId}`,
-      "instance",
-    );
-    this.createSession(
-      target.tool,
-      args,
-      toolCfg.preambleFlag,
-      toolConfigKey,
-      undefined,
-      undefined,
-      claimed.worktreePath,
-      target.backendSessionId,
-      target.id,
-      false,
-      true,
-      claimed.team,
-    );
-
-    this.renderDashboard();
+    debug(`takeover disabled for ${target.id}: session ownership is topology-owned`, "instance");
   },
 };

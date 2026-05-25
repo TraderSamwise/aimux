@@ -239,7 +239,7 @@ function projectFromActiveShare(activeShare: ActiveSharedSession) {
         id: activeShare.sessionId,
         tool: "shared",
         status: "running" as const,
-        label: "Shared chat",
+        label: "Shared session",
       },
     ],
     service: null,

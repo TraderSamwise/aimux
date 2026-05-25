@@ -24,7 +24,7 @@ through the relay and receive only the routes required to view a shared session.
 
 ## Ownership Model
 
-The relay already stores one Durable Object per owner Clerk user. A shared chat
+The relay already stores one Durable Object per owner Clerk user. A shared session view
 is owned by the user whose daemon token connected to that Durable Object. Guests
 do not get their own daemon. Instead, a guest client connects to the owner's
 Durable Object for a specific share, and that object authorizes every request
@@ -60,7 +60,6 @@ the invited email, and never be stored in plaintext.
 Owner clients can access their own relay as before. Guest clients are restricted
 to read-only shared session routes:
 
-- `GET /agents/history`
 - `GET /agents/output`
 - `GET /events`
 - attachment read routes needed to render existing attachment records

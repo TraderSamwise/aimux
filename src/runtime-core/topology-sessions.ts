@@ -256,25 +256,6 @@ export function upsertTopologySession(
   });
 }
 
-export function updateTopologySessionBackendId(
-  sessionId: string,
-  backendSessionId: string,
-  input?: { store?: RuntimeTopologyStore; now?: string },
-): string | undefined {
-  const store = input?.store ?? createRuntimeTopologyStore();
-  const now = input?.now ?? new Date().toISOString();
-  let selected: string | undefined;
-  store.update((topology) => {
-    const session = topology.sessions.find((entry) => entry.id === sessionId);
-    if (!session) return topology;
-    selected = session.backendSessionId ?? backendSessionId;
-    session.backendSessionId = selected;
-    session.updatedAt = now;
-    return topology;
-  });
-  return selected;
-}
-
 export function moveTopologySessionToGraveyard(
   sessionId: string,
   input?: { store?: RuntimeTopologyStore; now?: string },

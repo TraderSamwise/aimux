@@ -7,7 +7,7 @@ import { initPaths } from "../paths.js";
 import { dashboardTailMethods } from "./dashboard-tail-methods.js";
 
 describe("dashboardTailMethods.takeoverSession", () => {
-  it("preserves the claimed aimux session id and exact backend session id", async () => {
+  it("does not take over sessions from instance registry refs", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-takeover-"));
     execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
     await initPaths(repoRoot);
@@ -36,21 +36,9 @@ describe("dashboardTailMethods.takeoverSession", () => {
       fromInstanceId: "inst-other",
     });
 
-    expect(host.createSession).toHaveBeenCalledTimes(1);
-    expect(host.createSession.mock.calls[0]).toMatchObject([
-      "claude",
-      expect.arrayContaining(["--resume", "backend-remote"]),
-      expect.any(Array),
-      "claude",
-      undefined,
-      undefined,
-      repoRoot,
-      "backend-remote",
-      "claude-remote",
-      false,
-      true,
-      undefined,
-    ]);
+    expect(host.instanceDirectory.claimSession).not.toHaveBeenCalled();
+    expect(host.createSession).not.toHaveBeenCalled();
+    expect(host.renderDashboard).not.toHaveBeenCalled();
 
     rmSync(repoRoot, { recursive: true, force: true });
   });

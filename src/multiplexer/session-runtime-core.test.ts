@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
-import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import {
   buildTmuxWindowMetadata,
@@ -74,11 +73,10 @@ describe("session runtime prompt submission", () => {
     expect(resolveLiveSessionTmuxTarget(host, "claude-1")).toBeUndefined();
   });
 
-  it("publishes metadata backend ids to tmux metadata when the runtime has not learned them yet", async () => {
+  it("does not publish metadata backend ids to tmux metadata", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
-      recordSessionBackendSessionIdMetadata("claude-racy", "backend-racy", repoRoot);
       const host: any = {
         sessions: [{ id: "claude-racy", command: "claude" }],
         sessionOriginalArgs: new Map([["claude-racy", ["--resume"]]]),
@@ -91,7 +89,7 @@ describe("session runtime prompt submission", () => {
 
       expect(buildTmuxWindowMetadata(host, "claude-racy", "claude")).toMatchObject({
         sessionId: "claude-racy",
-        backendSessionId: "backend-racy",
+        backendSessionId: undefined,
       });
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
@@ -102,7 +100,6 @@ describe("session runtime prompt submission", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
-      recordSessionBackendSessionIdMetadata("claude-current", "backend-stale", repoRoot);
       const host: any = {
         sessions: [{ id: "claude-current", command: "claude", backendSessionId: "backend-current" }],
         sessionOriginalArgs: new Map([["claude-current", []]]),
@@ -182,11 +179,10 @@ describe("session runtime prompt submission", () => {
     expect(host.sessionRoles.get("codex-1")).toBeUndefined();
   });
 
-  it("preserves quick exited sessions when durable metadata has the backend id", async () => {
+  it("does not preserve quick exited sessions only because metadata has a backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
-      recordSessionBackendSessionIdMetadata("claude-racy-exit", "backend-racy-exit", repoRoot);
       const runtime = { id: "claude-racy-exit", command: "claude", startTime: Date.now() };
       const host: any = {
         sessions: [runtime],
@@ -207,13 +203,7 @@ describe("session runtime prompt submission", () => {
 
       handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
 
-      expect(host.offlineSessions).toEqual([
-        expect.objectContaining({
-          id: "claude-racy-exit",
-          lifecycle: "offline",
-          backendSessionId: "backend-racy-exit",
-        }),
-      ]);
+      expect(host.offlineSessions).toEqual([]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -223,7 +213,6 @@ describe("session runtime prompt submission", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
-      recordSessionBackendSessionIdMetadata("claude-current-exit", "backend-stale-exit", repoRoot);
       const runtime = {
         id: "claude-current-exit",
         command: "claude",

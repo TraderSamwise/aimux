@@ -12,7 +12,6 @@ import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
 import {
   createShareInvite,
-  getAgentHistory,
   getAgentOutput,
   getShare,
   leaveShare,
@@ -20,20 +19,14 @@ import {
   removeShareParticipant,
   type SharedSessionSummary,
 } from "@/lib/api";
-import {
-  messagesFromParsedAgentOutput,
-  pendingPromptAlreadyRendered,
-} from "@/lib/parsed-transcript";
+import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import {
-  chatHistoryFamily,
   ingestEventAtom,
   lastErrorFamily,
   outputBufferFamily,
   parsedOutputFamily,
-  pendingMessagesFamily,
-  setHistoryAtom,
 } from "@/stores/chat";
 import { desktopStateFamily } from "@/stores/desktopState";
 import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
@@ -57,9 +50,6 @@ export default function ChatScreen() {
   const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const ingestEvent = useSetAtom(ingestEventAtom);
-  const setHistory = useSetAtom(setHistoryAtom);
-  const history = useAtomValue(chatHistoryFamily(sessionKey));
-  const pendingMessages = useAtomValue(pendingMessagesFamily(sessionKey));
   const output = useAtomValue(outputBufferFamily(sessionKey));
   const setOutput = useSetAtom(outputBufferFamily(sessionKey));
   const parsedOutput = useAtomValue(parsedOutputFamily(sessionKey));
@@ -72,7 +62,6 @@ export default function ChatScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const [token, setToken] = useState<string | null>(null);
-  const [loadingHistory, setLoadingHistory] = useState(false);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -106,29 +95,7 @@ export default function ChatScreen() {
   }, [getToken]);
 
   const serviceEndpoint = project?.serviceEndpoint ?? null;
-  const relayReady = !relayConfigured || relayStatus === "connected";
   const useRelayPolling = relayConfigured && relayStatus === "connected";
-
-  // Initial history fetch
-  useEffect(() => {
-    if (!serviceEndpoint || !sessionId || !relayReady) return;
-    let cancelled = false;
-    setLoadingHistory(true);
-    getAgentHistory(serviceEndpoint, sessionId, 50, { token })
-      .then((res) => {
-        if (cancelled) return;
-        setHistory({ sessionId, messages: res.messages ?? [] });
-      })
-      .catch((err) => {
-        if (!cancelled) console.warn("history fetch failed:", err);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingHistory(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [serviceEndpoint?.host, serviceEndpoint?.port, sessionId, token, relayReady, setHistory]);
 
   // Subscribe to /events for local sessions. Hosted/relay deployments cannot
   // reach the project service EventSource directly, so they poll through the
@@ -168,16 +135,12 @@ export default function ChatScreen() {
     async function poll() {
       if (cancelled) return;
       try {
-        const [historyResult, outputResult] = await Promise.all([
-          getAgentHistory(serviceEndpoint!, sessionId!, 50, { token }),
-          getAgentOutput(serviceEndpoint!, sessionId!, undefined, { token }),
-        ]);
+        const outputResult = await getAgentOutput(serviceEndpoint!, sessionId!, undefined, { token });
         if (cancelled) return;
-        setHistory({ sessionId: sessionId!, messages: historyResult.messages ?? [] });
         setOutput(outputResult.output ?? "");
         setParsedOutput(outputResult.parsed ?? null);
       } catch (err) {
-        if (!cancelled) console.warn("relay chat poll failed:", err);
+        if (!cancelled) console.warn("relay transcript poll failed:", err);
       }
       if (cancelled) return;
       timer = setTimeout(poll, RELAY_CHAT_POLL_INTERVAL_MS);
@@ -197,7 +160,6 @@ export default function ChatScreen() {
     sessionId,
     token,
     useRelayPolling,
-    setHistory,
     setOutput,
     setParsedOutput,
   ]);
@@ -205,25 +167,8 @@ export default function ChatScreen() {
   const parsedMessages = useMemo(() => messagesFromParsedAgentOutput(parsedOutput), [parsedOutput]);
 
   const allMessages = useMemo<ChatMessage[]>(() => {
-    const pending = pendingMessages.map((p) => ({
-      id: `pending-${p.clientMessageId}`,
-      clientMessageId: p.clientMessageId,
-      role: "user" as const,
-      ts: p.ts,
-      parts: p.parts,
-      deliveryState: p.deliveryState,
-      deliveryError: p.deliveryError,
-    }));
-    if (parsedMessages.length > 0) {
-      return [
-        ...parsedMessages,
-        ...pending.filter((message) => !pendingPromptAlreadyRendered(message, parsedMessages)),
-      ];
-    }
-    return [...history, ...pending].sort((a, b) =>
-      String(a.ts ?? "").localeCompare(String(b.ts ?? "")),
-    );
-  }, [history, parsedMessages, pendingMessages]);
+    return parsedMessages;
+  }, [parsedMessages]);
 
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: true });
@@ -241,7 +186,7 @@ export default function ChatScreen() {
   const showSplit = canUseSplitView && canShowTerminal && showTerminalSplit;
   const showTerminalOnly = !canUseSplitView && canShowTerminal && showTerminalSplit;
   const terminalToggleLabel =
-    showSplit || showTerminalOnly ? "Show chat view" : "Show terminal view";
+    showSplit || showTerminalOnly ? "Show transcript view" : "Show terminal view";
   const measuredDividerWidth = terminalPaneWidth
     ? Math.max(
         MIN_TERMINAL_DIVIDER_WIDTH,
@@ -516,7 +461,7 @@ export default function ChatScreen() {
               ) : null}
               {!relayConfigured ? (
                 <Text className="text-xs text-muted-foreground mt-2">
-                  Remote mode is required for shared chats.
+                  Remote mode is required for shared session invites.
                 </Text>
               ) : !token ? (
                 <Text className="text-xs text-muted-foreground mt-2">
@@ -531,7 +476,7 @@ export default function ChatScreen() {
           {!serviceEndpoint ? (
             <View className="p-4">
               <Text className="text-sm text-muted-foreground">
-                Project service not running. Start the project host to enable chat.
+                Project service not running. Start the project host to view this session.
               </Text>
             </View>
           ) : (
@@ -547,9 +492,6 @@ export default function ChatScreen() {
                 ) : (
                   <View className="flex-1">
                     <ScrollView ref={scrollRef} className="flex-1 px-4 py-2">
-                      {loadingHistory && allMessages.length === 0 ? (
-                        <Text className="text-sm text-muted-foreground">Loading history…</Text>
-                      ) : null}
                       {allMessages.map((m, idx) => (
                         <MessageBlock
                           key={m.id ?? m.clientMessageId ?? `idx-${idx}`}

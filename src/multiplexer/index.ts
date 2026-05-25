@@ -303,12 +303,10 @@ export class Multiplexer {
       setConfirmedRegistered: (value) => {
         this.confirmedRegistered = value;
       },
-      getInstanceSessionRefs: () => this.getInstanceSessionRefs(),
       syncSessionsFromTopology: () => this.syncSessionsFromTopology(),
       loadOfflineTopologySessions: () => this.loadOfflineTopologySessions(),
       renderCurrentDashboardView: () => this.renderCurrentDashboardView(),
       renderDashboard: () => this.renderDashboard(),
-      handleSessionClaimed: (sessionId) => this.handleSessionClaimed(sessionId),
       writeStatuslineFile: () => this.writeStatuslineFile(),
     });
     this.eventBus.subscribe((event) => {

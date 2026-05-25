@@ -1,22 +1,15 @@
 import { existsSync } from "node:fs";
 import { loadConfig } from "../config.js";
-import {
-  getSessionBackendSessionId,
-  loadMetadataState,
-  recordSessionBackendSessionIdMetadata,
-  updateSessionMetadata,
-} from "../metadata-store.js";
+import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { isToolInternalWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { markLastUsed } from "../last-used.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { getServiceLaunchCommandLine } from "./services.js";
-import { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
 import {
   listTopologySessionStates,
   moveTopologySessionToGraveyard,
-  updateTopologySessionBackendId,
   upsertTopologySession,
 } from "../runtime-core/topology-sessions.js";
 
@@ -63,47 +56,6 @@ function removeRuntimeRegistration(host: RuntimeStateHost, runtime: any): void {
 function offlineSessionState(session: any): any {
   const { tmuxTarget: _tmuxTarget, ...rest } = session;
   return { ...rest, lifecycle: "offline" };
-}
-
-function writeBackendSessionIdToTopology(sessionId: string, backendSessionId: string): void {
-  updateTopologySessionBackendId(sessionId, backendSessionId);
-}
-
-function getSavedBackendSessionId(sessionId: string): string | undefined {
-  return listTopologySessionStates().find((session) => session.id === sessionId)?.backendSessionId;
-}
-
-function parseTimestampMs(value: unknown): number | undefined {
-  if (typeof value !== "string" || value.trim().length === 0) return undefined;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function recoverCapturedBackendSessionId(
-  host: RuntimeStateHost,
-  session: any,
-  sessionMetadata: any,
-  toolCfg: any,
-): string | undefined {
-  if (!toolCfg?.sessionCapture) return undefined;
-  const startedAtMs = parseTimestampMs(session.createdAt) ?? parseTimestampMs(sessionMetadata?.createdAt);
-  if (!startedAtMs) return undefined;
-  const backendSessionId = captureBackendSessionIdFromSessionFiles(toolCfg.sessionCapture, session.id, {
-    startedAtMs,
-    lookbackDays: 30,
-  });
-  if (!backendSessionId) return undefined;
-  try {
-    recordSessionBackendSessionId(host, session.id, backendSessionId);
-  } catch (error) {
-    host.debug?.(
-      `failed to record recovered backend id for ${session.id}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      "session",
-    );
-  }
-  return backendSessionId;
 }
 
 function markLifecycleUsed(host: RuntimeStateHost, itemId: string): void {
@@ -230,11 +182,6 @@ export function loadOfflineTopologySessions(
   }
 
   const liveIds = new Set(liveAgentWindows.map(({ metadata }) => metadata.sessionId));
-  const liveBackendIds = new Set(
-    liveAgentWindows
-      .map(({ metadata }) => metadata.backendSessionId)
-      .filter((value): value is string => Boolean(value)),
-  );
   const ownedIds = new Set<string>();
   for (const s of host.sessions) ownedIds.add(s.id);
   for (const inst of host.getRemoteInstancesSafe()) {
@@ -251,7 +198,6 @@ export function loadOfflineTopologySessions(
     .filter((s: any) => {
       if (!isIntentionalOfflineSession(s)) return false;
       if (liveIds.has(s.id)) return false;
-      if (s.backendSessionId && liveBackendIds.has(s.backendSessionId)) return false;
       if (ownedIds.has(s.id)) return false;
       if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
       if (host.dashboardPendingActions?.getSessionAction?.(s.id) === "starting") return false;
@@ -388,7 +334,6 @@ export function restoreTmuxSessionsFromTopology(host: RuntimeStateHost): Managed
       cols,
       rows,
     );
-    transport.backendSessionId = metadata.backendSessionId;
     host.sessionTmuxTargets.set(metadata.sessionId, target);
     host.registerManagedSession(
       transport,
@@ -418,7 +363,7 @@ export function restoreTmuxSessionsFromTopology(host: RuntimeStateHost): Managed
 export function stopSessionToOffline(host: RuntimeStateHost, session: any): void {
   if (host.stoppingSessionIds.has(session.id)) return;
   markLifecycleUsed(host, session.id);
-  const backendSessionId = session.backendSessionId ?? getSessionBackendSessionId(session.id);
+  const backendSessionId = session.backendSessionId;
   const offlineEntry = {
     id: session.id,
     tool: session.command,
@@ -521,13 +466,9 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   const toolCfg = config.tools[session.toolConfigKey];
   if (!toolCfg) return;
 
-  const sessionMetadata = loadMetadataState().sessions[session.id];
-  const derived = sessionMetadata?.derived;
+  const derived = loadMetadataState().sessions[session.id]?.derived;
   const relaunchFresh = derived?.activity === "error" || derived?.attention === "error";
-  let backendSessionId = session.backendSessionId;
-  if (!backendSessionId && !relaunchFresh) {
-    backendSessionId = recoverCapturedBackendSessionId(host, session, sessionMetadata, toolCfg);
-  }
+  const backendSessionId = session.backendSessionId;
   const useBackendResume =
     !relaunchFresh && host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId);
 
@@ -601,15 +542,7 @@ export function recordSessionBackendSessionId(
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   const offline = host.offlineSessions.find((session: any) => session.id === sessionId);
   if (!runtime && !offline) {
-    const savedBackendSessionId = getSavedBackendSessionId(sessionId);
-    if (savedBackendSessionId && savedBackendSessionId !== normalizedBackendSessionId) {
-      recordSessionBackendSessionIdMetadata(sessionId, savedBackendSessionId);
-      return { sessionId, backendSessionId: savedBackendSessionId };
-    }
-    const selectedBackendSessionId = savedBackendSessionId ?? normalizedBackendSessionId;
-    recordSessionBackendSessionIdMetadata(sessionId, selectedBackendSessionId);
-    writeBackendSessionIdToTopology(sessionId, selectedBackendSessionId);
-    return { sessionId, backendSessionId: selectedBackendSessionId };
+    throw new Error(`Agent "${sessionId}" is not managed by this runtime`);
   }
 
   const existing = runtime?.backendSessionId ?? offline?.backendSessionId;
@@ -619,8 +552,6 @@ export function recordSessionBackendSessionId(
     );
   }
   const selectedBackendSessionId = existing ?? normalizedBackendSessionId;
-  recordSessionBackendSessionIdMetadata(sessionId, selectedBackendSessionId);
-
   if (runtime) {
     runtime.backendSessionId = selectedBackendSessionId;
     host.syncTmuxWindowMetadata?.(sessionId);
@@ -628,7 +559,6 @@ export function recordSessionBackendSessionId(
   if (offline) {
     offline.backendSessionId = selectedBackendSessionId;
   }
-  writeBackendSessionIdToTopology(sessionId, selectedBackendSessionId);
 
   host.saveState?.();
   host.invalidateDesktopStateSnapshot?.();
@@ -638,25 +568,6 @@ export function recordSessionBackendSessionId(
 
 export function startHeartbeat(host: RuntimeStateHost): void {
   host.runtimeSync.startHeartbeat();
-}
-
-export function handleSessionClaimed(host: RuntimeStateHost, sessionId: string): void {
-  const session = host.sessions.find((s: any) => s.id === sessionId);
-  if (!session) return;
-  host.debug?.(`session ${sessionId} was claimed by another instance, killing local PTY`, "instance");
-  session.kill();
-  const idx = host.sessions.indexOf(session);
-  if (idx >= 0) {
-    host.sessions.splice(idx, 1);
-    host.sessionToolKeys.delete(sessionId);
-    host.sessionOriginalArgs.delete(sessionId);
-    host.sessionWorktreePaths.delete(sessionId);
-    host.sessionTmuxTargets.delete(sessionId);
-  }
-  if (host.activeIndex >= host.sessions.length) {
-    host.activeIndex = Math.max(0, host.sessions.length - 1);
-  }
-  host.renderDashboard();
 }
 
 export function stopHeartbeat(host: RuntimeStateHost): void {
@@ -676,17 +587,13 @@ export function getRemoteInstancesSafe(host: RuntimeStateHost) {
 }
 
 export function getRemoteOwnedSessionKeys(host: RuntimeStateHost): Set<string> {
-  return host.instanceDirectory.getRemoteOwnedSessionKeys(host.instanceId, process.cwd());
+  void host;
+  return new Set();
 }
 
 export function getInstanceSessionRefs(host: RuntimeStateHost): any[] {
-  return host.sessions.map((s: any) => ({
-    id: s.id,
-    tool: s.command,
-    backendSessionId: s.backendSessionId,
-    team: s.team,
-    worktreePath: host.sessionWorktreePaths.get(s.id),
-  }));
+  void host;
+  return [];
 }
 
 export function listDesktopWorktrees(

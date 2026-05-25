@@ -116,7 +116,6 @@ Each new tool should define as many of these as it can support:
 - `promptPatterns`
 - `turnPatterns`
 - `instructionsFile`
-- `sessionCapture`
 
 ## What A Good Integration Needs
 

@@ -9,7 +9,6 @@ import { getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
 import type {
   AgentOutputEvent,
   AlertEvent,
-  HistoryUpdateEvent,
   ReadyEvent,
   StreamErrorEvent,
   StreamEvent,
@@ -29,7 +28,7 @@ export interface HeartbeatHandle {
   stop: () => void;
 }
 
-const SSE_EVENT_NAMES = ["ready", "alert", "history_update", "agent_output", "error"] as const;
+const SSE_EVENT_NAMES = ["ready", "alert", "agent_output", "error"] as const;
 
 export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
   const { serviceEndpoint, sessionId, startLine, intervalMs, token, onEvent, onError } = options;
@@ -107,7 +106,6 @@ export function startHeartbeat(options: HeartbeatOptions): HeartbeatHandle {
 export type {
   AgentOutputEvent,
   AlertEvent,
-  HistoryUpdateEvent,
   ReadyEvent,
   StreamErrorEvent,
   StreamEvent,

@@ -50,7 +50,6 @@ vi.mock("./worktree-graveyard.js", async (importOriginal) => {
     ...actual,
     listWorktreeGraveyardEntries: vi.fn(() => []),
     listWorktreeGraveyardPaths: vi.fn(() => new Set<string>()),
-    writeWorktreeGraveyardEntries: vi.fn(),
   };
 });
 
@@ -65,7 +64,6 @@ vi.mock("../metadata-store.js", async (importOriginal) => {
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { getStatePath, initPaths } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
-import { writeWorktreeGraveyardEntries } from "./worktree-graveyard.js";
 import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
 
 describe("persistenceMethods", () => {
@@ -73,7 +71,6 @@ describe("persistenceMethods", () => {
     listWorktreesMock.mockReset();
     listWorktreesMock.mockReturnValue([]);
     spawnMock.mockReset();
-    vi.mocked(writeWorktreeGraveyardEntries).mockReset();
   });
 
   it("seeds desktop state when creating a worktree", () => {
@@ -539,85 +536,14 @@ describe("persistenceMethods", () => {
     ]);
   });
 
-  it("graveyards direct teammates with their parent worktree even across worktrees", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-graveyard-cross-worktree-team-"));
-    await initPaths(repoRoot);
-    const pending = new DashboardPendingActions(() => {});
+  it("blocks worktree graveyard until the runtime core owns it", async () => {
     const worktreePath = "/repo/.aimux/worktrees/demo";
-    try {
-      listWorktreesMock.mockReturnValue([
-        {
-          name: "demo",
-          branch: "demo",
-          path: worktreePath,
-          isBare: false,
-        },
-      ]);
-      const parent = {
-        id: "parent-1",
-        command: "claude",
-        toolConfigKey: "claude",
-        args: [],
-        worktreePath,
-        createdAt: "2026-05-01T00:00:00.000Z",
-      };
-      const teammate = {
-        id: "teammate-1",
-        command: "codex",
-        toolConfigKey: "codex",
-        args: [],
-        worktreePath: "/repo/.aimux/worktrees/other",
-        team: { teamId: "team-parent-1", parentSessionId: "parent-1", role: "reviewer" },
-        createdAt: "2026-05-02T00:00:00.000Z",
-      };
-      const independent = {
-        id: "independent-1",
-        command: "codex",
-        toolConfigKey: "codex",
-        args: [],
-        worktreePath: "/repo/.aimux/worktrees/other",
-      };
-      const host = {
-        dashboardPendingActions: pending,
-        footerFlash: "",
-        footerFlashTicks: 0,
-        syncSessionsFromTopology: vi.fn(),
-        listWorktreeGraveyardEntries: vi.fn(() => []),
-        invalidateDesktopStateSnapshot: vi.fn(),
-        refreshLocalDashboardModel: vi.fn(),
-        mode: "project-service",
-        tmuxRuntimeManager: {
-          listProjectManagedWindows: vi.fn(() => []),
-          killWindow: vi.fn(),
-        },
-        offlineServices: [],
-        buildLiveServiceStates: vi.fn(() => []),
-        offlineSessions: [parent, teammate, independent],
-        sessions: [],
-        sessionWorktreePaths: new Map(),
-        isSessionRuntimeLive: vi.fn(() => false),
-        saveState: vi.fn(),
-      };
-
-      await persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath);
-
-      expect(writeWorktreeGraveyardEntries).toHaveBeenCalledWith([
-        expect.objectContaining({
-          path: worktreePath,
-          agents: [expect.objectContaining({ id: "parent-1" })],
-        }),
-      ]);
-      expect(listTopologySessionStates({ statuses: ["graveyard"] })).toEqual([
-        expect.objectContaining({ id: "teammate-1" }),
-      ]);
-      expect(host.offlineSessions).toEqual([independent]);
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
+    await expect(persistenceMethods.graveyardDesktopWorktree.call({}, worktreePath)).rejects.toThrow(
+      "worktree graveyard requires the runtime core replacement",
+    );
   });
 
-  it("does not detach worktree services when graveyarding fails while waiting for agents to stop", async () => {
-    vi.useFakeTimers();
+  it("does not detach worktree services when blocked graveyarding is requested", async () => {
     const pending = new DashboardPendingActions(() => {});
     const worktreePath = "/repo/.aimux/worktrees/demo";
     const service = {
@@ -682,20 +608,14 @@ describe("persistenceMethods", () => {
       debug: vi.fn(),
     };
 
-    try {
-      const result = persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath);
-      const assertion = expect(result).rejects.toThrow('Timed out offlining agents for worktree "demo"');
-      await vi.advanceTimersByTimeAsync(10_100);
-      await assertion;
+    await expect(persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath)).rejects.toThrow(
+      "worktree graveyard requires the runtime core replacement",
+    );
 
-      expect(liveSession.kill).toHaveBeenCalledOnce();
-      expect(host.offlineServices).toEqual([service]);
-      expect(killWindow).not.toHaveBeenCalled();
-      expect(writeWorktreeGraveyardEntries).not.toHaveBeenCalled();
-      expect(pending.getWorktreeAction(worktreePath)).toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(liveSession.kill).not.toHaveBeenCalled();
+    expect(host.offlineServices).toEqual([service]);
+    expect(killWindow).not.toHaveBeenCalled();
+    expect(pending.getWorktreeAction(worktreePath)).toBeUndefined();
   });
 
   it("blocks direct teammate graveyard resurrection until the runtime core owns it", async () => {

@@ -1244,16 +1244,6 @@ describe("MetadataServer threads API", () => {
             },
           };
         },
-        readAgentHistory: ({ sessionId, lastN }) => ({
-          sessionId,
-          lastN: lastN ?? 20,
-          messages: [
-            {
-              role: "user",
-              parts: [{ type: "text", text: "hello" }],
-            },
-          ],
-        }),
       },
     });
     await server.start();
@@ -1600,23 +1590,9 @@ describe("MetadataServer threads API", () => {
     });
   });
 
-  it("reads agent history over HTTP", async () => {
+  it("rejects legacy agent history over HTTP", async () => {
     server?.stop();
-    server = new MetadataServer({
-      lifecycle: {
-        readAgentHistory: ({ sessionId, lastN }) => ({
-          sessionId,
-          lastN: lastN ?? 20,
-          messages: [
-            {
-              id: "msg_1",
-              role: "user",
-              parts: [{ type: "text", text: "what is in this image?" }],
-            },
-          ],
-        }),
-      },
-    });
+    server = new MetadataServer({});
     await server.start();
 
     const endpoint = server?.getAddress();
@@ -1624,16 +1600,12 @@ describe("MetadataServer threads API", () => {
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
     const historyRes = await fetch(`${base}/agents/history?sessionId=claude-1&lastN=5`);
-    const historyJson = (await historyRes.json()) as {
-      ok: boolean;
-      sessionId: string;
-      lastN: number;
-      messages: Array<{ id: string; role: string; parts: Array<{ type: string; text?: string }> }>;
-    };
-    expect(historyRes.ok).toBe(true);
-    expect(historyJson.sessionId).toBe("claude-1");
-    expect(historyJson.lastN).toBe(5);
-    expect(historyJson.messages[0]?.parts[0]?.text).toBe("what is in this image?");
+    const historyJson = (await historyRes.json()) as { ok: boolean; error: string };
+    expect(historyRes.status).toBe(410);
+    expect(historyJson).toEqual({
+      ok: false,
+      error: "agent message history requires the runtime core replacement",
+    });
   });
 
   it("streams agent output over SSE", async () => {

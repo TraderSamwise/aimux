@@ -9,7 +9,6 @@ import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
-import { readSessionMessages } from "../session-message-history.js";
 import { captureGitContext } from "../context/context-bridge.js";
 import type { SessionTeamMetadata } from "../team.js";
 
@@ -160,19 +159,6 @@ export function resolveLiveSessionTmuxTarget(host: SessionRuntimeHost, sessionId
   return undefined;
 }
 
-export async function readAgentHistory(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  lastN?: number,
-): Promise<{ sessionId: string; messages: ReturnType<typeof readSessionMessages>; lastN?: number }> {
-  resolveRunningSession(host, sessionId);
-  return {
-    sessionId,
-    messages: readSessionMessages(sessionId, { lastN: lastN ?? 20 }),
-    lastN: lastN ?? 20,
-  };
-}
-
 export async function interruptAgent(host: SessionRuntimeHost, sessionId: string): Promise<{ sessionId: string }> {
   const session = resolveRunningSession(host, sessionId);
   if (session.transport instanceof TmuxSessionTransport) {
@@ -311,8 +297,7 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
   if (idx === -1) return;
 
   const explicitStop = host.stoppingSessionIds.has(runtime.id);
-  const sessionMetadata = loadMetadataState().sessions[runtime.id];
-  const backendSessionId = runtime.backendSessionId ?? sessionMetadata?.backendSessionId;
+  const backendSessionId = runtime.backendSessionId;
   const shouldPreserveOffline = explicitStop || Boolean(backendSessionId) || uptime >= 10_000;
   if (shouldPreserveOffline && !host.offlineSessions.some((entry: any) => entry.id === runtime.id)) {
     host.offlineSessions.push({
@@ -374,7 +359,7 @@ export function buildTmuxWindowMetadata(
     command,
     args: host.sessionOriginalArgs.get(sessionId) ?? [],
     toolConfigKey: host.sessionToolKeys.get(sessionId) ?? command,
-    backendSessionId: runtime?.backendSessionId ?? sessionMetadata?.backendSessionId,
+    backendSessionId: runtime?.backendSessionId,
     team: runtime?.team ?? existing?.team,
     worktreePath: host.sessionWorktreePaths.get(sessionId),
     label: getSessionLabel(host, sessionId),

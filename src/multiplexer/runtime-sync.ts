@@ -1,5 +1,4 @@
 import type { InstanceDirectory } from "../instance-directory.js";
-import type { InstanceSessionRef } from "../instance-registry.js";
 
 export class MultiplexerRuntimeSync {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -13,12 +12,10 @@ export class MultiplexerRuntimeSync {
       getMode: () => "dashboard" | "project-service";
       getConfirmedRegistered: () => Set<string>;
       setConfirmedRegistered: (value: Set<string>) => void;
-      getInstanceSessionRefs: () => InstanceSessionRef[];
       syncSessionsFromTopology: () => void;
       loadOfflineTopologySessions: () => boolean;
       renderCurrentDashboardView: () => void;
       renderDashboard: () => void;
-      handleSessionClaimed: (sessionId: string) => void;
       writeStatuslineFile: () => void;
     },
   ) {}
@@ -30,19 +27,10 @@ export class MultiplexerRuntimeSync {
         this.deps.syncSessionsFromTopology();
         return;
       }
-      let dashboardNeedsRender = false;
-      const sessions = this.deps.getInstanceSessionRefs();
       this.deps.instanceDirectory
-        .reconcileHeartbeat(this.deps.instanceId, sessions, this.deps.cwd, this.deps.getConfirmedRegistered())
+        .reconcileHeartbeat(this.deps.instanceId, [], this.deps.cwd, this.deps.getConfirmedRegistered())
         .then((result) => {
-          for (const id of result.claimedIds) {
-            this.deps.handleSessionClaimed(id);
-            dashboardNeedsRender = true;
-          }
           this.deps.setConfirmedRegistered(result.confirmedIds);
-          if (dashboardNeedsRender && this.deps.getMode() === "dashboard") {
-            this.deps.renderCurrentDashboardView();
-          }
         })
         .catch(() => {});
 

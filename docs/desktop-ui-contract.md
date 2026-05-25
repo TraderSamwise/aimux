@@ -164,15 +164,12 @@ Preferred feedback model:
 - global footer/action bar for summarized in-flight actions
 - dedicated desktop screens for dashboard, activity, threads, plans, and graveyard
 
-Desktop orchestration UI can now:
+Desktop orchestration UI currently exposes read-only orchestration state while runtime-core writes are replaced:
 
-- compose direct messages
-- send handoffs
-- assign tasks
+- view direct-message and handoff threads
+- view assigned tasks
 - browse thread history
-- update thread status
-- accept or complete handoffs
-- accept, block, complete, reopen, approve, and request changes on workflow items
+- view workflow status
 
 Do not use tick-based loading heuristics.
 

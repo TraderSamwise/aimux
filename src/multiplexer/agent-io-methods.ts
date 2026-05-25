@@ -10,7 +10,6 @@ import {
   applySessionLabel as applySessionLabelImpl,
   deriveHeadline as deriveHeadlineImpl,
   getSessionLabel as getSessionLabelImpl,
-  readAgentHistory as readAgentHistoryImpl,
   readAgentOutput as readAgentOutputImpl,
   readStatusHeadline as readStatusHeadlineImpl,
   resolveRunningSession as resolveRunningSessionImpl,
@@ -198,10 +197,6 @@ export const agentIoMethods = {
 
   resolveRunningSession(this: any, sessionId: string): any {
     return resolveRunningSessionImpl(this, sessionId);
-  },
-
-  async readAgentHistory(this: any, sessionId: string, lastN?: number): Promise<any> {
-    return readAgentHistoryImpl(this, sessionId, lastN);
   },
 
   async interruptAgent(this: any, sessionId: string): Promise<{ sessionId: string }> {

@@ -1,5 +1,4 @@
 import {
-  claimSession,
   getRemoteInstances,
   registerInstance,
   unregisterInstance,
@@ -25,7 +24,6 @@ export interface InstanceDirectoryFns {
   registerInstance?: (instanceId: string, cwd: string) => Promise<InstanceInfo[]>;
   unregisterInstance?: (instanceId: string, cwd: string) => Promise<void>;
   updateHeartbeat?: (instanceId: string, sessions: InstanceSessionRef[], cwd: string) => Promise<string[]>;
-  claimSession?: (sessionId: string, fromInstanceId: string, cwd: string) => Promise<InstanceSessionRef | undefined>;
 }
 
 export class InstanceDirectory {
@@ -87,10 +85,6 @@ export class InstanceDirectory {
       confirmedIds: nextConfirmed,
       skippedClaimDetection,
     };
-  }
-
-  async claimSession(sessionId: string, fromInstanceId: string, cwd: string): Promise<InstanceSessionRef | undefined> {
-    return (this.fns.claimSession ?? claimSession)(sessionId, fromInstanceId, cwd);
   }
 
   buildSessionDirectoryEntries(

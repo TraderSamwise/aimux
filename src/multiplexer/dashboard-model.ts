@@ -330,7 +330,6 @@ function lifecycleFailureMessage(action: string, failures: Array<{ sessionId: st
 async function resumeOfflineAgentWithPending(
   host: DashboardModelHost,
   sessionId: string,
-  sessionSeed?: any,
 ): Promise<{ sessionId: string; status: "running" }> {
   return withMetadataSessionPending(
     host,
@@ -344,7 +343,7 @@ async function resumeOfflineAgentWithPending(
       host.resumeOfflineSession(offline);
       return { sessionId, status: "running" as const };
     },
-    findDashboardSessionSeed(host, sessionId, sessionSeed),
+    findDashboardSessionSeed(host, sessionId),
     () => waitForMetadataSessionRunning(host, sessionId),
   );
 }
@@ -352,9 +351,8 @@ async function resumeOfflineAgentWithPending(
 async function resumeOfflineAgentWithPendingAndSettle(
   host: DashboardModelHost,
   sessionId: string,
-  sessionSeed?: any,
 ): Promise<{ sessionId: string; status: "running" }> {
-  const result = await resumeOfflineAgentWithPending(host, sessionId, sessionSeed);
+  const result = await resumeOfflineAgentWithPending(host, sessionId);
   await waitForMetadataSessionRunning(host, sessionId);
   return result;
 }
@@ -362,7 +360,6 @@ async function resumeOfflineAgentWithPendingAndSettle(
 async function resumeAgentAndDirectTeammates(
   host: DashboardModelHost,
   sessionId: string,
-  sessionSeed?: any,
 ): Promise<{
   sessionId: string;
   status: "running";
@@ -375,12 +372,12 @@ async function resumeAgentAndDirectTeammates(
   }
 
   const teammates = isTeammateSession(offline) ? [] : selectDirectTeammates(host.offlineSessions ?? [], sessionId);
-  const result = await resumeOfflineAgentWithPendingAndSettle(host, sessionId, sessionSeed);
+  const result = await resumeOfflineAgentWithPendingAndSettle(host, sessionId);
   const teammateFailures: Array<{ sessionId: string; error: unknown }> = [];
 
   for (const teammate of teammates) {
     try {
-      await resumeOfflineAgentWithPendingAndSettle(host, teammate.id, toDashboardSessionSeed(teammate) ?? teammate);
+      await resumeOfflineAgentWithPendingAndSettle(host, teammate.id);
     } catch (error) {
       teammateFailures.push({ sessionId: teammate.id, error });
     }
@@ -1152,7 +1149,6 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           findDashboardSessionSeed(host, input.sessionId),
         ),
       readAgentOutput: (input: any) => host.readAgentOutput(input.sessionId, input.startLine),
-      readAgentHistory: (input: any) => host.readAgentHistory(input.sessionId, input.lastN),
     },
     onChange: () => {
       scheduleProjectServiceUiRefresh(host);

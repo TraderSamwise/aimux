@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -24,8 +24,7 @@ import {
   runProjectService,
   summarizeLaunchArgs,
 } from "./session-launch.js";
-import { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
-import { loadMetadataState, recordSessionBackendSessionIdMetadata, updateSessionMetadata } from "../metadata-store.js";
+import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 
 describe("createSession", () => {
   it("redacts sensitive launch arg values in debug summaries", () => {
@@ -48,111 +47,6 @@ describe("createSession", () => {
       "OPENAI_API_KEY=<redacted>",
       "PATH=/usr/bin",
     ]);
-  });
-
-  it("captures a Codex backend session id from the native session file containing the aimux session id", () => {
-    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-home-"));
-    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
-    mkdirSync(sessionDir, { recursive: true });
-    writeFileSync(
-      join(sessionDir, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"),
-      '{"message":"unrelated codex session"}\n',
-    );
-    writeFileSync(
-      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
-      '{"message":"This is an aimux-managed session with session ID codex-team"}\n',
-    );
-
-    expect(
-      captureBackendSessionIdFromSessionFiles(
-        {
-          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
-          pattern: "([0-9a-f-]+)\\.jsonl$",
-          delayMs: 0,
-        },
-        "codex-team",
-        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
-      ),
-    ).toBe("11111111-2222-3333-4444-555555555555");
-
-    rmSync(homeDir, { recursive: true, force: true });
-  });
-
-  it("does not guess a Codex backend session id when multiple native files mention the aimux session id", () => {
-    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-ambiguous-"));
-    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
-    mkdirSync(sessionDir, { recursive: true });
-    writeFileSync(
-      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
-      "This is an aimux-managed session with session ID codex-team\n",
-    );
-    writeFileSync(
-      join(sessionDir, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"),
-      "This is an aimux-managed session with session ID codex-team\n",
-    );
-
-    expect(
-      captureBackendSessionIdFromSessionFiles(
-        {
-          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
-          pattern: "([0-9a-f-]+)\\.jsonl$",
-          delayMs: 0,
-        },
-        "codex-team",
-        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
-      ),
-    ).toBeUndefined();
-
-    rmSync(homeDir, { recursive: true, force: true });
-  });
-
-  it("does not match session id prefixes while capturing Codex backend ids", () => {
-    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-prefix-"));
-    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
-    mkdirSync(sessionDir, { recursive: true });
-    writeFileSync(
-      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
-      "This is an aimux-managed session with session ID codex-10\n",
-    );
-
-    expect(
-      captureBackendSessionIdFromSessionFiles(
-        {
-          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
-          pattern: "([0-9a-f-]+)\\.jsonl$",
-          delayMs: 0,
-        },
-        "codex-1",
-        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
-      ),
-    ).toBeUndefined();
-
-    rmSync(homeDir, { recursive: true, force: true });
-  });
-
-  it("captures a Codex backend session id from the startup preamble even after the transcript grows", () => {
-    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-large-"));
-    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
-    mkdirSync(sessionDir, { recursive: true });
-    const filler = "x".repeat(300_000);
-    writeFileSync(
-      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
-      `{"message":"This is an aimux-managed session with session ID codex-team"}\n${filler}\n`,
-    );
-
-    expect(
-      captureBackendSessionIdFromSessionFiles(
-        {
-          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
-          pattern: "([0-9a-f-]+)\\.jsonl$",
-          delayMs: 0,
-        },
-        "codex-team",
-        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
-      ),
-    ).toBe("11111111-2222-3333-4444-555555555555");
-
-    rmSync(homeDir, { recursive: true, force: true });
   });
 
   it("does not inject startup preamble when explicitly suppressed", async () => {
@@ -798,13 +692,12 @@ describe("createSession", () => {
 });
 
 describe("migrateAgent", () => {
-  it("uses durable backend metadata when migrating a runtime that missed its backend id", async () => {
+  it("does not use durable backend metadata when migrating a runtime that missed its backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-migrate-"));
     const targetRoot = mkdtempSync(join(tmpdir(), "aimux-session-migrate-target-"));
     gitInit(repoRoot);
     gitInit(targetRoot);
     await initPaths(repoRoot);
-    recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
 
     const sessions: any[] = [];
     const sourceSession: any = {
@@ -829,7 +722,7 @@ describe("migrateAgent", () => {
       sessionTmuxTargets: new Map(),
       contextWatcher: { syncNow: vi.fn(async () => undefined) },
       sessionBootstrap: {
-        canResumeWithBackendSessionId: vi.fn(() => true),
+        canResumeWithBackendSessionId: vi.fn(() => false),
         composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
           ...originalArgs,
           ...resumeArgs,
@@ -861,14 +754,10 @@ describe("migrateAgent", () => {
 
     expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
       expect.objectContaining({ command: "codex" }),
-      "native-session",
+      undefined,
     );
-    expect(host.sessionBootstrap.composeToolArgs).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "codex" }),
-      expect.arrayContaining(["resume", "native-session"]),
-      ["--dangerously-bypass-approvals-and-sandbox"],
-    );
-    expect(sessions.find((session) => session.id === "codex-1")?.backendSessionId).toBe("native-session");
+    expect(host.sessionBootstrap.composeToolArgs).not.toHaveBeenCalled();
+    expect(sessions.find((session) => session.id === "codex-1")?.backendSessionId).toBeUndefined();
     expect(host.tmuxRuntimeManager.createWindow.mock.calls[0][2]).toBe(targetRoot);
     expect(host.registerManagedSession).toHaveBeenCalledWith(
       expect.anything(),
@@ -886,11 +775,10 @@ describe("migrateAgent", () => {
 });
 
 describe("focusSession", () => {
-  it("uses durable backend metadata when opening a session that missed its backend id", async () => {
+  it("does not use durable backend metadata when opening a session that missed its backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-focus-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
-    recordSessionBackendSessionIdMetadata("claude-1", "backend-1", repoRoot);
 
     const host: any = {
       sessions: [{ id: "claude-1" }],
@@ -909,7 +797,7 @@ describe("focusSession", () => {
 
     expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({
       id: "claude-1",
-      backendSessionId: "backend-1",
+      backendSessionId: undefined,
     });
     expect(host.saveState).toHaveBeenCalledOnce();
 
@@ -922,7 +810,6 @@ describe("resumeSessions", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-metadata-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
-    recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
     saveRuntimeTopologySessions({
       sessions: [
         {

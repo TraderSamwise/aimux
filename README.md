@@ -283,13 +283,11 @@ Navigation ownership rule:
 
 The browser/mobile client at `app/` exposes these flows directly over daemon (port 43190) and per-project metadata-server HTTP:
 
-- dashboard worktree/agent management
-- spawn, fork, rename, migrate, stop, kill
-- graveyard browse + resurrect
+- dashboard monitoring and read-only session views
+- graveyard browsing
 - worktree create + remove
 - activity, workflow, threads, plans, and graveyard secondary screens
-- direct message compose, handoff send/accept/complete, and task/review workflow actions
-- thread state updates and per-message delivery visibility
+- thread and workflow visibility
 
 For the lifecycle model, see [docs/runtime-lifecycle.md](docs/runtime-lifecycle.md).
 For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
@@ -755,11 +753,6 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
       "resumeArgs": ["--resume", "{sessionId}"],
       "resumeFallback": ["--continue"],
       "sessionIdFlag": ["--session-id", "{sessionId}"],
-      "sessionCapture": {
-        "dir": "{home}/.my-tool/sessions/{yyyy}/{mm}/{dd}",
-        "pattern": "([0-9a-f-]+)\\.json$",
-        "delayMs": 2000
-      },
       "promptPatterns": ["^> $", "^\\$ $"],
       "turnPatterns": ["^[>❯]\\s*(.+)"],
       "compactCommand": "claude --print --output-format text",
@@ -776,7 +769,6 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
 | `resumeByBackendSessionId` | Whether aimux's stored backend id is safe to pass to `resumeArgs` |
 | `resumeFallback` | Non-specific fallback resume args for explicit latest-session flows; targeted dashboard restore must not use these |
 | `sessionIdFlag` | Flag to set session ID at spawn time |
-| `sessionCapture` | Filesystem-based session ID capture (dir, regex pattern, delay) |
 | `promptPatterns` | Regex patterns for idle/prompt detection in status bar |
 | `turnPatterns` | Regex patterns for extracting conversation turns from output |
 | `compactCommand` | Shell command for LLM-powered history compaction |
@@ -784,10 +776,10 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
 
 ## Multi-Instance
 
-Run aimux in multiple terminal tabs for the same project. Each instance registers in `.aimux/instances.json` with a heartbeat. Agents from other instances appear inline in the dashboard with a `◈` icon.
+Run aimux in multiple terminal tabs for the same project. Each instance registers in `.aimux/instances.json` with a heartbeat. Session lifecycle and ownership stay in runtime topology; `instances.json` is liveness-only.
 
-- **Enter** on a remote agent takes it over (resumes in your instance)
-- `--resume` skips agents already owned by another live instance
+- Remote takeover through `instances.json` is disabled pending the runtime core replacement.
+- `--resume` no longer uses instance-registry session refs for ownership decisions.
 - When an instance exits, its agents become offline and visible to other instances
 - Dead instances are auto-pruned via PID checks and heartbeat staleness
 

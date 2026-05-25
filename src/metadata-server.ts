@@ -269,12 +269,6 @@ interface MetadataServerOptions {
     }) =>
       | Promise<{ sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput }>
       | { sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput };
-    readAgentHistory?: (input: {
-      sessionId: string;
-      lastN?: number;
-    }) =>
-      | Promise<{ sessionId: string; messages: unknown[]; lastN?: number }>
-      | { sessionId: string; messages: unknown[]; lastN?: number };
   };
 }
 
@@ -2453,23 +2447,7 @@ export class MetadataServer {
       }
 
       if (req.method === "GET" && url.pathname === "/agents/history") {
-        const sessionId = url.searchParams.get("sessionId")?.trim();
-        const lastNRaw = url.searchParams.get("lastN");
-        if (!sessionId) {
-          send(res, 400, { ok: false, error: "sessionId is required" });
-          return;
-        }
-        if (!this.options.lifecycle?.readAgentHistory) {
-          send(res, 501, { ok: false, error: "agent history not supported by this service" });
-          return;
-        }
-        const lastN = lastNRaw === null || lastNRaw.trim() === "" ? undefined : Number.parseInt(lastNRaw, 10);
-        if (lastNRaw !== null && Number.isNaN(lastN)) {
-          send(res, 400, { ok: false, error: "lastN must be an integer" });
-          return;
-        }
-        const result = await this.options.lifecycle.readAgentHistory({ sessionId, lastN });
-        send(res, 200, { ok: true, ...result });
+        send(res, 410, { ok: false, error: "agent message history requires the runtime core replacement" });
         return;
       }
 
@@ -2550,14 +2528,8 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/worktrees/graveyard") {
-        const body = (await readJson(req)) as { path: string };
-        if (!this.options.desktop?.graveyardWorktree) {
-          send(res, 501, { ok: false, error: "worktree graveyard not supported by this service" });
-          return;
-        }
-        const result = await this.options.desktop.graveyardWorktree(body);
-        this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        await readJson(req);
+        send(res, 410, { ok: false, error: "worktree graveyard requires the runtime core replacement" });
         return;
       }
 
@@ -2622,14 +2594,8 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/graveyard/worktrees/delete") {
-        const body = (await readJson(req)) as { path: string };
-        if (!this.options.desktop?.deleteGraveyardWorktree) {
-          send(res, 501, { ok: false, error: "worktree graveyard delete not supported by this service" });
-          return;
-        }
-        const result = await this.options.desktop.deleteGraveyardWorktree(body);
-        this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        await readJson(req);
+        send(res, 410, { ok: false, error: "worktree graveyard delete requires the runtime core replacement" });
         return;
       }
 

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import { getWorktreeGraveyardPath } from "../paths.js";
 import type { ServiceState, SessionState } from "./index.js";
@@ -22,10 +22,6 @@ export function listWorktreeGraveyardEntries(): WorktreeGraveyardEntry[] {
   } catch {
     return [];
   }
-}
-
-export function writeWorktreeGraveyardEntries(entries: WorktreeGraveyardEntry[]): void {
-  writeFileSync(getWorktreeGraveyardPath(), JSON.stringify(entries, null, 2) + "\n");
 }
 
 export function listWorktreeGraveyardPaths(): Set<string> {

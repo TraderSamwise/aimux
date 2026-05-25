@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { initProject, loadConfig, type SessionCaptureConfig } from "../config.js";
+import { initProject, loadConfig } from "../config.js";
 import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
@@ -15,15 +15,10 @@ import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
-import {
-  clearSessionTranscriptPath,
-  loadMetadataState,
-  recordSessionBackendSessionIdMetadata,
-} from "../metadata-store.js";
+import { clearSessionTranscriptPath } from "../metadata-store.js";
 import type { SessionTeamMetadata } from "../team.js";
-import { captureBackendSessionIdFromSessionFiles, extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
+import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
-export { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
 
 type SessionLaunchHost = any;
 
@@ -81,53 +76,6 @@ export function summarizeLaunchArgs(args: string[]): string[] {
     redactNext = SENSITIVE_OPTION_ARG_PATTERN.test(arg) && !arg.includes("=");
     return summarized;
   });
-}
-
-function scheduleBackendSessionCapture(input: {
-  host: SessionLaunchHost;
-  sessionId: string;
-  projectRoot: string;
-  capture?: SessionCaptureConfig;
-  startedAtMs: number;
-}): void {
-  if (!input.capture) return;
-  const delayMs = Math.max(0, input.capture.delayMs ?? 0);
-  const maxWaitMs = Math.max(delayMs, 60_000);
-  const deadlineMs = input.startedAtMs + maxWaitMs;
-  const attempt = () => {
-    const backendSessionId = captureBackendSessionIdFromSessionFiles(input.capture!, input.sessionId, {
-      startedAtMs: input.startedAtMs,
-    });
-    if (!backendSessionId) {
-      if (Date.now() < deadlineMs) {
-        const retry = setTimeout(attempt, 1000);
-        retry.unref?.();
-        return;
-      }
-      log.warn("session capture did not find exact backend id", "session", { sessionId: input.sessionId });
-      return;
-    }
-
-    try {
-      if (typeof input.host.recordSessionBackendSessionId === "function") {
-        input.host.recordSessionBackendSessionId(input.sessionId, backendSessionId);
-      } else {
-        recordSessionBackendSessionIdMetadata(input.sessionId, backendSessionId, input.projectRoot);
-      }
-      log.info("captured backend id", "session", {
-        sessionId: input.sessionId,
-        backendSessionId,
-      });
-    } catch (error) {
-      log.warn("failed to record captured backend id", "session", {
-        sessionId: input.sessionId,
-        backendSessionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
-  const timer = setTimeout(attempt, delayMs);
-  timer.unref?.();
 }
 
 function firstCodexPositionalArg(args: string[]): string | undefined {
@@ -586,15 +534,7 @@ export function createSession(
   if (session instanceof TmuxSessionTransport) {
     host.syncTmuxWindowMetadata(sessionId);
   }
-  if (!backendSessionId) {
-    scheduleBackendSessionCapture({
-      host,
-      sessionId,
-      projectRoot,
-      capture: toolCfg?.sessionCapture,
-      startedAtMs: sessionStartTime,
-    });
-  }
+  void projectRoot;
 
   host.activeIndex = host.sessions.length - 1;
   if (host.startedInDashboard && host.mode === "dashboard") {
@@ -638,8 +578,7 @@ export async function migrateAgent(
   const toolCfg = config.tools[toolConfigKey];
   const originalArgs = host.sessionOriginalArgs.get(sessionId) ?? [];
 
-  const sessionMetadata = loadMetadataState().sessions[sessionId];
-  const backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
+  const backendSessionId = session.backendSessionId;
   let migrateArgs = originalArgs;
   let historyContext = "";
   const useBackendResume = host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId);
@@ -776,9 +715,7 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
     } catch {}
   }
   if (typeof host.openLiveTmuxWindowForEntry === "function") {
-    const sessionMetadata = loadMetadataState().sessions[sid];
-    const backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
-    const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId });
+    const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId: session.backendSessionId });
     if (result === "opened") {
       host.saveState();
     }

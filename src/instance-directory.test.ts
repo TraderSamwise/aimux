@@ -37,29 +37,20 @@ describe("InstanceDirectory", () => {
     expect(directory.getRemoteOwnedSessionKeys("self", "/tmp")).toEqual(new Set());
   });
 
-  it("proxies heartbeat and claim calls", async () => {
+  it("proxies registration and heartbeat calls", async () => {
     const registerInstanceMock = vi.fn<() => Promise<InstanceInfo[]>>().mockResolvedValue([]);
     const unregisterInstanceMock = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     const updateHeartbeatMock = vi.fn<() => Promise<string[]>>().mockResolvedValue(["s1"]);
-    const claimSessionMock = vi
-      .fn<() => Promise<InstanceSessionRef | undefined>>()
-      .mockResolvedValue({ id: "s1", tool: "codex", backendSessionId: "backend-1" });
 
     const directory = new InstanceDirectory({
       registerInstance: registerInstanceMock as any,
       unregisterInstance: unregisterInstanceMock as any,
       updateHeartbeat: updateHeartbeatMock as any,
-      claimSession: claimSessionMock as any,
     });
 
     expect(await directory.registerInstance("self", "/tmp")).toEqual([]);
     await directory.unregisterInstance("self", "/tmp");
     expect(await directory.updateHeartbeat("self", [], "/tmp")).toEqual(["s1"]);
-    expect(await directory.claimSession("s1", "other-1", "/tmp")).toEqual({
-      id: "s1",
-      tool: "codex",
-      backendSessionId: "backend-1",
-    });
   });
 
   it("reconciles heartbeat claims and confirmed ids", async () => {

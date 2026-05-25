@@ -13,7 +13,7 @@ import { getDaemonUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-
 import { env } from "@/lib/env";
 import type { RelayTransport } from "@/lib/relay-transport";
 import type { DesktopState } from "@/lib/desktop-state";
-import type { ChatMessage, ParsedAgentOutput } from "@/lib/events";
+import type { ParsedAgentOutput } from "@/lib/events";
 
 let _relay: RelayTransport | null = null;
 export function setApiRelay(relay: RelayTransport | null): void {
@@ -168,22 +168,6 @@ export async function getProjectState(
   opts?: ApiOpts,
 ): Promise<ProjectStateResponse> {
   return callProjectJson<ProjectStateResponse>(endpoint, "GET", "/state", opts);
-}
-
-export interface AgentHistoryResponse {
-  sessionId: string;
-  messages: ChatMessage[];
-  lastN?: number;
-}
-
-export async function getAgentHistory(
-  endpoint: ServiceEndpoint,
-  sessionId: string,
-  lastN: number = 50,
-  opts?: ApiOpts,
-): Promise<AgentHistoryResponse> {
-  const path = `/agents/history?sessionId=${encodeURIComponent(sessionId)}&lastN=${lastN}`;
-  return callProjectJson<AgentHistoryResponse>(endpoint, "GET", path, opts);
 }
 
 export interface AgentOutputResponse {

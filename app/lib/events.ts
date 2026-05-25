@@ -1,7 +1,6 @@
 // SSE event taxonomy for the aimux project metadata server (`/events` endpoint).
-// Canonical server-side types live in src/project-events.ts (AlertEvent, HistoryUpdateEvent,
-// AlertKind). Redeclared here so the
-// Expo bundle stays hermetic.
+// Canonical server-side types live in src/project-events.ts (AlertEvent,
+// AlertKind). Redeclared here so the Expo bundle stays hermetic.
 
 export type AlertKind =
   | "notification"
@@ -38,15 +37,6 @@ export interface AlertEvent {
   forceNotify?: boolean;
 }
 
-export interface HistoryUpdateEvent {
-  type: "history_update";
-  projectId: string;
-  sessionId: string;
-  ts: string;
-  messages: ChatMessage[];
-  lastN?: number;
-}
-
 export interface ParsedAgentOutput {
   blocks?: Array<{ type?: string; kind?: string; text?: string; [k: string]: unknown }>;
   [k: string]: unknown;
@@ -69,7 +59,6 @@ export interface StreamErrorEvent {
 export type StreamEvent =
   | ReadyEvent
   | AlertEvent
-  | HistoryUpdateEvent
   | AgentOutputEvent
   | StreamErrorEvent;
 
@@ -101,7 +90,5 @@ export interface ChatMessage {
   actor?: ChatActor;
   shareId?: string;
   chatMode?: "single" | "multi";
-  deliveryState?: "sending" | "submitted" | "failed";
-  deliveryError?: string;
   [k: string]: unknown;
 }

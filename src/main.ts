@@ -39,7 +39,6 @@ import {
   loadMetadataEndpoint,
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   updateSessionMetadata,
-  recordSessionBackendSessionIdMetadata,
   clearSessionLogs,
   loadMetadataState,
   type MetadataTone,
@@ -392,21 +391,6 @@ async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSess
   if (!payloadSessionId) return explicitSessionId;
   const match = listTopologySessionStates().find((session) => session.backendSessionId === payloadSessionId);
   return match?.id ?? explicitSessionId;
-}
-
-function recordBackendSessionIdMetadataOnly(
-  sessionId: string,
-  backendSessionId: string,
-  projectRoot: string,
-): { sessionId: string; backendSessionId: string } {
-  const normalizedBackendSessionId = backendSessionId.trim();
-  if (!normalizedBackendSessionId) return { sessionId, backendSessionId: normalizedBackendSessionId };
-  recordSessionBackendSessionIdMetadata(sessionId, normalizedBackendSessionId, projectRoot);
-  return { sessionId, backendSessionId: normalizedBackendSessionId };
-}
-
-async function recordBackendSessionId(projectRoot: string, sessionId: string, backendSessionId: string): Promise<void> {
-  recordBackendSessionIdMetadataOnly(sessionId, backendSessionId, projectRoot);
 }
 
 async function resolveProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
@@ -2944,7 +2928,6 @@ program
     const sessionId = await resolveClaudeHookSessionId(opts.session, payload.session_id);
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     if (payload.session_id) {
-      await recordBackendSessionId(projectRoot, sessionId, payload.session_id);
       result.backendSessionId = payload.session_id;
     }
 

@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getStatePath, initPaths } from "../paths.js";
-import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import {
@@ -115,7 +114,6 @@ describe("resumeOfflineSession", () => {
   });
 
   it("does not use display metadata when resuming an incomplete offline row", () => {
-    recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
     const createSession = vi.fn();
     const host: any = {
       sessions: [],
@@ -161,7 +159,7 @@ describe("resumeOfflineSession", () => {
     ]);
   });
 
-  it("repairs a missing Codex backend id from the native session file before refusing restore", () => {
+  it("refuses restore without a topology-owned backend id instead of repairing from session files", () => {
     const captureDir = join(repoRoot, "codex-sessions");
     mkdirSync(captureDir, { recursive: true });
     writeFileSync(
@@ -189,7 +187,7 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [{ id: "codex-1" }],
       sessionLabels: new Map(),
       sessionBootstrap: {
-        canResumeWithBackendSessionId: vi.fn(() => true),
+        canResumeWithBackendSessionId: vi.fn(() => false),
       },
       getSessionLabel: vi.fn(),
       invalidateDesktopStateSnapshot: vi.fn(),
@@ -199,38 +197,25 @@ describe("resumeOfflineSession", () => {
       createSession,
     };
 
-    resumeOfflineSession(host, {
-      id: "codex-1",
-      command: "codex",
-      toolConfigKey: "codex",
-      args: [],
-      worktreePath: repoRoot,
-      createdAt: new Date().toISOString(),
-    });
+    expect(() =>
+      resumeOfflineSession(host, {
+        id: "codex-1",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        worktreePath: repoRoot,
+        createdAt: new Date().toISOString(),
+      }),
+    ).toThrow('Cannot restore session "codex-1" without an exact resumable backend session id');
 
     expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
       expect.objectContaining({ command: "codex" }),
-      "019e4837-66d5-7ab2-9bf6-bff1f958ecae",
+      undefined,
     );
-    expect(createSession).toHaveBeenCalledTimes(1);
-    expect(createSession.mock.calls[0]).toMatchObject([
-      "codex",
-      expect.arrayContaining(["resume", "019e4837-66d5-7ab2-9bf6-bff1f958ecae"]),
-      undefined,
-      "codex",
-      undefined,
-      undefined,
-      repoRoot,
-      "019e4837-66d5-7ab2-9bf6-bff1f958ecae",
-      "codex-1",
-      true,
-      true,
-      undefined,
-    ]);
+    expect(createSession).not.toHaveBeenCalled();
   });
 
   it("keeps the offline row backend id over stale metadata when resuming", () => {
-    recordSessionBackendSessionIdMetadata("codex-1", "backend-stale", repoRoot);
     const createSession = vi.fn();
     const host: any = {
       sessions: [],
@@ -343,7 +328,7 @@ describe("resumeOfflineSession", () => {
     expect(host.saveState).toHaveBeenCalledTimes(2);
   });
 
-  it("persists hook-discovered backend ids even when the runtime row is not loaded yet", () => {
+  it("rejects hook-discovered backend ids when the runtime row is not loaded", () => {
     saveRuntimeTopologySessions({
       sessions: [
         {
@@ -362,17 +347,16 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [],
     };
 
-    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-racy")).toEqual({
-      sessionId: "claude-racy",
-      backendSessionId: "backend-racy",
-    });
+    expect(() => recordSessionBackendSessionId(host, "claude-racy", "backend-racy")).toThrow(
+      'Agent "claude-racy" is not managed by this runtime',
+    );
 
     expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
-      "backend-racy",
+      undefined,
     );
   });
 
-  it("does not replace saved backend ids from a hook fallback without a loaded row", () => {
+  it("does not accept hook fallback backend ids without a loaded row", () => {
     saveRuntimeTopologySessions({
       sessions: [
         {
@@ -392,18 +376,16 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [],
     };
 
-    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-new")).toEqual({
-      sessionId: "claude-racy",
-      backendSessionId: "backend-saved",
-    });
+    expect(() => recordSessionBackendSessionId(host, "claude-racy", "backend-new")).toThrow(
+      'Agent "claude-racy" is not managed by this runtime',
+    );
 
     expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
       "backend-saved",
     );
   });
 
-  it("does not let stale metadata override saved state in hook fallback", () => {
-    recordSessionBackendSessionIdMetadata("claude-racy", "backend-stale", repoRoot);
+  it("does not let metadata create hook fallback authority without a loaded row", () => {
     saveRuntimeTopologySessions({
       sessions: [
         {
@@ -423,10 +405,9 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [],
     };
 
-    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-saved")).toEqual({
-      sessionId: "claude-racy",
-      backendSessionId: "backend-saved",
-    });
+    expect(() => recordSessionBackendSessionId(host, "claude-racy", "backend-saved")).toThrow(
+      'Agent "claude-racy" is not managed by this runtime',
+    );
 
     expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
       "backend-saved",
@@ -445,7 +426,6 @@ describe("resumeOfflineSession", () => {
   });
 
   it("does not let stale metadata override a known runtime backend id", () => {
-    recordSessionBackendSessionIdMetadata("claude-1", "backend-stale", repoRoot);
     const runtime = { id: "claude-1", command: "claude", backendSessionId: "backend-current" };
     const host: any = {
       sessions: [runtime],
@@ -463,22 +443,13 @@ describe("resumeOfflineSession", () => {
     expect(runtime.backendSessionId).toBe("backend-current");
   });
 
-  it("does not fill instance heartbeat refs from backend metadata", () => {
-    recordSessionBackendSessionIdMetadata("claude-racy", "backend-racy", repoRoot);
+  it("does not publish instance heartbeat session refs", () => {
     const host: any = {
       sessions: [{ id: "claude-racy", command: "claude" }],
       sessionWorktreePaths: new Map([["claude-racy", repoRoot]]),
     };
 
-    expect(getInstanceSessionRefs(host)).toEqual([
-      {
-        id: "claude-racy",
-        tool: "claude",
-        backendSessionId: undefined,
-        team: undefined,
-        worktreePath: repoRoot,
-      },
-    ]);
+    expect(getInstanceSessionRefs(host)).toEqual([]);
   });
 
   it("does not reload a starting session as offline from stale saved state", () => {
@@ -666,8 +637,6 @@ describe("resumeOfflineSession", () => {
   });
 
   it("ignores metadata backend ids while loading offline topology rows", () => {
-    recordSessionBackendSessionIdMetadata("claude-recoverable", "backend-from-metadata", repoRoot);
-    recordSessionBackendSessionIdMetadata("metadata-only", "backend-metadata-only", repoRoot);
     const host: any = {
       sessions: [],
       offlineSessions: [],
@@ -721,8 +690,6 @@ describe("resumeOfflineSession", () => {
       },
       debug: vi.fn(),
     };
-    recordSessionBackendSessionIdMetadata("claude-recoverable", "backend-from-metadata", repoRoot);
-
     seedTopologySessions([
       {
         id: "claude-recoverable",

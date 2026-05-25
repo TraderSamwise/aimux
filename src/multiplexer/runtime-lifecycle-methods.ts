@@ -5,7 +5,6 @@ import { closeDebug, debug } from "../debug.js";
 import { loadConfig } from "../config.js";
 import { getStatePath } from "../paths.js";
 import { buildAimuxAgentInstructions } from "../session-bootstrap.js";
-import type { InstanceSessionRef } from "../instance-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
@@ -17,7 +16,6 @@ import {
   getRemoteInstancesSafe as getRemoteInstancesSafeImpl,
   getRemoteOwnedSessionKeys as getRemoteOwnedSessionKeysImpl,
   graveyardSession as graveyardSessionImpl,
-  handleSessionClaimed as handleSessionClaimedImpl,
   isSessionRuntimeLive as isSessionRuntimeLiveImpl,
   loadOfflineServices as loadOfflineServicesImpl,
   loadOfflineTopologySessions as loadOfflineTopologySessionsImpl,
@@ -114,13 +112,12 @@ export type RuntimeLifecycleMethods = {
     backendSessionId: string,
   ): { sessionId: string; backendSessionId: string };
   startHeartbeat(this: Multiplexer): void;
-  handleSessionClaimed(this: Multiplexer, sessionId: string): void;
   stopHeartbeat(this: Multiplexer): void;
   startProjectServiceRefresh(this: Multiplexer): void;
   stopProjectServiceRefresh(this: Multiplexer): void;
   getRemoteInstancesSafe(this: Multiplexer): ReturnType<typeof getRemoteInstancesSafeImpl>;
   getRemoteOwnedSessionKeys(this: Multiplexer): Set<string>;
-  getInstanceSessionRefs(this: Multiplexer): InstanceSessionRef[];
+  getInstanceSessionRefs(this: Multiplexer): any[];
   saveState(this: Multiplexer): void;
   teardown(this: Multiplexer): void;
   cleanup(this: Multiplexer): void;
@@ -234,9 +231,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   },
   startHeartbeat(this: Multiplexer) {
     startHeartbeatImpl(this);
-  },
-  handleSessionClaimed(this: Multiplexer, sessionId) {
-    handleSessionClaimedImpl(this, sessionId);
   },
   stopHeartbeat(this: Multiplexer) {
     stopHeartbeatImpl(this);

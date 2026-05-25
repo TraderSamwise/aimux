@@ -15,23 +15,16 @@ import { loadDaemonInfo } from "../daemon.js";
 import { type DashboardService, type DashboardSession } from "../dashboard/index.js";
 import { getProjectStateDir, getStatePath } from "../paths.js";
 import { loadMetadataState } from "../metadata-store.js";
-import { renderCurrentDashboardView as renderCurrentDashboardViewImpl, stopSessionToOffline } from "./runtime-state.js";
+import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
 import {
   listWorktreeGraveyardEntries as listWorktreeGraveyardEntriesImpl,
   listWorktreeGraveyardPaths,
-  writeWorktreeGraveyardEntries,
-  type WorktreeGraveyardEntry,
 } from "./worktree-graveyard.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
-import { isTeammateSession, selectDirectTeammates } from "../team.js";
-import {
-  listTopologySessionStates,
-  topologySessionToSessionState,
-  upsertTopologySession,
-} from "../runtime-core/topology-sessions.js";
-import { createRuntimeTopologyStore } from "../runtime-core/topology-store.js";
+import { isTeammateSession } from "../team.js";
+import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 import {
   findMainRepo,
   getWorktreeBaseDir,
@@ -448,109 +441,9 @@ export const persistenceMethods = {
   },
 
   async graveyardDesktopWorktree(this: any, path: string): Promise<{ path: string; status: "graveyarded" }> {
-    this.syncSessionsFromTopology();
-
-    const mainRepo = findMainRepo();
-    if (path === mainRepo) {
-      throw new Error("Cannot graveyard the main checkout");
-    }
-
-    const matching = listAllWorktrees()
-      .filter((worktree) => !worktree.isBare)
-      .find((worktree) => worktree.path === path);
-    if (!matching) {
-      throw new Error(`Worktree "${path}" not found`);
-    }
-
-    const worktreeGraveyardEntries = this.listWorktreeGraveyardEntries() as WorktreeGraveyardEntry[];
-    if (worktreeGraveyardEntries.some((entry: WorktreeGraveyardEntry) => entry.path === path)) {
-      throw new Error(`Worktree "${matching.name}" is already in the graveyard`);
-    }
-
-    let pendingSet = false;
-    const setGraveyardPending = () => {
-      this.dashboardPendingActions.setWorktreeAction(path, "graveyarding", {
-        timeoutMs: 180_000,
-        onTimeout: () => {
-          const message = `Timed out graveyarding worktree "${matching.name}"`;
-          recordDashboardFailure(this, {
-            targetKind: "worktree",
-            operation: "graveyard",
-            title: `Failed to graveyard worktree "${matching.name}"`,
-            message,
-            worktreePath: path,
-            worktreeName: matching.name,
-          });
-          this.footerFlash = message;
-          this.footerFlashTicks = 5;
-          refreshDashboardWorktreeProjection(this);
-        },
-      });
-      pendingSet = true;
-      refreshDashboardWorktreeProjection(this);
-    };
-
-    setGraveyardPending();
-    try {
-      const baseAgents = [
-        ...this.sessions.filter((session: any) => this.sessionWorktreePaths.get(session.id) === path),
-        ...this.offlineSessions.filter((session: any) => session.worktreePath === path),
-      ].filter((session: any) => !isTeammateSession(session));
-      const directTeammateIds = new Set<string>();
-      for (const parent of baseAgents) {
-        for (const teammate of selectDirectTeammates([...this.sessions, ...this.offlineSessions], parent.id)) {
-          directTeammateIds.add(teammate.id);
-        }
-      }
-      const liveSessions = this.sessions.filter(
-        (session: any) =>
-          (this.sessionWorktreePaths.get(session.id) === path || directTeammateIds.has(session.id)) &&
-          this.isSessionRuntimeLive(session) &&
-          !session.exited,
-      );
-      for (const session of liveSessions) {
-        stopSessionToOffline(this, session);
-      }
-
-      await waitForWorktreeSessionsToStop(this, path, directTeammateIds);
-
-      const attachedServices = collectWorktreeServices(this, path);
-      const attachedAgents = collectWorktreeAgents(this, path, directTeammateIds);
-      const worktreeAgents = attachedAgents.filter(
-        (agent) => agent.worktreePath === path || !directTeammateIds.has(agent.id),
-      );
-      const crossWorktreeTeammates = attachedAgents.filter(
-        (agent) => directTeammateIds.has(agent.id) && agent.worktreePath !== path,
-      );
-      appendFlatGraveyardAgents(crossWorktreeTeammates);
-
-      const nextEntries = [
-        ...worktreeGraveyardEntries.filter((entry: WorktreeGraveyardEntry) => entry.path !== path),
-        {
-          name: matching.name,
-          path: matching.path,
-          branch: matching.branch,
-          createdAt: matching.createdAt,
-          graveyardedAt: new Date().toISOString(),
-          agents: worktreeAgents,
-          services: attachedServices,
-        },
-      ];
-      writeWorktreeGraveyardEntries(nextEntries);
-      this.worktreeGraveyardEntries = nextEntries;
-
-      detachWorktreeServices(this, path);
-      this.offlineSessions = this.offlineSessions.filter(
-        (session: any) => session.worktreePath !== path && !directTeammateIds.has(session.id),
-      );
-      this.saveState();
-      return { path, status: "graveyarded" };
-    } finally {
-      if (pendingSet) {
-        this.dashboardPendingActions.clearWorktreeAction(path);
-        refreshDashboardWorktreeProjection(this);
-      }
-    }
+    void this;
+    void path;
+    throw new Error("worktree graveyard requires the runtime core replacement");
   },
 
   async resurrectGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "offline" }> {
@@ -560,66 +453,9 @@ export const persistenceMethods = {
   },
 
   async deleteGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "removed" }> {
-    const entries = this.listWorktreeGraveyardEntries() as WorktreeGraveyardEntry[];
-    const entry = entries.find((candidate: WorktreeGraveyardEntry) => candidate.path === path);
-    if (!entry) {
-      throw new Error(`Graveyard worktree "${path}" not found`);
-    }
-
-    const mainRepo = findMainRepo();
-    if (path !== mainRepo) {
-      if (!existsSync(path)) {
-        await removeOrphanedDesktopWorktree(this, mainRepo, path);
-      } else {
-        await new Promise<void>((resolve, reject) => {
-          let stderr = "";
-          let child;
-          try {
-            child = spawn("git", ["worktree", "remove", path, "--force"], {
-              cwd: mainRepo,
-              stdio: ["ignore", "ignore", "pipe"],
-            });
-          } catch (error) {
-            reject(error);
-            return;
-          }
-
-          child.stderr.on("data", (chunk: Buffer) => {
-            stderr += chunk.toString();
-          });
-
-          child.on("error", reject);
-          child.on("close", (code: number | null) => {
-            if (code === 0) {
-              resolve();
-              return;
-            }
-            const detail = stderr
-              .split("\n")
-              .map((line) => line.trim())
-              .filter(Boolean)
-              .at(-1);
-            reject(new Error(detail || `git worktree remove exited with code ${code ?? 1}`));
-          });
-        });
-      }
-    }
-
-    const nextEntries = entries.filter((candidate: WorktreeGraveyardEntry) => candidate.path !== path);
-    writeWorktreeGraveyardEntries(nextEntries);
-    this.worktreeGraveyardEntries = nextEntries;
-    this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
-    this.offlineServices = this.offlineServices.filter((service: any) => service.worktreePath !== path);
-    removeFlatGraveyardAgentsForWorktree(path);
-    this.saveState();
-    this.invalidateDesktopStateSnapshot();
-    this.refreshLocalDashboardModel();
-    this.metadataServer?.notifyChange?.();
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    }
-
-    return { path, status: "removed" };
+    void this;
+    void path;
+    throw new Error("worktree graveyard delete requires the runtime core replacement");
   },
 
   createDesktopWorktree(this: any, name: string): { path: string; status: "creating" | "created" } {
@@ -898,7 +734,6 @@ export const persistenceMethods = {
 
         this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
         this.offlineServices = this.offlineServices.filter((service: any) => service.worktreePath !== path);
-        removeFlatGraveyardAgentsForWorktree(path);
         this.saveState();
         clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
         resolveRemoval({ path, status: "removed" });
@@ -997,56 +832,6 @@ function sortDesktopWorktrees(
   });
 }
 
-function collectWorktreeAgents(host: any, path: string, additionalSessionIds = new Set<string>()): any[] {
-  const byId = new Map<string, any>();
-  for (const session of host.offlineSessions) {
-    if (session.worktreePath !== path && !additionalSessionIds.has(session.id)) continue;
-    byId.set(session.id, session);
-  }
-  return [...byId.values()].sort((a, b) => {
-    const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
-    const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
-    return bTime - aTime || a.id.localeCompare(b.id);
-  });
-}
-
-function collectWorktreeServices(host: any, path: string): any[] {
-  const byId = new Map<string, any>();
-  for (const service of host.offlineServices ?? []) {
-    if (service.worktreePath !== path) continue;
-    byId.set(service.id, service);
-  }
-  for (const service of host.buildLiveServiceStates?.() ?? []) {
-    if (service.worktreePath !== path) continue;
-    byId.set(service.id, service);
-  }
-  return [...byId.values()].sort((a, b) => {
-    const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
-    const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
-    return bTime - aTime || a.id.localeCompare(b.id);
-  });
-}
-
-async function waitForWorktreeSessionsToStop(
-  host: any,
-  path: string,
-  additionalSessionIds = new Set<string>(),
-  timeoutMs = 10_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const remaining = host.sessions.some(
-      (session: any) =>
-        (host.sessionWorktreePaths.get(session.id) === path || additionalSessionIds.has(session.id)) &&
-        host.isSessionRuntimeLive(session) &&
-        !session.exited,
-    );
-    if (!remaining) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`Timed out offlining agents for worktree "${basename(path)}"`);
-}
-
 async function removeOrphanedDesktopWorktree(host: any, mainRepo: string, path: string): Promise<void> {
   await pruneGitWorktrees(mainRepo);
   if (existsSync(path)) {
@@ -1095,35 +880,4 @@ function markLifecycleUsed(host: any, itemId: string): void {
       });
     }
   } catch {}
-}
-
-function takeFlatGraveyardAgentsForWorktree(path: string): any[] {
-  const store = createRuntimeTopologyStore();
-  try {
-    let matching: any[] = [];
-    store.update((topology) => {
-      matching = topology.sessions
-        .filter((entry) => entry.status === "graveyard" && entry.worktreePath === path)
-        .map((entry) => topologySessionToSessionState(entry, topology));
-      if (matching.length > 0) {
-        const matchingIds = new Set(matching.map((entry) => entry.id));
-        topology.sessions = topology.sessions.filter((entry) => !matchingIds.has(entry.id));
-      }
-      return topology;
-    });
-    return matching;
-  } catch {
-    return [];
-  }
-}
-
-function appendFlatGraveyardAgents(agents: any[]): void {
-  if (agents.length === 0) return;
-  for (const agent of agents) {
-    if (agent?.id) upsertTopologySession(agent, "graveyard");
-  }
-}
-
-function removeFlatGraveyardAgentsForWorktree(path: string): void {
-  void takeFlatGraveyardAgentsForWorktree(path);
 }

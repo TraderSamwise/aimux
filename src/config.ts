@@ -71,15 +71,6 @@ export interface AimuxConfig {
   tools: Record<string, ToolConfig>;
 }
 
-export interface SessionCaptureConfig {
-  /** Directory to watch for new files. Supports {home}, {yyyy}, {mm}, {dd} */
-  dir: string;
-  /** Regex to extract session ID from filename */
-  pattern: string;
-  /** Delay before first check in ms */
-  delayMs: number;
-}
-
 export interface ToolConfig {
   command: string;
   args: string[];
@@ -99,8 +90,6 @@ export interface ToolConfig {
   resumeFallback?: string[];
   /** Flag to set a session ID when starting, with {sessionId} placeholder, e.g. ["--session-id", "{sessionId}"] */
   sessionIdFlag?: string[];
-  /** How to capture backend session ID when sessionIdFlag isn't available */
-  sessionCapture?: SessionCaptureConfig;
   /** File to write preamble instructions to (created on start, removed on exit), e.g. "AGENTS.md" */
   instructionsFile?: string;
   /** Regex patterns that indicate the tool is idle/waiting for input */
@@ -169,11 +158,6 @@ const DEFAULT_CONFIG: AimuxConfig = {
       resumeByBackendSessionId: true,
       resumeFallback: ["resume", "--last"],
       instructionsFile: "AGENTS.md",
-      sessionCapture: {
-        dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
-        pattern: "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.jsonl$",
-        delayMs: 2000,
-      },
       promptPatterns: ["^> $"],
       turnPatterns: ["^[>❯]\\s*(.+)"],
     },

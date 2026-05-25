@@ -334,10 +334,6 @@ export function getAttachmentsDir(): string {
   return join(getLocalAimuxDir(), "attachments");
 }
 
-export function getSessionMessagesDir(): string {
-  return join(getLocalAimuxDir(), "session-messages");
-}
-
 /** Escape hatch for cross-worktree operations. Prefer the no-arg variants above. */
 export function getAimuxDirFor(cwd: string): string {
   return join(resolveRepoRoot(cwd), ".aimux");
@@ -346,16 +342,7 @@ export function getAimuxDirFor(cwd: string): string {
 function ensureLocalSharedDirs(): void {
   const localDir = getLocalAimuxDir();
   mkdirSync(localDir, { recursive: true });
-  for (const subdir of [
-    "plans",
-    "context",
-    "history",
-    "tasks",
-    "status",
-    "threads",
-    "attachments",
-    "session-messages",
-  ]) {
+  for (const subdir of ["plans", "context", "history", "tasks", "status", "threads", "attachments"]) {
     mkdirSync(join(localDir, subdir), { recursive: true });
   }
 }

@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, w
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getStatePath, initPaths } from "../paths.js";
-import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
 import { loadStateStatic, runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 
@@ -459,7 +458,6 @@ describe("runtime lifecycle state persistence", () => {
   });
 
   it("does not fill missing live backend ids from metadata while saving state", () => {
-    recordSessionBackendSessionIdMetadata("claude-live", "backend-from-metadata", repoRoot);
     const runtime = {
       id: "claude-live",
       command: "claude",
@@ -491,7 +489,6 @@ describe("runtime lifecycle state persistence", () => {
   });
 
   it("does not replace a known runtime backend id with conflicting metadata", () => {
-    recordSessionBackendSessionIdMetadata("claude-live", "backend-stale", repoRoot);
     const runtime = {
       id: "claude-live",
       command: "claude",
