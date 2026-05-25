@@ -5,7 +5,6 @@ import { closeDebug, debug } from "../debug.js";
 import { loadConfig } from "../config.js";
 import { getStatePath } from "../paths.js";
 import { buildAimuxAgentInstructions } from "../session-bootstrap.js";
-import { loadMetadataState } from "../metadata-store.js";
 import type { InstanceSessionRef } from "../instance-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
@@ -35,11 +34,10 @@ import {
   syncSessionsFromTopology as syncSessionsFromTopologyImpl,
 } from "./runtime-state.js";
 
-function sanitizeOfflineSessionState(session: SessionState, metadataState = loadMetadataState()): SessionState {
+function sanitizeOfflineSessionState(session: SessionState): SessionState {
   const { tmuxTarget: _tmuxTarget, ...rest } = session;
   return {
     ...rest,
-    backendSessionId: rest.backendSessionId ?? metadataState.sessions[rest.id]?.backendSessionId,
     lifecycle: "offline",
   };
 }
@@ -260,7 +258,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   },
   saveState(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
-    const metadataState = loadMetadataState();
     const liveSessions = mux.sessions
       .filter((s: SessionRuntime) => !("stoppingSessionIds" in mux) || !(mux as any).stoppingSessionIds?.has?.(s.id))
       .filter((s: SessionRuntime) => this.isSessionRuntimeLive(s))
@@ -272,7 +269,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
         args: mux.sessionOriginalArgs.get(s.id) ?? [],
         lifecycle: "live" as const,
         createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
-        backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
+        backendSessionId: s.backendSessionId,
         team: s.team,
         worktreePath: mux.sessionWorktreePaths.get(s.id),
         label: this.getSessionLabel(s.id),
@@ -281,7 +278,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       }));
     const liveKeys = new Set(liveSessions.map(sessionStateKey));
     const offlineSessions = mux.offlineSessions
-      .map((session) => sanitizeOfflineSessionState(session, metadataState))
+      .map((session) => sanitizeOfflineSessionState(session))
       .filter((session) => !liveKeys.has(sessionStateKey(session)));
     const mySessions = dedupeSessionStates([...liveSessions, ...offlineSessions]);
     const removedServiceIds = mux.removedServiceIds ?? new Set<string>();

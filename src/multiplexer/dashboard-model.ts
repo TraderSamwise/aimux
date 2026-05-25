@@ -661,7 +661,7 @@ export function computeDashboardSessions(
     sessions: host.sessions.map((session: any) => ({
       id: session.id,
       command: session.command,
-      backendSessionId: session.backendSessionId ?? metadata[session.id]?.backendSessionId,
+      backendSessionId: session.backendSessionId,
       team: session.team,
       createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
       status: session.status,
@@ -1002,7 +1002,6 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       removeWorktree: ({ path }: any) => host.removeDesktopWorktree(path),
       graveyardWorktree: ({ path }: any) => host.graveyardDesktopWorktree(path),
       listWorktreeGraveyard: () => host.listWorktreeGraveyardEntries(),
-      resurrectGraveyardWorktree: ({ path }: any) => host.resurrectGraveyardWorktree(path),
       deleteGraveyardWorktree: ({ path }: any) => host.deleteGraveyardWorktree(path),
       createService: ({ command, worktreePath, serviceId }: any) =>
         host.createService(command ?? "", worktreePath, { serviceId }),
@@ -1033,7 +1032,6 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       resumeAgent: ({ sessionId }: any) =>
         enqueueProjectServiceAgentResume(host, () => resumeAgentAndDirectTeammates(host, sessionId)),
       listGraveyard: () => host.listGraveyardEntries(),
-      resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
     },
     threads: {
       sendMessage: (input: any) => host.sendOrchestrationMessage(input),
@@ -1153,8 +1151,6 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           () => host.sendAgentToGraveyard(input.sessionId),
           findDashboardSessionSeed(host, input.sessionId),
         ),
-      recordBackendSessionId: (input: any) =>
-        host.recordSessionBackendSessionId(input.sessionId, input.backendSessionId),
       readAgentOutput: (input: any) => host.readAgentOutput(input.sessionId, input.startLine),
       readAgentHistory: (input: any) => host.readAgentHistory(input.sessionId, input.lastN),
     },

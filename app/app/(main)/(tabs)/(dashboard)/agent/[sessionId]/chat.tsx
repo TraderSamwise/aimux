@@ -378,7 +378,7 @@ export default function ChatScreen() {
                 {session?.label || sessionId || "Unknown session"}
               </Text>
               <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                {session?.tool ?? ""} · {session?.status ?? "unknown"}
+                {session?.command ?? ""} · {session?.status ?? "unknown"}
               </Text>
             </View>
             <View className="flex-row items-center">
@@ -422,7 +422,7 @@ export default function ChatScreen() {
               {activeShare ? (
                 <View className="flex-row items-center justify-between gap-3">
                   <View className="flex-1">
-                    <Text className="text-sm font-medium text-foreground">Shared chat</Text>
+                    <Text className="text-sm font-medium text-foreground">Shared session view</Text>
                     <Text className="text-xs text-muted-foreground mt-1" numberOfLines={1}>
                       Connected to {activeShare.ownerUserId}
                     </Text>

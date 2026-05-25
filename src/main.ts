@@ -116,11 +116,7 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.
 import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/service-state-snapshot.js";
 import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
-import {
-  listTopologySessionStates,
-  resurrectTopologySession,
-  updateTopologySessionBackendId,
-} from "./runtime-core/topology-sessions.js";
+import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -398,29 +394,19 @@ async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSess
   return match?.id ?? explicitSessionId;
 }
 
-function recordBackendSessionIdInState(
+function recordBackendSessionIdMetadataOnly(
   sessionId: string,
   backendSessionId: string,
   projectRoot: string,
-): {
-  sessionId: string;
-  backendSessionId: string;
-} {
+): { sessionId: string; backendSessionId: string } {
   const normalizedBackendSessionId = backendSessionId.trim();
-  if (!normalizedBackendSessionId) {
-    recordSessionBackendSessionIdMetadata(sessionId, normalizedBackendSessionId, projectRoot);
-    return { sessionId, backendSessionId: normalizedBackendSessionId };
-  }
-  const selectedBackendSessionId =
-    updateTopologySessionBackendId(sessionId, normalizedBackendSessionId) ?? normalizedBackendSessionId;
-  recordSessionBackendSessionIdMetadata(sessionId, selectedBackendSessionId, projectRoot);
-  return { sessionId, backendSessionId: selectedBackendSessionId };
+  if (!normalizedBackendSessionId) return { sessionId, backendSessionId: normalizedBackendSessionId };
+  recordSessionBackendSessionIdMetadata(sessionId, normalizedBackendSessionId, projectRoot);
+  return { sessionId, backendSessionId: normalizedBackendSessionId };
 }
 
 async function recordBackendSessionId(projectRoot: string, sessionId: string, backendSessionId: string): Promise<void> {
-  await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/backend-session", { sessionId, backendSessionId }, () =>
-    recordBackendSessionIdInState(sessionId, backendSessionId, projectRoot),
-  );
+  recordBackendSessionIdMetadataOnly(sessionId, backendSessionId, projectRoot);
 }
 
 async function resolveProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
@@ -2483,18 +2469,14 @@ graveyardCmd
   .action(async (id: string, opts: { project?: string; json?: boolean }) => {
     await prepareProjectContext(opts.project);
     try {
-      const restored = resurrectTopologySession(id);
-      if (!restored) {
-        console.error(`Agent "${id}" not found in graveyard.`);
-        process.exit(1);
-      }
+      void id;
+      const error = "agent graveyard resurrection requires the runtime core replacement";
       if (opts.json) {
         console.log(
           JSON.stringify(
             {
-              ok: true,
-              sessionId: id,
-              status: "offline",
+              ok: false,
+              error,
             },
             null,
             2,
@@ -2502,7 +2484,7 @@ graveyardCmd
         );
         return;
       }
-      console.log(`Resurrected "${id}". It will appear as offline next time you start aimux.`);
+      throw new Error(error);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);

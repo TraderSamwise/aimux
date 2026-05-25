@@ -331,10 +331,8 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
   });
 
   const ownedByOthers = host.getRemoteOwnedSessionKeys();
-  const metadata = loadMetadataState().sessions;
-
   for (const saved of sessionsToResume) {
-    const backendSessionId = saved.backendSessionId ?? metadata[saved.id]?.backendSessionId;
+    const backendSessionId = saved.backendSessionId;
     if (ownedByOthers.has(saved.id) || (backendSessionId && ownedByOthers.has(backendSessionId))) {
       log.warn("skipping resume owned by another instance", "session", {
         sessionId: saved.id,
@@ -346,7 +344,7 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
     const toolCfg = config.tools[saved.toolConfigKey];
     if (!toolCfg) continue;
 
-    if (!host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId)) {
+    if (!backendSessionId || !host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId)) {
       console.error(
         `Skipping saved session "${saved.id}" because "${saved.toolConfigKey}" has no exact resumable backend session id.`,
       );

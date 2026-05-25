@@ -682,12 +682,10 @@ describe("MetadataServer threads API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "child" }),
     });
-    expect(res.ok).toBe(true);
+    expect(res.status).toBe(410);
     expect((await res.json()) as Record<string, unknown>).toMatchObject({
-      ok: true,
-      sessionId: "child",
-      teammateSessionId: "child",
-      status: "offline",
+      ok: false,
+      error: expect.stringContaining("runtime core replacement"),
     });
 
     const foreign = await fetch(`${base}/agents/teammates/resurrect`, {
@@ -696,9 +694,9 @@ describe("MetadataServer threads API", () => {
       body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "other-child" }),
     });
     const foreignBody = (await foreign.json()) as { ok: boolean; error: string };
-    expect(foreign.status).toBe(404);
-    expect(foreignBody.error).toContain("graveyard teammate");
-    expect(calls).toEqual(["resurrect:child"]);
+    expect(foreign.status).toBe(410);
+    expect(foreignBody.error).toContain("runtime core replacement");
+    expect(calls).toEqual([]);
   });
 
   it("passes reused teammate creation responses over HTTP", async () => {

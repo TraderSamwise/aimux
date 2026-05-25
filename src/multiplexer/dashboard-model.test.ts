@@ -236,7 +236,6 @@ describe("metadata pending actions", () => {
       renameAgent: vi.fn(),
       migrateAgent: vi.fn(),
       killAgent: vi.fn(),
-      recordBackendSessionId: vi.fn(),
       readAgentOutput: vi.fn(),
       readAgentHistory: vi.fn(),
     };
@@ -377,7 +376,6 @@ describe("metadata pending actions", () => {
       renameAgent: vi.fn(),
       migrateAgent: vi.fn(),
       killAgent: vi.fn(),
-      recordBackendSessionId: vi.fn(),
       readAgentOutput: vi.fn(),
       readAgentHistory: vi.fn(),
     };
@@ -466,7 +464,6 @@ describe("metadata pending actions", () => {
       renameAgent: vi.fn(),
       migrateAgent: vi.fn(),
       killAgent: vi.fn(),
-      recordBackendSessionId: vi.fn(),
       readAgentOutput: vi.fn(),
       readAgentHistory: vi.fn(),
     };
@@ -554,7 +551,6 @@ describe("metadata pending actions", () => {
       renameAgent: vi.fn(),
       migrateAgent: vi.fn(),
       killAgent: vi.fn(),
-      recordBackendSessionId: vi.fn(),
       readAgentOutput: vi.fn(),
       readAgentHistory: vi.fn(),
     };
@@ -638,7 +634,6 @@ describe("metadata pending actions", () => {
       renameAgent: vi.fn(),
       migrateAgent: vi.fn(),
       killAgent: vi.fn(),
-      recordBackendSessionId: vi.fn(),
       readAgentOutput: vi.fn(),
       readAgentHistory: vi.fn(),
     };

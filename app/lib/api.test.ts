@@ -18,7 +18,6 @@ import {
   removeShareParticipant,
   putPlan,
   setApiRelay,
-  spawnAgent,
   stopService,
 } from "@/lib/api";
 import type { RelayTransport } from "@/lib/relay-transport";
@@ -92,18 +91,13 @@ describe("api relay routing", () => {
     const request = installRelayMock({ ok: true, sessionId: "agent-1" });
 
     await putPlan(endpoint, "agent-1", "ship it");
-    await spawnAgent(endpoint, { tool: "codex", worktreePath: "/tmp/work" });
     await stopService(endpoint, "svc-1");
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(1, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
       content: "ship it",
     });
-    expect(request).toHaveBeenNthCalledWith(2, "POST", "/proxy/127.0.0.1/43210/agents/spawn", {
-      tool: "codex",
-      worktreePath: "/tmp/work",
-    });
-    expect(request).toHaveBeenNthCalledWith(3, "POST", "/proxy/127.0.0.1/43210/services/stop", {
+    expect(request).toHaveBeenNthCalledWith(2, "POST", "/proxy/127.0.0.1/43210/services/stop", {
       serviceId: "svc-1",
     });
   });

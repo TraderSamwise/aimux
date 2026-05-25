@@ -22,8 +22,6 @@ module.exports = {
       buildNumber: String(APP_VERSION.buildNumber),
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
-        NSPhotoLibraryUsageDescription:
-          "Allow $(PRODUCT_NAME) to access your photo library for attaching images.",
       },
     },
     android: {
@@ -46,9 +44,7 @@ module.exports = {
       checkAutomatically: "ON_LOAD",
       fallbackToCacheTimeout: 30000,
     },
-    plugins: HAS_REAL_EAS_PROJECT
-      ? ["expo-router", "expo-updates", "expo-image-picker"]
-      : ["expo-router", "expo-image-picker"],
+    plugins: HAS_REAL_EAS_PROJECT ? ["expo-router", "expo-updates"] : ["expo-router"],
     experiments: {
       typedRoutes: true,
     },

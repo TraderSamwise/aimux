@@ -458,7 +458,7 @@ describe("runtime lifecycle state persistence", () => {
     ]);
   });
 
-  it("fills missing live backend ids from metadata while saving state", () => {
+  it("does not fill missing live backend ids from metadata while saving state", () => {
     recordSessionBackendSessionIdMetadata("claude-live", "backend-from-metadata", repoRoot);
     const runtime = {
       id: "claude-live",
@@ -485,7 +485,7 @@ describe("runtime lifecycle state persistence", () => {
     expect(topologySessions()).toEqual([
       expect.objectContaining({
         id: "claude-live",
-        backendSessionId: "backend-from-metadata",
+        backendSessionId: undefined,
       }),
     ]);
   });

@@ -918,7 +918,7 @@ describe("focusSession", () => {
 });
 
 describe("resumeSessions", () => {
-  it("uses durable backend metadata when saved resume state is incomplete", async () => {
+  it("does not use display metadata when saved resume state is incomplete", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-metadata-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
@@ -959,24 +959,8 @@ describe("resumeSessions", () => {
 
     await expect(resumeSessions(host as any)).resolves.toBe(0);
 
-    expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "codex" }),
-      "native-session",
-    );
-    expect(host.createSession).toHaveBeenCalledWith(
-      "codex",
-      expect.arrayContaining(["resume", "native-session"]),
-      undefined,
-      "codex",
-      undefined,
-      undefined,
-      repoRoot,
-      "native-session",
-      "codex-1",
-      false,
-      true,
-      undefined,
-    );
+    expect(host.sessionBootstrap.canResumeWithBackendSessionId).not.toHaveBeenCalled();
+    expect(host.createSession).not.toHaveBeenCalled();
     expect(host.openTmuxDashboardTarget).toHaveBeenCalledOnce();
 
     rmSync(repoRoot, { recursive: true, force: true });

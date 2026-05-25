@@ -92,9 +92,6 @@ interface MetadataServerOptions {
       path: string;
     }) => Promise<{ path: string; status: "graveyarded" }> | { path: string; status: "graveyarded" };
     listWorktreeGraveyard?: () => unknown[];
-    resurrectGraveyardWorktree?: (input: {
-      path: string;
-    }) => Promise<{ path: string; status: "offline" }> | { path: string; status: "offline" };
     deleteGraveyardWorktree?: (input: {
       path: string;
     }) => Promise<{ path: string; status: "removed" }> | { path: string; status: "removed" };
@@ -266,10 +263,6 @@ interface MetadataServerOptions {
           status: "graveyard";
           previousStatus: "running" | "offline";
         };
-    recordBackendSessionId?: (input: {
-      sessionId: string;
-      backendSessionId: string;
-    }) => Promise<{ sessionId: string; backendSessionId: string }> | { sessionId: string; backendSessionId: string };
     readAgentOutput?: (input: {
       sessionId: string;
       startLine?: number;
@@ -2314,27 +2307,8 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/agents/teammates/resurrect") {
-        const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
-        const resolved = this.resolveDirectGraveyardTeammate(
-          body.parentSessionId?.trim() ?? "",
-          body.teammateSessionId?.trim() ?? "",
-        );
-        if (!resolved.ok) {
-          send(res, resolved.status, { ok: false, error: resolved.error });
-          return;
-        }
-        if (!this.options.desktop?.resurrectGraveyard) {
-          send(res, 501, { ok: false, error: "graveyard resurrect not supported by this service" });
-          return;
-        }
-        const result = await this.options.desktop.resurrectGraveyard({ sessionId: resolved.teammate.id });
-        this.options.onChange?.();
-        send(res, 200, {
-          ok: true,
-          parentSessionId: resolved.parent.id,
-          teammateSessionId: resolved.teammate.id,
-          ...result,
-        });
+        await readJson(req);
+        send(res, 410, { ok: false, error: "teammate graveyard resurrection requires the runtime core replacement" });
         return;
       }
 
@@ -2429,18 +2403,6 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.killAgent({ sessionId: body.sessionId });
-        this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/agents/backend-session") {
-        const body = (await readJson(req)) as { sessionId: string; backendSessionId: string };
-        if (!this.options.lifecycle?.recordBackendSessionId) {
-          send(res, 501, { ok: false, error: "backend session recording not supported by this service" });
-          return;
-        }
-        const result = await this.options.lifecycle.recordBackendSessionId(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
@@ -2648,26 +2610,14 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/graveyard/resurrect") {
-        const body = (await readJson(req)) as { sessionId: string };
-        if (!this.options.desktop?.resurrectGraveyard) {
-          send(res, 501, { ok: false, error: "graveyard resurrect not supported by this service" });
-          return;
-        }
-        const result = await this.options.desktop.resurrectGraveyard(body);
-        this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        await readJson(req);
+        send(res, 410, { ok: false, error: "agent graveyard resurrection requires the runtime core replacement" });
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/graveyard/worktrees/resurrect") {
-        const body = (await readJson(req)) as { path: string };
-        if (!this.options.desktop?.resurrectGraveyardWorktree) {
-          send(res, 501, { ok: false, error: "worktree graveyard resurrect not supported by this service" });
-          return;
-        }
-        const result = await this.options.desktop.resurrectGraveyardWorktree(body);
-        this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        await readJson(req);
+        send(res, 410, { ok: false, error: "worktree graveyard resurrection requires the runtime core replacement" });
         return;
       }
 

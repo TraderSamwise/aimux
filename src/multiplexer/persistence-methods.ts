@@ -28,7 +28,6 @@ import { markLastUsed } from "../last-used.js";
 import { isTeammateSession, selectDirectTeammates } from "../team.js";
 import {
   listTopologySessionStates,
-  resurrectTopologySession,
   topologySessionToSessionState,
   upsertTopologySession,
 } from "../runtime-core/topology-sessions.js";
@@ -555,38 +554,9 @@ export const persistenceMethods = {
   },
 
   async resurrectGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "offline" }> {
-    const entries = this.listWorktreeGraveyardEntries() as WorktreeGraveyardEntry[];
-    const entry = entries.find((candidate: WorktreeGraveyardEntry) => candidate.path === path);
-    if (!entry) {
-      throw new Error(`Graveyard worktree "${path}" not found`);
-    }
-
-    const nextEntries = entries.filter((candidate: WorktreeGraveyardEntry) => candidate.path !== path);
-    writeWorktreeGraveyardEntries(nextEntries);
-    this.worktreeGraveyardEntries = nextEntries;
-
-    const flatAgents = takeFlatGraveyardAgentsForWorktree(path);
-    const seen = new Set(this.offlineSessions.map((session: any) => session.id));
-    for (const agent of [...entry.agents, ...flatAgents]) {
-      if (seen.has(agent.id)) continue;
-      this.offlineSessions.push(agent);
-      seen.add(agent.id);
-    }
-    const serviceSeen = new Set(this.offlineServices.map((service: any) => service.id));
-    for (const service of entry.services ?? []) {
-      if (serviceSeen.has(service.id)) continue;
-      this.offlineServices.push(service);
-      serviceSeen.add(service.id);
-    }
-    this.saveState();
-    this.invalidateDesktopStateSnapshot();
-    this.refreshLocalDashboardModel();
-    this.metadataServer?.notifyChange?.();
-    if (this.mode === "dashboard") {
-      this.renderDashboard();
-    }
-
-    return { path, status: "offline" };
+    void this;
+    void path;
+    throw new Error("worktree graveyard resurrection requires the runtime core replacement");
   },
 
   async deleteGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "removed" }> {
@@ -967,27 +937,9 @@ export const persistenceMethods = {
   },
 
   async resurrectGraveyardSession(this: any, sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
-    this.loadOfflineTopologySessions();
-    const graveyardEntries = this.listGraveyardEntries();
-    const entry = graveyardEntries.find((candidate: any) => candidate.id === sessionId);
-    if (!entry) {
-      throw new Error(`Graveyard session "${sessionId}" not found`);
-    }
-
-    const entriesToRestore = isTeammateSession(entry)
-      ? [entry]
-      : [entry, ...selectDirectTeammates(graveyardEntries, entry.id)];
-
-    const offlineIds = new Set(this.offlineSessions.map((session: any) => session.id));
-    for (const candidate of entriesToRestore) {
-      resurrectTopologySession(candidate.id);
-      if (offlineIds.has(candidate.id)) continue;
-      this.offlineSessions.push(candidate);
-      offlineIds.add(candidate.id);
-    }
-
-    debug(`resurrected ${entry.id} from graveyard`, "session");
-    return { sessionId, status: "offline" };
+    void this;
+    void sessionId;
+    throw new Error("agent graveyard resurrection requires the runtime core replacement");
   },
 
   stripAnsi(this: any, text: string): string {

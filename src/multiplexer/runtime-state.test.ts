@@ -114,7 +114,7 @@ describe("resumeOfflineSession", () => {
     ]);
   });
 
-  it("uses durable backend metadata when resuming an incomplete offline row", () => {
+  it("does not use display metadata when resuming an incomplete offline row", () => {
     recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
     const createSession = vi.fn();
     const host: any = {
@@ -138,23 +138,22 @@ describe("resumeOfflineSession", () => {
       toolConfigKey: "codex",
       args: [],
       worktreePath: repoRoot,
-      createdAt: new Date().toISOString(),
     });
 
     expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
       expect.objectContaining({ command: "codex" }),
-      "native-session",
+      undefined,
     );
     expect(createSession).toHaveBeenCalledTimes(1);
     expect(createSession.mock.calls[0]).toMatchObject([
       "codex",
-      expect.arrayContaining(["resume", "native-session"]),
+      expect.arrayContaining(["--dangerously-bypass-approvals-and-sandbox"]),
       undefined,
       "codex",
       undefined,
       undefined,
       repoRoot,
-      "native-session",
+      undefined,
       "codex-1",
       true,
       true,
@@ -464,7 +463,7 @@ describe("resumeOfflineSession", () => {
     expect(runtime.backendSessionId).toBe("backend-current");
   });
 
-  it("fills instance heartbeat refs from backend metadata", () => {
+  it("does not fill instance heartbeat refs from backend metadata", () => {
     recordSessionBackendSessionIdMetadata("claude-racy", "backend-racy", repoRoot);
     const host: any = {
       sessions: [{ id: "claude-racy", command: "claude" }],
@@ -475,7 +474,8 @@ describe("resumeOfflineSession", () => {
       {
         id: "claude-racy",
         tool: "claude",
-        backendSessionId: "backend-racy",
+        backendSessionId: undefined,
+        team: undefined,
         worktreePath: repoRoot,
       },
     ]);
@@ -665,7 +665,7 @@ describe("resumeOfflineSession", () => {
     ]);
   });
 
-  it("fills missing offline backend ids from metadata without synthesizing new rows", () => {
+  it("ignores metadata backend ids while loading offline topology rows", () => {
     recordSessionBackendSessionIdMetadata("claude-recoverable", "backend-from-metadata", repoRoot);
     recordSessionBackendSessionIdMetadata("metadata-only", "backend-metadata-only", repoRoot);
     const host: any = {
@@ -696,12 +696,12 @@ describe("resumeOfflineSession", () => {
     expect(host.offlineSessions).toEqual([
       expect.objectContaining({
         id: "claude-recoverable",
-        backendSessionId: "backend-from-metadata",
+        backendSessionId: undefined,
       }),
     ]);
   });
 
-  it("detects offline session changes when metadata fills a backend id", () => {
+  it("does not report offline session changes for metadata-only backend ids", () => {
     const host: any = {
       sessions: [],
       offlineSessions: [
@@ -737,8 +737,8 @@ describe("resumeOfflineSession", () => {
 
     const changed = loadOfflineTopologySessions(host);
 
-    expect(changed).toBe(true);
-    expect(host.offlineSessions[0].backendSessionId).toBe("backend-from-metadata");
+    expect(changed).toBe(false);
+    expect(host.offlineSessions[0].backendSessionId).toBeUndefined();
   });
 
   it("loads valid live sessions without backend ids as offline when their tmux window is gone", () => {

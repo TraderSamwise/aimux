@@ -65,12 +65,6 @@ function offlineSessionState(session: any): any {
   return { ...rest, lifecycle: "offline" };
 }
 
-function fillMissingBackendSessionIdFromMetadata(session: any, metadataState = loadMetadataState()): any {
-  if (session.backendSessionId) return session;
-  const backendSessionId = metadataState.sessions[session.id]?.backendSessionId;
-  return backendSessionId ? { ...session, backendSessionId } : session;
-}
-
 function writeBackendSessionIdToTopology(sessionId: string, backendSessionId: string): void {
   updateTopologySessionBackendId(sessionId, backendSessionId);
 }
@@ -253,9 +247,7 @@ export function loadOfflineTopologySessions(
       .filter((value: any): value is string => Boolean(value)),
   );
 
-  const metadataState = loadMetadataState();
   const nextOfflineSessions = savedSessions
-    .map((s: any) => fillMissingBackendSessionIdFromMetadata(s, metadataState))
     .filter((s: any) => {
       if (!isIntentionalOfflineSession(s)) return false;
       if (liveIds.has(s.id)) return false;
@@ -532,7 +524,7 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   const sessionMetadata = loadMetadataState().sessions[session.id];
   const derived = sessionMetadata?.derived;
   const relaunchFresh = derived?.activity === "error" || derived?.attention === "error";
-  let backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
+  let backendSessionId = session.backendSessionId;
   if (!backendSessionId && !relaunchFresh) {
     backendSessionId = recoverCapturedBackendSessionId(host, session, sessionMetadata, toolCfg);
   }
@@ -688,11 +680,10 @@ export function getRemoteOwnedSessionKeys(host: RuntimeStateHost): Set<string> {
 }
 
 export function getInstanceSessionRefs(host: RuntimeStateHost): any[] {
-  const metadataState = loadMetadataState();
   return host.sessions.map((s: any) => ({
     id: s.id,
     tool: s.command,
-    backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
+    backendSessionId: s.backendSessionId,
     team: s.team,
     worktreePath: host.sessionWorktreePaths.get(s.id),
   }));
