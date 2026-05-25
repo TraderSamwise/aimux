@@ -10,15 +10,11 @@ import {
   applySessionLabel as applySessionLabelImpl,
   deriveHeadline as deriveHeadlineImpl,
   getSessionLabel as getSessionLabelImpl,
-  normalizeAgentInput as normalizeAgentInputImpl,
-  paneStillContainsAgentDraft as paneStillContainsAgentDraftImpl,
   readAgentHistory as readAgentHistoryImpl,
   readAgentOutput as readAgentOutputImpl,
   readStatusHeadline as readStatusHeadlineImpl,
   resolveRunningSession as resolveRunningSessionImpl,
-  scheduleTmuxAgentSubmit as scheduleTmuxAgentSubmitImpl,
   updateSessionLabel as updateSessionLabelImpl,
-  writeTmuxAgentInput as writeTmuxAgentInputImpl,
 } from "./session-runtime-core.js";
 
 export const agentIoMethods = {
@@ -202,22 +198,6 @@ export const agentIoMethods = {
 
   resolveRunningSession(this: any, sessionId: string): any {
     return resolveRunningSessionImpl(this, sessionId);
-  },
-
-  writeTmuxAgentInput(this: any, sessionId: string, transport: any, data: string): void {
-    writeTmuxAgentInputImpl(this, sessionId, transport, data);
-  },
-
-  normalizeAgentInput(this: any, data: string, submit: boolean, sessionId?: string): string {
-    return normalizeAgentInputImpl(this, data, submit, sessionId);
-  },
-
-  paneStillContainsAgentDraft(this: any, target: any, draft: string): boolean {
-    return paneStillContainsAgentDraftImpl(this, target, draft);
-  },
-
-  scheduleTmuxAgentSubmit(this: any, sessionId: string, target: any, draft: string): void {
-    scheduleTmuxAgentSubmitImpl(this, sessionId, target, draft);
   },
 
   async readAgentHistory(this: any, sessionId: string, lastN?: number): Promise<any> {

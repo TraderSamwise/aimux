@@ -7,6 +7,7 @@ import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState } from "./metadata-store.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import { moveTopologySessionToGraveyard, saveRuntimeTopologySessions } from "./runtime-core/topology-sessions.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -41,6 +42,31 @@ describe("MetadataServer threads API", () => {
     server?.stop();
     rmSync(repoRoot, { recursive: true, force: true });
   });
+
+  function seedAgentTopology(
+    sessions: Array<{
+      id: string;
+      command?: string;
+      status?: "running" | "idle" | "offline";
+      team?: Record<string, unknown>;
+      createdAt?: string;
+      label?: string;
+    }>,
+  ): void {
+    saveRuntimeTopologySessions({
+      sessions: sessions.map((session) => ({
+        id: session.id,
+        tool: session.command ?? "codex",
+        toolConfigKey: session.command ?? "codex",
+        command: session.command ?? "codex",
+        args: [],
+        lifecycle: session.status === "running" || session.status === "idle" ? "live" : "offline",
+        createdAt: session.createdAt,
+        team: session.team,
+        label: session.label,
+      })),
+    });
+  }
 
   it("opens, sends, and reads threads over HTTP", async () => {
     const endpoint = server?.getAddress();
@@ -150,8 +176,37 @@ describe("MetadataServer threads API", () => {
     expect(body).toEqual({ ok: true, sessionId: "claude-1" });
   });
 
-  it("lists direct teammates from the hidden desktop teammate state", async () => {
+  it("lists direct teammates from runtime topology instead of desktop pending overlays", async () => {
     server?.stop();
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      {
+        id: "late",
+        command: "codex",
+        status: "running",
+        createdAt: "2026-01-01T00:00:02.000Z",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder", order: 2 },
+      },
+      {
+        id: "early",
+        command: "claude",
+        status: "running",
+        createdAt: "2026-01-01T00:00:01.000Z",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer", order: 1 },
+      },
+      {
+        id: "nested",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-nested", parentSessionId: "late", role: "coder" },
+      },
+      {
+        id: "other",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -272,6 +327,15 @@ describe("MetadataServer threads API", () => {
 
   it("rejects teammate agents as parents for teammate discovery and delegation", async () => {
     server?.stop();
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      {
+        id: "child",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -310,6 +374,15 @@ describe("MetadataServer threads API", () => {
 
   it("creates durable tasks for direct teammate work instead of raw input", async () => {
     server?.stop();
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      {
+        id: "child",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -418,6 +491,16 @@ describe("MetadataServer threads API", () => {
 
   it("rejects teammate tasks to non-direct teammates", async () => {
     server?.stop();
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      { id: "ordinary", command: "codex", status: "running" },
+      {
+        id: "other-child",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -456,6 +539,21 @@ describe("MetadataServer threads API", () => {
   it("controls only direct teammate lifecycle targets", async () => {
     server?.stop();
     const calls: string[] = [];
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      {
+        id: "child",
+        command: "codex",
+        status: "offline",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+      },
+      {
+        id: "other-child",
+        command: "codex",
+        status: "offline",
+        team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -530,6 +628,23 @@ describe("MetadataServer threads API", () => {
   it("resurrects direct graveyard teammates through graveyard-aware validation", async () => {
     server?.stop();
     const calls: string[] = [];
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      {
+        id: "child",
+        command: "codex",
+        status: "offline",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+      },
+      {
+        id: "other-child",
+        command: "codex",
+        status: "offline",
+        team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+      },
+    ]);
+    moveTopologySessionToGraveyard("child");
+    moveTopologySessionToGraveyard("other-child");
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -672,6 +787,14 @@ describe("MetadataServer threads API", () => {
   it("rejects teammate creation when the requested parent is itself a teammate", async () => {
     server?.stop();
     const createTeammateAgent = vi.fn();
+    seedAgentTopology([
+      {
+        id: "nested",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -709,6 +832,7 @@ describe("MetadataServer threads API", () => {
   it("rejects empty initial teammate tasks before creating a teammate", async () => {
     server?.stop();
     const createTeammateAgent = vi.fn();
+    seedAgentTopology([{ id: "parent", command: "claude", status: "running" }]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -1404,62 +1528,46 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"sessionId":"claude-lead"');
   });
 
-  it("ingests path attachments and serves metadata plus content over HTTP", async () => {
+  it("serves existing attachment metadata plus content over HTTP", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
-    const imagePath = join(repoRoot, "shot.png");
+    const attachmentsDir = join(repoRoot, ".aimux", "attachments");
+    const attachmentId = "att_existing";
+    const imagePath = join(attachmentsDir, `${attachmentId}.png`);
     const imageBytes = Buffer.from("fake-image-bytes");
     writeFileSync(imagePath, imageBytes);
+    writeFileSync(
+      join(attachmentsDir, `${attachmentId}.json`),
+      `${JSON.stringify(
+        {
+          id: attachmentId,
+          kind: "image",
+          filename: "shot.png",
+          mimeType: "image/png",
+          sizeBytes: imageBytes.length,
+          sha256: "test-sha",
+          createdAt: "2025-01-01T00:00:00.000Z",
+          source: "path",
+          contentPath: imagePath,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
 
-    const createRes = await fetch(`${base}/attachments`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: imagePath }),
-    });
-    const created = (await createRes.json()) as {
-      ok: boolean;
-      attachment: { id: string; filename: string; mimeType: string; contentUrl: string };
-    };
-    expect(createRes.ok).toBe(true);
-    expect(created.attachment.id).toContain("att_");
-    expect(created.attachment.filename).toBe("shot.png");
-    expect(created.attachment.mimeType).toBe("image/png");
-
-    const showRes = await fetch(`${base}/attachments/${created.attachment.id}`);
+    const showRes = await fetch(`${base}/attachments/${attachmentId}`);
     const shown = (await showRes.json()) as { ok: boolean; attachment: { id: string; contentUrl: string } };
     expect(showRes.ok).toBe(true);
-    expect(shown.attachment.id).toBe(created.attachment.id);
-    expect(shown.attachment.contentUrl).toBe(`/attachments/${created.attachment.id}/content`);
+    expect(shown.attachment.id).toBe(attachmentId);
+    expect(shown.attachment.contentUrl).toBe(`/attachments/${attachmentId}/content`);
 
-    const contentRes = await fetch(`${base}${created.attachment.contentUrl}`);
+    const contentRes = await fetch(`${base}${shown.attachment.contentUrl}`);
     const contentBytes = Buffer.from(await contentRes.arrayBuffer());
     expect(contentRes.ok).toBe(true);
     expect(contentRes.headers.get("content-type")).toBe("image/png");
     expect(contentBytes.equals(imageBytes)).toBe(true);
-  });
-
-  it("ingests base64 attachments over HTTP", async () => {
-    const endpoint = server?.getAddress();
-    expect(endpoint).toBeTruthy();
-    const base = `http://${endpoint!.host}:${endpoint!.port}`;
-
-    const createRes = await fetch(`${base}/attachments`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        filename: "clip.webp",
-        mimeType: "image/webp",
-        contentBase64: Buffer.from("webp-ish").toString("base64"),
-      }),
-    });
-    const created = (await createRes.json()) as {
-      ok: boolean;
-      attachment: { id: string; filename: string; mimeType: string };
-    };
-    expect(createRes.ok).toBe(true);
-    expect(created.attachment.filename).toBe("clip.webp");
-    expect(created.attachment.mimeType).toBe("image/webp");
   });
 
   it("validates agent output query parameters over HTTP", async () => {

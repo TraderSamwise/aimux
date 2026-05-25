@@ -11,11 +11,6 @@ import { loadMetadataState } from "../metadata-store.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
 import { readSessionMessages } from "../session-message-history.js";
 import { captureGitContext } from "../context/context-bridge.js";
-import {
-  normalizeSubmittedPrompt,
-  paneStillContainsPromptDraft,
-  waitForTmuxPromptSubmit,
-} from "../agent-prompt-delivery.js";
 import type { SessionTeamMetadata } from "../team.js";
 
 type SessionRuntimeHost = any;
@@ -163,78 +158,6 @@ export function resolveLiveSessionTmuxTarget(host: SessionRuntimeHost, sessionId
   } catch {}
 
   return undefined;
-}
-
-export function writeTmuxAgentInput(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  transport: TmuxSessionTransport,
-  data: string,
-): void {
-  const target = resolveLiveSessionTmuxTarget(host, sessionId, transport.tmuxTarget);
-  if (!target) {
-    throw new Error(`Session "${sessionId}" does not have a live tmux target`);
-  }
-  transport.retarget(target);
-  let textBuffer = "";
-  const flushText = () => {
-    if (!textBuffer) return;
-    host.tmuxRuntimeManager.sendText(target, textBuffer);
-    textBuffer = "";
-  };
-
-  for (const ch of data) {
-    if (ch === "\r") {
-      flushText();
-      host.tmuxRuntimeManager.sendEnter(target);
-      continue;
-    }
-    if (ch === "\n") {
-      flushText();
-      host.tmuxRuntimeManager.sendKey(target, "C-j");
-      continue;
-    }
-    textBuffer += ch;
-  }
-
-  flushText();
-}
-
-export function normalizeAgentInput(
-  host: SessionRuntimeHost,
-  data: string,
-  submit: boolean,
-  sessionId?: string,
-): string {
-  const tool = sessionId ? host.sessionToolKeys?.get(sessionId) : undefined;
-  return normalizeSubmittedPrompt(tool, data, submit);
-}
-
-export function paneStillContainsAgentDraft(host: SessionRuntimeHost, target: any, draft: string): boolean {
-  return paneStillContainsPromptDraft(host.tmuxRuntimeManager, target, draft);
-}
-
-export function waitForTmuxAgentSubmit(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  target: any,
-  draft: string,
-): Promise<boolean> {
-  const isTargetCurrent = () => {
-    const currentTarget = resolveLiveSessionTmuxTarget(host, sessionId);
-    return Boolean(currentTarget && currentTarget.windowId === target.windowId);
-  };
-
-  return waitForTmuxPromptSubmit({
-    tmuxRuntimeManager: host.tmuxRuntimeManager,
-    target,
-    draft,
-    isTargetCurrent,
-  });
-}
-
-export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: string, target: any, draft: string): void {
-  void waitForTmuxAgentSubmit(host, sessionId, target, draft);
 }
 
 export async function readAgentHistory(

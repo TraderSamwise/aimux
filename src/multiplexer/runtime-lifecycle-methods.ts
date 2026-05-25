@@ -6,7 +6,7 @@ import { loadConfig } from "../config.js";
 import { getStatePath } from "../paths.js";
 import { buildAimuxAgentInstructions } from "../session-bootstrap.js";
 import { loadMetadataState } from "../metadata-store.js";
-import type { InstanceInfo, InstanceSessionRef } from "../instance-registry.js";
+import type { InstanceSessionRef } from "../instance-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
@@ -284,9 +284,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       .map((session) => sanitizeOfflineSessionState(session, metadataState))
       .filter((session) => !liveKeys.has(sessionStateKey(session)));
     const mySessions = dedupeSessionStates([...liveSessions, ...offlineSessions]);
-    const remoteRefs: InstanceSessionRef[] = this.getRemoteInstancesSafe().flatMap(
-      (instance: InstanceInfo) => instance.sessions,
-    );
     const removedServiceIds = mux.removedServiceIds ?? new Set<string>();
     const liveServices = this.buildLiveServiceStates().filter((service) => !removedServiceIds.has(service.id));
     const myServices = [...mux.offlineServices, ...liveServices].filter(
@@ -294,7 +291,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     );
 
     const statePath = getStatePath();
-    const remoteIds = new Set(remoteRefs.map((s: InstanceSessionRef) => s.id));
     const myBackendIds = new Set(mySessions.map((s) => s.backendSessionId).filter(Boolean));
     const myIds = new Set(mySessions.map((s) => s.id));
     const unpreservedExitedIds = mux.unpreservedExitedSessionIds ?? new Set<string>();
@@ -303,11 +299,10 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     }) as SessionState[];
     const otherSessions = topologySessions.flatMap((s) => {
       if (unpreservedExitedIds.has(s.id)) return [];
-      if (remoteIds.has(s.id)) return [s];
       if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return [];
       if (myIds.has(s.id)) return [];
       if (!isRecoverableExistingSession(s)) return [];
-      return [sanitizeOfflineSessionState(s, metadataState)];
+      return [s];
     });
     const mergedSessions: SessionState[] = dedupeSessionStates([...otherSessions, ...mySessions]);
     let mergedServices: ServiceState[] = myServices;

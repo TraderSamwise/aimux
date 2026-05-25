@@ -281,7 +281,7 @@ describe("dashboard-ops", () => {
 
     expect(host.postToProjectService).toHaveBeenCalledWith(
       "/agents/resume",
-      { sessionId: "sess-1", session: expect.objectContaining({ id: "sess-1", command: "claude" }) },
+      { sessionId: "sess-1" },
       { timeoutMs: 60_000 },
     );
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
@@ -515,13 +515,7 @@ describe("dashboard-ops", () => {
     expect(sessionSeeds[0]).toEqual(expect.objectContaining({ id: "teammate-1", team: session.team }));
     expect(host.postToProjectService).toHaveBeenCalledWith(
       "/agents/resume",
-      {
-        sessionId: "teammate-1",
-        session: expect.objectContaining({
-          id: "teammate-1",
-          team: session.team,
-        }),
-      },
+      { sessionId: "teammate-1" },
       { timeoutMs: 60_000 },
     );
   });

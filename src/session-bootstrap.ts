@@ -24,7 +24,8 @@ export function buildAimuxAgentInstructions(
   const sessionPath = opts.sessionId ?? "{session-id}";
   const includeTeammates = opts.includeTeammateCreationInstructions !== false;
   const teamCoordinationLine = includeTeammates
-    ? "- Do not directly spawn or control other agents unless the user gives an explicit aimux CLI command.\n"
+    ? "- Do not directly spawn or control other agents unless the user gives an explicit aimux CLI command.\n" +
+      "- Do not call aimux metadata APIs from inside an agent unless the user gives an explicit CLI/API command.\n"
     : "- This session is already a teammate; do not create nested teammate teams.\n";
   const delegationProtocol = includeTeammates
     ? "When the user specifically asks for delegation, handoff, or teammate coordination, use `.aimux/tasks/` handoff records unless the user gives an explicit aimux CLI command. " +

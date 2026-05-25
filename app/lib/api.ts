@@ -387,26 +387,6 @@ export async function putPlan(
   );
 }
 
-// ── Attachments ──────────────────────────────────────────────────────────
-
-export interface AttachmentResponse {
-  ok: boolean;
-  attachment: {
-    id: string;
-    contentUrl: string;
-    filename?: string;
-    mimeType?: string;
-  };
-}
-
-export async function uploadAttachmentBase64(
-  endpoint: ServiceEndpoint,
-  input: { filename: string; mimeType: string; contentBase64: string },
-  opts?: ApiOpts,
-): Promise<AttachmentResponse> {
-  return callProjectJson<AttachmentResponse>(endpoint, "POST", "/attachments", opts, input);
-}
-
 // ── Desktop state (project → worktree → agents | services hierarchy) ────
 
 export async function getDesktopState(

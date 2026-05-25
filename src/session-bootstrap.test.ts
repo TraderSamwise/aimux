@@ -24,6 +24,7 @@ describe("buildAimuxAgentInstructions", () => {
     expect(instructions).toContain("Your aimux session ID is codex-123");
     expect(instructions).toContain(".aimux/tasks/*.json");
     expect(instructions).toContain("Do not directly spawn or control other agents");
+    expect(instructions).toContain("Do not call aimux metadata APIs from inside an agent");
     expect(instructions).toContain("For generic delegation or handoff records");
     expect(instructions).toContain("Treat task files as shared handoff records");
     expect(instructions).not.toContain("dispatches pending tasks");

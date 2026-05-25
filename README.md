@@ -477,17 +477,10 @@ The project-service HTTP API also exposes:
 - `POST /log`
 - `POST /clear-log`
 - `POST /notify`
-- `GET /agents/teammates?parentSessionId=...`
-- `POST /agents/teammates/create`
-- `POST /agents/teammates/tasks`
-- `POST /agents/teammates/stop`
-- `POST /agents/teammates/resume`
-- `POST /agents/teammates/kill`
-- `POST /agents/teammates/resurrect`
 
 Use `aimux metadata endpoint` to get the local base URL for the current project service.
 
-Teammate agents are first-party aimux agents attached to a parent agent. They stay hidden from the normal dashboard unless the parent agent is focused, but can still be inspected, entered, stopped, restarted, and graveyarded through the parent/team UI.
+Teammate agents are first-party aimux agents attached to a parent agent. They stay hidden from the normal dashboard unless the parent agent is focused, but can still be inspected, entered, stopped, restarted, and graveyarded through the parent/team UI. Programmatic teammate lifecycle routes are control-plane internals; agents should use `.aimux/tasks/*.json` handoff records unless the user gives an explicit CLI/API command.
 
 Dashboard navigation exposes only the selected parent's direct team:
 
@@ -497,67 +490,6 @@ Dashboard navigation exposes only the selected parent's direct team:
 - Non-selected parents do not expose their teammates in dashboard rows, details, or footer chips.
 
 Direct teammate teams are capped at 3 agents. Creating a teammate is idempotent by normalized `role` + `label` for the same parent: if that direct teammate already exists, aimux returns it instead of creating a duplicate.
-
-List direct teammates for a parent:
-
-```bash
-endpoint="$(aimux metadata endpoint)"
-curl -sS "$endpoint/agents/teammates?parentSessionId=claude-abc123"
-```
-
-Create a teammate from a user shell or control-plane caller with:
-
-```bash
-endpoint="$(aimux metadata endpoint)"
-curl -sS "$endpoint/agents/teammates/create" \
-  -H 'content-type: application/json' \
-  -d '{
-    "parentSessionId": "claude-abc123",
-    "role": "coder",
-    "label": "coder-1",
-    "initialTask": {
-      "title": "Parser tests",
-      "body": "Implement the bounded parser tests and report back."
-    }
-  }'
-```
-
-Useful request fields:
-
-- `parentSessionId` - required aimux session ID of the primary agent.
-- `role` / `label` - optional teammate role and display label.
-- `tool` - optional tool config key; omitted means inherit the parent tool and safe model/provider/runtime flags.
-- `sessionId` - optional aimux session ID; omitted means aimux generates one.
-- `worktreePath` - optional target worktree; omitted means inherit the parent worktree.
-- `extraArgs` - optional CLI args for model/provider flags; when set, these override inherited runtime flags.
-- `initialTask` - optional first durable task assigned to the teammate after launch.
-- `order` - optional numeric order within the parent's direct team.
-- `open` - optional boolean; `false` creates without switching focus.
-
-Delegate to an existing direct teammate:
-
-```bash
-curl -sS "$endpoint/agents/teammates/tasks" \
-  -H 'content-type: application/json' \
-  -d '{
-    "parentSessionId": "claude-abc123",
-    "teammateSessionId": "codex-def456",
-    "title": "Review parser patch",
-    "body": "Review the parser patch and report blockers first."
-  }'
-```
-
-`/agents/teammates/tasks` only accepts direct teammates of the parent and creates a normal durable task targeted to that teammate. The teammate reports back with `aimux task complete` or `aimux task block`, and aimux routes completion back to the parent.
-
-Manage a direct teammate lifecycle with the same parent/teammate guard:
-
-```bash
-curl -sS "$endpoint/agents/teammates/stop" \
-  -H 'content-type: application/json' \
-  -d '{ "parentSessionId": "claude-abc123", "teammateSessionId": "codex-def456" }'
-```
-
-Use `/agents/teammates/resume` for offline teammates, `/agents/teammates/kill` to send a direct teammate to the graveyard, and `/agents/teammates/resurrect` to move a direct graveyarded teammate back to offline. Each endpoint rejects teammates not directly attached to the parent.
 
 ## Plugins And Watchers
 
@@ -715,7 +647,7 @@ Agents can coordinate handoffs through `.aimux/tasks/*.json` when the user expli
    }
    ```
 
-2. **A target agent or user picks it up** through an explicit handoff, teammate API request, or manual coordination
+2. **A target agent or user picks it up** through an explicit handoff or manual coordination
 
 3. **The receiving agent works from the task prompt** and treats the task file as durable coordination state
 

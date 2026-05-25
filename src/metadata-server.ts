@@ -58,12 +58,7 @@ import { buildWorkflowEntries } from "./workflow.js";
 import { markLastUsed } from "./last-used.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
-import {
-  getAttachment,
-  getAttachmentContent,
-  ingestAttachmentFromBase64,
-  ingestAttachmentFromPath,
-} from "./attachment-store.js";
+import { getAttachment, getAttachmentContent } from "./attachment-store.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
@@ -79,6 +74,7 @@ import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { TmuxTarget } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
+import { listTopologySessionStates, type RuntimeTopologySessionState } from "./runtime-core/topology-sessions.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -452,6 +448,16 @@ function desktopSessionList(value: unknown): DesktopSessionRecord[] {
   return value.filter(isDesktopSessionRecord);
 }
 
+function topologyDesktopSessionList(
+  statuses: Array<"running" | "idle" | "offline" | "graveyard">,
+): DesktopSessionRecord[] {
+  return listTopologySessionStates({ statuses }).map((session: RuntimeTopologySessionState) => ({
+    ...session,
+    status: session.lifecycle ?? "offline",
+    team: session.team as SessionTeamMetadata | undefined,
+  }));
+}
+
 function firstLine(value: string): string {
   return (
     value
@@ -569,13 +575,9 @@ export class MetadataServer {
     if (!parentSessionId.trim()) {
       return { ok: false, status: 400, error: "parentSessionId is required" };
     }
-    if (!this.options.desktop?.getState) {
-      return { ok: false, status: 501, error: "teammate discovery not supported by this service" };
-    }
-
-    const state = this.options.desktop.getState();
-    const sessions = desktopSessionList(state.sessions);
-    const teammates = desktopSessionList(state.teammates);
+    const topologySessions = topologyDesktopSessionList(["running", "idle", "offline"]);
+    const sessions = topologySessions.filter((session) => !isTeammateSession(session));
+    const teammates = topologySessions.filter(isTeammateSession);
     const parent = [...sessions, ...teammates].find((session) => session.id === parentSessionId);
     if (!parent) {
       return { ok: false, status: 404, error: `parent agent "${parentSessionId}" not found` };
@@ -635,15 +637,11 @@ export class MetadataServer {
         status: number;
         error: string;
       } {
-    if (!this.options.desktop?.listGraveyard) {
-      return { ok: false, status: 501, error: "graveyard discovery not supported by this service" };
-    }
     const resolved = this.resolveDirectTeammates(parentSessionId);
     if (!resolved.ok) return resolved;
-    const teammate = selectDirectTeammates(
-      desktopSessionList(this.options.desktop.listGraveyard()),
-      resolved.parent.id,
-    ).find((session) => session.id === teammateSessionId);
+    const teammate = selectDirectTeammates(topologyDesktopSessionList(["graveyard"]), resolved.parent.id).find(
+      (session) => session.id === teammateSessionId,
+    );
     if (!teammate) {
       return {
         ok: false,
@@ -2373,12 +2371,12 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/agents/resume") {
-        const body = (await readJson(req)) as { sessionId: string; session?: Record<string, unknown> };
+        const body = (await readJson(req)) as { sessionId: string };
         if (!this.options.desktop?.resumeAgent) {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resumeAgent(body);
+        const result = await this.options.desktop.resumeAgent({ sessionId: body.sessionId });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
@@ -2445,24 +2443,6 @@ export class MetadataServer {
         const result = await this.options.lifecycle.recordBackendSessionId(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/attachments") {
-        const body = (await readJson(req)) as {
-          path?: string;
-          filename?: string;
-          mimeType?: string;
-          contentBase64?: string;
-        };
-        const attachment = body.path?.trim()
-          ? ingestAttachmentFromPath(body.path)
-          : ingestAttachmentFromBase64({
-              filename: body.filename,
-              mimeType: body.mimeType,
-              contentBase64: String(body.contentBase64 ?? ""),
-            });
-        send(res, 200, { ok: true, attachment });
         return;
       }
 

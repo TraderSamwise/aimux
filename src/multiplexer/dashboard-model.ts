@@ -2,7 +2,6 @@ import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashb
 import { buildDashboardSessions } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
 import {
-  getSessionBackendSessionId,
   loadMetadataEndpoint,
   loadMetadataState,
   removeMetadataEndpoint,
@@ -15,7 +14,6 @@ import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { requestJson } from "../http-client.js";
-import { loadConfig } from "../config.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { isTeammateSession, selectDirectTeammates } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
@@ -30,6 +28,7 @@ import type {
 } from "../pending-actions.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { setPendingDashboardServiceAction, setPendingDashboardSessionAction } from "./dashboard-ops.js";
+import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 
 type DashboardModelHost = any;
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
@@ -41,41 +40,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function sessionStateFromDashboardSeed(seed: any): any | undefined {
-  if (!seed?.id || !seed?.command) return undefined;
-  const config = loadConfig();
-  const toolConfigKey =
-    typeof seed.toolConfigKey === "string"
-      ? seed.toolConfigKey
-      : (Object.entries(config.tools).find(([, tool]: any) => tool.command === seed.command)?.[0] ?? seed.command);
-  const toolCfg = config.tools[toolConfigKey];
-  if (!toolCfg) return undefined;
-  return {
-    id: seed.id,
-    tool: seed.command,
-    toolConfigKey,
-    command: toolCfg.command ?? seed.command,
-    args: Array.isArray(seed.args) ? seed.args : [...(toolCfg.args ?? [])],
-    lifecycle: "offline",
-    createdAt: seed.createdAt,
-    backendSessionId:
-      typeof seed.backendSessionId === "string"
-        ? seed.backendSessionId
-        : typeof seed.remoteBackendSessionId === "string"
-          ? seed.remoteBackendSessionId
-          : getSessionBackendSessionId(seed.id),
-    worktreePath: typeof seed.worktreePath === "string" ? seed.worktreePath : undefined,
-    label: typeof seed.label === "string" ? seed.label : undefined,
-    headline: typeof seed.headline === "string" ? seed.headline : undefined,
-    team: seed.team,
-  };
-}
-
-function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: string, seed?: any): any | undefined {
+function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: string): any | undefined {
   return (
     host.offlineSessions.find((session: any) => session.id === sessionId) ??
-    sessionStateFromDashboardSeed(seed) ??
-    sessionStateFromDashboardSeed(host.dashboardSessionsCache.find((entry: any) => entry.id === sessionId))
+    listTopologySessionStates({ statuses: ["offline"] }).find((session) => session.id === sessionId)
   );
 }
 
@@ -369,7 +337,7 @@ async function resumeOfflineAgentWithPending(
     sessionId,
     "starting",
     () => {
-      const offline = resolveOfflineSessionForAction(host, sessionId, sessionSeed);
+      const offline = resolveOfflineSessionForAction(host, sessionId);
       if (!offline) {
         throw new Error(`Agent "${sessionId}" not found`);
       }
@@ -401,7 +369,7 @@ async function resumeAgentAndDirectTeammates(
   warning?: string;
   teammateFailures?: Array<{ sessionId: string; error: string }>;
 }> {
-  const offline = resolveOfflineSessionForAction(host, sessionId, sessionSeed);
+  const offline = resolveOfflineSessionForAction(host, sessionId);
   if (!offline) {
     throw new Error(`Agent "${sessionId}" not found`);
   }
@@ -1062,8 +1030,8 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           () => host.removeOfflineService(serviceId),
           () => waitForMetadataCondition(host, () => isMetadataServiceRemoved(host, serviceId)),
         ),
-      resumeAgent: ({ sessionId, session }: any) =>
-        enqueueProjectServiceAgentResume(host, () => resumeAgentAndDirectTeammates(host, sessionId, session)),
+      resumeAgent: ({ sessionId }: any) =>
+        enqueueProjectServiceAgentResume(host, () => resumeAgentAndDirectTeammates(host, sessionId)),
       listGraveyard: () => host.listGraveyardEntries(),
       resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
     },

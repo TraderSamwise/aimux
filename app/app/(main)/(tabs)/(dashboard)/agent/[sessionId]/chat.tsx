@@ -6,7 +6,6 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Columns2, MessageSquare, SquareTerminal, UserPlus } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
-import { ChatComposer } from "@/components/ChatComposer";
 import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
@@ -544,13 +543,6 @@ export default function ChatScreen() {
                 {showTerminalOnly ? (
                   <View className="flex-1">
                     {terminalPane}
-                    {sessionId ? (
-                      <ChatComposer
-                        serviceEndpoint={serviceEndpoint}
-                        sessionId={sessionId}
-                        token={token}
-                      />
-                    ) : null}
                   </View>
                 ) : (
                   <View className="flex-1">
@@ -577,13 +569,6 @@ export default function ChatScreen() {
                         <Text className="text-xs text-destructive my-2">{lastError}</Text>
                       ) : null}
                     </ScrollView>
-                    {sessionId ? (
-                      <ChatComposer
-                        serviceEndpoint={serviceEndpoint}
-                        sessionId={sessionId}
-                        token={token}
-                      />
-                    ) : null}
                   </View>
                 )}
               </View>

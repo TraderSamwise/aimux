@@ -245,7 +245,7 @@ describe("runtime lifecycle state persistence", () => {
     expect(topologySessions()).toEqual([]);
   });
 
-  it("converts recoverable existing live sessions to offline instead of erasing them", () => {
+  it("preserves recoverable existing live sessions when saving partial state", () => {
     writeFileSync(
       getStatePath(),
       JSON.stringify(
@@ -289,9 +289,12 @@ describe("runtime lifecycle state persistence", () => {
         tool: "claude",
         toolConfigKey: "claude",
         args: ["--resume", "backend-1"],
-        lifecycle: "offline",
+        lifecycle: "live",
         backendSessionId: "backend-1",
         worktreePath: repoRoot,
+        tmuxTarget: expect.objectContaining({
+          windowId: "@7",
+        }),
       }),
     ]);
   });
@@ -333,7 +336,7 @@ describe("runtime lifecycle state persistence", () => {
         tool: "claude",
         toolConfigKey: "claude",
         args: [],
-        lifecycle: "offline",
+        lifecycle: "live",
         worktreePath: repoRoot,
       }),
     ]);
@@ -381,7 +384,7 @@ describe("runtime lifecycle state persistence", () => {
     expect(topologySessions()).toHaveLength(1);
     expect(topologySessions()[0]).toMatchObject({
       id: "local-agent",
-      lifecycle: "offline",
+      lifecycle: "live",
       label: "new",
     });
   });

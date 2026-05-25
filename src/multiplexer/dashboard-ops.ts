@@ -721,7 +721,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         request: async () => {
           resumeResult = await host.postToProjectService(
             "/agents/resume",
-            { sessionId: session.id, session: sessionSeed },
+            { sessionId: session.id },
             { timeoutMs: 60_000 },
           );
         },
@@ -917,7 +917,7 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
         } satisfies DashboardSession);
       const result = await host.postToProjectService(
         "/agents/resume",
-        { sessionId: session.id, session: sessionSeed },
+        { sessionId: session.id },
         { timeoutMs: 10_000 },
       );
       const warningLines = restoreWarningLines(result);
