@@ -26,6 +26,7 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
 import { isTeammateSession, selectDirectTeammates } from "../team.js";
+import { projectHostRuntimeTopology } from "../runtime-core/topology-importer.js";
 import {
   findMainRepo,
   getWorktreeBaseDir,
@@ -82,6 +83,10 @@ function orderStatuslineItemsByWorktree<T extends { id: string; worktreePath?: s
 }
 
 export const persistenceMethods = {
+  writeRuntimeTopologyFile(this: any): void {
+    projectHostRuntimeTopology(this);
+  },
+
   writeSessionsFile(this: any): void {
     const dir = getLocalAimuxDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -112,6 +117,7 @@ export const persistenceMethods = {
       }
       this.dashboardUiStateStore.loadSharedState(this.dashboardState);
       this.refreshDesktopStateSnapshot();
+      this.writeRuntimeTopologyFile();
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
       const tmpPath = `${filePath}.tmp`;

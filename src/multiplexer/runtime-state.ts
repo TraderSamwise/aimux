@@ -190,6 +190,7 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
     if (host.mode === "project-service") {
       host.taskDispatcher?.tick(host.sessions.map((s: any) => s.id));
       host.orchestrationDispatcher?.tick(host.sessions.map((s: any) => s.id));
+      host.writeRuntimeTopologyFile?.();
     }
 
     const events = host.taskDispatcher?.drainEvents() ?? [];

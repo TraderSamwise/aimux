@@ -302,6 +302,7 @@ export async function runProjectService(host: SessionLaunchHost): Promise<number
   await host.startProjectServices();
   host.startStatusRefresh();
   host.refreshDesktopStateSnapshot();
+  host.writeRuntimeTopologyFile?.();
   host.writeStatuslineFile();
 
   const exitCode = await new Promise<number>((resolve) => {

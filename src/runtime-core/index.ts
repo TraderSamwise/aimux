@@ -1,3 +1,5 @@
+import { createRuntimeTopologyStore, type RuntimeTopology } from "./topology-store.js";
+
 export type RuntimeCoreOperation =
   | "agent.spawn"
   | "agent.fork"
@@ -68,6 +70,7 @@ export interface RuntimeCore {
     collaboration?: unknown;
   }): Promise<{ sessionId: string; accepted: boolean; error?: string }>;
   interruptAgent(input: { sessionId: string }): Promise<{ sessionId: string }>;
+  readTopology(): RuntimeTopology;
 }
 
 function disabled(operation: RuntimeCoreOperation): never {
@@ -102,6 +105,9 @@ export function createDisabledRuntimeCore(): RuntimeCore {
     },
     async interruptAgent() {
       disabled("agent.interrupt");
+    },
+    readTopology() {
+      return createRuntimeTopologyStore().read();
     },
   };
 }
