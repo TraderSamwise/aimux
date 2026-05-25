@@ -20,6 +20,7 @@ import {
   focusSession,
   migrateAgent,
   resumeSessions,
+  restoreSessions,
   runDashboard,
   runProjectService,
   summarizeLaunchArgs,
@@ -909,6 +910,131 @@ describe("resumeSessions", () => {
       false,
       true,
       team,
+    );
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("only resumes offline topology sessions", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-offline-only-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-running",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "running",
+          backendSessionId: "backend-running",
+          worktreePath: repoRoot,
+        },
+        {
+          id: "codex-offline",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-offline",
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
+
+    class Host {
+      instanceId = "inst-1";
+      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
+      startHeartbeat = vi.fn();
+      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
+      sessionBootstrap = {
+        canResumeWithBackendSessionId: vi.fn(() => true),
+        composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
+          ...originalArgs,
+          ...resumeArgs,
+        ]),
+      };
+      createSession = vi.fn();
+      openTmuxDashboardTarget = vi.fn();
+      runDashboard = vi.fn();
+    }
+
+    const host = new Host();
+
+    await expect(resumeSessions(host as any)).resolves.toBe(0);
+
+    expect(host.createSession).toHaveBeenCalledOnce();
+    expect(host.createSession).toHaveBeenCalledWith(
+      "codex",
+      expect.arrayContaining(["resume", "backend-offline"]),
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      "backend-offline",
+      "codex-offline",
+      false,
+      true,
+      undefined,
+    );
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("only restores offline topology sessions", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-restore-offline-only-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-running",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: ["running"],
+          lifecycle: "running",
+          worktreePath: repoRoot,
+        },
+        {
+          id: "codex-offline",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: ["offline"],
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
+
+    const host = {
+      createSession: vi.fn(),
+      openTmuxDashboardTarget: vi.fn(),
+      runDashboard: vi.fn(),
+    };
+
+    await expect(restoreSessions(host as any)).resolves.toBe(0);
+
+    expect(host.createSession).toHaveBeenCalledOnce();
+    expect(host.createSession).toHaveBeenCalledWith(
+      "codex",
+      ["offline"],
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      undefined,
+      "codex-offline",
+      false,
+      false,
+      undefined,
     );
 
     rmSync(repoRoot, { recursive: true, force: true });

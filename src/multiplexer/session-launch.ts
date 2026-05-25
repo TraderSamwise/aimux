@@ -23,7 +23,7 @@ import { listTopologySessionStates } from "../runtime-core/topology-sessions.js"
 type SessionLaunchHost = any;
 
 function listLaunchableTopologySessions(toolFilter?: string): any[] {
-  const sessions = listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
+  const sessions = listTopologySessionStates({ statuses: ["offline"] });
   return toolFilter ? sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter) : sessions;
 }
 

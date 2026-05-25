@@ -129,19 +129,24 @@ function saveJson(path: string, value: unknown): void {
   writeJsonAtomic(path, value);
 }
 
-export function loadMetadataState(projectRoot?: string): MetadataState {
-  const state = loadJson<MetadataState>(metadataPathFor(projectRoot), { version: 1, sessions: {} });
-  for (const session of Object.values(state.sessions)) {
-    delete (session as SessionMetadata & { backendSessionId?: string }).backendSessionId;
+function scrubBackendSessionIds(state: MetadataState): MetadataState {
+  const sessions = (state as { sessions?: unknown }).sessions;
+  if (!sessions || typeof sessions !== "object") return state;
+  for (const session of Object.values(sessions as Record<string, unknown>)) {
+    if (session && typeof session === "object") {
+      delete (session as { backendSessionId?: unknown }).backendSessionId;
+    }
   }
   return state;
 }
 
+export function loadMetadataState(projectRoot?: string): MetadataState {
+  const state = loadJson<MetadataState>(metadataPathFor(projectRoot), { version: 1, sessions: {} });
+  return scrubBackendSessionIds(state);
+}
+
 export function saveMetadataState(state: MetadataState, projectRoot?: string): void {
-  for (const session of Object.values(state.sessions)) {
-    delete (session as SessionMetadata & { backendSessionId?: string }).backendSessionId;
-  }
-  saveJson(metadataPathFor(projectRoot), state);
+  saveJson(metadataPathFor(projectRoot), scrubBackendSessionIds(state));
 }
 
 export function updateSessionMetadata(
