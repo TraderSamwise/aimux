@@ -9,7 +9,7 @@ import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
 import { parseKeys } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
-import { requestReview } from "../task-dispatcher.js";
+import { requestReview } from "../task-workflow.js";
 import { isTeammateSession } from "../team.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {

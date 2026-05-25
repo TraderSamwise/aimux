@@ -1093,13 +1093,13 @@ describe("resumeSessions", () => {
 });
 
 describe("runProjectService", () => {
-  it("starts the dispatcher refresh loop", async () => {
+  it("starts without legacy dispatchers", async () => {
     const resolveRun = vi.fn();
     const host: any = {
       mode: "dashboard",
       syncSessionsFromState: vi.fn(),
-      createTaskDispatcher: vi.fn(() => ({ tick: vi.fn(), drainEvents: vi.fn(() => []) })),
-      createOrchestrationDispatcher: vi.fn(() => ({ tick: vi.fn(), drainEvents: vi.fn(() => []) })),
+      taskDispatcher: "sentinel",
+      orchestrationDispatcher: "sentinel",
       writeInstructionFiles: vi.fn(),
       startProjectServices: vi.fn(),
       startStatusRefresh: vi.fn(() => resolveRun(0)),
@@ -1115,6 +1115,8 @@ describe("runProjectService", () => {
     await expect(runPromise).resolves.toBe(0);
 
     expect(host.mode).toBe("project-service");
+    expect(host.taskDispatcher).toBeNull();
+    expect(host.orchestrationDispatcher).toBeNull();
     expect(host.startStatusRefresh).toHaveBeenCalledOnce();
   });
 });

@@ -2,7 +2,13 @@ import { normalizeReviewStatus, type Task, writeTask } from "./tasks.js";
 import { loadTeamConfig } from "./team.js";
 import { markMessageDelivered, openTaskThread, updateThread } from "./threads.js";
 import { sendThreadMessage } from "./orchestration.js";
-import type { TaskEvent } from "./task-dispatcher.js";
+
+export interface TaskEvent {
+  type: "assigned" | "completed" | "failed" | "review_created" | "review_approved" | "changes_requested";
+  taskId: string;
+  sessionId: string;
+  description: string;
+}
 
 interface DispatchSession {
   id: string;
@@ -199,6 +205,43 @@ export class TaskWorkflow {
 }
 
 function defaultDeliverPrompt(session: DispatchSession, prompt: string): void {
-  // Production multiplexer wiring overrides this with writeAgentInput(..., submit: true).
   session.write(prompt + "\r");
+}
+
+export function requestReview(
+  agentSessionId: string,
+  agentRole: string,
+  diff: string | undefined,
+  summary: string,
+): Task | null {
+  const config = loadTeamConfig();
+  const roleConfig = config.roles[agentRole];
+  let reviewerRole = roleConfig?.reviewedBy;
+
+  if (!reviewerRole) {
+    const fallback = Object.entries(config.roles).find(
+      ([_, role]) => role.canEdit || role.description.toLowerCase().includes("review"),
+    );
+    if (!fallback) return null;
+    reviewerRole = fallback[0];
+  }
+
+  const reviewTask: Task = {
+    id: `review-manual-${Date.now().toString(36)}`,
+    status: "pending",
+    assignedBy: agentSessionId,
+    description: `Review: ${summary.slice(0, 100)}`,
+    prompt: summary,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    assignee: reviewerRole,
+    assigner: agentRole,
+    type: "review",
+    reviewStatus: "pending",
+    diff,
+    iteration: 1,
+  };
+
+  writeTask(reviewTask);
+  return reviewTask;
 }

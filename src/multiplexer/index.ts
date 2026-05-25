@@ -5,7 +5,6 @@ import { DashboardOverlayState, DashboardState } from "../dashboard/state.js";
 import { ContextWatcher } from "../context/context-bridge.js";
 import { loadConfig } from "../config.js";
 import { findMainRepo } from "../worktree.js";
-import { TaskDispatcher } from "../task-dispatcher.js";
 import { TerminalHost } from "../terminal-host.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "../session-runtime.js";
 import { AgentTracker } from "../agent-tracker.js";
@@ -17,7 +16,6 @@ import { loadMetadataState } from "../metadata-store.js";
 import { PluginRuntime } from "../plugin-runtime.js";
 import { SessionBootstrapService } from "../session-bootstrap.js";
 import { createThread, appendMessage, updateThread } from "../threads.js";
-import { OrchestrationDispatcher } from "../orchestration-dispatcher.js";
 import { ProjectEventBus, type AlertKind } from "../project-events.js";
 import {
   contextualizeAlertInput,
@@ -106,6 +104,11 @@ export interface SavedState {
 }
 
 type ManagedSession = SessionRuntime;
+
+type RuntimeQueueStatus = {
+  getSessionTask?: (sessionId: string) => string | undefined;
+  getTaskCounts?: () => { pending: number; assigned: number };
+};
 
 interface WorktreeRemovalJob {
   path: string;
@@ -240,8 +243,8 @@ export class Multiplexer {
   private contextWatcher = new ContextWatcher((target) =>
     this.tmuxRuntimeManager.captureTarget(target, { startLine: -120 }),
   );
-  private taskDispatcher: TaskDispatcher | null = null;
-  private orchestrationDispatcher: OrchestrationDispatcher | null = null;
+  private taskDispatcher: RuntimeQueueStatus | null = null;
+  private orchestrationDispatcher: null = null;
   /** Maps session ID → toolConfigKey for state saving */
   private sessionToolKeys = new Map<string, string>();
   /** Maps session ID → original args (before preamble injection) */
@@ -415,7 +418,7 @@ export class Multiplexer {
       unseenCount: derived?.unseenCount,
       notificationUnreadCount: unreadNotifications.length,
       latestNotification,
-      hasActiveTask: Boolean(this.taskDispatcher?.getSessionTask(sessionId)),
+      hasActiveTask: Boolean(this.taskDispatcher?.getSessionTask?.(sessionId)),
     });
   }
 
@@ -445,28 +448,6 @@ export class Multiplexer {
 
   private updateContextWatcherSessions(): void {
     updateContextWatcherSessionsImpl(this);
-  }
-
-  private createTaskDispatcher(): TaskDispatcher {
-    return new TaskDispatcher(
-      (id) => this.sessions.find((s) => s.id === id),
-      (id) => this.sessionToolKeys.get(id),
-      (id) => this.sessionRoles.get(id),
-      (id) => this.deriveSessionSemanticState(id).runtime.canReceiveInput,
-      (session, prompt) => {
-        void this.writeAgentInput(session.id, prompt, undefined, undefined, true);
-      },
-    );
-  }
-
-  private createOrchestrationDispatcher(): OrchestrationDispatcher {
-    return new OrchestrationDispatcher(
-      (id) => this.sessions.find((s) => s.id === id),
-      (id) => this.deriveSessionSemanticState(id).runtime.canReceiveInput,
-      (session, prompt) => {
-        void this.writeAgentInput(session.id, prompt, undefined, undefined, true);
-      },
-    );
   }
 
   private selectLinkedOrOpenTarget(target: TmuxTarget): void {
