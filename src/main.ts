@@ -26,6 +26,7 @@ import {
   getDaemonLogPath,
   getProjectLogPath,
   getProjectStateDirFor,
+  getRuntimeTopologyPath,
 } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
@@ -116,6 +117,7 @@ import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.js";
 import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/service-state-snapshot.js";
 import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
+import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -1025,6 +1027,25 @@ hostCmd
       return;
     }
     console.log(`Restarted project service for ${dashboardSession.sessionName}`);
+  });
+
+hostCmd
+  .command("topology")
+  .description("Show the runtime topology YAML path or parsed contents")
+  .option("--json", "Emit parsed topology JSON")
+  .option("--raw", "Print raw YAML contents")
+  .action(async (opts: { json?: boolean; raw?: boolean }) => {
+    await initPaths();
+    const path = getRuntimeTopologyPath();
+    if (opts.json) {
+      console.log(JSON.stringify(createRuntimeTopologyStore(path).read(), null, 2));
+      return;
+    }
+    if (opts.raw) {
+      console.log(readFileSync(path, "utf-8"));
+      return;
+    }
+    console.log(path);
   });
 
 hostCmd
