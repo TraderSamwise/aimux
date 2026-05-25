@@ -144,21 +144,21 @@ export function collectGithubPrTargets(
   topologySessions: RuntimeTopologySessionState[] = [],
 ): SessionTarget[] {
   const targets = new Map<string, SessionTarget>();
-
-  for (const session of statusline?.sessions ?? []) {
-    const existingContext = metadata?.sessions?.[session.id]?.context ?? {};
-    targets.set(session.id, {
-      id: session.id,
-      worktreePath: session.worktreePath ?? existingContext.worktreePath ?? existingContext.cwd,
-    });
-  }
+  const statuslineById = new Map<string, any>(
+    (statusline?.sessions ?? []).map((session: any) => [session.id, session]),
+  );
 
   for (const session of topologySessions) {
     if (!targets.has(session.id)) {
+      const statuslineSession = statuslineById.get(session.id);
       const existingContext = metadata?.sessions?.[session.id]?.context ?? {};
       targets.set(session.id, {
         id: session.id,
-        worktreePath: session.worktreePath ?? existingContext.worktreePath ?? existingContext.cwd,
+        worktreePath:
+          session.worktreePath ??
+          statuslineSession?.worktreePath ??
+          existingContext.worktreePath ??
+          existingContext.cwd,
       });
     }
   }

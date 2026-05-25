@@ -9,9 +9,7 @@ export type RuntimeCoreOperation =
   | "agent.kill"
   | "agent.migrate"
   | "agent.input"
-  | "agent.interrupt"
-  | "agent.resume"
-  | "agent.resurrect";
+  | "agent.interrupt";
 
 export class RuntimeCoreDisabledError extends Error {
   readonly code = "AIMUX_RUNTIME_CORE_DISABLED";

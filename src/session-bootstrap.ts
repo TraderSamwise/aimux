@@ -24,31 +24,12 @@ export function buildAimuxAgentInstructions(
   const sessionPath = opts.sessionId ?? "{session-id}";
   const includeTeammates = opts.includeTeammateCreationInstructions !== false;
   const teamCoordinationLine = includeTeammates
-    ? "- Team lifecycle uses the local metadata teammate API; actionable teammate work must be assigned as durable aimux tasks.\n"
+    ? "- Do not directly spawn or control other agents unless the user gives an explicit aimux CLI command.\n"
     : "- This session is already a teammate; do not create nested teammate teams.\n";
   const delegationProtocol = includeTeammates
-    ? "When the user specifically asks for a team or teammates, first use the Teammates API below to discover, reuse, create, and assign task work to direct teammate agents. " +
+    ? "When the user specifically asks for delegation, handoff, or teammate coordination, use `.aimux/tasks/` handoff records unless the user gives an explicit aimux CLI command. " +
       'For generic delegation or handoff records, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. '
     : 'For generic delegation or handoff records, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. ';
-  const teammateInstructions = includeTeammates
-    ? "\n\n" +
-      "## Teammates\n" +
-      "- When the user asks you to make or use a team, discover and reuse existing teammates first; create 1-3 aimux teammate agents through the local metadata API only when needed.\n" +
-      "- Reuse existing teammates first. Discover the local endpoint with `aimux metadata endpoint`, then GET `/agents/teammates?parentSessionId=" +
-      sessionPath +
-      "` before creating new ones; ask before replacing an existing team.\n" +
-      "- Once a team exists, prefer delegating bounded subtasks to those direct teammates until the user removes or replaces the team.\n" +
-      "- Teammates are first-party aimux agents. The user can inspect and enter them, but they stay hidden from the normal dashboard unless your agent is focused.\n" +
-      "- Default to your same tool, worktree, and safe model/provider/runtime selection. Only set `tool`, `worktreePath`, `extraArgs`, or role/model-specific args when the user or task requires it.\n" +
-      '- Discover the API with `aimux metadata endpoint`, then POST `/agents/teammates/create` with JSON like `{ "parentSessionId": "' +
-      sessionPath +
-      '", "role": "coder", "label": "coder-1", "initialTask": { "title": "Parser tests", "body": "Implement bounded parser tests and report back." } }`.\n' +
-      '- Delegate work by POSTing `/agents/teammates/tasks` with JSON like `{ "parentSessionId": "' +
-      sessionPath +
-      '", "teammateSessionId": "codex-abc123", "title": "Review patch", "body": "Review this patch and report blockers first." }`.\n' +
-      "- Manage direct teammate lifecycle with `/agents/teammates/stop`, `/agents/teammates/resume`, `/agents/teammates/kill`, and `/agents/teammates/resurrect`; pass your `parentSessionId` plus the direct `teammateSessionId`.\n" +
-      "- If your own session instructions say you are already a teammate for another parent, do not create nested teammates."
-    : "";
 
   return (
     "You are running inside aimux, an agent multiplexer for this repository. " +
@@ -74,9 +55,8 @@ export function buildAimuxAgentInstructions(
     "\n" +
     "## Delegation Protocol\n" +
     delegationProtocol +
-    "Optional fields are `assignedTo` for a specific session ID and `tool` for coordination metadata. Treat task files as shared handoff records for explicit teammate metadata API or manual coordination flows.\n" +
-    "When you accept a task file, complete it and mark the task `done` with `result`, or `failed` with `error`." +
-    teammateInstructions
+    "Optional fields are `assignedTo` for a specific session ID and `tool` for coordination metadata. Treat task files as shared handoff records for explicit manual coordination flows.\n" +
+    "When you accept a task file, complete it and mark the task `done` with `result`, or `failed` with `error`."
   );
 }
 

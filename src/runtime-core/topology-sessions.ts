@@ -131,6 +131,7 @@ function sessionToBinding(
   nodeId: string,
   now: string,
 ): RuntimeTopologyBinding | undefined {
+  if (session.lifecycle === "offline") return undefined;
   const target = session.tmuxTarget;
   if (!target) return undefined;
   return {
@@ -149,7 +150,10 @@ export function topologySessionToSessionState(
   topology: RuntimeTopology,
 ): RuntimeTopologySessionState {
   const node = topology.nodes.find((entry) => entry.id === session.nodeId);
-  const binding = topology.bindings.find((entry) => entry.nodeId === session.nodeId);
+  const binding =
+    session.status === "running" || session.status === "idle" || session.status === "starting"
+      ? topology.bindings.find((entry) => entry.nodeId === session.nodeId)
+      : undefined;
   const tool = session.tool ?? node?.toolConfigKey ?? session.command ?? "unknown";
   return {
     id: session.id,
@@ -213,15 +217,19 @@ export function saveRuntimeTopologySessions(input: SaveRuntimeTopologySessionsIn
     const preservedNodes = topology.nodes.filter((node) =>
       preservedGraveyard.some((session) => session.nodeId === node.id),
     );
-    const preservedBindings = topology.bindings.filter((binding) =>
-      preservedGraveyard.some((session) => session.nodeId === binding.nodeId),
-    );
     topology.nodes = [...preservedNodes.filter((node) => !activeNodeIds.has(node.id)), ...nextNodes];
-    topology.bindings = [
-      ...preservedBindings.filter((binding) => !nextBindings.some((next) => next.id === binding.id)),
-      ...nextBindings,
-    ];
+    topology.bindings = nextBindings;
     topology.sessions = [...preservedGraveyard, ...nextSessions];
+    const retainedNodeIds = new Set(topology.nodes.map((node) => node.id));
+    const retainedSessionIds = new Set(topology.sessions.map((session) => session.id));
+    topology.edges = topology.edges.filter(
+      (edge) => retainedNodeIds.has(edge.sourceNodeId) && retainedNodeIds.has(edge.targetNodeId),
+    );
+    topology.queue = topology.queue.filter(
+      (item) =>
+        (!item.sourceSessionId || retainedSessionIds.has(item.sourceSessionId)) &&
+        (!item.targetSessionId || retainedSessionIds.has(item.targetSessionId)),
+    );
     return topology;
   });
 }
@@ -281,12 +289,14 @@ export function moveTopologySessionToGraveyard(
       moved = topologySessionToSessionState(existing, topology);
       existing.status = "graveyard";
       existing.updatedAt = now;
+      topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
       return topology;
     }
     if (!seed) return topology;
     const rigId = ensureRig(topology, getRepoRoot(), now);
     const node = upsertNode(topology, seed, rigId, now);
     topology.sessions.push({ ...sessionToTopologySession(seed, node.id, now), status: "graveyard" });
+    topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== node.id);
     moved = seed;
     return topology;
   });
@@ -302,6 +312,7 @@ export function resurrectTopologySession(sessionId: string, input?: { store?: Ru
     if (!session) return topology;
     session.status = "offline";
     session.updatedAt = now;
+    topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== session.nodeId);
     restored = topologySessionToSessionState(session, topology);
     return topology;
   });

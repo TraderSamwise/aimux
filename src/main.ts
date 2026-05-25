@@ -1403,7 +1403,9 @@ projectsCmd
   .action(async (opts: { json?: boolean }) => {
     await ensureDaemonRunning();
     const result = await requestDaemonJson("/projects");
-    const projects = result.projects as ReturnType<typeof listDesktopProjects>;
+    const projects = result.projects as Array<
+      ReturnType<typeof listDesktopProjects>[number] & { serviceAlive?: boolean }
+    >;
     if (opts.json) {
       console.log(JSON.stringify({ projects }, null, 2));
       return;
@@ -1415,14 +1417,8 @@ projectsCmd
     }
 
     for (const project of projects) {
-      const liveBadge = project.sessions.some((session) => session.status !== "offline") ? "live" : "idle";
+      const liveBadge = project.serviceAlive ? "live" : "idle";
       console.log(`${project.name}  ${liveBadge}  ${project.path}`);
-      if (project.sessions.length === 0) continue;
-      for (const session of project.sessions) {
-        const label = session.label ? ` ${session.label}` : "";
-        const headline = session.headline ? ` - ${session.headline}` : "";
-        console.log(`  ${session.id}  ${session.tool}  ${session.status}${label}${headline}`);
-      }
     }
   });
 

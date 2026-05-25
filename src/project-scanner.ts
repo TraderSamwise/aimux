@@ -14,7 +14,6 @@ export interface GlobalSession {
   headline?: string;
   role?: string;
   worktreePath?: string;
-  ownerPid?: number;
 }
 
 export interface ProjectInfo {
@@ -29,7 +28,6 @@ export interface DesktopProjectInfo {
   path: string;
   lastSeen?: string;
   dashboardSessionName: string;
-  sessions: GlobalSession[];
 }
 
 function topologyStatusToGlobalStatus(status: string | undefined): GlobalSession["status"] {
@@ -90,69 +88,29 @@ export function scanProject(projectPath: string): ProjectInfo {
   const registryEntry = listProjects().find((entry) => entry.repoRoot === projectPath);
   const sessionById = new Map<string, GlobalSession>();
 
-  // Check both global state dir and in-repo .aimux/ for instances
-  const instancesPaths = [join(getAimuxDirFor(projectPath), "instances.json")];
   const statusDirs = [join(getAimuxDirFor(projectPath), "status")];
 
   // Also check global project state dirs for registered projects
   if (registryEntry) {
     const projectStateDir = getProjectStateDirById(registryEntry.id);
-    const globalInstances = join(projectStateDir, "instances.json");
-    if (!instancesPaths.includes(globalInstances)) {
-      instancesPaths.unshift(globalInstances);
-    }
     statusDirs.unshift(join(projectStateDir, "status"));
   }
 
-  for (const instancesPath of instancesPaths) {
-    if (!existsSync(instancesPath)) continue;
-    try {
-      const instances = JSON.parse(readFileSync(instancesPath, "utf-8")) as Array<{
-        instanceId: string;
-        pid: number;
-        sessions: Array<{ id: string; tool: string; worktreePath?: string; backendSessionId?: string }>;
-      }>;
-
-      for (const inst of instances) {
-        // Check PID alive
-        try {
-          process.kill(inst.pid, 0);
-        } catch {
-          continue;
-        }
-
-        for (const s of inst.sessions) {
-          if (seenIds.has(s.id)) continue;
-          seenIds.add(s.id);
-
-          let headline: string | undefined;
-          for (const statusDir of statusDirs) {
-            try {
-              const statusPath = join(statusDir, `${s.id}.md`);
-              if (existsSync(statusPath)) {
-                const content = readFileSync(statusPath, "utf-8").trim();
-                if (content) {
-                  headline = content.split("\n")[0].slice(0, 80);
-                  break;
-                }
-              }
-            } catch {
-              // Try the next candidate directory.
-            }
+  function readStatusHeadline(sessionId: string): string | undefined {
+    for (const statusDir of statusDirs) {
+      try {
+        const statusPath = join(statusDir, `${sessionId}.md`);
+        if (existsSync(statusPath)) {
+          const content = readFileSync(statusPath, "utf-8").trim();
+          if (content) {
+            return content.split("\n")[0].slice(0, 80);
           }
-
-          sessions.push({
-            id: s.id,
-            tool: s.tool,
-            status: "running",
-            headline,
-            worktreePath: s.worktreePath,
-            ownerPid: inst.pid,
-          });
-          sessionById.set(s.id, sessions[sessions.length - 1]);
         }
+      } catch {
+        // Try the next candidate directory.
       }
-    } catch {}
+    }
+    return undefined;
   }
 
   const topologyPaths: string[] = [];
@@ -171,7 +129,7 @@ export function scanProject(projectPath: string): ProjectInfo {
           if (existing) {
             existing.status = topologyStatusToGlobalStatus(topologySession.status);
             existing.label = s.label ?? existing.label;
-            existing.headline = s.headline ?? existing.headline;
+            existing.headline = s.headline ?? existing.headline ?? readStatusHeadline(s.id);
             existing.worktreePath = s.worktreePath ?? existing.worktreePath;
           }
           continue;
@@ -181,7 +139,7 @@ export function scanProject(projectPath: string): ProjectInfo {
           tool: s.command ?? s.tool ?? "unknown",
           status: topologyStatusToGlobalStatus(topologySession.status),
           label: s.label,
-          headline: s.headline,
+          headline: s.headline ?? readStatusHeadline(s.id),
           worktreePath: s.worktreePath,
         };
         sessions.push(session);
@@ -222,7 +180,6 @@ export function scanProject(projectPath: string): ProjectInfo {
         existing.tool = s.tool ?? existing.tool;
         existing.label = s.label ?? existing.label;
         existing.headline = s.headline ?? existing.headline;
-        existing.status = s.status ?? existing.status;
         existing.role = s.role ?? existing.role;
       }
       break;
@@ -280,7 +237,6 @@ export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopPro
       path: entry.repoRoot,
       lastSeen: entry.lastSeen,
       dashboardSessionName: tmuxSession.sessionName,
-      sessions: scanned?.sessions ?? [],
     });
   }
 
@@ -293,7 +249,6 @@ export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopPro
       name: scanned.name,
       path: scanned.path,
       dashboardSessionName: tmuxSession.sessionName,
-      sessions: scanned.sessions,
     });
   }
 

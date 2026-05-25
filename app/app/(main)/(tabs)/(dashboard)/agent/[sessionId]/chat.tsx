@@ -36,12 +36,8 @@ import {
   pendingMessagesFamily,
   setHistoryAtom,
 } from "@/stores/chat";
-import {
-  projectsAtom,
-  selectedProjectAtom,
-  selectedSessionIdAtom,
-  selectProjectAtom,
-} from "@/stores/projects";
+import { desktopStateFamily } from "@/stores/desktopState";
+import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import { activeSharedSessionAtom, chatTerminalSplitAtom } from "@/stores/settings";
 import type { ChatMessage } from "@/lib/events";
@@ -59,8 +55,7 @@ export default function ChatScreen() {
   const sessionId = singleRouteParam(params.sessionId);
   const sessionKey = sessionId ?? "";
   const project = useAtomValue(selectedProjectAtom);
-  const projects = useAtomValue(projectsAtom);
-  const selectProject = useSetAtom(selectProjectAtom);
+  const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const ingestEvent = useSetAtom(ingestEventAtom);
   const setHistory = useSetAtom(setHistoryAtom);
@@ -95,20 +90,6 @@ export default function ChatScreen() {
     if (!sessionId) return;
     selectSession(sessionId);
   }, [sessionId, selectSession]);
-
-  // The route is the source of truth on refresh/deep link. If persisted project
-  // state points elsewhere, recover the project that owns this session.
-  useEffect(() => {
-    if (!sessionId || projects.length === 0) return;
-    if (project?.sessions.some((session) => session.id === sessionId)) return;
-    const owner = projects.find((candidate) =>
-      candidate.sessions.some((session) => session.id === sessionId),
-    );
-    if (owner) {
-      selectProject(owner.path);
-      selectSession(sessionId);
-    }
-  }, [sessionId, projects, project, selectProject, selectSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -253,7 +234,7 @@ export default function ChatScreen() {
     terminalScrollRef.current?.scrollToEnd({ animated: false });
   }, [output, showTerminalSplit]);
 
-  const session = sessionId ? (project?.sessions.find((s) => s.id === sessionId) ?? null) : null;
+  const session = sessionId ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null) : null;
   const canShowTerminal = Boolean(output);
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;

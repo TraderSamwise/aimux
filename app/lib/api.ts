@@ -105,24 +105,12 @@ export interface DaemonHealth {
   port: number;
 }
 
-export interface ProjectSession {
-  id: string;
-  tool: string;
-  status: "running" | "idle" | "waiting" | "offline";
-  label?: string;
-  headline?: string;
-  role?: string;
-  worktreePath?: string;
-  ownerPid?: number;
-}
-
 export interface DaemonProject {
   id: string;
   name: string;
   path: string;
   lastSeen?: string;
   dashboardSessionName: string;
-  sessions: ProjectSession[];
   service: unknown | null;
   serviceAlive: boolean;
   serviceEndpoint: ServiceEndpoint | null;
