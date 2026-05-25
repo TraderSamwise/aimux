@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
 import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
-import { readSessionInputOperation } from "../session-input-operations.js";
 import { readSessionMessages } from "../session-message-history.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import {
@@ -147,27 +146,15 @@ describe("session runtime prompt submission", () => {
         tmuxRuntimeManager,
       };
 
-      const resultPromise = writeAgentInput(
-        host,
-        "codex-1",
-        "Review task details",
-        undefined,
-        "client-message-1",
-        true,
-      );
+      await expect(
+        writeAgentInput(host, "codex-1", "Review task details", undefined, "client-message-1", true),
+      ).rejects.toMatchObject({
+        code: "AIMUX_RUNTIME_CORE_DISABLED",
+        operation: "agent.input",
+      });
 
-      await vi.advanceTimersByTimeAsync(300);
-      await vi.advanceTimersByTimeAsync(250);
-      await vi.advanceTimersByTimeAsync(200);
-      await vi.advanceTimersByTimeAsync(700);
-
-      const result = await resultPromise;
-
-      expect(result.accepted).toBe(true);
-      expect(result.operation.state).toBe("submitted");
-      expect(readSessionInputOperation(result.operation.id)?.state).toBe("submitted");
-      expect(tmuxRuntimeManager.sendText).toHaveBeenCalledWith(target, "Review task details");
-      expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledWith(target);
+      expect(tmuxRuntimeManager.sendText).not.toHaveBeenCalled();
+      expect(tmuxRuntimeManager.sendCarriageReturn).not.toHaveBeenCalled();
       expect(tmuxRuntimeManager.sendEnter).not.toHaveBeenCalled();
     } finally {
       transport.destroy();
@@ -192,72 +179,24 @@ describe("session runtime prompt submission", () => {
         sessionToolKeys: new Map([["claude-1", "claude"]]),
       };
 
-      const result = await writeAgentInput(host, "claude-1", "Can you check this?", undefined, "client-1", true, {
-        shareId: "share_123",
-        mode: "multi",
-        actor: {
-          userId: "user_123",
-          displayName: "Sam Steady",
-          email: "sam@example.com",
-          role: "owner",
-        },
-      });
-
-      const repeat = await writeAgentInput(host, "claude-1", "Second question", undefined, "client-2", true, {
-        shareId: "share_123",
-        mode: "multi",
-        actor: {
-          userId: "user_123",
-          displayName: "Sam Steady",
-          email: "sam@example.com",
-          role: "owner",
-        },
-      });
-      const downgraded = await writeAgentInput(host, "claude-1", "Back to normal", undefined, "client-3", true, {
-        shareId: "share_123",
-        mode: "single",
-        actor: {
-          userId: "user_123",
-          displayName: "Sam Steady",
-          email: "sam@example.com",
-          role: "owner",
-        },
-      });
-
-      expect(result.accepted).toBe(true);
-      expect(repeat.accepted).toBe(true);
-      expect(downgraded.accepted).toBe(true);
-      expect(writes).toEqual([
-        "Aimux collaboration note: This shared chat is now multi-user. Human messages are prefixed as [Name]: message so you can distinguish participants.\n\n[Sam Steady]: Can you check this?\r",
-        "[Sam Steady]: Second question\r",
-        "Aimux collaboration note: This shared chat is back to single-user mode. Future unprefixed user messages are from the remaining participant.\n\nBack to normal\r",
-      ]);
-      expect(readSessionMessages("claude-1")).toMatchObject([
-        {
-          clientMessageId: "client-1",
-          sessionId: "claude-1",
-          role: "user",
-          parts: [{ type: "text", text: "Can you check this?" }],
+      await expect(
+        writeAgentInput(host, "claude-1", "Can you check this?", undefined, "client-1", true, {
+          shareId: "share_123",
+          mode: "multi",
           actor: {
             userId: "user_123",
             displayName: "Sam Steady",
             email: "sam@example.com",
             role: "owner",
           },
-          shareId: "share_123",
-          chatMode: "multi",
-        },
-        {
-          clientMessageId: "client-2",
-          parts: [{ type: "text", text: "Second question" }],
-          chatMode: "multi",
-        },
-        {
-          clientMessageId: "client-3",
-          parts: [{ type: "text", text: "Back to normal" }],
-          chatMode: "single",
-        },
-      ]);
+        }),
+      ).rejects.toMatchObject({
+        code: "AIMUX_RUNTIME_CORE_DISABLED",
+        operation: "agent.input",
+      });
+
+      expect(writes).toEqual([]);
+      expect(readSessionMessages("claude-1")).toEqual([]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -292,17 +231,14 @@ describe("session runtime prompt submission", () => {
         tmuxRuntimeManager,
       };
 
-      const resultPromise = writeAgentInput(host, "codex-1", "Review task details", undefined, undefined, true);
+      await expect(
+        writeAgentInput(host, "codex-1", "Review task details", undefined, undefined, true),
+      ).rejects.toMatchObject({
+        code: "AIMUX_RUNTIME_CORE_DISABLED",
+        operation: "agent.input",
+      });
 
-      await vi.advanceTimersByTimeAsync(300);
-
-      const result = await resultPromise;
-
-      expect(result.accepted).toBe(false);
-      expect(result.operation.state).toBe("failed");
-      expect(result.error).toContain("prompt submit was not accepted");
-      expect(readSessionInputOperation(result.operation.id)?.state).toBe("failed");
-      expect(tmuxRuntimeManager.sendText).toHaveBeenCalledWith(target, "Review task details");
+      expect(tmuxRuntimeManager.sendText).not.toHaveBeenCalled();
       expect(tmuxRuntimeManager.sendCarriageReturn).not.toHaveBeenCalled();
     } finally {
       transport.destroy();

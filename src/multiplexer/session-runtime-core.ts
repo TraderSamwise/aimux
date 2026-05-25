@@ -9,21 +9,15 @@ import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
-import { serializeAgentInput, type AgentInputPart } from "../agent-message-parts.js";
-import { resolveAttachmentPath } from "../attachment-store.js";
-import { applyAgentCollaborationPrefix, type AgentCollaborationContext } from "../collaboration.js";
-import { appendSessionMessage, readSessionMessages } from "../session-message-history.js";
-import {
-  createSessionInputOperation,
-  saveSessionInputOperation,
-  type SessionInputOperationRecord,
-} from "../session-input-operations.js";
+import type { AgentCollaborationContext } from "../collaboration.js";
+import { readSessionMessages } from "../session-message-history.js";
 import { captureGitContext } from "../context/context-bridge.js";
 import {
   normalizeSubmittedPrompt,
   paneStillContainsPromptDraft,
   waitForTmuxPromptSubmit,
 } from "../agent-prompt-delivery.js";
+import { RuntimeCoreDisabledError } from "../runtime-core/index.js";
 import type { SessionTeamMetadata } from "../team.js";
 
 type SessionRuntimeHost = any;
@@ -249,125 +243,20 @@ export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: str
 }
 
 export async function writeAgentInput(
-  host: SessionRuntimeHost,
+  _host: SessionRuntimeHost,
   sessionId: string,
-  data = "",
-  parts?: any[],
-  clientMessageId?: string,
-  submit = false,
-  collaboration?: AgentCollaborationContext,
+  _data = "",
+  _parts?: any[],
+  _clientMessageId?: string,
+  _submit = false,
+  _collaboration?: AgentCollaborationContext,
 ): Promise<{
   sessionId: string;
   accepted: boolean;
-  operation: SessionInputOperationRecord;
   messageId?: string;
   error?: string;
 }> {
-  const session = resolveRunningSession(host, sessionId);
-  const agentInput = applyCollaborationContextForAgent(
-    host,
-    sessionId,
-    applyAgentCollaborationPrefix({ data, parts }, collaboration),
-    collaboration,
-  );
-  const serializedData = serializeAgentInput(agentInput, {
-    tool: host.sessionToolKeys.get(sessionId),
-    resolveAttachmentPath,
-  });
-  const normalizedData = normalizeAgentInput(host, serializedData, submit, sessionId);
-  if (!normalizedData && !submit) {
-    throw new Error("input data is required");
-  }
-
-  let operation = createSessionInputOperation({ sessionId, clientMessageId, submit });
-  try {
-    const message = appendSessionMessage(sessionId, { data, parts, clientMessageId, collaboration });
-    if (message?.id) {
-      operation = saveSessionInputOperation({
-        ...operation,
-        messageId: message.id,
-      });
-    }
-    if (session.transport instanceof TmuxSessionTransport) {
-      if (normalizedData) {
-        writeTmuxAgentInput(host, sessionId, session.transport, normalizedData);
-      }
-      if (submit) {
-        const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
-        if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
-        const submitted = await waitForTmuxAgentSubmit(host, sessionId, target, normalizedData);
-        if (!submitted) {
-          throw new Error(`Session "${sessionId}" prompt submit was not accepted by tmux`);
-        }
-      }
-      operation = saveSessionInputOperation({
-        ...operation,
-        state: submit ? "submitted" : "applied",
-      });
-    } else {
-      session.write(submit ? `${normalizedData}\r` : normalizedData);
-      operation = saveSessionInputOperation({
-        ...operation,
-        state: submit ? "submitted" : "applied",
-      });
-    }
-    return {
-      sessionId,
-      accepted: true,
-      operation,
-      messageId: message?.id,
-    };
-  } catch (error) {
-    operation = saveSessionInputOperation({
-      ...operation,
-      state: "failed",
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return {
-      sessionId,
-      accepted: false,
-      operation,
-      messageId: operation.messageId,
-      error: operation.error,
-    };
-  }
-}
-
-function applyCollaborationContextForAgent(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  input: { data?: string; parts?: AgentInputPart[] },
-  collaboration?: AgentCollaborationContext,
-): { data?: string; parts?: AgentInputPart[] } {
-  const notice = consumeCollaborationModeNotice(host, sessionId, collaboration);
-  if (!notice) return input;
-  if (Array.isArray(input.parts) && input.parts.length > 0) {
-    return {
-      data: input.data,
-      parts: [{ type: "text", text: notice }, ...input.parts],
-    };
-  }
-  const data = String(input.data ?? "");
-  return {
-    data: data.trim() ? `${notice}\n\n${data}` : notice,
-    parts: input.parts,
-  };
-}
-
-function consumeCollaborationModeNotice(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  collaboration?: AgentCollaborationContext,
-): string | null {
-  if (!collaboration?.shareId || !collaboration.mode) return null;
-  const modes: Map<string, string> = (host.collaborationModesBySession ??= new Map());
-  const next = `${collaboration.shareId}:${collaboration.mode}`;
-  if (modes.get(sessionId) === next) return null;
-  modes.set(sessionId, next);
-  if (collaboration.mode === "multi") {
-    return "Aimux collaboration note: This shared chat is now multi-user. Human messages are prefixed as [Name]: message so you can distinguish participants.";
-  }
-  return "Aimux collaboration note: This shared chat is back to single-user mode. Future unprefixed user messages are from the remaining participant.";
+  throw new RuntimeCoreDisabledError("agent.input");
 }
 
 export async function readAgentHistory(

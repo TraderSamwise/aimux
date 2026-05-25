@@ -60,7 +60,6 @@ import { markLastUsed } from "./last-used.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
 import type { AgentInputPart } from "./agent-message-parts.js";
-import type { SessionInputOperationRecord } from "./session-input-operations.js";
 import {
   getAttachment,
   getAttachmentContent,
@@ -288,14 +287,14 @@ interface MetadataServerOptions {
       | Promise<{
           sessionId: string;
           accepted: boolean;
-          operation: SessionInputOperationRecord;
+          operation?: unknown;
           messageId?: string;
           error?: string;
         }>
       | {
           sessionId: string;
           accepted: boolean;
-          operation: SessionInputOperationRecord;
+          operation?: unknown;
           messageId?: string;
           error?: string;
         };
