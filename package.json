@@ -70,7 +70,8 @@
     "node-pty": "^1.0.0",
     "proper-lockfile": "^4.1.2",
     "simple-git": "^3.33.0",
-    "strip-ansi": "^7.1.0"
+    "strip-ansi": "^7.1.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

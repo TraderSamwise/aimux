@@ -283,6 +283,10 @@ export function getMetadataPath(): string {
   return join(getProjectStateDir(), "metadata.json");
 }
 
+export function getRuntimeTopologyPath(): string {
+  return join(getProjectStateDir(), "runtime-topology.yaml");
+}
+
 export function getNotificationsPath(): string {
   return join(getProjectStateDir(), "notifications.json");
 }
