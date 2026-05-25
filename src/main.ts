@@ -99,7 +99,6 @@ import {
 import { notifyAlert } from "./notify.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
-import { writeJsonAtomic } from "./atomic-write.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
 import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
 import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";

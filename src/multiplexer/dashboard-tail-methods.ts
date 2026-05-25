@@ -1,4 +1,3 @@
-import { debug } from "../debug.js";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { Multiplexer, SessionState } from "./index.js";
 import { disabledRuntimeCore } from "../runtime-core/index.js";

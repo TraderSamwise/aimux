@@ -903,18 +903,6 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
         host.resumeOfflineSession(session);
         return;
       }
-      const sessionSeed =
-        host.getDashboardSessions?.().find((entry: any) => entry.id === session.id) ??
-        ({
-          index: -1,
-          id: session.id,
-          command: session.command,
-          label: session.label ?? session.command,
-          status: "offline",
-          active: false,
-          worktreePath: session.worktreePath,
-          team: session.team,
-        } satisfies DashboardSession);
       const result = await host.postToProjectService(
         "/agents/resume",
         { sessionId: session.id },

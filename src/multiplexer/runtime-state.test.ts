@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getStatePath, initPaths } from "../paths.js";
+import { initPaths } from "../paths.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import {

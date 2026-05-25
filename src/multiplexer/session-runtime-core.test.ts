@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
-import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import {
   buildTmuxWindowMetadata,
   handleSessionRuntimeEvent,

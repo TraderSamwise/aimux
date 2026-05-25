@@ -426,15 +426,6 @@ interface TeammateTaskBody {
   worktreePath?: string;
 }
 
-function isDesktopSessionRecord(value: unknown): value is DesktopSessionRecord {
-  return Boolean(value && typeof value === "object" && typeof (value as { id?: unknown }).id === "string");
-}
-
-function desktopSessionList(value: unknown): DesktopSessionRecord[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(isDesktopSessionRecord);
-}
-
 function topologyDesktopSessionList(
   statuses: Array<"running" | "idle" | "offline" | "graveyard">,
 ): DesktopSessionRecord[] {

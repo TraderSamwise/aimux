@@ -229,7 +229,6 @@ export function listDesktopProjects(tmux = new TmuxRuntimeManager()): DesktopPro
 
   for (const entry of listProjects()) {
     if (shouldHideDesktopProject(entry.repoRoot)) continue;
-    const scanned = scannedByPath.get(entry.repoRoot);
     const tmuxSession = tmux.getProjectSession(entry.repoRoot);
     projects.set(entry.repoRoot, {
       id: entry.id,
