@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../config.js";
 import {
   getSessionBackendSessionId,
@@ -6,7 +6,7 @@ import {
   recordSessionBackendSessionIdMetadata,
   updateSessionMetadata,
 } from "../metadata-store.js";
-import { getGraveyardPath, getLocalAimuxDir, getStatePath } from "../paths.js";
+import { getLocalAimuxDir } from "../paths.js";
 import { isToolInternalWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
@@ -14,6 +14,12 @@ import { markLastUsed } from "../last-used.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { getServiceLaunchCommandLine } from "./services.js";
 import { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
+import {
+  listTopologySessionStates,
+  moveTopologySessionToGraveyard,
+  updateTopologySessionBackendId,
+  upsertTopologySession,
+} from "../runtime-core/topology-sessions.js";
 
 type RuntimeStateHost = any;
 
@@ -66,32 +72,12 @@ function fillMissingBackendSessionIdFromMetadata(session: any, metadataState = l
   return backendSessionId ? { ...session, backendSessionId } : session;
 }
 
-function writeBackendSessionIdToSavedState(sessionId: string, backendSessionId: string): void {
-  const statePath = getStatePath();
-  if (!existsSync(statePath)) return;
-  try {
-    const state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
-    const session = state.sessions?.find?.((entry: any) => entry.id === sessionId);
-    if (!session) return;
-    if (session.backendSessionId && session.backendSessionId !== backendSessionId) return;
-    session.backendSessionId = backendSessionId;
-    state.savedAt = new Date().toISOString();
-    writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-  } catch {}
+function writeBackendSessionIdToTopology(sessionId: string, backendSessionId: string): void {
+  updateTopologySessionBackendId(sessionId, backendSessionId);
 }
 
 function getSavedBackendSessionId(sessionId: string): string | undefined {
-  const statePath = getStatePath();
-  if (!existsSync(statePath)) return undefined;
-  try {
-    const state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
-    const session = state.sessions?.find?.((entry: any) => entry.id === sessionId);
-    return typeof session?.backendSessionId === "string" && session.backendSessionId
-      ? session.backendSessionId
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  return listTopologySessionStates().find((session) => session.id === sessionId)?.backendSessionId;
 }
 
 function parseTimestampMs(value: unknown): number | undefined {
@@ -190,7 +176,6 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
     if (host.mode === "project-service") {
       host.taskDispatcher?.tick(host.sessions.map((s: any) => s.id));
       host.orchestrationDispatcher?.tick(host.sessions.map((s: any) => s.id));
-      host.writeRuntimeTopologyFile?.();
     }
 
     const events = host.taskDispatcher?.drainEvents() ?? [];
@@ -276,7 +261,8 @@ export function loadOfflineSessions(
   state = host.constructor.loadState(),
   liveAgentWindows = listLiveAgentWindows(host),
 ): boolean {
-  if (!state || state.sessions.length === 0) {
+  const savedSessions = state?.sessions ?? listTopologySessionStates({ statuses: ["offline"] });
+  if (savedSessions.length === 0) {
     const changed = host.offlineSessions.length > 0;
     host.offlineSessions = [];
     return changed;
@@ -301,7 +287,7 @@ export function loadOfflineSessions(
   );
 
   const metadataState = loadMetadataState();
-  const nextOfflineSessions = state.sessions
+  const nextOfflineSessions = savedSessions
     .map((s: any) => fillMissingBackendSessionIdFromMetadata(s, metadataState))
     .filter((s: any) => {
       if (!isIntentionalOfflineSession(s)) return false;
@@ -329,7 +315,7 @@ export function loadOfflineSessions(
   host.offlineSessions = nextOfflineSessions;
 
   if (host.offlineSessions.length > 0) {
-    host.debug?.(`loaded ${host.offlineSessions.length} offline session(s) from state.json`, "session");
+    host.debug?.(`loaded ${host.offlineSessions.length} offline session(s) from runtime topology`, "session");
   }
   return previousKey !== nextKey;
 }
@@ -405,7 +391,8 @@ export function restoreTmuxSessionsFromState(
   host: RuntimeStateHost,
   state = host.constructor.loadState(),
 ): ManagedAgentWindow[] {
-  const savedById = new Map<string, any>((state?.sessions ?? []).map((session: any) => [session.id, session]));
+  const savedSessions = state?.sessions ?? listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
+  const savedById = new Map<string, any>(savedSessions.map((session: any) => [session.id, session]));
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const liveAgentWindows = listLiveAgentWindows(host);
@@ -483,7 +470,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
     toolConfigKey: host.sessionToolKeys.get(session.id) ?? session.command,
     command: session.command,
     args: host.sessionOriginalArgs.get(session.id) ?? [],
-    lifecycle: "offline",
+    lifecycle: "offline" as const,
     createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
     backendSessionId,
     team: session.team,
@@ -500,6 +487,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
   }
   host.stoppingSessionIds.add(session.id);
   host.startedInDashboard = true;
+  upsertTopologySession(offlineEntry, "offline");
   host.saveState();
   session.kill();
   host.debug?.(`stopped session ${session.id} → offline`, "session");
@@ -532,24 +520,7 @@ export function graveyardSession(host: RuntimeStateHost, sessionId: string, sess
 
   host.offlineSessions = host.offlineSessions.filter((s: any) => s.id !== sessionId);
 
-  const graveyardPath = getGraveyardPath();
-  let graveyard: Array<Record<string, unknown>> = [];
-  if (existsSync(graveyardPath)) {
-    try {
-      graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8"));
-    } catch {}
-  }
-  graveyard.push({ ...session, id: session.id });
-  writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
-
-  const statePath = getStatePath();
-  if (existsSync(statePath)) {
-    try {
-      const state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
-      state.sessions = state.sessions.filter((s: any) => s.id !== sessionId);
-      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-    } catch {}
-  }
+  moveTopologySessionToGraveyard(sessionId, session);
 
   host.debug?.(`graveyarded session ${sessionId}`, "session");
 }
@@ -685,7 +656,7 @@ export function recordSessionBackendSessionId(
     }
     const selectedBackendSessionId = savedBackendSessionId ?? normalizedBackendSessionId;
     recordSessionBackendSessionIdMetadata(sessionId, selectedBackendSessionId);
-    writeBackendSessionIdToSavedState(sessionId, selectedBackendSessionId);
+    writeBackendSessionIdToTopology(sessionId, selectedBackendSessionId);
     return { sessionId, backendSessionId: selectedBackendSessionId };
   }
 
@@ -705,7 +676,7 @@ export function recordSessionBackendSessionId(
   if (offline) {
     offline.backendSessionId = selectedBackendSessionId;
   }
-  writeBackendSessionIdToSavedState(sessionId, selectedBackendSessionId);
+  writeBackendSessionIdToTopology(sessionId, selectedBackendSessionId);
 
   host.writeSessionsFile?.();
   host.saveState?.();

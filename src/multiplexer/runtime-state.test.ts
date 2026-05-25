@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { getGraveyardPath, getStatePath, initPaths } from "../paths.js";
 import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import {
   buildLiveServiceStates,
   getInstanceSessionRefs,
@@ -338,29 +339,19 @@ describe("resumeOfflineSession", () => {
   });
 
   it("persists hook-discovered backend ids even when the runtime row is not loaded yet", () => {
-    writeFileSync(
-      getStatePath(),
-      JSON.stringify(
+    saveRuntimeTopologySessions({
+      sessions: [
         {
-          savedAt: new Date().toISOString(),
-          cwd: repoRoot,
-          sessions: [
-            {
-              id: "claude-racy",
-              command: "claude",
-              tool: "claude",
-              toolConfigKey: "claude",
-              args: ["--resume"],
-              lifecycle: "live",
-              worktreePath: repoRoot,
-            },
-          ],
-          services: [],
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: ["--resume"],
+          lifecycle: "live",
+          worktreePath: repoRoot,
         },
-        null,
-        2,
-      ) + "\n",
-    );
+      ],
+    });
     const host: any = {
       sessions: [],
       offlineSessions: [],
@@ -371,36 +362,26 @@ describe("resumeOfflineSession", () => {
       backendSessionId: "backend-racy",
     });
 
-    const state = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; backendSessionId?: string }>;
-    };
-    expect(state.sessions.find((session) => session.id === "claude-racy")?.backendSessionId).toBe("backend-racy");
+    expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
+      "backend-racy",
+    );
   });
 
   it("does not replace saved backend ids from a hook fallback without a loaded row", () => {
-    writeFileSync(
-      getStatePath(),
-      JSON.stringify(
+    saveRuntimeTopologySessions({
+      sessions: [
         {
-          savedAt: new Date().toISOString(),
-          cwd: repoRoot,
-          sessions: [
-            {
-              id: "claude-racy",
-              command: "claude",
-              tool: "claude",
-              toolConfigKey: "claude",
-              backendSessionId: "backend-saved",
-              lifecycle: "offline",
-              worktreePath: repoRoot,
-            },
-          ],
-          services: [],
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-saved",
+          lifecycle: "offline",
+          worktreePath: repoRoot,
         },
-        null,
-        2,
-      ) + "\n",
-    );
+      ],
+    });
     const host: any = {
       sessions: [],
       offlineSessions: [],
@@ -411,37 +392,27 @@ describe("resumeOfflineSession", () => {
       backendSessionId: "backend-saved",
     });
 
-    const state = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; backendSessionId?: string }>;
-    };
-    expect(state.sessions.find((session) => session.id === "claude-racy")?.backendSessionId).toBe("backend-saved");
+    expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
+      "backend-saved",
+    );
   });
 
   it("does not let stale metadata override saved state in hook fallback", () => {
     recordSessionBackendSessionIdMetadata("claude-racy", "backend-stale", repoRoot);
-    writeFileSync(
-      getStatePath(),
-      JSON.stringify(
+    saveRuntimeTopologySessions({
+      sessions: [
         {
-          savedAt: new Date().toISOString(),
-          cwd: repoRoot,
-          sessions: [
-            {
-              id: "claude-racy",
-              command: "claude",
-              tool: "claude",
-              toolConfigKey: "claude",
-              backendSessionId: "backend-saved",
-              lifecycle: "offline",
-              worktreePath: repoRoot,
-            },
-          ],
-          services: [],
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-saved",
+          lifecycle: "offline",
+          worktreePath: repoRoot,
         },
-        null,
-        2,
-      ) + "\n",
-    );
+      ],
+    });
     const host: any = {
       sessions: [],
       offlineSessions: [],
@@ -452,10 +423,9 @@ describe("resumeOfflineSession", () => {
       backendSessionId: "backend-saved",
     });
 
-    const state = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; backendSessionId?: string }>;
-    };
-    expect(state.sessions.find((session) => session.id === "claude-racy")?.backendSessionId).toBe("backend-saved");
+    expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
+      "backend-saved",
+    );
   });
 
   it("does not replace an existing backend session id", () => {
@@ -884,28 +854,19 @@ describe("resumeOfflineSession", () => {
       noteLastUsedItem: vi.fn(),
       debug: vi.fn(),
     };
-    writeFileSync(
-      getStatePath(),
-      JSON.stringify(
+    saveRuntimeTopologySessions({
+      sessions: [
         {
-          savedAt: new Date().toISOString(),
-          cwd: repoRoot,
-          sessions: [
-            {
-              id: "codex-stale",
-              command: "codex",
-              tool: "codex",
-              toolConfigKey: "codex",
-              lifecycle: "offline",
-              worktreePath: repoRoot,
-            },
-          ],
-          services: [],
+          id: "codex-stale",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: repoRoot,
         },
-        null,
-        2,
-      ) + "\n",
-    );
+      ],
+    });
 
     graveyardSession(host, "codex-stale", {
       id: "codex-stale",
@@ -916,11 +877,8 @@ describe("resumeOfflineSession", () => {
       worktreePath: repoRoot,
     });
 
-    const state = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { sessions: Array<{ id: string }> };
-    const graveyard = existsSync(getGraveyardPath())
-      ? (JSON.parse(readFileSync(getGraveyardPath(), "utf-8")) as Array<{ id: string }>)
-      : [];
-    expect(state.sessions).toEqual([]);
+    const graveyard = listTopologySessionStates({ statuses: ["graveyard"] });
+    expect(listTopologySessionStates({ statuses: ["offline"] }).map((entry) => entry.id)).toEqual([]);
     expect(graveyard.map((entry) => entry.id)).toContain("codex-stale");
   });
 

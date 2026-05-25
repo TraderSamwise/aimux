@@ -66,6 +66,7 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { getGraveyardPath, getStatePath, initPaths } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
 import { writeWorktreeGraveyardEntries } from "./worktree-graveyard.js";
+import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
 
 describe("persistenceMethods", () => {
   beforeEach(() => {
@@ -717,12 +718,17 @@ describe("persistenceMethods", () => {
         team: { teamId: "team-codex-reviewer", parentSessionId: "codex-reviewer", role: "reviewer" },
       };
       const independent = { id: "codex-independent", command: "codex", toolConfigKey: "codex", args: [] };
-      writeFileSync(getGraveyardPath(), JSON.stringify([parent, teammate, nested, independent], null, 2) + "\n");
+      for (const session of [parent, teammate, nested, independent]) {
+        upsertTopologySession(
+          { ...session, tool: session.command, lifecycle: "offline", worktreePath: repoRoot },
+          "graveyard",
+        );
+      }
       writeFileSync(getStatePath(), JSON.stringify({ savedAt: "now", cwd: repoRoot, sessions: [] }, null, 2) + "\n");
       const host = {
         offlineSessions: [],
         loadOfflineSessions: vi.fn(),
-        listGraveyardEntries: vi.fn(() => JSON.parse(readFileSync(getGraveyardPath(), "utf-8"))),
+        listGraveyardEntries: vi.fn(() => listTopologySessionStates({ statuses: ["graveyard"] })),
       };
 
       await expect(persistenceMethods.resurrectGraveyardSession.call(host, "claude-parent")).resolves.toEqual({
@@ -731,11 +737,11 @@ describe("persistenceMethods", () => {
       });
 
       expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["claude-parent", "codex-reviewer"]);
-      expect(JSON.parse(readFileSync(getGraveyardPath(), "utf-8")).map((session: any) => session.id)).toEqual([
+      expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session: any) => session.id)).toEqual([
         "claude-nested",
         "codex-independent",
       ]);
-      expect(JSON.parse(readFileSync(getStatePath(), "utf-8")).sessions.map((session: any) => session.id)).toEqual([
+      expect(listTopologySessionStates({ statuses: ["offline"] }).map((session: any) => session.id)).toEqual([
         "claude-parent",
         "codex-reviewer",
       ]);
@@ -756,12 +762,17 @@ describe("persistenceMethods", () => {
         args: [],
         team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
       };
-      writeFileSync(getGraveyardPath(), JSON.stringify([parent, teammate], null, 2) + "\n");
+      for (const session of [parent, teammate]) {
+        upsertTopologySession(
+          { ...session, tool: session.command, lifecycle: "offline", worktreePath: repoRoot },
+          "graveyard",
+        );
+      }
       writeFileSync(getStatePath(), JSON.stringify({ savedAt: "now", cwd: repoRoot, sessions: [] }, null, 2) + "\n");
       const host = {
         offlineSessions: [],
         loadOfflineSessions: vi.fn(),
-        listGraveyardEntries: vi.fn(() => JSON.parse(readFileSync(getGraveyardPath(), "utf-8"))),
+        listGraveyardEntries: vi.fn(() => listTopologySessionStates({ statuses: ["graveyard"] })),
       };
 
       await expect(persistenceMethods.resurrectGraveyardSession.call(host, "codex-reviewer")).resolves.toEqual({
@@ -770,7 +781,7 @@ describe("persistenceMethods", () => {
       });
 
       expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["codex-reviewer"]);
-      expect(JSON.parse(readFileSync(getGraveyardPath(), "utf-8")).map((session: any) => session.id)).toEqual([
+      expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session: any) => session.id)).toEqual([
         "claude-parent",
       ]);
     } finally {

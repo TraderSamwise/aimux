@@ -64,6 +64,9 @@ export interface RuntimeTopologySession {
   args?: string[];
   backendSessionId?: string;
   worktreePath?: string;
+  label?: string;
+  headline?: string;
+  team?: unknown;
   createdAt: string;
   updatedAt: string;
   lastSeenAt?: string;
@@ -204,6 +207,9 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
         args: asStringArray(row.args),
         backendSessionId: asOptionalString(row.backendSessionId),
         worktreePath: asOptionalString(row.worktreePath),
+        label: asOptionalString(row.label),
+        headline: asOptionalString(row.headline),
+        team: row.team,
         createdAt: asString(row.createdAt, `sessions[${index}].createdAt`),
         updatedAt: asString(row.updatedAt, `sessions[${index}].updatedAt`),
         lastSeenAt: asOptionalString(row.lastSeenAt),

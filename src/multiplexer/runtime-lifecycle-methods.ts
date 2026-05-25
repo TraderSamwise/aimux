@@ -9,6 +9,7 @@ import { loadMetadataState } from "../metadata-store.js";
 import type { InstanceInfo, InstanceSessionRef } from "../instance-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
+import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import {
   adjustAfterRemove as adjustAfterRemoveImpl,
   buildLiveServiceStates as buildLiveServiceStatesImpl,
@@ -149,15 +150,22 @@ export type RuntimeLifecycleMethods = {
 
 export function loadStateStatic(): SavedState | null {
   const statePath = getStatePath();
-  if (!existsSync(statePath)) return null;
+  const topologySessions = listTopologySessionStates({ statuses: ["running", "idle", "offline"] }) as SessionState[];
+  if (!existsSync(statePath)) {
+    return topologySessions.length > 0
+      ? { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: topologySessions }
+      : null;
+  }
 
   try {
     const raw = readFileSync(statePath, "utf-8");
     const state = JSON.parse(raw) as SavedState;
 
-    return state;
+    return { ...state, sessions: topologySessions };
   } catch {
-    return null;
+    return topologySessions.length > 0
+      ? { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: topologySessions }
+      : null;
   }
 }
 
@@ -317,12 +325,13 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       try {
         const existing = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
         const remoteIds = new Set(remoteRefs.map((s: InstanceSessionRef) => s.id));
-        const remoteBackendIds = new Set(remoteRefs.map((s: InstanceSessionRef) => s.backendSessionId).filter(Boolean));
         const myBackendIds = new Set(mySessions.map((s) => s.backendSessionId).filter(Boolean));
         const myIds = new Set(mySessions.map((s) => s.id));
-        const otherSessions = existing.sessions.flatMap((s) => {
+        const topologySessions = listTopologySessionStates({
+          statuses: ["running", "idle", "offline"],
+        }) as SessionState[];
+        const otherSessions = topologySessions.flatMap((s) => {
           if (remoteIds.has(s.id)) return [s];
-          if (s.backendSessionId && remoteBackendIds.has(s.backendSessionId)) return [s];
           if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return [];
           if (myIds.has(s.id)) return [];
           if (!isRecoverableExistingSession(s)) return [];
@@ -340,10 +349,12 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       } catch {}
     }
 
+    saveRuntimeTopologySessions({ sessions: mergedSessions });
+
     const state: SavedState = {
       savedAt: new Date().toISOString(),
       cwd: process.cwd(),
-      sessions: mergedSessions,
+      sessions: [],
       services: mergedServices,
     };
 

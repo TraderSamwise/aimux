@@ -26,7 +26,7 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
 import { isTeammateSession, selectDirectTeammates } from "../team.js";
-import { projectHostRuntimeTopology } from "../runtime-core/topology-importer.js";
+import { listTopologySessionStates, resurrectTopologySession } from "../runtime-core/topology-sessions.js";
 import {
   findMainRepo,
   getWorktreeBaseDir,
@@ -83,10 +83,6 @@ function orderStatuslineItemsByWorktree<T extends { id: string; worktreePath?: s
 }
 
 export const persistenceMethods = {
-  writeRuntimeTopologyFile(this: any): void {
-    projectHostRuntimeTopology(this);
-  },
-
   writeSessionsFile(this: any): void {
     const dir = getLocalAimuxDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -117,7 +113,6 @@ export const persistenceMethods = {
       }
       this.dashboardUiStateStore.loadSharedState(this.dashboardState);
       this.refreshDesktopStateSnapshot();
-      this.writeRuntimeTopologyFile();
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
       const tmpPath = `${filePath}.tmp`;
@@ -983,12 +978,7 @@ export const persistenceMethods = {
   },
 
   listGraveyardEntries(this: any): any[] {
-    try {
-      const content = readFileSync(getGraveyardPath(), "utf-8");
-      return JSON.parse(content) as any[];
-    } catch {
-      return [];
-    }
+    return listTopologySessionStates({ statuses: ["graveyard"] });
   },
 
   async resurrectGraveyardSession(this: any, sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
@@ -1002,31 +992,14 @@ export const persistenceMethods = {
     const entriesToRestore = isTeammateSession(entry)
       ? [entry]
       : [entry, ...selectDirectTeammates(graveyardEntries, entry.id)];
-    const restoreIds = new Set(entriesToRestore.map((candidate: any) => candidate.id));
-    const nextGraveyard = graveyardEntries.filter((candidate: any) => !restoreIds.has(candidate.id));
-    writeFileSync(getGraveyardPath(), JSON.stringify(nextGraveyard, null, 2) + "\n");
 
     const offlineIds = new Set(this.offlineSessions.map((session: any) => session.id));
     for (const candidate of entriesToRestore) {
+      resurrectTopologySession(candidate.id);
       if (offlineIds.has(candidate.id)) continue;
       this.offlineSessions.push(candidate);
       offlineIds.add(candidate.id);
     }
-
-    const statePath = getStatePath();
-    try {
-      let state: any = { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: [] };
-      if (existsSync(statePath)) {
-        state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
-      }
-      const stateIds = new Set((state.sessions ?? []).map((session: any) => session.id));
-      for (const candidate of entriesToRestore) {
-        if (stateIds.has(candidate.id)) continue;
-        state.sessions.push(candidate);
-        stateIds.add(candidate.id);
-      }
-      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-    } catch {}
 
     debug(`resurrected ${entry.id} from graveyard`, "session");
     return { sessionId, status: "offline" };

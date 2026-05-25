@@ -118,6 +118,11 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.
 import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/service-state-snapshot.js";
 import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
+import {
+  listTopologySessionStates,
+  resurrectTopologySession,
+  updateTopologySessionBackendId,
+} from "./runtime-core/topology-sessions.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -391,8 +396,7 @@ async function postLiveProjectServiceJsonOrLocal(
 
 async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSessionId?: string): Promise<string> {
   if (!payloadSessionId) return explicitSessionId;
-  const state = Multiplexer.loadState();
-  const match = state?.sessions.find((session) => session.backendSessionId === payloadSessionId);
+  const match = listTopologySessionStates().find((session) => session.backendSessionId === payloadSessionId);
   return match?.id ?? explicitSessionId;
 }
 
@@ -405,21 +409,14 @@ function recordBackendSessionIdInState(
   backendSessionId: string;
 } {
   const normalizedBackendSessionId = backendSessionId.trim();
-  const state = Multiplexer.loadState();
-  const session = state?.sessions.find((entry) => entry.id === sessionId);
-  if (!state || !session || !normalizedBackendSessionId) {
+  if (!normalizedBackendSessionId) {
     recordSessionBackendSessionIdMetadata(sessionId, normalizedBackendSessionId, projectRoot);
     return { sessionId, backendSessionId: normalizedBackendSessionId };
   }
-  if (session.backendSessionId && session.backendSessionId !== normalizedBackendSessionId) {
-    recordSessionBackendSessionIdMetadata(sessionId, session.backendSessionId, projectRoot);
-    return { sessionId, backendSessionId: session.backendSessionId };
-  }
-  recordSessionBackendSessionIdMetadata(sessionId, normalizedBackendSessionId, projectRoot);
-  session.backendSessionId = normalizedBackendSessionId;
-  state.savedAt = new Date().toISOString();
-  writeJsonAtomic(getStatePath(), state);
-  return { sessionId, backendSessionId: normalizedBackendSessionId };
+  const selectedBackendSessionId =
+    updateTopologySessionBackendId(sessionId, normalizedBackendSessionId) ?? normalizedBackendSessionId;
+  recordSessionBackendSessionIdMetadata(sessionId, selectedBackendSessionId, projectRoot);
+  return { sessionId, backendSessionId: selectedBackendSessionId };
 }
 
 async function recordBackendSessionId(projectRoot: string, sessionId: string, backendSessionId: string): Promise<void> {
@@ -2448,9 +2445,8 @@ graveyardCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     await prepareProjectContext(opts.project);
-    const graveyardPath = getGraveyardPath();
     try {
-      const graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8"));
+      const graveyard = listTopologySessionStates({ statuses: ["graveyard"] });
       if (opts.json) {
         console.log(JSON.stringify(Array.isArray(graveyard) ? graveyard : [], null, 2));
         return;
@@ -2516,34 +2512,12 @@ graveyardCmd
   .option("--json", "Emit JSON")
   .action(async (id: string, opts: { project?: string; json?: boolean }) => {
     await prepareProjectContext(opts.project);
-    const graveyardPath = getGraveyardPath();
-    if (!existsSync(graveyardPath)) {
-      console.error("Graveyard is empty.");
-      process.exit(1);
-    }
     try {
-      const graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8")) as Array<Record<string, unknown>>;
-      const idx = graveyard.findIndex((s) => s.id === id);
-      if (idx === -1) {
+      const restored = resurrectTopologySession(id);
+      if (!restored) {
         console.error(`Agent "${id}" not found in graveyard.`);
         process.exit(1);
       }
-      const restored = graveyard.splice(idx, 1)[0];
-      writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
-
-      const statePath = getStatePath();
-      let state = {
-        savedAt: new Date().toISOString(),
-        cwd: process.cwd(),
-        sessions: [] as Array<Record<string, unknown>>,
-      };
-      if (existsSync(statePath)) {
-        try {
-          state = JSON.parse(readFileSync(statePath, "utf-8"));
-        } catch {}
-      }
-      state.sessions.push(restored);
-      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
       if (opts.json) {
         console.log(
           JSON.stringify(
