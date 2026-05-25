@@ -16,7 +16,7 @@ aimux uses `tmux` as its terminal runtime substrate. Each project gets its own m
 - **Dashboard view** — see all running, offline, and remote agents at a glance
 - **Multi-instance** — run aimux in multiple terminal tabs; agents from other instances appear inline and can be taken over
 - **Agent lifecycle** — two-step kill (`[x]` stops → offline, `[x]` again → graveyard), with `aimux graveyard resurrect` for recovery
-- **Task delegation** — agents can delegate work to each other via `.aimux/tasks/`, with automatic dispatch, completion notifications, and dashboard badges
+- **Task delegation** — agents can create explicit handoff records in `.aimux/tasks/` and coordinate direct teammate work through the metadata API
 - **Threaded orchestration** — direct messages, handoffs, and task assignment all flow through durable `.aimux/threads/` state with queued delivery when recipients are busy
 - **Dashboard orchestration actions** — from the main dashboard, use `S` to send a message, `H` to send a handoff, `T` to assign a task, `o` to jump to the most relevant thread, and `R` to reply when something is waiting on you
 - **Workflow view** — a dedicated workflow screen groups related task/review/revision chains, supports actionable filters, and exposes explicit accept/block/complete/reopen/review controls

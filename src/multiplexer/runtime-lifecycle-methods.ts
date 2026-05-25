@@ -148,22 +148,17 @@ export type RuntimeLifecycleMethods = {
 
 export function loadStateStatic(): SavedState | null {
   const statePath = getStatePath();
-  const topologySessions = listTopologySessionStates({ statuses: ["running", "idle", "offline"] }) as SessionState[];
   if (!existsSync(statePath)) {
-    return topologySessions.length > 0
-      ? { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: topologySessions }
-      : null;
+    return null;
   }
 
   try {
     const raw = readFileSync(statePath, "utf-8");
     const state = JSON.parse(raw) as SavedState;
 
-    return { ...state, sessions: topologySessions };
+    return { ...state, sessions: [] };
   } catch {
-    return topologySessions.length > 0
-      ? { savedAt: new Date().toISOString(), cwd: process.cwd(), sessions: topologySessions }
-      : null;
+    return null;
   }
 }
 

@@ -22,9 +22,15 @@ import {
 } from "../metadata-store.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { captureBackendSessionIdFromSessionFiles, extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
+import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 export { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
 
 type SessionLaunchHost = any;
+
+function listLaunchableTopologySessions(toolFilter?: string): any[] {
+  const sessions = listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
+  return toolFilter ? sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter) : sessions;
+}
 
 const CODEX_OPTIONS_WITH_VALUE = new Set([
   "-a",
@@ -312,25 +318,17 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
   initProject();
   await host.instanceDirectory.registerInstance(host.instanceId, process.cwd());
   host.startHeartbeat();
-  const state = host.constructor.loadState();
-  if (!state || state.sessions.length === 0) {
+  const sessionsToResume = listLaunchableTopologySessions(toolFilter);
+  if (sessionsToResume.length === 0) {
     console.error("No saved session state found (or state is stale). Starting fresh.");
     return host.runDashboard();
   }
 
   const config = loadConfig();
-  const sessionsToResume = toolFilter
-    ? state.sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter)
-    : state.sessions;
   log.info("resuming saved sessions", "session", {
     requestedTool: toolFilter,
     count: sessionsToResume.length,
   });
-
-  if (sessionsToResume.length === 0) {
-    console.error(`No saved sessions found for tool "${toolFilter}". Starting fresh.`);
-    return host.runDashboard();
-  }
 
   const ownedByOthers = host.getRemoteOwnedSessionKeys();
   const metadata = loadMetadataState().sessions;
@@ -385,21 +383,13 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
 
 export async function restoreSessions(host: SessionLaunchHost, toolFilter?: string): Promise<number> {
   initProject();
-  const state = host.constructor.loadState();
-  if (!state || state.sessions.length === 0) {
+  const sessionsToRestore = listLaunchableTopologySessions(toolFilter);
+  if (sessionsToRestore.length === 0) {
     console.error("No saved session state found (or state is stale). Starting fresh.");
     return host.runDashboard();
   }
 
   const config = loadConfig();
-  const sessionsToRestore = toolFilter
-    ? state.sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter)
-    : state.sessions;
-
-  if (sessionsToRestore.length === 0) {
-    console.error(`No saved sessions found for tool "${toolFilter}". Starting fresh.`);
-    return host.runDashboard();
-  }
 
   for (const saved of sessionsToRestore) {
     const toolCfg = config.tools[saved.toolConfigKey];

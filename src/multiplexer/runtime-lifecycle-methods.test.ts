@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getStatePath, initPaths } from "../paths.js";
 import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
-import { runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
+import { loadStateStatic, runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 
 describe("runtime lifecycle state persistence", () => {
@@ -42,6 +42,30 @@ describe("runtime lifecycle state persistence", () => {
   function topologySessions() {
     return listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
   }
+
+  it("does not expose topology sessions through the service state loader", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify({ savedAt: new Date().toISOString(), cwd: repoRoot, sessions: [], services: [] }, null, 2) + "\n",
+    );
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-offline",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-1",
+          worktreePath: repoRoot,
+        },
+      ],
+    });
+
+    expect(loadStateStatic()?.sessions).toEqual([]);
+    expect(topologySessions()).toEqual([expect.objectContaining({ id: "codex-offline" })]);
+  });
 
   it("preserves topology sessions even when service state does not exist yet", () => {
     if (existsSync(getStatePath())) unlinkSync(getStatePath());

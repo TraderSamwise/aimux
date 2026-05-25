@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
+import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 
 function gitInit(cwd: string): void {
   const env = { ...process.env };
@@ -922,22 +923,22 @@ describe("resumeSessions", () => {
     gitInit(repoRoot);
     await initPaths(repoRoot);
     recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: ["--dangerously-bypass-approvals-and-sandbox"],
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
 
     class Host {
-      static loadState() {
-        return {
-          sessions: [
-            {
-              id: "codex-1",
-              command: "codex",
-              toolConfigKey: "codex",
-              args: ["--dangerously-bypass-approvals-and-sandbox"],
-              worktreePath: repoRoot,
-            },
-          ],
-        };
-      }
-
       instanceId = "inst-1";
       instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();
@@ -986,24 +987,24 @@ describe("resumeSessions", () => {
     gitInit(repoRoot);
     await initPaths(repoRoot);
     const team = { teamId: "team-1", parentSessionId: "claude-parent", role: "reviewer" };
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-team",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-team",
+          team,
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
 
     class Host {
-      static loadState() {
-        return {
-          sessions: [
-            {
-              id: "codex-team",
-              command: "codex",
-              toolConfigKey: "codex",
-              args: [],
-              backendSessionId: "backend-team",
-              team,
-              worktreePath: repoRoot,
-            },
-          ],
-        };
-      }
-
       instanceId = "inst-1";
       instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();
@@ -1046,22 +1047,22 @@ describe("resumeSessions", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: ["--dangerously-bypass-approvals-and-sandbox"],
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
 
     class Host {
-      static loadState() {
-        return {
-          sessions: [
-            {
-              id: "codex-1",
-              command: "codex",
-              toolConfigKey: "codex",
-              args: ["--dangerously-bypass-approvals-and-sandbox"],
-              worktreePath: repoRoot,
-            },
-          ],
-        };
-      }
-
       instanceId = "inst-1";
       instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();

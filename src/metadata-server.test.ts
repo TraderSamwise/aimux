@@ -150,7 +150,7 @@ describe("MetadataServer threads API", () => {
     expect(body).toEqual({ ok: true, sessionId: "claude-1" });
   });
 
-  it("lists direct teammates from the hidden desktop teammate projection", async () => {
+  it("lists direct teammates from the hidden desktop teammate state", async () => {
     server?.stop();
     server = new MetadataServer({
       desktop: {
@@ -212,7 +212,7 @@ describe("MetadataServer threads API", () => {
     });
   });
 
-  it("opens notification targets from hidden teammate desktop projection", async () => {
+  it("opens notification targets from hidden teammate desktop state", async () => {
     server?.stop();
     server = new MetadataServer({
       desktop: {

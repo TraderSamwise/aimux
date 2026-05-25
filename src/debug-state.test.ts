@@ -168,7 +168,7 @@ describe("buildDebugStateReport", () => {
     expect(report.targetResolution.status).toBe("missing");
     expect(report.sources.savedState.status).toBe("missing");
     expect(report.sources.pendingActions.status).toBe("unavailable");
-    expect(report.sources.dashboardProjection.status).toBe("unavailable");
+    expect(report.sources.dashboardSnapshot.status).toBe("unavailable");
     expect(report.sources.runtimeRows.status).toBe("unavailable");
   });
 

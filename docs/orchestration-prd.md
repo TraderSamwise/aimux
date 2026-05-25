@@ -34,7 +34,7 @@ Aimux already has the substrate for multi-agent work:
 
 - tmux-backed live agent runtime
 - per-agent plans
-- file-backed task dispatch
+- file-backed task handoff records
 - shared context/history
 - metadata, events, activity, and attention tracking
 
@@ -302,9 +302,10 @@ Aimux already has these layers:
 - path: `.aimux/tasks/*.json`
 - implementation:
   - [`src/tasks.ts`](/Users/sam/cs/aimux/src/tasks.ts)
-  - [`src/task-dispatcher.ts`](/Users/sam/cs/aimux/src/task-dispatcher.ts)
+  - [`src/orchestration-actions.ts`](/Users/sam/cs/aimux/src/orchestration-actions.ts)
+  - [`src/task-workflow.ts`](/Users/sam/cs/aimux/src/task-workflow.ts)
 - role:
-  - assign executable work
+  - record explicit handoffs and assignments
   - review loops
   - completion/failure routing
 

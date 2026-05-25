@@ -76,7 +76,7 @@ describe("persistenceMethods", () => {
     vi.mocked(writeWorktreeGraveyardEntries).mockReset();
   });
 
-  it("seeds desktop-state projection when creating a worktree", () => {
+  it("seeds desktop state when creating a worktree", () => {
     const child = new EventEmitter() as EventEmitter & {
       stderr: EventEmitter;
       stdout: EventEmitter;
@@ -476,7 +476,7 @@ describe("persistenceMethods", () => {
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("optimistic");
   });
 
-  it("keeps raw worktree lists free of pending removal projection", () => {
+  it("keeps raw worktree lists free of pending removal state", () => {
     const pending = new DashboardPendingActions(() => {});
     const worktreePath = "/repo/.aimux/worktrees/demo";
     listWorktreesMock.mockReturnValue([

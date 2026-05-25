@@ -288,8 +288,8 @@ Keep or adapt:
 
 - `metadata.json`
 - `instances.json`
-- `state.json`
-- `graveyard.json`
+- `state.json` for service/project state only
+- `runtime-topology.yaml` for agent lifecycle, including graveyard entries
 - `recordings/`
 
 ## CLI Changes

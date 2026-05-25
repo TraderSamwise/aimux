@@ -183,7 +183,7 @@ Raw `session.write(prompt + "\r")` should only remain in non-tmux fallbacks or t
   - do not assume Codex fork startup behaves like Claude preamble startup
   - do not submit Codex injected prompts with plain tmux `Enter`; use the shared aimux submit path that waits for the visible draft/pasted-content marker and sends raw carriage return
   - keep Codex injected prompts single-line before submission; multiline pasted drafts are materially less reliable than the startup kickoff shape
-  - this applies to every push-injection path, not just fork/migrate: fresh preamble kickoff, task dispatch, message dispatch, handoff, review, and future orchestration prompts must all go through the same hardened submit logic
+  - this applies to every retained push-injection path, not just fork/migrate: fresh preamble kickoff and future explicit prompt pushes must go through the same hardened submit logic
 
 ### Claude
 

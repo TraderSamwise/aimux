@@ -65,7 +65,7 @@ export interface DebugStateReport {
     instances: SourceResult<{ files: Array<SourceResult<{ instances: unknown[] }>> }>;
     runtimeRows: SourceResult<never>;
     pendingActions: SourceResult<never>;
-    dashboardProjection: SourceResult<never>;
+    dashboardSnapshot: SourceResult<never>;
   };
 }
 
@@ -598,7 +598,7 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
       instances,
       runtimeRows: sourceUnavailable("standalone debug-state does not attach to the live project runtime"),
       pendingActions: sourceUnavailable("pending actions are in-memory dashboard state"),
-      dashboardProjection: sourceUnavailable("dashboard projection requires project-service/dashboard runtime"),
+      dashboardSnapshot: sourceUnavailable("dashboard snapshot requires project-service/dashboard runtime"),
     },
   };
 }
