@@ -1,5 +1,4 @@
 import {
-  claimSession,
   getRemoteInstances,
   registerInstance,
   unregisterInstance,
@@ -10,7 +9,7 @@ import {
 import { getRemoteOwnedSessionKeys } from "./dashboard/session-registry.js";
 import type { SessionTeamMetadata } from "./team.js";
 
-export interface SessionsFileEntry {
+export interface InstanceSessionDirectoryEntry {
   id: string;
   tool: string;
   status: string;
@@ -25,7 +24,6 @@ export interface InstanceDirectoryFns {
   registerInstance?: (instanceId: string, cwd: string) => Promise<InstanceInfo[]>;
   unregisterInstance?: (instanceId: string, cwd: string) => Promise<void>;
   updateHeartbeat?: (instanceId: string, sessions: InstanceSessionRef[], cwd: string) => Promise<string[]>;
-  claimSession?: (sessionId: string, fromInstanceId: string, cwd: string) => Promise<InstanceSessionRef | undefined>;
 }
 
 export class InstanceDirectory {
@@ -89,12 +87,11 @@ export class InstanceDirectory {
     };
   }
 
-  async claimSession(sessionId: string, fromInstanceId: string, cwd: string): Promise<InstanceSessionRef | undefined> {
-    return (this.fns.claimSession ?? claimSession)(sessionId, fromInstanceId, cwd);
-  }
-
-  buildSessionsFileEntries(localSessions: InstanceSessionRef[], remoteInstances: InstanceInfo[]): SessionsFileEntry[] {
-    const data: SessionsFileEntry[] = localSessions.map((session) => ({
+  buildSessionDirectoryEntries(
+    localSessions: InstanceSessionRef[],
+    remoteInstances: InstanceInfo[],
+  ): InstanceSessionDirectoryEntry[] {
+    const data: InstanceSessionDirectoryEntry[] = localSessions.map((session) => ({
       id: session.id,
       tool: session.tool,
       status: "running",

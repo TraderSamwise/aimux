@@ -1,15 +1,6 @@
-import { debug } from "../debug.js";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { Multiplexer, SessionState } from "./index.js";
-import {
-  createTeammateAgent as createTeammateAgentImpl,
-  forkAgent as forkAgentImpl,
-  migrateAgentSession as migrateAgentSessionImpl,
-  renameAgent as renameAgentImpl,
-  sendAgentToGraveyard as sendAgentToGraveyardImpl,
-  spawnAgent as spawnAgentImpl,
-  stopAgent as stopAgentImpl,
-} from "./session-actions.js";
+import { disabledRuntimeCore } from "../runtime-core/index.js";
 import {
   buildPlanPreview as buildPlanPreviewImpl,
   handleGraveyardKey as handleGraveyardKeyImpl,
@@ -60,7 +51,6 @@ import {
   setPendingDashboardSessionAction as setPendingDashboardSessionActionImpl,
   stopDashboardServiceWithFeedback as stopDashboardServiceWithFeedbackImpl,
   stopSessionToOfflineWithFeedback as stopSessionToOfflineWithFeedbackImpl,
-  takeoverFromDashEntryWithFeedback as takeoverFromDashEntryWithFeedbackImpl,
   truncateAnsiForHost,
   truncatePlainForHost,
   waitForSessionStartForHost,
@@ -70,22 +60,13 @@ import {
 import type { PendingServiceActionKind, PendingSessionActionKind } from "../pending-actions.js";
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
-import { loadConfig } from "../config.js";
 import type { SessionRuntime } from "../session-runtime.js";
-import type { InstanceSessionRef } from "../instance-registry.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";
   dashboardSessionsCache: DashboardSession[];
   dashboardServicesCache: DashboardService[];
   dashboardWorktreeGroupsCache: Array<{ sessions: DashboardSession[] }>;
-  instanceDirectory: {
-    claimSession(sessionId: string, fromInstanceId: string, cwd: string): Promise<InstanceSessionRef | null>;
-  };
-  sessionBootstrap: {
-    canResumeWithBackendSessionId(toolCfg: { resumeArgs?: string[] }, backendSessionId?: string): boolean;
-    composeToolArgs(toolCfg: { args: string[] }, args: string[]): string[];
-  };
 };
 
 export type DashboardTailMethods = {
@@ -130,7 +111,6 @@ export type DashboardTailMethods = {
   sendAgentToGraveyard(
     this: Multiplexer,
     sessionId: string,
-    sessionSeed?: any,
   ): Promise<{
     sessionId: string;
     status: "graveyard";
@@ -219,7 +199,6 @@ export type DashboardTailMethods = {
   resumeOfflineSessionWithFeedback(this: Multiplexer, session: SessionState): Promise<void>;
   waitForSessionStart(this: Multiplexer, sessionId: string, timeoutMs?: number): Promise<boolean>;
   dashboardSessionActionDeps(this: Multiplexer): ReturnType<typeof dashboardSessionActionDepsImpl>;
-  takeoverFromDashEntryWithFeedback(this: Multiplexer, entry: DashboardSession): Promise<void>;
   migrateSessionWithFeedback(
     this: Multiplexer,
     session: SessionRuntime,
@@ -230,39 +209,29 @@ export type DashboardTailMethods = {
   getDashboardSessions(this: Multiplexer): DashboardSession[];
   getDashboardServices(this: Multiplexer): DashboardService[];
   getDashboardSessionsInVisualOrder(this: Multiplexer): DashboardSession[];
-  takeoverSessionFromDashEntry(this: Multiplexer, entry: DashboardSession): Promise<void>;
-  takeoverSession(
-    this: Multiplexer,
-    target: {
-      id: string;
-      tool: string;
-      backendSessionId: string;
-      fromInstanceId: string;
-    },
-  ): Promise<void>;
 };
 
 export const dashboardTailMethods: DashboardTailMethods = {
   async forkAgent(opts) {
-    return forkAgentImpl(this, opts);
+    return disabledRuntimeCore.forkAgent(opts);
   },
   async spawnAgent(opts) {
-    return spawnAgentImpl(this, opts);
+    return disabledRuntimeCore.spawnAgent(opts);
   },
   async createTeammateAgent(opts) {
-    return createTeammateAgentImpl(this, opts);
+    return disabledRuntimeCore.createTeammateAgent(opts);
   },
   async renameAgent(sessionId, label) {
-    return renameAgentImpl(this, sessionId, label);
+    return disabledRuntimeCore.renameAgent({ sessionId, label });
   },
   async stopAgent(sessionId) {
-    return stopAgentImpl(this, sessionId);
+    return disabledRuntimeCore.stopAgent({ sessionId });
   },
-  async sendAgentToGraveyard(sessionId, sessionSeed) {
-    return sendAgentToGraveyardImpl(this, sessionId, sessionSeed);
+  async sendAgentToGraveyard(sessionId) {
+    return disabledRuntimeCore.killAgent({ sessionId });
   },
   async migrateAgentSession(sessionId, targetWorktreePath) {
-    return migrateAgentSessionImpl(this, sessionId, targetWorktreePath);
+    return disabledRuntimeCore.migrateAgent({ sessionId, targetWorktreePath });
   },
   showGraveyard() {
     showGraveyardImpl(this);
@@ -411,9 +380,6 @@ export const dashboardTailMethods: DashboardTailMethods = {
   dashboardSessionActionDeps() {
     return dashboardSessionActionDepsImpl(this);
   },
-  async takeoverFromDashEntryWithFeedback(entry) {
-    await takeoverFromDashEntryWithFeedbackImpl(this, entry);
-  },
   async migrateSessionWithFeedback(session, targetPath, targetName) {
     await migrateSessionWithFeedbackImpl(this, session, targetPath, targetName);
   },
@@ -462,60 +428,5 @@ export const dashboardTailMethods: DashboardTailMethods = {
       return allDash;
     }
     return orderDashboardSessionsByVisualWorktree(allDash, worktreePaths, mainRepoPath);
-  },
-  async takeoverSessionFromDashEntry(entry) {
-    if (!entry.remoteInstanceId || !entry.remoteBackendSessionId) return;
-    await this.takeoverSession({
-      id: entry.id,
-      tool: entry.command,
-      backendSessionId: entry.remoteBackendSessionId,
-      fromInstanceId: entry.remoteInstanceId,
-    });
-  },
-  async takeoverSession(target) {
-    const mux = this as unknown as DashboardTailHost;
-    const claimed = await mux.instanceDirectory.claimSession(target.id, target.fromInstanceId, process.cwd());
-    if (!claimed) {
-      debug(`takeover: session ${target.id} not found in instance ${target.fromInstanceId}`, "instance");
-      return;
-    }
-
-    const config = loadConfig();
-    const toolEntry = Object.entries(config.tools).find(([, t]) => t.command === target.tool);
-    const toolCfg = toolEntry?.[1];
-    const toolConfigKey = toolEntry?.[0];
-
-    if (!toolCfg?.resumeArgs) {
-      debug(`takeover: no resumeArgs configured for tool ${target.tool}`, "instance");
-      return;
-    }
-    if (!mux.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, target.backendSessionId)) {
-      debug(`takeover: tool ${target.tool} does not support backendSessionId resume`, "instance");
-      return;
-    }
-
-    const resumeArgs = toolCfg.resumeArgs.map((a: string) => a.replace("{sessionId}", target.backendSessionId));
-    const args = mux.sessionBootstrap.composeToolArgs(toolCfg, resumeArgs);
-
-    debug(
-      `taking over session ${target.id} (backend=${target.backendSessionId}) from instance ${target.fromInstanceId}`,
-      "instance",
-    );
-    this.createSession(
-      target.tool,
-      args,
-      toolCfg.preambleFlag,
-      toolConfigKey,
-      undefined,
-      undefined,
-      claimed.worktreePath,
-      target.backendSessionId,
-      target.id,
-      false,
-      true,
-      claimed.team,
-    );
-
-    this.renderDashboard();
   },
 };

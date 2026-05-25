@@ -38,15 +38,3 @@ export function messagesFromParsedAgentOutput(parsed?: ParsedAgentOutput | null)
 
   return messages;
 }
-
-export function pendingPromptAlreadyRendered(
-  pending: Pick<ChatMessage, "parts" | "text" | "deliveryState">,
-  renderedMessages: ChatMessage[],
-): boolean {
-  if (pending.deliveryState === "failed") return false;
-  const pendingText = normalizeText(messageText(pending));
-  if (!pendingText) return false;
-  return renderedMessages.some(
-    (message) => message.role === "user" && normalizeText(messageText(message)) === pendingText,
-  );
-}

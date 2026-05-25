@@ -5,7 +5,6 @@ import { DashboardOverlayState, DashboardState } from "../dashboard/state.js";
 import { ContextWatcher } from "../context/context-bridge.js";
 import { loadConfig } from "../config.js";
 import { findMainRepo } from "../worktree.js";
-import { TaskDispatcher } from "../task-dispatcher.js";
 import { TerminalHost } from "../terminal-host.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "../session-runtime.js";
 import { AgentTracker } from "../agent-tracker.js";
@@ -17,7 +16,6 @@ import { loadMetadataState } from "../metadata-store.js";
 import { PluginRuntime } from "../plugin-runtime.js";
 import { SessionBootstrapService } from "../session-bootstrap.js";
 import { createThread, appendMessage, updateThread } from "../threads.js";
-import { OrchestrationDispatcher } from "../orchestration-dispatcher.js";
 import { ProjectEventBus, type AlertKind } from "../project-events.js";
 import {
   contextualizeAlertInput,
@@ -101,7 +99,6 @@ export interface ServiceState {
 export interface SavedState {
   savedAt: string;
   cwd: string;
-  sessions: SessionState[];
   services?: ServiceState[];
 }
 
@@ -216,6 +213,7 @@ export class Multiplexer {
     }
   });
   private stoppingSessionIds = new Set<string>();
+  private unpreservedExitedSessionIds = new Set<string>();
   private graveyardAfterStopSessionIds = new Set<string>();
   private dashboardQuickJumpTimeout: ReturnType<typeof setTimeout> | null = null;
   /** Quick switcher overlay state */
@@ -240,9 +238,7 @@ export class Multiplexer {
   private contextWatcher = new ContextWatcher((target) =>
     this.tmuxRuntimeManager.captureTarget(target, { startLine: -120 }),
   );
-  private taskDispatcher: TaskDispatcher | null = null;
-  private orchestrationDispatcher: OrchestrationDispatcher | null = null;
-  /** Maps session ID → toolConfigKey for state saving */
+  /** Maps session ID → toolConfigKey for topology persistence */
   private sessionToolKeys = new Map<string, string>();
   /** Maps session ID → original args (before preamble injection) */
   private sessionOriginalArgs = new Map<string, string[]>();
@@ -252,7 +248,7 @@ export class Multiplexer {
   private sessionRoles = new Map<string, string>();
   /** Maps session ID → user-provided stable label */
   private sessionLabels = new Map<string, string>();
-  /** Offline sessions from previous runs (loaded from state.json) */
+  /** Offline sessions from previous runs (loaded from runtime topology) */
   private offlineSessions: SessionState[] = [];
   /** Cross-instance discovery and claim/heartbeat ownership */
   private instanceDirectory = new InstanceDirectory();
@@ -307,12 +303,10 @@ export class Multiplexer {
       setConfirmedRegistered: (value) => {
         this.confirmedRegistered = value;
       },
-      getInstanceSessionRefs: () => this.getInstanceSessionRefs(),
-      syncSessionsFromState: () => this.syncSessionsFromState(),
-      loadOfflineSessions: () => this.loadOfflineSessions(),
+      syncSessionsFromTopology: () => this.syncSessionsFromTopology(),
+      loadOfflineTopologySessions: () => this.loadOfflineTopologySessions(),
       renderCurrentDashboardView: () => this.renderCurrentDashboardView(),
       renderDashboard: () => this.renderDashboard(),
-      handleSessionClaimed: (sessionId) => this.handleSessionClaimed(sessionId),
       writeStatuslineFile: () => this.writeStatuslineFile(),
     });
     this.eventBus.subscribe((event) => {
@@ -415,7 +409,7 @@ export class Multiplexer {
       unseenCount: derived?.unseenCount,
       notificationUnreadCount: unreadNotifications.length,
       latestNotification,
-      hasActiveTask: Boolean(this.taskDispatcher?.getSessionTask(sessionId)),
+      hasActiveTask: false,
     });
   }
 
@@ -447,28 +441,6 @@ export class Multiplexer {
     updateContextWatcherSessionsImpl(this);
   }
 
-  private createTaskDispatcher(): TaskDispatcher {
-    return new TaskDispatcher(
-      (id) => this.sessions.find((s) => s.id === id),
-      (id) => this.sessionToolKeys.get(id),
-      (id) => this.sessionRoles.get(id),
-      (id) => this.deriveSessionSemanticState(id).runtime.canReceiveInput,
-      (session, prompt) => {
-        void this.writeAgentInput(session.id, prompt, undefined, undefined, true);
-      },
-    );
-  }
-
-  private createOrchestrationDispatcher(): OrchestrationDispatcher {
-    return new OrchestrationDispatcher(
-      (id) => this.sessions.find((s) => s.id === id),
-      (id) => this.deriveSessionSemanticState(id).runtime.canReceiveInput,
-      (session, prompt) => {
-        void this.writeAgentInput(session.id, prompt, undefined, undefined, true);
-      },
-    );
-  }
-
   private selectLinkedOrOpenTarget(target: TmuxTarget): void {
     selectLinkedOrOpenTarget(this.tmuxRuntimeManager, target);
   }
@@ -487,7 +459,7 @@ export class Multiplexer {
 
   /**
    * Resume previous sessions using each tool's native resume mechanism.
-   * Reads state.json and spawns sessions with resumeArgs instead of normal args.
+   * Reads runtime topology and spawns sessions with resumeArgs instead of normal args.
    */
   async resumeSessions(toolFilter?: string): Promise<number> {
     return resumeSessionsImpl(this, toolFilter);

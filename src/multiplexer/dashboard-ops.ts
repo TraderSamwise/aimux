@@ -670,7 +670,7 @@ export async function graveyardSessionWithFeedback(
       pendingAction: "graveyarding",
       sessionSeed,
       request: async () => {
-        await host.postToProjectService("/agents/kill", { sessionId, session: sessionSeed }, { timeoutMs: 10_000 });
+        await host.postToProjectService("/agents/kill", { sessionId }, { timeoutMs: 10_000 });
       },
       settle: () => waitForStableDashboardSessionAbsence(host, sessionId),
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),
@@ -721,7 +721,7 @@ export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, s
         request: async () => {
           resumeResult = await host.postToProjectService(
             "/agents/resume",
-            { sessionId: session.id, session: sessionSeed },
+            { sessionId: session.id },
             { timeoutMs: 60_000 },
           );
         },
@@ -903,21 +903,9 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
         host.resumeOfflineSession(session);
         return;
       }
-      const sessionSeed =
-        host.getDashboardSessions?.().find((entry: any) => entry.id === session.id) ??
-        ({
-          index: -1,
-          id: session.id,
-          command: session.command,
-          label: session.label ?? session.command,
-          status: "offline",
-          active: false,
-          worktreePath: session.worktreePath,
-          team: session.team,
-        } satisfies DashboardSession);
       const result = await host.postToProjectService(
         "/agents/resume",
-        { sessionId: session.id, session: sessionSeed },
+        { sessionId: session.id },
         { timeoutMs: 10_000 },
       );
       const warningLines = restoreWarningLines(result);
@@ -936,17 +924,6 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
     getRuntimeById: (sessionId: string) => host.sessions.find((session: any) => session.id === sessionId),
     isSessionRuntimeLive: (session: any) => host.isSessionRuntimeLive(session),
   };
-}
-
-export async function takeoverFromDashEntryWithFeedback(host: DashboardOpsHost, entry: any): Promise<void> {
-  const label = entry.label ?? entry.command;
-  await runDashboardOperation(
-    host,
-    `Taking over "${label}"`,
-    [`  Session: ${entry.id}`],
-    () => host.takeoverSessionFromDashEntry(entry),
-    `Failed to take over "${label}"`,
-  );
 }
 
 export async function migrateSessionWithFeedback(

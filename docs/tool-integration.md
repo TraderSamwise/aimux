@@ -116,7 +116,6 @@ Each new tool should define as many of these as it can support:
 - `promptPatterns`
 - `turnPatterns`
 - `instructionsFile`
-- `sessionCapture`
 
 ## What A Good Integration Needs
 
@@ -151,7 +150,7 @@ At minimum:
 
 Prompt injection is a shared runtime concern, not a per-feature detail.
 
-Production code that pushes text into a tmux-backed agent and expects it to run must use the shared prompt delivery path in `src/agent-prompt-delivery.ts`, normally via `writeAgentInput(..., submit: true)`.
+Production code that pushes text into a tmux-backed agent and expects it to run must be implemented in the runtime core replacement. Do not reintroduce the removed raw-input HTTP path.
 
 Do not add new production paths that call `session.write(prompt + "\r")`, plain tmux `Enter`, or ad hoc delayed submits. Those paths can paste into Codex without actually submitting, especially when Codex collapses a large prompt into `[Pasted Content ...]`.
 
@@ -183,7 +182,7 @@ Raw `session.write(prompt + "\r")` should only remain in non-tmux fallbacks or t
   - do not assume Codex fork startup behaves like Claude preamble startup
   - do not submit Codex injected prompts with plain tmux `Enter`; use the shared aimux submit path that waits for the visible draft/pasted-content marker and sends raw carriage return
   - keep Codex injected prompts single-line before submission; multiline pasted drafts are materially less reliable than the startup kickoff shape
-  - this applies to every push-injection path, not just fork/migrate: fresh preamble kickoff, task dispatch, message dispatch, handoff, review, and future orchestration prompts must all go through the same hardened submit logic
+  - this applies to every retained push-injection path, not just fork/migrate: fresh preamble kickoff and future explicit prompt pushes must go through the same hardened submit logic
 
 ### Claude
 

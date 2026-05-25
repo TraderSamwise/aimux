@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { initProject, loadConfig, type SessionCaptureConfig } from "../config.js";
+import { initProject, loadConfig } from "../config.js";
 import { buildContextPreamble } from "../context/context-bridge.js";
 import { readHistory } from "../context/history.js";
 import { findMainRepo } from "../worktree.js";
@@ -15,16 +15,17 @@ import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
-import {
-  clearSessionTranscriptPath,
-  loadMetadataState,
-  recordSessionBackendSessionIdMetadata,
-} from "../metadata-store.js";
+import { clearSessionTranscriptPath } from "../metadata-store.js";
 import type { SessionTeamMetadata } from "../team.js";
-import { captureBackendSessionIdFromSessionFiles, extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
-export { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
+import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
+import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 
 type SessionLaunchHost = any;
+
+function listLaunchableTopologySessions(toolFilter?: string): any[] {
+  const sessions = listTopologySessionStates({ statuses: ["offline"] });
+  return toolFilter ? sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter) : sessions;
+}
 
 const CODEX_OPTIONS_WITH_VALUE = new Set([
   "-a",
@@ -77,53 +78,6 @@ export function summarizeLaunchArgs(args: string[]): string[] {
   });
 }
 
-function scheduleBackendSessionCapture(input: {
-  host: SessionLaunchHost;
-  sessionId: string;
-  projectRoot: string;
-  capture?: SessionCaptureConfig;
-  startedAtMs: number;
-}): void {
-  if (!input.capture) return;
-  const delayMs = Math.max(0, input.capture.delayMs ?? 0);
-  const maxWaitMs = Math.max(delayMs, 60_000);
-  const deadlineMs = input.startedAtMs + maxWaitMs;
-  const attempt = () => {
-    const backendSessionId = captureBackendSessionIdFromSessionFiles(input.capture!, input.sessionId, {
-      startedAtMs: input.startedAtMs,
-    });
-    if (!backendSessionId) {
-      if (Date.now() < deadlineMs) {
-        const retry = setTimeout(attempt, 1000);
-        retry.unref?.();
-        return;
-      }
-      log.warn("session capture did not find exact backend id", "session", { sessionId: input.sessionId });
-      return;
-    }
-
-    try {
-      if (typeof input.host.recordSessionBackendSessionId === "function") {
-        input.host.recordSessionBackendSessionId(input.sessionId, backendSessionId);
-      } else {
-        recordSessionBackendSessionIdMetadata(input.sessionId, backendSessionId, input.projectRoot);
-      }
-      log.info("captured backend id", "session", {
-        sessionId: input.sessionId,
-        backendSessionId,
-      });
-    } catch (error) {
-      log.warn("failed to record captured backend id", "session", {
-        sessionId: input.sessionId,
-        backendSessionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
-  const timer = setTimeout(attempt, delayMs);
-  timer.unref?.();
-}
-
 function firstCodexPositionalArg(args: string[]): string | undefined {
   let skipNext = false;
   for (let i = 0; i < args.length; i += 1) {
@@ -161,9 +115,7 @@ export async function run(host: SessionLaunchHost, opts: { command: string; args
   initProject();
   await host.instanceDirectory.registerInstance(host.instanceId, process.cwd());
   host.startHeartbeat();
-  host.syncSessionsFromState();
-  host.taskDispatcher = host.createTaskDispatcher();
-  host.orchestrationDispatcher = host.createOrchestrationDispatcher();
+  host.syncSessionsFromTopology();
   host.defaultCommand = opts.command;
   host.defaultArgs = opts.args;
 
@@ -192,7 +144,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.startHeartbeat();
   host.startedInDashboard = true;
   host.mode = "dashboard";
-  host.syncSessionsFromState();
+  host.syncSessionsFromTopology();
 
   const config = loadConfig();
   const defaultTool = config.tools[config.defaultTool];
@@ -295,9 +247,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
 export async function runProjectService(host: SessionLaunchHost): Promise<number> {
   initProject();
   host.mode = "project-service";
-  host.syncSessionsFromState();
-  host.taskDispatcher = host.createTaskDispatcher();
-  host.orchestrationDispatcher = host.createOrchestrationDispatcher();
+  host.syncSessionsFromTopology();
   host.writeInstructionFiles();
   await host.startProjectServices();
   host.startStatusRefresh();
@@ -316,31 +266,21 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
   initProject();
   await host.instanceDirectory.registerInstance(host.instanceId, process.cwd());
   host.startHeartbeat();
-  const state = host.constructor.loadState();
-  if (!state || state.sessions.length === 0) {
+  const sessionsToResume = listLaunchableTopologySessions(toolFilter);
+  if (sessionsToResume.length === 0) {
     console.error("No saved session state found (or state is stale). Starting fresh.");
     return host.runDashboard();
   }
 
   const config = loadConfig();
-  const sessionsToResume = toolFilter
-    ? state.sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter)
-    : state.sessions;
   log.info("resuming saved sessions", "session", {
     requestedTool: toolFilter,
     count: sessionsToResume.length,
   });
 
-  if (sessionsToResume.length === 0) {
-    console.error(`No saved sessions found for tool "${toolFilter}". Starting fresh.`);
-    return host.runDashboard();
-  }
-
   const ownedByOthers = host.getRemoteOwnedSessionKeys();
-  const metadata = loadMetadataState().sessions;
-
   for (const saved of sessionsToResume) {
-    const backendSessionId = saved.backendSessionId ?? metadata[saved.id]?.backendSessionId;
+    const backendSessionId = saved.backendSessionId;
     if (ownedByOthers.has(saved.id) || (backendSessionId && ownedByOthers.has(backendSessionId))) {
       log.warn("skipping resume owned by another instance", "session", {
         sessionId: saved.id,
@@ -352,7 +292,7 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
     const toolCfg = config.tools[saved.toolConfigKey];
     if (!toolCfg) continue;
 
-    if (!host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId)) {
+    if (!backendSessionId || !host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId)) {
       console.error(
         `Skipping saved session "${saved.id}" because "${saved.toolConfigKey}" has no exact resumable backend session id.`,
       );
@@ -389,21 +329,13 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
 
 export async function restoreSessions(host: SessionLaunchHost, toolFilter?: string): Promise<number> {
   initProject();
-  const state = host.constructor.loadState();
-  if (!state || state.sessions.length === 0) {
+  const sessionsToRestore = listLaunchableTopologySessions(toolFilter);
+  if (sessionsToRestore.length === 0) {
     console.error("No saved session state found (or state is stale). Starting fresh.");
     return host.runDashboard();
   }
 
   const config = loadConfig();
-  const sessionsToRestore = toolFilter
-    ? state.sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter)
-    : state.sessions;
-
-  if (sessionsToRestore.length === 0) {
-    console.error(`No saved sessions found for tool "${toolFilter}". Starting fresh.`);
-    return host.runDashboard();
-  }
 
   for (const saved of sessionsToRestore) {
     const toolCfg = config.tools[saved.toolConfigKey];
@@ -602,15 +534,7 @@ export function createSession(
   if (session instanceof TmuxSessionTransport) {
     host.syncTmuxWindowMetadata(sessionId);
   }
-  if (!backendSessionId) {
-    scheduleBackendSessionCapture({
-      host,
-      sessionId,
-      projectRoot,
-      capture: toolCfg?.sessionCapture,
-      startedAtMs: sessionStartTime,
-    });
-  }
+  void projectRoot;
 
   host.activeIndex = host.sessions.length - 1;
   if (host.startedInDashboard && host.mode === "dashboard") {
@@ -654,8 +578,7 @@ export async function migrateAgent(
   const toolCfg = config.tools[toolConfigKey];
   const originalArgs = host.sessionOriginalArgs.get(sessionId) ?? [];
 
-  const sessionMetadata = loadMetadataState().sessions[sessionId];
-  const backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
+  const backendSessionId = session.backendSessionId;
   let migrateArgs = originalArgs;
   let historyContext = "";
   const useBackendResume = host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId);
@@ -792,9 +715,7 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
     } catch {}
   }
   if (typeof host.openLiveTmuxWindowForEntry === "function") {
-    const sessionMetadata = loadMetadataState().sessions[sid];
-    const backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
-    const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId });
+    const result = host.openLiveTmuxWindowForEntry({ id: sid, backendSessionId: session.backendSessionId });
     if (result === "opened") {
       host.saveState();
     }
@@ -858,7 +779,7 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
       host.showWorktreeList();
       break;
     case "review":
-      host.handleReviewRequest();
+      void host.handleReviewRequest();
       break;
   }
 }

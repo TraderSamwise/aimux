@@ -4,10 +4,8 @@ import { fileURLToPath } from "node:url";
 
 export const PROJECT_SERVICE_API_VERSION = 4;
 export const PROJECT_SERVICE_CAPABILITIES = {
-  structuredAgentInput: true,
   parsedAgentOutput: true,
-  attachments: true,
-  agentHistory: true,
+  attachmentRead: true,
   chatEventStream: true,
 } as const;
 

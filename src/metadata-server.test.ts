@@ -7,6 +7,11 @@ import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState } from "./metadata-store.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import {
+  moveTopologySessionToGraveyard,
+  saveRuntimeTopologySessions,
+  upsertTopologySession,
+} from "./runtime-core/topology-sessions.js";
 
 async function readSseUntil(stream: ReadableStream<Uint8Array>, predicate: (text: string) => boolean): Promise<string> {
   const reader = stream.getReader();
@@ -41,6 +46,31 @@ describe("MetadataServer threads API", () => {
     server?.stop();
     rmSync(repoRoot, { recursive: true, force: true });
   });
+
+  function seedAgentTopology(
+    sessions: Array<{
+      id: string;
+      command?: string;
+      status?: "running" | "idle" | "offline";
+      team?: Record<string, unknown>;
+      createdAt?: string;
+      label?: string;
+    }>,
+  ): void {
+    saveRuntimeTopologySessions({
+      sessions: sessions.map((session) => ({
+        id: session.id,
+        tool: session.command ?? "codex",
+        toolConfigKey: session.command ?? "codex",
+        command: session.command ?? "codex",
+        args: [],
+        lifecycle: session.status === "running" || session.status === "idle" ? "live" : "offline",
+        createdAt: session.createdAt,
+        team: session.team,
+        label: session.label,
+      })),
+    });
+  }
 
   it("opens, sends, and reads threads over HTTP", async () => {
     const endpoint = server?.getAddress();
@@ -150,8 +180,37 @@ describe("MetadataServer threads API", () => {
     expect(body).toEqual({ ok: true, sessionId: "claude-1" });
   });
 
-  it("lists direct teammates from the hidden desktop teammate projection", async () => {
+  it("lists direct teammates from runtime topology instead of desktop pending overlays", async () => {
     server?.stop();
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      {
+        id: "late",
+        command: "codex",
+        status: "running",
+        createdAt: "2026-01-01T00:00:02.000Z",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder", order: 2 },
+      },
+      {
+        id: "early",
+        command: "claude",
+        status: "running",
+        createdAt: "2026-01-01T00:00:01.000Z",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer", order: 1 },
+      },
+      {
+        id: "nested",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-nested", parentSessionId: "late", role: "coder" },
+      },
+      {
+        id: "other",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -212,7 +271,46 @@ describe("MetadataServer threads API", () => {
     });
   });
 
-  it("opens notification targets from hidden teammate desktop projection", async () => {
+  it("preserves topology status values in teammate API records", async () => {
+    server?.stop();
+    seedAgentTopology([{ id: "parent", command: "claude", status: "running" }]);
+    upsertTopologySession(
+      {
+        id: "idle-child",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+      },
+      "idle",
+    );
+    server = new MetadataServer({
+      desktop: {
+        getState: () => ({
+          sessions: [{ id: "parent", command: "claude", status: "running" }],
+          teammates: [],
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/teammates?parentSessionId=parent`);
+    const body = (await res.json()) as {
+      ok: boolean;
+      teammates: Array<{ id: string; status?: string }>;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.teammates).toEqual([expect.objectContaining({ id: "idle-child", status: "idle" })]);
+  });
+
+  it("opens notification targets from hidden teammate desktop state", async () => {
     server?.stop();
     server = new MetadataServer({
       desktop: {
@@ -272,6 +370,15 @@ describe("MetadataServer threads API", () => {
 
   it("rejects teammate agents as parents for teammate discovery and delegation", async () => {
     server?.stop();
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      {
+        id: "child",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -284,20 +391,6 @@ describe("MetadataServer threads API", () => {
               team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
             },
           ],
-        }),
-      },
-      lifecycle: {
-        writeAgentInput: ({ sessionId }) => ({
-          sessionId,
-          accepted: true,
-          operation: {
-            id: "inputop-never",
-            sessionId,
-            submit: true,
-            state: "submitted" as const,
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          },
         }),
       },
     });
@@ -324,7 +417,15 @@ describe("MetadataServer threads API", () => {
 
   it("creates durable tasks for direct teammate work instead of raw input", async () => {
     server?.stop();
-    const writes: string[] = [];
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      {
+        id: "child",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -338,12 +439,6 @@ describe("MetadataServer threads API", () => {
             },
           ],
         }),
-      },
-      lifecycle: {
-        writeAgentInput: ({ sessionId }) => {
-          writes.push(sessionId);
-          throw new Error("raw teammate input should not be used");
-        },
       },
     });
     await server.start();
@@ -385,7 +480,6 @@ describe("MetadataServer threads API", () => {
     expect(body.thread?.kind).toBe("task");
     expect(body.thread?.waitingOn).toEqual(["child"]);
     expect(readTask(body.task.id)?.prompt).toBe("Check this patch.");
-    expect(writes).toEqual([]);
 
     const promptOnlyRes = await fetch(`${base}/agents/teammates/tasks`, {
       method: "POST",
@@ -440,7 +534,16 @@ describe("MetadataServer threads API", () => {
 
   it("rejects teammate tasks to non-direct teammates", async () => {
     server?.stop();
-    const writes: string[] = [];
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      { id: "ordinary", command: "codex", status: "running" },
+      {
+        id: "other-child",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -458,12 +561,6 @@ describe("MetadataServer threads API", () => {
           ],
         }),
       },
-      lifecycle: {
-        writeAgentInput: ({ sessionId }) => {
-          writes.push(sessionId);
-          throw new Error("raw teammate input should not be used");
-        },
-      },
     });
     await server.start();
 
@@ -480,12 +577,26 @@ describe("MetadataServer threads API", () => {
 
     expect(res.status).toBe(404);
     expect(body.error).toContain("not attached");
-    expect(writes).toEqual([]);
   });
 
   it("controls only direct teammate lifecycle targets", async () => {
     server?.stop();
     const calls: string[] = [];
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      {
+        id: "child",
+        command: "codex",
+        status: "offline",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+      },
+      {
+        id: "other-child",
+        command: "codex",
+        status: "offline",
+        team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -560,6 +671,23 @@ describe("MetadataServer threads API", () => {
   it("resurrects direct graveyard teammates through graveyard-aware validation", async () => {
     server?.stop();
     const calls: string[] = [];
+    seedAgentTopology([
+      { id: "parent", command: "claude", status: "running" },
+      {
+        id: "child",
+        command: "codex",
+        status: "offline",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "coder" },
+      },
+      {
+        id: "other-child",
+        command: "codex",
+        status: "offline",
+        team: { teamId: "team-other", parentSessionId: "other-parent", role: "coder" },
+      },
+    ]);
+    moveTopologySessionToGraveyard("child");
+    moveTopologySessionToGraveyard("other-child");
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -597,12 +725,10 @@ describe("MetadataServer threads API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "child" }),
     });
-    expect(res.ok).toBe(true);
+    expect(res.status).toBe(410);
     expect((await res.json()) as Record<string, unknown>).toMatchObject({
-      ok: true,
-      sessionId: "child",
-      teammateSessionId: "child",
-      status: "offline",
+      ok: false,
+      error: expect.stringContaining("runtime core replacement"),
     });
 
     const foreign = await fetch(`${base}/agents/teammates/resurrect`, {
@@ -611,9 +737,9 @@ describe("MetadataServer threads API", () => {
       body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "other-child" }),
     });
     const foreignBody = (await foreign.json()) as { ok: boolean; error: string };
-    expect(foreign.status).toBe(404);
-    expect(foreignBody.error).toContain("graveyard teammate");
-    expect(calls).toEqual(["resurrect:child"]);
+    expect(foreign.status).toBe(410);
+    expect(foreignBody.error).toContain("runtime core replacement");
+    expect(calls).toEqual([]);
   });
 
   it("passes reused teammate creation responses over HTTP", async () => {
@@ -702,6 +828,14 @@ describe("MetadataServer threads API", () => {
   it("rejects teammate creation when the requested parent is itself a teammate", async () => {
     server?.stop();
     const createTeammateAgent = vi.fn();
+    seedAgentTopology([
+      {
+        id: "nested",
+        command: "codex",
+        status: "running",
+        team: { teamId: "team-parent", parentSessionId: "parent", role: "reviewer" },
+      },
+    ]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -739,6 +873,7 @@ describe("MetadataServer threads API", () => {
   it("rejects empty initial teammate tasks before creating a teammate", async () => {
     server?.stop();
     const createTeammateAgent = vi.fn();
+    seedAgentTopology([{ id: "parent", command: "claude", status: "running" }]);
     server = new MetadataServer({
       desktop: {
         getState: () => ({
@@ -1007,26 +1142,10 @@ describe("MetadataServer threads API", () => {
     );
   });
 
-  it("writes agent input and reads agent output over HTTP", async () => {
+  it("reads agent output over HTTP", async () => {
     server?.stop();
-    const writes: Array<{ sessionId: string; data: string }> = [];
     server = new MetadataServer({
       lifecycle: {
-        writeAgentInput: ({ sessionId, data }) => {
-          writes.push({ sessionId, data });
-          return {
-            sessionId,
-            accepted: true,
-            operation: {
-              id: "inputop-1",
-              sessionId,
-              submit: false,
-              state: "applied" as const,
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          };
-        },
         readAgentOutput: ({ sessionId, startLine }) => ({
           sessionId,
           startLine: startLine ?? -120,
@@ -1050,19 +1169,6 @@ describe("MetadataServer threads API", () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
-
-    const inputRes = await fetch(`${base}/agents/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "codex-1",
-        data: "hello\r",
-      }),
-    });
-    const inputJson = (await inputRes.json()) as { ok: boolean; sessionId: string };
-    expect(inputRes.ok).toBe(true);
-    expect(inputJson.sessionId).toBe("codex-1");
-    expect(writes).toEqual([{ sessionId: "codex-1", data: "hello\r" }]);
 
     const outputRes = await fetch(`${base}/agents/output?sessionId=codex-1&startLine=-80`);
     const outputJson = (await outputRes.json()) as {
@@ -1088,57 +1194,6 @@ describe("MetadataServer threads API", () => {
       version: 1,
       confidence: "heuristic",
     });
-  });
-
-  it("returns explicit failed agent input operations over HTTP", async () => {
-    server?.stop();
-    server = new MetadataServer({
-      lifecycle: {
-        writeAgentInput: ({ sessionId, clientMessageId }) => ({
-          sessionId,
-          accepted: false,
-          error: "tmux submit failed",
-          operation: {
-            id: "inputop-failed",
-            sessionId,
-            clientMessageId,
-            submit: true,
-            state: "failed" as const,
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-            error: "tmux submit failed",
-          },
-        }),
-      },
-    });
-    await server.start();
-
-    const endpoint = server?.getAddress();
-    expect(endpoint).toBeTruthy();
-    const base = `http://${endpoint!.host}:${endpoint!.port}`;
-
-    const inputRes = await fetch(`${base}/agents/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "codex-1",
-        data: "hello",
-        clientMessageId: "client-1",
-        submit: true,
-      }),
-    });
-    const inputJson = (await inputRes.json()) as {
-      ok: boolean;
-      accepted: boolean;
-      error?: string;
-      operation: { state: string; clientMessageId?: string };
-    };
-    expect(inputRes.ok).toBe(true);
-    expect(inputJson.ok).toBe(false);
-    expect(inputJson.accepted).toBe(false);
-    expect(inputJson.error).toBe("tmux submit failed");
-    expect(inputJson.operation.state).toBe("failed");
-    expect(inputJson.operation.clientMessageId).toBe("client-1");
   });
 
   it("streams alert events over SSE", async () => {
@@ -1216,18 +1271,6 @@ describe("MetadataServer threads API", () => {
     let reads = 0;
     server = new MetadataServer({
       lifecycle: {
-        writeAgentInput: ({ sessionId }) => ({
-          sessionId,
-          accepted: true,
-          operation: {
-            id: "inputop-2",
-            sessionId,
-            submit: false,
-            state: "applied" as const,
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          },
-        }),
         readAgentOutput: ({ sessionId, startLine }) => {
           reads += 1;
           return {
@@ -1244,16 +1287,6 @@ describe("MetadataServer threads API", () => {
             },
           };
         },
-        readAgentHistory: ({ sessionId, lastN }) => ({
-          sessionId,
-          lastN: lastN ?? 20,
-          messages: [
-            {
-              role: "user",
-              parts: [{ type: "text", text: "hello" }],
-            },
-          ],
-        }),
       },
     });
     await server.start();
@@ -1266,28 +1299,13 @@ describe("MetadataServer threads API", () => {
     expect(streamRes.ok).toBe(true);
     expect(streamRes.body).toBeTruthy();
 
-    const streamRead = readSseUntil(
-      streamRes.body!,
-      (text) => text.includes("event: agent_output") && text.includes("event: history_update"),
-    );
-
-    const inputRes = await fetch(`${base}/agents/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "codex-1",
-        data: "hello\r",
-      }),
-    });
-    expect(inputRes.ok).toBe(true);
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("event: agent_output"));
 
     const text = await streamRead;
     expect(text).toContain("event: ready");
     expect(text).toContain("event: agent_output");
     expect(text).toContain('"sessionId":"codex-1"');
     expect(text).toContain('"output":"initial output"');
-    expect(text).toContain("event: history_update");
-    expect(text).toContain('"messages":[{"role":"user","parts":[{"type":"text","text":"hello"}]}]');
   });
 
   it("maps legacy notify calls onto the alert SSE stream", async () => {
@@ -1541,238 +1559,46 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain('"sessionId":"claude-lead"');
   });
 
-  it("passes submit intent with agent input over HTTP", async () => {
-    server?.stop();
-    const writes: Array<{ sessionId: string; data: string; submit?: boolean }> = [];
-    server = new MetadataServer({
-      lifecycle: {
-        writeAgentInput: ({ sessionId, data, submit }) => {
-          writes.push({ sessionId, data, submit });
-          return {
-            sessionId,
-            accepted: true,
-            operation: {
-              id: "inputop-3",
-              sessionId,
-              submit: submit === true,
-              state: submit ? ("submitted" as const) : ("applied" as const),
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          };
-        },
-      },
-    });
-    await server.start();
-
+  it("serves existing attachment metadata plus content over HTTP", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
-
-    const inputRes = await fetch(`${base}/agents/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "codex-1",
-        data: "hello from http",
-        submit: true,
-      }),
-    });
-    expect(inputRes.ok).toBe(true);
-    expect(writes).toEqual([{ sessionId: "codex-1", data: "hello from http", submit: true }]);
-  });
-
-  it("passes trusted collaboration headers with agent input over HTTP", async () => {
-    server?.stop();
-    const writes: Array<{
-      sessionId: string;
-      data?: string;
-      collaboration?: {
-        shareId?: string;
-        mode?: string;
-        actor?: { userId: string; displayName: string; email?: string; role?: string };
-      };
-    }> = [];
-    server = new MetadataServer({
-      lifecycle: {
-        writeAgentInput: ({ sessionId, data, collaboration }) => {
-          writes.push({ sessionId, data, collaboration });
-          return {
-            sessionId,
-            accepted: true,
-            operation: {
-              id: "inputop-collab",
-              sessionId,
-              submit: true,
-              state: "submitted" as const,
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          };
-        },
-      },
-    });
-    await server.start();
-
-    const endpoint = server?.getAddress();
-    expect(endpoint).toBeTruthy();
-    const base = `http://${endpoint!.host}:${endpoint!.port}`;
-
-    const inputRes = await fetch(`${base}/agents/input`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-aimux-share-id": "share_123",
-        "x-aimux-share-mode": "multi",
-        "x-aimux-actor-user-id": "user_123",
-        "x-aimux-actor-name": "Sam Steady",
-        "x-aimux-actor-email": "sam@example.com",
-        "x-aimux-actor-role": "owner",
-      },
-      body: JSON.stringify({
-        sessionId: "claude-1",
-        data: "hello from http",
-        submit: true,
-      }),
-    });
-
-    expect(inputRes.ok).toBe(true);
-    expect(writes).toEqual([
-      {
-        sessionId: "claude-1",
-        data: "hello from http",
-        collaboration: {
-          shareId: "share_123",
-          mode: "multi",
-          actor: {
-            userId: "user_123",
-            displayName: "Sam Steady",
-            email: "sam@example.com",
-            role: "owner",
-          },
-        },
-      },
-    ]);
-  });
-
-  it("passes structured input parts with agent input over HTTP", async () => {
-    server?.stop();
-    const writes: Array<{
-      sessionId: string;
-      data?: string;
-      parts?: Array<Record<string, unknown>>;
-      submit?: boolean;
-    }> = [];
-    server = new MetadataServer({
-      lifecycle: {
-        writeAgentInput: ({ sessionId, data, parts, submit }) => {
-          writes.push({ sessionId, data, parts, submit });
-          return {
-            sessionId,
-            accepted: true,
-            operation: {
-              id: "inputop-4",
-              sessionId,
-              submit: submit === true,
-              state: submit ? ("submitted" as const) : ("applied" as const),
-              createdAt: "2026-01-01T00:00:00.000Z",
-              updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-          };
-        },
-      },
-    });
-    await server.start();
-
-    const endpoint = server?.getAddress();
-    expect(endpoint).toBeTruthy();
-    const base = `http://${endpoint!.host}:${endpoint!.port}`;
-
-    const inputRes = await fetch(`${base}/agents/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "claude-1",
-        parts: [
-          { type: "text", text: "Compare these" },
-          { type: "image", url: "https://example.com/a.png", alt: "first screenshot" },
-          { type: "text", text: "against this one" },
-        ],
-        submit: true,
-      }),
-    });
-
-    expect(inputRes.ok).toBe(true);
-    expect(writes).toEqual([
-      {
-        sessionId: "claude-1",
-        data: undefined,
-        parts: [
-          { type: "text", text: "Compare these" },
-          { type: "image", url: "https://example.com/a.png", alt: "first screenshot" },
-          { type: "text", text: "against this one" },
-        ],
-        submit: true,
-      },
-    ]);
-  });
-
-  it("ingests path attachments and serves metadata plus content over HTTP", async () => {
-    const endpoint = server?.getAddress();
-    expect(endpoint).toBeTruthy();
-    const base = `http://${endpoint!.host}:${endpoint!.port}`;
-    const imagePath = join(repoRoot, "shot.png");
+    const attachmentsDir = join(repoRoot, ".aimux", "attachments");
+    const attachmentId = "att_existing";
+    const imagePath = join(attachmentsDir, `${attachmentId}.png`);
     const imageBytes = Buffer.from("fake-image-bytes");
     writeFileSync(imagePath, imageBytes);
+    writeFileSync(
+      join(attachmentsDir, `${attachmentId}.json`),
+      `${JSON.stringify(
+        {
+          id: attachmentId,
+          kind: "image",
+          filename: "shot.png",
+          mimeType: "image/png",
+          sizeBytes: imageBytes.length,
+          sha256: "test-sha",
+          createdAt: "2025-01-01T00:00:00.000Z",
+          source: "path",
+          contentPath: imagePath,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
 
-    const createRes = await fetch(`${base}/attachments`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: imagePath }),
-    });
-    const created = (await createRes.json()) as {
-      ok: boolean;
-      attachment: { id: string; filename: string; mimeType: string; contentUrl: string };
-    };
-    expect(createRes.ok).toBe(true);
-    expect(created.attachment.id).toContain("att_");
-    expect(created.attachment.filename).toBe("shot.png");
-    expect(created.attachment.mimeType).toBe("image/png");
-
-    const showRes = await fetch(`${base}/attachments/${created.attachment.id}`);
+    const showRes = await fetch(`${base}/attachments/${attachmentId}`);
     const shown = (await showRes.json()) as { ok: boolean; attachment: { id: string; contentUrl: string } };
     expect(showRes.ok).toBe(true);
-    expect(shown.attachment.id).toBe(created.attachment.id);
-    expect(shown.attachment.contentUrl).toBe(`/attachments/${created.attachment.id}/content`);
+    expect(shown.attachment.id).toBe(attachmentId);
+    expect(shown.attachment.contentUrl).toBe(`/attachments/${attachmentId}/content`);
 
-    const contentRes = await fetch(`${base}${created.attachment.contentUrl}`);
+    const contentRes = await fetch(`${base}${shown.attachment.contentUrl}`);
     const contentBytes = Buffer.from(await contentRes.arrayBuffer());
     expect(contentRes.ok).toBe(true);
     expect(contentRes.headers.get("content-type")).toBe("image/png");
     expect(contentBytes.equals(imageBytes)).toBe(true);
-  });
-
-  it("ingests base64 attachments over HTTP", async () => {
-    const endpoint = server?.getAddress();
-    expect(endpoint).toBeTruthy();
-    const base = `http://${endpoint!.host}:${endpoint!.port}`;
-
-    const createRes = await fetch(`${base}/attachments`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        filename: "clip.webp",
-        mimeType: "image/webp",
-        contentBase64: Buffer.from("webp-ish").toString("base64"),
-      }),
-    });
-    const created = (await createRes.json()) as {
-      ok: boolean;
-      attachment: { id: string; filename: string; mimeType: string };
-    };
-    expect(createRes.ok).toBe(true);
-    expect(created.attachment.filename).toBe("clip.webp");
-    expect(created.attachment.mimeType).toBe("image/webp");
   });
 
   it("validates agent output query parameters over HTTP", async () => {
@@ -1807,23 +1633,9 @@ describe("MetadataServer threads API", () => {
     });
   });
 
-  it("reads agent history over HTTP", async () => {
+  it("rejects legacy agent history over HTTP", async () => {
     server?.stop();
-    server = new MetadataServer({
-      lifecycle: {
-        readAgentHistory: ({ sessionId, lastN }) => ({
-          sessionId,
-          lastN: lastN ?? 20,
-          messages: [
-            {
-              id: "msg_1",
-              role: "user",
-              parts: [{ type: "text", text: "what is in this image?" }],
-            },
-          ],
-        }),
-      },
-    });
+    server = new MetadataServer({});
     await server.start();
 
     const endpoint = server?.getAddress();
@@ -1831,16 +1643,12 @@ describe("MetadataServer threads API", () => {
     const base = `http://${endpoint!.host}:${endpoint!.port}`;
 
     const historyRes = await fetch(`${base}/agents/history?sessionId=claude-1&lastN=5`);
-    const historyJson = (await historyRes.json()) as {
-      ok: boolean;
-      sessionId: string;
-      lastN: number;
-      messages: Array<{ id: string; role: string; parts: Array<{ type: string; text?: string }> }>;
-    };
-    expect(historyRes.ok).toBe(true);
-    expect(historyJson.sessionId).toBe("claude-1");
-    expect(historyJson.lastN).toBe(5);
-    expect(historyJson.messages[0]?.parts[0]?.text).toBe("what is in this image?");
+    const historyJson = (await historyRes.json()) as { ok: boolean; error: string };
+    expect(historyRes.status).toBe(410);
+    expect(historyJson).toEqual({
+      ok: false,
+      error: "agent message history requires the runtime core replacement",
+    });
   });
 
   it("streams agent output over SSE", async () => {

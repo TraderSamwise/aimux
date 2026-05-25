@@ -1,19 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { loadConfig } from "../config.js";
-import {
-  getSessionBackendSessionId,
-  loadMetadataState,
-  recordSessionBackendSessionIdMetadata,
-  updateSessionMetadata,
-} from "../metadata-store.js";
-import { getGraveyardPath, getLocalAimuxDir, getStatePath } from "../paths.js";
+import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { isToolInternalWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { markLastUsed } from "../last-used.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { getServiceLaunchCommandLine } from "./services.js";
-import { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
+import {
+  listTopologySessionStates,
+  moveTopologySessionToGraveyard,
+  upsertTopologySession,
+} from "../runtime-core/topology-sessions.js";
 
 type RuntimeStateHost = any;
 
@@ -58,73 +56,6 @@ function removeRuntimeRegistration(host: RuntimeStateHost, runtime: any): void {
 function offlineSessionState(session: any): any {
   const { tmuxTarget: _tmuxTarget, ...rest } = session;
   return { ...rest, lifecycle: "offline" };
-}
-
-function fillMissingBackendSessionIdFromMetadata(session: any, metadataState = loadMetadataState()): any {
-  if (session.backendSessionId) return session;
-  const backendSessionId = metadataState.sessions[session.id]?.backendSessionId;
-  return backendSessionId ? { ...session, backendSessionId } : session;
-}
-
-function writeBackendSessionIdToSavedState(sessionId: string, backendSessionId: string): void {
-  const statePath = getStatePath();
-  if (!existsSync(statePath)) return;
-  try {
-    const state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
-    const session = state.sessions?.find?.((entry: any) => entry.id === sessionId);
-    if (!session) return;
-    if (session.backendSessionId && session.backendSessionId !== backendSessionId) return;
-    session.backendSessionId = backendSessionId;
-    state.savedAt = new Date().toISOString();
-    writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-  } catch {}
-}
-
-function getSavedBackendSessionId(sessionId: string): string | undefined {
-  const statePath = getStatePath();
-  if (!existsSync(statePath)) return undefined;
-  try {
-    const state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
-    const session = state.sessions?.find?.((entry: any) => entry.id === sessionId);
-    return typeof session?.backendSessionId === "string" && session.backendSessionId
-      ? session.backendSessionId
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function parseTimestampMs(value: unknown): number | undefined {
-  if (typeof value !== "string" || value.trim().length === 0) return undefined;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function recoverCapturedBackendSessionId(
-  host: RuntimeStateHost,
-  session: any,
-  sessionMetadata: any,
-  toolCfg: any,
-): string | undefined {
-  if (!toolCfg?.sessionCapture) return undefined;
-  const startedAtMs = parseTimestampMs(session.createdAt) ?? parseTimestampMs(sessionMetadata?.createdAt);
-  if (!startedAtMs) return undefined;
-  const backendSessionId = captureBackendSessionIdFromSessionFiles(toolCfg.sessionCapture, session.id, {
-    startedAtMs,
-    lookbackDays: 30,
-  });
-  if (!backendSessionId) return undefined;
-  try {
-    recordSessionBackendSessionId(host, session.id, backendSessionId);
-  } catch (error) {
-    host.debug?.(
-      `failed to record recovered backend id for ${session.id}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      "session",
-    );
-  }
-  return backendSessionId;
 }
 
 function markLifecycleUsed(host: RuntimeStateHost, itemId: string): void {
@@ -187,38 +118,6 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
   if (host.statusInterval) return;
   host.statusInterval = setInterval(() => {
     let dashboardNeedsRender = false;
-    if (host.mode === "project-service") {
-      host.taskDispatcher?.tick(host.sessions.map((s: any) => s.id));
-      host.orchestrationDispatcher?.tick(host.sessions.map((s: any) => s.id));
-    }
-
-    const events = host.taskDispatcher?.drainEvents() ?? [];
-    for (const ev of events) {
-      if (ev.type === "assigned") {
-        host.footerFlash = `⧫ Task assigned → ${ev.sessionId}`;
-      } else if (ev.type === "completed") {
-        host.footerFlash = `✓ Task done by ${ev.sessionId}`;
-      } else if (ev.type === "failed") {
-        host.footerFlash = `✗ Task failed: ${ev.sessionId}`;
-      } else if (ev.type === "review_created") {
-        host.footerFlash = `⧫ Review created: ${ev.description}`;
-      } else if (ev.type === "review_approved") {
-        host.footerFlash = `✓ Review approved: ${ev.description}`;
-      } else if (ev.type === "changes_requested") {
-        host.footerFlash = `↻ Changes requested: ${ev.description}`;
-      }
-      host.footerFlashTicks = 3;
-      dashboardNeedsRender = true;
-    }
-
-    const orchestrationEvents = host.orchestrationDispatcher?.drainEvents() ?? [];
-    for (const event of orchestrationEvents) {
-      if (event.type === "message_delivered") {
-        host.footerFlash = `✉ Message delivered → ${event.sessionId}`;
-        host.footerFlashTicks = 3;
-        dashboardNeedsRender = true;
-      }
-    }
 
     if (host.dashboardFeedback.tickFlashVisibilityChanged()) {
       dashboardNeedsRender = true;
@@ -263,30 +162,26 @@ export function stopStatusRefresh(host: RuntimeStateHost): void {
   }
 }
 
-export function syncSessionsFromState(host: RuntimeStateHost, state = host.constructor.loadState()): void {
-  const liveAgentWindows = restoreTmuxSessionsFromState(host, state);
-  loadOfflineSessions(host, state, liveAgentWindows);
+export function syncSessionsFromTopology(host: RuntimeStateHost): void {
+  const state = host.constructor.loadState();
+  const liveAgentWindows = restoreTmuxSessionsFromTopology(host);
+  loadOfflineTopologySessions(host, liveAgentWindows);
   loadOfflineServices(host, state);
   host.invalidateDesktopStateSnapshot();
 }
 
-export function loadOfflineSessions(
+export function loadOfflineTopologySessions(
   host: RuntimeStateHost,
-  state = host.constructor.loadState(),
   liveAgentWindows = listLiveAgentWindows(host),
 ): boolean {
-  if (!state || state.sessions.length === 0) {
+  const savedSessions = listTopologySessionStates({ statuses: ["offline"] });
+  if (savedSessions.length === 0) {
     const changed = host.offlineSessions.length > 0;
     host.offlineSessions = [];
     return changed;
   }
 
   const liveIds = new Set(liveAgentWindows.map(({ metadata }) => metadata.sessionId));
-  const liveBackendIds = new Set(
-    liveAgentWindows
-      .map(({ metadata }) => metadata.backendSessionId)
-      .filter((value): value is string => Boolean(value)),
-  );
   const ownedIds = new Set<string>();
   for (const s of host.sessions) ownedIds.add(s.id);
   for (const inst of host.getRemoteInstancesSafe()) {
@@ -299,13 +194,10 @@ export function loadOfflineSessions(
       .filter((value: any): value is string => Boolean(value)),
   );
 
-  const metadataState = loadMetadataState();
-  const nextOfflineSessions = state.sessions
-    .map((s: any) => fillMissingBackendSessionIdFromMetadata(s, metadataState))
+  const nextOfflineSessions = savedSessions
     .filter((s: any) => {
       if (!isIntentionalOfflineSession(s)) return false;
       if (liveIds.has(s.id)) return false;
-      if (s.backendSessionId && liveBackendIds.has(s.backendSessionId)) return false;
       if (ownedIds.has(s.id)) return false;
       if (s.backendSessionId && ownedBackendIds.has(s.backendSessionId)) return false;
       if (host.dashboardPendingActions?.getSessionAction?.(s.id) === "starting") return false;
@@ -328,7 +220,7 @@ export function loadOfflineSessions(
   host.offlineSessions = nextOfflineSessions;
 
   if (host.offlineSessions.length > 0) {
-    host.debug?.(`loaded ${host.offlineSessions.length} offline session(s) from state.json`, "session");
+    host.debug?.(`loaded ${host.offlineSessions.length} offline session(s) from runtime topology`, "session");
   }
   return previousKey !== nextKey;
 }
@@ -400,11 +292,9 @@ export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
   return liveServices;
 }
 
-export function restoreTmuxSessionsFromState(
-  host: RuntimeStateHost,
-  state = host.constructor.loadState(),
-): ManagedAgentWindow[] {
-  const savedById = new Map<string, any>((state?.sessions ?? []).map((session: any) => [session.id, session]));
+export function restoreTmuxSessionsFromTopology(host: RuntimeStateHost): ManagedAgentWindow[] {
+  const savedSessions = listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
+  const savedById = new Map<string, any>(savedSessions.map((session: any) => [session.id, session]));
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const liveAgentWindows = listLiveAgentWindows(host);
@@ -444,7 +334,6 @@ export function restoreTmuxSessionsFromState(
       cols,
       rows,
     );
-    transport.backendSessionId = metadata.backendSessionId;
     host.sessionTmuxTargets.set(metadata.sessionId, target);
     host.registerManagedSession(
       transport,
@@ -467,7 +356,6 @@ export function restoreTmuxSessionsFromState(
     host.syncTmuxWindowMetadata(metadata.sessionId);
   }
 
-  host.writeSessionsFile?.();
   host.updateContextWatcherSessions?.();
   return liveAgentWindows;
 }
@@ -475,14 +363,14 @@ export function restoreTmuxSessionsFromState(
 export function stopSessionToOffline(host: RuntimeStateHost, session: any): void {
   if (host.stoppingSessionIds.has(session.id)) return;
   markLifecycleUsed(host, session.id);
-  const backendSessionId = session.backendSessionId ?? getSessionBackendSessionId(session.id);
+  const backendSessionId = session.backendSessionId;
   const offlineEntry = {
     id: session.id,
     tool: session.command,
     toolConfigKey: host.sessionToolKeys.get(session.id) ?? session.command,
     command: session.command,
     args: host.sessionOriginalArgs.get(session.id) ?? [],
-    lifecycle: "offline",
+    lifecycle: "offline" as const,
     createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
     backendSessionId,
     team: session.team,
@@ -499,6 +387,7 @@ export function stopSessionToOffline(host: RuntimeStateHost, session: any): void
   }
   host.stoppingSessionIds.add(session.id);
   host.startedInDashboard = true;
+  upsertTopologySession(offlineEntry, "offline");
   host.saveState();
   session.kill();
   host.debug?.(`stopped session ${session.id} → offline`, "session");
@@ -520,34 +409,20 @@ export function adjustAfterRemove(host: RuntimeStateHost, hasWorktrees: boolean)
   }
 }
 
-export function graveyardSession(host: RuntimeStateHost, sessionId: string, sessionSeed?: any): void {
+export function graveyardSession(host: RuntimeStateHost, sessionId: string, _sessionSeed?: any): void {
   const session =
     host.offlineSessions.find((s: any) => s.id === sessionId) ??
-    (sessionSeed?.id === sessionId
-      ? offlineSessionState(fillMissingBackendSessionIdFromMetadata(sessionSeed))
-      : undefined);
+    listTopologySessionStates({ statuses: ["running", "idle", "offline"] }).find((s: any) => s.id === sessionId);
   if (!session) return;
   markLifecycleUsed(host, sessionId);
 
   host.offlineSessions = host.offlineSessions.filter((s: any) => s.id !== sessionId);
 
-  const graveyardPath = getGraveyardPath();
-  let graveyard: Array<Record<string, unknown>> = [];
-  if (existsSync(graveyardPath)) {
-    try {
-      graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8"));
-    } catch {}
-  }
-  graveyard.push({ ...session, id: session.id });
-  writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
-
-  const statePath = getStatePath();
-  if (existsSync(statePath)) {
-    try {
-      const state = JSON.parse(readFileSync(statePath, "utf-8")) as any;
-      state.sessions = state.sessions.filter((s: any) => s.id !== sessionId);
-      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
-    } catch {}
+  moveTopologySessionToGraveyard(sessionId);
+  host.invalidateDesktopStateSnapshot?.();
+  host.writeStatuslineFile?.();
+  if (host.mode === "dashboard") {
+    host.renderCurrentDashboardView?.();
   }
 
   host.debug?.(`graveyarded session ${sessionId}`, "session");
@@ -576,7 +451,6 @@ export function evictZombieSession(host: RuntimeStateHost, runtime: any): void {
   }
   host.stoppingSessionIds.delete(runtime.id);
   host.sessionTmuxTargets.delete(runtime.id);
-  host.writeSessionsFile();
   host.updateContextWatcherSessions();
   host.saveState();
 }
@@ -597,13 +471,9 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
   const toolCfg = config.tools[session.toolConfigKey];
   if (!toolCfg) return;
 
-  const sessionMetadata = loadMetadataState().sessions[session.id];
-  const derived = sessionMetadata?.derived;
+  const derived = loadMetadataState().sessions[session.id]?.derived;
   const relaunchFresh = derived?.activity === "error" || derived?.attention === "error";
-  let backendSessionId = session.backendSessionId ?? sessionMetadata?.backendSessionId;
-  if (!backendSessionId && !relaunchFresh) {
-    backendSessionId = recoverCapturedBackendSessionId(host, session, sessionMetadata, toolCfg);
-  }
+  const backendSessionId = session.backendSessionId;
   const useBackendResume =
     !relaunchFresh && host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId);
 
@@ -677,15 +547,7 @@ export function recordSessionBackendSessionId(
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   const offline = host.offlineSessions.find((session: any) => session.id === sessionId);
   if (!runtime && !offline) {
-    const savedBackendSessionId = getSavedBackendSessionId(sessionId);
-    if (savedBackendSessionId && savedBackendSessionId !== normalizedBackendSessionId) {
-      recordSessionBackendSessionIdMetadata(sessionId, savedBackendSessionId);
-      return { sessionId, backendSessionId: savedBackendSessionId };
-    }
-    const selectedBackendSessionId = savedBackendSessionId ?? normalizedBackendSessionId;
-    recordSessionBackendSessionIdMetadata(sessionId, selectedBackendSessionId);
-    writeBackendSessionIdToSavedState(sessionId, selectedBackendSessionId);
-    return { sessionId, backendSessionId: selectedBackendSessionId };
+    throw new Error(`Agent "${sessionId}" is not managed by this runtime`);
   }
 
   const existing = runtime?.backendSessionId ?? offline?.backendSessionId;
@@ -695,8 +557,6 @@ export function recordSessionBackendSessionId(
     );
   }
   const selectedBackendSessionId = existing ?? normalizedBackendSessionId;
-  recordSessionBackendSessionIdMetadata(sessionId, selectedBackendSessionId);
-
   if (runtime) {
     runtime.backendSessionId = selectedBackendSessionId;
     host.syncTmuxWindowMetadata?.(sessionId);
@@ -704,9 +564,7 @@ export function recordSessionBackendSessionId(
   if (offline) {
     offline.backendSessionId = selectedBackendSessionId;
   }
-  writeBackendSessionIdToSavedState(sessionId, selectedBackendSessionId);
 
-  host.writeSessionsFile?.();
   host.saveState?.();
   host.invalidateDesktopStateSnapshot?.();
   host.writeStatuslineFile?.();
@@ -715,25 +573,6 @@ export function recordSessionBackendSessionId(
 
 export function startHeartbeat(host: RuntimeStateHost): void {
   host.runtimeSync.startHeartbeat();
-}
-
-export function handleSessionClaimed(host: RuntimeStateHost, sessionId: string): void {
-  const session = host.sessions.find((s: any) => s.id === sessionId);
-  if (!session) return;
-  host.debug?.(`session ${sessionId} was claimed by another instance, killing local PTY`, "instance");
-  session.kill();
-  const idx = host.sessions.indexOf(session);
-  if (idx >= 0) {
-    host.sessions.splice(idx, 1);
-    host.sessionToolKeys.delete(sessionId);
-    host.sessionOriginalArgs.delete(sessionId);
-    host.sessionWorktreePaths.delete(sessionId);
-    host.sessionTmuxTargets.delete(sessionId);
-  }
-  if (host.activeIndex >= host.sessions.length) {
-    host.activeIndex = Math.max(0, host.sessions.length - 1);
-  }
-  host.renderDashboard();
 }
 
 export function stopHeartbeat(host: RuntimeStateHost): void {
@@ -753,44 +592,13 @@ export function getRemoteInstancesSafe(host: RuntimeStateHost) {
 }
 
 export function getRemoteOwnedSessionKeys(host: RuntimeStateHost): Set<string> {
-  return host.instanceDirectory.getRemoteOwnedSessionKeys(host.instanceId, process.cwd());
+  void host;
+  return new Set();
 }
 
 export function getInstanceSessionRefs(host: RuntimeStateHost): any[] {
-  const metadataState = loadMetadataState();
-  return host.sessions.map((s: any) => ({
-    id: s.id,
-    tool: s.command,
-    backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
-    team: s.team,
-    worktreePath: host.sessionWorktreePaths.get(s.id),
-  }));
-}
-
-export function writeSessionsFile(host: RuntimeStateHost): void {
-  const dir = getLocalAimuxDir();
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-  const metadataState = loadMetadataState();
-  const localSessions = host.sessions.map((s: any) => ({
-    id: s.id,
-    tool: s.command,
-    backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
-    team: s.team,
-    worktreePath: host.sessionWorktreePaths.get(s.id),
-  }));
-  const data = host.instanceDirectory.buildSessionsFileEntries(
-    localSessions,
-    host.instanceDirectory.getRemoteInstancesSafe(host.instanceId, process.cwd()),
-  );
-
-  writeFileSync(`${dir}/sessions.json`, JSON.stringify(data, null, 2) + "\n");
-}
-
-export function removeSessionsFile(): void {
-  try {
-    unlinkSync(`${getLocalAimuxDir()}/sessions.json`);
-  } catch {}
+  void host;
+  return [];
 }
 
 export function listDesktopWorktrees(

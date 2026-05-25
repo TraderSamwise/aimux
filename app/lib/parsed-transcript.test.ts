@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  messagesFromParsedAgentOutput,
-  pendingPromptAlreadyRendered,
-} from "@/lib/parsed-transcript";
+import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
 
 describe("parsed transcript conversion", () => {
   it("turns parsed prompt and response blocks into ordered chat messages", () => {
@@ -68,30 +65,5 @@ describe("parsed transcript conversion", () => {
         parts: [{ type: "text", text: "legacy reply" }],
       },
     ]);
-  });
-
-  it("filters pending prompts already visible in the parsed transcript", () => {
-    const rendered = messagesFromParsedAgentOutput({
-      blocks: [{ type: "prompt", text: "hi" }],
-    });
-
-    expect(
-      pendingPromptAlreadyRendered(
-        {
-          deliveryState: "submitted",
-          parts: [{ type: "text", text: "hi" }],
-        },
-        rendered,
-      ),
-    ).toBe(true);
-    expect(
-      pendingPromptAlreadyRendered(
-        {
-          deliveryState: "failed",
-          parts: [{ type: "text", text: "hi" }],
-        },
-        rendered,
-      ),
-    ).toBe(false);
   });
 });

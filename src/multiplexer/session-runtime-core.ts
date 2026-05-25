@@ -9,21 +9,7 @@ import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
-import { serializeAgentInput, type AgentInputPart } from "../agent-message-parts.js";
-import { resolveAttachmentPath } from "../attachment-store.js";
-import { applyAgentCollaborationPrefix, type AgentCollaborationContext } from "../collaboration.js";
-import { appendSessionMessage, readSessionMessages } from "../session-message-history.js";
-import {
-  createSessionInputOperation,
-  saveSessionInputOperation,
-  type SessionInputOperationRecord,
-} from "../session-input-operations.js";
 import { captureGitContext } from "../context/context-bridge.js";
-import {
-  normalizeSubmittedPrompt,
-  paneStillContainsPromptDraft,
-  waitForTmuxPromptSubmit,
-} from "../agent-prompt-delivery.js";
 import type { SessionTeamMetadata } from "../team.js";
 
 type SessionRuntimeHost = any;
@@ -122,9 +108,6 @@ export function readStatusHeadline(_host: SessionRuntimeHost, sessionId: string)
 }
 
 export function deriveHeadline(host: SessionRuntimeHost, sessionId: string): string | undefined {
-  const taskDescription = host.taskDispatcher?.getSessionTask(sessionId);
-  if (taskDescription) return taskDescription.slice(0, 80);
-
   const statusHeadline = readStatusHeadline(host, sessionId);
   if (statusHeadline) return statusHeadline;
 
@@ -174,213 +157,6 @@ export function resolveLiveSessionTmuxTarget(host: SessionRuntimeHost, sessionId
   } catch {}
 
   return undefined;
-}
-
-export function writeTmuxAgentInput(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  transport: TmuxSessionTransport,
-  data: string,
-): void {
-  const target = resolveLiveSessionTmuxTarget(host, sessionId, transport.tmuxTarget);
-  if (!target) {
-    throw new Error(`Session "${sessionId}" does not have a live tmux target`);
-  }
-  transport.retarget(target);
-  let textBuffer = "";
-  const flushText = () => {
-    if (!textBuffer) return;
-    host.tmuxRuntimeManager.sendText(target, textBuffer);
-    textBuffer = "";
-  };
-
-  for (const ch of data) {
-    if (ch === "\r") {
-      flushText();
-      host.tmuxRuntimeManager.sendEnter(target);
-      continue;
-    }
-    if (ch === "\n") {
-      flushText();
-      host.tmuxRuntimeManager.sendKey(target, "C-j");
-      continue;
-    }
-    textBuffer += ch;
-  }
-
-  flushText();
-}
-
-export function normalizeAgentInput(
-  host: SessionRuntimeHost,
-  data: string,
-  submit: boolean,
-  sessionId?: string,
-): string {
-  const tool = sessionId ? host.sessionToolKeys?.get(sessionId) : undefined;
-  return normalizeSubmittedPrompt(tool, data, submit);
-}
-
-export function paneStillContainsAgentDraft(host: SessionRuntimeHost, target: any, draft: string): boolean {
-  return paneStillContainsPromptDraft(host.tmuxRuntimeManager, target, draft);
-}
-
-export function waitForTmuxAgentSubmit(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  target: any,
-  draft: string,
-): Promise<boolean> {
-  const isTargetCurrent = () => {
-    const currentTarget = resolveLiveSessionTmuxTarget(host, sessionId);
-    return Boolean(currentTarget && currentTarget.windowId === target.windowId);
-  };
-
-  return waitForTmuxPromptSubmit({
-    tmuxRuntimeManager: host.tmuxRuntimeManager,
-    target,
-    draft,
-    isTargetCurrent,
-  });
-}
-
-export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: string, target: any, draft: string): void {
-  void waitForTmuxAgentSubmit(host, sessionId, target, draft);
-}
-
-export async function writeAgentInput(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  data = "",
-  parts?: any[],
-  clientMessageId?: string,
-  submit = false,
-  collaboration?: AgentCollaborationContext,
-): Promise<{
-  sessionId: string;
-  accepted: boolean;
-  operation: SessionInputOperationRecord;
-  messageId?: string;
-  error?: string;
-}> {
-  const session = resolveRunningSession(host, sessionId);
-  const agentInput = applyCollaborationContextForAgent(
-    host,
-    sessionId,
-    applyAgentCollaborationPrefix({ data, parts }, collaboration),
-    collaboration,
-  );
-  const serializedData = serializeAgentInput(agentInput, {
-    tool: host.sessionToolKeys.get(sessionId),
-    resolveAttachmentPath,
-  });
-  const normalizedData = normalizeAgentInput(host, serializedData, submit, sessionId);
-  if (!normalizedData && !submit) {
-    throw new Error("input data is required");
-  }
-
-  let operation = createSessionInputOperation({ sessionId, clientMessageId, submit });
-  try {
-    const message = appendSessionMessage(sessionId, { data, parts, clientMessageId, collaboration });
-    if (message?.id) {
-      operation = saveSessionInputOperation({
-        ...operation,
-        messageId: message.id,
-      });
-    }
-    if (session.transport instanceof TmuxSessionTransport) {
-      if (normalizedData) {
-        writeTmuxAgentInput(host, sessionId, session.transport, normalizedData);
-      }
-      if (submit) {
-        const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
-        if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
-        const submitted = await waitForTmuxAgentSubmit(host, sessionId, target, normalizedData);
-        if (!submitted) {
-          throw new Error(`Session "${sessionId}" prompt submit was not accepted by tmux`);
-        }
-      }
-      operation = saveSessionInputOperation({
-        ...operation,
-        state: submit ? "submitted" : "applied",
-      });
-    } else {
-      session.write(submit ? `${normalizedData}\r` : normalizedData);
-      operation = saveSessionInputOperation({
-        ...operation,
-        state: submit ? "submitted" : "applied",
-      });
-    }
-    return {
-      sessionId,
-      accepted: true,
-      operation,
-      messageId: message?.id,
-    };
-  } catch (error) {
-    operation = saveSessionInputOperation({
-      ...operation,
-      state: "failed",
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return {
-      sessionId,
-      accepted: false,
-      operation,
-      messageId: operation.messageId,
-      error: operation.error,
-    };
-  }
-}
-
-function applyCollaborationContextForAgent(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  input: { data?: string; parts?: AgentInputPart[] },
-  collaboration?: AgentCollaborationContext,
-): { data?: string; parts?: AgentInputPart[] } {
-  const notice = consumeCollaborationModeNotice(host, sessionId, collaboration);
-  if (!notice) return input;
-  if (Array.isArray(input.parts) && input.parts.length > 0) {
-    return {
-      data: input.data,
-      parts: [{ type: "text", text: notice }, ...input.parts],
-    };
-  }
-  const data = String(input.data ?? "");
-  return {
-    data: data.trim() ? `${notice}\n\n${data}` : notice,
-    parts: input.parts,
-  };
-}
-
-function consumeCollaborationModeNotice(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  collaboration?: AgentCollaborationContext,
-): string | null {
-  if (!collaboration?.shareId || !collaboration.mode) return null;
-  const modes: Map<string, string> = (host.collaborationModesBySession ??= new Map());
-  const next = `${collaboration.shareId}:${collaboration.mode}`;
-  if (modes.get(sessionId) === next) return null;
-  modes.set(sessionId, next);
-  if (collaboration.mode === "multi") {
-    return "Aimux collaboration note: This shared chat is now multi-user. Human messages are prefixed as [Name]: message so you can distinguish participants.";
-  }
-  return "Aimux collaboration note: This shared chat is back to single-user mode. Future unprefixed user messages are from the remaining participant.";
-}
-
-export async function readAgentHistory(
-  host: SessionRuntimeHost,
-  sessionId: string,
-  lastN?: number,
-): Promise<{ sessionId: string; messages: ReturnType<typeof readSessionMessages>; lastN?: number }> {
-  resolveRunningSession(host, sessionId);
-  return {
-    sessionId,
-    messages: readSessionMessages(sessionId, { lastN: lastN ?? 20 }),
-    lastN: lastN ?? 20,
-  };
 }
 
 export async function interruptAgent(host: SessionRuntimeHost, sessionId: string): Promise<{ sessionId: string }> {
@@ -460,7 +236,6 @@ export function registerManagedSession(
   }
 
   host.sessions.push(runtime);
-  host.writeSessionsFile();
   host.updateContextWatcherSessions();
   if (host.sessions.length === 1) host.contextWatcher.start();
   return runtime;
@@ -522,8 +297,7 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
   if (idx === -1) return;
 
   const explicitStop = host.stoppingSessionIds.has(runtime.id);
-  const sessionMetadata = loadMetadataState().sessions[runtime.id];
-  const backendSessionId = runtime.backendSessionId ?? sessionMetadata?.backendSessionId;
+  const backendSessionId = runtime.backendSessionId;
   const shouldPreserveOffline = explicitStop || Boolean(backendSessionId) || uptime >= 10_000;
   if (shouldPreserveOffline && !host.offlineSessions.some((entry: any) => entry.id === runtime.id)) {
     host.offlineSessions.push({
@@ -540,11 +314,13 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
       label: host.getSessionLabel(runtime.id),
       headline: host.deriveHeadline(runtime.id),
     });
+  } else if (!shouldPreserveOffline) {
+    host.unpreservedExitedSessionIds ??= new Set<string>();
+    host.unpreservedExitedSessionIds.add(runtime.id);
   }
 
   host.sessions.splice(idx, 1);
   host.stoppingSessionIds.delete(runtime.id);
-  host.writeSessionsFile();
   host.updateContextWatcherSessions();
   const mappedTarget = host.sessionTmuxTargets.get(runtime.id);
   const runtimeTarget = runtime.transport instanceof TmuxSessionTransport ? runtime.transport.tmuxTarget : undefined;
@@ -583,7 +359,7 @@ export function buildTmuxWindowMetadata(
     command,
     args: host.sessionOriginalArgs.get(sessionId) ?? [],
     toolConfigKey: host.sessionToolKeys.get(sessionId) ?? command,
-    backendSessionId: runtime?.backendSessionId ?? sessionMetadata?.backendSessionId,
+    backendSessionId: runtime?.backendSessionId,
     team: runtime?.team ?? existing?.team,
     worktreePath: host.sessionWorktreePaths.get(sessionId),
     label: getSessionLabel(host, sessionId),

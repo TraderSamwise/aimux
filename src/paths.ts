@@ -3,7 +3,7 @@
  *
  * Two locations:
  *   - In-repo:  {repoRoot}/.aimux/  → agent-facing shared artifacts
- *                (config, team, plans, context, history, tasks, status, threads, sessions.json)
+ *                (config, team, plans, context, history, tasks, status, threads)
  *   - Global:   ~/.aimux/projects/<project-id>/  → runtime-private state
  *                (recordings, metadata, instance ownership, statusline internals, offline state)
  *                Override with AIMUX_HOME for isolated dev/runtime lanes.
@@ -128,7 +128,7 @@ export interface ReadOnlyProjectPaths {
   projectStateDir: string;
   localAimuxDir: string;
   statePath: string;
-  graveyardPath: string;
+  runtimeTopologyPath: string;
   worktreeGraveyardPath: string;
   instancesPath: string;
   localInstancesPath: string;
@@ -154,7 +154,7 @@ export function getReadOnlyProjectPathsFor(cwd: string): ReadOnlyProjectPaths {
     projectStateDir,
     localAimuxDir,
     statePath: join(projectStateDir, "state.json"),
-    graveyardPath: join(projectStateDir, "graveyard.json"),
+    runtimeTopologyPath: join(projectStateDir, "runtime-topology.yaml"),
     worktreeGraveyardPath: join(projectStateDir, "worktree-graveyard.json"),
     instancesPath: join(projectStateDir, "instances.json"),
     localInstancesPath: join(localAimuxDir, "instances.json"),
@@ -240,10 +240,6 @@ export function getStatePath(): string {
   return join(getProjectStateDir(), "state.json");
 }
 
-export function getGraveyardPath(): string {
-  return join(getProjectStateDir(), "graveyard.json");
-}
-
 export function getWorktreeGraveyardPath(): string {
   return join(getProjectStateDir(), "worktree-graveyard.json");
 }
@@ -281,6 +277,10 @@ export function getInstancesPath(): string {
 
 export function getMetadataPath(): string {
   return join(getProjectStateDir(), "metadata.json");
+}
+
+export function getRuntimeTopologyPath(): string {
+  return join(getProjectStateDir(), "runtime-topology.yaml");
 }
 
 export function getNotificationsPath(): string {
@@ -334,14 +334,6 @@ export function getAttachmentsDir(): string {
   return join(getLocalAimuxDir(), "attachments");
 }
 
-export function getSessionMessagesDir(): string {
-  return join(getLocalAimuxDir(), "session-messages");
-}
-
-export function getSessionInputOperationsDir(): string {
-  return join(getLocalAimuxDir(), "session-input-ops");
-}
-
 /** Escape hatch for cross-worktree operations. Prefer the no-arg variants above. */
 export function getAimuxDirFor(cwd: string): string {
   return join(resolveRepoRoot(cwd), ".aimux");
@@ -350,17 +342,7 @@ export function getAimuxDirFor(cwd: string): string {
 function ensureLocalSharedDirs(): void {
   const localDir = getLocalAimuxDir();
   mkdirSync(localDir, { recursive: true });
-  for (const subdir of [
-    "plans",
-    "context",
-    "history",
-    "tasks",
-    "status",
-    "threads",
-    "attachments",
-    "session-messages",
-    "session-input-ops",
-  ]) {
+  for (const subdir of ["plans", "context", "history", "tasks", "status", "threads", "attachments"]) {
     mkdirSync(join(localDir, subdir), { recursive: true });
   }
 }

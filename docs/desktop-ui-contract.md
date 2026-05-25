@@ -84,6 +84,8 @@ Do not re-infer "on you", "blocked", or "done" differently in different desktop 
 
 ## Action Model
 
+This write-oriented action model is legacy/historical context for the removed desktop writer paths. Runtime-core owns lifecycle writes; implementers must not wire these removed desktop write paths.
+
 Desktop actions should call awaited project-service endpoints:
 
 - `POST /agents/spawn`
@@ -164,15 +166,12 @@ Preferred feedback model:
 - global footer/action bar for summarized in-flight actions
 - dedicated desktop screens for dashboard, activity, threads, plans, and graveyard
 
-Desktop orchestration UI can now:
+Desktop orchestration UI currently exposes strictly read-only orchestration state while runtime-core writes are replaced. The write-oriented action contract above is historical context only:
 
-- compose direct messages
-- send handoffs
-- assign tasks
+- view direct-message and handoff threads
+- view assigned tasks
 - browse thread history
-- update thread status
-- accept or complete handoffs
-- accept, block, complete, reopen, approve, and request changes on workflow items
+- view workflow status
 
 Do not use tick-based loading heuristics.
 

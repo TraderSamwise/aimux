@@ -1,8 +1,10 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
-import type { DaemonProject, ProjectSession } from "@/lib/api";
+import type { DaemonProject } from "@/lib/api";
+import type { DesktopSession } from "@/lib/desktop-state";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
+import { desktopStateFamily } from "@/stores/desktopState";
 
 // ─── Base atoms ────────────────────────────────────────────────────────────
 
@@ -35,11 +37,11 @@ export const selectedProjectEndpointAtom = atom<ServiceEndpoint | null>((get) =>
   return project?.serviceEndpoint ?? null;
 });
 
-export const selectedSessionAtom = atom<ProjectSession | null>((get) => {
+export const selectedSessionAtom = atom<DesktopSession | null>((get) => {
   const project = get(selectedProjectAtom);
   const sessionId = get(selectedSessionIdAtom);
   if (!project || !sessionId) return null;
-  return project.sessions.find((s) => s.id === sessionId) ?? null;
+  return get(desktopStateFamily(project.path))?.sessions.find((s) => s.id === sessionId) ?? null;
 });
 
 // ─── Action atoms ──────────────────────────────────────────────────────────
@@ -63,12 +65,6 @@ export const reconcileProjectsAtom = atom(null, (get, set, incoming: DaemonProje
     nextSession = null;
   }
   // else: stored path is still present — keep it.
-
-  if (nextPath && nextSession) {
-    const project = sorted.find((p) => p.path === nextPath);
-    const exists = (project?.sessions ?? []).some((s) => s.id === nextSession);
-    if (!exists) nextSession = null;
-  }
 
   set(projectsAtom, sorted);
   set(selectedProjectPathAtom, nextPath);

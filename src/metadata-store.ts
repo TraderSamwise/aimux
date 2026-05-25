@@ -79,7 +79,6 @@ export interface SessionDerivedMetadata extends SessionDerivedState {
 
 export interface SessionMetadata {
   label?: string;
-  backendSessionId?: string;
   status?: SessionStatusMetadata;
   progress?: SessionProgressMetadata;
   logs?: SessionLogEntry[];
@@ -130,12 +129,24 @@ function saveJson(path: string, value: unknown): void {
   writeJsonAtomic(path, value);
 }
 
+function scrubBackendSessionIds(state: MetadataState): MetadataState {
+  const sessions = (state as { sessions?: unknown }).sessions;
+  if (!sessions || typeof sessions !== "object") return state;
+  for (const session of Object.values(sessions as Record<string, unknown>)) {
+    if (session && typeof session === "object") {
+      delete (session as { backendSessionId?: unknown }).backendSessionId;
+    }
+  }
+  return state;
+}
+
 export function loadMetadataState(projectRoot?: string): MetadataState {
-  return loadJson<MetadataState>(metadataPathFor(projectRoot), { version: 1, sessions: {} });
+  const state = loadJson<MetadataState>(metadataPathFor(projectRoot), { version: 1, sessions: {} });
+  return scrubBackendSessionIds(state);
 }
 
 export function saveMetadataState(state: MetadataState, projectRoot?: string): void {
-  saveJson(metadataPathFor(projectRoot), state);
+  saveJson(metadataPathFor(projectRoot), scrubBackendSessionIds(state));
 }
 
 export function updateSessionMetadata(
@@ -151,33 +162,6 @@ export function updateSessionMetadata(
   };
   saveMetadataState(state, projectRoot);
   return state;
-}
-
-export function getSessionBackendSessionId(sessionId: string, projectRoot?: string): string | undefined {
-  const normalizedSessionId = sessionId.trim();
-  if (!normalizedSessionId) return undefined;
-  return loadMetadataState(projectRoot).sessions[normalizedSessionId]?.backendSessionId;
-}
-
-export function recordSessionBackendSessionIdMetadata(
-  sessionId: string,
-  backendSessionId: string,
-  projectRoot?: string,
-): void {
-  const normalizedSessionId = sessionId.trim();
-  const normalizedBackendSessionId = backendSessionId.trim();
-  if (!normalizedSessionId || !normalizedBackendSessionId) return;
-
-  updateSessionMetadata(
-    normalizedSessionId,
-    (current) => {
-      if (current.backendSessionId && current.backendSessionId !== normalizedBackendSessionId) {
-        return current;
-      }
-      return { ...current, backendSessionId: normalizedBackendSessionId };
-    },
-    projectRoot,
-  );
 }
 
 export function clearSessionLogs(sessionId: string, projectRoot?: string): MetadataState {

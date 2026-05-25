@@ -15,7 +15,6 @@ import {
   registerInstance,
   unregisterInstance,
   updateHeartbeat,
-  claimSession,
   getRemoteInstances,
   type InstanceSessionRef,
 } from "./instance-registry.js";
@@ -85,18 +84,17 @@ describe("instance-registry", () => {
   });
 
   describe("updateHeartbeat", () => {
-    it("updates sessions list and heartbeat timestamp", async () => {
+    it("updates heartbeat timestamp without persisting session refs", async () => {
       await registerInstance("inst-a", tmpDir);
 
       const sessions: InstanceSessionRef[] = [{ id: "claude-123", tool: "claude" }];
       await updateHeartbeat("inst-a", sessions, tmpDir);
 
       const instances = readInstances();
-      expect(instances[0].sessions).toHaveLength(1);
-      expect(instances[0].sessions[0].id).toBe("claude-123");
+      expect(instances[0].sessions).toEqual([]);
     });
 
-    it("returns previous session IDs for claim detection", async () => {
+    it("does not return previous session IDs for claim detection", async () => {
       await registerInstance("inst-a", tmpDir);
 
       // First heartbeat: register sessions
@@ -105,16 +103,13 @@ describe("instance-registry", () => {
         { id: "claude-456", tool: "claude", backendSessionId: "uuid-2" },
       ];
       const prev1 = await updateHeartbeat("inst-a", sessions, tmpDir);
-      // First heartbeat: registry was empty before
       expect(prev1).toEqual([]);
 
-      // Second heartbeat: registry had our sessions
       const prev2 = await updateHeartbeat("inst-a", sessions, tmpDir);
-      expect(prev2).toContain("claude-123");
-      expect(prev2).toContain("claude-456");
+      expect(prev2).toEqual([]);
     });
 
-    it("caller can detect claims by comparing previousIds vs confirmed set", async () => {
+    it("keeps the registry liveness-only across repeated heartbeats", async () => {
       await registerInstance("inst-a", tmpDir);
 
       const sessions: InstanceSessionRef[] = [
@@ -123,48 +118,12 @@ describe("instance-registry", () => {
       ];
       await updateHeartbeat("inst-a", sessions, tmpDir);
 
-      // Simulate claim
-      await claimSession("claude-123", "inst-a", tmpDir);
-
-      // Next heartbeat returns what was in registry (only claude-456 remains)
       const previousIds = await updateHeartbeat("inst-a", sessions, tmpDir);
-      expect(previousIds).toContain("claude-456");
-      expect(previousIds).not.toContain("claude-123");
+      expect(previousIds).toEqual([]);
 
-      // Caller detects: "claude-123" was confirmed but not in previousIds → claimed
-      const confirmed = new Set(["claude-123", "claude-456"]);
-      const claimed = [...confirmed].filter((id) => !previousIds.includes(id));
-      expect(claimed).toEqual(["claude-123"]);
-
-      // Registry should have all sessions (updateHeartbeat writes what we send)
       const instances = readInstances();
       const instA = instances.find((i: { instanceId: string }) => i.instanceId === "inst-a");
-      expect(instA?.sessions).toHaveLength(2);
-    });
-  });
-
-  describe("claimSession", () => {
-    it("removes session from source instance and returns it", async () => {
-      await registerInstance("inst-a", tmpDir);
-      const sessions: InstanceSessionRef[] = [{ id: "claude-123", tool: "claude", backendSessionId: "uuid-1" }];
-      await updateHeartbeat("inst-a", sessions, tmpDir);
-
-      const claimed = await claimSession("claude-123", "inst-a", tmpDir);
-      expect(claimed).toBeDefined();
-      expect(claimed!.id).toBe("claude-123");
-      expect(claimed!.backendSessionId).toBe("uuid-1");
-
-      // Session should be removed from inst-a
-      const instances = readInstances();
-      const instA = instances.find((i: { instanceId: string }) => i.instanceId === "inst-a");
-      expect(instA?.sessions ?? []).toHaveLength(0);
-    });
-
-    it("returns undefined for non-existent session", async () => {
-      await registerInstance("inst-a", tmpDir);
-
-      const claimed = await claimSession("nonexistent", "inst-a", tmpDir);
-      expect(claimed).toBeUndefined();
+      expect(instA?.sessions).toEqual([]);
     });
   });
 

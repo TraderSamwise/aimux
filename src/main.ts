@@ -18,14 +18,13 @@ import { initProject, loadConfig } from "./config.js";
 import {
   initPaths,
   getHistoryDir,
-  getGraveyardPath,
-  getStatePath,
   getContextDir,
   getProjectId,
   getRepoRoot,
   getDaemonLogPath,
   getProjectLogPath,
   getProjectStateDirFor,
+  getRuntimeTopologyPath,
 } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
 import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
@@ -40,7 +39,6 @@ import {
   loadMetadataEndpoint,
   resolveProjectServiceEndpoint as resolveStoredProjectServiceEndpoint,
   updateSessionMetadata,
-  recordSessionBackendSessionIdMetadata,
   clearSessionLogs,
   loadMetadataState,
   type MetadataTone,
@@ -101,7 +99,6 @@ import {
 import { notifyAlert } from "./notify.js";
 import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
-import { writeJsonAtomic } from "./atomic-write.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
 import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
 import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
@@ -116,6 +113,8 @@ import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.js";
 import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/service-state-snapshot.js";
 import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
+import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
+import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -389,41 +388,8 @@ async function postLiveProjectServiceJsonOrLocal(
 
 async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSessionId?: string): Promise<string> {
   if (!payloadSessionId) return explicitSessionId;
-  const state = Multiplexer.loadState();
-  const match = state?.sessions.find((session) => session.backendSessionId === payloadSessionId);
+  const match = listTopologySessionStates().find((session) => session.backendSessionId === payloadSessionId);
   return match?.id ?? explicitSessionId;
-}
-
-function recordBackendSessionIdInState(
-  sessionId: string,
-  backendSessionId: string,
-  projectRoot: string,
-): {
-  sessionId: string;
-  backendSessionId: string;
-} {
-  const normalizedBackendSessionId = backendSessionId.trim();
-  const state = Multiplexer.loadState();
-  const session = state?.sessions.find((entry) => entry.id === sessionId);
-  if (!state || !session || !normalizedBackendSessionId) {
-    recordSessionBackendSessionIdMetadata(sessionId, normalizedBackendSessionId, projectRoot);
-    return { sessionId, backendSessionId: normalizedBackendSessionId };
-  }
-  if (session.backendSessionId && session.backendSessionId !== normalizedBackendSessionId) {
-    recordSessionBackendSessionIdMetadata(sessionId, session.backendSessionId, projectRoot);
-    return { sessionId, backendSessionId: session.backendSessionId };
-  }
-  recordSessionBackendSessionIdMetadata(sessionId, normalizedBackendSessionId, projectRoot);
-  session.backendSessionId = normalizedBackendSessionId;
-  state.savedAt = new Date().toISOString();
-  writeJsonAtomic(getStatePath(), state);
-  return { sessionId, backendSessionId: normalizedBackendSessionId };
-}
-
-async function recordBackendSessionId(projectRoot: string, sessionId: string, backendSessionId: string): Promise<void> {
-  await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/backend-session", { sessionId, backendSessionId }, () =>
-    recordBackendSessionIdInState(sessionId, backendSessionId, projectRoot),
-  );
 }
 
 async function resolveProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
@@ -855,6 +821,7 @@ program
             2,
           ),
         );
+        process.exitCode = 1;
         return;
       }
       console.log(`Stopped project runtime for ${projectRoot}`);
@@ -1028,27 +995,22 @@ hostCmd
   });
 
 hostCmd
-  .command("agent-send")
-  .description("Send raw input to a running agent session over the project HTTP service")
-  .argument("<sessionId>", "Agent session ID")
-  .argument("[data...]", "Input to send")
-  .option("--stdin", "Read the full input payload from stdin")
-  .option("--submit", "Submit after writing the input")
-  .action(async (sessionId: string, data: string[], opts: { stdin?: boolean; submit?: boolean }) => {
+  .command("topology")
+  .description("Show the runtime topology YAML path or parsed contents")
+  .option("--json", "Emit parsed topology JSON")
+  .option("--raw", "Print raw YAML contents")
+  .action(async (opts: { json?: boolean; raw?: boolean }) => {
     await initPaths();
-    const payload = opts.stdin === true ? await readAllStdin() : data.join(" ");
-    if (!payload) {
-      throw new Error("input data is required");
+    const path = getRuntimeTopologyPath();
+    if (opts.json) {
+      console.log(JSON.stringify(createRuntimeTopologyStore(path).read(), null, 2));
+      return;
     }
-    const result = await postProjectServiceJson("/agents/input", {
-      sessionId,
-      data: payload,
-      submit: opts.submit === true,
-    });
-    if (result.accepted === false) {
-      throw new Error(result.error || `agent input failed for ${result.sessionId}`);
+    if (opts.raw) {
+      console.log(readFileSync(path, "utf-8"));
+      return;
     }
-    console.log(`sent input to ${result.sessionId}`);
+    console.log(path);
   });
 
 hostCmd
@@ -1387,7 +1349,9 @@ projectsCmd
   .action(async (opts: { json?: boolean }) => {
     await ensureDaemonRunning();
     const result = await requestDaemonJson("/projects");
-    const projects = result.projects as ReturnType<typeof listDesktopProjects>;
+    const projects = result.projects as Array<
+      ReturnType<typeof listDesktopProjects>[number] & { serviceAlive?: boolean }
+    >;
     if (opts.json) {
       console.log(JSON.stringify({ projects }, null, 2));
       return;
@@ -1399,14 +1363,8 @@ projectsCmd
     }
 
     for (const project of projects) {
-      const liveBadge = project.sessions.some((session) => session.status !== "offline") ? "live" : "idle";
+      const liveBadge = project.serviceAlive ? "live" : "idle";
       console.log(`${project.name}  ${liveBadge}  ${project.path}`);
-      if (project.sessions.length === 0) continue;
-      for (const session of project.sessions) {
-        const label = session.label ? ` ${session.label}` : "";
-        const headline = session.headline ? ` - ${session.headline}` : "";
-        console.log(`  ${session.id}  ${session.tool}  ${session.status}${label}${headline}`);
-      }
     }
   });
 
@@ -2427,9 +2385,8 @@ graveyardCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     await prepareProjectContext(opts.project);
-    const graveyardPath = getGraveyardPath();
     try {
-      const graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8"));
+      const graveyard = listTopologySessionStates({ statuses: ["graveyard"] });
       if (opts.json) {
         console.log(JSON.stringify(Array.isArray(graveyard) ? graveyard : [], null, 2));
         return;
@@ -2495,41 +2452,15 @@ graveyardCmd
   .option("--json", "Emit JSON")
   .action(async (id: string, opts: { project?: string; json?: boolean }) => {
     await prepareProjectContext(opts.project);
-    const graveyardPath = getGraveyardPath();
-    if (!existsSync(graveyardPath)) {
-      console.error("Graveyard is empty.");
-      process.exit(1);
-    }
     try {
-      const graveyard = JSON.parse(readFileSync(graveyardPath, "utf-8")) as Array<Record<string, unknown>>;
-      const idx = graveyard.findIndex((s) => s.id === id);
-      if (idx === -1) {
-        console.error(`Agent "${id}" not found in graveyard.`);
-        process.exit(1);
-      }
-      const restored = graveyard.splice(idx, 1)[0];
-      writeFileSync(graveyardPath, JSON.stringify(graveyard, null, 2) + "\n");
-
-      const statePath = getStatePath();
-      let state = {
-        savedAt: new Date().toISOString(),
-        cwd: process.cwd(),
-        sessions: [] as Array<Record<string, unknown>>,
-      };
-      if (existsSync(statePath)) {
-        try {
-          state = JSON.parse(readFileSync(statePath, "utf-8"));
-        } catch {}
-      }
-      state.sessions.push(restored);
-      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+      void id;
+      const error = "agent graveyard resurrection requires the runtime core replacement";
       if (opts.json) {
         console.log(
           JSON.stringify(
             {
-              ok: true,
-              sessionId: id,
-              status: "offline",
+              ok: false,
+              error,
             },
             null,
             2,
@@ -2537,7 +2468,7 @@ graveyardCmd
         );
         return;
       }
-      console.log(`Resurrected "${id}". It will appear as offline next time you start aimux.`);
+      throw new Error(error);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);
@@ -2997,7 +2928,6 @@ program
     const sessionId = await resolveClaudeHookSessionId(opts.session, payload.session_id);
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     if (payload.session_id) {
-      await recordBackendSessionId(projectRoot, sessionId, payload.session_id);
       result.backendSessionId = payload.session_id;
     }
 

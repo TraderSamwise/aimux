@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -50,7 +50,6 @@ vi.mock("./worktree-graveyard.js", async (importOriginal) => {
     ...actual,
     listWorktreeGraveyardEntries: vi.fn(() => []),
     listWorktreeGraveyardPaths: vi.fn(() => new Set<string>()),
-    writeWorktreeGraveyardEntries: vi.fn(),
   };
 });
 
@@ -63,19 +62,18 @@ vi.mock("../metadata-store.js", async (importOriginal) => {
 });
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
-import { getGraveyardPath, getStatePath, initPaths } from "../paths.js";
+import { getStatePath, initPaths } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
-import { writeWorktreeGraveyardEntries } from "./worktree-graveyard.js";
+import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
 
 describe("persistenceMethods", () => {
   beforeEach(() => {
     listWorktreesMock.mockReset();
     listWorktreesMock.mockReturnValue([]);
     spawnMock.mockReset();
-    vi.mocked(writeWorktreeGraveyardEntries).mockReset();
   });
 
-  it("seeds desktop-state projection when creating a worktree", () => {
+  it("seeds desktop state when creating a worktree", () => {
     const child = new EventEmitter() as EventEmitter & {
       stderr: EventEmitter;
       stdout: EventEmitter;
@@ -389,7 +387,6 @@ describe("persistenceMethods", () => {
         orderServicesForWorktree: vi.fn((services) => services),
       },
       dashboardState: { screen: "dashboard" },
-      taskDispatcher: undefined,
       footerFlash: null,
       refreshDesktopStateSnapshot: vi.fn(),
       buildDesktopStateSnapshot: vi.fn(),
@@ -476,7 +473,7 @@ describe("persistenceMethods", () => {
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("optimistic");
   });
 
-  it("keeps raw worktree lists free of pending removal projection", () => {
+  it("keeps raw worktree lists free of pending removal state", () => {
     const pending = new DashboardPendingActions(() => {});
     const worktreePath = "/repo/.aimux/worktrees/demo";
     listWorktreesMock.mockReturnValue([
@@ -539,84 +536,14 @@ describe("persistenceMethods", () => {
     ]);
   });
 
-  it("graveyards direct teammates with their parent worktree even across worktrees", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-graveyard-cross-worktree-team-"));
-    await initPaths(repoRoot);
-    const pending = new DashboardPendingActions(() => {});
+  it("blocks worktree graveyard until the runtime core owns it", async () => {
     const worktreePath = "/repo/.aimux/worktrees/demo";
-    try {
-      listWorktreesMock.mockReturnValue([
-        {
-          name: "demo",
-          branch: "demo",
-          path: worktreePath,
-          isBare: false,
-        },
-      ]);
-      const parent = {
-        id: "parent-1",
-        command: "claude",
-        toolConfigKey: "claude",
-        args: [],
-        worktreePath,
-        createdAt: "2026-05-01T00:00:00.000Z",
-      };
-      const teammate = {
-        id: "teammate-1",
-        command: "codex",
-        toolConfigKey: "codex",
-        args: [],
-        worktreePath: "/repo/.aimux/worktrees/other",
-        team: { teamId: "team-parent-1", parentSessionId: "parent-1", role: "reviewer" },
-        createdAt: "2026-05-02T00:00:00.000Z",
-      };
-      const independent = {
-        id: "independent-1",
-        command: "codex",
-        toolConfigKey: "codex",
-        args: [],
-        worktreePath: "/repo/.aimux/worktrees/other",
-      };
-      const host = {
-        dashboardPendingActions: pending,
-        footerFlash: "",
-        footerFlashTicks: 0,
-        syncSessionsFromState: vi.fn(),
-        listWorktreeGraveyardEntries: vi.fn(() => []),
-        invalidateDesktopStateSnapshot: vi.fn(),
-        refreshLocalDashboardModel: vi.fn(),
-        mode: "project-service",
-        tmuxRuntimeManager: {
-          listProjectManagedWindows: vi.fn(() => []),
-          killWindow: vi.fn(),
-        },
-        offlineServices: [],
-        buildLiveServiceStates: vi.fn(() => []),
-        offlineSessions: [parent, teammate, independent],
-        sessions: [],
-        sessionWorktreePaths: new Map(),
-        isSessionRuntimeLive: vi.fn(() => false),
-        saveState: vi.fn(),
-      };
-
-      await persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath);
-
-      expect(writeWorktreeGraveyardEntries).toHaveBeenCalledWith([
-        expect.objectContaining({
-          path: worktreePath,
-          agents: [expect.objectContaining({ id: "parent-1" })],
-        }),
-      ]);
-      const flatGraveyard = JSON.parse(readFileSync(getGraveyardPath(), "utf-8"));
-      expect(flatGraveyard).toEqual([expect.objectContaining({ id: "teammate-1" })]);
-      expect(host.offlineSessions).toEqual([independent]);
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
+    await expect(persistenceMethods.graveyardDesktopWorktree.call({}, worktreePath)).rejects.toThrow(
+      "worktree graveyard requires the runtime core replacement",
+    );
   });
 
-  it("does not detach worktree services when graveyarding fails while waiting for agents to stop", async () => {
-    vi.useFakeTimers();
+  it("does not detach worktree services when blocked graveyarding is requested", async () => {
     const pending = new DashboardPendingActions(() => {});
     const worktreePath = "/repo/.aimux/worktrees/demo";
     const service = {
@@ -647,7 +574,7 @@ describe("persistenceMethods", () => {
       dashboardPendingActions: pending,
       footerFlash: "",
       footerFlashTicks: 0,
-      syncSessionsFromState: vi.fn(),
+      syncSessionsFromTopology: vi.fn(),
       listWorktreeGraveyardEntries: vi.fn(() => []),
       invalidateDesktopStateSnapshot: vi.fn(),
       refreshLocalDashboardModel: vi.fn(),
@@ -681,23 +608,17 @@ describe("persistenceMethods", () => {
       debug: vi.fn(),
     };
 
-    try {
-      const result = persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath);
-      const assertion = expect(result).rejects.toThrow('Timed out offlining agents for worktree "demo"');
-      await vi.advanceTimersByTimeAsync(10_100);
-      await assertion;
+    await expect(persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath)).rejects.toThrow(
+      "worktree graveyard requires the runtime core replacement",
+    );
 
-      expect(liveSession.kill).toHaveBeenCalledOnce();
-      expect(host.offlineServices).toEqual([service]);
-      expect(killWindow).not.toHaveBeenCalled();
-      expect(writeWorktreeGraveyardEntries).not.toHaveBeenCalled();
-      expect(pending.getWorktreeAction(worktreePath)).toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(liveSession.kill).not.toHaveBeenCalled();
+    expect(host.offlineServices).toEqual([service]);
+    expect(killWindow).not.toHaveBeenCalled();
+    expect(pending.getWorktreeAction(worktreePath)).toBeUndefined();
   });
 
-  it("resurrects direct teammate graveyard entries with a primary agent", async () => {
+  it("blocks direct teammate graveyard resurrection until the runtime core owns it", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-resurrect-team-"));
     try {
       await initPaths(repoRoot);
@@ -717,34 +638,37 @@ describe("persistenceMethods", () => {
         team: { teamId: "team-codex-reviewer", parentSessionId: "codex-reviewer", role: "reviewer" },
       };
       const independent = { id: "codex-independent", command: "codex", toolConfigKey: "codex", args: [] };
-      writeFileSync(getGraveyardPath(), JSON.stringify([parent, teammate, nested, independent], null, 2) + "\n");
+      for (const session of [parent, teammate, nested, independent]) {
+        upsertTopologySession(
+          { ...session, tool: session.command, lifecycle: "offline", worktreePath: repoRoot },
+          "graveyard",
+        );
+      }
       writeFileSync(getStatePath(), JSON.stringify({ savedAt: "now", cwd: repoRoot, sessions: [] }, null, 2) + "\n");
       const host = {
         offlineSessions: [],
-        loadOfflineSessions: vi.fn(),
-        listGraveyardEntries: vi.fn(() => JSON.parse(readFileSync(getGraveyardPath(), "utf-8"))),
+        loadOfflineTopologySessions: vi.fn(),
+        listGraveyardEntries: vi.fn(() => listTopologySessionStates({ statuses: ["graveyard"] })),
       };
 
-      await expect(persistenceMethods.resurrectGraveyardSession.call(host, "claude-parent")).resolves.toEqual({
-        sessionId: "claude-parent",
-        status: "offline",
-      });
+      await expect(persistenceMethods.resurrectGraveyardSession.call(host, "claude-parent")).rejects.toThrow(
+        "runtime core replacement",
+      );
 
-      expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["claude-parent", "codex-reviewer"]);
-      expect(JSON.parse(readFileSync(getGraveyardPath(), "utf-8")).map((session: any) => session.id)).toEqual([
+      expect(host.offlineSessions.map((session: any) => session.id)).toEqual([]);
+      expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session: any) => session.id)).toEqual([
+        "claude-parent",
+        "codex-reviewer",
         "claude-nested",
         "codex-independent",
       ]);
-      expect(JSON.parse(readFileSync(getStatePath(), "utf-8")).sessions.map((session: any) => session.id)).toEqual([
-        "claude-parent",
-        "codex-reviewer",
-      ]);
+      expect(listTopologySessionStates({ statuses: ["offline"] })).toEqual([]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
   });
 
-  it("does not propagate graveyard resurrection upward when resurrecting a teammate directly", async () => {
+  it("blocks teammate graveyard resurrection until the runtime core owns it", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-resurrect-teammate-"));
     try {
       await initPaths(repoRoot);
@@ -756,22 +680,27 @@ describe("persistenceMethods", () => {
         args: [],
         team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
       };
-      writeFileSync(getGraveyardPath(), JSON.stringify([parent, teammate], null, 2) + "\n");
+      for (const session of [parent, teammate]) {
+        upsertTopologySession(
+          { ...session, tool: session.command, lifecycle: "offline", worktreePath: repoRoot },
+          "graveyard",
+        );
+      }
       writeFileSync(getStatePath(), JSON.stringify({ savedAt: "now", cwd: repoRoot, sessions: [] }, null, 2) + "\n");
       const host = {
         offlineSessions: [],
-        loadOfflineSessions: vi.fn(),
-        listGraveyardEntries: vi.fn(() => JSON.parse(readFileSync(getGraveyardPath(), "utf-8"))),
+        loadOfflineTopologySessions: vi.fn(),
+        listGraveyardEntries: vi.fn(() => listTopologySessionStates({ statuses: ["graveyard"] })),
       };
 
-      await expect(persistenceMethods.resurrectGraveyardSession.call(host, "codex-reviewer")).resolves.toEqual({
-        sessionId: "codex-reviewer",
-        status: "offline",
-      });
+      await expect(persistenceMethods.resurrectGraveyardSession.call(host, "codex-reviewer")).rejects.toThrow(
+        "runtime core replacement",
+      );
 
-      expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["codex-reviewer"]);
-      expect(JSON.parse(readFileSync(getGraveyardPath(), "utf-8")).map((session: any) => session.id)).toEqual([
+      expect(host.offlineSessions.map((session: any) => session.id)).toEqual([]);
+      expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session: any) => session.id)).toEqual([
         "claude-parent",
+        "codex-reviewer",
       ]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });

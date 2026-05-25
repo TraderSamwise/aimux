@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir } from "./paths.js";
-import { collaborationContextFromHeaders, type AgentCollaborationContext } from "./collaboration.js";
 import {
   type MetadataTone,
   updateSessionMetadata,
@@ -59,14 +58,7 @@ import { buildWorkflowEntries } from "./workflow.js";
 import { markLastUsed } from "./last-used.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
-import type { AgentInputPart } from "./agent-message-parts.js";
-import type { SessionInputOperationRecord } from "./session-input-operations.js";
-import {
-  getAttachment,
-  getAttachmentContent,
-  ingestAttachmentFromBase64,
-  ingestAttachmentFromPath,
-} from "./attachment-store.js";
+import { getAttachment, getAttachmentContent } from "./attachment-store.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
@@ -82,6 +74,7 @@ import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { TmuxTarget } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
+import { listTopologySessionStates, type RuntimeTopologySessionState } from "./runtime-core/topology-sessions.js";
 
 interface MetadataServerOptions {
   onChange?: () => void;
@@ -99,9 +92,6 @@ interface MetadataServerOptions {
       path: string;
     }) => Promise<{ path: string; status: "graveyarded" }> | { path: string; status: "graveyarded" };
     listWorktreeGraveyard?: () => unknown[];
-    resurrectGraveyardWorktree?: (input: {
-      path: string;
-    }) => Promise<{ path: string; status: "offline" }> | { path: string; status: "offline" };
     deleteGraveyardWorktree?: (input: {
       path: string;
     }) => Promise<{ path: string; status: "removed" }> | { path: string; status: "removed" };
@@ -262,7 +252,7 @@ interface MetadataServerOptions {
       sessionId: string;
       worktreePath: string;
     }) => Promise<{ sessionId: string; worktreePath?: string }> | { sessionId: string; worktreePath?: string };
-    killAgent?: (input: { sessionId: string; session?: Record<string, unknown> }) =>
+    killAgent?: (input: { sessionId: string }) =>
       | Promise<{
           sessionId: string;
           status: "graveyard";
@@ -272,32 +262,6 @@ interface MetadataServerOptions {
           sessionId: string;
           status: "graveyard";
           previousStatus: "running" | "offline";
-        };
-    recordBackendSessionId?: (input: {
-      sessionId: string;
-      backendSessionId: string;
-    }) => Promise<{ sessionId: string; backendSessionId: string }> | { sessionId: string; backendSessionId: string };
-    writeAgentInput?: (input: {
-      sessionId: string;
-      data?: string;
-      parts?: AgentInputPart[];
-      clientMessageId?: string;
-      submit?: boolean;
-      collaboration?: AgentCollaborationContext;
-    }) =>
-      | Promise<{
-          sessionId: string;
-          accepted: boolean;
-          operation: SessionInputOperationRecord;
-          messageId?: string;
-          error?: string;
-        }>
-      | {
-          sessionId: string;
-          accepted: boolean;
-          operation: SessionInputOperationRecord;
-          messageId?: string;
-          error?: string;
         };
     readAgentOutput?: (input: {
       sessionId: string;
@@ -305,12 +269,6 @@ interface MetadataServerOptions {
     }) =>
       | Promise<{ sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput }>
       | { sessionId: string; output: string; startLine?: number; parsed?: ParsedAgentOutput };
-    readAgentHistory?: (input: {
-      sessionId: string;
-      lastN?: number;
-    }) =>
-      | Promise<{ sessionId: string; messages: unknown[]; lastN?: number }>
-      | { sessionId: string; messages: unknown[]; lastN?: number };
   };
 }
 
@@ -457,6 +415,7 @@ function sendSseEvent(res: ServerResponse, event: string, data: unknown): void {
 type DesktopSessionRecord = Record<string, unknown> & {
   id: string;
   createdAt?: string;
+  status?: string;
   team?: SessionTeamMetadata;
 };
 
@@ -468,13 +427,14 @@ interface TeammateTaskBody {
   worktreePath?: string;
 }
 
-function isDesktopSessionRecord(value: unknown): value is DesktopSessionRecord {
-  return Boolean(value && typeof value === "object" && typeof (value as { id?: unknown }).id === "string");
-}
-
-function desktopSessionList(value: unknown): DesktopSessionRecord[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(isDesktopSessionRecord);
+function topologyDesktopSessionList(
+  statuses: Array<"running" | "idle" | "offline" | "graveyard">,
+): DesktopSessionRecord[] {
+  return listTopologySessionStates({ statuses }).map((session: RuntimeTopologySessionState) => ({
+    ...session,
+    status: session.status ?? "offline",
+    team: session.team as SessionTeamMetadata | undefined,
+  }));
 }
 
 function firstLine(value: string): string {
@@ -594,13 +554,9 @@ export class MetadataServer {
     if (!parentSessionId.trim()) {
       return { ok: false, status: 400, error: "parentSessionId is required" };
     }
-    if (!this.options.desktop?.getState) {
-      return { ok: false, status: 501, error: "teammate discovery not supported by this service" };
-    }
-
-    const state = this.options.desktop.getState();
-    const sessions = desktopSessionList(state.sessions);
-    const teammates = desktopSessionList(state.teammates);
+    const topologySessions = topologyDesktopSessionList(["running", "idle", "offline"]);
+    const sessions = topologySessions.filter((session) => !isTeammateSession(session));
+    const teammates = topologySessions.filter(isTeammateSession);
     const parent = [...sessions, ...teammates].find((session) => session.id === parentSessionId);
     if (!parent) {
       return { ok: false, status: 404, error: `parent agent "${parentSessionId}" not found` };
@@ -660,15 +616,11 @@ export class MetadataServer {
         status: number;
         error: string;
       } {
-    if (!this.options.desktop?.listGraveyard) {
-      return { ok: false, status: 501, error: "graveyard discovery not supported by this service" };
-    }
     const resolved = this.resolveDirectTeammates(parentSessionId);
     if (!resolved.ok) return resolved;
-    const teammate = selectDirectTeammates(
-      desktopSessionList(this.options.desktop.listGraveyard()),
-      resolved.parent.id,
-    ).find((session) => session.id === teammateSessionId);
+    const teammate = selectDirectTeammates(topologyDesktopSessionList(["graveyard"]), resolved.parent.id).find(
+      (session) => session.id === teammateSessionId,
+    );
     if (!teammate) {
       return {
         ok: false,
@@ -2329,7 +2281,6 @@ export class MetadataServer {
         }
         const result = await this.options.lifecycle.killAgent({
           sessionId: resolved.teammate.id,
-          session: resolved.teammate,
         });
         this.options.onChange?.();
         send(res, 200, {
@@ -2342,27 +2293,8 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/agents/teammates/resurrect") {
-        const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
-        const resolved = this.resolveDirectGraveyardTeammate(
-          body.parentSessionId?.trim() ?? "",
-          body.teammateSessionId?.trim() ?? "",
-        );
-        if (!resolved.ok) {
-          send(res, resolved.status, { ok: false, error: resolved.error });
-          return;
-        }
-        if (!this.options.desktop?.resurrectGraveyard) {
-          send(res, 501, { ok: false, error: "graveyard resurrect not supported by this service" });
-          return;
-        }
-        const result = await this.options.desktop.resurrectGraveyard({ sessionId: resolved.teammate.id });
-        this.options.onChange?.();
-        send(res, 200, {
-          ok: true,
-          parentSessionId: resolved.parent.id,
-          teammateSessionId: resolved.teammate.id,
-          ...result,
-        });
+        await readJson(req);
+        send(res, 410, { ok: false, error: "teammate graveyard resurrection requires the runtime core replacement" });
         return;
       }
 
@@ -2399,12 +2331,12 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/agents/resume") {
-        const body = (await readJson(req)) as { sessionId: string; session?: Record<string, unknown> };
+        const body = (await readJson(req)) as { sessionId: string };
         if (!this.options.desktop?.resumeAgent) {
           send(res, 501, { ok: false, error: "agent resume not supported by this service" });
           return;
         }
-        const result = await this.options.desktop.resumeAgent(body);
+        const result = await this.options.desktop.resumeAgent({ sessionId: body.sessionId });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
@@ -2456,70 +2388,9 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.killAgent(body);
+        const result = await this.options.lifecycle.killAgent({ sessionId: body.sessionId });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/agents/backend-session") {
-        const body = (await readJson(req)) as { sessionId: string; backendSessionId: string };
-        if (!this.options.lifecycle?.recordBackendSessionId) {
-          send(res, 501, { ok: false, error: "backend session recording not supported by this service" });
-          return;
-        }
-        const result = await this.options.lifecycle.recordBackendSessionId(body);
-        this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/agents/input") {
-        const body = (await readJson(req)) as {
-          sessionId: string;
-          data?: string;
-          parts?: AgentInputPart[];
-          clientMessageId?: string;
-          submit?: boolean;
-        };
-        if (!this.options.lifecycle?.writeAgentInput) {
-          send(res, 501, { ok: false, error: "agent input not supported by this service" });
-          return;
-        }
-        const collaboration = collaborationContextFromHeaders(req.headers);
-        const result = await this.options.lifecycle.writeAgentInput({ ...body, collaboration });
-        if (this.options.lifecycle.readAgentHistory) {
-          try {
-            const history = await this.options.lifecycle.readAgentHistory({ sessionId: body.sessionId, lastN: 20 });
-            this.eventBus.publishHistoryUpdate({
-              sessionId: history.sessionId,
-              messages: history.messages,
-              lastN: history.lastN,
-            });
-          } catch {
-            // History update is best-effort; the write result should still succeed.
-          }
-        }
-        this.options.onChange?.();
-        send(res, 200, { ok: result.accepted, ...result });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/attachments") {
-        const body = (await readJson(req)) as {
-          path?: string;
-          filename?: string;
-          mimeType?: string;
-          contentBase64?: string;
-        };
-        const attachment = body.path?.trim()
-          ? ingestAttachmentFromPath(body.path)
-          : ingestAttachmentFromBase64({
-              filename: body.filename,
-              mimeType: body.mimeType,
-              contentBase64: String(body.contentBase64 ?? ""),
-            });
-        send(res, 200, { ok: true, attachment });
         return;
       }
 
@@ -2568,23 +2439,7 @@ export class MetadataServer {
       }
 
       if (req.method === "GET" && url.pathname === "/agents/history") {
-        const sessionId = url.searchParams.get("sessionId")?.trim();
-        const lastNRaw = url.searchParams.get("lastN");
-        if (!sessionId) {
-          send(res, 400, { ok: false, error: "sessionId is required" });
-          return;
-        }
-        if (!this.options.lifecycle?.readAgentHistory) {
-          send(res, 501, { ok: false, error: "agent history not supported by this service" });
-          return;
-        }
-        const lastN = lastNRaw === null || lastNRaw.trim() === "" ? undefined : Number.parseInt(lastNRaw, 10);
-        if (lastNRaw !== null && Number.isNaN(lastN)) {
-          send(res, 400, { ok: false, error: "lastN must be an integer" });
-          return;
-        }
-        const result = await this.options.lifecycle.readAgentHistory({ sessionId, lastN });
-        send(res, 200, { ok: true, ...result });
+        send(res, 410, { ok: false, error: "agent message history requires the runtime core replacement" });
         return;
       }
 
@@ -2665,14 +2520,8 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/worktrees/graveyard") {
-        const body = (await readJson(req)) as { path: string };
-        if (!this.options.desktop?.graveyardWorktree) {
-          send(res, 501, { ok: false, error: "worktree graveyard not supported by this service" });
-          return;
-        }
-        const result = await this.options.desktop.graveyardWorktree(body);
-        this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        await readJson(req);
+        send(res, 410, { ok: false, error: "worktree graveyard requires the runtime core replacement" });
         return;
       }
 
@@ -2725,38 +2574,20 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/graveyard/resurrect") {
-        const body = (await readJson(req)) as { sessionId: string };
-        if (!this.options.desktop?.resurrectGraveyard) {
-          send(res, 501, { ok: false, error: "graveyard resurrect not supported by this service" });
-          return;
-        }
-        const result = await this.options.desktop.resurrectGraveyard(body);
-        this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        await readJson(req);
+        send(res, 410, { ok: false, error: "agent graveyard resurrection requires the runtime core replacement" });
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/graveyard/worktrees/resurrect") {
-        const body = (await readJson(req)) as { path: string };
-        if (!this.options.desktop?.resurrectGraveyardWorktree) {
-          send(res, 501, { ok: false, error: "worktree graveyard resurrect not supported by this service" });
-          return;
-        }
-        const result = await this.options.desktop.resurrectGraveyardWorktree(body);
-        this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        await readJson(req);
+        send(res, 410, { ok: false, error: "worktree graveyard resurrection requires the runtime core replacement" });
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/graveyard/worktrees/delete") {
-        const body = (await readJson(req)) as { path: string };
-        if (!this.options.desktop?.deleteGraveyardWorktree) {
-          send(res, 501, { ok: false, error: "worktree graveyard delete not supported by this service" });
-          return;
-        }
-        const result = await this.options.desktop.deleteGraveyardWorktree(body);
-        this.options.onChange?.();
-        send(res, 200, { ok: true, ...result });
+        await readJson(req);
+        send(res, 410, { ok: false, error: "worktree graveyard delete requires the runtime core replacement" });
         return;
       }
 

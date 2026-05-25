@@ -4,41 +4,17 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
-import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
-import { readSessionInputOperation } from "../session-input-operations.js";
-import { readSessionMessages } from "../session-message-history.js";
-import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import {
   buildTmuxWindowMetadata,
   handleSessionRuntimeEvent,
-  normalizeAgentInput,
-  paneStillContainsAgentDraft,
   registerManagedSession,
   resolveLiveSessionTmuxTarget,
-  scheduleTmuxAgentSubmit,
   updateSessionLabel,
-  writeAgentInput,
 } from "./session-runtime-core.js";
 
 describe("session runtime prompt submission", () => {
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it("treats Codex pasted-content markers as a still-visible draft", () => {
-    const host: any = {
-      tmuxRuntimeManager: {
-        captureTarget: vi.fn(() => "› [Pasted Content 3434 chars]"),
-      },
-    };
-
-    expect(
-      paneStillContainsAgentDraft(
-        host,
-        { windowId: "@1" },
-        "This is a long aimux task prompt that Codex will collapse into a pasted-content marker.",
-      ),
-    ).toBe(true);
   });
 
   it("does not apply dashboard rename locally when project-service rename fails", async () => {
@@ -65,250 +41,6 @@ describe("session runtime prompt submission", () => {
     expect(host.footerFlash).toBe("Rename failed: boom");
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
     expect(host.setPendingDashboardSessionAction).toHaveBeenLastCalledWith("codex-1", null);
-  });
-
-  it("compacts Codex submitted injections to the single-line shape used by startup kickoff", () => {
-    const host: any = {
-      sessionToolKeys: new Map([["codex-1", "codex"]]),
-    };
-
-    expect(normalizeAgentInput(host, "Aimux task\n\nRun:\n  aimux task show t1\n", true, "codex-1")).toBe(
-      "Aimux task Run: aimux task show t1",
-    );
-  });
-
-  it("preserves multiline submitted injections for non-Codex tools", () => {
-    const host: any = {
-      sessionToolKeys: new Map([["claude-1", "claude"]]),
-    };
-
-    expect(normalizeAgentInput(host, "Aimux task\n\nRun:\n  aimux task show t1\n", true, "claude-1")).toBe(
-      "Aimux task\n\nRun:\n  aimux task show t1",
-    );
-  });
-
-  it("submits agent prompt injection with raw carriage return after the draft is stable", () => {
-    vi.useFakeTimers();
-    const target = { windowId: "@1" };
-    const captures = [
-      "› [Pasted Content 3434 chars]",
-      "› [Pasted Content 3434 chars]",
-      "› [Pasted Content 3434 chars]",
-      "› [Pasted Content 3434 chars]",
-      "",
-    ];
-    const host: any = {
-      sessionTmuxTargets: new Map([["codex-1", target]]),
-      tmuxRuntimeManager: {
-        captureTarget: vi.fn(() => captures.shift() ?? ""),
-        sendCarriageReturn: vi.fn(),
-        sendEnter: vi.fn(),
-      },
-    };
-
-    scheduleTmuxAgentSubmit(host, "codex-1", target, "Review task details and respond through aimux.");
-
-    vi.advanceTimersByTime(300);
-    vi.advanceTimersByTime(250);
-    vi.advanceTimersByTime(200);
-
-    expect(host.tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledWith(target);
-    expect(host.tmuxRuntimeManager.sendEnter).not.toHaveBeenCalled();
-  });
-
-  it("marks submitted tmux input only after carriage return delivery succeeds", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
-    vi.useFakeTimers();
-    const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
-    const captures = [
-      "› Review task details",
-      "› Review task details",
-      "› Review task details",
-      "› Review task details",
-      "",
-    ];
-    const tmuxRuntimeManager: any = {
-      captureTarget: vi.fn(() => captures.shift() ?? ""),
-      sendText: vi.fn(),
-      sendKey: vi.fn(),
-      sendEnter: vi.fn(),
-      sendCarriageReturn: vi.fn(),
-      getTargetByWindowId: vi.fn(() => target),
-      getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "codex-1" })),
-      isWindowAlive: vi.fn(() => true),
-    };
-    const transport = new TmuxSessionTransport("codex-1", "codex", target, tmuxRuntimeManager, 80, 24);
-    try {
-      await initPaths(repoRoot);
-      const host: any = {
-        sessions: [{ id: "codex-1", transport, exited: false }],
-        sessionToolKeys: new Map([["codex-1", "codex"]]),
-        sessionTmuxTargets: new Map([["codex-1", target]]),
-        tmuxRuntimeManager,
-      };
-
-      const resultPromise = writeAgentInput(
-        host,
-        "codex-1",
-        "Review task details",
-        undefined,
-        "client-message-1",
-        true,
-      );
-
-      await vi.advanceTimersByTimeAsync(300);
-      await vi.advanceTimersByTimeAsync(250);
-      await vi.advanceTimersByTimeAsync(200);
-      await vi.advanceTimersByTimeAsync(700);
-
-      const result = await resultPromise;
-
-      expect(result.accepted).toBe(true);
-      expect(result.operation.state).toBe("submitted");
-      expect(readSessionInputOperation(result.operation.id)?.state).toBe("submitted");
-      expect(tmuxRuntimeManager.sendText).toHaveBeenCalledWith(target, "Review task details");
-      expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledWith(target);
-      expect(tmuxRuntimeManager.sendEnter).not.toHaveBeenCalled();
-    } finally {
-      transport.destroy();
-      vi.useRealTimers();
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("prefixes multi-user input for the agent while storing original message metadata", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
-    try {
-      await initPaths(repoRoot);
-      const writes: string[] = [];
-      const host: any = {
-        sessions: [
-          {
-            id: "claude-1",
-            exited: false,
-            write: (data: string) => writes.push(data),
-          },
-        ],
-        sessionToolKeys: new Map([["claude-1", "claude"]]),
-      };
-
-      const result = await writeAgentInput(host, "claude-1", "Can you check this?", undefined, "client-1", true, {
-        shareId: "share_123",
-        mode: "multi",
-        actor: {
-          userId: "user_123",
-          displayName: "Sam Steady",
-          email: "sam@example.com",
-          role: "owner",
-        },
-      });
-
-      const repeat = await writeAgentInput(host, "claude-1", "Second question", undefined, "client-2", true, {
-        shareId: "share_123",
-        mode: "multi",
-        actor: {
-          userId: "user_123",
-          displayName: "Sam Steady",
-          email: "sam@example.com",
-          role: "owner",
-        },
-      });
-      const downgraded = await writeAgentInput(host, "claude-1", "Back to normal", undefined, "client-3", true, {
-        shareId: "share_123",
-        mode: "single",
-        actor: {
-          userId: "user_123",
-          displayName: "Sam Steady",
-          email: "sam@example.com",
-          role: "owner",
-        },
-      });
-
-      expect(result.accepted).toBe(true);
-      expect(repeat.accepted).toBe(true);
-      expect(downgraded.accepted).toBe(true);
-      expect(writes).toEqual([
-        "Aimux collaboration note: This shared chat is now multi-user. Human messages are prefixed as [Name]: message so you can distinguish participants.\n\n[Sam Steady]: Can you check this?\r",
-        "[Sam Steady]: Second question\r",
-        "Aimux collaboration note: This shared chat is back to single-user mode. Future unprefixed user messages are from the remaining participant.\n\nBack to normal\r",
-      ]);
-      expect(readSessionMessages("claude-1")).toMatchObject([
-        {
-          clientMessageId: "client-1",
-          sessionId: "claude-1",
-          role: "user",
-          parts: [{ type: "text", text: "Can you check this?" }],
-          actor: {
-            userId: "user_123",
-            displayName: "Sam Steady",
-            email: "sam@example.com",
-            role: "owner",
-          },
-          shareId: "share_123",
-          chatMode: "multi",
-        },
-        {
-          clientMessageId: "client-2",
-          parts: [{ type: "text", text: "Second question" }],
-          chatMode: "multi",
-        },
-        {
-          clientMessageId: "client-3",
-          parts: [{ type: "text", text: "Back to normal" }],
-          chatMode: "single",
-        },
-      ]);
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("fails submitted tmux input when the target disappears before prompt submission", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
-    vi.useFakeTimers();
-    const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
-    let lookups = 0;
-    const tmuxRuntimeManager: any = {
-      captureTarget: vi.fn(() => "› Review task details"),
-      sendText: vi.fn(),
-      sendKey: vi.fn(),
-      sendEnter: vi.fn(),
-      sendCarriageReturn: vi.fn(),
-      getTargetByWindowId: vi.fn(() => {
-        lookups += 1;
-        return lookups <= 2 ? target : undefined;
-      }),
-      getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "codex-1" })),
-      isWindowAlive: vi.fn(() => true),
-      listProjectManagedWindows: vi.fn(() => []),
-    };
-    const transport = new TmuxSessionTransport("codex-1", "codex", target, tmuxRuntimeManager, 80, 24);
-    try {
-      await initPaths(repoRoot);
-      const host: any = {
-        sessions: [{ id: "codex-1", transport, exited: false }],
-        sessionToolKeys: new Map([["codex-1", "codex"]]),
-        sessionTmuxTargets: new Map([["codex-1", target]]),
-        tmuxRuntimeManager,
-      };
-
-      const resultPromise = writeAgentInput(host, "codex-1", "Review task details", undefined, undefined, true);
-
-      await vi.advanceTimersByTimeAsync(300);
-
-      const result = await resultPromise;
-
-      expect(result.accepted).toBe(false);
-      expect(result.operation.state).toBe("failed");
-      expect(result.error).toContain("prompt submit was not accepted");
-      expect(readSessionInputOperation(result.operation.id)?.state).toBe("failed");
-      expect(tmuxRuntimeManager.sendText).toHaveBeenCalledWith(target, "Review task details");
-      expect(tmuxRuntimeManager.sendCarriageReturn).not.toHaveBeenCalled();
-    } finally {
-      transport.destroy();
-      vi.useRealTimers();
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
   });
 
   it("allows a live just-created tmux target before metadata has been written", () => {
@@ -340,11 +72,10 @@ describe("session runtime prompt submission", () => {
     expect(resolveLiveSessionTmuxTarget(host, "claude-1")).toBeUndefined();
   });
 
-  it("publishes metadata backend ids to tmux metadata when the runtime has not learned them yet", async () => {
+  it("does not publish metadata backend ids to tmux metadata", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
-      recordSessionBackendSessionIdMetadata("claude-racy", "backend-racy", repoRoot);
       const host: any = {
         sessions: [{ id: "claude-racy", command: "claude" }],
         sessionOriginalArgs: new Map([["claude-racy", ["--resume"]]]),
@@ -357,7 +88,7 @@ describe("session runtime prompt submission", () => {
 
       expect(buildTmuxWindowMetadata(host, "claude-racy", "claude")).toMatchObject({
         sessionId: "claude-racy",
-        backendSessionId: "backend-racy",
+        backendSessionId: undefined,
       });
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
@@ -368,7 +99,6 @@ describe("session runtime prompt submission", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
-      recordSessionBackendSessionIdMetadata("claude-current", "backend-stale", repoRoot);
       const host: any = {
         sessions: [{ id: "claude-current", command: "claude", backendSessionId: "backend-current" }],
         sessionOriginalArgs: new Map([["claude-current", []]]),
@@ -438,7 +168,6 @@ describe("session runtime prompt submission", () => {
       sessionLabels: new Map(),
       offlineSessions: [],
       handleSessionRuntimeEvent: vi.fn(),
-      writeSessionsFile: vi.fn(),
       updateContextWatcherSessions: vi.fn(),
       contextWatcher: { start: vi.fn() },
     };
@@ -449,11 +178,10 @@ describe("session runtime prompt submission", () => {
     expect(host.sessionRoles.get("codex-1")).toBeUndefined();
   });
 
-  it("preserves quick exited sessions when durable metadata has the backend id", async () => {
+  it("does not preserve quick exited sessions only because metadata has a backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
-      recordSessionBackendSessionIdMetadata("claude-racy-exit", "backend-racy-exit", repoRoot);
       const runtime = { id: "claude-racy-exit", command: "claude", startTime: Date.now() };
       const host: any = {
         sessions: [runtime],
@@ -466,7 +194,6 @@ describe("session runtime prompt submission", () => {
         startedInDashboard: true,
         getSessionLabel: vi.fn(() => undefined),
         deriveHeadline: vi.fn(() => undefined),
-        writeSessionsFile: vi.fn(),
         updateContextWatcherSessions: vi.fn(),
         writeStatuslineFile: vi.fn(),
         saveState: vi.fn(),
@@ -475,13 +202,7 @@ describe("session runtime prompt submission", () => {
 
       handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
 
-      expect(host.offlineSessions).toEqual([
-        expect.objectContaining({
-          id: "claude-racy-exit",
-          lifecycle: "offline",
-          backendSessionId: "backend-racy-exit",
-        }),
-      ]);
+      expect(host.offlineSessions).toEqual([]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -491,7 +212,6 @@ describe("session runtime prompt submission", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-runtime-"));
     try {
       await initPaths(repoRoot);
-      recordSessionBackendSessionIdMetadata("claude-current-exit", "backend-stale-exit", repoRoot);
       const runtime = {
         id: "claude-current-exit",
         command: "claude",
@@ -509,7 +229,6 @@ describe("session runtime prompt submission", () => {
         startedInDashboard: true,
         getSessionLabel: vi.fn(() => undefined),
         deriveHeadline: vi.fn(() => undefined),
-        writeSessionsFile: vi.fn(),
         updateContextWatcherSessions: vi.fn(),
         writeStatuslineFile: vi.fn(),
         saveState: vi.fn(),
@@ -543,7 +262,6 @@ describe("session runtime prompt submission", () => {
         startedInDashboard: true,
         getSessionLabel: vi.fn(() => undefined),
         deriveHeadline: vi.fn(() => undefined),
-        writeSessionsFile: vi.fn(),
         updateContextWatcherSessions: vi.fn(),
         writeStatuslineFile: vi.fn(),
         saveState: vi.fn(),
@@ -584,7 +302,6 @@ describe("session runtime prompt submission", () => {
         startedInDashboard: true,
         getSessionLabel: vi.fn(() => undefined),
         deriveHeadline: vi.fn(() => undefined),
-        writeSessionsFile: vi.fn(),
         updateContextWatcherSessions: vi.fn(),
         writeStatuslineFile: vi.fn(),
         saveState: vi.fn(),

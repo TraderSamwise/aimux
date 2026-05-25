@@ -33,8 +33,8 @@ export default function LandingScreen() {
 
         <View className="mt-16 w-full">
           <FeatureRow
-            title="Remote control"
-            description="Stop, resume, and interact with agents from your phone or another machine."
+            title="Remote visibility"
+            description="Monitor agent sessions from your phone or another machine."
           />
           <FeatureRow
             title="Multi-project"

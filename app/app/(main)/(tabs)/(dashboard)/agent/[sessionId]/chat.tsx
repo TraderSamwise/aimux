@@ -6,14 +6,12 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Columns2, MessageSquare, SquareTerminal, UserPlus } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
-import { ChatComposer } from "@/components/ChatComposer";
 import { Input } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { useAuth } from "@/lib/auth";
 import { startHeartbeat } from "@/lib/heartbeat";
 import {
   createShareInvite,
-  getAgentHistory,
   getAgentOutput,
   getShare,
   leaveShare,
@@ -21,27 +19,17 @@ import {
   removeShareParticipant,
   type SharedSessionSummary,
 } from "@/lib/api";
-import {
-  messagesFromParsedAgentOutput,
-  pendingPromptAlreadyRendered,
-} from "@/lib/parsed-transcript";
+import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import {
-  chatHistoryFamily,
   ingestEventAtom,
   lastErrorFamily,
   outputBufferFamily,
   parsedOutputFamily,
-  pendingMessagesFamily,
-  setHistoryAtom,
 } from "@/stores/chat";
-import {
-  projectsAtom,
-  selectedProjectAtom,
-  selectedSessionIdAtom,
-  selectProjectAtom,
-} from "@/stores/projects";
+import { desktopStateFamily } from "@/stores/desktopState";
+import { selectedProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
 import { activeSharedSessionAtom, chatTerminalSplitAtom } from "@/stores/settings";
 import type { ChatMessage } from "@/lib/events";
@@ -59,13 +47,9 @@ export default function ChatScreen() {
   const sessionId = singleRouteParam(params.sessionId);
   const sessionKey = sessionId ?? "";
   const project = useAtomValue(selectedProjectAtom);
-  const projects = useAtomValue(projectsAtom);
-  const selectProject = useSetAtom(selectProjectAtom);
+  const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const ingestEvent = useSetAtom(ingestEventAtom);
-  const setHistory = useSetAtom(setHistoryAtom);
-  const history = useAtomValue(chatHistoryFamily(sessionKey));
-  const pendingMessages = useAtomValue(pendingMessagesFamily(sessionKey));
   const output = useAtomValue(outputBufferFamily(sessionKey));
   const setOutput = useSetAtom(outputBufferFamily(sessionKey));
   const parsedOutput = useAtomValue(parsedOutputFamily(sessionKey));
@@ -78,7 +62,6 @@ export default function ChatScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const [token, setToken] = useState<string | null>(null);
-  const [loadingHistory, setLoadingHistory] = useState(false);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -96,20 +79,6 @@ export default function ChatScreen() {
     selectSession(sessionId);
   }, [sessionId, selectSession]);
 
-  // The route is the source of truth on refresh/deep link. If persisted project
-  // state points elsewhere, recover the project that owns this session.
-  useEffect(() => {
-    if (!sessionId || projects.length === 0) return;
-    if (project?.sessions.some((session) => session.id === sessionId)) return;
-    const owner = projects.find((candidate) =>
-      candidate.sessions.some((session) => session.id === sessionId),
-    );
-    if (owner) {
-      selectProject(owner.path);
-      selectSession(sessionId);
-    }
-  }, [sessionId, projects, project, selectProject, selectSession]);
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -126,29 +95,7 @@ export default function ChatScreen() {
   }, [getToken]);
 
   const serviceEndpoint = project?.serviceEndpoint ?? null;
-  const relayReady = !relayConfigured || relayStatus === "connected";
   const useRelayPolling = relayConfigured && relayStatus === "connected";
-
-  // Initial history fetch
-  useEffect(() => {
-    if (!serviceEndpoint || !sessionId || !relayReady) return;
-    let cancelled = false;
-    setLoadingHistory(true);
-    getAgentHistory(serviceEndpoint, sessionId, 50, { token })
-      .then((res) => {
-        if (cancelled) return;
-        setHistory({ sessionId, messages: res.messages ?? [] });
-      })
-      .catch((err) => {
-        if (!cancelled) console.warn("history fetch failed:", err);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingHistory(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [serviceEndpoint?.host, serviceEndpoint?.port, sessionId, token, relayReady, setHistory]);
 
   // Subscribe to /events for local sessions. Hosted/relay deployments cannot
   // reach the project service EventSource directly, so they poll through the
@@ -188,16 +135,12 @@ export default function ChatScreen() {
     async function poll() {
       if (cancelled) return;
       try {
-        const [historyResult, outputResult] = await Promise.all([
-          getAgentHistory(serviceEndpoint!, sessionId!, 50, { token }),
-          getAgentOutput(serviceEndpoint!, sessionId!, undefined, { token }),
-        ]);
+        const outputResult = await getAgentOutput(serviceEndpoint!, sessionId!, undefined, { token });
         if (cancelled) return;
-        setHistory({ sessionId: sessionId!, messages: historyResult.messages ?? [] });
         setOutput(outputResult.output ?? "");
         setParsedOutput(outputResult.parsed ?? null);
       } catch (err) {
-        if (!cancelled) console.warn("relay chat poll failed:", err);
+        if (!cancelled) console.warn("relay transcript poll failed:", err);
       }
       if (cancelled) return;
       timer = setTimeout(poll, RELAY_CHAT_POLL_INTERVAL_MS);
@@ -217,7 +160,6 @@ export default function ChatScreen() {
     sessionId,
     token,
     useRelayPolling,
-    setHistory,
     setOutput,
     setParsedOutput,
   ]);
@@ -225,25 +167,8 @@ export default function ChatScreen() {
   const parsedMessages = useMemo(() => messagesFromParsedAgentOutput(parsedOutput), [parsedOutput]);
 
   const allMessages = useMemo<ChatMessage[]>(() => {
-    const pending = pendingMessages.map((p) => ({
-      id: `pending-${p.clientMessageId}`,
-      clientMessageId: p.clientMessageId,
-      role: "user" as const,
-      ts: p.ts,
-      parts: p.parts,
-      deliveryState: p.deliveryState,
-      deliveryError: p.deliveryError,
-    }));
-    if (parsedMessages.length > 0) {
-      return [
-        ...parsedMessages,
-        ...pending.filter((message) => !pendingPromptAlreadyRendered(message, parsedMessages)),
-      ];
-    }
-    return [...history, ...pending].sort((a, b) =>
-      String(a.ts ?? "").localeCompare(String(b.ts ?? "")),
-    );
-  }, [history, parsedMessages, pendingMessages]);
+    return parsedMessages;
+  }, [parsedMessages]);
 
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: true });
@@ -253,7 +178,7 @@ export default function ChatScreen() {
     terminalScrollRef.current?.scrollToEnd({ animated: false });
   }, [output, showTerminalSplit]);
 
-  const session = sessionId ? (project?.sessions.find((s) => s.id === sessionId) ?? null) : null;
+  const session = sessionId ? (desktopState?.sessions.find((s) => s.id === sessionId) ?? null) : null;
   const canShowTerminal = Boolean(output);
   const viewportWidth =
     Platform.OS === "web" && typeof window !== "undefined" ? window.innerWidth : width;
@@ -261,7 +186,7 @@ export default function ChatScreen() {
   const showSplit = canUseSplitView && canShowTerminal && showTerminalSplit;
   const showTerminalOnly = !canUseSplitView && canShowTerminal && showTerminalSplit;
   const terminalToggleLabel =
-    showSplit || showTerminalOnly ? "Show chat view" : "Show terminal view";
+    showSplit || showTerminalOnly ? "Show transcript view" : "Show terminal view";
   const measuredDividerWidth = terminalPaneWidth
     ? Math.max(
         MIN_TERMINAL_DIVIDER_WIDTH,
@@ -398,7 +323,7 @@ export default function ChatScreen() {
                 {session?.label || sessionId || "Unknown session"}
               </Text>
               <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                {session?.tool ?? ""} · {session?.status ?? "unknown"}
+                {session?.command ?? ""} · {session?.status ?? "unknown"}
               </Text>
             </View>
             <View className="flex-row items-center">
@@ -442,7 +367,7 @@ export default function ChatScreen() {
               {activeShare ? (
                 <View className="flex-row items-center justify-between gap-3">
                   <View className="flex-1">
-                    <Text className="text-sm font-medium text-foreground">Shared chat</Text>
+                    <Text className="text-sm font-medium text-foreground">Shared session view</Text>
                     <Text className="text-xs text-muted-foreground mt-1" numberOfLines={1}>
                       Connected to {activeShare.ownerUserId}
                     </Text>
@@ -536,7 +461,7 @@ export default function ChatScreen() {
               ) : null}
               {!relayConfigured ? (
                 <Text className="text-xs text-muted-foreground mt-2">
-                  Remote mode is required for shared chats.
+                  Remote mode is required for shared session invites.
                 </Text>
               ) : !token ? (
                 <Text className="text-xs text-muted-foreground mt-2">
@@ -551,7 +476,7 @@ export default function ChatScreen() {
           {!serviceEndpoint ? (
             <View className="p-4">
               <Text className="text-sm text-muted-foreground">
-                Project service not running. Start the project host to enable chat.
+                Project service not running. Start the project host to view this session.
               </Text>
             </View>
           ) : (
@@ -563,20 +488,10 @@ export default function ChatScreen() {
                 {showTerminalOnly ? (
                   <View className="flex-1">
                     {terminalPane}
-                    {sessionId ? (
-                      <ChatComposer
-                        serviceEndpoint={serviceEndpoint}
-                        sessionId={sessionId}
-                        token={token}
-                      />
-                    ) : null}
                   </View>
                 ) : (
                   <View className="flex-1">
                     <ScrollView ref={scrollRef} className="flex-1 px-4 py-2">
-                      {loadingHistory && allMessages.length === 0 ? (
-                        <Text className="text-sm text-muted-foreground">Loading history…</Text>
-                      ) : null}
                       {allMessages.map((m, idx) => (
                         <MessageBlock
                           key={m.id ?? m.clientMessageId ?? `idx-${idx}`}
@@ -596,13 +511,6 @@ export default function ChatScreen() {
                         <Text className="text-xs text-destructive my-2">{lastError}</Text>
                       ) : null}
                     </ScrollView>
-                    {sessionId ? (
-                      <ChatComposer
-                        serviceEndpoint={serviceEndpoint}
-                        sessionId={sessionId}
-                        token={token}
-                      />
-                    ) : null}
                   </View>
                 )}
               </View>

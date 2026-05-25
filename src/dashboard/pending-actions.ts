@@ -56,10 +56,8 @@ function visibleEntryKey(entry?: PendingActionEntry): string {
 
 function canSynthesizeMissingSession(
   kind: PendingDashboardActionKind,
-): kind is Extract<PendingSessionActionKind, "creating" | "forking" | "migrating" | "starting" | "stopping"> {
-  return (
-    kind === "creating" || kind === "forking" || kind === "migrating" || kind === "starting" || kind === "stopping"
-  );
+): kind is Extract<PendingSessionActionKind, "creating" | "forking"> {
+  return kind === "creating" || kind === "forking";
 }
 
 function canSynthesizeMissingService(

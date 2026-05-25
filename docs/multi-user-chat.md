@@ -1,19 +1,15 @@
-# Multi-User Chat
+# Multi-User Session Sharing
 
-Aimux multi-user chat lets the owner of a connected CLI/daemon invite another
-authenticated aimux app user into one agent chat. The owner's daemon remains the
-authority for the session; invited users connect through the relay and receive
-only the routes required for the shared chat.
+Aimux multi-user sharing is currently a read-only session viewing surface. The
+owner's daemon remains the authority for the session; invited users connect
+through the relay and receive only the routes required to view a shared session.
 
 ## Goals
 
 - Let an owner invite a guest by email to a specific project agent session.
 - Let the guest accept in the web or mobile app after Clerk authentication.
-- Prefix all real-user messages with the speaker name when two or more users are
-  active in the chat, so the agent can distinguish people.
-- Return future messages to normal single-user input when only one real user
-  remains active.
-- Preserve existing chat history when a chat is upgraded or downgraded.
+- Preserve read-only access to output, events, and existing historical message
+  records where available.
 - Keep sharing authorization at the relay boundary before requests reach the
   owner's daemon.
 
@@ -21,13 +17,14 @@ only the routes required for the shared chat.
 
 - Shared project administration. Guests cannot spawn, stop, kill, fork, or
   manage worktrees.
+- Shared user input or agent chat composition.
+- Attachment upload.
 - Broad organization/team roles.
-- Rewriting historical messages when sharing mode changes.
 - Trusting display names or actor IDs sent by the app.
 
 ## Ownership Model
 
-The relay already stores one Durable Object per owner Clerk user. A shared chat
+The relay already stores one Durable Object per owner Clerk user. A shared session view
 is owned by the user whose daemon token connected to that Durable Object. Guests
 do not get their own daemon. Instead, a guest client connects to the owner's
 Durable Object for a specific share, and that object authorizes every request
@@ -61,13 +58,11 @@ the invited email, and never be stored in plaintext.
 ## Relay Authorization
 
 Owner clients can access their own relay as before. Guest clients are restricted
-to the shared session routes:
+to read-only shared session routes:
 
-- `GET /agents/history`
 - `GET /agents/output`
-- `POST /agents/input`
 - `GET /events`
-- attachment routes needed to render or upload chat attachments
+- attachment read routes needed to render existing attachment records
 
 Guests must not access daemon-level project management routes or other sessions.
 The owner Durable Object injects trusted actor metadata into proxied requests
@@ -87,50 +82,14 @@ only trust actor metadata injected by the relay. The trusted actor shape is:
 }
 ```
 
-Session history records should keep actor metadata so the UI can render speaker
-labels without reparsing terminal output.
+Session history records may keep actor metadata for archived display. There is
+no active shared input writer in the current runtime cut.
 
-## Chat Mode
+## Sharing State
 
-The effective chat mode is derived from active real participants:
-
-- `single`: fewer than two active real users.
-- `multi`: two or more active real users.
-
-When mode is `multi`, every real-user input sent to the agent is prefixed:
-
-```text
-[Sam]: can you inspect this failure?
-[Alex]: I think it is in the relay proxy.
-```
-
-When mode returns to `single`, future inputs are sent without prefixes. Existing
-history remains unchanged.
-
-## Agent Preamble
-
-When a session first enters multi-user mode, aimux should inject a short preamble
-before the next user input:
-
-```text
-System note: this chat is now shared by multiple real users. User messages will
-be prefixed like [Sam]: ... and [Alex]: ... . Use those names to distinguish who
-is speaking.
-```
-
-When the session returns to single-user mode, aimux may inject a downgrade note
-once. Preamble injection must be idempotent per share/version so reconnects do
-not spam the agent.
-
-## Upgrade And Downgrade
-
-Any existing chat can be upgraded by creating a share and accepting at least one
-guest. The owner can revoke guests or disable sharing. Mode changes affect
-future messages only:
-
-- Upgrade to multi: prefix all future real-user messages.
-- Downgrade to single: stop prefixing future messages.
-- History and terminal output remain append-only.
+Any existing session can be shared by creating an invite and accepting at least
+one guest. The owner can revoke guests or disable sharing. History and terminal
+output remain append-only.
 
 ## Security Invariants
 

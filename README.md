@@ -16,8 +16,8 @@ aimux uses `tmux` as its terminal runtime substrate. Each project gets its own m
 - **Dashboard view** — see all running, offline, and remote agents at a glance
 - **Multi-instance** — run aimux in multiple terminal tabs; agents from other instances appear inline and can be taken over
 - **Agent lifecycle** — two-step kill (`[x]` stops → offline, `[x]` again → graveyard), with `aimux graveyard resurrect` for recovery
-- **Task delegation** — agents can delegate work to each other via `.aimux/tasks/`, with automatic dispatch, completion notifications, and dashboard badges
-- **Threaded orchestration** — direct messages, handoffs, and task assignment all flow through durable `.aimux/threads/` state with queued delivery when recipients are busy
+- **Task delegation** — agents can create explicit handoff records in `.aimux/tasks/`; users and control-plane clients can coordinate teammate work through the metadata API
+- **Threaded orchestration** — direct messages, handoffs, and task assignment all flow through durable `.aimux/threads/` state and explicit user/agent workflow actions
 - **Dashboard orchestration actions** — from the main dashboard, use `S` to send a message, `H` to send a handoff, `T` to assign a task, `o` to jump to the most relevant thread, and `R` to reply when something is waiting on you
 - **Workflow view** — a dedicated workflow screen groups related task/review/revision chains, supports actionable filters, and exposes explicit accept/block/complete/reopen/review controls
 - **Next-action guidance** — dashboard rows and details surface `on me`, `blocked`, family-chain pressure, and the single most relevant next orchestration step
@@ -187,13 +187,9 @@ aimux worktree create feature-x --project /abs/path/to/repo --json
 desktop terminal focus now uses the thin tmux fast-control entrypoint via the project service and terminal client tty
 ```
 
-HTTP-backed agent I/O helpers:
+HTTP-backed agent output helpers:
 
 ```bash
-# Send raw input to a running agent through the project service
-aimux host agent-send <sessionId> "hello\r"
-printf 'hello\r' | aimux host agent-send <sessionId> --stdin
-
 # Read a tmux pane snapshot for a running agent
 aimux host agent-read <sessionId> --start-line -80
 
@@ -208,20 +204,9 @@ Ephemeral project events:
 curl -N http://127.0.0.1:<project-service-port>/events
 ```
 
-These commands are additive control-plane helpers on top of the existing `aimux -> tmux -> codex/claude` runtime. They do not replace the native TUI path; they reuse the same session write path and tmux pane capture path through the project HTTP service.
+These commands are additive control-plane helpers on top of the existing `aimux -> tmux -> codex/claude` runtime. They do not replace the native TUI path; they reuse the tmux pane capture path through the project HTTP service.
 
 For desktop / GUI callers, prefer explicit `--project` usage instead of relying on launcher cwd.
-
-Structured message parts:
-
-- `POST /agents/input` accepts either plain `data` or ordered `parts`.
-- `parts` currently supports:
-  - `{ "type": "text", "text": "..." }`
-  - `{ "type": "image", "path": "/abs/path.png", "alt": "..." }`
-  - `{ "type": "image", "url": "https://...", "alt": "..." }`
-  - `{ "type": "image", "attachmentId": "att_123", "alt": "..." }`
-- Parts preserve inline ordering for GUI / HTTP callers.
-- Today, tmux-backed agent sessions still receive image parts as explicit inline image descriptors in the prompt text. This preserves message structure now, but it is not yet binary image upload/attachment transport.
 
 Example:
 
@@ -298,13 +283,11 @@ Navigation ownership rule:
 
 The browser/mobile client at `app/` exposes these flows directly over daemon (port 43190) and per-project metadata-server HTTP:
 
-- dashboard worktree/agent management
-- spawn, fork, rename, migrate, stop, kill
-- graveyard browse + resurrect
+- dashboard monitoring and read-only session views
+- graveyard browsing
 - worktree create + remove
 - activity, workflow, threads, plans, and graveyard secondary screens
-- direct message compose, handoff send/accept/complete, and task/review workflow actions
-- thread state updates and per-message delivery visibility
+- thread and workflow visibility
 
 For the lifecycle model, see [docs/runtime-lifecycle.md](docs/runtime-lifecycle.md).
 For the current source of truth, see [docs/current-architecture.md](docs/current-architecture.md).
@@ -492,17 +475,10 @@ The project-service HTTP API also exposes:
 - `POST /log`
 - `POST /clear-log`
 - `POST /notify`
-- `GET /agents/teammates?parentSessionId=...`
-- `POST /agents/teammates/create`
-- `POST /agents/teammates/tasks`
-- `POST /agents/teammates/stop`
-- `POST /agents/teammates/resume`
-- `POST /agents/teammates/kill`
-- `POST /agents/teammates/resurrect`
 
 Use `aimux metadata endpoint` to get the local base URL for the current project service.
 
-Teammate agents are first-party aimux agents attached to a parent agent. They stay hidden from the normal dashboard unless the parent agent is focused, but can still be inspected, entered, stopped, restarted, and graveyarded through the parent/team UI.
+Teammate agents are first-party aimux agents attached to a parent agent. They stay hidden from the normal dashboard unless the parent agent is focused, but can still be inspected, entered, stopped, restarted, and graveyarded through the parent/team UI. Programmatic teammate lifecycle routes are control-plane internals; agents should use `.aimux/tasks/*.json` handoff records unless the user gives an explicit CLI/API command.
 
 Dashboard navigation exposes only the selected parent's direct team:
 
@@ -512,67 +488,6 @@ Dashboard navigation exposes only the selected parent's direct team:
 - Non-selected parents do not expose their teammates in dashboard rows, details, or footer chips.
 
 Direct teammate teams are capped at 3 agents. Creating a teammate is idempotent by normalized `role` + `label` for the same parent: if that direct teammate already exists, aimux returns it instead of creating a duplicate.
-
-List direct teammates for a parent:
-
-```bash
-endpoint="$(aimux metadata endpoint)"
-curl -sS "$endpoint/agents/teammates?parentSessionId=claude-abc123"
-```
-
-Create a teammate from an agent or shell with:
-
-```bash
-endpoint="$(aimux metadata endpoint)"
-curl -sS "$endpoint/agents/teammates/create" \
-  -H 'content-type: application/json' \
-  -d '{
-    "parentSessionId": "claude-abc123",
-    "role": "coder",
-    "label": "coder-1",
-    "initialTask": {
-      "title": "Parser tests",
-      "body": "Implement the bounded parser tests and report back."
-    }
-  }'
-```
-
-Useful request fields:
-
-- `parentSessionId` - required aimux session ID of the primary agent.
-- `role` / `label` - optional teammate role and display label.
-- `tool` - optional tool config key; omitted means inherit the parent tool and safe model/provider/runtime flags.
-- `sessionId` - optional aimux session ID; omitted means aimux generates one.
-- `worktreePath` - optional target worktree; omitted means inherit the parent worktree.
-- `extraArgs` - optional CLI args for model/provider flags; when set, these override inherited runtime flags.
-- `initialTask` - optional first durable task assigned to the teammate after launch.
-- `order` - optional numeric order within the parent's direct team.
-- `open` - optional boolean; `false` creates without switching focus.
-
-Delegate to an existing direct teammate:
-
-```bash
-curl -sS "$endpoint/agents/teammates/tasks" \
-  -H 'content-type: application/json' \
-  -d '{
-    "parentSessionId": "claude-abc123",
-    "teammateSessionId": "codex-def456",
-    "title": "Review parser patch",
-    "body": "Review the parser patch and report blockers first."
-  }'
-```
-
-`/agents/teammates/tasks` only accepts direct teammates of the parent and creates a normal durable task targeted to that teammate. The teammate reports back with `aimux task complete` or `aimux task block`, and aimux routes completion back to the parent.
-
-Manage a direct teammate lifecycle with the same parent/teammate guard:
-
-```bash
-curl -sS "$endpoint/agents/teammates/stop" \
-  -H 'content-type: application/json' \
-  -d '{ "parentSessionId": "claude-abc123", "teammateSessionId": "codex-def456" }'
-```
-
-Use `/agents/teammates/resume` for offline teammates, `/agents/teammates/kill` to send a direct teammate to the graveyard, and `/agents/teammates/resurrect` to move a direct graveyarded teammate back to offline. Each endpoint rejects teammates not directly attached to the parent.
 
 ## Plugins And Watchers
 
@@ -656,13 +571,13 @@ aimux records each agent's conversation and makes it available to other agents:
 - **`.aimux/context/{session-id}/summary.checkpoints.jsonl`** — append-only compaction checkpoints
 - **`.aimux/history/{session-id}.jsonl`** — full raw conversation log
 - **`.aimux/plans/{session-id}.md`** — canonical shared plan for that agent
-- **`.aimux/sessions.json`** — all running agents (so agents can discover each other)
+- **`.aimux/tasks/{task-id}.json`** — explicit handoff records when the user asks for delegation
 
 Agents are told about these files in their startup preamble.
 
 These are the canonical agent-facing paths. Runtime-private state stays under `~/.aimux/projects/<project-id>/...` and is not part of the agent contract.
 
-In tmux mode, live terminal state comes from tmux itself. `~/.aimux/projects/<project-id>/state.json` is mainly for offline/resume metadata, not live screen ownership.
+In tmux mode, live terminal state comes from tmux itself. Runtime topology is stored in `~/.aimux/projects/<project-id>/runtime-topology.yaml`; `~/.aimux/projects/<project-id>/state.json` is service/project state and is not the agent session source of truth.
 
 Memory roles are explicit:
 
@@ -713,7 +628,7 @@ Each new session gets a stub plan file. Agents are instructed to keep it current
 
 ## Task Delegation
 
-Agents can delegate work to each other through the aimux task system. This is a file-based protocol — agents create task files, aimux dispatches them, and agents report results.
+Agents can coordinate handoffs through `.aimux/tasks/*.json` when the user explicitly asks for delegation or handoff. These files are a shared record format; they are not an alternate live agent lifecycle or persistence layer.
 
 ### How it works
 
@@ -730,37 +645,34 @@ Agents can delegate work to each other through the aimux task system. This is a 
    }
    ```
 
-2. **Aimux detects** the pending task (checks every 2s) and finds an idle agent to handle it
+2. **A target agent or user picks it up** through an explicit handoff or manual coordination
 
-3. **The task prompt is injected** into the target agent's stdin — the agent sees it as input and starts working
+3. **The receiving agent works from the task prompt** and treats the task file as durable coordination state
 
 4. **The agent completes the work** and updates the task file with `"status": "done"` and a `"result"` summary
 
-5. **Aimux notifies** the original agent that the task is complete
+5. **The original agent or user reviews** the result from the shared task record
 
 ### Targeting
 
-Tasks can be targeted in three ways:
+Tasks can carry routing metadata:
 
-- **Specific agent**: set `assignedTo` to a session ID from `.aimux/sessions.json`
-- **By tool type**: set `tool` to `"claude"`, `"codex"`, or `"aider"` — dispatched to the first idle agent of that type
-- **Any idle agent**: omit both fields — dispatched to any available idle agent
+- **Specific agent**: set `assignedTo` to the intended aimux session ID
+- **By tool type**: set `tool` to `"claude"`, `"codex"`, or `"aider"` as a preferred tool hint
+- **Untargeted**: omit both fields for a general handoff record
 
 ### Dashboard indicators
 
-- Sessions with active tasks show a purple `⧫` badge with the task description
-- The dashboard footer shows task counts: `[T:2p/1a]` (2 pending, 1 assigned)
-- Flash notifications appear when tasks are assigned, completed, or failed
+The dashboard and metadata APIs expose teammate and task workflow state where those flows are active. The runtime topology remains authoritative for session lifecycle.
 
 ### Using it
 
-Just ask your agent to delegate. The preamble tells agents exactly how the protocol works. For example:
+Ask your agent to delegate or hand off when you want a task file created. For example:
 
 > "Delegate the test writing to another agent"
-
 > "Hand off the CSS cleanup to the codex agent"
 
-The agent will create the task file, and aimux handles the rest. This is separate from any native task system in the underlying tools (like Claude Code's internal tasks).
+The agent creates the task file. Control-plane callers may expose teammate workflow APIs where configured, but agents should not call aimux metadata APIs themselves. This is separate from any native task system in the underlying tools (like Claude Code's internal tasks).
 
 ## Custom Instructions
 
@@ -840,11 +752,6 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
       "resumeArgs": ["--resume", "{sessionId}"],
       "resumeFallback": ["--continue"],
       "sessionIdFlag": ["--session-id", "{sessionId}"],
-      "sessionCapture": {
-        "dir": "{home}/.my-tool/sessions/{yyyy}/{mm}/{dd}",
-        "pattern": "([0-9a-f-]+)\\.json$",
-        "delayMs": 2000
-      },
       "promptPatterns": ["^> $", "^\\$ $"],
       "turnPatterns": ["^[>❯]\\s*(.+)"],
       "compactCommand": "claude --print --output-format text",
@@ -861,7 +768,6 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
 | `resumeByBackendSessionId` | Whether aimux's stored backend id is safe to pass to `resumeArgs` |
 | `resumeFallback` | Non-specific fallback resume args for explicit latest-session flows; targeted dashboard restore must not use these |
 | `sessionIdFlag` | Flag to set session ID at spawn time |
-| `sessionCapture` | Filesystem-based session ID capture (dir, regex pattern, delay) |
 | `promptPatterns` | Regex patterns for idle/prompt detection in status bar |
 | `turnPatterns` | Regex patterns for extracting conversation turns from output |
 | `compactCommand` | Shell command for LLM-powered history compaction |
@@ -869,10 +775,10 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
 
 ## Multi-Instance
 
-Run aimux in multiple terminal tabs for the same project. Each instance registers in `.aimux/instances.json` with a heartbeat. Agents from other instances appear inline in the dashboard with a `◈` icon.
+Run aimux in multiple terminal tabs for the same project. Each instance registers in `.aimux/instances.json` with a heartbeat. Session lifecycle and ownership stay in runtime topology; `instances.json` is liveness-only.
 
-- **Enter** on a remote agent takes it over (resumes in your instance)
-- `--resume` skips agents already owned by another live instance
+- Remote takeover through `instances.json` is disabled pending the runtime core replacement.
+- `--resume` no longer uses instance-registry session refs for ownership decisions.
 - When an instance exits, its agents become offline and visible to other instances
 - Dead instances are auto-pruned via PID checks and heartbeat staleness
 
