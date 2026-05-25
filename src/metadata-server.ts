@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir } from "./paths.js";
-import { collaborationContextFromHeaders, type AgentCollaborationContext } from "./collaboration.js";
 import {
   type MetadataTone,
   updateSessionMetadata,
@@ -59,7 +58,6 @@ import { buildWorkflowEntries } from "./workflow.js";
 import { markLastUsed } from "./last-used.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
-import type { AgentInputPart } from "./agent-message-parts.js";
 import {
   getAttachment,
   getAttachmentContent,
@@ -261,7 +259,7 @@ interface MetadataServerOptions {
       sessionId: string;
       worktreePath: string;
     }) => Promise<{ sessionId: string; worktreePath?: string }> | { sessionId: string; worktreePath?: string };
-    killAgent?: (input: { sessionId: string; session?: Record<string, unknown> }) =>
+    killAgent?: (input: { sessionId: string }) =>
       | Promise<{
           sessionId: string;
           status: "graveyard";
@@ -276,28 +274,6 @@ interface MetadataServerOptions {
       sessionId: string;
       backendSessionId: string;
     }) => Promise<{ sessionId: string; backendSessionId: string }> | { sessionId: string; backendSessionId: string };
-    writeAgentInput?: (input: {
-      sessionId: string;
-      data?: string;
-      parts?: AgentInputPart[];
-      clientMessageId?: string;
-      submit?: boolean;
-      collaboration?: AgentCollaborationContext;
-    }) =>
-      | Promise<{
-          sessionId: string;
-          accepted: boolean;
-          operation?: unknown;
-          messageId?: string;
-          error?: string;
-        }>
-      | {
-          sessionId: string;
-          accepted: boolean;
-          operation?: unknown;
-          messageId?: string;
-          error?: string;
-        };
     readAgentOutput?: (input: {
       sessionId: string;
       startLine?: number;
@@ -2328,7 +2304,6 @@ export class MetadataServer {
         }
         const result = await this.options.lifecycle.killAgent({
           sessionId: resolved.teammate.id,
-          session: resolved.teammate,
         });
         this.options.onChange?.();
         send(res, 200, {
@@ -2455,7 +2430,7 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent kill not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.killAgent(body);
+        const result = await this.options.lifecycle.killAgent({ sessionId: body.sessionId });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
@@ -2470,37 +2445,6 @@ export class MetadataServer {
         const result = await this.options.lifecycle.recordBackendSessionId(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/agents/input") {
-        const body = (await readJson(req)) as {
-          sessionId: string;
-          data?: string;
-          parts?: AgentInputPart[];
-          clientMessageId?: string;
-          submit?: boolean;
-        };
-        if (!this.options.lifecycle?.writeAgentInput) {
-          send(res, 501, { ok: false, error: "agent input not supported by this service" });
-          return;
-        }
-        const collaboration = collaborationContextFromHeaders(req.headers);
-        const result = await this.options.lifecycle.writeAgentInput({ ...body, collaboration });
-        if (this.options.lifecycle.readAgentHistory) {
-          try {
-            const history = await this.options.lifecycle.readAgentHistory({ sessionId: body.sessionId, lastN: 20 });
-            this.eventBus.publishHistoryUpdate({
-              sessionId: history.sessionId,
-              messages: history.messages,
-              lastN: history.lastN,
-            });
-          } catch {
-            // History update is best-effort; the write result should still succeed.
-          }
-        }
-        this.options.onChange?.();
-        send(res, 200, { ok: result.accepted, ...result });
         return;
       }
 

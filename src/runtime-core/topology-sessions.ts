@@ -277,7 +277,6 @@ export function updateTopologySessionBackendId(
 
 export function moveTopologySessionToGraveyard(
   sessionId: string,
-  seed?: RuntimeTopologySessionState,
   input?: { store?: RuntimeTopologyStore; now?: string },
 ): RuntimeTopologySessionState | undefined {
   const store = input?.store ?? createRuntimeTopologyStore();
@@ -292,12 +291,6 @@ export function moveTopologySessionToGraveyard(
       topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
       return topology;
     }
-    if (!seed) return topology;
-    const rigId = ensureRig(topology, getRepoRoot(), now);
-    const node = upsertNode(topology, seed, rigId, now);
-    topology.sessions.push({ ...sessionToTopologySession(seed, node.id, now), status: "graveyard" });
-    topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== node.id);
-    moved = seed;
     return topology;
   });
   return moved;

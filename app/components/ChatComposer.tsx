@@ -4,8 +4,8 @@ import { useSetAtom } from "jotai";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { addPendingAtom, updatePendingAtom } from "@/stores/chat";
-import { sendAgentInput, uploadAttachmentBase64 } from "@/lib/api";
-import type { AgentInputPart, HistoryPart } from "@/lib/events";
+import { uploadAttachmentBase64 } from "@/lib/api";
+import type { HistoryPart } from "@/lib/events";
 import { pickImages } from "@/lib/image-picker";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 
@@ -100,14 +100,11 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
     const submittedText = trimmed;
     const submittedImages = draftImages;
     const clientMessageId = uuid();
-    const sendParts: AgentInputPart[] = [];
     const historyParts: HistoryPart[] = [];
     if (submittedText) {
-      sendParts.push({ type: "text", text: submittedText });
       historyParts.push({ type: "text", text: submittedText });
     }
     for (const img of submittedImages) {
-      sendParts.push({ type: "image", attachmentId: img.attachmentId, alt: img.filename });
       historyParts.push({
         type: "image",
         attachmentId: img.attachmentId,
@@ -130,42 +127,14 @@ export function ChatComposer({ serviceEndpoint, sessionId, token }: Props) {
     setDraftImages([]);
 
     try {
-      const result = await sendAgentInput(
-        serviceEndpoint,
-        { sessionId, data: "", parts: sendParts, clientMessageId, submit: true },
-        { token },
-      );
-      if (!result.accepted) {
-        const msg = result.error ?? "The agent input operation failed.";
-        updatePending({
-          sessionId,
-          clientMessageId,
-          patch: { deliveryState: "failed", deliveryError: msg },
-        });
-        setError(msg);
-        restoreDraftIfUntouched(submittedText, submittedImages);
-        return;
-      }
-      // Server operation state is queued|applied|submitted|failed; client tracks
-      // sending|submitted|failed. Anything not failed has been accepted and is
-      // effectively submitted from the UI's perspective.
-      const opState = result.operation?.state;
-      const deliveryState: "submitted" | "failed" = opState === "failed" ? "failed" : "submitted";
+      const msg = "Agent messaging requires the runtime core replacement.";
       updatePending({
         sessionId,
         clientMessageId,
-        patch: {
-          deliveryState,
-          deliveryError:
-            deliveryState === "failed"
-              ? (result.error ?? "The agent input operation failed.")
-              : undefined,
-        },
+        patch: { deliveryState: "failed", deliveryError: msg },
       });
-      if (deliveryState === "failed") {
-        setError(result.error ?? "The agent input operation failed.");
-        restoreDraftIfUntouched(submittedText, submittedImages);
-      }
+      setError(msg);
+      restoreDraftIfUntouched(submittedText, submittedImages);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       updatePending({

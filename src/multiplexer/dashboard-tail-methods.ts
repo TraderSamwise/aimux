@@ -122,7 +122,6 @@ export type DashboardTailMethods = {
   sendAgentToGraveyard(
     this: Multiplexer,
     sessionId: string,
-    sessionSeed?: any,
   ): Promise<{
     sessionId: string;
     status: "graveyard";
@@ -250,8 +249,8 @@ export const dashboardTailMethods: DashboardTailMethods = {
   async stopAgent(sessionId) {
     return disabledRuntimeCore.stopAgent({ sessionId });
   },
-  async sendAgentToGraveyard(sessionId, sessionSeed) {
-    return disabledRuntimeCore.killAgent({ sessionId, sessionSeed });
+  async sendAgentToGraveyard(sessionId) {
+    return disabledRuntimeCore.killAgent({ sessionId });
   },
   async migrateAgentSession(sessionId, targetWorktreePath) {
     return disabledRuntimeCore.migrateAgent({ sessionId, targetWorktreePath });

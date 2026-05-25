@@ -2,7 +2,6 @@ import { sendDirectMessage, sendThreadMessage } from "../orchestration.js";
 import { sendHandoff } from "../orchestration-actions.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
 import type { DashboardSession } from "../dashboard/index.js";
-import type { AgentCollaborationContext } from "../collaboration.js";
 import type { MessageKind } from "../threads.js";
 import { disabledRuntimeCore } from "../runtime-core/index.js";
 import { stopProjectServices as stopProjectServicesImpl } from "./dashboard-model.js";
@@ -219,18 +218,6 @@ export const agentIoMethods = {
 
   scheduleTmuxAgentSubmit(this: any, sessionId: string, target: any, draft: string): void {
     scheduleTmuxAgentSubmitImpl(this, sessionId, target, draft);
-  },
-
-  async writeAgentInput(
-    this: any,
-    sessionId: string,
-    data = "",
-    parts?: any[],
-    clientMessageId?: string,
-    submit = false,
-    collaboration?: AgentCollaborationContext,
-  ): Promise<{ sessionId: string }> {
-    return disabledRuntimeCore.writeAgentInput({ sessionId, data, parts, clientMessageId, submit, collaboration });
   },
 
   async readAgentHistory(this: any, sessionId: string, lastN?: number): Promise<any> {

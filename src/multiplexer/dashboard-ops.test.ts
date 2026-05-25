@@ -677,7 +677,7 @@ describe("dashboard-ops", () => {
 
     expect(host.postToProjectService).toHaveBeenCalledWith(
       "/agents/kill",
-      { sessionId: "sess-1", session: expect.objectContaining({ id: "sess-1", command: "claude" }) },
+      { sessionId: "sess-1" },
       { timeoutMs: 10_000 },
     );
     expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();

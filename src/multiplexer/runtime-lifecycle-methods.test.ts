@@ -206,7 +206,7 @@ describe("runtime lifecycle state persistence", () => {
     expect(saved.services.map((service) => service.id)).toEqual(["stale-service"]);
   });
 
-  it("persists remote instance session refs even when state has no matching row yet", () => {
+  it("does not mint topology sessions from remote instance refs", () => {
     writeFileSync(
       getStatePath(),
       JSON.stringify(
@@ -242,18 +242,7 @@ describe("runtime lifecycle state persistence", () => {
       }) as never,
     );
 
-    expect(topologySessions()).toEqual([
-      expect.objectContaining({
-        id: "remote-agent",
-        tool: "claude",
-        toolConfigKey: "claude",
-        command: "claude",
-        args: [],
-        lifecycle: "offline",
-        backendSessionId: "native-session",
-        worktreePath: repoRoot,
-      }),
-    ]);
+    expect(topologySessions()).toEqual([]);
   });
 
   it("converts recoverable existing live sessions to offline instead of erasing them", () => {

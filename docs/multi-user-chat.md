@@ -65,7 +65,6 @@ to the shared session routes:
 
 - `GET /agents/history`
 - `GET /agents/output`
-- `POST /agents/input`
 - `GET /events`
 - attachment routes needed to render or upload chat attachments
 

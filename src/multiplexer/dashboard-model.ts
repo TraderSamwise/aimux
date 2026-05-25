@@ -1182,20 +1182,11 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           host,
           input.sessionId,
           "graveyarding",
-          () => host.sendAgentToGraveyard(input.sessionId, input.session),
-          findDashboardSessionSeed(host, input.sessionId, input.session),
+          () => host.sendAgentToGraveyard(input.sessionId),
+          findDashboardSessionSeed(host, input.sessionId),
         ),
       recordBackendSessionId: (input: any) =>
         host.recordSessionBackendSessionId(input.sessionId, input.backendSessionId),
-      writeAgentInput: (input: any) =>
-        host.writeAgentInput(
-          input.sessionId,
-          input.data,
-          input.parts,
-          input.clientMessageId,
-          input.submit,
-          input.collaboration,
-        ),
       readAgentOutput: (input: any) => host.readAgentOutput(input.sessionId, input.startLine),
       readAgentHistory: (input: any) => host.readAgentHistory(input.sessionId, input.lastN),
     },

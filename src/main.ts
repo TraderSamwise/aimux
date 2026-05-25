@@ -1044,30 +1044,6 @@ hostCmd
   });
 
 hostCmd
-  .command("agent-send")
-  .description("Send raw input to a running agent session over the project HTTP service")
-  .argument("<sessionId>", "Agent session ID")
-  .argument("[data...]", "Input to send")
-  .option("--stdin", "Read the full input payload from stdin")
-  .option("--submit", "Submit after writing the input")
-  .action(async (sessionId: string, data: string[], opts: { stdin?: boolean; submit?: boolean }) => {
-    await initPaths();
-    const payload = opts.stdin === true ? await readAllStdin() : data.join(" ");
-    if (!payload) {
-      throw new Error("input data is required");
-    }
-    const result = await postProjectServiceJson("/agents/input", {
-      sessionId,
-      data: payload,
-      submit: opts.submit === true,
-    });
-    if (result.accepted === false) {
-      throw new Error(result.error || `agent input failed for ${result.sessionId}`);
-    }
-    console.log(`sent input to ${result.sessionId}`);
-  });
-
-hostCmd
   .command("agent-read")
   .description("Read captured output from a running agent session over the project HTTP service")
   .argument("<sessionId>", "Agent session ID")

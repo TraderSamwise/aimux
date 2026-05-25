@@ -56,23 +56,6 @@ function isRecoverableExistingSession(session: SessionState): boolean {
   return Boolean(session.backendSessionId);
 }
 
-function sessionStateFromInstanceRef(ref: InstanceSessionRef): SessionState | null {
-  const tool = ref.tool;
-  if (!ref.id || !tool) return null;
-  return {
-    id: ref.id,
-    tool,
-    toolConfigKey: tool,
-    command: tool,
-    args: [],
-    lifecycle: "offline",
-    createdAt: ref.createdAt,
-    backendSessionId: ref.backendSessionId,
-    team: ref.team,
-    worktreePath: ref.worktreePath,
-  };
-}
-
 function dedupeSessionStates(sessions: SessionState[]): SessionState[] {
   const byKey = new Map<string, SessionState>();
   for (const session of sessions) {
@@ -98,6 +81,7 @@ type RuntimeLifecycleHost = {
   contextWatcher: { stop(): void };
   onStdinData: ((data: Buffer) => void) | null;
   onResize: (() => void) | null;
+  unpreservedExitedSessionIds?: Set<string>;
   dashboardViewportPollInterval: ReturnType<typeof setInterval> | null;
   hotkeys: { destroy(): void };
   terminalHost: { restoreTerminalState(): void };
@@ -300,12 +284,8 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       .map((session) => sanitizeOfflineSessionState(session, metadataState))
       .filter((session) => !liveKeys.has(sessionStateKey(session)));
     const mySessions = dedupeSessionStates([...liveSessions, ...offlineSessions]);
-    const remoteRefs = this.getRemoteInstancesSafe().flatMap((instance: InstanceInfo) => instance.sessions);
-    const remoteSessions = dedupeSessionStates(
-      remoteRefs.flatMap((ref: InstanceSessionRef) => {
-        const session = sessionStateFromInstanceRef(ref);
-        return session ? [session] : [];
-      }),
+    const remoteRefs: InstanceSessionRef[] = this.getRemoteInstancesSafe().flatMap(
+      (instance: InstanceInfo) => instance.sessions,
     );
     const removedServiceIds = mux.removedServiceIds ?? new Set<string>();
     const liveServices = this.buildLiveServiceStates().filter((service) => !removedServiceIds.has(service.id));
@@ -317,17 +297,19 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     const remoteIds = new Set(remoteRefs.map((s: InstanceSessionRef) => s.id));
     const myBackendIds = new Set(mySessions.map((s) => s.backendSessionId).filter(Boolean));
     const myIds = new Set(mySessions.map((s) => s.id));
+    const unpreservedExitedIds = mux.unpreservedExitedSessionIds ?? new Set<string>();
     const topologySessions = listTopologySessionStates({
       statuses: ["running", "idle", "offline"],
     }) as SessionState[];
     const otherSessions = topologySessions.flatMap((s) => {
+      if (unpreservedExitedIds.has(s.id)) return [];
       if (remoteIds.has(s.id)) return [s];
       if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return [];
       if (myIds.has(s.id)) return [];
       if (!isRecoverableExistingSession(s)) return [];
       return [sanitizeOfflineSessionState(s, metadataState)];
     });
-    const mergedSessions: SessionState[] = dedupeSessionStates([...remoteSessions, ...otherSessions, ...mySessions]);
+    const mergedSessions: SessionState[] = dedupeSessionStates([...otherSessions, ...mySessions]);
     let mergedServices: ServiceState[] = myServices;
 
     if (existsSync(statePath)) {
@@ -344,6 +326,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     }
 
     saveRuntimeTopologySessions({ sessions: mergedSessions });
+    unpreservedExitedIds.clear();
 
     const state: SavedState = {
       savedAt: new Date().toISOString(),

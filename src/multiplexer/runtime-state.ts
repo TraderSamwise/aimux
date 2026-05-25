@@ -472,18 +472,16 @@ export function adjustAfterRemove(host: RuntimeStateHost, hasWorktrees: boolean)
   }
 }
 
-export function graveyardSession(host: RuntimeStateHost, sessionId: string, sessionSeed?: any): void {
+export function graveyardSession(host: RuntimeStateHost, sessionId: string, _sessionSeed?: any): void {
   const session =
     host.offlineSessions.find((s: any) => s.id === sessionId) ??
-    (sessionSeed?.id === sessionId
-      ? offlineSessionState(fillMissingBackendSessionIdFromMetadata(sessionSeed))
-      : undefined);
+    listTopologySessionStates({ statuses: ["running", "idle", "offline"] }).find((s: any) => s.id === sessionId);
   if (!session) return;
   markLifecycleUsed(host, sessionId);
 
   host.offlineSessions = host.offlineSessions.filter((s: any) => s.id !== sessionId);
 
-  moveTopologySessionToGraveyard(sessionId, session);
+  moveTopologySessionToGraveyard(sessionId);
 
   host.debug?.(`graveyarded session ${sessionId}`, "session");
 }

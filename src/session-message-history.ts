@@ -1,10 +1,6 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { existsSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { getSessionMessagesDir } from "./paths.js";
-import type { AgentInputPart } from "./agent-message-parts.js";
-import { getAttachment } from "./attachment-store.js";
-import type { AgentCollaborationContext, CollaborationChatMode, CollaborationRole } from "./collaboration.js";
 
 export interface SessionMessagePart {
   type: "text" | "image";
@@ -27,44 +23,14 @@ export interface SessionMessageRecord {
     userId: string;
     displayName: string;
     email?: string;
-    role?: CollaborationRole;
+    role?: "owner" | "guest";
   };
   shareId?: string;
-  chatMode?: CollaborationChatMode;
+  chatMode?: "single" | "multi";
 }
 
 function historyPath(sessionId: string): string {
   return join(getSessionMessagesDir(), `${sessionId}.jsonl`);
-}
-
-export function appendSessionMessage(
-  sessionId: string,
-  input: {
-    data?: string;
-    parts?: AgentInputPart[];
-    clientMessageId?: string;
-    collaboration?: AgentCollaborationContext;
-  },
-): SessionMessageRecord | null {
-  const parts = normalizeMessageParts(input);
-  if (parts.length === 0) return null;
-  const dir = getSessionMessagesDir();
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  const record: SessionMessageRecord = {
-    id: `msg_${randomUUID()}`,
-    clientMessageId: input.clientMessageId?.trim() || undefined,
-    sessionId,
-    role: "user",
-    ts: new Date().toISOString(),
-    parts,
-    actor: input.collaboration?.actor,
-    shareId: input.collaboration?.shareId,
-    chatMode: input.collaboration?.mode,
-  };
-  appendFileSync(historyPath(sessionId), `${JSON.stringify(record)}\n`);
-  return record;
 }
 
 export function readSessionMessages(
@@ -114,36 +80,4 @@ export function readSessionMessages(
     records = records.slice(-opts.lastN);
   }
   return records;
-}
-
-function normalizeMessageParts(input: { data?: string; parts?: AgentInputPart[] }): SessionMessagePart[] {
-  const parts = Array.isArray(input.parts) ? input.parts : [];
-  if (parts.length === 0) {
-    const text = String(input.data ?? "");
-    return text.trim() ? [{ type: "text", text }] : [];
-  }
-
-  const normalized: SessionMessagePart[] = [];
-  for (const part of parts) {
-    if (part.type === "text") {
-      const text = String(part.text ?? "");
-      if (text.trim()) {
-        normalized.push({ type: "text", text });
-      }
-      continue;
-    }
-
-    const attachmentId = part.attachmentId?.trim();
-    if (!attachmentId) continue;
-    const attachment = getAttachment(attachmentId);
-    normalized.push({
-      type: "image",
-      attachmentId,
-      alt: part.alt?.trim() || undefined,
-      filename: attachment?.filename,
-      mimeType: attachment?.mimeType,
-      contentUrl: attachment?.contentUrl,
-    });
-  }
-  return normalized;
 }

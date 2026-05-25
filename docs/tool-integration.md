@@ -151,7 +151,7 @@ At minimum:
 
 Prompt injection is a shared runtime concern, not a per-feature detail.
 
-Production code that pushes text into a tmux-backed agent and expects it to run must use the shared prompt delivery path in `src/agent-prompt-delivery.ts`, normally via `writeAgentInput(..., submit: true)`.
+Production code that pushes text into a tmux-backed agent and expects it to run must be implemented in the runtime core replacement. Do not reintroduce the removed raw-input HTTP path.
 
 Do not add new production paths that call `session.write(prompt + "\r")`, plain tmux `Enter`, or ad hoc delayed submits. Those paths can paste into Codex without actually submitting, especially when Codex collapses a large prompt into `[Pasted Content ...]`.
 

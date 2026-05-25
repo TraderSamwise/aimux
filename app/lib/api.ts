@@ -13,7 +13,7 @@ import { getDaemonUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-
 import { env } from "@/lib/env";
 import type { RelayTransport } from "@/lib/relay-transport";
 import type { DesktopState } from "@/lib/desktop-state";
-import type { AgentInputPart, ChatMessage, ParsedAgentOutput } from "@/lib/events";
+import type { ChatMessage, ParsedAgentOutput } from "@/lib/events";
 
 let _relay: RelayTransport | null = null;
 export function setApiRelay(relay: RelayTransport | null): void {
@@ -207,31 +207,6 @@ export async function getAgentOutput(
     `/agents/output?${params.toString()}`,
     opts,
   );
-}
-
-export interface AgentInputRequest {
-  sessionId: string;
-  data?: string;
-  parts?: AgentInputPart[];
-  clientMessageId?: string;
-  submit?: boolean;
-}
-
-export interface AgentInputResult {
-  ok: boolean;
-  accepted: boolean;
-  messageId?: string;
-  operation?: { id?: string; state?: string };
-  error?: string;
-  [k: string]: unknown;
-}
-
-export async function sendAgentInput(
-  endpoint: ServiceEndpoint,
-  input: AgentInputRequest,
-  opts?: ApiOpts,
-): Promise<AgentInputResult> {
-  return callProjectJson<AgentInputResult>(endpoint, "POST", "/agents/input", opts, input);
 }
 
 // ── Relay sharing ────────────────────────────────────────────────────────

@@ -8,7 +8,6 @@ export type RuntimeCoreOperation =
   | "agent.stop"
   | "agent.kill"
   | "agent.migrate"
-  | "agent.input"
   | "agent.interrupt";
 
 export class RuntimeCoreDisabledError extends Error {
@@ -53,20 +52,11 @@ export interface RuntimeCore {
   stopAgent(input: { sessionId: string }): Promise<{ sessionId: string; status: "offline" }>;
   killAgent(input: {
     sessionId: string;
-    sessionSeed?: unknown;
   }): Promise<{ sessionId: string; status: "graveyard"; previousStatus: "running" | "offline" }>;
   migrateAgent(input: {
     sessionId: string;
     targetWorktreePath: string;
   }): Promise<{ sessionId: string; worktreePath: string }>;
-  writeAgentInput(input: {
-    sessionId: string;
-    data?: string;
-    parts?: unknown[];
-    clientMessageId?: string;
-    submit?: boolean;
-    collaboration?: unknown;
-  }): Promise<{ sessionId: string; accepted: boolean; error?: string }>;
   interruptAgent(input: { sessionId: string }): Promise<{ sessionId: string }>;
   readTopology(): RuntimeTopology;
 }
@@ -97,9 +87,6 @@ export function createDisabledRuntimeCore(): RuntimeCore {
     },
     async migrateAgent() {
       disabled("agent.migrate");
-    },
-    async writeAgentInput() {
-      disabled("agent.input");
     },
     async interruptAgent() {
       disabled("agent.interrupt");

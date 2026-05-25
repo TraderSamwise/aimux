@@ -17,7 +17,6 @@ import {
   markNotificationsRead,
   removeShareParticipant,
   putPlan,
-  sendAgentInput,
   setApiRelay,
   spawnAgent,
   stopService,
@@ -92,29 +91,19 @@ describe("api relay routing", () => {
     const fetchMock = installFetchMock();
     const request = installRelayMock({ ok: true, sessionId: "agent-1" });
 
-    await sendAgentInput(endpoint, {
-      sessionId: "agent-1",
-      data: "hello",
-      submit: true,
-    });
     await putPlan(endpoint, "agent-1", "ship it");
     await spawnAgent(endpoint, { tool: "codex", worktreePath: "/tmp/work" });
     await stopService(endpoint, "svc-1");
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(request).toHaveBeenNthCalledWith(1, "POST", "/proxy/127.0.0.1/43210/agents/input", {
-      sessionId: "agent-1",
-      data: "hello",
-      submit: true,
-    });
-    expect(request).toHaveBeenNthCalledWith(2, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
+    expect(request).toHaveBeenNthCalledWith(1, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
       content: "ship it",
     });
-    expect(request).toHaveBeenNthCalledWith(3, "POST", "/proxy/127.0.0.1/43210/agents/spawn", {
+    expect(request).toHaveBeenNthCalledWith(2, "POST", "/proxy/127.0.0.1/43210/agents/spawn", {
       tool: "codex",
       worktreePath: "/tmp/work",
     });
-    expect(request).toHaveBeenNthCalledWith(4, "POST", "/proxy/127.0.0.1/43210/services/stop", {
+    expect(request).toHaveBeenNthCalledWith(3, "POST", "/proxy/127.0.0.1/43210/services/stop", {
       serviceId: "svc-1",
     });
   });

@@ -22,7 +22,6 @@ describe("disabledRuntimeCore", () => {
       ["agent.stop", () => disabledRuntimeCore.stopAgent({ sessionId: "s1" })],
       ["agent.kill", () => disabledRuntimeCore.killAgent({ sessionId: "s1" })],
       ["agent.migrate", () => disabledRuntimeCore.migrateAgent({ sessionId: "s1", targetWorktreePath: "/repo/wt" })],
-      ["agent.input", () => disabledRuntimeCore.writeAgentInput({ sessionId: "s1", data: "hello" })],
       ["agent.interrupt", () => disabledRuntimeCore.interruptAgent({ sessionId: "s1" })],
     ];
 

@@ -1,6 +1,6 @@
 // SSE event taxonomy for the aimux project metadata server (`/events` endpoint).
 // Canonical server-side types live in src/project-events.ts (AlertEvent, HistoryUpdateEvent,
-// AlertKind) and src/agent-message-parts.ts (AgentInputPart). Redeclared here so the
+// AlertKind). Redeclared here so the
 // Expo bundle stays hermetic.
 
 export type AlertKind =
@@ -72,11 +72,6 @@ export type StreamEvent =
   | HistoryUpdateEvent
   | AgentOutputEvent
   | StreamErrorEvent;
-
-// Input parts sent on POST /agents/input.
-export type AgentInputPart =
-  | { type: "text"; text: string }
-  | { type: "image"; attachmentId: string; alt?: string };
 
 // Display-side representation of an image part as it appears in history.
 export interface HistoryImagePart {

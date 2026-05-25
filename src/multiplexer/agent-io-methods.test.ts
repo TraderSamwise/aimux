@@ -10,11 +10,11 @@ describe("agentIoMethods orchestration delivery", () => {
       status: "running",
       write: vi.fn(),
     };
-    const writeAgentInput = vi.fn();
+    const legacyInputPath = vi.fn();
     const host: any = {
       sessions: [session],
       deriveSessionSemanticState: () => ({ runtime: { canReceiveInput: true, isAlive: true } }),
-      writeAgentInput,
+      legacyInputPath,
     };
 
     const delivered = agentIoMethods.deliverOrchestrationMessage.call(
@@ -29,6 +29,6 @@ describe("agentIoMethods orchestration delivery", () => {
 
     expect(delivered).toEqual([]);
     expect(session.write).not.toHaveBeenCalled();
-    expect(writeAgentInput).not.toHaveBeenCalled();
+    expect(legacyInputPath).not.toHaveBeenCalled();
   });
 });

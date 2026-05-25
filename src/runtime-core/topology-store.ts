@@ -139,12 +139,35 @@ function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+function normalizeRuntimeTopology(topology: RuntimeTopology): RuntimeTopology {
+  const rigIds = new Set(topology.rigs.map((rig) => rig.id));
+  const nodes = topology.nodes.filter((node) => rigIds.has(node.rigId));
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const sessions = topology.sessions.filter((session) => nodeIds.has(session.nodeId));
+  const sessionIds = new Set(sessions.map((session) => session.id));
+
+  return {
+    ...topology,
+    nodes,
+    edges: topology.edges.filter(
+      (edge) => rigIds.has(edge.rigId) && nodeIds.has(edge.sourceNodeId) && nodeIds.has(edge.targetNodeId),
+    ),
+    bindings: topology.bindings.filter((binding) => nodeIds.has(binding.nodeId)),
+    sessions,
+    queue: topology.queue.filter((item) => {
+      if (item.sourceSessionId && !sessionIds.has(item.sourceSessionId)) return false;
+      if (item.targetSessionId && !sessionIds.has(item.targetSessionId)) return false;
+      return true;
+    }),
+  };
+}
+
 function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
   const record = asRecord(raw, "root");
   if (record.version !== RUNTIME_TOPOLOGY_VERSION) {
     throw new Error(`unsupported runtime topology version: ${String(record.version)}`);
   }
-  return {
+  return normalizeRuntimeTopology({
     version: RUNTIME_TOPOLOGY_VERSION,
     generatedAt: asString(record.generatedAt, "generatedAt"),
     rigs: asArray(record.rigs).map((entry, index) => {
@@ -229,7 +252,7 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
         updatedAt: asString(row.updatedAt, `queue[${index}].updatedAt`),
       };
     }),
-  };
+  });
 }
 
 function asRuntimeSessionStatus(value: unknown): RuntimeTopologySessionStatus {

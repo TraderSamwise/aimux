@@ -187,13 +187,9 @@ aimux worktree create feature-x --project /abs/path/to/repo --json
 desktop terminal focus now uses the thin tmux fast-control entrypoint via the project service and terminal client tty
 ```
 
-HTTP-backed agent I/O helpers:
+HTTP-backed agent output helpers:
 
 ```bash
-# Send raw input to a running agent through the project service
-aimux host agent-send <sessionId> "hello\r"
-printf 'hello\r' | aimux host agent-send <sessionId> --stdin
-
 # Read a tmux pane snapshot for a running agent
 aimux host agent-read <sessionId> --start-line -80
 
@@ -208,20 +204,9 @@ Ephemeral project events:
 curl -N http://127.0.0.1:<project-service-port>/events
 ```
 
-These commands are additive control-plane helpers on top of the existing `aimux -> tmux -> codex/claude` runtime. They do not replace the native TUI path; they reuse the same session write path and tmux pane capture path through the project HTTP service.
+These commands are additive control-plane helpers on top of the existing `aimux -> tmux -> codex/claude` runtime. They do not replace the native TUI path; they reuse the tmux pane capture path through the project HTTP service.
 
 For desktop / GUI callers, prefer explicit `--project` usage instead of relying on launcher cwd.
-
-Structured message parts:
-
-- `POST /agents/input` accepts either plain `data` or ordered `parts`.
-- `parts` currently supports:
-  - `{ "type": "text", "text": "..." }`
-  - `{ "type": "image", "path": "/abs/path.png", "alt": "..." }`
-  - `{ "type": "image", "url": "https://...", "alt": "..." }`
-  - `{ "type": "image", "attachmentId": "att_123", "alt": "..." }`
-- Parts preserve inline ordering for GUI / HTTP callers.
-- Today, tmux-backed agent sessions still receive image parts as explicit inline image descriptors in the prompt text. This preserves message structure now, but it is not yet binary image upload/attachment transport.
 
 Example:
 
@@ -520,7 +505,7 @@ endpoint="$(aimux metadata endpoint)"
 curl -sS "$endpoint/agents/teammates?parentSessionId=claude-abc123"
 ```
 
-Create a teammate from an agent or shell with:
+Create a teammate from a user shell or control-plane caller with:
 
 ```bash
 endpoint="$(aimux metadata endpoint)"
@@ -758,7 +743,7 @@ Ask your agent to delegate or hand off when you want a task file created. For ex
 
 > "Hand off the CSS cleanup to the codex agent"
 
-The agent will create the task file or use the teammate metadata API when a direct teammate flow is available. This is separate from any native task system in the underlying tools (like Claude Code's internal tasks).
+The agent creates the task file. Control-plane callers may expose teammate workflow APIs where configured, but agents should not call aimux metadata APIs themselves. This is separate from any native task system in the underlying tools (like Claude Code's internal tasks).
 
 ## Custom Instructions
 

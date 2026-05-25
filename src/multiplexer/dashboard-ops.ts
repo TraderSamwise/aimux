@@ -670,7 +670,7 @@ export async function graveyardSessionWithFeedback(
       pendingAction: "graveyarding",
       sessionSeed,
       request: async () => {
-        await host.postToProjectService("/agents/kill", { sessionId, session: sessionSeed }, { timeoutMs: 10_000 });
+        await host.postToProjectService("/agents/kill", { sessionId }, { timeoutMs: 10_000 });
       },
       settle: () => waitForStableDashboardSessionAbsence(host, sessionId),
       onAfterSettle: () => host.adjustAfterRemove(hasWorktrees),

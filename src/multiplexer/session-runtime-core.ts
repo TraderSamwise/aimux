@@ -9,7 +9,6 @@ import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
-import type { AgentCollaborationContext } from "../collaboration.js";
 import { readSessionMessages } from "../session-message-history.js";
 import { captureGitContext } from "../context/context-bridge.js";
 import {
@@ -17,7 +16,6 @@ import {
   paneStillContainsPromptDraft,
   waitForTmuxPromptSubmit,
 } from "../agent-prompt-delivery.js";
-import { RuntimeCoreDisabledError } from "../runtime-core/index.js";
 import type { SessionTeamMetadata } from "../team.js";
 
 type SessionRuntimeHost = any;
@@ -239,23 +237,6 @@ export function scheduleTmuxAgentSubmit(host: SessionRuntimeHost, sessionId: str
   void waitForTmuxAgentSubmit(host, sessionId, target, draft);
 }
 
-export async function writeAgentInput(
-  _host: SessionRuntimeHost,
-  sessionId: string,
-  _data = "",
-  _parts?: any[],
-  _clientMessageId?: string,
-  _submit = false,
-  _collaboration?: AgentCollaborationContext,
-): Promise<{
-  sessionId: string;
-  accepted: boolean;
-  messageId?: string;
-  error?: string;
-}> {
-  throw new RuntimeCoreDisabledError("agent.input");
-}
-
 export async function readAgentHistory(
   host: SessionRuntimeHost,
   sessionId: string,
@@ -425,6 +406,9 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
       label: host.getSessionLabel(runtime.id),
       headline: host.deriveHeadline(runtime.id),
     });
+  } else if (!shouldPreserveOffline) {
+    host.unpreservedExitedSessionIds ??= new Set<string>();
+    host.unpreservedExitedSessionIds.add(runtime.id);
   }
 
   host.sessions.splice(idx, 1);

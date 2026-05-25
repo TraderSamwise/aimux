@@ -44,7 +44,7 @@ describe("topology session lifecycle", () => {
     );
 
     expect(store.read().bindings).toHaveLength(1);
-    const moved = moveTopologySessionToGraveyard("codex-1", undefined, { store });
+    const moved = moveTopologySessionToGraveyard("codex-1", { store });
     expect(moved?.tmuxTarget).toEqual({
       sessionName: "aimux-repo",
       windowId: "@1",
@@ -56,6 +56,49 @@ describe("topology session lifecycle", () => {
     const restored = resurrectTopologySession("codex-1", { store });
     expect(restored?.tmuxTarget).toBeUndefined();
     expect(store.read().bindings).toEqual([]);
+  });
+
+  it("does not mint graveyard sessions from caller-provided seeds", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const moved = moveTopologySessionToGraveyard("missing-agent", { store });
+
+    expect(moved).toBeUndefined();
+    expect(store.read().sessions).toEqual([]);
+  });
+
+  it("prunes topology references to missing nodes and sessions on store writes", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const now = "2026-05-25T00:00:00.000Z";
+    store.write({
+      ...emptyRuntimeTopology(now),
+      rigs: [{ id: "rig-a", name: "repo", projectRoot: repoRoot, createdAt: now, updatedAt: now }],
+      nodes: [{ id: "agent:keep", rigId: "rig-a", logicalId: "keep", createdAt: now }],
+      edges: [
+        {
+          id: "edge-drop",
+          rigId: "rig-a",
+          sourceNodeId: "agent:keep",
+          targetNodeId: "agent:missing",
+          kind: "team",
+          createdAt: now,
+        },
+      ],
+      bindings: [{ id: "tmux:drop", nodeId: "agent:missing", updatedAt: now }],
+      sessions: [
+        { id: "keep", nodeId: "agent:keep", status: "offline", createdAt: now, updatedAt: now },
+        { id: "drop", nodeId: "agent:missing", status: "offline", createdAt: now, updatedAt: now },
+      ],
+      queue: [
+        { id: "queue-keep", targetSessionId: "keep", status: "queued", kind: "task", createdAt: now, updatedAt: now },
+        { id: "queue-drop", targetSessionId: "drop", status: "queued", kind: "task", createdAt: now, updatedAt: now },
+      ],
+    });
+
+    const topology = store.read();
+    expect(topology.sessions.map((session) => session.id)).toEqual(["keep"]);
+    expect(topology.edges).toEqual([]);
+    expect(topology.bindings).toEqual([]);
+    expect(topology.queue.map((item) => item.id)).toEqual(["queue-keep"]);
   });
 
   it("prunes graph and queue references when saving replacement session topology", () => {
