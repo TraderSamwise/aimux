@@ -1,15 +1,7 @@
 import { debug } from "../debug.js";
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { Multiplexer, SessionState } from "./index.js";
-import {
-  createTeammateAgent as createTeammateAgentImpl,
-  forkAgent as forkAgentImpl,
-  migrateAgentSession as migrateAgentSessionImpl,
-  renameAgent as renameAgentImpl,
-  sendAgentToGraveyard as sendAgentToGraveyardImpl,
-  spawnAgent as spawnAgentImpl,
-  stopAgent as stopAgentImpl,
-} from "./session-actions.js";
+import { disabledRuntimeCore } from "../runtime-core/index.js";
 import {
   buildPlanPreview as buildPlanPreviewImpl,
   handleGraveyardKey as handleGraveyardKeyImpl,
@@ -244,25 +236,25 @@ export type DashboardTailMethods = {
 
 export const dashboardTailMethods: DashboardTailMethods = {
   async forkAgent(opts) {
-    return forkAgentImpl(this, opts);
+    return disabledRuntimeCore.forkAgent(opts);
   },
   async spawnAgent(opts) {
-    return spawnAgentImpl(this, opts);
+    return disabledRuntimeCore.spawnAgent(opts);
   },
   async createTeammateAgent(opts) {
-    return createTeammateAgentImpl(this, opts);
+    return disabledRuntimeCore.createTeammateAgent(opts);
   },
   async renameAgent(sessionId, label) {
-    return renameAgentImpl(this, sessionId, label);
+    return disabledRuntimeCore.renameAgent({ sessionId, label });
   },
   async stopAgent(sessionId) {
-    return stopAgentImpl(this, sessionId);
+    return disabledRuntimeCore.stopAgent({ sessionId });
   },
   async sendAgentToGraveyard(sessionId, sessionSeed) {
-    return sendAgentToGraveyardImpl(this, sessionId, sessionSeed);
+    return disabledRuntimeCore.killAgent({ sessionId, sessionSeed });
   },
   async migrateAgentSession(sessionId, targetWorktreePath) {
-    return migrateAgentSessionImpl(this, sessionId, targetWorktreePath);
+    return disabledRuntimeCore.migrateAgent({ sessionId, targetWorktreePath });
   },
   showGraveyard() {
     showGraveyardImpl(this);
