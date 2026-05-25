@@ -329,7 +329,12 @@ export class RuntimeTopologyStore {
     while (true) {
       try {
         mkdirSync(lockPath);
-        writeFileSync(join(lockPath, "owner"), `${process.pid}\n`);
+        try {
+          writeFileSync(join(lockPath, "owner"), `${process.pid}\n`);
+        } catch (ownerError) {
+          rmSync(lockPath, { recursive: true, force: true });
+          throw ownerError;
+        }
         return () => rmSync(lockPath, { recursive: true, force: true });
       } catch (error) {
         if (Date.now() >= deadline) {
