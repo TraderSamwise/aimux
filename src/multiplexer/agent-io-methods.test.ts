@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { agentIoMethods } from "./agent-io-methods.js";
 
 describe("agentIoMethods orchestration delivery", () => {
-  it("uses submitted agent input for direct message delivery", () => {
+  it("does not deliver direct messages through the old agent input path", () => {
     const session = {
       id: "codex-1",
       exited: false,
@@ -28,15 +28,9 @@ describe("agentIoMethods orchestration delivery", () => {
       "review complete",
     );
 
-    expect(delivered).toEqual(["codex-1"]);
+    expect(delivered).toEqual([]);
     expect(session.write).not.toHaveBeenCalled();
-    expect(writeAgentInput).toHaveBeenCalledWith(
-      "codex-1",
-      expect.stringContaining("Check the thread now"),
-      undefined,
-      undefined,
-      true,
-    );
+    expect(writeAgentInput).not.toHaveBeenCalled();
   });
 
   it("formats pushed messages as active instructions, not passive context", () => {

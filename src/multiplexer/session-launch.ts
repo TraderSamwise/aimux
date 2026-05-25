@@ -162,8 +162,8 @@ export async function run(host: SessionLaunchHost, opts: { command: string; args
   await host.instanceDirectory.registerInstance(host.instanceId, process.cwd());
   host.startHeartbeat();
   host.syncSessionsFromState();
-  host.taskDispatcher = host.createTaskDispatcher();
-  host.orchestrationDispatcher = host.createOrchestrationDispatcher();
+  host.taskDispatcher = null;
+  host.orchestrationDispatcher = null;
   host.defaultCommand = opts.command;
   host.defaultArgs = opts.args;
 
@@ -296,8 +296,8 @@ export async function runProjectService(host: SessionLaunchHost): Promise<number
   initProject();
   host.mode = "project-service";
   host.syncSessionsFromState();
-  host.taskDispatcher = host.createTaskDispatcher();
-  host.orchestrationDispatcher = host.createOrchestrationDispatcher();
+  host.taskDispatcher = null;
+  host.orchestrationDispatcher = null;
   host.writeInstructionFiles();
   await host.startProjectServices();
   host.startStatusRefresh();

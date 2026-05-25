@@ -3,14 +3,14 @@ import { sendHandoff } from "../orchestration-actions.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
 import type { DashboardSession } from "../dashboard/index.js";
 import type { AgentCollaborationContext } from "../collaboration.js";
-import { markMessageDelivered, type MessageKind } from "../threads.js";
+import type { MessageKind } from "../threads.js";
+import { disabledRuntimeCore } from "../runtime-core/index.js";
 import { stopProjectServices as stopProjectServicesImpl } from "./dashboard-model.js";
 import {
   applyDashboardSessionLabel as applyDashboardSessionLabelImpl,
   applySessionLabel as applySessionLabelImpl,
   deriveHeadline as deriveHeadlineImpl,
   getSessionLabel as getSessionLabelImpl,
-  interruptAgent as interruptAgentImpl,
   normalizeAgentInput as normalizeAgentInputImpl,
   paneStillContainsAgentDraft as paneStillContainsAgentDraftImpl,
   readAgentHistory as readAgentHistoryImpl,
@@ -19,7 +19,6 @@ import {
   resolveRunningSession as resolveRunningSessionImpl,
   scheduleTmuxAgentSubmit as scheduleTmuxAgentSubmitImpl,
   updateSessionLabel as updateSessionLabelImpl,
-  writeAgentInput as writeAgentInputImpl,
   writeTmuxAgentInput as writeTmuxAgentInputImpl,
 } from "./session-runtime-core.js";
 
@@ -63,25 +62,14 @@ export const agentIoMethods = {
     title?: string,
     messageId?: string,
   ): string[] {
-    const delivered: string[] = [];
-    for (const recipient of recipients) {
-      const session = this.sessions.find((candidate: any) => candidate.id === recipient && !candidate.exited);
-      if (!session) continue;
-      const runtime = this.deriveSessionSemanticState(session.id, session.status).runtime;
-      if (!runtime.canReceiveInput) continue;
-      void this.writeAgentInput(
-        recipient,
-        this.composeOrchestrationPrompt(threadId, from, body, kind, title),
-        undefined,
-        undefined,
-        true,
-      );
-      if (messageId) {
-        markMessageDelivered(threadId, messageId, recipient);
-      }
-      delivered.push(recipient);
-    }
-    return delivered;
+    void recipients;
+    void threadId;
+    void from;
+    void body;
+    void kind;
+    void title;
+    void messageId;
+    return [];
   },
 
   sendOrchestrationMessage(
@@ -260,7 +248,7 @@ export const agentIoMethods = {
     submit = false,
     collaboration?: AgentCollaborationContext,
   ): Promise<{ sessionId: string }> {
-    return writeAgentInputImpl(this, sessionId, data, parts, clientMessageId, submit, collaboration);
+    return disabledRuntimeCore.writeAgentInput({ sessionId, data, parts, clientMessageId, submit, collaboration });
   },
 
   async readAgentHistory(this: any, sessionId: string, lastN?: number): Promise<any> {
@@ -268,7 +256,7 @@ export const agentIoMethods = {
   },
 
   async interruptAgent(this: any, sessionId: string): Promise<{ sessionId: string }> {
-    return interruptAgentImpl(this, sessionId);
+    return disabledRuntimeCore.interruptAgent({ sessionId });
   },
 
   async readAgentOutput(this: any, sessionId: string, startLine?: number): Promise<any> {

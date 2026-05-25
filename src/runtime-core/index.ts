@@ -59,6 +59,15 @@ export interface RuntimeCore {
     sessionId: string;
     targetWorktreePath: string;
   }): Promise<{ sessionId: string; worktreePath: string }>;
+  writeAgentInput(input: {
+    sessionId: string;
+    data?: string;
+    parts?: unknown[];
+    clientMessageId?: string;
+    submit?: boolean;
+    collaboration?: unknown;
+  }): Promise<{ sessionId: string; accepted: boolean; error?: string }>;
+  interruptAgent(input: { sessionId: string }): Promise<{ sessionId: string }>;
 }
 
 function disabled(operation: RuntimeCoreOperation): never {
@@ -87,6 +96,12 @@ export function createDisabledRuntimeCore(): RuntimeCore {
     },
     async migrateAgent() {
       disabled("agent.migrate");
+    },
+    async writeAgentInput() {
+      disabled("agent.input");
+    },
+    async interruptAgent() {
+      disabled("agent.interrupt");
     },
   };
 }
