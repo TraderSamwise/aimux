@@ -938,17 +938,6 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
   };
 }
 
-export async function takeoverFromDashEntryWithFeedback(host: DashboardOpsHost, entry: any): Promise<void> {
-  const label = entry.label ?? entry.command;
-  await runDashboardOperation(
-    host,
-    `Taking over "${label}"`,
-    [`  Session: ${entry.id}`],
-    () => host.takeoverSessionFromDashEntry(entry),
-    `Failed to take over "${label}"`,
-  );
-}
-
 export async function migrateSessionWithFeedback(
   host: DashboardOpsHost,
   session: any,

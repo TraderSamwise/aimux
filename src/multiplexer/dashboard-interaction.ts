@@ -698,11 +698,6 @@ export const dashboardInteractionMethods = {
       return;
     }
 
-    if (entry.remoteInstanceId) {
-      await this.takeoverFromDashEntryWithFeedback(entry);
-      return;
-    }
-
     if (entry.status === "offline") {
       const offline = this.offlineSessions.find((session: any) => session.id === entry.id);
       await this.resumeOfflineSessionWithFeedback(offline ?? entry);

@@ -52,7 +52,6 @@ import {
   setPendingDashboardSessionAction as setPendingDashboardSessionActionImpl,
   stopDashboardServiceWithFeedback as stopDashboardServiceWithFeedbackImpl,
   stopSessionToOfflineWithFeedback as stopSessionToOfflineWithFeedbackImpl,
-  takeoverFromDashEntryWithFeedback as takeoverFromDashEntryWithFeedbackImpl,
   truncateAnsiForHost,
   truncatePlainForHost,
   waitForSessionStartForHost,
@@ -201,7 +200,6 @@ export type DashboardTailMethods = {
   resumeOfflineSessionWithFeedback(this: Multiplexer, session: SessionState): Promise<void>;
   waitForSessionStart(this: Multiplexer, sessionId: string, timeoutMs?: number): Promise<boolean>;
   dashboardSessionActionDeps(this: Multiplexer): ReturnType<typeof dashboardSessionActionDepsImpl>;
-  takeoverFromDashEntryWithFeedback(this: Multiplexer, entry: DashboardSession): Promise<void>;
   migrateSessionWithFeedback(
     this: Multiplexer,
     session: SessionRuntime,
@@ -212,16 +210,6 @@ export type DashboardTailMethods = {
   getDashboardSessions(this: Multiplexer): DashboardSession[];
   getDashboardServices(this: Multiplexer): DashboardService[];
   getDashboardSessionsInVisualOrder(this: Multiplexer): DashboardSession[];
-  takeoverSessionFromDashEntry(this: Multiplexer, entry: DashboardSession): Promise<void>;
-  takeoverSession(
-    this: Multiplexer,
-    target: {
-      id: string;
-      tool: string;
-      backendSessionId: string;
-      fromInstanceId: string;
-    },
-  ): Promise<void>;
 };
 
 export const dashboardTailMethods: DashboardTailMethods = {
@@ -393,9 +381,6 @@ export const dashboardTailMethods: DashboardTailMethods = {
   dashboardSessionActionDeps() {
     return dashboardSessionActionDepsImpl(this);
   },
-  async takeoverFromDashEntryWithFeedback(entry) {
-    await takeoverFromDashEntryWithFeedbackImpl(this, entry);
-  },
   async migrateSessionWithFeedback(session, targetPath, targetName) {
     await migrateSessionWithFeedbackImpl(this, session, targetPath, targetName);
   },
@@ -444,12 +429,5 @@ export const dashboardTailMethods: DashboardTailMethods = {
       return allDash;
     }
     return orderDashboardSessionsByVisualWorktree(allDash, worktreePaths, mainRepoPath);
-  },
-  async takeoverSessionFromDashEntry(entry) {
-    if (!entry.remoteInstanceId || !entry.remoteBackendSessionId) return;
-    debug(`takeover disabled for ${entry.id}: session ownership is topology-owned`, "instance");
-  },
-  async takeoverSession(target) {
-    debug(`takeover disabled for ${target.id}: session ownership is topology-owned`, "instance");
   },
 };
