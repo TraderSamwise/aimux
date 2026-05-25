@@ -11,6 +11,7 @@ import {
   snapshotProjectServiceWindows,
 } from "./service-state-snapshot.js";
 import { initPaths } from "../paths.js";
+import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 
 describe("service-state-snapshot", () => {
   it("merges runtime-stop service snapshots as offline services without stale tmux retention", () => {
@@ -46,7 +47,7 @@ describe("service-state-snapshot", () => {
     expect(merged).toEqual({
       savedAt: "2026-05-02T00:00:00.000Z",
       cwd: "/repo",
-      sessions: existing.sessions,
+      sessions: [],
       services: [
         {
           id: "service-1",
@@ -60,10 +61,13 @@ describe("service-state-snapshot", () => {
     });
   });
 
-  it("merges runtime-stop agent snapshots as offline sessions that replace stale live state", () => {
+  it("merges runtime-stop agent snapshots into topology instead of state sessions", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-agent-snapshot-merge-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
     const existing: SavedState = {
       savedAt: "2026-05-01T00:00:00.000Z",
-      cwd: "/repo",
+      cwd: repoRoot,
       sessions: [
         {
           id: "old-id",
@@ -79,37 +83,42 @@ describe("service-state-snapshot", () => {
       services: [],
     };
 
-    const merged = mergeRuntimeSnapshots(
-      existing,
-      {
-        sessions: [
-          {
-            id: "new-id",
-            tool: "claude",
-            toolConfigKey: "claude",
-            command: "claude",
-            args: ["--resume"],
-            lifecycle: "live",
-            backendSessionId: "backend-1",
-            tmuxTarget: { sessionName: "aimux-repo", windowId: "@2", windowIndex: 2, windowName: "claude" },
-          },
-        ],
-      },
-      "/repo",
-      "2026-05-02T00:00:00.000Z",
-    );
+    try {
+      const merged = mergeRuntimeSnapshots(
+        existing,
+        {
+          sessions: [
+            {
+              id: "new-id",
+              tool: "claude",
+              toolConfigKey: "claude",
+              command: "claude",
+              args: ["--resume"],
+              lifecycle: "live",
+              backendSessionId: "backend-1",
+              tmuxTarget: { sessionName: "aimux-repo", windowId: "@2", windowIndex: 2, windowName: "claude" },
+            },
+          ],
+        },
+        repoRoot,
+        "2026-05-02T00:00:00.000Z",
+      );
 
-    expect(merged.sessions).toEqual([
-      {
-        id: "new-id",
-        tool: "claude",
-        toolConfigKey: "claude",
-        command: "claude",
-        args: ["--resume"],
-        lifecycle: "offline",
-        backendSessionId: "backend-1",
-      },
-    ]);
+      expect(merged.sessions).toEqual([]);
+      expect(listTopologySessionStates({ statuses: ["offline"] })).toEqual([
+        expect.objectContaining({
+          id: "new-id",
+          tool: "claude",
+          toolConfigKey: "claude",
+          command: "claude",
+          args: ["--resume"],
+          lifecycle: "offline",
+          backendSessionId: "backend-1",
+        }),
+      ]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 
   it("does not snapshot managed windows for missing worktrees", async () => {

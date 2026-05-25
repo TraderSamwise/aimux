@@ -708,7 +708,7 @@ export function computeDashboardSessions(
     includeTeammates: options.includeTeammates,
     getSessionLabel: (sessionId: string) => host.getSessionLabel(sessionId),
     getSessionHeadline: (sessionId: string) => host.deriveHeadline(sessionId),
-    getSessionTaskDescription: (sessionId: string) => host.taskDispatcher?.getSessionTask(sessionId),
+    getSessionTaskDescription: () => undefined,
     getSessionRole: (sessionId: string) => host.sessionRoles.get(sessionId),
     getSessionContext: (sessionId: string) => metadata[sessionId]?.context,
     getSessionDerived: (sessionId: string) => metadata[sessionId]?.derived,

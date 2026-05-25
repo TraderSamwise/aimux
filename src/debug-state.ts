@@ -173,31 +173,6 @@ function filterSavedState(
 ): SourceResult<{ sessions: unknown[]; services: unknown[] }> {
   if (source.status !== "found") return { ...source, value: undefined };
   const root = asObject(source.value);
-  const sessions = asArray(root?.sessions).filter((entry) => {
-    const record = asObject(entry);
-    const id = getString(record, "id");
-    const backendSessionId = getString(record, "backendSessionId");
-    const worktreePath = getString(record, "worktreePath");
-    const label = getString(record, "label");
-    const matched =
-      matchesString(id, target) ||
-      matchesString(backendSessionId, target) ||
-      matchesString(worktreePath, target) ||
-      matchesString(label, target);
-    if (matched) {
-      addMatch(matches, seen, {
-        canonicalKey: sessionCanonical(id, backendSessionId),
-        kind: backendSessionId === target && id !== target ? "backend-session" : "session",
-        source: "savedState",
-        id,
-        backendSessionId,
-        worktreePath,
-        label,
-        raw: entry,
-      });
-    }
-    return matched;
-  });
   const services = asArray(root?.services).filter((entry) => {
     const record = asObject(entry);
     const id = getString(record, "id");
@@ -222,7 +197,7 @@ function filterSavedState(
     }
     return matched;
   });
-  return { status: "found", path: source.path, value: { sessions, services } };
+  return { status: "found", path: source.path, value: { sessions: [], services } };
 }
 
 function filterMetadata(

@@ -656,13 +656,13 @@ aimux records each agent's conversation and makes it available to other agents:
 - **`.aimux/context/{session-id}/summary.checkpoints.jsonl`** — append-only compaction checkpoints
 - **`.aimux/history/{session-id}.jsonl`** — full raw conversation log
 - **`.aimux/plans/{session-id}.md`** — canonical shared plan for that agent
-- **`.aimux/sessions.json`** — all running agents (so agents can discover each other)
+- **`.aimux/tasks/{task-id}.json`** — explicit handoff records when the user asks for delegation
 
 Agents are told about these files in their startup preamble.
 
 These are the canonical agent-facing paths. Runtime-private state stays under `~/.aimux/projects/<project-id>/...` and is not part of the agent contract.
 
-In tmux mode, live terminal state comes from tmux itself. `~/.aimux/projects/<project-id>/state.json` is mainly for offline/resume metadata, not live screen ownership.
+In tmux mode, live terminal state comes from tmux itself. Runtime topology is stored in `~/.aimux/projects/<project-id>/runtime-topology.yaml`; `~/.aimux/projects/<project-id>/state.json` is service/project state and is not the agent session source of truth.
 
 Memory roles are explicit:
 
@@ -713,7 +713,7 @@ Each new session gets a stub plan file. Agents are instructed to keep it current
 
 ## Task Delegation
 
-Agents can delegate work to each other through the aimux task system. This is a file-based protocol — agents create task files, aimux dispatches them, and agents report results.
+Agents can coordinate handoffs through `.aimux/tasks/*.json` when the user explicitly asks for delegation or handoff. These files are a shared record format; they are not an alternate live agent lifecycle or persistence layer.
 
 ### How it works
 
@@ -730,37 +730,35 @@ Agents can delegate work to each other through the aimux task system. This is a 
    }
    ```
 
-2. **Aimux detects** the pending task (checks every 2s) and finds an idle agent to handle it
+2. **A target agent or user picks it up** through an explicit handoff, teammate API request, or manual coordination
 
-3. **The task prompt is injected** into the target agent's stdin — the agent sees it as input and starts working
+3. **The receiving agent works from the task prompt** and treats the task file as durable coordination state
 
 4. **The agent completes the work** and updates the task file with `"status": "done"` and a `"result"` summary
 
-5. **Aimux notifies** the original agent that the task is complete
+5. **The original agent or user reviews** the result from the shared task record
 
 ### Targeting
 
-Tasks can be targeted in three ways:
+Tasks can carry routing metadata:
 
-- **Specific agent**: set `assignedTo` to a session ID from `.aimux/sessions.json`
-- **By tool type**: set `tool` to `"claude"`, `"codex"`, or `"aider"` — dispatched to the first idle agent of that type
-- **Any idle agent**: omit both fields — dispatched to any available idle agent
+- **Specific agent**: set `assignedTo` to the intended aimux session ID
+- **By tool type**: set `tool` to `"claude"`, `"codex"`, or `"aider"` as a preferred tool hint
+- **Untargeted**: omit both fields for a general handoff record
 
 ### Dashboard indicators
 
-- Sessions with active tasks show a purple `⧫` badge with the task description
-- The dashboard footer shows task counts: `[T:2p/1a]` (2 pending, 1 assigned)
-- Flash notifications appear when tasks are assigned, completed, or failed
+The dashboard and metadata APIs expose teammate and task workflow state where those flows are active. The runtime topology remains authoritative for session lifecycle.
 
 ### Using it
 
-Just ask your agent to delegate. The preamble tells agents exactly how the protocol works. For example:
+Ask your agent to delegate or hand off when you want a task file created. For example:
 
 > "Delegate the test writing to another agent"
 
 > "Hand off the CSS cleanup to the codex agent"
 
-The agent will create the task file, and aimux handles the rest. This is separate from any native task system in the underlying tools (like Claude Code's internal tasks).
+The agent will create the task file or use the teammate metadata API when a direct teammate flow is available. This is separate from any native task system in the underlying tools (like Claude Code's internal tasks).
 
 ## Custom Instructions
 

@@ -21,6 +21,13 @@ import {
 describe("resumeOfflineSession", () => {
   let repoRoot = "";
 
+  function seedTopologySessions(sessions: any[]): void {
+    saveRuntimeTopologySessions({
+      sessions,
+      projectRoot: repoRoot,
+    });
+  }
+
   beforeEach(async () => {
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-runtime-state-"));
     mkdirSync(join(repoRoot, ".git"), { recursive: true });
@@ -317,7 +324,6 @@ describe("resumeOfflineSession", () => {
       sessions: [runtime],
       offlineSessions: [offline],
       syncTmuxWindowMetadata: vi.fn(),
-      writeSessionsFile: vi.fn(),
       saveState: vi.fn(),
       invalidateDesktopStateSnapshot: vi.fn(),
       writeStatuslineFile: vi.fn(),
@@ -446,7 +452,6 @@ describe("resumeOfflineSession", () => {
       sessions: [runtime],
       offlineSessions: [],
       syncTmuxWindowMetadata: vi.fn(),
-      writeSessionsFile: vi.fn(),
       saveState: vi.fn(),
       invalidateDesktopStateSnapshot: vi.fn(),
       writeStatuslineFile: vi.fn(),
@@ -490,18 +495,21 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
     };
 
+    seedTopologySessions([
+      {
+        id: "codex-1",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "offline",
+        backendSessionId: "native-session",
+        worktreePath: repoRoot,
+      },
+    ]);
+
     const changed = loadOfflineSessions(host, {
-      sessions: [
-        {
-          id: "codex-1",
-          command: "codex",
-          tool: "codex",
-          toolConfigKey: "codex",
-          args: [],
-          backendSessionId: "native-session",
-          worktreePath: repoRoot,
-        },
-      ],
+      sessions: [],
       services: [],
       updatedAt: new Date().toISOString(),
     });
@@ -524,18 +532,21 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
     };
 
+    seedTopologySessions([
+      {
+        id: "codex-1",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "offline",
+        backendSessionId: "native-session",
+        worktreePath: repoRoot,
+      },
+    ]);
+
     const changed = loadOfflineSessions(host, {
-      sessions: [
-        {
-          id: "codex-1",
-          command: "codex",
-          tool: "codex",
-          toolConfigKey: "codex",
-          args: [],
-          backendSessionId: "native-session",
-          worktreePath: repoRoot,
-        },
-      ],
+      sessions: [],
       services: [],
       updatedAt: new Date().toISOString(),
     });
@@ -644,31 +655,33 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
     };
 
-    const changed = loadOfflineSessions(host, {
-      sessions: [
-        {
-          id: "claude-recoverable",
-          command: "claude",
-          tool: "claude",
-          toolConfigKey: "claude",
-          args: ["--resume", "native-session"],
-          lifecycle: "live",
-          backendSessionId: "native-session",
-          worktreePath: repoRoot,
-          tmuxTarget: {
-            sessionName: "aimux-test",
-            windowId: "@2",
-            windowIndex: 2,
-            windowName: "claude",
-          },
+    seedTopologySessions([
+      {
+        id: "claude-recoverable",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: ["--resume", "native-session"],
+        lifecycle: "offline",
+        backendSessionId: "native-session",
+        worktreePath: repoRoot,
+        tmuxTarget: {
+          sessionName: "aimux-test",
+          windowId: "@2",
+          windowIndex: 2,
+          windowName: "claude",
         },
-      ],
+      },
+    ]);
+
+    const changed = loadOfflineSessions(host, {
+      sessions: [],
       services: [],
       updatedAt: new Date().toISOString(),
     });
 
     expect(changed).toBe(true);
-    expect(host.offlineSessions).toEqual([
+    expect(host.offlineSessions).toMatchObject([
       {
         id: "claude-recoverable",
         command: "claude",
@@ -695,18 +708,20 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
     };
 
+    seedTopologySessions([
+      {
+        id: "claude-recoverable",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: ["--resume"],
+        lifecycle: "offline",
+        worktreePath: repoRoot,
+      },
+    ]);
+
     const changed = loadOfflineSessions(host, {
-      sessions: [
-        {
-          id: "claude-recoverable",
-          command: "claude",
-          tool: "claude",
-          toolConfigKey: "claude",
-          args: ["--resume"],
-          lifecycle: "live",
-          worktreePath: repoRoot,
-        },
-      ],
+      sessions: [],
       services: [],
       updatedAt: new Date().toISOString(),
     });
@@ -742,18 +757,20 @@ describe("resumeOfflineSession", () => {
     };
     recordSessionBackendSessionIdMetadata("claude-recoverable", "backend-from-metadata", repoRoot);
 
+    seedTopologySessions([
+      {
+        id: "claude-recoverable",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "offline",
+        worktreePath: repoRoot,
+      },
+    ]);
+
     const changed = loadOfflineSessions(host, {
-      sessions: [
-        {
-          id: "claude-recoverable",
-          command: "claude",
-          tool: "claude",
-          toolConfigKey: "claude",
-          args: [],
-          lifecycle: "offline",
-          worktreePath: repoRoot,
-        },
-      ],
+      sessions: [],
       services: [],
       updatedAt: new Date().toISOString(),
     });
@@ -773,24 +790,26 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
     };
 
+    seedTopologySessions([
+      {
+        id: "claude-recoverable",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "offline",
+        worktreePath: repoRoot,
+      },
+    ]);
+
     const changed = loadOfflineSessions(host, {
-      sessions: [
-        {
-          id: "claude-recoverable",
-          command: "claude",
-          tool: "claude",
-          toolConfigKey: "claude",
-          args: [],
-          lifecycle: "live",
-          worktreePath: repoRoot,
-        },
-      ],
+      sessions: [],
       services: [],
       updatedAt: new Date().toISOString(),
     });
 
     expect(changed).toBe(true);
-    expect(host.offlineSessions).toEqual([
+    expect(host.offlineSessions).toMatchObject([
       {
         id: "claude-recoverable",
         command: "claude",
@@ -814,29 +833,31 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
     };
 
-    const changed = loadOfflineSessions(host, {
-      sessions: [
-        {
-          id: "codex-offline",
-          command: "codex",
-          tool: "codex",
-          toolConfigKey: "codex",
-          args: [],
-          lifecycle: "offline",
-          tmuxTarget: {
-            sessionName: "aimux-test",
-            windowId: "@4",
-            windowIndex: 4,
-            windowName: "codex",
-          },
+    seedTopologySessions([
+      {
+        id: "codex-offline",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "offline",
+        tmuxTarget: {
+          sessionName: "aimux-test",
+          windowId: "@4",
+          windowIndex: 4,
+          windowName: "codex",
         },
-      ],
+      },
+    ]);
+
+    const changed = loadOfflineSessions(host, {
+      sessions: [],
       services: [],
       updatedAt: new Date().toISOString(),
     });
 
     expect(changed).toBe(true);
-    expect(host.offlineSessions).toEqual([
+    expect(host.offlineSessions).toMatchObject([
       {
         id: "codex-offline",
         command: "codex",

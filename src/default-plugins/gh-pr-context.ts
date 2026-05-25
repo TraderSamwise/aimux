@@ -5,6 +5,8 @@ import { getProjectStateDirFor } from "../paths.js";
 import { writeJsonAtomic } from "../atomic-write.js";
 import type { AimuxPluginAPI, AimuxPluginInstance } from "../plugin-runtime.js";
 import type { SessionContextMetadata } from "../metadata-store.js";
+import { createRuntimeTopologyStore } from "../runtime-core/topology-store.js";
+import { listTopologySessionStates, type RuntimeTopologySessionState } from "../runtime-core/topology-sessions.js";
 
 const POLL_INTERVAL_MS = 60_000;
 const PR_CACHE_TTL_MS = 5 * 60_000;
@@ -135,7 +137,12 @@ function stableSerialize(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
-export function collectGithubPrTargets(statusline: any, state: any, metadata: any): SessionTarget[] {
+export function collectGithubPrTargets(
+  statusline: any,
+  state: any,
+  metadata: any,
+  topologySessions: RuntimeTopologySessionState[] = [],
+): SessionTarget[] {
   const targets = new Map<string, SessionTarget>();
 
   for (const session of statusline?.sessions ?? []) {
@@ -146,7 +153,7 @@ export function collectGithubPrTargets(statusline: any, state: any, metadata: an
     });
   }
 
-  for (const session of state?.sessions ?? []) {
+  for (const session of topologySessions) {
     if (!targets.has(session.id)) {
       const existingContext = metadata?.sessions?.[session.id]?.context ?? {};
       targets.set(session.id, {
@@ -172,8 +179,10 @@ export function createGithubPrContextPlugin(api: AimuxPluginAPI): AimuxPluginIns
   const projectStateDir = getProjectStateDirFor(api.projectRoot);
   const statuslinePath = join(projectStateDir, "statusline.json");
   const statePath = join(projectStateDir, "state.json");
+  const runtimeTopologyPath = join(projectStateDir, "runtime-topology.yaml");
   const metadataPath = join(projectStateDir, "metadata.json");
   const prCachePath = join(projectStateDir, "plugin-cache", "gh-pr-context.json");
+  const topologyStore = createRuntimeTopologyStore(runtimeTopologyPath);
 
   const prCache = new Map<string, PrCacheEntry>();
   const contextCache = new Map<string, string>();
@@ -210,7 +219,11 @@ export function createGithubPrContextPlugin(api: AimuxPluginAPI): AimuxPluginIns
     const statusline = loadCachedJson(statuslinePath);
     const state = loadCachedJson(statePath);
     const metadata = loadCachedJson(metadataPath);
-    return collectGithubPrTargets(statusline, state, metadata);
+    const topologySessions = listTopologySessionStates({
+      statuses: ["running", "idle", "offline"],
+      store: topologyStore,
+    });
+    return collectGithubPrTargets(statusline, state, metadata, topologySessions);
   }
 
   async function resolveCachedPr(

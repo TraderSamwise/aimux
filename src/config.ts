@@ -257,7 +257,7 @@ export function saveGlobalConfig(config: Partial<AimuxConfig>): void {
   writeFileSync(getGlobalConfigPath(), JSON.stringify(config, null, 2) + "\n");
 }
 
-const GITIGNORE_CONTENTS = `# Runtime-private session state (lives in ~/.aimux/projects/)
+const GITIGNORE_CONTENTS = `# Runtime-private service/project state (lives in ~/.aimux/projects/)
 state.json
 instances.json
 

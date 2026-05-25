@@ -355,7 +355,6 @@ function ensureLocalSharedDirs(): void {
     "threads",
     "attachments",
     "session-messages",
-    "session-input-ops",
   ]) {
     mkdirSync(join(localDir, subdir), { recursive: true });
   }

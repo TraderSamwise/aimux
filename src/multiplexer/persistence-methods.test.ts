@@ -390,7 +390,6 @@ describe("persistenceMethods", () => {
         orderServicesForWorktree: vi.fn((services) => services),
       },
       dashboardState: { screen: "dashboard" },
-      taskDispatcher: undefined,
       footerFlash: null,
       refreshDesktopStateSnapshot: vi.fn(),
       buildDesktopStateSnapshot: vi.fn(),

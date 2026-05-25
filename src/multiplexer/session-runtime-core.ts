@@ -116,9 +116,6 @@ export function readStatusHeadline(_host: SessionRuntimeHost, sessionId: string)
 }
 
 export function deriveHeadline(host: SessionRuntimeHost, sessionId: string): string | undefined {
-  const taskDescription = host.taskDispatcher?.getSessionTask(sessionId);
-  if (taskDescription) return taskDescription.slice(0, 80);
-
   const statusHeadline = readStatusHeadline(host, sessionId);
   if (statusHeadline) return statusHeadline;
 

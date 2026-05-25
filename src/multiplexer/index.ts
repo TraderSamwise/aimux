@@ -105,11 +105,6 @@ export interface SavedState {
 
 type ManagedSession = SessionRuntime;
 
-type RuntimeQueueStatus = {
-  getSessionTask?: (sessionId: string) => string | undefined;
-  getTaskCounts?: () => { pending: number; assigned: number };
-};
-
 interface WorktreeRemovalJob {
   path: string;
   name: string;
@@ -243,8 +238,6 @@ export class Multiplexer {
   private contextWatcher = new ContextWatcher((target) =>
     this.tmuxRuntimeManager.captureTarget(target, { startLine: -120 }),
   );
-  private taskDispatcher: RuntimeQueueStatus | null = null;
-  private orchestrationDispatcher: null = null;
   /** Maps session ID → toolConfigKey for topology persistence */
   private sessionToolKeys = new Map<string, string>();
   /** Maps session ID → original args (before preamble injection) */
@@ -418,7 +411,7 @@ export class Multiplexer {
       unseenCount: derived?.unseenCount,
       notificationUnreadCount: unreadNotifications.length,
       latestNotification,
-      hasActiveTask: Boolean(this.taskDispatcher?.getSessionTask?.(sessionId)),
+      hasActiveTask: false,
     });
   }
 

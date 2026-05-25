@@ -308,7 +308,7 @@ export const persistenceMethods = {
         semantic: session.semantic,
         team: session.team,
       })),
-      tasks: this.taskDispatcher?.getTaskCounts() ?? { pending: 0, assigned: 0 },
+      tasks: { pending: 0, assigned: 0 },
       controlPlane: {
         daemonAlive: Boolean(loadDaemonInfo()),
         projectServiceAlive: true,

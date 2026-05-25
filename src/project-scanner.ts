@@ -211,7 +211,7 @@ export function scanProject(projectPath: string): ProjectInfo {
     if (!existsSync(topologyPath)) continue;
     try {
       const topology = new RuntimeTopologyStore(topologyPath).read();
-      for (const topologySession of topology.sessions.filter((session) => session.status === "offline")) {
+      for (const topologySession of topology.sessions.filter((session) => session.status !== "graveyard")) {
         const s = topologySessionToSessionState(topologySession, topology);
         if (seenIds.has(s.id)) continue;
         seenIds.add(s.id);

@@ -28,8 +28,8 @@ export function buildAimuxAgentInstructions(
     : "- This session is already a teammate; do not create nested teammate teams.\n";
   const delegationProtocol = includeTeammates
     ? "When the user specifically asks for a team or teammates, first use the Teammates API below to discover, reuse, create, and assign task work to direct teammate agents. " +
-      'For generic delegation, handoff, or assignment to ordinary idle aimux agents, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. '
-    : 'For generic delegation, handoff, or assignment to ordinary idle aimux agents, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. ';
+      'For generic delegation or handoff records, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. '
+    : 'For generic delegation or handoff records, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. ';
   const teammateInstructions = includeTeammates
     ? "\n\n" +
       "## Teammates\n" +
@@ -58,7 +58,7 @@ export function buildAimuxAgentInstructions(
     "## Aimux Model\n" +
     "- The user controls aimux from the dashboard and tmux status/footer UI.\n" +
     "- Agents are normal tool processes running inside aimux-managed tmux windows.\n" +
-    "- Broad cross-agent coordination can use `.aimux/tasks/*.json` when explicitly asked to delegate or hand off work to ordinary idle agents.\n" +
+    "- Broad cross-agent coordination can use `.aimux/tasks/*.json` when explicitly asked to delegate or hand off work.\n" +
     teamCoordinationLine +
     "\n" +
     "## Shared Context Files\n" +
@@ -74,8 +74,8 @@ export function buildAimuxAgentInstructions(
     "\n" +
     "## Delegation Protocol\n" +
     delegationProtocol +
-    "Optional fields are `assignedTo` for a specific session ID and `tool` for a preferred tool type. Aimux dispatches pending tasks to idle agents and injects the prompt.\n" +
-    "When you receive `[AIMUX TASK ...]`, complete it and mark the task `done` with `result`, or `failed` with `error`." +
+    "Optional fields are `assignedTo` for a specific session ID and `tool` for coordination metadata. Treat task files as shared handoff records for explicit teammate metadata API or manual coordination flows.\n" +
+    "When you accept a task file, complete it and mark the task `done` with `result`, or `failed` with `error`." +
     teammateInstructions
   );
 }

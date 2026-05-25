@@ -29,12 +29,15 @@ describe("buildAimuxAgentInstructions", () => {
     expect(instructions).toContain("Reuse existing teammates first");
     expect(instructions).toContain("Team lifecycle uses the local metadata teammate API");
     expect(instructions).toContain("Once a team exists, prefer delegating bounded subtasks");
-    expect(instructions).toContain("For generic delegation, handoff, or assignment to ordinary idle aimux agents");
+    expect(instructions).toContain("For generic delegation or handoff records");
+    expect(instructions).toContain("Treat task files as shared handoff records");
+    expect(instructions).not.toContain("dispatches pending tasks");
+    expect(instructions).not.toContain("[AIMUX TASK");
     expect(instructions).toContain("aimux metadata endpoint");
     expect(instructions).not.toContain("initialPrompt");
     expect(instructions).not.toContain("/agents/teammates/send");
     expect(instructions).not.toContain("Do not assume you can directly invoke another live agent");
-    expect(instructions).not.toContain("Check `.aimux/sessions.json` for sessions with `team.parentSessionId`");
+    expect(instructions).not.toContain("sessions.json");
     expect(instructions).toContain("Do not proactively create or edit `.aimux/plans/*` or `.aimux/status/*`");
     expect(instructions).not.toContain("Maintain a plan file");
     expect(instructions).not.toContain("Maintain a status file");

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { collectGithubPrTargets } from "./gh-pr-context.js";
 
 describe("collectGithubPrTargets", () => {
-  it("ignores stale metadata-only sessions", () => {
+  it("ignores stale state and metadata-only sessions", () => {
     const targets = collectGithubPrTargets(
       {
         sessions: [{ id: "live-from-statusline", worktreePath: "/repo/live" }],
@@ -18,16 +18,17 @@ describe("collectGithubPrTargets", () => {
           },
         },
       },
+      [{ id: "live-from-topology", worktreePath: "/repo/topology" } as any],
     );
 
     expect(targets).toEqual([
       { id: "live-from-statusline", worktreePath: "/repo/live" },
-      { id: "live-from-state", worktreePath: "/repo/state" },
+      { id: "live-from-topology", worktreePath: "/repo/topology" },
       { id: "service-1", worktreePath: "/repo/service" },
     ]);
   });
 
-  it("uses metadata context only to complete live session paths", () => {
+  it("uses metadata context only to complete topology/statusline session paths", () => {
     const targets = collectGithubPrTargets(
       {
         sessions: [{ id: "statusline-missing-path" }],
@@ -43,13 +44,17 @@ describe("collectGithubPrTargets", () => {
           "state-missing-path": {
             context: { worktreePath: "/repo/state" },
           },
+          "topology-missing-path": {
+            context: { worktreePath: "/repo/topology" },
+          },
         },
       },
+      [{ id: "topology-missing-path" } as any],
     );
 
     expect(targets).toEqual([
       { id: "statusline-missing-path", worktreePath: "/repo/statusline" },
-      { id: "state-missing-path", worktreePath: "/repo/state" },
+      { id: "topology-missing-path", worktreePath: "/repo/topology" },
     ]);
   });
 });

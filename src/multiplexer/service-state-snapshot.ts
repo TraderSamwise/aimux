@@ -5,10 +5,7 @@ import type { TmuxRuntimeManager } from "../tmux/runtime-manager.js";
 import type { SavedState, ServiceState, SessionState } from "./index.js";
 import { buildServiceStateFromMetadata } from "./services.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
-
-function sessionStateKey(session: SessionState): string {
-  return session.backendSessionId ? `backend:${session.backendSessionId}` : `id:${session.id}`;
-}
+import { upsertTopologySession } from "../runtime-core/topology-sessions.js";
 
 function sanitizeSnapshotSession(session: SessionState): SessionState {
   const { tmuxTarget: _tmuxTarget, ...rest } = session;
@@ -27,13 +24,9 @@ export function mergeRuntimeSnapshots(
   cwd: string,
   savedAt = new Date().toISOString(),
 ): SavedState {
-  const sessionByKey = new Map<string, SessionState>();
-  for (const session of state?.sessions ?? []) {
-    sessionByKey.set(sessionStateKey(session), session);
-  }
   for (const session of snapshots.sessions ?? []) {
     const offline = sanitizeSnapshotSession(session);
-    sessionByKey.set(sessionStateKey(offline), offline);
+    upsertTopologySession(offline, "offline");
   }
 
   const byId = new Map<string, ServiceState>();
@@ -50,7 +43,7 @@ export function mergeRuntimeSnapshots(
   return {
     savedAt,
     cwd: state?.cwd ?? cwd,
-    sessions: [...sessionByKey.values()],
+    sessions: [],
     services: [...byId.values()],
   };
 }

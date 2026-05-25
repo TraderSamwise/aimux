@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getStatePath, initPaths } from "../paths.js";
@@ -42,6 +42,36 @@ describe("runtime lifecycle state persistence", () => {
   function topologySessions() {
     return listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
   }
+
+  it("preserves topology sessions even when service state does not exist yet", () => {
+    if (existsSync(getStatePath())) unlinkSync(getStatePath());
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-offline",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-1",
+          worktreePath: repoRoot,
+        },
+      ],
+    });
+
+    runtimeLifecycleMethods.saveState.call(host() as never);
+
+    expect(topologySessions()).toEqual([
+      expect.objectContaining({
+        id: "codex-offline",
+        lifecycle: "offline",
+        backendSessionId: "backend-1",
+      }),
+    ]);
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { sessions: unknown[] };
+    expect(saved.sessions).toEqual([]);
+  });
 
   it("persists an empty session list after the last local agent row is removed", () => {
     writeFileSync(

@@ -1098,8 +1098,6 @@ describe("runProjectService", () => {
     const host: any = {
       mode: "dashboard",
       syncSessionsFromState: vi.fn(),
-      taskDispatcher: "sentinel",
-      orchestrationDispatcher: "sentinel",
       writeInstructionFiles: vi.fn(),
       startProjectServices: vi.fn(),
       startStatusRefresh: vi.fn(() => resolveRun(0)),
@@ -1115,8 +1113,6 @@ describe("runProjectService", () => {
     await expect(runPromise).resolves.toBe(0);
 
     expect(host.mode).toBe("project-service");
-    expect(host.taskDispatcher).toBeNull();
-    expect(host.orchestrationDispatcher).toBeNull();
     expect(host.startStatusRefresh).toHaveBeenCalledOnce();
   });
 });

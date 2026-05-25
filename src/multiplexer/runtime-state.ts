@@ -172,38 +172,6 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
   if (host.statusInterval) return;
   host.statusInterval = setInterval(() => {
     let dashboardNeedsRender = false;
-    if (host.mode === "project-service") {
-      host.taskDispatcher?.tick(host.sessions.map((s: any) => s.id));
-      host.orchestrationDispatcher?.tick(host.sessions.map((s: any) => s.id));
-    }
-
-    const events = host.taskDispatcher?.drainEvents() ?? [];
-    for (const ev of events) {
-      if (ev.type === "assigned") {
-        host.footerFlash = `⧫ Task assigned → ${ev.sessionId}`;
-      } else if (ev.type === "completed") {
-        host.footerFlash = `✓ Task done by ${ev.sessionId}`;
-      } else if (ev.type === "failed") {
-        host.footerFlash = `✗ Task failed: ${ev.sessionId}`;
-      } else if (ev.type === "review_created") {
-        host.footerFlash = `⧫ Review created: ${ev.description}`;
-      } else if (ev.type === "review_approved") {
-        host.footerFlash = `✓ Review approved: ${ev.description}`;
-      } else if (ev.type === "changes_requested") {
-        host.footerFlash = `↻ Changes requested: ${ev.description}`;
-      }
-      host.footerFlashTicks = 3;
-      dashboardNeedsRender = true;
-    }
-
-    const orchestrationEvents = host.orchestrationDispatcher?.drainEvents() ?? [];
-    for (const event of orchestrationEvents) {
-      if (event.type === "message_delivered") {
-        host.footerFlash = `✉ Message delivered → ${event.sessionId}`;
-        host.footerFlashTicks = 3;
-        dashboardNeedsRender = true;
-      }
-    }
 
     if (host.dashboardFeedback.tickFlashVisibilityChanged()) {
       dashboardNeedsRender = true;
@@ -260,7 +228,7 @@ export function loadOfflineSessions(
   state = host.constructor.loadState(),
   liveAgentWindows = listLiveAgentWindows(host),
 ): boolean {
-  const savedSessions = state?.sessions ?? listTopologySessionStates({ statuses: ["offline"] });
+  const savedSessions = listTopologySessionStates({ statuses: ["offline"] });
   if (savedSessions.length === 0) {
     const changed = host.offlineSessions.length > 0;
     host.offlineSessions = [];
@@ -390,7 +358,7 @@ export function restoreTmuxSessionsFromState(
   host: RuntimeStateHost,
   state = host.constructor.loadState(),
 ): ManagedAgentWindow[] {
-  const savedSessions = state?.sessions ?? listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
+  const savedSessions = listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
   const savedById = new Map<string, any>(savedSessions.map((session: any) => [session.id, session]));
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
