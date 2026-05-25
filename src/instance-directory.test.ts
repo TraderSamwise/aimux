@@ -96,7 +96,7 @@ describe("InstanceDirectory", () => {
     expect(result.skippedClaimDetection).toBe(true);
   });
 
-  it("builds sessions file entries with remote dedupe", () => {
+  it("builds instance session directory entries with remote dedupe", () => {
     const directory = new InstanceDirectory();
     const localTeam = { teamId: "team-local", parentSessionId: "parent-local" };
     const remoteTeam = { teamId: "team-remote", parentSessionId: "parent-remote" };
@@ -123,7 +123,7 @@ describe("InstanceDirectory", () => {
       },
     ];
 
-    expect(directory.buildSessionsFileEntries(localSessions, remoteInstances)).toEqual([
+    expect(directory.buildSessionDirectoryEntries(localSessions, remoteInstances)).toEqual([
       {
         id: "local-1",
         tool: "codex",

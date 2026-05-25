@@ -216,16 +216,16 @@ export function stopStatusRefresh(host: RuntimeStateHost): void {
   }
 }
 
-export function syncSessionsFromState(host: RuntimeStateHost, state = host.constructor.loadState()): void {
-  const liveAgentWindows = restoreTmuxSessionsFromState(host, state);
-  loadOfflineSessions(host, state, liveAgentWindows);
+export function syncSessionsFromTopology(host: RuntimeStateHost): void {
+  const state = host.constructor.loadState();
+  const liveAgentWindows = restoreTmuxSessionsFromTopology(host);
+  loadOfflineTopologySessions(host, liveAgentWindows);
   loadOfflineServices(host, state);
   host.invalidateDesktopStateSnapshot();
 }
 
-export function loadOfflineSessions(
+export function loadOfflineTopologySessions(
   host: RuntimeStateHost,
-  state = host.constructor.loadState(),
   liveAgentWindows = listLiveAgentWindows(host),
 ): boolean {
   const savedSessions = listTopologySessionStates({ statuses: ["offline"] });
@@ -354,10 +354,7 @@ export function buildLiveServiceStates(host: RuntimeStateHost): any[] {
   return liveServices;
 }
 
-export function restoreTmuxSessionsFromState(
-  host: RuntimeStateHost,
-  state = host.constructor.loadState(),
-): ManagedAgentWindow[] {
+export function restoreTmuxSessionsFromTopology(host: RuntimeStateHost): ManagedAgentWindow[] {
   const savedSessions = listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
   const savedById = new Map<string, any>(savedSessions.map((session: any) => [session.id, session]));
   const cols = process.stdout.columns ?? 80;

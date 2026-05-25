@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { RuntimeTopologyStore, emptyRuntimeTopology } from "./runtime-core/topology-store.js";
 
 let tmpHome: string;
 let projectA: string;
@@ -120,6 +121,76 @@ describe("project-scanner", () => {
         status: "waiting",
         role: "coder",
       }),
+    );
+  });
+
+  it("does not mint project sessions from statusline-only data", async () => {
+    writeFileSync(
+      join(tmpHome, ".aimux", "projects", "proj-a", "statusline.json"),
+      JSON.stringify({
+        sessions: [
+          {
+            id: "statusline-only",
+            tool: "codex",
+            headline: "stale statusline row",
+            status: "waiting",
+          },
+        ],
+      }),
+    );
+
+    const { scanProject } = await import("./project-scanner.js");
+    const result = scanProject(projectA);
+
+    expect(result.sessions.map((session) => session.id)).toEqual(["session-a"]);
+  });
+
+  it("loads project sessions from runtime topology with topology status", async () => {
+    const projectStateDir = join(tmpHome, ".aimux", "projects", "proj-a");
+    const now = "2026-05-25T00:00:00.000Z";
+    new RuntimeTopologyStore(join(projectStateDir, "runtime-topology.yaml")).write({
+      ...emptyRuntimeTopology(now),
+      rigs: [{ id: "rig-a", name: "project-a", projectRoot: projectA, createdAt: now, updatedAt: now }],
+      nodes: [
+        {
+          id: "node-topology-idle",
+          rigId: "rig-a",
+          logicalId: "topology-idle",
+          toolConfigKey: "codex",
+          cwd: projectA,
+          label: "topology",
+          createdAt: now,
+        },
+      ],
+      sessions: [
+        {
+          id: "topology-idle",
+          nodeId: "node-topology-idle",
+          status: "idle",
+          tool: "codex",
+          command: "codex",
+          args: [],
+          worktreePath: projectA,
+          label: "topology",
+          headline: "from topology",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    const { scanProject } = await import("./project-scanner.js");
+    const result = scanProject(projectA);
+
+    expect(result.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "topology-idle",
+          status: "idle",
+          label: "topology",
+          headline: "from topology",
+        }),
+      ]),
     );
   });
 

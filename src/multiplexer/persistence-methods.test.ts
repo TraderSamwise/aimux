@@ -581,7 +581,7 @@ describe("persistenceMethods", () => {
         dashboardPendingActions: pending,
         footerFlash: "",
         footerFlashTicks: 0,
-        syncSessionsFromState: vi.fn(),
+        syncSessionsFromTopology: vi.fn(),
         listWorktreeGraveyardEntries: vi.fn(() => []),
         invalidateDesktopStateSnapshot: vi.fn(),
         refreshLocalDashboardModel: vi.fn(),
@@ -648,7 +648,7 @@ describe("persistenceMethods", () => {
       dashboardPendingActions: pending,
       footerFlash: "",
       footerFlashTicks: 0,
-      syncSessionsFromState: vi.fn(),
+      syncSessionsFromTopology: vi.fn(),
       listWorktreeGraveyardEntries: vi.fn(() => []),
       invalidateDesktopStateSnapshot: vi.fn(),
       refreshLocalDashboardModel: vi.fn(),
@@ -727,7 +727,7 @@ describe("persistenceMethods", () => {
       writeFileSync(getStatePath(), JSON.stringify({ savedAt: "now", cwd: repoRoot, sessions: [] }, null, 2) + "\n");
       const host = {
         offlineSessions: [],
-        loadOfflineSessions: vi.fn(),
+        loadOfflineTopologySessions: vi.fn(),
         listGraveyardEntries: vi.fn(() => listTopologySessionStates({ statuses: ["graveyard"] })),
       };
 
@@ -771,7 +771,7 @@ describe("persistenceMethods", () => {
       writeFileSync(getStatePath(), JSON.stringify({ savedAt: "now", cwd: repoRoot, sessions: [] }, null, 2) + "\n");
       const host = {
         offlineSessions: [],
-        loadOfflineSessions: vi.fn(),
+        loadOfflineTopologySessions: vi.fn(),
         listGraveyardEntries: vi.fn(() => listTopologySessionStates({ statuses: ["graveyard"] })),
       };
 

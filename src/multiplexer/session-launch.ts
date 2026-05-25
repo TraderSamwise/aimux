@@ -167,7 +167,7 @@ export async function run(host: SessionLaunchHost, opts: { command: string; args
   initProject();
   await host.instanceDirectory.registerInstance(host.instanceId, process.cwd());
   host.startHeartbeat();
-  host.syncSessionsFromState();
+  host.syncSessionsFromTopology();
   host.defaultCommand = opts.command;
   host.defaultArgs = opts.args;
 
@@ -196,7 +196,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   host.startHeartbeat();
   host.startedInDashboard = true;
   host.mode = "dashboard";
-  host.syncSessionsFromState();
+  host.syncSessionsFromTopology();
 
   const config = loadConfig();
   const defaultTool = config.tools[config.defaultTool];
@@ -299,7 +299,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
 export async function runProjectService(host: SessionLaunchHost): Promise<number> {
   initProject();
   host.mode = "project-service";
-  host.syncSessionsFromState();
+  host.syncSessionsFromTopology();
   host.writeInstructionFiles();
   await host.startProjectServices();
   host.startStatusRefresh();

@@ -14,7 +14,6 @@ describe("agentIoMethods orchestration delivery", () => {
     const host: any = {
       sessions: [session],
       deriveSessionSemanticState: () => ({ runtime: { canReceiveInput: true, isAlive: true } }),
-      composeOrchestrationPrompt: agentIoMethods.composeOrchestrationPrompt,
       writeAgentInput,
     };
 
@@ -31,14 +30,5 @@ describe("agentIoMethods orchestration delivery", () => {
     expect(delivered).toEqual([]);
     expect(session.write).not.toHaveBeenCalled();
     expect(writeAgentInput).not.toHaveBeenCalled();
-  });
-
-  it("formats pushed messages as active instructions, not passive context", () => {
-    const prompt = agentIoMethods.composeOrchestrationPrompt("thread-1", "claude-1", "Ping.", "status", "review done");
-
-    expect(prompt).toContain("[AIMUX MESSAGE thread-1 from claude-1]");
-    expect(prompt).toContain("This is a status message delivered by aimux.");
-    expect(prompt).toContain("Check the thread now");
-    expect(prompt).toContain("acknowledge that no action is needed");
   });
 });

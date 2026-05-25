@@ -11,9 +11,9 @@ import {
   getInstanceSessionRefs,
   graveyardSession,
   loadOfflineServices,
-  loadOfflineSessions,
+  loadOfflineTopologySessions,
   recordSessionBackendSessionId,
-  restoreTmuxSessionsFromState,
+  restoreTmuxSessionsFromTopology,
   resumeOfflineSession,
   stopSessionToOffline,
 } from "./runtime-state.js";
@@ -508,11 +508,7 @@ describe("resumeOfflineSession", () => {
       },
     ]);
 
-    const changed = loadOfflineSessions(host, {
-      sessions: [],
-      services: [],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineTopologySessions(host);
 
     expect(changed).toBe(false);
     expect(host.offlineSessions).toEqual([]);
@@ -545,11 +541,7 @@ describe("resumeOfflineSession", () => {
       },
     ]);
 
-    const changed = loadOfflineSessions(host, {
-      sessions: [],
-      services: [],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineTopologySessions(host);
 
     expect(changed).toBe(true);
     expect(host.offlineSessions).toMatchObject([{ id: "codex-1" }]);
@@ -620,25 +612,7 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
     };
 
-    const changed = loadOfflineSessions(host, {
-      sessions: [
-        {
-          id: "claude-stale",
-          command: "claude",
-          tool: "claude",
-          toolConfigKey: "claude",
-          args: [],
-          tmuxTarget: {
-            sessionName: "aimux-test",
-            windowId: "@2",
-            windowIndex: 2,
-            windowName: "claude",
-          },
-        },
-      ],
-      services: [],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineTopologySessions(host);
 
     expect(changed).toBe(false);
     expect(host.offlineSessions).toEqual([]);
@@ -674,11 +648,7 @@ describe("resumeOfflineSession", () => {
       },
     ]);
 
-    const changed = loadOfflineSessions(host, {
-      sessions: [],
-      services: [],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineTopologySessions(host);
 
     expect(changed).toBe(true);
     expect(host.offlineSessions).toMatchObject([
@@ -720,11 +690,7 @@ describe("resumeOfflineSession", () => {
       },
     ]);
 
-    const changed = loadOfflineSessions(host, {
-      sessions: [],
-      services: [],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineTopologySessions(host);
 
     expect(changed).toBe(true);
     expect(host.offlineSessions).toEqual([
@@ -769,11 +735,7 @@ describe("resumeOfflineSession", () => {
       },
     ]);
 
-    const changed = loadOfflineSessions(host, {
-      sessions: [],
-      services: [],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineTopologySessions(host);
 
     expect(changed).toBe(true);
     expect(host.offlineSessions[0].backendSessionId).toBe("backend-from-metadata");
@@ -802,11 +764,7 @@ describe("resumeOfflineSession", () => {
       },
     ]);
 
-    const changed = loadOfflineSessions(host, {
-      sessions: [],
-      services: [],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineTopologySessions(host);
 
     expect(changed).toBe(true);
     expect(host.offlineSessions).toMatchObject([
@@ -850,11 +808,7 @@ describe("resumeOfflineSession", () => {
       },
     ]);
 
-    const changed = loadOfflineSessions(host, {
-      sessions: [],
-      services: [],
-      updatedAt: new Date().toISOString(),
-    });
+    const changed = loadOfflineTopologySessions(host);
 
     expect(changed).toBe(true);
     expect(host.offlineSessions).toMatchObject([
@@ -940,7 +894,7 @@ describe("resumeOfflineSession", () => {
       syncTmuxWindowMetadata: vi.fn(),
     };
 
-    restoreTmuxSessionsFromState(host, { sessions: [] });
+    restoreTmuxSessionsFromTopology(host);
 
     expect(host.registerManagedSession).toHaveBeenCalledWith(
       expect.anything(),
@@ -980,7 +934,7 @@ describe("resumeOfflineSession", () => {
       debug: vi.fn(),
     };
 
-    restoreTmuxSessionsFromState(host, { sessions: [] });
+    restoreTmuxSessionsFromTopology(host);
 
     expect(host.sessions).toEqual([]);
     expect(host.sessionTmuxTargets.has("codex-stale")).toBe(false);

@@ -99,7 +99,6 @@ export interface ServiceState {
 export interface SavedState {
   savedAt: string;
   cwd: string;
-  sessions: SessionState[];
   services?: ServiceState[];
 }
 
@@ -304,8 +303,8 @@ export class Multiplexer {
         this.confirmedRegistered = value;
       },
       getInstanceSessionRefs: () => this.getInstanceSessionRefs(),
-      syncSessionsFromState: () => this.syncSessionsFromState(),
-      loadOfflineSessions: () => this.loadOfflineSessions(),
+      syncSessionsFromTopology: () => this.syncSessionsFromTopology(),
+      loadOfflineTopologySessions: () => this.loadOfflineTopologySessions(),
       renderCurrentDashboardView: () => this.renderCurrentDashboardView(),
       renderDashboard: () => this.renderDashboard(),
       handleSessionClaimed: (sessionId) => this.handleSessionClaimed(sessionId),

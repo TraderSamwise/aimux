@@ -3,7 +3,6 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import type { SavedState } from "./index.js";
 import {
   mergeRuntimeSnapshots,
   mergeServiceSnapshots,
@@ -15,7 +14,7 @@ import { listTopologySessionStates } from "../runtime-core/topology-sessions.js"
 
 describe("service-state-snapshot", () => {
   it("merges runtime-stop service snapshots as offline services without stale tmux retention", () => {
-    const existing: SavedState = {
+    const existing = {
       savedAt: "2026-05-01T00:00:00.000Z",
       cwd: "/repo",
       sessions: [{ id: "agent-1", tool: "codex", toolConfigKey: "codex", command: "codex", args: [] }],
@@ -47,7 +46,6 @@ describe("service-state-snapshot", () => {
     expect(merged).toEqual({
       savedAt: "2026-05-02T00:00:00.000Z",
       cwd: "/repo",
-      sessions: [],
       services: [
         {
           id: "service-1",
@@ -65,7 +63,7 @@ describe("service-state-snapshot", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-agent-snapshot-merge-"));
     mkdirSync(join(repoRoot, ".git"), { recursive: true });
     await initPaths(repoRoot);
-    const existing: SavedState = {
+    const existing = {
       savedAt: "2026-05-01T00:00:00.000Z",
       cwd: repoRoot,
       sessions: [
@@ -104,7 +102,7 @@ describe("service-state-snapshot", () => {
         "2026-05-02T00:00:00.000Z",
       );
 
-      expect(merged.sessions).toEqual([]);
+      expect(merged).not.toHaveProperty("sessions");
       expect(listTopologySessionStates({ statuses: ["offline"] })).toEqual([
         expect.objectContaining({
           id: "new-id",

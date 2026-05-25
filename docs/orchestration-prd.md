@@ -10,7 +10,7 @@ Implemented so far:
 - thread inbox/dashboard screen
 - direct messaging, handoff, and task-assignment CLI verbs
 - project-service API endpoints for threads, handoffs, task assignment, and workflow actions
-- durable message delivery when recipients are busy
+- durable thread state for messages and workflow actions
 - dashboard-native orchestration actions and quick reply/jump flows
 - routing by explicit session, role, tool, and worktree
 - fan-out routing to all matching recipients
@@ -126,15 +126,15 @@ Key concepts called out in the upstream README:
   - asynchronous spawn/delegation
 - `send_message`:
   - direct communication with an existing agent
-- queued delivery when the recipient is busy
+- durable inbox state when the recipient is busy
 
 Those semantics are extremely close to what aimux needs next.
 
 What to borrow:
 
 - explicit orchestration verbs
-- inbox/message delivery semantics
-- queued delivery when recipients are busy
+- inbox/message state semantics
+- durable waiting state when recipients are busy
 - treating terminal identity as a routing target
 
 What not to borrow wholesale:
@@ -622,7 +622,7 @@ But aimux keeps its own primitives:
 
 We should also explicitly align with CAO's orchestration verbs:
 
-- `send_message` -> thread message append + queued delivery
+- `send_message` -> thread message append + waiting state
 - `assign` -> task creation + async execution
 - `handoff` -> thread/task ownership transfer + wait state
 

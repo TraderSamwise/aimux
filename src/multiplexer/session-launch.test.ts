@@ -1098,7 +1098,7 @@ describe("runProjectService", () => {
     const resolveRun = vi.fn();
     const host: any = {
       mode: "dashboard",
-      syncSessionsFromState: vi.fn(),
+      syncSessionsFromTopology: vi.fn(),
       writeInstructionFiles: vi.fn(),
       startProjectServices: vi.fn(),
       startStatusRefresh: vi.fn(() => resolveRun(0)),
@@ -1126,7 +1126,7 @@ describe("runDashboard", () => {
       startHeartbeat: vi.fn(),
       startedInDashboard: false,
       mode: "session",
-      syncSessionsFromState: vi.fn(),
+      syncSessionsFromTopology: vi.fn(),
       writeInstructionFiles: vi.fn(),
       terminalHost: {
         enterRawMode: vi.fn(),

@@ -866,7 +866,7 @@ export function readTmuxProcessInfo(
 }
 
 export function buildDesktopStateSnapshot(host: DashboardModelHost) {
-  host.syncSessionsFromState();
+  host.syncSessionsFromTopology();
   const worktrees = host.listDesktopWorktrees();
   const realizedWorktreePaths = new Set(
     worktrees.filter((worktree: any) => !worktree.operationFailure).map((worktree: any) => worktree.path),

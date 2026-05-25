@@ -129,7 +129,7 @@ describe("buildDebugStateReport", () => {
 
     expect(report.targetResolution.status).toBe("matched");
     expect(report.targetResolution.entityCount).toBe(1);
-    expect(report.sources.savedState.value?.sessions).toHaveLength(0);
+    expect(report.sources.savedState.value).not.toHaveProperty("sessions");
     expect(report.sources.runtimeTopology.value?.sessions).toHaveLength(1);
     expect(report.sources.metadata.value?.sessions).toHaveLength(1);
     expect(report.sources.tmux.value?.windows).toHaveLength(1);

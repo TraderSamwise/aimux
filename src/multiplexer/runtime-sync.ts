@@ -14,8 +14,8 @@ export class MultiplexerRuntimeSync {
       getConfirmedRegistered: () => Set<string>;
       setConfirmedRegistered: (value: Set<string>) => void;
       getInstanceSessionRefs: () => InstanceSessionRef[];
-      syncSessionsFromState: () => void;
-      loadOfflineSessions: () => boolean;
+      syncSessionsFromTopology: () => void;
+      loadOfflineTopologySessions: () => boolean;
       renderCurrentDashboardView: () => void;
       renderDashboard: () => void;
       handleSessionClaimed: (sessionId: string) => void;
@@ -27,7 +27,7 @@ export class MultiplexerRuntimeSync {
     if (this.heartbeatInterval) return;
     this.heartbeatInterval = setInterval(() => {
       if (this.deps.getMode() === "project-service") {
-        this.deps.syncSessionsFromState();
+        this.deps.syncSessionsFromTopology();
         return;
       }
       let dashboardNeedsRender = false;
@@ -46,7 +46,7 @@ export class MultiplexerRuntimeSync {
         })
         .catch(() => {});
 
-      const offlineChanged = this.deps.loadOfflineSessions();
+      const offlineChanged = this.deps.loadOfflineTopologySessions();
       if (offlineChanged && this.deps.getMode() === "dashboard") {
         this.deps.renderCurrentDashboardView();
       }
@@ -63,7 +63,7 @@ export class MultiplexerRuntimeSync {
   startProjectServiceRefresh(): void {
     if (this.projectServiceInterval) return;
     this.projectServiceInterval = setInterval(() => {
-      this.deps.syncSessionsFromState();
+      this.deps.syncSessionsFromTopology();
     }, 2000);
   }
 

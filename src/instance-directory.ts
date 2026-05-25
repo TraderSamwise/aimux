@@ -10,7 +10,7 @@ import {
 import { getRemoteOwnedSessionKeys } from "./dashboard/session-registry.js";
 import type { SessionTeamMetadata } from "./team.js";
 
-export interface SessionsFileEntry {
+export interface InstanceSessionDirectoryEntry {
   id: string;
   tool: string;
   status: string;
@@ -93,8 +93,11 @@ export class InstanceDirectory {
     return (this.fns.claimSession ?? claimSession)(sessionId, fromInstanceId, cwd);
   }
 
-  buildSessionsFileEntries(localSessions: InstanceSessionRef[], remoteInstances: InstanceInfo[]): SessionsFileEntry[] {
-    const data: SessionsFileEntry[] = localSessions.map((session) => ({
+  buildSessionDirectoryEntries(
+    localSessions: InstanceSessionRef[],
+    remoteInstances: InstanceInfo[],
+  ): InstanceSessionDirectoryEntry[] {
+    const data: InstanceSessionDirectoryEntry[] = localSessions.map((session) => ({
       id: session.id,
       tool: session.tool,
       status: "running",

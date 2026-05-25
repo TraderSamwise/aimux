@@ -21,8 +21,8 @@ import {
   handleSessionClaimed as handleSessionClaimedImpl,
   isSessionRuntimeLive as isSessionRuntimeLiveImpl,
   loadOfflineServices as loadOfflineServicesImpl,
-  loadOfflineSessions as loadOfflineSessionsImpl,
-  restoreTmuxSessionsFromState as restoreTmuxSessionsFromStateImpl,
+  loadOfflineTopologySessions as loadOfflineTopologySessionsImpl,
+  restoreTmuxSessionsFromTopology as restoreTmuxSessionsFromTopologyImpl,
   recordSessionBackendSessionId as recordSessionBackendSessionIdImpl,
   resumeOfflineSession as resumeOfflineSessionImpl,
   startHeartbeat as startHeartbeatImpl,
@@ -32,7 +32,7 @@ import {
   stopProjectServiceRefresh as stopProjectServiceRefreshImpl,
   stopSessionToOffline as stopSessionToOfflineImpl,
   stopStatusRefresh as stopStatusRefreshImpl,
-  syncSessionsFromState as syncSessionsFromStateImpl,
+  syncSessionsFromTopology as syncSessionsFromTopologyImpl,
 } from "./runtime-state.js";
 
 function sanitizeOfflineSessionState(session: SessionState, metadataState = loadMetadataState()): SessionState {
@@ -115,11 +115,11 @@ export type RuntimeLifecycleMethods = {
   removeInstructionFiles(this: Multiplexer): void;
   startStatusRefresh(this: Multiplexer): void;
   stopStatusRefresh(this: Multiplexer): void;
-  syncSessionsFromState(this: Multiplexer, state?: SavedState | null): void;
-  loadOfflineSessions(this: Multiplexer, state?: SavedState | null): boolean;
+  syncSessionsFromTopology(this: Multiplexer): void;
+  loadOfflineTopologySessions(this: Multiplexer): boolean;
   loadOfflineServices(this: Multiplexer, state?: SavedState | null): boolean;
   buildLiveServiceStates(this: Multiplexer): ServiceState[];
-  restoreTmuxSessionsFromState(this: Multiplexer, state?: SavedState | null): void;
+  restoreTmuxSessionsFromTopology(this: Multiplexer): void;
   stopSessionToOffline(this: Multiplexer, session: SessionRuntime): void;
   adjustAfterRemove(this: Multiplexer, hasWorktrees: boolean): void;
   graveyardSession(this: Multiplexer, sessionId: string, sessionSeed?: any): void;
@@ -154,9 +154,12 @@ export function loadStateStatic(): SavedState | null {
 
   try {
     const raw = readFileSync(statePath, "utf-8");
-    const state = JSON.parse(raw) as SavedState;
-
-    return { ...state, sessions: [] };
+    const state = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      savedAt: typeof state.savedAt === "string" ? state.savedAt : new Date().toISOString(),
+      cwd: typeof state.cwd === "string" ? state.cwd : process.cwd(),
+      services: Array.isArray(state.services) ? (state.services as ServiceState[]) : undefined,
+    };
   } catch {
     return null;
   }
@@ -211,11 +214,11 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   stopStatusRefresh(this: Multiplexer) {
     stopStatusRefreshImpl(this);
   },
-  syncSessionsFromState(this: Multiplexer, state = loadStateStatic()) {
-    syncSessionsFromStateImpl(this, state);
+  syncSessionsFromTopology(this: Multiplexer) {
+    syncSessionsFromTopologyImpl(this);
   },
-  loadOfflineSessions(this: Multiplexer, state = loadStateStatic()) {
-    return loadOfflineSessionsImpl(this, state);
+  loadOfflineTopologySessions(this: Multiplexer) {
+    return loadOfflineTopologySessionsImpl(this);
   },
   loadOfflineServices(this: Multiplexer, state = loadStateStatic()) {
     return loadOfflineServicesImpl(this, state);
@@ -223,8 +226,8 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   buildLiveServiceStates(this: Multiplexer) {
     return buildLiveServiceStatesImpl(this);
   },
-  restoreTmuxSessionsFromState(this: Multiplexer, state = loadStateStatic()) {
-    restoreTmuxSessionsFromStateImpl(this, state);
+  restoreTmuxSessionsFromTopology(this: Multiplexer) {
+    restoreTmuxSessionsFromTopologyImpl(this);
   },
   stopSessionToOffline(this: Multiplexer, session) {
     stopSessionToOfflineImpl(this, session);
@@ -345,7 +348,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     const state: SavedState = {
       savedAt: new Date().toISOString(),
       cwd: process.cwd(),
-      sessions: [],
       services: mergedServices,
     };
 

@@ -32,6 +32,11 @@ export interface DesktopProjectInfo {
   sessions: GlobalSession[];
 }
 
+function topologyStatusToGlobalStatus(status: string | undefined): GlobalSession["status"] {
+  if (status === "running" || status === "idle" || status === "waiting" || status === "offline") return status;
+  return "offline";
+}
+
 /**
  * Discover local projects with aimux state.
  * Uses the global projects registry plus filesystem scanning as fallback.
@@ -150,7 +155,43 @@ export function scanProject(projectPath: string): ProjectInfo {
     } catch {}
   }
 
-  // Enrich live sessions with statusline.json when available.
+  const topologyPaths: string[] = [];
+  if (registryEntry) {
+    topologyPaths.push(join(getProjectStateDirById(registryEntry.id), "runtime-topology.yaml"));
+  }
+
+  for (const topologyPath of topologyPaths) {
+    if (!existsSync(topologyPath)) continue;
+    try {
+      const topology = new RuntimeTopologyStore(topologyPath).read();
+      for (const topologySession of topology.sessions.filter((session) => session.status !== "graveyard")) {
+        const s = topologySessionToSessionState(topologySession, topology);
+        if (seenIds.has(s.id)) {
+          const existing = sessionById.get(s.id);
+          if (existing) {
+            existing.status = topologyStatusToGlobalStatus(topologySession.status);
+            existing.label = s.label ?? existing.label;
+            existing.headline = s.headline ?? existing.headline;
+            existing.worktreePath = s.worktreePath ?? existing.worktreePath;
+          }
+          continue;
+        }
+        const session: GlobalSession = {
+          id: s.id,
+          tool: s.command ?? s.tool ?? "unknown",
+          status: topologyStatusToGlobalStatus(topologySession.status),
+          label: s.label,
+          headline: s.headline,
+          worktreePath: s.worktreePath,
+        };
+        sessions.push(session);
+        sessionById.set(s.id, session);
+        seenIds.add(s.id);
+      }
+    } catch {}
+  }
+
+  // Enrich known sessions with statusline.json when available.
   const statuslinePaths = [join(getAimuxDirFor(projectPath), "statusline.json")];
   if (registryEntry) {
     const globalStatusline = join(getProjectStateDirById(registryEntry.id), "statusline.json");
@@ -177,54 +218,14 @@ export function scanProject(projectPath: string): ProjectInfo {
 
       for (const s of statusline.sessions ?? []) {
         const existing = sessionById.get(s.id);
-        if (existing) {
-          existing.tool = s.tool ?? existing.tool;
-          existing.label = s.label ?? existing.label;
-          existing.headline = s.headline ?? existing.headline;
-          existing.status = s.status ?? existing.status;
-          existing.role = s.role ?? existing.role;
-          continue;
-        }
-
-        const session: GlobalSession = {
-          id: s.id,
-          tool: s.tool ?? "unknown",
-          label: s.label,
-          headline: s.headline,
-          status: s.status ?? "idle",
-          role: s.role,
-        };
-        sessions.push(session);
-        sessionById.set(s.id, session);
-        seenIds.add(s.id);
+        if (!existing) continue;
+        existing.tool = s.tool ?? existing.tool;
+        existing.label = s.label ?? existing.label;
+        existing.headline = s.headline ?? existing.headline;
+        existing.status = s.status ?? existing.status;
+        existing.role = s.role ?? existing.role;
       }
       break;
-    } catch {}
-  }
-
-  const topologyPaths: string[] = [];
-  if (registryEntry) {
-    topologyPaths.push(join(getProjectStateDirById(registryEntry.id), "runtime-topology.yaml"));
-  }
-
-  for (const topologyPath of topologyPaths) {
-    if (!existsSync(topologyPath)) continue;
-    try {
-      const topology = new RuntimeTopologyStore(topologyPath).read();
-      for (const topologySession of topology.sessions.filter((session) => session.status !== "graveyard")) {
-        const s = topologySessionToSessionState(topologySession, topology);
-        if (seenIds.has(s.id)) continue;
-        seenIds.add(s.id);
-
-        sessions.push({
-          id: s.id,
-          tool: s.command ?? s.tool ?? "unknown",
-          status: "offline",
-          label: s.label,
-          headline: s.headline,
-          worktreePath: s.worktreePath,
-        });
-      }
     } catch {}
   }
 

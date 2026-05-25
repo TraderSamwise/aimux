@@ -53,7 +53,7 @@ export interface DebugStateReport {
     matches: TargetMatch[];
   };
   sources: {
-    savedState: SourceResult<{ sessions: unknown[]; services: unknown[] }>;
+    savedState: SourceResult<{ services: unknown[] }>;
     runtimeTopology: SourceResult<{ sessions: unknown[] }>;
     metadata: SourceResult<{ sessions: unknown[] }>;
     tmux: SourceResult<{ windows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> }>;
@@ -170,7 +170,7 @@ function filterSavedState(
   target: string,
   matches: TargetMatch[],
   seen: Set<string>,
-): SourceResult<{ sessions: unknown[]; services: unknown[] }> {
+): SourceResult<{ services: unknown[] }> {
   if (source.status !== "found") return { ...source, value: undefined };
   const root = asObject(source.value);
   const services = asArray(root?.services).filter((entry) => {
@@ -197,7 +197,7 @@ function filterSavedState(
     }
     return matched;
   });
-  return { status: "found", path: source.path, value: { sessions: [], services } };
+  return { status: "found", path: source.path, value: { services } };
 }
 
 function filterMetadata(

@@ -43,7 +43,6 @@ export function mergeRuntimeSnapshots(
   return {
     savedAt,
     cwd: state?.cwd ?? cwd,
-    sessions: [],
     services: [...byId.values()],
   };
 }

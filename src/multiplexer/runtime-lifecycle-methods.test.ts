@@ -63,7 +63,7 @@ describe("runtime lifecycle state persistence", () => {
       ],
     });
 
-    expect(loadStateStatic()?.sessions).toEqual([]);
+    expect(loadStateStatic()).not.toHaveProperty("sessions");
     expect(topologySessions()).toEqual([expect.objectContaining({ id: "codex-offline" })]);
   });
 
@@ -93,8 +93,8 @@ describe("runtime lifecycle state persistence", () => {
         backendSessionId: "backend-1",
       }),
     ]);
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { sessions: unknown[] };
-    expect(saved.sessions).toEqual([]);
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as Record<string, unknown>;
+    expect(saved).not.toHaveProperty("sessions");
   });
 
   it("persists an empty session list after the last local agent row is removed", () => {
@@ -114,8 +114,8 @@ describe("runtime lifecycle state persistence", () => {
 
     runtimeLifecycleMethods.saveState.call(host() as never);
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { sessions: unknown[]; services: unknown[] };
-    expect(saved.sessions).toEqual([]);
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { services: unknown[] };
+    expect(saved).not.toHaveProperty("sessions");
     expect(saved.services).toEqual([{ id: "stale-service", command: "shell", args: [] }]);
   });
 

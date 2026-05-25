@@ -23,24 +23,6 @@ import {
 } from "./session-runtime-core.js";
 
 export const agentIoMethods = {
-  composeOrchestrationPrompt(
-    this: any,
-    threadId: string,
-    from: string,
-    body: string,
-    kind: MessageKind,
-    title?: string,
-  ): string {
-    const prefix = `[AIMUX MESSAGE ${threadId} from ${from}]`;
-    const headline = title ? `${title}\n\n` : "";
-    return (
-      `${prefix} ${headline}${body}\n\n` +
-      `Read .aimux/threads/${threadId}.json and .aimux/threads/${threadId}.jsonl for context. ` +
-      `This is a ${kind} message delivered by aimux. ` +
-      `Check the thread now, then either reply in-thread or briefly acknowledge that no action is needed.`
-    );
-  },
-
   orchestrationWorkflowPressure(this: any, sessionId: string, status?: DashboardSession["status"]): number {
     const semantic = this.deriveSessionSemanticState(sessionId, status);
     return (

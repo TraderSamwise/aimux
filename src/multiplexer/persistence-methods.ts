@@ -449,7 +449,7 @@ export const persistenceMethods = {
   },
 
   async graveyardDesktopWorktree(this: any, path: string): Promise<{ path: string; status: "graveyarded" }> {
-    this.syncSessionsFromState();
+    this.syncSessionsFromTopology();
 
     const mainRepo = findMainRepo();
     if (path === mainRepo) {
@@ -851,7 +851,7 @@ export const persistenceMethods = {
 
     void (async () => {
       try {
-        this.syncSessionsFromState();
+        this.syncSessionsFromTopology();
 
         const mainRepo = findMainRepo();
         if (path === mainRepo) {
@@ -967,7 +967,7 @@ export const persistenceMethods = {
   },
 
   async resurrectGraveyardSession(this: any, sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
-    this.loadOfflineSessions();
+    this.loadOfflineTopologySessions();
     const graveyardEntries = this.listGraveyardEntries();
     const entry = graveyardEntries.find((candidate: any) => candidate.id === sessionId);
     if (!entry) {
