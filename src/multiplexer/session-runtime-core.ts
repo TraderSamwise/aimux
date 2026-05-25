@@ -349,7 +349,6 @@ export function registerManagedSession(
   }
 
   host.sessions.push(runtime);
-  host.writeSessionsFile();
   host.updateContextWatcherSessions();
   if (host.sessions.length === 1) host.contextWatcher.start();
   return runtime;
@@ -433,7 +432,6 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
 
   host.sessions.splice(idx, 1);
   host.stoppingSessionIds.delete(runtime.id);
-  host.writeSessionsFile();
   host.updateContextWatcherSessions();
   const mappedTarget = host.sessionTmuxTargets.get(runtime.id);
   const runtimeTarget = runtime.transport instanceof TmuxSessionTransport ? runtime.transport.tmuxTarget : undefined;

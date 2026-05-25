@@ -259,8 +259,6 @@ export function saveGlobalConfig(config: Partial<AimuxConfig>): void {
 
 const GITIGNORE_CONTENTS = `# Runtime-private session state (lives in ~/.aimux/projects/)
 state.json
-graveyard.json
-sessions.json
 instances.json
 
 # Agent-facing shared artifacts

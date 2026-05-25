@@ -3,7 +3,7 @@
  *
  * Two locations:
  *   - In-repo:  {repoRoot}/.aimux/  → agent-facing shared artifacts
- *                (config, team, plans, context, history, tasks, status, threads, sessions.json)
+ *                (config, team, plans, context, history, tasks, status, threads)
  *   - Global:   ~/.aimux/projects/<project-id>/  → runtime-private state
  *                (recordings, metadata, instance ownership, statusline internals, offline state)
  *                Override with AIMUX_HOME for isolated dev/runtime lanes.
@@ -128,7 +128,7 @@ export interface ReadOnlyProjectPaths {
   projectStateDir: string;
   localAimuxDir: string;
   statePath: string;
-  graveyardPath: string;
+  runtimeTopologyPath: string;
   worktreeGraveyardPath: string;
   instancesPath: string;
   localInstancesPath: string;
@@ -154,7 +154,7 @@ export function getReadOnlyProjectPathsFor(cwd: string): ReadOnlyProjectPaths {
     projectStateDir,
     localAimuxDir,
     statePath: join(projectStateDir, "state.json"),
-    graveyardPath: join(projectStateDir, "graveyard.json"),
+    runtimeTopologyPath: join(projectStateDir, "runtime-topology.yaml"),
     worktreeGraveyardPath: join(projectStateDir, "worktree-graveyard.json"),
     instancesPath: join(projectStateDir, "instances.json"),
     localInstancesPath: join(localAimuxDir, "instances.json"),
@@ -238,10 +238,6 @@ export function getProjectServiceStdioLogPathFor(cwd: string): string {
 
 export function getStatePath(): string {
   return join(getProjectStateDir(), "state.json");
-}
-
-export function getGraveyardPath(): string {
-  return join(getProjectStateDir(), "graveyard.json");
 }
 
 export function getWorktreeGraveyardPath(): string {

@@ -66,7 +66,6 @@ export function buildAimuxAgentInstructions(
     `- .aimux/context/${sessionPath}/summary.md — compacted history for this session\n` +
     `- .aimux/plans/${sessionPath}.md — optional shared plan for long-running or delegated work\n` +
     `- .aimux/status/${sessionPath}.md — optional brief status note for long-running or delegated work\n` +
-    "- .aimux/sessions.json — currently known aimux sessions\n" +
     "- .aimux/context/{other-session-id}/ — other agents' context when needed\n" +
     "- .aimux/history/ — full raw conversation history (JSONL)\n" +
     "\n" +

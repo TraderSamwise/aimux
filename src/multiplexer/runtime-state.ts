@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { loadConfig } from "../config.js";
 import {
   getSessionBackendSessionId,
@@ -6,7 +6,6 @@ import {
   recordSessionBackendSessionIdMetadata,
   updateSessionMetadata,
 } from "../metadata-store.js";
-import { getLocalAimuxDir } from "../paths.js";
 import { isToolInternalWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
@@ -455,7 +454,6 @@ export function restoreTmuxSessionsFromState(
     host.syncTmuxWindowMetadata(metadata.sessionId);
   }
 
-  host.writeSessionsFile?.();
   host.updateContextWatcherSessions?.();
   return liveAgentWindows;
 }
@@ -548,7 +546,6 @@ export function evictZombieSession(host: RuntimeStateHost, runtime: any): void {
   }
   host.stoppingSessionIds.delete(runtime.id);
   host.sessionTmuxTargets.delete(runtime.id);
-  host.writeSessionsFile();
   host.updateContextWatcherSessions();
   host.saveState();
 }
@@ -678,7 +675,6 @@ export function recordSessionBackendSessionId(
   }
   writeBackendSessionIdToTopology(sessionId, selectedBackendSessionId);
 
-  host.writeSessionsFile?.();
   host.saveState?.();
   host.invalidateDesktopStateSnapshot?.();
   host.writeStatuslineFile?.();
@@ -737,32 +733,6 @@ export function getInstanceSessionRefs(host: RuntimeStateHost): any[] {
     team: s.team,
     worktreePath: host.sessionWorktreePaths.get(s.id),
   }));
-}
-
-export function writeSessionsFile(host: RuntimeStateHost): void {
-  const dir = getLocalAimuxDir();
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-  const metadataState = loadMetadataState();
-  const localSessions = host.sessions.map((s: any) => ({
-    id: s.id,
-    tool: s.command,
-    backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
-    team: s.team,
-    worktreePath: host.sessionWorktreePaths.get(s.id),
-  }));
-  const data = host.instanceDirectory.buildSessionsFileEntries(
-    localSessions,
-    host.instanceDirectory.getRemoteInstancesSafe(host.instanceId, process.cwd()),
-  );
-
-  writeFileSync(`${dir}/sessions.json`, JSON.stringify(data, null, 2) + "\n");
-}
-
-export function removeSessionsFile(): void {
-  try {
-    unlinkSync(`${getLocalAimuxDir()}/sessions.json`);
-  } catch {}
 }
 
 export function listDesktopWorktrees(

@@ -17,7 +17,7 @@ function makePaths(): ReadOnlyProjectPaths {
     projectStateDir,
     localAimuxDir,
     statePath: join(projectStateDir, "state.json"),
-    graveyardPath: join(projectStateDir, "graveyard.json"),
+    runtimeTopologyPath: join(projectStateDir, "runtime-topology.yaml"),
     worktreeGraveyardPath: join(projectStateDir, "worktree-graveyard.json"),
     instancesPath: join(projectStateDir, "instances.json"),
     localInstancesPath: join(localAimuxDir, "instances.json"),

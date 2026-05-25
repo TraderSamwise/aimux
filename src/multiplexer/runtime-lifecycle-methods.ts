@@ -373,7 +373,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     this.saveState();
     this.stopStatusRefresh();
     mux.contextWatcher.stop();
-    this.removeSessionsFile();
     this.removeInstructionFiles();
     closeDebug();
     if (mux.onStdinData) {

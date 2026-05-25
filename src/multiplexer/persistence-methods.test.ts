@@ -63,7 +63,7 @@ vi.mock("../metadata-store.js", async (importOriginal) => {
 });
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
-import { getGraveyardPath, getStatePath, initPaths } from "../paths.js";
+import { getStatePath, initPaths } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
 import { writeWorktreeGraveyardEntries } from "./worktree-graveyard.js";
 import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
@@ -608,8 +608,9 @@ describe("persistenceMethods", () => {
           agents: [expect.objectContaining({ id: "parent-1" })],
         }),
       ]);
-      const flatGraveyard = JSON.parse(readFileSync(getGraveyardPath(), "utf-8"));
-      expect(flatGraveyard).toEqual([expect.objectContaining({ id: "teammate-1" })]);
+      expect(listTopologySessionStates({ statuses: ["graveyard"] })).toEqual([
+        expect.objectContaining({ id: "teammate-1" }),
+      ]);
       expect(host.offlineSessions).toEqual([independent]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });

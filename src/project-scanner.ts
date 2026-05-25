@@ -3,6 +3,8 @@ import { join, basename } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { getAimuxDirFor, getProjectStateDirById, listProjects } from "./paths.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import { RuntimeTopologyStore } from "./runtime-core/topology-store.js";
+import { topologySessionToSessionState } from "./runtime-core/topology-sessions.js";
 
 export interface GlobalSession {
   id: string;
@@ -63,7 +65,7 @@ export function discoverProjects(): string[] {
         try {
           if (!statSync(projectPath).isDirectory()) continue;
           const aimuxDir = join(projectPath, ".aimux");
-          if (existsSync(join(aimuxDir, "instances.json")) || existsSync(join(aimuxDir, "state.json"))) {
+          if (existsSync(join(aimuxDir, "instances.json"))) {
             found.add(projectPath);
           }
         } catch {}
@@ -200,30 +202,17 @@ export function scanProject(projectPath: string): ProjectInfo {
     } catch {}
   }
 
-  // Offline sessions — check both global state and in-repo
-  const statePaths = [join(getAimuxDirFor(projectPath), "state.json")];
+  const topologyPaths: string[] = [];
   if (registryEntry) {
-    const globalState = join(getProjectStateDirById(registryEntry.id), "state.json");
-    if (!statePaths.includes(globalState)) {
-      statePaths.unshift(globalState);
-    }
+    topologyPaths.push(join(getProjectStateDirById(registryEntry.id), "runtime-topology.yaml"));
   }
 
-  for (const statePath of statePaths) {
-    if (!existsSync(statePath)) continue;
+  for (const topologyPath of topologyPaths) {
+    if (!existsSync(topologyPath)) continue;
     try {
-      const state = JSON.parse(readFileSync(statePath, "utf-8")) as {
-        sessions: Array<{
-          id: string;
-          command: string;
-          tool?: string;
-          label?: string;
-          headline?: string;
-          worktreePath?: string;
-        }>;
-      };
-
-      for (const s of state.sessions) {
+      const topology = new RuntimeTopologyStore(topologyPath).read();
+      for (const topologySession of topology.sessions.filter((session) => session.status === "offline")) {
+        const s = topologySessionToSessionState(topologySession, topology);
         if (seenIds.has(s.id)) continue;
         seenIds.add(s.id);
 

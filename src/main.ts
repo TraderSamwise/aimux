@@ -18,8 +18,6 @@ import { initProject, loadConfig } from "./config.js";
 import {
   initPaths,
   getHistoryDir,
-  getGraveyardPath,
-  getStatePath,
   getContextDir,
   getProjectId,
   getRepoRoot,

@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getGraveyardPath, getStatePath, initPaths } from "../paths.js";
+import { getStatePath, initPaths } from "../paths.js";
 import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
@@ -955,7 +955,6 @@ describe("resumeOfflineSession", () => {
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
-      writeSessionsFile: vi.fn(),
       updateContextWatcherSessions: vi.fn(),
       debug: vi.fn(),
     };
@@ -964,7 +963,7 @@ describe("resumeOfflineSession", () => {
 
     expect(host.sessions).toEqual([]);
     expect(host.sessionTmuxTargets.has("codex-stale")).toBe(false);
-    expect(host.writeSessionsFile).toHaveBeenCalled();
+    expect(host.updateContextWatcherSessions).toHaveBeenCalled();
   });
 
   it("does not treat dead service windows as live", () => {

@@ -245,7 +245,7 @@ export class Multiplexer {
   );
   private taskDispatcher: RuntimeQueueStatus | null = null;
   private orchestrationDispatcher: null = null;
-  /** Maps session ID → toolConfigKey for state saving */
+  /** Maps session ID → toolConfigKey for topology persistence */
   private sessionToolKeys = new Map<string, string>();
   /** Maps session ID → original args (before preamble injection) */
   private sessionOriginalArgs = new Map<string, string[]>();
@@ -255,7 +255,7 @@ export class Multiplexer {
   private sessionRoles = new Map<string, string>();
   /** Maps session ID → user-provided stable label */
   private sessionLabels = new Map<string, string>();
-  /** Offline sessions from previous runs (loaded from state.json) */
+  /** Offline sessions from previous runs (loaded from runtime topology) */
   private offlineSessions: SessionState[] = [];
   /** Cross-instance discovery and claim/heartbeat ownership */
   private instanceDirectory = new InstanceDirectory();
@@ -468,7 +468,7 @@ export class Multiplexer {
 
   /**
    * Resume previous sessions using each tool's native resume mechanism.
-   * Reads state.json and spawns sessions with resumeArgs instead of normal args.
+   * Reads runtime topology and spawns sessions with resumeArgs instead of normal args.
    */
   async resumeSessions(toolFilter?: string): Promise<number> {
     return resumeSessionsImpl(this, toolFilter);

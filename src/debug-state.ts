@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { getReadOnlyProjectPathsFor, type ReadOnlyProjectPaths } from "./paths.js";
 import { TmuxRuntimeManager, type TmuxWindowMetadata, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { listWorktrees, type WorktreeInfo } from "./worktree.js";
+import { RuntimeTopologyStore, type RuntimeTopology } from "./runtime-core/topology-store.js";
 
 type SourceStatus = "found" | "missing" | "unavailable" | "error";
 type TargetResolutionStatus = "matched" | "missing" | "ambiguous";
@@ -53,6 +54,7 @@ export interface DebugStateReport {
   };
   sources: {
     savedState: SourceResult<{ sessions: unknown[]; services: unknown[] }>;
+    runtimeTopology: SourceResult<{ sessions: unknown[] }>;
     metadata: SourceResult<{ sessions: unknown[] }>;
     tmux: SourceResult<{ windows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> }>;
     gitWorktrees: SourceResult<{ worktrees: WorktreeInfo[] }>;
@@ -97,6 +99,19 @@ function readJson(path: string): SourceResult<unknown> {
   if (!existsSync(path)) return { status: "missing", path };
   try {
     return { status: "found", path, value: JSON.parse(readFileSync(path, "utf8")) };
+  } catch (err) {
+    return {
+      status: "error",
+      path,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function readRuntimeTopology(path: string): SourceResult<RuntimeTopology> {
+  if (!existsSync(path)) return { status: "missing", path };
+  try {
+    return { status: "found", path, value: new RuntimeTopologyStore(path).read() };
   } catch (err) {
     return {
       status: "error",
@@ -350,6 +365,8 @@ function filterGraveyard(
   const root = source.value;
   const entries = asArray(Array.isArray(root) ? root : asObject(root)?.sessions).filter((entry) => {
     const record = asObject(entry);
+    const status = getString(record, "status");
+    if (status && status !== "graveyard") return false;
     const id = getString(record, "id");
     const backendSessionId = getString(record, "backendSessionId");
     const worktreePath = getString(record, "worktreePath");
@@ -374,6 +391,41 @@ function filterGraveyard(
     return matched;
   });
   return { status: "found", path: source.path, value: { entries } };
+}
+
+function filterRuntimeTopology(
+  source: SourceResult<RuntimeTopology>,
+  target: string,
+  matches: TargetMatch[],
+  seen: Set<string>,
+): SourceResult<{ sessions: unknown[] }> {
+  if (source.status !== "found") return { ...source, value: undefined };
+  const topology = source.value as RuntimeTopology;
+  const sessions = topology.sessions.filter((entry) => {
+    const id = entry.id;
+    const backendSessionId = entry.backendSessionId;
+    const worktreePath = entry.worktreePath;
+    const label = entry.label;
+    const matched =
+      matchesString(id, target) ||
+      matchesString(backendSessionId, target) ||
+      matchesString(worktreePath, target) ||
+      matchesString(label, target);
+    if (matched) {
+      addMatch(matches, seen, {
+        canonicalKey: sessionCanonical(id, backendSessionId),
+        kind: backendSessionId === target && id !== target ? "backend-session" : "session",
+        source: "runtimeTopology",
+        id,
+        backendSessionId,
+        worktreePath,
+        label,
+        raw: entry,
+      });
+    }
+    return matched;
+  });
+  return { status: "found", path: source.path, value: { sessions } };
 }
 
 function filterWorktreeGraveyard(
@@ -529,10 +581,11 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
   const target = options.target;
 
   const savedState = filterSavedState(readJson(paths.statePath), target, matches, seen);
+  const runtimeTopology = filterRuntimeTopology(readRuntimeTopology(paths.runtimeTopologyPath), target, matches, seen);
   const metadata = filterMetadata(readJson(paths.metadataPath), target, matches, seen);
   const tmux = filterTmux(options.tmuxWindows, paths, target, matches, seen);
   const gitWorktrees = filterGitWorktrees(options.worktrees, paths, target, matches, seen);
-  const graveyard = filterGraveyard(readJson(paths.graveyardPath), target, matches, seen);
+  const graveyard = filterGraveyard(runtimeTopology, target, matches, seen);
   const worktreeGraveyard = filterWorktreeGraveyard(readJson(paths.worktreeGraveyardPath), target, matches, seen);
   const notifications = filterNotifications(readJson(paths.notificationsPath), target, matches, seen);
   const operationFailures = filterOperationFailures(
@@ -559,6 +612,7 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
     },
     sources: {
       savedState,
+      runtimeTopology,
       metadata,
       tmux,
       gitWorktrees,

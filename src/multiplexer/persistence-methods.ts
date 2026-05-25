@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { debug } from "../debug.js";
@@ -13,7 +13,7 @@ import { composeDashboardWorktreeGroups } from "./dashboard-model.js";
 import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon.js";
 import { type DashboardService, type DashboardSession } from "../dashboard/index.js";
-import { getGraveyardPath, getLocalAimuxDir, getProjectStateDir, getStatePath } from "../paths.js";
+import { getProjectStateDir, getStatePath } from "../paths.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl, stopSessionToOffline } from "./runtime-state.js";
 import {
@@ -26,7 +26,13 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
 import { isTeammateSession, selectDirectTeammates } from "../team.js";
-import { listTopologySessionStates, resurrectTopologySession } from "../runtime-core/topology-sessions.js";
+import {
+  listTopologySessionStates,
+  resurrectTopologySession,
+  topologySessionToSessionState,
+  upsertTopologySession,
+} from "../runtime-core/topology-sessions.js";
+import { createRuntimeTopologyStore } from "../runtime-core/topology-store.js";
 import {
   findMainRepo,
   getWorktreeBaseDir,
@@ -83,27 +89,6 @@ function orderStatuslineItemsByWorktree<T extends { id: string; worktreePath?: s
 }
 
 export const persistenceMethods = {
-  writeSessionsFile(this: any): void {
-    const dir = getLocalAimuxDir();
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-    const metadataState = loadMetadataState();
-    const localSessions = this.sessions.map((s: any) => ({
-      id: s.id,
-      tool: s.command,
-      createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
-      backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
-      team: s.team,
-      worktreePath: this.sessionWorktreePaths.get(s.id),
-    }));
-    const data = this.instanceDirectory.buildSessionsFileEntries(
-      localSessions,
-      this.instanceDirectory.getRemoteInstancesSafe(this.instanceId, process.cwd()),
-    );
-
-    writeFileSync(`${dir}/sessions.json`, JSON.stringify(data, null, 2) + "\n");
-  },
-
   writeStatuslineFile(this: any, input?: { force?: boolean }): void {
     try {
       if (this.mode !== "project-service") return;
@@ -1005,12 +990,6 @@ export const persistenceMethods = {
     return { sessionId, status: "offline" };
   },
 
-  removeSessionsFile(this: any): void {
-    try {
-      unlinkSync(`${getLocalAimuxDir()}/sessions.json`);
-    } catch {}
-  },
-
   stripAnsi(this: any, text: string): string {
     return text.replace(/\u001B\[[0-9;]*m/g, "");
   },
@@ -1167,16 +1146,19 @@ function markLifecycleUsed(host: any, itemId: string): void {
 }
 
 function takeFlatGraveyardAgentsForWorktree(path: string): any[] {
-  const graveyardPath = getGraveyardPath();
-  if (!existsSync(graveyardPath)) return [];
+  const store = createRuntimeTopologyStore();
   try {
-    const entries = JSON.parse(readFileSync(graveyardPath, "utf-8"));
-    if (!Array.isArray(entries)) return [];
-    const matching = entries.filter((entry) => entry?.worktreePath === path);
-    const remaining = entries.filter((entry) => entry?.worktreePath !== path);
-    if (matching.length > 0) {
-      writeFileSync(graveyardPath, JSON.stringify(remaining, null, 2) + "\n");
-    }
+    let matching: any[] = [];
+    store.update((topology) => {
+      matching = topology.sessions
+        .filter((entry) => entry.status === "graveyard" && entry.worktreePath === path)
+        .map((entry) => topologySessionToSessionState(entry, topology));
+      if (matching.length > 0) {
+        const matchingIds = new Set(matching.map((entry) => entry.id));
+        topology.sessions = topology.sessions.filter((entry) => !matchingIds.has(entry.id));
+      }
+      return topology;
+    });
     return matching;
   } catch {
     return [];
@@ -1185,19 +1167,9 @@ function takeFlatGraveyardAgentsForWorktree(path: string): any[] {
 
 function appendFlatGraveyardAgents(agents: any[]): void {
   if (agents.length === 0) return;
-  const graveyardPath = getGraveyardPath();
-  let entries: any[] = [];
-  if (existsSync(graveyardPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync(graveyardPath, "utf-8"));
-      if (Array.isArray(parsed)) entries = parsed;
-    } catch {}
-  }
-  const nextById = new Map(entries.map((entry) => [entry?.id, entry]));
   for (const agent of agents) {
-    if (agent?.id) nextById.set(agent.id, agent);
+    if (agent?.id) upsertTopologySession(agent, "graveyard");
   }
-  writeFileSync(graveyardPath, JSON.stringify([...nextById.values()], null, 2) + "\n");
 }
 
 function removeFlatGraveyardAgentsForWorktree(path: string): void {
