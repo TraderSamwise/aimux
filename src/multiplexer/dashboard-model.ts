@@ -2,7 +2,6 @@ import type { DashboardService, DashboardSession, WorktreeGroup } from "../dashb
 import { buildDashboardSessions } from "../dashboard/session-registry.js";
 import { loadLastUsedState } from "../last-used.js";
 import {
-  getSessionBackendSessionId,
   loadMetadataEndpoint,
   loadMetadataState,
   removeMetadataEndpoint,
@@ -15,7 +14,6 @@ import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { requestJson } from "../http-client.js";
-import { loadConfig } from "../config.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { isTeammateSession, selectDirectTeammates } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
@@ -30,6 +28,7 @@ import type {
 } from "../pending-actions.js";
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { setPendingDashboardServiceAction, setPendingDashboardSessionAction } from "./dashboard-ops.js";
+import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 
 type DashboardModelHost = any;
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
@@ -41,42 +40,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function sessionStateFromDashboardSeed(seed: any): any | undefined {
-  if (!seed?.id || !seed?.command) return undefined;
-  const config = loadConfig();
-  const toolConfigKey =
-    typeof seed.toolConfigKey === "string"
-      ? seed.toolConfigKey
-      : (Object.entries(config.tools).find(([, tool]: any) => tool.command === seed.command)?.[0] ?? seed.command);
-  const toolCfg = config.tools[toolConfigKey];
-  if (!toolCfg) return undefined;
-  return {
-    id: seed.id,
-    tool: seed.command,
-    toolConfigKey,
-    command: toolCfg.command ?? seed.command,
-    args: Array.isArray(seed.args) ? seed.args : [...(toolCfg.args ?? [])],
-    lifecycle: "offline",
-    createdAt: seed.createdAt,
-    backendSessionId:
-      typeof seed.backendSessionId === "string"
-        ? seed.backendSessionId
-        : typeof seed.remoteBackendSessionId === "string"
-          ? seed.remoteBackendSessionId
-          : getSessionBackendSessionId(seed.id),
-    worktreePath: typeof seed.worktreePath === "string" ? seed.worktreePath : undefined,
-    label: typeof seed.label === "string" ? seed.label : undefined,
-    headline: typeof seed.headline === "string" ? seed.headline : undefined,
-    team: seed.team,
-  };
+function listOfflineSessionsForAction(host: DashboardModelHost): any[] {
+  const sessionsById = new Map<string, any>();
+  for (const session of host.offlineSessions ?? []) {
+    if (session?.id) sessionsById.set(session.id, session);
+  }
+  for (const session of listTopologySessionStates({ statuses: ["offline"] })) {
+    if (session?.id && !sessionsById.has(session.id)) sessionsById.set(session.id, session);
+  }
+  return [...sessionsById.values()];
 }
 
-function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: string, seed?: any): any | undefined {
-  return (
-    host.offlineSessions.find((session: any) => session.id === sessionId) ??
-    sessionStateFromDashboardSeed(seed) ??
-    sessionStateFromDashboardSeed(host.dashboardSessionsCache.find((entry: any) => entry.id === sessionId))
-  );
+function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: string): any | undefined {
+  return listOfflineSessionsForAction(host).find((session: any) => session.id === sessionId);
 }
 
 function findDashboardSessionSeed(
@@ -362,21 +338,20 @@ function lifecycleFailureMessage(action: string, failures: Array<{ sessionId: st
 async function resumeOfflineAgentWithPending(
   host: DashboardModelHost,
   sessionId: string,
-  sessionSeed?: any,
 ): Promise<{ sessionId: string; status: "running" }> {
   return withMetadataSessionPending(
     host,
     sessionId,
     "starting",
     () => {
-      const offline = resolveOfflineSessionForAction(host, sessionId, sessionSeed);
+      const offline = resolveOfflineSessionForAction(host, sessionId);
       if (!offline) {
         throw new Error(`Agent "${sessionId}" not found`);
       }
       host.resumeOfflineSession(offline);
       return { sessionId, status: "running" as const };
     },
-    findDashboardSessionSeed(host, sessionId, sessionSeed),
+    findDashboardSessionSeed(host, sessionId),
     () => waitForMetadataSessionRunning(host, sessionId),
   );
 }
@@ -384,9 +359,8 @@ async function resumeOfflineAgentWithPending(
 async function resumeOfflineAgentWithPendingAndSettle(
   host: DashboardModelHost,
   sessionId: string,
-  sessionSeed?: any,
 ): Promise<{ sessionId: string; status: "running" }> {
-  const result = await resumeOfflineAgentWithPending(host, sessionId, sessionSeed);
+  const result = await resumeOfflineAgentWithPending(host, sessionId);
   await waitForMetadataSessionRunning(host, sessionId);
   return result;
 }
@@ -394,25 +368,26 @@ async function resumeOfflineAgentWithPendingAndSettle(
 async function resumeAgentAndDirectTeammates(
   host: DashboardModelHost,
   sessionId: string,
-  sessionSeed?: any,
 ): Promise<{
   sessionId: string;
   status: "running";
   warning?: string;
   teammateFailures?: Array<{ sessionId: string; error: string }>;
 }> {
-  const offline = resolveOfflineSessionForAction(host, sessionId, sessionSeed);
+  const offline = resolveOfflineSessionForAction(host, sessionId);
   if (!offline) {
     throw new Error(`Agent "${sessionId}" not found`);
   }
 
-  const teammates = isTeammateSession(offline) ? [] : selectDirectTeammates(host.offlineSessions ?? [], sessionId);
-  const result = await resumeOfflineAgentWithPendingAndSettle(host, sessionId, sessionSeed);
+  const teammates = isTeammateSession(offline)
+    ? []
+    : selectDirectTeammates(listOfflineSessionsForAction(host), sessionId);
+  const result = await resumeOfflineAgentWithPendingAndSettle(host, sessionId);
   const teammateFailures: Array<{ sessionId: string; error: unknown }> = [];
 
   for (const teammate of teammates) {
     try {
-      await resumeOfflineAgentWithPendingAndSettle(host, teammate.id, toDashboardSessionSeed(teammate) ?? teammate);
+      await resumeOfflineAgentWithPendingAndSettle(host, teammate.id);
     } catch (error) {
       teammateFailures.push({ sessionId: teammate.id, error });
     }
@@ -693,7 +668,7 @@ export function computeDashboardSessions(
     sessions: host.sessions.map((session: any) => ({
       id: session.id,
       command: session.command,
-      backendSessionId: session.backendSessionId ?? metadata[session.id]?.backendSessionId,
+      backendSessionId: session.backendSessionId,
       team: session.team,
       createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
       status: session.status,
@@ -708,7 +683,7 @@ export function computeDashboardSessions(
     includeTeammates: options.includeTeammates,
     getSessionLabel: (sessionId: string) => host.getSessionLabel(sessionId),
     getSessionHeadline: (sessionId: string) => host.deriveHeadline(sessionId),
-    getSessionTaskDescription: (sessionId: string) => host.taskDispatcher?.getSessionTask(sessionId),
+    getSessionTaskDescription: () => undefined,
     getSessionRole: (sessionId: string) => host.sessionRoles.get(sessionId),
     getSessionContext: (sessionId: string) => metadata[sessionId]?.context,
     getSessionDerived: (sessionId: string) => metadata[sessionId]?.derived,
@@ -866,7 +841,7 @@ export function readTmuxProcessInfo(
 }
 
 export function buildDesktopStateSnapshot(host: DashboardModelHost) {
-  host.syncSessionsFromState();
+  host.syncSessionsFromTopology();
   const worktrees = host.listDesktopWorktrees();
   const realizedWorktreePaths = new Set(
     worktrees.filter((worktree: any) => !worktree.operationFailure).map((worktree: any) => worktree.path),
@@ -1034,7 +1009,6 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       removeWorktree: ({ path }: any) => host.removeDesktopWorktree(path),
       graveyardWorktree: ({ path }: any) => host.graveyardDesktopWorktree(path),
       listWorktreeGraveyard: () => host.listWorktreeGraveyardEntries(),
-      resurrectGraveyardWorktree: ({ path }: any) => host.resurrectGraveyardWorktree(path),
       deleteGraveyardWorktree: ({ path }: any) => host.deleteGraveyardWorktree(path),
       createService: ({ command, worktreePath, serviceId }: any) =>
         host.createService(command ?? "", worktreePath, { serviceId }),
@@ -1062,10 +1036,9 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           () => host.removeOfflineService(serviceId),
           () => waitForMetadataCondition(host, () => isMetadataServiceRemoved(host, serviceId)),
         ),
-      resumeAgent: ({ sessionId, session }: any) =>
-        enqueueProjectServiceAgentResume(host, () => resumeAgentAndDirectTeammates(host, sessionId, session)),
+      resumeAgent: ({ sessionId }: any) =>
+        enqueueProjectServiceAgentResume(host, () => resumeAgentAndDirectTeammates(host, sessionId)),
       listGraveyard: () => host.listGraveyardEntries(),
-      resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
     },
     threads: {
       sendMessage: (input: any) => host.sendOrchestrationMessage(input),
@@ -1182,22 +1155,10 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           host,
           input.sessionId,
           "graveyarding",
-          () => host.sendAgentToGraveyard(input.sessionId, input.session),
-          findDashboardSessionSeed(host, input.sessionId, input.session),
-        ),
-      recordBackendSessionId: (input: any) =>
-        host.recordSessionBackendSessionId(input.sessionId, input.backendSessionId),
-      writeAgentInput: (input: any) =>
-        host.writeAgentInput(
-          input.sessionId,
-          input.data,
-          input.parts,
-          input.clientMessageId,
-          input.submit,
-          input.collaboration,
+          () => host.sendAgentToGraveyard(input.sessionId),
+          findDashboardSessionSeed(host, input.sessionId),
         ),
       readAgentOutput: (input: any) => host.readAgentOutput(input.sessionId, input.startLine),
-      readAgentHistory: (input: any) => host.readAgentHistory(input.sessionId, input.lastN),
     },
     onChange: () => {
       scheduleProjectServiceUiRefresh(host);

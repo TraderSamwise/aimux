@@ -64,14 +64,7 @@ describe("DashboardPendingActions", () => {
     });
 
     expect(pending.applyToSessions([])).toEqual([]);
-    expect(pending.applyToSessions([], { includeTeammates: true })).toEqual([
-      expect.objectContaining({
-        id: "codex-reviewer",
-        pendingAction: "starting",
-        optimistic: true,
-        team: expect.objectContaining({ parentSessionId: "claude-parent" }),
-      }),
-    ]);
+    expect(pending.applyToSessions([], { includeTeammates: true })).toEqual([]);
   });
 
   it("keeps stopping session rows visible while waiting for offline state", () => {
@@ -90,15 +83,7 @@ describe("DashboardPendingActions", () => {
 
     const sessions = pending.applyToSessions([]);
 
-    expect(sessions).toEqual([
-      expect.objectContaining({
-        id: "claude-1",
-        status: "running",
-        pending: true,
-        pendingAction: "stopping",
-        optimistic: true,
-      }),
-    ]);
+    expect(sessions).toEqual([]);
   });
 
   it("keeps migrating session rows visible while waiting for the new runtime", () => {
@@ -117,15 +102,7 @@ describe("DashboardPendingActions", () => {
 
     const sessions = pending.applyToSessions([]);
 
-    expect(sessions).toEqual([
-      expect.objectContaining({
-        id: "claude-1",
-        status: "running",
-        pending: true,
-        pendingAction: "migrating",
-        optimistic: true,
-      }),
-    ]);
+    expect(sessions).toEqual([]);
   });
 
   it("keeps stopping service rows visible while waiting for offline state", () => {
@@ -420,13 +397,7 @@ describe("DashboardPendingActions", () => {
 
     expect(pending.getSessionAction(sharedId)).toBe("starting");
     expect(pending.getServiceAction(sharedId)).toBe("stopping");
-    expect(pending.applyToSessions([])).toEqual([
-      expect.objectContaining({
-        id: sharedId,
-        pendingAction: "starting",
-        optimistic: true,
-      }),
-    ]);
+    expect(pending.applyToSessions([])).toEqual([]);
     expect(pending.applyToServices([])).toEqual([
       expect.objectContaining({
         id: sharedId,

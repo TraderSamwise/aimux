@@ -68,7 +68,7 @@ export default function AcceptShareInviteScreen() {
   return (
     <View className="flex-1 bg-background p-6 justify-center">
       <View className="rounded-lg border border-border bg-card p-5">
-        <Text className="text-2xl font-semibold text-foreground">Shared chat invite</Text>
+        <Text className="text-2xl font-semibold text-foreground">Shared session invite</Text>
         <Text className="text-sm text-muted-foreground mt-2">
           {isSignedIn
             ? "Accepting this invite will connect aimux to the owner shared session."

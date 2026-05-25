@@ -15,6 +15,7 @@ import {
 import { debug } from "./debug.js";
 import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
 import { AgentTracker } from "./agent-tracker.js";
+import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import { type AlertKind, type ProjectEventBus } from "./project-events.js";
 import { contextualizeAlertInput, metadataDisplayContext } from "./alert-display.js";
@@ -292,7 +293,7 @@ export class PluginRuntime {
         },
       },
       sessions: {
-        list: () => Object.keys(loadMetadataState().sessions).map((id) => ({ id })),
+        list: () => listTopologySessionStates().map((session) => ({ id: session.id })),
       },
     };
 

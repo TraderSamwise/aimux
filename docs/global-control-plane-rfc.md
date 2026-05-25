@@ -40,7 +40,7 @@ That split looked clean on paper, but the host layer has become a complexity hot
 Observed costs:
 
 - host election and heartbeat logic
-- host takeover and stale-host edge cases
+- stale-host edge cases
 - competing writers for `statusline.json`
 - dashboard-backed host vs `aimux serve` host ambiguity
 - desktop polling triggering replacement hosts at the wrong time
@@ -116,7 +116,7 @@ But those benefits are being purchased with:
 
 - heartbeat leases
 - ownership reconciliation
-- takeover logic
+- topology-owned lifecycle without host takeover
 - endpoint discovery races
 - dashboard/serve ambiguity
 - multi-client state coordination bugs
@@ -287,9 +287,9 @@ Delete over time:
 Keep or adapt:
 
 - `metadata.json`
-- `instances.json`
-- `state.json`
-- `graveyard.json`
+- `instances.json` for liveness only
+- `state.json` for service/project state only
+- `runtime-topology.yaml` for agent lifecycle, including graveyard entries
 - `recordings/`
 
 ## CLI Changes

@@ -2,46 +2,21 @@ import { sendDirectMessage, sendThreadMessage } from "../orchestration.js";
 import { sendHandoff } from "../orchestration-actions.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
 import type { DashboardSession } from "../dashboard/index.js";
-import type { AgentCollaborationContext } from "../collaboration.js";
-import { markMessageDelivered, type MessageKind } from "../threads.js";
+import type { MessageKind } from "../threads.js";
+import { disabledRuntimeCore } from "../runtime-core/index.js";
 import { stopProjectServices as stopProjectServicesImpl } from "./dashboard-model.js";
 import {
   applyDashboardSessionLabel as applyDashboardSessionLabelImpl,
   applySessionLabel as applySessionLabelImpl,
   deriveHeadline as deriveHeadlineImpl,
   getSessionLabel as getSessionLabelImpl,
-  interruptAgent as interruptAgentImpl,
-  normalizeAgentInput as normalizeAgentInputImpl,
-  paneStillContainsAgentDraft as paneStillContainsAgentDraftImpl,
-  readAgentHistory as readAgentHistoryImpl,
   readAgentOutput as readAgentOutputImpl,
   readStatusHeadline as readStatusHeadlineImpl,
   resolveRunningSession as resolveRunningSessionImpl,
-  scheduleTmuxAgentSubmit as scheduleTmuxAgentSubmitImpl,
   updateSessionLabel as updateSessionLabelImpl,
-  writeAgentInput as writeAgentInputImpl,
-  writeTmuxAgentInput as writeTmuxAgentInputImpl,
 } from "./session-runtime-core.js";
 
 export const agentIoMethods = {
-  composeOrchestrationPrompt(
-    this: any,
-    threadId: string,
-    from: string,
-    body: string,
-    kind: MessageKind,
-    title?: string,
-  ): string {
-    const prefix = `[AIMUX MESSAGE ${threadId} from ${from}]`;
-    const headline = title ? `${title}\n\n` : "";
-    return (
-      `${prefix} ${headline}${body}\n\n` +
-      `Read .aimux/threads/${threadId}.json and .aimux/threads/${threadId}.jsonl for context. ` +
-      `This is a ${kind} message delivered by aimux. ` +
-      `Check the thread now, then either reply in-thread or briefly acknowledge that no action is needed.`
-    );
-  },
-
   orchestrationWorkflowPressure(this: any, sessionId: string, status?: DashboardSession["status"]): number {
     const semantic = this.deriveSessionSemanticState(sessionId, status);
     return (
@@ -63,25 +38,14 @@ export const agentIoMethods = {
     title?: string,
     messageId?: string,
   ): string[] {
-    const delivered: string[] = [];
-    for (const recipient of recipients) {
-      const session = this.sessions.find((candidate: any) => candidate.id === recipient && !candidate.exited);
-      if (!session) continue;
-      const runtime = this.deriveSessionSemanticState(session.id, session.status).runtime;
-      if (!runtime.canReceiveInput) continue;
-      void this.writeAgentInput(
-        recipient,
-        this.composeOrchestrationPrompt(threadId, from, body, kind, title),
-        undefined,
-        undefined,
-        true,
-      );
-      if (messageId) {
-        markMessageDelivered(threadId, messageId, recipient);
-      }
-      delivered.push(recipient);
-    }
-    return delivered;
+    void recipients;
+    void threadId;
+    void from;
+    void body;
+    void kind;
+    void title;
+    void messageId;
+    return [];
   },
 
   sendOrchestrationMessage(
@@ -235,40 +199,8 @@ export const agentIoMethods = {
     return resolveRunningSessionImpl(this, sessionId);
   },
 
-  writeTmuxAgentInput(this: any, sessionId: string, transport: any, data: string): void {
-    writeTmuxAgentInputImpl(this, sessionId, transport, data);
-  },
-
-  normalizeAgentInput(this: any, data: string, submit: boolean, sessionId?: string): string {
-    return normalizeAgentInputImpl(this, data, submit, sessionId);
-  },
-
-  paneStillContainsAgentDraft(this: any, target: any, draft: string): boolean {
-    return paneStillContainsAgentDraftImpl(this, target, draft);
-  },
-
-  scheduleTmuxAgentSubmit(this: any, sessionId: string, target: any, draft: string): void {
-    scheduleTmuxAgentSubmitImpl(this, sessionId, target, draft);
-  },
-
-  async writeAgentInput(
-    this: any,
-    sessionId: string,
-    data = "",
-    parts?: any[],
-    clientMessageId?: string,
-    submit = false,
-    collaboration?: AgentCollaborationContext,
-  ): Promise<{ sessionId: string }> {
-    return writeAgentInputImpl(this, sessionId, data, parts, clientMessageId, submit, collaboration);
-  },
-
-  async readAgentHistory(this: any, sessionId: string, lastN?: number): Promise<any> {
-    return readAgentHistoryImpl(this, sessionId, lastN);
-  },
-
   async interruptAgent(this: any, sessionId: string): Promise<{ sessionId: string }> {
-    return interruptAgentImpl(this, sessionId);
+    return disabledRuntimeCore.interruptAgent({ sessionId });
   },
 
   async readAgentOutput(this: any, sessionId: string, startLine?: number): Promise<any> {

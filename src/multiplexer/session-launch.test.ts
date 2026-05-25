@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
+import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 
 function gitInit(cwd: string): void {
   const env = { ...process.env };
@@ -19,12 +20,12 @@ import {
   focusSession,
   migrateAgent,
   resumeSessions,
+  restoreSessions,
   runDashboard,
   runProjectService,
   summarizeLaunchArgs,
 } from "./session-launch.js";
-import { captureBackendSessionIdFromSessionFiles } from "./session-capture.js";
-import { loadMetadataState, recordSessionBackendSessionIdMetadata, updateSessionMetadata } from "../metadata-store.js";
+import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 
 describe("createSession", () => {
   it("redacts sensitive launch arg values in debug summaries", () => {
@@ -47,111 +48,6 @@ describe("createSession", () => {
       "OPENAI_API_KEY=<redacted>",
       "PATH=/usr/bin",
     ]);
-  });
-
-  it("captures a Codex backend session id from the native session file containing the aimux session id", () => {
-    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-home-"));
-    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
-    mkdirSync(sessionDir, { recursive: true });
-    writeFileSync(
-      join(sessionDir, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"),
-      '{"message":"unrelated codex session"}\n',
-    );
-    writeFileSync(
-      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
-      '{"message":"This is an aimux-managed session with session ID codex-team"}\n',
-    );
-
-    expect(
-      captureBackendSessionIdFromSessionFiles(
-        {
-          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
-          pattern: "([0-9a-f-]+)\\.jsonl$",
-          delayMs: 0,
-        },
-        "codex-team",
-        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
-      ),
-    ).toBe("11111111-2222-3333-4444-555555555555");
-
-    rmSync(homeDir, { recursive: true, force: true });
-  });
-
-  it("does not guess a Codex backend session id when multiple native files mention the aimux session id", () => {
-    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-ambiguous-"));
-    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
-    mkdirSync(sessionDir, { recursive: true });
-    writeFileSync(
-      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
-      "This is an aimux-managed session with session ID codex-team\n",
-    );
-    writeFileSync(
-      join(sessionDir, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"),
-      "This is an aimux-managed session with session ID codex-team\n",
-    );
-
-    expect(
-      captureBackendSessionIdFromSessionFiles(
-        {
-          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
-          pattern: "([0-9a-f-]+)\\.jsonl$",
-          delayMs: 0,
-        },
-        "codex-team",
-        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
-      ),
-    ).toBeUndefined();
-
-    rmSync(homeDir, { recursive: true, force: true });
-  });
-
-  it("does not match session id prefixes while capturing Codex backend ids", () => {
-    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-prefix-"));
-    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
-    mkdirSync(sessionDir, { recursive: true });
-    writeFileSync(
-      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
-      "This is an aimux-managed session with session ID codex-10\n",
-    );
-
-    expect(
-      captureBackendSessionIdFromSessionFiles(
-        {
-          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
-          pattern: "([0-9a-f-]+)\\.jsonl$",
-          delayMs: 0,
-        },
-        "codex-1",
-        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
-      ),
-    ).toBeUndefined();
-
-    rmSync(homeDir, { recursive: true, force: true });
-  });
-
-  it("captures a Codex backend session id from the startup preamble even after the transcript grows", () => {
-    const homeDir = mkdtempSync(join(tmpdir(), "aimux-codex-session-capture-large-"));
-    const sessionDir = join(homeDir, ".codex", "sessions", "2026", "05", "21");
-    mkdirSync(sessionDir, { recursive: true });
-    const filler = "x".repeat(300_000);
-    writeFileSync(
-      join(sessionDir, "11111111-2222-3333-4444-555555555555.jsonl"),
-      `{"message":"This is an aimux-managed session with session ID codex-team"}\n${filler}\n`,
-    );
-
-    expect(
-      captureBackendSessionIdFromSessionFiles(
-        {
-          dir: "{home}/.codex/sessions/{yyyy}/{mm}/{dd}",
-          pattern: "([0-9a-f-]+)\\.jsonl$",
-          delayMs: 0,
-        },
-        "codex-team",
-        { homeDir, now: new Date("2026-05-21T12:00:00Z") },
-      ),
-    ).toBe("11111111-2222-3333-4444-555555555555");
-
-    rmSync(homeDir, { recursive: true, force: true });
   });
 
   it("does not inject startup preamble when explicitly suppressed", async () => {
@@ -797,13 +693,12 @@ describe("createSession", () => {
 });
 
 describe("migrateAgent", () => {
-  it("uses durable backend metadata when migrating a runtime that missed its backend id", async () => {
+  it("does not use durable backend metadata when migrating a runtime that missed its backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-migrate-"));
     const targetRoot = mkdtempSync(join(tmpdir(), "aimux-session-migrate-target-"));
     gitInit(repoRoot);
     gitInit(targetRoot);
     await initPaths(repoRoot);
-    recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
 
     const sessions: any[] = [];
     const sourceSession: any = {
@@ -828,7 +723,7 @@ describe("migrateAgent", () => {
       sessionTmuxTargets: new Map(),
       contextWatcher: { syncNow: vi.fn(async () => undefined) },
       sessionBootstrap: {
-        canResumeWithBackendSessionId: vi.fn(() => true),
+        canResumeWithBackendSessionId: vi.fn(() => false),
         composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
           ...originalArgs,
           ...resumeArgs,
@@ -860,14 +755,10 @@ describe("migrateAgent", () => {
 
     expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
       expect.objectContaining({ command: "codex" }),
-      "native-session",
+      undefined,
     );
-    expect(host.sessionBootstrap.composeToolArgs).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "codex" }),
-      expect.arrayContaining(["resume", "native-session"]),
-      ["--dangerously-bypass-approvals-and-sandbox"],
-    );
-    expect(sessions.find((session) => session.id === "codex-1")?.backendSessionId).toBe("native-session");
+    expect(host.sessionBootstrap.composeToolArgs).not.toHaveBeenCalled();
+    expect(sessions.find((session) => session.id === "codex-1")?.backendSessionId).toBeUndefined();
     expect(host.tmuxRuntimeManager.createWindow.mock.calls[0][2]).toBe(targetRoot);
     expect(host.registerManagedSession).toHaveBeenCalledWith(
       expect.anything(),
@@ -885,11 +776,10 @@ describe("migrateAgent", () => {
 });
 
 describe("focusSession", () => {
-  it("uses durable backend metadata when opening a session that missed its backend id", async () => {
+  it("does not use durable backend metadata when opening a session that missed its backend id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-focus-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
-    recordSessionBackendSessionIdMetadata("claude-1", "backend-1", repoRoot);
 
     const host: any = {
       sessions: [{ id: "claude-1" }],
@@ -908,7 +798,7 @@ describe("focusSession", () => {
 
     expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({
       id: "claude-1",
-      backendSessionId: "backend-1",
+      backendSessionId: undefined,
     });
     expect(host.saveState).toHaveBeenCalledOnce();
 
@@ -917,27 +807,26 @@ describe("focusSession", () => {
 });
 
 describe("resumeSessions", () => {
-  it("uses durable backend metadata when saved resume state is incomplete", async () => {
+  it("does not use display metadata when saved resume state is incomplete", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-metadata-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
-    recordSessionBackendSessionIdMetadata("codex-1", "native-session", repoRoot);
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: ["--dangerously-bypass-approvals-and-sandbox"],
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
 
     class Host {
-      static loadState() {
-        return {
-          sessions: [
-            {
-              id: "codex-1",
-              command: "codex",
-              toolConfigKey: "codex",
-              args: ["--dangerously-bypass-approvals-and-sandbox"],
-              worktreePath: repoRoot,
-            },
-          ],
-        };
-      }
-
       instanceId = "inst-1";
       instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();
@@ -958,24 +847,8 @@ describe("resumeSessions", () => {
 
     await expect(resumeSessions(host as any)).resolves.toBe(0);
 
-    expect(host.sessionBootstrap.canResumeWithBackendSessionId).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "codex" }),
-      "native-session",
-    );
-    expect(host.createSession).toHaveBeenCalledWith(
-      "codex",
-      expect.arrayContaining(["resume", "native-session"]),
-      undefined,
-      "codex",
-      undefined,
-      undefined,
-      repoRoot,
-      "native-session",
-      "codex-1",
-      false,
-      true,
-      undefined,
-    );
+    expect(host.sessionBootstrap.canResumeWithBackendSessionId).not.toHaveBeenCalled();
+    expect(host.createSession).not.toHaveBeenCalled();
     expect(host.openTmuxDashboardTarget).toHaveBeenCalledOnce();
 
     rmSync(repoRoot, { recursive: true, force: true });
@@ -986,24 +859,24 @@ describe("resumeSessions", () => {
     gitInit(repoRoot);
     await initPaths(repoRoot);
     const team = { teamId: "team-1", parentSessionId: "claude-parent", role: "reviewer" };
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-team",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-team",
+          team,
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
 
     class Host {
-      static loadState() {
-        return {
-          sessions: [
-            {
-              id: "codex-team",
-              command: "codex",
-              toolConfigKey: "codex",
-              args: [],
-              backendSessionId: "backend-team",
-              team,
-              worktreePath: repoRoot,
-            },
-          ],
-        };
-      }
-
       instanceId = "inst-1";
       instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();
@@ -1042,26 +915,151 @@ describe("resumeSessions", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("only resumes offline topology sessions", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-offline-only-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-running",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "running",
+          backendSessionId: "backend-running",
+          worktreePath: repoRoot,
+        },
+        {
+          id: "codex-offline",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-offline",
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
+
+    class Host {
+      instanceId = "inst-1";
+      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
+      startHeartbeat = vi.fn();
+      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
+      sessionBootstrap = {
+        canResumeWithBackendSessionId: vi.fn(() => true),
+        composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
+          ...originalArgs,
+          ...resumeArgs,
+        ]),
+      };
+      createSession = vi.fn();
+      openTmuxDashboardTarget = vi.fn();
+      runDashboard = vi.fn();
+    }
+
+    const host = new Host();
+
+    await expect(resumeSessions(host as any)).resolves.toBe(0);
+
+    expect(host.createSession).toHaveBeenCalledOnce();
+    expect(host.createSession).toHaveBeenCalledWith(
+      "codex",
+      expect.arrayContaining(["resume", "backend-offline"]),
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      "backend-offline",
+      "codex-offline",
+      false,
+      true,
+      undefined,
+    );
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("only restores offline topology sessions", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-restore-offline-only-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-running",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: ["running"],
+          lifecycle: "running",
+          worktreePath: repoRoot,
+        },
+        {
+          id: "codex-offline",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: ["offline"],
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
+
+    const host = {
+      createSession: vi.fn(),
+      openTmuxDashboardTarget: vi.fn(),
+      runDashboard: vi.fn(),
+    };
+
+    await expect(restoreSessions(host as any)).resolves.toBe(0);
+
+    expect(host.createSession).toHaveBeenCalledOnce();
+    expect(host.createSession).toHaveBeenCalledWith(
+      "codex",
+      ["offline"],
+      undefined,
+      "codex",
+      undefined,
+      undefined,
+      repoRoot,
+      undefined,
+      "codex-offline",
+      false,
+      false,
+      undefined,
+    );
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("skips saved sessions without exact backend resume args instead of using broad fallback args", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: ["--dangerously-bypass-approvals-and-sandbox"],
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
 
     class Host {
-      static loadState() {
-        return {
-          sessions: [
-            {
-              id: "codex-1",
-              command: "codex",
-              toolConfigKey: "codex",
-              args: ["--dangerously-bypass-approvals-and-sandbox"],
-              worktreePath: repoRoot,
-            },
-          ],
-        };
-      }
-
       instanceId = "inst-1";
       instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();
@@ -1093,13 +1091,11 @@ describe("resumeSessions", () => {
 });
 
 describe("runProjectService", () => {
-  it("starts the dispatcher refresh loop", async () => {
+  it("starts without legacy dispatchers", async () => {
     const resolveRun = vi.fn();
     const host: any = {
       mode: "dashboard",
-      syncSessionsFromState: vi.fn(),
-      createTaskDispatcher: vi.fn(() => ({ tick: vi.fn(), drainEvents: vi.fn(() => []) })),
-      createOrchestrationDispatcher: vi.fn(() => ({ tick: vi.fn(), drainEvents: vi.fn(() => []) })),
+      syncSessionsFromTopology: vi.fn(),
       writeInstructionFiles: vi.fn(),
       startProjectServices: vi.fn(),
       startStatusRefresh: vi.fn(() => resolveRun(0)),
@@ -1127,7 +1123,7 @@ describe("runDashboard", () => {
       startHeartbeat: vi.fn(),
       startedInDashboard: false,
       mode: "session",
-      syncSessionsFromState: vi.fn(),
+      syncSessionsFromTopology: vi.fn(),
       writeInstructionFiles: vi.fn(),
       terminalHost: {
         enterRawMode: vi.fn(),

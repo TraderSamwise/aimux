@@ -5,10 +5,9 @@ import { closeDebug, debug } from "../debug.js";
 import { loadConfig } from "../config.js";
 import { getStatePath } from "../paths.js";
 import { buildAimuxAgentInstructions } from "../session-bootstrap.js";
-import { loadMetadataState } from "../metadata-store.js";
-import type { InstanceInfo, InstanceSessionRef } from "../instance-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
+import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import {
   adjustAfterRemove as adjustAfterRemoveImpl,
   buildLiveServiceStates as buildLiveServiceStatesImpl,
@@ -17,11 +16,10 @@ import {
   getRemoteInstancesSafe as getRemoteInstancesSafeImpl,
   getRemoteOwnedSessionKeys as getRemoteOwnedSessionKeysImpl,
   graveyardSession as graveyardSessionImpl,
-  handleSessionClaimed as handleSessionClaimedImpl,
   isSessionRuntimeLive as isSessionRuntimeLiveImpl,
   loadOfflineServices as loadOfflineServicesImpl,
-  loadOfflineSessions as loadOfflineSessionsImpl,
-  restoreTmuxSessionsFromState as restoreTmuxSessionsFromStateImpl,
+  loadOfflineTopologySessions as loadOfflineTopologySessionsImpl,
+  restoreTmuxSessionsFromTopology as restoreTmuxSessionsFromTopologyImpl,
   recordSessionBackendSessionId as recordSessionBackendSessionIdImpl,
   resumeOfflineSession as resumeOfflineSessionImpl,
   startHeartbeat as startHeartbeatImpl,
@@ -31,14 +29,13 @@ import {
   stopProjectServiceRefresh as stopProjectServiceRefreshImpl,
   stopSessionToOffline as stopSessionToOfflineImpl,
   stopStatusRefresh as stopStatusRefreshImpl,
-  syncSessionsFromState as syncSessionsFromStateImpl,
+  syncSessionsFromTopology as syncSessionsFromTopologyImpl,
 } from "./runtime-state.js";
 
-function sanitizeOfflineSessionState(session: SessionState, metadataState = loadMetadataState()): SessionState {
+function sanitizeOfflineSessionState(session: SessionState): SessionState {
   const { tmuxTarget: _tmuxTarget, ...rest } = session;
   return {
     ...rest,
-    backendSessionId: rest.backendSessionId ?? metadataState.sessions[rest.id]?.backendSessionId,
     lifecycle: "offline",
   };
 }
@@ -53,23 +50,6 @@ function isRecoverableExistingSession(session: SessionState): boolean {
   if (session.lifecycle === "live") return true;
   if (session.lifecycle) return false;
   return Boolean(session.backendSessionId);
-}
-
-function sessionStateFromInstanceRef(ref: InstanceSessionRef): SessionState | null {
-  const tool = ref.tool;
-  if (!ref.id || !tool) return null;
-  return {
-    id: ref.id,
-    tool,
-    toolConfigKey: tool,
-    command: tool,
-    args: [],
-    lifecycle: "offline",
-    createdAt: ref.createdAt,
-    backendSessionId: ref.backendSessionId,
-    team: ref.team,
-    worktreePath: ref.worktreePath,
-  };
 }
 
 function dedupeSessionStates(sessions: SessionState[]): SessionState[] {
@@ -92,13 +72,12 @@ type RuntimeLifecycleHost = {
   offlineSessions: SessionState[];
   offlineServices: ServiceState[];
   removedServiceIds?: Set<string>;
-  taskDispatcher: unknown;
-  orchestrationDispatcher: unknown;
   instanceDirectory: { unregisterInstance(instanceId: string, cwd: string): Promise<void> };
   instanceId: string;
   contextWatcher: { stop(): void };
   onStdinData: ((data: Buffer) => void) | null;
   onResize: (() => void) | null;
+  unpreservedExitedSessionIds?: Set<string>;
   dashboardViewportPollInterval: ReturnType<typeof setInterval> | null;
   hotkeys: { destroy(): void };
   terminalHost: { restoreTerminalState(): void };
@@ -116,11 +95,11 @@ export type RuntimeLifecycleMethods = {
   removeInstructionFiles(this: Multiplexer): void;
   startStatusRefresh(this: Multiplexer): void;
   stopStatusRefresh(this: Multiplexer): void;
-  syncSessionsFromState(this: Multiplexer, state?: SavedState | null): void;
-  loadOfflineSessions(this: Multiplexer, state?: SavedState | null): boolean;
+  syncSessionsFromTopology(this: Multiplexer): void;
+  loadOfflineTopologySessions(this: Multiplexer): boolean;
   loadOfflineServices(this: Multiplexer, state?: SavedState | null): boolean;
   buildLiveServiceStates(this: Multiplexer): ServiceState[];
-  restoreTmuxSessionsFromState(this: Multiplexer, state?: SavedState | null): void;
+  restoreTmuxSessionsFromTopology(this: Multiplexer): void;
   stopSessionToOffline(this: Multiplexer, session: SessionRuntime): void;
   adjustAfterRemove(this: Multiplexer, hasWorktrees: boolean): void;
   graveyardSession(this: Multiplexer, sessionId: string, sessionSeed?: any): void;
@@ -133,13 +112,12 @@ export type RuntimeLifecycleMethods = {
     backendSessionId: string,
   ): { sessionId: string; backendSessionId: string };
   startHeartbeat(this: Multiplexer): void;
-  handleSessionClaimed(this: Multiplexer, sessionId: string): void;
   stopHeartbeat(this: Multiplexer): void;
   startProjectServiceRefresh(this: Multiplexer): void;
   stopProjectServiceRefresh(this: Multiplexer): void;
   getRemoteInstancesSafe(this: Multiplexer): ReturnType<typeof getRemoteInstancesSafeImpl>;
   getRemoteOwnedSessionKeys(this: Multiplexer): Set<string>;
-  getInstanceSessionRefs(this: Multiplexer): InstanceSessionRef[];
+  getInstanceSessionRefs(this: Multiplexer): any[];
   saveState(this: Multiplexer): void;
   teardown(this: Multiplexer): void;
   cleanup(this: Multiplexer): void;
@@ -149,13 +127,18 @@ export type RuntimeLifecycleMethods = {
 
 export function loadStateStatic(): SavedState | null {
   const statePath = getStatePath();
-  if (!existsSync(statePath)) return null;
+  if (!existsSync(statePath)) {
+    return null;
+  }
 
   try {
     const raw = readFileSync(statePath, "utf-8");
-    const state = JSON.parse(raw) as SavedState;
-
-    return state;
+    const state = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      savedAt: typeof state.savedAt === "string" ? state.savedAt : new Date().toISOString(),
+      cwd: typeof state.cwd === "string" ? state.cwd : process.cwd(),
+      services: Array.isArray(state.services) ? (state.services as ServiceState[]) : undefined,
+    };
   } catch {
     return null;
   }
@@ -210,11 +193,11 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   stopStatusRefresh(this: Multiplexer) {
     stopStatusRefreshImpl(this);
   },
-  syncSessionsFromState(this: Multiplexer, state = loadStateStatic()) {
-    syncSessionsFromStateImpl(this, state);
+  syncSessionsFromTopology(this: Multiplexer) {
+    syncSessionsFromTopologyImpl(this);
   },
-  loadOfflineSessions(this: Multiplexer, state = loadStateStatic()) {
-    return loadOfflineSessionsImpl(this, state);
+  loadOfflineTopologySessions(this: Multiplexer) {
+    return loadOfflineTopologySessionsImpl(this);
   },
   loadOfflineServices(this: Multiplexer, state = loadStateStatic()) {
     return loadOfflineServicesImpl(this, state);
@@ -222,8 +205,8 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   buildLiveServiceStates(this: Multiplexer) {
     return buildLiveServiceStatesImpl(this);
   },
-  restoreTmuxSessionsFromState(this: Multiplexer, state = loadStateStatic()) {
-    restoreTmuxSessionsFromStateImpl(this, state);
+  restoreTmuxSessionsFromTopology(this: Multiplexer) {
+    restoreTmuxSessionsFromTopologyImpl(this);
   },
   stopSessionToOffline(this: Multiplexer, session) {
     stopSessionToOfflineImpl(this, session);
@@ -249,9 +232,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   startHeartbeat(this: Multiplexer) {
     startHeartbeatImpl(this);
   },
-  handleSessionClaimed(this: Multiplexer, sessionId) {
-    handleSessionClaimedImpl(this, sessionId);
-  },
   stopHeartbeat(this: Multiplexer) {
     stopHeartbeatImpl(this);
   },
@@ -272,7 +252,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   },
   saveState(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
-    const metadataState = loadMetadataState();
     const liveSessions = mux.sessions
       .filter((s: SessionRuntime) => !("stoppingSessionIds" in mux) || !(mux as any).stoppingSessionIds?.has?.(s.id))
       .filter((s: SessionRuntime) => this.isSessionRuntimeLive(s))
@@ -284,7 +263,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
         args: mux.sessionOriginalArgs.get(s.id) ?? [],
         lifecycle: "live" as const,
         createdAt: s.startTime ? new Date(s.startTime).toISOString() : undefined,
-        backendSessionId: s.backendSessionId ?? metadataState.sessions[s.id]?.backendSessionId,
+        backendSessionId: s.backendSessionId,
         team: s.team,
         worktreePath: mux.sessionWorktreePaths.get(s.id),
         label: this.getSessionLabel(s.id),
@@ -293,16 +272,9 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       }));
     const liveKeys = new Set(liveSessions.map(sessionStateKey));
     const offlineSessions = mux.offlineSessions
-      .map((session) => sanitizeOfflineSessionState(session, metadataState))
+      .map((session) => sanitizeOfflineSessionState(session))
       .filter((session) => !liveKeys.has(sessionStateKey(session)));
     const mySessions = dedupeSessionStates([...liveSessions, ...offlineSessions]);
-    const remoteRefs = this.getRemoteInstancesSafe().flatMap((instance: InstanceInfo) => instance.sessions);
-    const remoteSessions = dedupeSessionStates(
-      remoteRefs.flatMap((ref: InstanceSessionRef) => {
-        const session = sessionStateFromInstanceRef(ref);
-        return session ? [session] : [];
-      }),
-    );
     const removedServiceIds = mux.removedServiceIds ?? new Set<string>();
     const liveServices = this.buildLiveServiceStates().filter((service) => !removedServiceIds.has(service.id));
     const myServices = [...mux.offlineServices, ...liveServices].filter(
@@ -310,26 +282,25 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     );
 
     const statePath = getStatePath();
-    let mergedSessions: SessionState[] = dedupeSessionStates([...remoteSessions, ...mySessions]);
+    const myBackendIds = new Set(mySessions.map((s) => s.backendSessionId).filter(Boolean));
+    const myIds = new Set(mySessions.map((s) => s.id));
+    const unpreservedExitedIds = mux.unpreservedExitedSessionIds ?? new Set<string>();
+    const topologySessions = listTopologySessionStates({
+      statuses: ["running", "idle", "offline"],
+    }) as SessionState[];
+    const otherSessions = topologySessions.flatMap((s) => {
+      if (unpreservedExitedIds.has(s.id)) return [];
+      if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return [];
+      if (myIds.has(s.id)) return [];
+      if (!isRecoverableExistingSession(s)) return [];
+      return [s];
+    });
+    const mergedSessions: SessionState[] = dedupeSessionStates([...otherSessions, ...mySessions]);
     let mergedServices: ServiceState[] = myServices;
 
     if (existsSync(statePath)) {
       try {
         const existing = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
-        const remoteIds = new Set(remoteRefs.map((s: InstanceSessionRef) => s.id));
-        const remoteBackendIds = new Set(remoteRefs.map((s: InstanceSessionRef) => s.backendSessionId).filter(Boolean));
-        const myBackendIds = new Set(mySessions.map((s) => s.backendSessionId).filter(Boolean));
-        const myIds = new Set(mySessions.map((s) => s.id));
-        const otherSessions = existing.sessions.flatMap((s) => {
-          if (remoteIds.has(s.id)) return [s];
-          if (s.backendSessionId && remoteBackendIds.has(s.backendSessionId)) return [s];
-          if (s.backendSessionId && myBackendIds.has(s.backendSessionId)) return [];
-          if (myIds.has(s.id)) return [];
-          if (!isRecoverableExistingSession(s)) return [];
-          return [sanitizeOfflineSessionState(s, metadataState)];
-        });
-        mergedSessions = dedupeSessionStates([...remoteSessions, ...otherSessions, ...mySessions]);
-
         const myServiceIds = new Set(myServices.map((service) => service.id));
         const otherServices = (existing.services ?? []).filter((service) => {
           if (removedServiceIds.has(service.id)) return false;
@@ -340,10 +311,12 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       } catch {}
     }
 
+    saveRuntimeTopologySessions({ sessions: mergedSessions });
+    unpreservedExitedIds.clear();
+
     const state: SavedState = {
       savedAt: new Date().toISOString(),
       cwd: process.cwd(),
-      sessions: mergedSessions,
       services: mergedServices,
     };
 
@@ -356,13 +329,10 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     this.clearDashboardBusy();
     this.stopHeartbeat();
     this.stopProjectServiceRefresh();
-    mux.taskDispatcher = null;
-    mux.orchestrationDispatcher = null;
     mux.instanceDirectory.unregisterInstance(mux.instanceId, process.cwd()).catch(() => {});
     this.saveState();
     this.stopStatusRefresh();
     mux.contextWatcher.stop();
-    this.removeSessionsFile();
     this.removeInstructionFiles();
     closeDebug();
     if (mux.onStdinData) {

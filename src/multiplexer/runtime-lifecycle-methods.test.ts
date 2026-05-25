@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getStatePath, initPaths } from "../paths.js";
-import { recordSessionBackendSessionIdMetadata } from "../metadata-store.js";
-import { runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
+import { loadStateStatic, runtimeLifecycleMethods } from "./runtime-lifecycle-methods.js";
+import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 
 describe("runtime lifecycle state persistence", () => {
   let repoRoot = "";
@@ -38,6 +38,64 @@ describe("runtime lifecycle state persistence", () => {
     };
   }
 
+  function topologySessions() {
+    return listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
+  }
+
+  it("does not expose topology sessions through the service state loader", () => {
+    writeFileSync(
+      getStatePath(),
+      JSON.stringify({ savedAt: new Date().toISOString(), cwd: repoRoot, sessions: [], services: [] }, null, 2) + "\n",
+    );
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-offline",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-1",
+          worktreePath: repoRoot,
+        },
+      ],
+    });
+
+    expect(loadStateStatic()).not.toHaveProperty("sessions");
+    expect(topologySessions()).toEqual([expect.objectContaining({ id: "codex-offline" })]);
+  });
+
+  it("preserves topology sessions even when service state does not exist yet", () => {
+    if (existsSync(getStatePath())) unlinkSync(getStatePath());
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-offline",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-1",
+          worktreePath: repoRoot,
+        },
+      ],
+    });
+
+    runtimeLifecycleMethods.saveState.call(host() as never);
+
+    expect(topologySessions()).toEqual([
+      expect.objectContaining({
+        id: "codex-offline",
+        lifecycle: "offline",
+        backendSessionId: "backend-1",
+      }),
+    ]);
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as Record<string, unknown>;
+    expect(saved).not.toHaveProperty("sessions");
+  });
+
   it("persists an empty session list after the last local agent row is removed", () => {
     writeFileSync(
       getStatePath(),
@@ -55,8 +113,8 @@ describe("runtime lifecycle state persistence", () => {
 
     runtimeLifecycleMethods.saveState.call(host() as never);
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { sessions: unknown[]; services: unknown[] };
-    expect(saved.sessions).toEqual([]);
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { services: unknown[] };
+    expect(saved).not.toHaveProperty("sessions");
     expect(saved.services).toEqual([{ id: "stale-service", command: "shell", args: [] }]);
   });
 
@@ -117,13 +175,16 @@ describe("runtime lifecycle state persistence", () => {
         {
           savedAt: new Date().toISOString(),
           cwd: repoRoot,
-          sessions: [{ id: "remote-agent", command: "claude", tool: "claude", args: [] }],
+          sessions: [],
           services: [{ id: "stale-service", command: "shell", args: [] }],
         },
         null,
         2,
       ) + "\n",
     );
+    saveRuntimeTopologySessions({
+      sessions: [{ id: "remote-agent", command: "claude", tool: "claude", toolConfigKey: "claude", args: [] }],
+    });
 
     runtimeLifecycleMethods.saveState.call(
       host({
@@ -139,15 +200,12 @@ describe("runtime lifecycle state persistence", () => {
       }) as never,
     );
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string }>;
-      services: Array<{ id: string }>;
-    };
-    expect(saved.sessions.map((session) => session.id)).toEqual(["remote-agent"]);
+    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { services: Array<{ id: string }> };
+    expect(topologySessions().map((session) => session.id)).toEqual(["remote-agent"]);
     expect(saved.services.map((service) => service.id)).toEqual(["stale-service"]);
   });
 
-  it("persists remote instance session refs even when state has no matching row yet", () => {
+  it("does not mint topology sessions from remote instance refs", () => {
     writeFileSync(
       getStatePath(),
       JSON.stringify(
@@ -183,71 +241,60 @@ describe("runtime lifecycle state persistence", () => {
       }) as never,
     );
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; command: string; lifecycle?: string; backendSessionId?: string }>;
-    };
-    expect(saved.sessions).toEqual([
-      {
-        id: "remote-agent",
-        tool: "claude",
-        toolConfigKey: "claude",
-        command: "claude",
-        args: [],
-        lifecycle: "offline",
-        backendSessionId: "native-session",
-        worktreePath: repoRoot,
-      },
-    ]);
+    expect(topologySessions()).toEqual([]);
   });
 
-  it("converts recoverable existing live sessions to offline instead of erasing them", () => {
+  it("preserves recoverable existing live sessions when saving partial state", () => {
     writeFileSync(
       getStatePath(),
       JSON.stringify(
         {
           savedAt: new Date().toISOString(),
           cwd: repoRoot,
-          sessions: [
-            {
-              id: "local-agent",
-              command: "claude",
-              tool: "claude",
-              toolConfigKey: "claude",
-              args: ["--resume", "backend-1"],
-              lifecycle: "live",
-              backendSessionId: "backend-1",
-              worktreePath: repoRoot,
-              tmuxTarget: {
-                sessionName: "aimux-repo",
-                windowId: "@7",
-                windowIndex: 7,
-                windowName: "claude",
-              },
-            },
-          ],
+          sessions: [],
           services: [],
         },
         null,
         2,
       ) + "\n",
     );
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "local-agent",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: ["--resume", "backend-1"],
+          lifecycle: "live",
+          backendSessionId: "backend-1",
+          worktreePath: repoRoot,
+          tmuxTarget: {
+            sessionName: "aimux-repo",
+            windowId: "@7",
+            windowIndex: 7,
+            windowName: "claude",
+          },
+        },
+      ],
+    });
 
     runtimeLifecycleMethods.saveState.call(host() as never);
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; lifecycle?: string; tmuxTarget?: unknown; backendSessionId?: string }>;
-    };
-    expect(saved.sessions).toEqual([
-      {
+    expect(topologySessions()).toEqual([
+      expect.objectContaining({
         id: "local-agent",
         command: "claude",
         tool: "claude",
         toolConfigKey: "claude",
         args: ["--resume", "backend-1"],
-        lifecycle: "offline",
+        lifecycle: "live",
         backendSessionId: "backend-1",
         worktreePath: repoRoot,
-      },
+        tmuxTarget: expect.objectContaining({
+          windowId: "@7",
+        }),
+      }),
     ]);
   });
 
@@ -258,39 +305,39 @@ describe("runtime lifecycle state persistence", () => {
         {
           savedAt: new Date().toISOString(),
           cwd: repoRoot,
-          sessions: [
-            {
-              id: "local-agent",
-              command: "claude",
-              tool: "claude",
-              toolConfigKey: "claude",
-              args: [],
-              lifecycle: "live",
-              worktreePath: repoRoot,
-            },
-          ],
+          sessions: [],
           services: [],
         },
         null,
         2,
       ) + "\n",
     );
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "local-agent",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "live",
+          worktreePath: repoRoot,
+        },
+      ],
+    });
 
     runtimeLifecycleMethods.saveState.call(host() as never);
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; lifecycle?: string; tmuxTarget?: unknown; backendSessionId?: string }>;
-    };
-    expect(saved.sessions).toEqual([
-      {
+    expect(topologySessions()).toEqual([
+      expect.objectContaining({
         id: "local-agent",
         command: "claude",
         tool: "claude",
         toolConfigKey: "claude",
         args: [],
-        lifecycle: "offline",
+        lifecycle: "live",
         worktreePath: repoRoot,
-      },
+      }),
     ]);
   });
 
@@ -317,26 +364,26 @@ describe("runtime lifecycle state persistence", () => {
         {
           savedAt: new Date().toISOString(),
           cwd: repoRoot,
-          sessions: [
-            { ...duplicate, label: "old" },
-            { ...duplicate, label: "new" },
-          ],
+          sessions: [],
           services: [],
         },
         null,
         2,
       ) + "\n",
     );
+    saveRuntimeTopologySessions({
+      sessions: [
+        { ...duplicate, label: "old" },
+        { ...duplicate, label: "new" },
+      ],
+    });
 
     runtimeLifecycleMethods.saveState.call(host() as never);
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; lifecycle?: string; label?: string }>;
-    };
-    expect(saved.sessions).toHaveLength(1);
-    expect(saved.sessions[0]).toMatchObject({
+    expect(topologySessions()).toHaveLength(1);
+    expect(topologySessions()[0]).toMatchObject({
       id: "local-agent",
-      lifecycle: "offline",
+      lifecycle: "live",
       label: "new",
     });
   });
@@ -362,18 +409,15 @@ describe("runtime lifecycle state persistence", () => {
       }) as never,
     );
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; lifecycle?: string; tmuxTarget?: unknown }>;
-    };
-    expect(saved.sessions).toEqual([
-      {
+    expect(topologySessions()).toEqual([
+      expect.objectContaining({
         id: "codex-offline",
         tool: "codex",
         toolConfigKey: "codex",
         command: "codex",
         args: [],
         lifecycle: "offline",
-      },
+      }),
     ]);
   });
 
@@ -403,10 +447,7 @@ describe("runtime lifecycle state persistence", () => {
       }) as never,
     );
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; lifecycle?: string; tmuxTarget?: unknown }>;
-    };
-    expect(saved.sessions).toEqual([
+    expect(topologySessions()).toEqual([
       expect.objectContaining({
         id: "codex-live",
         lifecycle: "live",
@@ -416,8 +457,7 @@ describe("runtime lifecycle state persistence", () => {
     ]);
   });
 
-  it("fills missing live backend ids from metadata while saving state", () => {
-    recordSessionBackendSessionIdMetadata("claude-live", "backend-from-metadata", repoRoot);
+  it("does not fill missing live backend ids from metadata while saving state", () => {
     const runtime = {
       id: "claude-live",
       command: "claude",
@@ -440,19 +480,15 @@ describe("runtime lifecycle state persistence", () => {
       }) as never,
     );
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; backendSessionId?: string }>;
-    };
-    expect(saved.sessions).toEqual([
+    expect(topologySessions()).toEqual([
       expect.objectContaining({
         id: "claude-live",
-        backendSessionId: "backend-from-metadata",
+        backendSessionId: undefined,
       }),
     ]);
   });
 
   it("does not replace a known runtime backend id with conflicting metadata", () => {
-    recordSessionBackendSessionIdMetadata("claude-live", "backend-stale", repoRoot);
     const runtime = {
       id: "claude-live",
       command: "claude",
@@ -476,10 +512,7 @@ describe("runtime lifecycle state persistence", () => {
       }) as never,
     );
 
-    const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as {
-      sessions: Array<{ id: string; backendSessionId?: string }>;
-    };
-    expect(saved.sessions).toEqual([
+    expect(topologySessions()).toEqual([
       expect.objectContaining({
         id: "claude-live",
         backendSessionId: "backend-current",

@@ -112,7 +112,7 @@ Target budget:
 Examples:
 
 - statusline rendering
-- footer/status projections
+- footer/status payloads
 - small in-dashboard overlays
 
 Rules:
@@ -164,7 +164,7 @@ Target budget:
 Examples:
 
 - project-service polling/ticks
-- orchestration dispatch
+- orchestration API writes
 - statusline snapshot writes
 - event streaming
 

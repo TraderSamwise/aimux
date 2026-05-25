@@ -181,12 +181,9 @@ export async function unregisterInstance(instanceId: string, cwd: string): Promi
  */
 export async function updateHeartbeat(
   instanceId: string,
-  sessions: InstanceSessionRef[],
+  _sessions: InstanceSessionRef[],
   cwd: string,
 ): Promise<string[]> {
-  // Collect previous session IDs across ALL instances.json files (global + in-repo).
-  // withLockedInstances calls the callback once per file, so we merge results.
-  const allPreviousIds = new Set<string>();
   await withLockedInstances(cwd, (instances) => {
     // Prune dead instances, but never prune ourselves — we know we're alive
     const pruned = pruneDeadEntries(instances.filter((i) => i.instanceId !== instanceId));
@@ -194,12 +191,11 @@ export async function updateHeartbeat(
 
     const result = pruned.map((inst) => inst);
     if (self) {
-      for (const s of self.sessions) allPreviousIds.add(s.id);
-      result.push({ ...self, heartbeat: new Date().toISOString(), sessions });
+      result.push({ ...self, heartbeat: new Date().toISOString(), sessions: [] });
     }
     return result;
   });
-  return [...allPreviousIds];
+  return [];
 }
 
 /**
@@ -217,41 +213,10 @@ export function getRemoteInstances(ownInstanceId: string, cwd: string): Instance
     for (const inst of alive) {
       if (inst.instanceId !== ownInstanceId && !seen.has(inst.instanceId)) {
         seen.add(inst.instanceId);
-        result.push(inst);
+        result.push({ ...inst, sessions: [] });
       }
     }
   }
 
   return result;
-}
-
-/**
- * Remove a session from another instance's entry (takeover step).
- * Returns the claimed session ref, or undefined if not found.
- */
-export async function claimSession(
-  sessionId: string,
-  fromInstanceId: string,
-  cwd: string,
-): Promise<InstanceSessionRef | undefined> {
-  let claimed: InstanceSessionRef | undefined;
-
-  await withLockedInstances(cwd, (instances) => {
-    return instances.map((inst) => {
-      if (inst.instanceId === fromInstanceId) {
-        const session = inst.sessions.find((s) => s.id === sessionId);
-        if (session) {
-          claimed = session;
-          debug(`claimed session ${sessionId} from instance ${fromInstanceId}`, "instance");
-          return {
-            ...inst,
-            sessions: inst.sessions.filter((s) => s.id !== sessionId),
-          };
-        }
-      }
-      return inst;
-    });
-  });
-
-  return claimed;
 }

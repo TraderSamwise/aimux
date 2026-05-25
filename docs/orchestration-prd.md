@@ -10,7 +10,7 @@ Implemented so far:
 - thread inbox/dashboard screen
 - direct messaging, handoff, and task-assignment CLI verbs
 - project-service API endpoints for threads, handoffs, task assignment, and workflow actions
-- durable message delivery when recipients are busy
+- durable thread state for messages and workflow actions
 - dashboard-native orchestration actions and quick reply/jump flows
 - routing by explicit session, role, tool, and worktree
 - fan-out routing to all matching recipients
@@ -34,7 +34,7 @@ Aimux already has the substrate for multi-agent work:
 
 - tmux-backed live agent runtime
 - per-agent plans
-- file-backed task dispatch
+- file-backed task handoff records
 - shared context/history
 - metadata, events, activity, and attention tracking
 
@@ -126,15 +126,15 @@ Key concepts called out in the upstream README:
   - asynchronous spawn/delegation
 - `send_message`:
   - direct communication with an existing agent
-- queued delivery when the recipient is busy
+- durable inbox state when the recipient is busy
 
 Those semantics are extremely close to what aimux needs next.
 
 What to borrow:
 
 - explicit orchestration verbs
-- inbox/message delivery semantics
-- queued delivery when recipients are busy
+- inbox/message state semantics
+- durable waiting state when recipients are busy
 - treating terminal identity as a routing target
 
 What not to borrow wholesale:
@@ -243,7 +243,7 @@ Aimux should standardize on three top-level orchestration actions, directly insp
 
 1. `send_message`
 - lightweight communication with an existing agent
-- queued if the target is busy
+- appends to the target thread/inbox and places the recipient in a waiting state
 - ideal for clarification, follow-up, or status checks
 
 2. `assign_task`
@@ -301,18 +301,19 @@ Aimux already has these layers:
 
 - path: `.aimux/tasks/*.json`
 - implementation:
-  - [`src/tasks.ts`](/Users/sam/cs/aimux/src/tasks.ts)
-  - [`src/task-dispatcher.ts`](/Users/sam/cs/aimux/src/task-dispatcher.ts)
+  - [`src/tasks.ts`](../src/tasks.ts)
+  - [`src/orchestration-actions.ts`](../src/orchestration-actions.ts)
+  - [`src/task-workflow.ts`](../src/task-workflow.ts)
 - role:
-  - assign executable work
+  - record explicit handoffs and assignments
   - review loops
   - completion/failure routing
 
 ### 3. Context / History
 
 - implementation:
-  - [`src/context/history.ts`](/Users/sam/cs/aimux/src/context/history.ts)
-  - [`src/context/context-bridge.ts`](/Users/sam/cs/aimux/src/context/context-bridge.ts)
+  - [`src/context/history.ts`](../src/context/history.ts)
+  - [`src/context/context-bridge.ts`](../src/context/context-bridge.ts)
 - role:
   - continuity
   - migration handoff
@@ -321,9 +322,9 @@ Aimux already has these layers:
 ### 4. Metadata / Events / Tracker
 
 - implementation:
-  - [`src/metadata-store.ts`](/Users/sam/cs/aimux/src/metadata-store.ts)
-  - [`src/metadata-server.ts`](/Users/sam/cs/aimux/src/metadata-server.ts)
-  - [`src/agent-tracker.ts`](/Users/sam/cs/aimux/src/agent-tracker.ts)
+  - [`src/metadata-store.ts`](../src/metadata-store.ts)
+  - [`src/metadata-server.ts`](../src/metadata-server.ts)
+  - [`src/agent-tracker.ts`](../src/agent-tracker.ts)
 - role:
   - status
   - progress
@@ -336,7 +337,7 @@ Aimux already has these layers:
 ### 5. Team / Role Routing
 
 - implementation:
-  - [`src/team.ts`](/Users/sam/cs/aimux/src/team.ts)
+  - [`src/team.ts`](../src/team.ts)
 - role:
   - role-aware assignment
   - review topology
@@ -621,7 +622,7 @@ But aimux keeps its own primitives:
 
 We should also explicitly align with CAO's orchestration verbs:
 
-- `send_message` -> thread message append + queued delivery
+- `send_message` -> thread message append + waiting state
 - `assign` -> task creation + async execution
 - `handoff` -> thread/task ownership transfer + wait state
 

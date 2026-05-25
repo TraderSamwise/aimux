@@ -48,11 +48,6 @@ export function MessageBlock({ message, serviceEndpoint }: Props) {
           {speakerLabel}
         </Text>
       ) : null}
-      {message.deliveryState === "failed" ? (
-        <Text className="text-xs text-destructive mb-1">
-          {message.deliveryError ?? "Failed to deliver"}
-        </Text>
-      ) : null}
       {Array.isArray(message.parts) && message.parts.length > 0 ? (
         message.parts.map((part, idx) => {
           if (part.type === "text") {
@@ -87,9 +82,6 @@ export function MessageBlock({ message, serviceEndpoint }: Props) {
           {message.text ?? ""}
         </Text>
       )}
-      {message.deliveryState === "sending" ? (
-        <Text className="text-xs text-muted-foreground mt-1">Sending…</Text>
-      ) : null}
     </View>
   );
 }

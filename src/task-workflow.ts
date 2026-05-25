@@ -1,112 +1,14 @@
 import { normalizeReviewStatus, type Task, writeTask } from "./tasks.js";
 import { loadTeamConfig } from "./team.js";
-import { markMessageDelivered, openTaskThread, updateThread } from "./threads.js";
-import { sendThreadMessage } from "./orchestration.js";
-import type { TaskEvent } from "./task-dispatcher.js";
 
-interface DispatchSession {
-  id: string;
-  write(data: string): void;
-}
-
-function taskBody(task: Task): string {
-  return task.prompt?.trim() || task.description;
+export interface TaskEvent {
+  type: "assigned" | "completed" | "failed" | "review_created" | "review_approved" | "changes_requested";
+  taskId: string;
+  sessionId: string;
+  description: string;
 }
 
 export class TaskWorkflow {
-  constructor(
-    private readonly deliverPrompt: (session: DispatchSession, prompt: string) => void = defaultDeliverPrompt,
-  ) {}
-
-  injectIntoSession(session: DispatchSession, task: Task): TaskEvent {
-    const thread = openTaskThread(task.id, {
-      title: `${task.type === "review" ? "Review" : "Task"}: ${task.description}`,
-      createdBy: task.assignedBy,
-      participants: [task.assignedBy, session.id],
-      kind: task.type === "review" ? "review" : "task",
-    });
-    task.threadId = thread.id;
-    const initialMessage = sendThreadMessage({
-      threadId: thread.id,
-      from: task.assignedBy,
-      to: [session.id],
-      kind: "request",
-      body: taskBody(task),
-      metadata: { taskId: task.id },
-    });
-    markMessageDelivered(thread.id, initialMessage.message.id, session.id);
-
-    const prefix =
-      task.type === "review"
-        ? `[AIMUX REVIEW ${task.id} from ${task.assignedBy}]`
-        : `[AIMUX TASK ${task.id} from ${task.assignedBy}]`;
-
-    const bodyLabel = task.type === "review" ? "Review request" : "Task body";
-    let prompt = `${prefix} ${task.description}\n\n${bodyLabel}:\n${taskBody(task)}\n\n`;
-
-    if (task.type === "review" && task.diff) {
-      prompt += `Diff to review:\n${task.diff.slice(0, 3000)}\n\n`;
-    }
-
-    prompt +=
-      `Run:\n` +
-      `  aimux task show ${task.id}\n` +
-      `  aimux thread show ${thread.id}\n\n` +
-      `Acknowledge with:\n` +
-      `  aimux task accept ${task.id} --from ${session.id}\n\n` +
-      `When done, complete with:\n` +
-      `  aimux task complete ${task.id} --from ${session.id} --body "<summary>"`;
-
-    if (task.type === "review") {
-      prompt +=
-        `\n\nFor review verdicts use:\n` +
-        `  aimux review approve ${task.id} --from ${session.id} --body "<notes>"\n` +
-        `  aimux review request-changes ${task.id} --from ${session.id} --body "<requested changes>"`;
-    } else {
-      prompt += `\n\nIf blocked, use:\n  aimux task block ${task.id} --from ${session.id} --body "<reason>"`;
-    }
-
-    this.deliverPrompt(session, prompt);
-    task.status = "assigned";
-    task.assignedTo = session.id;
-    writeTask(task);
-    return {
-      type: "assigned",
-      taskId: task.id,
-      sessionId: session.id,
-      description: task.description,
-    };
-  }
-
-  notifyAssigner(session: DispatchSession, task: Task): void {
-    if (task.threadId) {
-      sendThreadMessage({
-        threadId: task.threadId,
-        from: task.assignedTo ?? task.assignedBy,
-        to: [task.assignedBy],
-        kind: task.status === "done" ? "status" : "reply",
-        body:
-          task.status === "done"
-            ? `Completed: ${task.description}${task.result ? `\n\n${task.result}` : ""}`
-            : `Failed: ${task.description}${task.error ? `\n\n${task.error}` : ""}`,
-        metadata: { taskId: task.id, status: task.status },
-      });
-      updateThread(task.threadId, (current) => ({
-        ...current,
-        status: task.status === "done" ? "done" : "blocked",
-        owner: task.assignedBy,
-        waitingOn: [],
-      }));
-    }
-
-    this.deliverPrompt(
-      session,
-      `[AIMUX TASK COMPLETE ${task.id}] Agent ${task.assignedTo} finished: ${task.result ?? task.error ?? "no details"}`,
-    );
-    task.notifiedAt = new Date().toISOString();
-    writeTask(task);
-  }
-
   handleCompletion(task: Task): TaskEvent[] {
     if (task.type === "review") {
       return this.handleReviewCompletion(task);
@@ -198,7 +100,50 @@ export class TaskWorkflow {
   }
 }
 
-function defaultDeliverPrompt(session: DispatchSession, prompt: string): void {
-  // Production multiplexer wiring overrides this with writeAgentInput(..., submit: true).
-  session.write(prompt + "\r");
+export async function requestReview(
+  agentSessionId: string,
+  agentRole: string,
+  diff: string | undefined,
+  summary: string,
+): Promise<Task | null> {
+  const config = loadTeamConfig();
+  const roleConfig = config.roles[agentRole];
+  let reviewerRole = roleConfig?.reviewedBy;
+
+  if (!reviewerRole) {
+    const roles = Object.entries(config.roles).filter(([roleKey]) => roleKey !== agentRole);
+    const fallback =
+      roles.find(([, role]) => role.description.toLowerCase().includes("review")) ??
+      roles.find(([, role]) => role.canEdit);
+    if (!fallback) return null;
+    reviewerRole = fallback[0];
+  }
+
+  if (reviewerRole === agentRole) {
+    const roles = Object.entries(config.roles).filter(([roleKey]) => roleKey !== agentRole);
+    const fallback =
+      roles.find(([, role]) => role.description.toLowerCase().includes("review")) ??
+      roles.find(([, role]) => role.canEdit);
+    if (!fallback) return null;
+    reviewerRole = fallback[0];
+  }
+
+  const reviewTask: Task = {
+    id: `review-manual-${Date.now().toString(36)}`,
+    status: "pending",
+    assignedBy: agentSessionId,
+    description: `Review: ${summary.slice(0, 100)}`,
+    prompt: summary,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    assignee: reviewerRole,
+    assigner: agentRole,
+    type: "review",
+    reviewStatus: "pending",
+    diff,
+    iteration: 1,
+  };
+
+  await writeTask(reviewTask);
+  return reviewTask;
 }

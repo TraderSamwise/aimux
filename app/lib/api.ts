@@ -13,7 +13,7 @@ import { getDaemonUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-
 import { env } from "@/lib/env";
 import type { RelayTransport } from "@/lib/relay-transport";
 import type { DesktopState } from "@/lib/desktop-state";
-import type { AgentInputPart, ChatMessage, ParsedAgentOutput } from "@/lib/events";
+import type { ParsedAgentOutput } from "@/lib/events";
 
 let _relay: RelayTransport | null = null;
 export function setApiRelay(relay: RelayTransport | null): void {
@@ -105,24 +105,12 @@ export interface DaemonHealth {
   port: number;
 }
 
-export interface ProjectSession {
-  id: string;
-  tool: string;
-  status: "running" | "idle" | "waiting" | "offline";
-  label?: string;
-  headline?: string;
-  role?: string;
-  worktreePath?: string;
-  ownerPid?: number;
-}
-
 export interface DaemonProject {
   id: string;
   name: string;
   path: string;
   lastSeen?: string;
   dashboardSessionName: string;
-  sessions: ProjectSession[];
   service: unknown | null;
   serviceAlive: boolean;
   serviceEndpoint: ServiceEndpoint | null;
@@ -182,22 +170,6 @@ export async function getProjectState(
   return callProjectJson<ProjectStateResponse>(endpoint, "GET", "/state", opts);
 }
 
-export interface AgentHistoryResponse {
-  sessionId: string;
-  messages: ChatMessage[];
-  lastN?: number;
-}
-
-export async function getAgentHistory(
-  endpoint: ServiceEndpoint,
-  sessionId: string,
-  lastN: number = 50,
-  opts?: ApiOpts,
-): Promise<AgentHistoryResponse> {
-  const path = `/agents/history?sessionId=${encodeURIComponent(sessionId)}&lastN=${lastN}`;
-  return callProjectJson<AgentHistoryResponse>(endpoint, "GET", path, opts);
-}
-
 export interface AgentOutputResponse {
   sessionId: string;
   output: string;
@@ -219,31 +191,6 @@ export async function getAgentOutput(
     `/agents/output?${params.toString()}`,
     opts,
   );
-}
-
-export interface AgentInputRequest {
-  sessionId: string;
-  data?: string;
-  parts?: AgentInputPart[];
-  clientMessageId?: string;
-  submit?: boolean;
-}
-
-export interface AgentInputResult {
-  ok: boolean;
-  accepted: boolean;
-  messageId?: string;
-  operation?: { id?: string; state?: string };
-  error?: string;
-  [k: string]: unknown;
-}
-
-export async function sendAgentInput(
-  endpoint: ServiceEndpoint,
-  input: AgentInputRequest,
-  opts?: ApiOpts,
-): Promise<AgentInputResult> {
-  return callProjectJson<AgentInputResult>(endpoint, "POST", "/agents/input", opts, input);
 }
 
 // ── Relay sharing ────────────────────────────────────────────────────────
@@ -424,26 +371,6 @@ export async function putPlan(
   );
 }
 
-// ── Attachments ──────────────────────────────────────────────────────────
-
-export interface AttachmentResponse {
-  ok: boolean;
-  attachment: {
-    id: string;
-    contentUrl: string;
-    filename?: string;
-    mimeType?: string;
-  };
-}
-
-export async function uploadAttachmentBase64(
-  endpoint: ServiceEndpoint,
-  input: { filename: string; mimeType: string; contentBase64: string },
-  opts?: ApiOpts,
-): Promise<AttachmentResponse> {
-  return callProjectJson<AttachmentResponse>(endpoint, "POST", "/attachments", opts, input);
-}
-
 // ── Desktop state (project → worktree → agents | services hierarchy) ────
 
 export async function getDesktopState(
@@ -507,80 +434,6 @@ export async function clearNotifications(
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; cleared: number }> {
   return callProjectJson(endpoint, "POST", "/notifications/clear", opts, input);
-}
-
-// ── Agent actions ────────────────────────────────────────────────────────
-
-export interface AgentSpawnInput {
-  tool: string;
-  worktreePath?: string;
-  label?: string;
-  role?: string;
-}
-
-export async function spawnAgent(
-  endpoint: ServiceEndpoint,
-  input: AgentSpawnInput,
-  opts?: ApiOpts,
-): Promise<{ ok: boolean; sessionId: string }> {
-  return callProjectJson(endpoint, "POST", "/agents/spawn", opts, input);
-}
-
-export async function forkAgent(
-  endpoint: ServiceEndpoint,
-  input: { sessionId: string; tool?: string; worktreePath?: string },
-  opts?: ApiOpts,
-): Promise<{ ok: boolean; sessionId: string }> {
-  return callProjectJson(endpoint, "POST", "/agents/fork", opts, input);
-}
-
-export async function stopAgent(
-  endpoint: ServiceEndpoint,
-  sessionId: string,
-  opts?: ApiOpts,
-): Promise<{ ok: boolean }> {
-  return callProjectJson(endpoint, "POST", "/agents/stop", opts, { sessionId });
-}
-
-export async function resumeAgent(
-  endpoint: ServiceEndpoint,
-  sessionId: string,
-  opts?: ApiOpts,
-): Promise<{ ok: boolean }> {
-  return callProjectJson(endpoint, "POST", "/agents/resume", opts, { sessionId });
-}
-
-export async function interruptAgent(
-  endpoint: ServiceEndpoint,
-  sessionId: string,
-  opts?: ApiOpts,
-): Promise<{ ok: boolean }> {
-  return callProjectJson(endpoint, "POST", "/agents/interrupt", opts, { sessionId });
-}
-
-export async function renameAgent(
-  endpoint: ServiceEndpoint,
-  sessionId: string,
-  label: string,
-  opts?: ApiOpts,
-): Promise<{ ok: boolean }> {
-  return callProjectJson(endpoint, "POST", "/agents/rename", opts, { sessionId, label });
-}
-
-export async function migrateAgent(
-  endpoint: ServiceEndpoint,
-  input: { sessionId: string; worktreePath?: string },
-  opts?: ApiOpts,
-): Promise<{ ok: boolean }> {
-  return callProjectJson(endpoint, "POST", "/agents/migrate", opts, input);
-}
-
-export async function killAgent(
-  endpoint: ServiceEndpoint,
-  sessionId: string,
-  opts?: ApiOpts,
-): Promise<{ ok: boolean }> {
-  return callProjectJson(endpoint, "POST", "/agents/kill", opts, { sessionId });
 }
 
 // ── Service actions ──────────────────────────────────────────────────────

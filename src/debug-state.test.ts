@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildDebugStateReport } from "./debug-state.js";
 import type { ReadOnlyProjectPaths } from "./paths.js";
+import { createRuntimeTopologyStore, emptyRuntimeTopology } from "./runtime-core/topology-store.js";
 
 function makePaths(): ReadOnlyProjectPaths {
   const root = mkdtempSync(join(tmpdir(), "aimux-debug-state-"));
@@ -17,7 +18,7 @@ function makePaths(): ReadOnlyProjectPaths {
     projectStateDir,
     localAimuxDir,
     statePath: join(projectStateDir, "state.json"),
-    graveyardPath: join(projectStateDir, "graveyard.json"),
+    runtimeTopologyPath: join(projectStateDir, "runtime-topology.yaml"),
     worktreeGraveyardPath: join(projectStateDir, "worktree-graveyard.json"),
     instancesPath: join(projectStateDir, "instances.json"),
     localInstancesPath: join(localAimuxDir, "instances.json"),
@@ -36,18 +37,55 @@ function snapshot(paths: string[]): Map<string, string> {
   return new Map(paths.map((path) => [path, readFileSync(path, "utf8")]));
 }
 
+function writeTopologySession(paths: ReadOnlyProjectPaths, session: any): void {
+  const now = new Date().toISOString();
+  createRuntimeTopologyStore(paths.runtimeTopologyPath).write({
+    ...emptyRuntimeTopology(now),
+    rigs: [{ id: "rig:test", name: "repo", projectRoot: paths.repoRoot, createdAt: now, updatedAt: now }],
+    nodes: [
+      {
+        id: `agent:${session.id}`,
+        rigId: "rig:test",
+        logicalId: session.id,
+        toolConfigKey: session.toolConfigKey ?? session.tool,
+        cwd: session.worktreePath,
+        label: session.label,
+        createdAt: now,
+      },
+    ],
+    sessions: [
+      {
+        id: session.id,
+        nodeId: `agent:${session.id}`,
+        status: session.lifecycle === "offline" ? "offline" : "running",
+        tool: session.tool,
+        command: session.command,
+        args: session.args ?? [],
+        backendSessionId: session.backendSessionId,
+        worktreePath: session.worktreePath,
+        label: session.label,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+  });
+}
+
 describe("buildDebugStateReport", () => {
   it("joins session evidence without mutating source files", () => {
     const paths = makePaths();
+    writeTopologySession(paths, {
+      id: "codex-a1",
+      tool: "codex",
+      toolConfigKey: "codex",
+      command: "codex",
+      args: [],
+      lifecycle: "offline",
+      backendSessionId: "backend-a1",
+      worktreePath: "/repo/worktree-a",
+    });
     writeJson(paths.statePath, {
-      sessions: [
-        {
-          id: "codex-a1",
-          tool: "codex",
-          backendSessionId: "backend-a1",
-          worktreePath: "/repo/worktree-a",
-        },
-      ],
+      sessions: [],
       services: [],
     });
     writeJson(paths.metadataPath, {
@@ -91,7 +129,8 @@ describe("buildDebugStateReport", () => {
 
     expect(report.targetResolution.status).toBe("matched");
     expect(report.targetResolution.entityCount).toBe(1);
-    expect(report.sources.savedState.value?.sessions).toHaveLength(1);
+    expect(report.sources.savedState.value).not.toHaveProperty("sessions");
+    expect(report.sources.runtimeTopology.value?.sessions).toHaveLength(1);
     expect(report.sources.metadata.value?.sessions).toHaveLength(1);
     expect(report.sources.tmux.value?.windows).toHaveLength(1);
     expect(snapshot([...before.keys()])).toEqual(before);
@@ -129,14 +168,22 @@ describe("buildDebugStateReport", () => {
     expect(report.targetResolution.status).toBe("missing");
     expect(report.sources.savedState.status).toBe("missing");
     expect(report.sources.pendingActions.status).toBe("unavailable");
-    expect(report.sources.dashboardProjection.status).toBe("unavailable");
+    expect(report.sources.dashboardSnapshot.status).toBe("unavailable");
     expect(report.sources.runtimeRows.status).toBe("unavailable");
   });
 
   it("marks ambiguous exact matches instead of guessing", () => {
     const paths = makePaths();
+    writeTopologySession(paths, {
+      id: "same",
+      tool: "codex",
+      toolConfigKey: "codex",
+      command: "codex",
+      args: [],
+      lifecycle: "offline",
+    });
     writeJson(paths.statePath, {
-      sessions: [{ id: "same", tool: "codex" }],
+      sessions: [],
       services: [{ id: "same", worktreePath: "/repo/app" }],
     });
 

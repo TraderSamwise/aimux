@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { getGraveyardPath, getPlansDir } from "../paths.js";
+import { getPlansDir } from "../paths.js";
 import { debug } from "../debug.js";
 import { parseKeys } from "../key-parser.js";
 import { loadLastUsedState } from "../last-used.js";
@@ -21,6 +21,7 @@ import {
   type GraveyardSelectableRow,
   type GraveyardViewModel,
 } from "./graveyard-view-model.js";
+import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
 
 type ArchivesHost = any;
 
@@ -225,12 +226,7 @@ async function deleteSelectedGraveyardWorktree(host: ArchivesHost): Promise<void
 }
 
 function loadGraveyardEntries(host: ArchivesHost): void {
-  const graveyardPath = getGraveyardPath();
-  try {
-    host.graveyardEntries = JSON.parse(readFileSync(graveyardPath, "utf-8"));
-  } catch {
-    host.graveyardEntries = [];
-  }
+  host.graveyardEntries = listTopologySessionStates({ statuses: ["graveyard"] });
   host.worktreeGraveyardEntries = listWorktreeGraveyardEntries();
   refreshGraveyardViewModel(host);
 }

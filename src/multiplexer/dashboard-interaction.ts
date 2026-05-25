@@ -9,7 +9,7 @@ import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { clearDashboardOperationFailures } from "../dashboard/operation-failures.js";
 import { parseKeys } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
-import { requestReview } from "../task-dispatcher.js";
+import { requestReview } from "../task-workflow.js";
 import { isTeammateSession } from "../team.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
@@ -698,11 +698,6 @@ export const dashboardInteractionMethods = {
       return;
     }
 
-    if (entry.remoteInstanceId) {
-      await this.takeoverFromDashEntryWithFeedback(entry);
-      return;
-    }
-
     if (entry.status === "offline") {
       const offline = this.offlineSessions.find((session: any) => session.id === entry.id);
       await this.resumeOfflineSessionWithFeedback(offline ?? entry);
@@ -880,7 +875,7 @@ export const dashboardInteractionMethods = {
     }
   },
 
-  handleReviewRequest(this: any): void {
+  async handleReviewRequest(this: any): Promise<void> {
     const session = this.activeSession;
     if (!session) return;
 
@@ -890,7 +885,7 @@ export const dashboardInteractionMethods = {
       diff = execSync("git diff HEAD", { encoding: "utf-8", timeout: 5000 }).slice(0, 5000) || undefined;
     } catch {}
 
-    const reviewTask = requestReview(session.id, role, diff, `Review ${session.command} agent's recent work`);
+    const reviewTask = await requestReview(session.id, role, diff, `Review ${session.command} agent's recent work`);
 
     if (reviewTask) {
       this.footerFlash = `⧫ Review requested → ${reviewTask.assignee ?? "reviewer"}`;

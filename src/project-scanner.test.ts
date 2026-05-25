@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { RuntimeTopologyStore, emptyRuntimeTopology } from "./runtime-core/topology-store.js";
 
 let tmpHome: string;
 let projectA: string;
@@ -26,6 +27,42 @@ function makeTmpDir(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 }
 
+function writeTopologySession(
+  projectId: string,
+  projectPath: string,
+  session: { id: string; tool: string; status?: "running" | "idle" | "waiting" | "offline" },
+) {
+  const projectStateDir = join(tmpHome, ".aimux", "projects", projectId);
+  const now = "2026-05-25T00:00:00.000Z";
+  new RuntimeTopologyStore(join(projectStateDir, "runtime-topology.yaml")).write({
+    ...emptyRuntimeTopology(now),
+    rigs: [{ id: `rig-${projectId}`, name: projectId, projectRoot: projectPath, createdAt: now, updatedAt: now }],
+    nodes: [
+      {
+        id: `node-${session.id}`,
+        rigId: `rig-${projectId}`,
+        logicalId: session.id,
+        toolConfigKey: session.tool,
+        cwd: projectPath,
+        createdAt: now,
+      },
+    ],
+    sessions: [
+      {
+        id: session.id,
+        nodeId: `node-${session.id}`,
+        status: session.status ?? "running",
+        tool: session.tool,
+        command: session.tool,
+        args: [],
+        worktreePath: projectPath,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+  });
+}
+
 describe("project-scanner", () => {
   beforeEach(() => {
     tmpHome = makeTmpDir("aimux-home-");
@@ -41,26 +78,8 @@ describe("project-scanner", () => {
     mkdirSync(join(tmpHome, ".aimux", "projects", "proj-a", "status"), { recursive: true });
     mkdirSync(join(tmpHome, ".aimux", "projects", "proj-b", "status"), { recursive: true });
 
-    writeFileSync(
-      join(tmpHome, ".aimux", "projects", "proj-a", "instances.json"),
-      JSON.stringify([
-        {
-          instanceId: "server-a",
-          pid: process.pid,
-          sessions: [{ id: "session-a", tool: "codex" }],
-        },
-      ]),
-    );
-    writeFileSync(
-      join(tmpHome, ".aimux", "projects", "proj-b", "instances.json"),
-      JSON.stringify([
-        {
-          instanceId: "server-b",
-          pid: process.pid,
-          sessions: [{ id: "session-b", tool: "claude" }],
-        },
-      ]),
-    );
+    writeTopologySession("proj-a", projectA, { id: "session-a", tool: "codex" });
+    writeTopologySession("proj-b", projectB, { id: "session-b", tool: "claude" });
     writeFileSync(join(tmpHome, ".aimux", "projects", "proj-a", "status", "session-a.md"), "Alpha headline\n");
     writeFileSync(join(tmpHome, ".aimux", "projects", "proj-b", "status", "session-b.md"), "Beta headline\n");
   });
@@ -92,7 +111,7 @@ describe("project-scanner", () => {
     );
   });
 
-  it("enriches live sessions from fresh statusline data", async () => {
+  it("enriches topology sessions from fresh statusline data without overriding topology status", async () => {
     writeFileSync(
       join(tmpHome, ".aimux", "projects", "proj-a", "statusline.json"),
       JSON.stringify({
@@ -117,9 +136,103 @@ describe("project-scanner", () => {
         id: "session-a",
         label: "chart-fix",
         headline: "auditing session routing",
-        status: "waiting",
+        status: "running",
         role: "coder",
       }),
+    );
+  });
+
+  it("does not mint project sessions from statusline-only data", async () => {
+    writeFileSync(
+      join(tmpHome, ".aimux", "projects", "proj-a", "statusline.json"),
+      JSON.stringify({
+        sessions: [
+          {
+            id: "statusline-only",
+            tool: "codex",
+            headline: "stale statusline row",
+            status: "waiting",
+          },
+        ],
+      }),
+    );
+
+    const { scanProject } = await import("./project-scanner.js");
+    const result = scanProject(projectA);
+
+    expect(result.sessions.map((session) => session.id)).toEqual(["session-a"]);
+  });
+
+  it("does not mint project sessions from instances-only data", async () => {
+    const projectC = join(tmpHome, "work", "project-c");
+    mkdirSync(join(projectC, ".aimux"), { recursive: true });
+    registryProjects = [
+      ...registryProjects,
+      { id: "proj-c", name: "project-c", repoRoot: projectC, lastSeen: "2026-03-28T00:00:00.000Z" },
+    ];
+    mkdirSync(join(tmpHome, ".aimux", "projects", "proj-c"), { recursive: true });
+    writeFileSync(
+      join(tmpHome, ".aimux", "projects", "proj-c", "instances.json"),
+      JSON.stringify([
+        {
+          instanceId: "server-c",
+          pid: process.pid,
+          sessions: [{ id: "session-c", tool: "codex" }],
+        },
+      ]),
+    );
+
+    const { scanProject } = await import("./project-scanner.js");
+
+    expect(scanProject(projectC).sessions).toEqual([]);
+  });
+
+  it("loads project sessions from runtime topology with topology status", async () => {
+    const projectStateDir = join(tmpHome, ".aimux", "projects", "proj-a");
+    const now = "2026-05-25T00:00:00.000Z";
+    new RuntimeTopologyStore(join(projectStateDir, "runtime-topology.yaml")).write({
+      ...emptyRuntimeTopology(now),
+      rigs: [{ id: "rig-a", name: "project-a", projectRoot: projectA, createdAt: now, updatedAt: now }],
+      nodes: [
+        {
+          id: "node-topology-idle",
+          rigId: "rig-a",
+          logicalId: "topology-idle",
+          toolConfigKey: "codex",
+          cwd: projectA,
+          label: "topology",
+          createdAt: now,
+        },
+      ],
+      sessions: [
+        {
+          id: "topology-idle",
+          nodeId: "node-topology-idle",
+          status: "idle",
+          tool: "codex",
+          command: "codex",
+          args: [],
+          worktreePath: projectA,
+          label: "topology",
+          headline: "from topology",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    const { scanProject } = await import("./project-scanner.js");
+    const result = scanProject(projectA);
+
+    expect(result.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "topology-idle",
+          status: "idle",
+          label: "topology",
+          headline: "from topology",
+        }),
+      ]),
     );
   });
 
@@ -134,12 +247,6 @@ describe("project-scanner", () => {
           name: "project-a",
           path: projectA,
           dashboardSessionName: expect.stringMatching(/^aimux-project-a-/),
-          sessions: expect.arrayContaining([
-            expect.objectContaining({
-              id: "session-a",
-              tool: "codex",
-            }),
-          ]),
         }),
         expect.objectContaining({
           id: "proj-b",

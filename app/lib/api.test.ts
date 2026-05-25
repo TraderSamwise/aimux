@@ -7,7 +7,6 @@ import {
   clearNotifications,
   createShareInvite,
   getShare,
-  getAgentHistory,
   getAgentOutput,
   leaveShare,
   listShares,
@@ -17,9 +16,7 @@ import {
   markNotificationsRead,
   removeShareParticipant,
   putPlan,
-  sendAgentInput,
   setApiRelay,
-  spawnAgent,
   stopService,
 } from "@/lib/api";
 import type { RelayTransport } from "@/lib/relay-transport";
@@ -63,13 +60,13 @@ describe("api relay routing", () => {
   });
 
   it("uses direct project HTTP when no relay transport is connected", async () => {
-    const fetchMock = installFetchMock({ sessionId: "session/a b", messages: [] });
+    const fetchMock = installFetchMock({ sessionId: "session/a b", output: "" });
 
-    await getAgentHistory(endpoint, "session/a b", 25, { token: "local-token" });
+    await getAgentOutput(endpoint, "session/a b", -25, { token: "local-token" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("http://127.0.0.1:43210/agents/history?sessionId=session%2Fa%20b&lastN=25");
+    expect(url).toBe("http://127.0.0.1:43210/agents/output?sessionId=session%2Fa+b&startLine=-25");
     expect(init.method).toBe("GET");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer local-token");
   });
@@ -92,29 +89,14 @@ describe("api relay routing", () => {
     const fetchMock = installFetchMock();
     const request = installRelayMock({ ok: true, sessionId: "agent-1" });
 
-    await sendAgentInput(endpoint, {
-      sessionId: "agent-1",
-      data: "hello",
-      submit: true,
-    });
     await putPlan(endpoint, "agent-1", "ship it");
-    await spawnAgent(endpoint, { tool: "codex", worktreePath: "/tmp/work" });
     await stopService(endpoint, "svc-1");
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(request).toHaveBeenNthCalledWith(1, "POST", "/proxy/127.0.0.1/43210/agents/input", {
-      sessionId: "agent-1",
-      data: "hello",
-      submit: true,
-    });
-    expect(request).toHaveBeenNthCalledWith(2, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
+    expect(request).toHaveBeenNthCalledWith(1, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
       content: "ship it",
     });
-    expect(request).toHaveBeenNthCalledWith(3, "POST", "/proxy/127.0.0.1/43210/agents/spawn", {
-      tool: "codex",
-      worktreePath: "/tmp/work",
-    });
-    expect(request).toHaveBeenNthCalledWith(4, "POST", "/proxy/127.0.0.1/43210/services/stop", {
+    expect(request).toHaveBeenNthCalledWith(2, "POST", "/proxy/127.0.0.1/43210/services/stop", {
       serviceId: "svc-1",
     });
   });
@@ -184,7 +166,7 @@ describe("api relay routing", () => {
     process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
     const fetchMock = installFetchMock();
 
-    await expect(getAgentHistory(endpoint, "session-1")).rejects.toThrow("Relay not connected");
+    await expect(getAgentOutput(endpoint, "session-1")).rejects.toThrow("Relay not connected");
     await expect(listProjects()).rejects.toThrow("Relay not connected");
 
     expect(fetchMock).not.toHaveBeenCalled();

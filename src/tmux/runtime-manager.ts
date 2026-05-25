@@ -694,7 +694,6 @@ export class TmuxRuntimeManager {
     if (!matcher.sessionId && !matcher.backendSessionId) return null;
     for (const entry of this.listManagedWindows(sessionName)) {
       if (matcher.sessionId && entry.metadata.sessionId === matcher.sessionId) return entry;
-      if (matcher.backendSessionId && entry.metadata.backendSessionId === matcher.backendSessionId) return entry;
     }
     return null;
   }

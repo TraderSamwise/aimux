@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { initPaths } from "./paths.js";
 import { assignTask } from "./orchestration-actions.js";
 import { openTaskThread } from "./threads.js";
-import { writeTask, type Task } from "./tasks.js";
+import { readTask, writeTask, type Task } from "./tasks.js";
+import { saveTeamConfig } from "./team.js";
+import { requestReview } from "./task-workflow.js";
 import { buildWorkflowEntries, filterWorkflowEntries } from "./workflow.js";
 
 describe("workflow model", () => {
@@ -94,5 +96,30 @@ describe("workflow model", () => {
     expect(
       filterWorkflowEntries(entries, "families", "reviewer").every((entry) => entry.familyTaskIds.length > 1),
     ).toBe(true);
+  });
+
+  it("persists requested reviews before returning them", async () => {
+    const reviewTask = await requestReview("codex-1", "coder", "diff", "Review parser work");
+
+    expect(reviewTask?.assignee).toBe("reviewer");
+    expect(readTask(reviewTask!.id)).toMatchObject({
+      id: reviewTask!.id,
+      assignee: "reviewer",
+      prompt: "Review parser work",
+    });
+  });
+
+  it("does not fall back to assigning reviews to the requesting role", async () => {
+    saveTeamConfig({
+      defaultRole: "coder",
+      roles: {
+        coder: { description: "Writes code", canEdit: true },
+        reviewer: { description: "Reviews changes" },
+      },
+    });
+
+    const reviewTask = await requestReview("codex-1", "coder", undefined, "Review parser work");
+
+    expect(reviewTask?.assignee).toBe("reviewer");
   });
 });

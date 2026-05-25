@@ -241,7 +241,7 @@ export function buildHelpOverlayOutput(_ctx: any): string {
     "  Ctrl+A 1-9  focus numbered agent",
     "  Ctrl+A d  return to dashboard window",
     "  arrows / j k  navigate",
-    "  Enter  open, resume, or takeover",
+    "  Enter  open, resume, or focus",
     "  a  activity",
     "  i  inbox",
     "  y  workflow",

@@ -241,11 +241,9 @@ export function renderDashboardFrame(
     const teamLabel = selectedSession && state.selectedTeammates.length > 0 ? "  [e] team" : "";
     const enterLabel = selectedService
       ? "Enter open"
-      : selectedSession?.remoteInstancePid
-        ? "Enter takeover"
-        : selectedSession?.status === "offline"
-          ? "Enter resume"
-          : "Enter focus";
+      : selectedSession?.status === "offline"
+        ? "Enter resume"
+        : "Enter focus";
 
     if (state.sessions.length === 0 && !state.hasWorktrees) {
       return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [p] plans  [g] graveyard  [?] help  [q] quit ";
