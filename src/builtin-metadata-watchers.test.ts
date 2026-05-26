@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initPaths, getPlansDir, getStatusDir, getTasksDir, getHistoryDir } from "./paths.js";
+import { initPaths, getPlansDir, getStatusDir, getHistoryDir } from "./paths.js";
 import { createBuiltinMetadataWatchers } from "./builtin-metadata-watchers.js";
 import { writeTask } from "./tasks.js";
 
@@ -72,7 +72,6 @@ describe("createBuiltinMetadataWatchers", () => {
   });
 
   it("loads initial task and history metadata", async () => {
-    mkdirSync(getTasksDir(), { recursive: true });
     mkdirSync(getHistoryDir(), { recursive: true });
     await writeTask({
       id: "t1",
@@ -131,7 +130,6 @@ describe("createBuiltinMetadataWatchers", () => {
   });
 
   it("does not emit task notifications for tasks that already exist on startup", async () => {
-    mkdirSync(getTasksDir(), { recursive: true });
     await writeTask({
       id: "t1",
       status: "done",

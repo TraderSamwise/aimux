@@ -1,19 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-
-// Mock paths module so tasks read/write to tmpDir
-let tmpDir: string;
-vi.mock("./paths.js", () => ({
-  getTasksDir: () => join(tmpDir, "tasks"),
-}));
+import { initPaths } from "./paths.js";
+import { createRuntimeExchangeStore } from "./runtime-core/exchange-store.js";
 
 import { readTask, readAllTasks, writeTask, hasActiveTask, cleanupTasks, type Task } from "./tasks.js";
 
 function makeTmpDir(): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "aimux-test-")));
-  mkdirSync(join(dir, "tasks"), { recursive: true });
+  mkdirSync(join(dir, ".git"), { recursive: true });
   return dir;
 }
 
@@ -31,8 +27,11 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 describe("tasks", () => {
-  beforeEach(() => {
+  let tmpDir = "";
+
+  beforeEach(async () => {
     tmpDir = makeTmpDir();
+    await initPaths(tmpDir);
   });
 
   afterEach(() => {
@@ -41,7 +40,7 @@ describe("tasks", () => {
 
   describe("writeTask + readTask", () => {
     it("writes and reads a task", async () => {
-      const task = makeTask();
+      const task = makeTask({ assignedTo: "codex-1" });
       await writeTask(task);
 
       const read = readTask("test-task-1");
@@ -49,6 +48,9 @@ describe("tasks", () => {
       expect(read!.id).toBe("test-task-1");
       expect(read!.status).toBe("pending");
       expect(read!.description).toBe("Test task");
+      expect(createRuntimeExchangeStore().read().waits).toMatchObject([
+        { id: "wait:task:test-task-1", subjectKind: "task", subjectId: "test-task-1" },
+      ]);
     });
 
     it("returns undefined for non-existent task", () => {
@@ -66,7 +68,7 @@ describe("tasks", () => {
   });
 
   describe("readAllTasks", () => {
-    it("reads all tasks from directory", async () => {
+    it("reads all tasks from the runtime exchange", async () => {
       await writeTask(makeTask({ id: "task-a" }));
       await writeTask(makeTask({ id: "task-b" }));
       await writeTask(makeTask({ id: "task-c" }));
@@ -81,13 +83,35 @@ describe("tasks", () => {
       expect(all).toEqual([]);
     });
 
-    it("skips corrupt files", async () => {
+    it("returns exchange tasks without scanning legacy task files", async () => {
       await writeTask(makeTask({ id: "good" }));
-      writeFileSync(join(tmpDir, "tasks", "bad.json"), "not json{{{");
+      mkdirSync(join(tmpDir, ".aimux", "tasks"), { recursive: true });
 
-      const all = readAllTasks();
-      expect(all).toHaveLength(1);
-      expect(all[0].id).toBe("good");
+      expect(readAllTasks().map((task) => task.id)).toEqual(["good"]);
+    });
+  });
+
+  describe("review indexes", () => {
+    it("keeps review rows derived from review tasks", async () => {
+      await writeTask(
+        makeTask({
+          id: "review-1",
+          type: "review",
+          reviewStatus: "request-changes",
+          reviewFeedback: "Needs tests",
+          reviewOf: "task-1",
+        }),
+      );
+
+      expect(createRuntimeExchangeStore().read().reviews).toMatchObject([
+        {
+          id: "review:review-1",
+          taskId: "review-1",
+          reviewOf: "task-1",
+          status: "changes_requested",
+          feedback: "Needs tests",
+        },
+      ]);
     });
   });
 
@@ -112,12 +136,17 @@ describe("tasks", () => {
   describe("cleanupTasks", () => {
     it("removes old done/failed tasks", async () => {
       const oldDate = new Date(Date.now() - 7200000).toISOString(); // 2 hours ago
-      await writeTask(makeTask({ id: "old-done", status: "done", updatedAt: oldDate }));
-      // Force the updatedAt back (writeTask overwrites it)
-      const taskPath = join(tmpDir, "tasks", "old-done.json");
-      const data = JSON.parse(readFileSync(taskPath, "utf-8"));
-      data.updatedAt = oldDate;
-      writeFileSync(taskPath, JSON.stringify(data));
+      await writeTask(makeTask({ id: "old-done", status: "done" }));
+      const oldDone = readTask("old-done")!;
+      oldDone.updatedAt = oldDate;
+      await writeTask(oldDone);
+      oldDone.updatedAt = oldDate;
+      await import("./runtime-core/exchange-store.js").then(({ createRuntimeExchangeStore }) => {
+        createRuntimeExchangeStore().update((exchange) => ({
+          ...exchange,
+          tasks: exchange.tasks.map((task) => (task.id === "old-done" ? { ...task, updatedAt: oldDate } : task)),
+        }));
+      });
 
       await writeTask(makeTask({ id: "recent-done", status: "done" }));
       await writeTask(makeTask({ id: "pending", status: "pending" }));
@@ -131,10 +160,12 @@ describe("tasks", () => {
     it("keeps pending and assigned tasks regardless of age", async () => {
       const oldDate = new Date(Date.now() - 7200000).toISOString();
       await writeTask(makeTask({ id: "old-pending", status: "pending" }));
-      const taskPath = join(tmpDir, "tasks", "old-pending.json");
-      const data = JSON.parse(readFileSync(taskPath, "utf-8"));
-      data.updatedAt = oldDate;
-      writeFileSync(taskPath, JSON.stringify(data));
+      await import("./runtime-core/exchange-store.js").then(({ createRuntimeExchangeStore }) => {
+        createRuntimeExchangeStore().update((exchange) => ({
+          ...exchange,
+          tasks: exchange.tasks.map((task) => (task.id === "old-pending" ? { ...task, updatedAt: oldDate } : task)),
+        }));
+      });
 
       cleanupTasks(3600000);
 

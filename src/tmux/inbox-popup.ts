@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { TerminalHost } from "../terminal-host.js";
 import { parseKeys } from "../key-parser.js";
 import { requestJson } from "../http-client.js";
-import type { NotificationRecord } from "../notifications.js";
+import { TmuxRuntimeManager } from "./runtime-manager.js";
 
 export interface TmuxInboxPopupOptions {
   projectRoot: string;
@@ -17,7 +17,14 @@ export interface TmuxInboxPopupOptions {
 
 type InboxTargetState = "live" | "offline" | "missing" | "none";
 
-interface InboxPopupEntry extends NotificationRecord {
+interface InboxPopupEntry {
+  id: string;
+  sessionId?: string;
+  title: string;
+  subtitle?: string;
+  body: string;
+  createdAt: string;
+  unread: boolean;
   targetLabel?: string;
   targetState: InboxTargetState;
 }
@@ -82,23 +89,43 @@ function loadEndpoint(projectStateDir: string): string {
   return raw;
 }
 
-async function loadInboxEntries(endpoint: string): Promise<InboxPopupEntry[]> {
-  const [{ status: notificationsStatus, json: notificationsBody }, { status: desktopStatus, json: desktopBody }] =
-    await Promise.all([
-      requestJson<{ notifications?: NotificationRecord[] }>(`${endpoint}/notifications`, { timeoutMs: 2000 }),
-      requestJson<{ sessions?: any[]; services?: any[] }>(`${endpoint}/desktop-state`, { timeoutMs: 2000 }),
-    ]);
-  if (notificationsStatus < 200 || notificationsStatus >= 300) {
+function resolveFocusedParticipant(options: TmuxInboxPopupOptions): string | undefined {
+  const currentWindowId = options.currentWindowId?.trim();
+  if (!currentWindowId || (options.currentWindow?.trim() && /^dashboard/.test(options.currentWindow.trim()))) {
+    return undefined;
+  }
+  try {
+    const tmux = new TmuxRuntimeManager();
+    const match = tmux
+      .listProjectManagedWindows(options.projectRoot)
+      .find((entry) => entry.target.windowId === currentWindowId);
+    return match?.metadata.sessionId?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadInboxEntries(endpoint: string, participantId?: string): Promise<InboxPopupEntry[]> {
+  const query = participantId ? `?participant=${encodeURIComponent(participantId)}` : "";
+  const [{ status: inboxStatus, json: inboxBody }, { status: desktopStatus, json: desktopBody }] = await Promise.all([
+    requestJson<{ inbox?: InboxPopupEntry[] }>(`${endpoint}/inbox${query}`, { timeoutMs: 2000 }),
+    requestJson<{ sessions?: any[]; teammates?: any[]; services?: any[] }>(`${endpoint}/desktop-state`, {
+      timeoutMs: 2000,
+    }),
+  ]);
+  if (inboxStatus < 200 || inboxStatus >= 300) {
     throw new Error("failed to load inbox");
   }
   if (desktopStatus < 200 || desktopStatus >= 300) {
     throw new Error("failed to load desktop state");
   }
 
-  const sessions = new Map<string, any>((desktopBody.sessions ?? []).map((entry) => [entry.id, entry]));
+  const sessions = new Map<string, any>(
+    [...(desktopBody.sessions ?? []), ...(desktopBody.teammates ?? [])].map((entry) => [entry.id, entry]),
+  );
   const services = new Map<string, any>((desktopBody.services ?? []).map((entry) => [entry.id, entry]));
 
-  return (notificationsBody.notifications ?? []).map((entry) => {
+  return (inboxBody.inbox ?? []).map((entry) => {
     const session = entry.sessionId ? sessions.get(entry.sessionId) : undefined;
     if (session) {
       return {
@@ -117,7 +144,8 @@ async function loadInboxEntries(endpoint: string): Promise<InboxPopupEntry[]> {
     }
     return {
       ...entry,
-      targetState: entry.sessionId ? "missing" : "none",
+      sessionId: undefined,
+      targetState: "none",
     };
   });
 }
@@ -187,7 +215,8 @@ function renderPopup(entries: InboxPopupEntry[], index: number, message: string 
 
 export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise<number> {
   const endpoint = loadEndpoint(options.projectStateDir);
-  let entries = await loadInboxEntries(endpoint);
+  const participantId = resolveFocusedParticipant(options);
+  let entries = await loadInboxEntries(endpoint, participantId);
   let index = entries.length > 0 ? 0 : -1;
   let message: string | null = null;
 
@@ -204,7 +233,7 @@ export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise
   };
 
   const refresh = async (nextMessage: string | null = null) => {
-    entries = await loadInboxEntries(endpoint);
+    entries = await loadInboxEntries(endpoint, participantId);
     if (index >= entries.length) index = Math.max(0, entries.length - 1);
     if (entries.length === 0) index = -1;
     message = nextMessage;
@@ -240,23 +269,23 @@ export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise
       const selected = index >= 0 ? entries[index] : undefined;
       if (key === "r") {
         if (!selected) return;
-        await postJson(endpoint, "/notifications/read", { id: selected.id });
+        await postJson(endpoint, "/inbox/read", { id: selected.id });
         await refresh(null);
         return;
       }
       if (key === "R") {
-        await postJson(endpoint, "/notifications/read", {});
+        await postJson(endpoint, "/inbox/read", { participant: participantId });
         await refresh(null);
         return;
       }
       if (key === "c") {
         if (!selected) return;
-        await postJson(endpoint, "/notifications/clear", { id: selected.id });
+        await postJson(endpoint, "/inbox/clear", { id: selected.id });
         await refresh(null);
         return;
       }
       if (key === "C") {
-        await postJson(endpoint, "/notifications/clear", {});
+        await postJson(endpoint, "/inbox/clear", { participant: participantId });
         await refresh(null);
         return;
       }
@@ -277,7 +306,7 @@ export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise
             clientTty: options.clientTty,
           });
           if (selected.unread) {
-            await postJson(endpoint, "/notifications/read", { id: selected.id });
+            await postJson(endpoint, "/inbox/read", { id: selected.id });
           }
           process.stdin.off("data", onData);
           resolve(exit(0));

@@ -5,6 +5,7 @@ import { getReadOnlyProjectPathsFor, type ReadOnlyProjectPaths } from "./paths.j
 import { TmuxRuntimeManager, type TmuxWindowMetadata, type TmuxTarget } from "./tmux/runtime-manager.js";
 import { listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { RuntimeTopologyStore, type RuntimeTopology } from "./runtime-core/topology-store.js";
+import { RuntimeExchangeStore, type RuntimeExchange } from "./runtime-core/exchange-store.js";
 
 type SourceStatus = "found" | "missing" | "unavailable" | "error";
 type TargetResolutionStatus = "matched" | "missing" | "ambiguous";
@@ -112,6 +113,19 @@ function readRuntimeTopology(path: string): SourceResult<RuntimeTopology> {
   if (!existsSync(path)) return { status: "missing", path };
   try {
     return { status: "found", path, value: new RuntimeTopologyStore(path).read() };
+  } catch (err) {
+    return {
+      status: "error",
+      path,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function readRuntimeExchange(path: string): SourceResult<RuntimeExchange> {
+  if (!existsSync(path)) return { status: "missing", path };
+  try {
+    return { status: "found", path, value: new RuntimeExchangeStore(path).read() };
   } catch (err) {
     return {
       status: "error",
@@ -477,23 +491,30 @@ function filterWorktreeGraveyard(
 }
 
 function filterNotifications(
-  source: SourceResult<unknown>,
+  source: SourceResult<RuntimeExchange>,
   target: string,
   matches: TargetMatch[],
   seen: Set<string>,
 ): SourceResult<{ notifications: unknown[] }> {
   if (source.status !== "found") return { ...source, value: undefined };
-  const notifications = asArray(asObject(source.value)?.notifications).filter((entry) => {
-    const record = asObject(entry);
-    const sessionId = getString(record, "sessionId");
-    const targetKey = getString(record, "targetKey");
-    const id = getString(record, "id");
+  const exchange = source.value;
+  if (!exchange) return { ...source, value: { notifications: [] } };
+  const messagesByThread = new Map(exchange.messages.map((message) => [message.threadId, message] as const));
+  const notifications = exchange.threads.filter((entry) => {
+    if (!entry.tags?.includes("notification")) return false;
+    const message = messagesByThread.get(entry.id);
+    const sessionId =
+      typeof message?.metadata?.notificationSessionId === "string" ? message.metadata.notificationSessionId : undefined;
+    const targetKey =
+      typeof message?.metadata?.notificationTargetKey === "string" ? message.metadata.notificationTargetKey : undefined;
+    const id =
+      typeof message?.metadata?.notificationRecordId === "string" ? message.metadata.notificationRecordId : entry.id;
     const matched = matchesString(sessionId, target) || matchesString(targetKey, target) || matchesString(id, target);
     if (matched) {
       addMatch(matches, seen, {
         canonicalKey: `notification:${id ?? targetKey ?? sessionId ?? "unknown"}`,
         kind: "notification",
-        source: "notifications",
+        source: "runtimeExchange",
         id,
         raw: entry,
       });
@@ -592,6 +613,7 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
 
   const savedState = filterSavedState(readJson(paths.statePath), target, matches, seen);
   const rawRuntimeTopology = readRuntimeTopology(paths.runtimeTopologyPath);
+  const rawRuntimeExchange = readRuntimeExchange(paths.runtimeExchangePath);
   const runtimeTopology = filterRuntimeTopology(rawRuntimeTopology, target, matches, seen);
   const metadata = filterMetadata(readJson(paths.metadataPath), target, matches, seen);
   const tmux = filterTmux(options.tmuxWindows, paths, target, matches, seen);
@@ -605,7 +627,7 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
     matches,
     seen,
   );
-  const notifications = filterNotifications(readJson(paths.notificationsPath), target, matches, seen);
+  const notifications = filterNotifications(rawRuntimeExchange, target, matches, seen);
   const operationFailures = filterOperationFailures(
     readJson(paths.dashboardOperationFailuresPath),
     target,

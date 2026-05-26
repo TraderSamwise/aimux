@@ -517,6 +517,58 @@ describe("dashboardInteractionMethods", () => {
     });
   });
 
+  it("submits dashboard handoffs to the handoff route", async () => {
+    const host: any = {
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      clearDashboardOverlay: vi.fn(),
+      footerFlash: "",
+      renderDashboard: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.submitDashboardOrchestrationAction.call(
+      host,
+      "handoff",
+      { label: "codex-1", sessionId: "codex-1", worktreePath: "/repo" },
+      "Take over this task",
+    );
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/handoff", {
+      from: "user",
+      to: ["codex-1"],
+      assignee: undefined,
+      tool: undefined,
+      worktreePath: "/repo",
+      body: "Take over this task",
+    });
+    expect(host.footerFlash).toBe("Sent handoff to codex-1");
+  });
+
+  it("submits dashboard tasks with route-compatible descriptions", async () => {
+    const host: any = {
+      postToProjectService: vi.fn(async () => ({ ok: true })),
+      clearDashboardOverlay: vi.fn(),
+      footerFlash: "",
+      renderDashboard: vi.fn(),
+    };
+
+    await dashboardInteractionMethods.submitDashboardOrchestrationAction.call(
+      host,
+      "task",
+      { label: "reviewer", assignee: "reviewer", tool: "codex", worktreePath: "/repo" },
+      "Review this diff",
+    );
+
+    expect(host.postToProjectService).toHaveBeenCalledWith("/tasks/assign", {
+      from: "user",
+      to: undefined,
+      assignee: "reviewer",
+      tool: "codex",
+      worktreePath: "/repo",
+      description: "Review this diff",
+    });
+    expect(host.footerFlash).toBe("Assigned task to reviewer");
+  });
+
   it("persists preferred service selection before opening a service", async () => {
     const service = {
       id: "service-1",

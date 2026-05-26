@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "./paths.js";
+import { createRuntimeExchangeStore } from "./runtime-core/exchange-store.js";
 import { readMessages, readThread } from "./threads.js";
 import { readTask } from "./tasks.js";
 import {
@@ -77,6 +78,9 @@ describe("orchestration actions", () => {
     expect(accepted.thread.waitingOn).toEqual([]);
     expect(accepted.thread.status).toBe("open");
     expect(accepted.message.metadata?.handoffAction).toBe("accepted");
+    expect(createRuntimeExchangeStore().read().handoffs).toMatchObject([
+      { threadId: created.thread.id, status: "accepted", acceptedBy: "codex-worker" },
+    ]);
   });
 
   it("completes a handoff and waits on the originator", () => {
@@ -95,6 +99,9 @@ describe("orchestration actions", () => {
     expect(completed.thread.waitingOn).toEqual(["claude-lead"]);
     expect(completed.thread.status).toBe("waiting");
     expect(completed.message.metadata?.handoffAction).toBe("completed");
+    expect(createRuntimeExchangeStore().read().handoffs).toMatchObject([
+      { threadId: created.thread.id, status: "completed", completedBy: "codex-worker" },
+    ]);
   });
 
   it("accepts blocks and completes tasks with matching thread updates", async () => {
