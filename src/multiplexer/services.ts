@@ -6,6 +6,11 @@ import { getStatePath } from "../paths.js";
 import type { ServiceState } from "./index.js";
 import { wrapCommandWithShellIntegration, wrapInteractiveShellWithIntegration } from "../shell-hooks.js";
 import { markLastUsed } from "../last-used.js";
+import {
+  removeTopologyService,
+  upsertTopologyService,
+  type RuntimeTopologyServiceState,
+} from "../runtime-core/topology-services.js";
 
 type ServiceHost = any;
 
@@ -74,6 +79,43 @@ function markServiceUsed(host: ServiceHost, serviceId: string): void {
       });
     }
   } catch {}
+}
+
+function serviceMetadataToTopologyState(
+  serviceId: string,
+  metadata: {
+    command?: string;
+    args?: string[];
+    createdAt?: string;
+    worktreePath?: string;
+    label?: string;
+    launchCommandLine?: string;
+  },
+  opts: { cwd?: string; tmuxTarget?: ServiceState["tmuxTarget"] } = {},
+): RuntimeTopologyServiceState {
+  return {
+    id: serviceId,
+    command: metadata.command,
+    args: metadata.args ?? [],
+    createdAt: metadata.createdAt?.trim() || undefined,
+    worktreePath: metadata.worktreePath,
+    cwd: opts.cwd,
+    label: metadata.label,
+    launchCommandLine: metadata.launchCommandLine?.trim() || getServiceLaunchCommandLine(metadata),
+    tmuxTarget: opts.tmuxTarget,
+  };
+}
+
+function serviceStateToTopologyState(service: ServiceState): RuntimeTopologyServiceState {
+  return {
+    id: service.id,
+    createdAt: service.createdAt?.trim() || undefined,
+    worktreePath: service.worktreePath,
+    cwd: service.cwd,
+    label: service.label,
+    launchCommandLine: service.launchCommandLine,
+    tmuxTarget: service.tmuxTarget,
+  };
 }
 
 export function serviceLabelForCommand(commandLine: string): string {
@@ -150,6 +192,19 @@ export function createService(
       label,
       launchCommandLine: trimmed,
     });
+    upsertTopologyService(
+      {
+        id: serviceId,
+        command: trimmed ? shell : "shell",
+        args: trimmed ? ["-lc", trimmed] : ["-l"],
+        launchCommandLine: trimmed,
+        worktreePath,
+        cwd,
+        label,
+        tmuxTarget: target,
+      },
+      "running",
+    );
     host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
     host.saveState();
     host.invalidateDesktopStateSnapshot();
@@ -186,6 +241,13 @@ export function stopService(host: ServiceHost, serviceId: string): { serviceId: 
       retained: true,
     }),
   ];
+  upsertTopologyService(
+    serviceMetadataToTopologyState(serviceId, match.metadata, {
+      cwd,
+      tmuxTarget: match.target,
+    }),
+    "stopped",
+  );
   host.tmuxRuntimeManager.sendKey(match.target, "C-c");
   host.tmuxRuntimeManager.setWindowMetadata(match.target, {
     ...match.metadata,
@@ -218,6 +280,7 @@ export function removeOfflineService(host: ServiceHost, serviceId: string): { se
     } catch {}
   }
   host.offlineServices = host.offlineServices.filter((service: ServiceState) => service.id !== serviceId);
+  removeTopologyService(serviceId);
   const statePath = getStatePath();
   if (existsSync(statePath)) {
     try {
@@ -312,6 +375,16 @@ export function resumeOfflineService(
     worktreePath: service.worktreePath,
     label,
   });
+  upsertTopologyService(
+    {
+      ...serviceStateToTopologyState(service),
+      command: launchCommandLine ? shell : "shell",
+      args: launchCommandLine ? ["-lc", launchCommandLine] : ["-l"],
+      label,
+      tmuxTarget: target,
+    },
+    "running",
+  );
   host.tmuxRuntimeManager.applyManagedAgentWindowPolicy(target, "service");
   host.offlineServices = host.offlineServices.filter((entry: ServiceState) => entry.id !== service.id);
   markServiceUsed(host, service.id);

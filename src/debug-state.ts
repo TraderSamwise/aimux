@@ -54,7 +54,7 @@ export interface DebugStateReport {
   };
   sources: {
     savedState: SourceResult<{ services: unknown[] }>;
-    runtimeTopology: SourceResult<{ sessions: unknown[] }>;
+    runtimeTopology: SourceResult<{ sessions: unknown[]; services: unknown[]; worktrees: unknown[] }>;
     metadata: SourceResult<{ sessions: unknown[] }>;
     tmux: SourceResult<{ windows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> }>;
     gitWorktrees: SourceResult<{ worktrees: WorktreeInfo[] }>;
@@ -373,7 +373,7 @@ function filterRuntimeTopology(
   target: string,
   matches: TargetMatch[],
   seen: Set<string>,
-): SourceResult<{ sessions: unknown[] }> {
+): SourceResult<{ sessions: unknown[]; services: unknown[]; worktrees: unknown[] }> {
   if (source.status !== "found") return { ...source, value: undefined };
   const topology = source.value as RuntimeTopology;
   const sessions = topology.sessions.filter((entry) => {
@@ -400,7 +400,42 @@ function filterRuntimeTopology(
     }
     return matched;
   });
-  return { status: "found", path: source.path, value: { sessions } };
+  const services = topology.services.filter((entry) => {
+    const matched =
+      matchesString(entry.id, target) ||
+      matchesString(entry.worktreePath, target) ||
+      matchesString(entry.cwd, target) ||
+      matchesString(entry.label, target) ||
+      matchesString(entry.launchCommandLine, target);
+    if (matched) {
+      addMatch(matches, seen, {
+        canonicalKey: serviceCanonical(entry.id, entry.worktreePath),
+        kind: "service",
+        source: "runtimeTopology",
+        id: entry.id,
+        worktreePath: entry.worktreePath,
+        label: entry.label,
+        raw: entry,
+      });
+    }
+    return matched;
+  });
+  const worktrees = topology.worktrees.filter((entry) => {
+    const matched =
+      matchesString(entry.name, target) || matchesString(entry.path, target) || matchesString(entry.branch, target);
+    if (matched) {
+      addMatch(matches, seen, {
+        canonicalKey: worktreeCanonical(entry.path, entry.name),
+        kind: "worktree",
+        source: "runtimeTopology",
+        worktreePath: entry.path,
+        worktreeName: entry.name,
+        raw: entry,
+      });
+    }
+    return matched;
+  });
+  return { status: "found", path: source.path, value: { sessions, services, worktrees } };
 }
 
 function filterWorktreeGraveyard(
@@ -556,12 +591,20 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
   const target = options.target;
 
   const savedState = filterSavedState(readJson(paths.statePath), target, matches, seen);
-  const runtimeTopology = filterRuntimeTopology(readRuntimeTopology(paths.runtimeTopologyPath), target, matches, seen);
+  const rawRuntimeTopology = readRuntimeTopology(paths.runtimeTopologyPath);
+  const runtimeTopology = filterRuntimeTopology(rawRuntimeTopology, target, matches, seen);
   const metadata = filterMetadata(readJson(paths.metadataPath), target, matches, seen);
   const tmux = filterTmux(options.tmuxWindows, paths, target, matches, seen);
   const gitWorktrees = filterGitWorktrees(options.worktrees, paths, target, matches, seen);
   const graveyard = filterGraveyard(runtimeTopology, target, matches, seen);
-  const worktreeGraveyard = filterWorktreeGraveyard(readJson(paths.worktreeGraveyardPath), target, matches, seen);
+  const worktreeGraveyard = filterWorktreeGraveyard(
+    rawRuntimeTopology.status === "found"
+      ? { status: "found", path: rawRuntimeTopology.path, value: rawRuntimeTopology.value?.worktreeGraveyard ?? [] }
+      : rawRuntimeTopology,
+    target,
+    matches,
+    seen,
+  );
   const notifications = filterNotifications(readJson(paths.notificationsPath), target, matches, seen);
   const operationFailures = filterOperationFailures(
     readJson(paths.dashboardOperationFailuresPath),

@@ -434,7 +434,7 @@ describe("RuntimeTopologyStore", () => {
       const topology = store.read();
       expect(topology.services.map((service) => service.id)).toEqual(["service-keep"]);
       expect(topology.worktrees.map((worktree) => worktree.id)).toEqual(["worktree-keep"]);
-      expect(topology.worktreeGraveyard.map((entry) => entry.id)).toEqual(["graveyard-keep"]);
+      expect(topology.worktreeGraveyard.map((entry) => entry.id)).toEqual(["graveyard-keep", "graveyard-drop"]);
       expect(topology.teamRoles.map((role) => role.id)).toEqual(["role-keep"]);
       expect(topology.remoteClients).toMatchObject([{ id: "client-keep", ownsSessionIds: ["keep"] }]);
       expect(topology.lifecycleOperations.map((operation) => operation.id)).toEqual(["op-keep"]);

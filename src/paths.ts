@@ -130,7 +130,6 @@ export interface ReadOnlyProjectPaths {
   statePath: string;
   runtimeTopologyPath: string;
   runtimeExchangePath: string;
-  worktreeGraveyardPath: string;
   instancesPath: string;
   localInstancesPath: string;
   metadataPath: string;
@@ -157,7 +156,6 @@ export function getReadOnlyProjectPathsFor(cwd: string): ReadOnlyProjectPaths {
     statePath: join(projectStateDir, "state.json"),
     runtimeTopologyPath: join(projectStateDir, "runtime-topology.yaml"),
     runtimeExchangePath: join(projectStateDir, "runtime-exchange.yaml"),
-    worktreeGraveyardPath: join(projectStateDir, "worktree-graveyard.json"),
     instancesPath: join(projectStateDir, "instances.json"),
     localInstancesPath: join(localAimuxDir, "instances.json"),
     metadataPath: join(projectStateDir, "metadata.json"),
@@ -240,10 +238,6 @@ export function getProjectServiceStdioLogPathFor(cwd: string): string {
 
 export function getStatePath(): string {
   return join(getProjectStateDir(), "state.json");
-}
-
-export function getWorktreeGraveyardPath(): string {
-  return join(getProjectStateDir(), "worktree-graveyard.json");
 }
 
 export function getContextDir(): string {
