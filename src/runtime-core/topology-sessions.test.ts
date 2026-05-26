@@ -104,9 +104,25 @@ describe("topology session lifecycle", () => {
         { id: "keep", nodeId: "agent:keep", status: "offline", createdAt: now, updatedAt: now },
         { id: "drop", nodeId: "agent:missing", status: "offline", createdAt: now, updatedAt: now },
       ],
-      queue: [
-        { id: "queue-keep", targetSessionId: "keep", status: "queued", kind: "task", createdAt: now, updatedAt: now },
-        { id: "queue-drop", targetSessionId: "drop", status: "queued", kind: "task", createdAt: now, updatedAt: now },
+      exchangeRefs: [
+        {
+          id: "exchange-keep",
+          rigId: "rig-a",
+          kind: "task",
+          exchangeId: "task-keep",
+          sessionId: "keep",
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: "exchange-drop",
+          rigId: "rig-a",
+          kind: "task",
+          exchangeId: "task-drop",
+          sessionId: "drop",
+          createdAt: now,
+          updatedAt: now,
+        },
       ],
     });
 
@@ -114,10 +130,10 @@ describe("topology session lifecycle", () => {
     expect(topology.sessions.map((session) => session.id)).toEqual(["keep"]);
     expect(topology.edges).toEqual([]);
     expect(topology.bindings).toEqual([]);
-    expect(topology.queue.map((item) => item.id)).toEqual(["queue-keep"]);
+    expect(topology.exchangeRefs.map((ref) => ref.id)).toEqual(["exchange-keep"]);
   });
 
-  it("prunes graph and queue references when saving replacement session topology", () => {
+  it("prunes graph and exchange references when saving replacement session topology", () => {
     const store = createRuntimeTopologyStore(topologyPath);
     const now = "2026-05-25T00:00:00.000Z";
     store.write({
@@ -158,12 +174,13 @@ describe("topology session lifecycle", () => {
           updatedAt: now,
         },
       ],
-      queue: [
+      exchangeRefs: [
         {
-          id: "queue-drop",
-          targetSessionId: "drop",
-          status: "queued",
+          id: "exchange-drop",
+          rigId: "rig-a",
           kind: "task",
+          exchangeId: "task-drop",
+          sessionId: "drop",
           createdAt: now,
           updatedAt: now,
         },
@@ -189,7 +206,7 @@ describe("topology session lifecycle", () => {
     expect(topology.sessions.map((session) => session.id)).toEqual(["keep"]);
     expect(topology.bindings).toEqual([]);
     expect(topology.edges).toEqual([]);
-    expect(topology.queue).toEqual([]);
+    expect(topology.exchangeRefs).toEqual([]);
     expect(topologySessionToSessionState(topology.sessions[0], topology).tmuxTarget).toBeUndefined();
   });
 });
