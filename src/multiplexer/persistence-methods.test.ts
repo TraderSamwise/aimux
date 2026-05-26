@@ -695,8 +695,11 @@ describe("persistenceMethods", () => {
   });
 
   it("resurrects topology worktree graveyard entries", async () => {
-    const worktreePath = "/repo/.aimux/worktrees/demo";
+    const worktreePath = join(pathsRoot, "worktrees", "demo");
+    mkdirSync(worktreePath, { recursive: true });
     upsertTopologyWorktree({ path: worktreePath, name: "demo", branch: "demo" }, "active");
+    upsertTopologySession({ id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    upsertTopologyService({ id: "service-demo", command: "zsh", worktreePath }, "stopped");
     moveTopologyWorktreeToGraveyard(worktreePath);
     const host = {
       invalidateDesktopStateSnapshot: vi.fn(),
@@ -711,7 +714,33 @@ describe("persistenceMethods", () => {
 
     expect(listTopologyWorktreeGraveyard()).toEqual([]);
     expect(listTopologyWorktreeStates({ statuses: ["active"] })).toMatchObject([{ path: worktreePath }]);
+    expect(listTopologySessionStates().filter((session) => session.worktreePath === worktreePath)).toMatchObject([
+      { id: "codex-demo", status: "offline" },
+    ]);
+    expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toMatchObject([
+      { id: "service-demo", status: "stopped" },
+    ]);
     expect(host.metadataServer.notifyChange).toHaveBeenCalled();
+  });
+
+  it("does not resurrect graveyarded worktrees when the checkout is missing", async () => {
+    const worktreePath = join(pathsRoot, "worktrees", "missing");
+    upsertTopologyWorktree({ path: worktreePath, name: "missing", branch: "missing" }, "active");
+    moveTopologyWorktreeToGraveyard(worktreePath);
+    const host = {
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(persistenceMethods.resurrectGraveyardWorktree.call(host, worktreePath)).rejects.toThrow(
+      `Cannot resurrect worktree "${worktreePath}" because the checkout is missing`,
+    );
+
+    expect(listTopologyWorktreeGraveyard()).toMatchObject([{ path: worktreePath }]);
+    expect(listTopologyWorktreeStates({ statuses: ["active"] })).toEqual([]);
+    expect(host.invalidateDesktopStateSnapshot).not.toHaveBeenCalled();
+    expect(host.metadataServer.notifyChange).not.toHaveBeenCalled();
   });
 
   it("keeps graveyard entries visible when delete physical removal fails", async () => {

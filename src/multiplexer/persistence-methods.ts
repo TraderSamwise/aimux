@@ -506,6 +506,9 @@ export const persistenceMethods = {
   },
 
   async resurrectGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "active" }> {
+    if (!existsSync(path)) {
+      throw new Error(`Cannot resurrect worktree "${path}" because the checkout is missing`);
+    }
     const resurrected = resurrectTopologyWorktreeFromGraveyard(path);
     if (!resurrected) {
       throw new Error(`Graveyard worktree "${path}" not found`);

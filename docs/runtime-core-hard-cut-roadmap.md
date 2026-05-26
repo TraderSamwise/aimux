@@ -29,7 +29,7 @@ Still not fully cut:
 - Direct messages, handoffs, tasks, reviews, and waits still use the existing threads/tasks files as authoritative storage.
 - Notifications and metadata remain their own state/projection files.
 - Service lifecycle uses topology service records with remaining `state.json` compatibility snapshots for service/project state only.
-- Worktree lifecycle and worktree graveyard use topology records; git remains substrate evidence.
+- Worktree lifecycle and worktree graveyard use topology records; git remains substrate evidence and the physical checkout mechanism.
 - Remote takeover/presence semantics use relay/share transport state and must not reintroduce `instances.json` lifecycle authority.
 - Migration/debug tooling is explicit and fail-closed; keep expanding audits as new compatibility paths appear.
 
