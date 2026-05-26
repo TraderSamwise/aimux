@@ -11,7 +11,7 @@ interface DashboardActionDeps {
   getSessionLabel(sessionId: string): string | undefined;
   getPendingAction(sessionId: string): PendingSessionActionKind | undefined;
   setPendingAction(sessionId: string, kind: PendingSessionActionKind | null): void;
-  stopSessionToOffline(session: SessionRuntime): void;
+  stopSessionToOffline(session: SessionRuntime): void | Promise<void>;
   isGraveyardAfterStop(sessionId: string): boolean;
   sendAgentToGraveyard(sessionId: string): Promise<void>;
   resumeOfflineSession(session: DashboardOfflineEntryLike): void | Promise<void>;
@@ -58,7 +58,7 @@ export async function stopSessionToOfflineWithFeedback(
   const label = deps.getSessionLabel(session.id) ?? session.command;
   deps.setPendingAction(session.id, "stopping");
   try {
-    deps.stopSessionToOffline(session);
+    await deps.stopSessionToOffline(session);
     await waitForSessionExit(session);
     if (!deps.isGraveyardAfterStop(session.id)) {
       deps.setPendingAction(session.id, null);
