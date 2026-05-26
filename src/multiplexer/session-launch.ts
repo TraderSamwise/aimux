@@ -610,28 +610,27 @@ export async function migrateAgent(
   await waitForExit().catch(() => {});
 
   if (!toolCfg?.preambleFlag) {
+    const continuityPreamble = host.sessionBootstrap.buildCodexMigrationContinuityPreamble(
+      sessionId,
+      sourceCwd,
+      targetWorktreePath,
+      sourceSnapshot,
+    );
     createSession(
       host,
       session.command,
       migrateArgs,
       undefined,
       toolConfigKey,
-      undefined,
+      continuityPreamble,
       undefined,
       effectiveTarget,
       useBackendResume ? backendSessionId : undefined,
       sessionId,
       true,
-      true,
+      false,
       session.team,
     );
-    const kickoff = host.sessionBootstrap.buildCodexMigrationKickoffPrompt(
-      sessionId,
-      sourceCwd,
-      targetWorktreePath,
-      sourceSnapshot,
-    );
-    await host.sessionBootstrap.deliverDetachedCodexKickoffPrompt(sessionId, kickoff, 1800);
     return;
   }
 

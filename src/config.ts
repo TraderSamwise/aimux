@@ -93,7 +93,7 @@ export interface ToolConfig {
   /** File to write preamble instructions to (created on start, removed on exit), e.g. "AGENTS.md" */
   instructionsFile?: string;
   /** Codex config key used for durable standing instructions, e.g. "developer_instructions" */
-  developerInstructionsConfigKey?: string;
+  developerInstructionsConfigKey?: string | null;
   /** Regex patterns that indicate the tool is idle/waiting for input */
   promptPatterns?: string[];
   /** Regex patterns to detect user prompts in terminal output (for turn extraction) */
