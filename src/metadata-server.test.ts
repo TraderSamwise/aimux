@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { getDashboardClientUiStatePath, getPlansDir, initPaths } from "./paths.js";
 import { MetadataServer } from "./metadata-server.js";
 import { loadMetadataState } from "./metadata-store.js";
+import { upsertNotification } from "./notifications.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import {
@@ -155,20 +156,36 @@ describe("MetadataServer threads API", () => {
     expect(roleHandoff.thread.participants).toContain("reviewer");
     expect(roleHandoff.message.to).toEqual(["reviewer"]);
 
+    upsertNotification({
+      title: "Reviewer alert",
+      body: "Notification feed alert",
+      sessionId: "reviewer",
+      kind: "needs_input",
+    });
+
     const inboxRes = await fetch(`${base}/inbox?participant=reviewer`);
     const inbox = (await inboxRes.json()) as { inbox: Array<{ id: string; subjectId: string; title: string }> };
     expect(inboxRes.ok).toBe(true);
     expect(inbox.inbox).toEqual([expect.objectContaining({ subjectId: roleHandoff.thread.id })]);
 
+    const inboxWithNotificationsRes = await fetch(`${base}/inbox?participant=reviewer&includeNotifications=1`);
+    const inboxWithNotifications = (await inboxWithNotificationsRes.json()) as {
+      inbox: Array<{ title: string; subjectId: string }>;
+    };
+    expect(inboxWithNotifications.inbox.map((entry) => entry.title)).toContain("Reviewer alert");
+
     const readInboxRes = await fetch(`${base}/inbox/read`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: inbox.inbox[0]!.id }),
+      body: JSON.stringify({ participant: "reviewer" }),
     });
     expect(readInboxRes.ok).toBe(true);
     const readInboxAgainRes = await fetch(`${base}/inbox?participant=reviewer&unread=1`);
     const readInboxAgain = (await readInboxAgainRes.json()) as { inbox: unknown[] };
     expect(readInboxAgain.inbox).toEqual([]);
+    const notificationStillUnreadRes = await fetch(`${base}/notifications?sessionId=reviewer&unread=1`);
+    const notificationStillUnread = (await notificationStillUnreadRes.json()) as { notifications: unknown[] };
+    expect(notificationStillUnread.notifications).toHaveLength(1);
 
     const taskRes = await fetch(`${base}/tasks/assign`, {
       method: "POST",

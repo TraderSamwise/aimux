@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { TerminalHost } from "../terminal-host.js";
 import { parseKeys } from "../key-parser.js";
 import { requestJson } from "../http-client.js";
+import { TmuxRuntimeManager } from "./runtime-manager.js";
 
 export interface TmuxInboxPopupOptions {
   projectRoot: string;
@@ -88,10 +89,29 @@ function loadEndpoint(projectStateDir: string): string {
   return raw;
 }
 
-async function loadInboxEntries(endpoint: string): Promise<InboxPopupEntry[]> {
+function resolveFocusedParticipant(options: TmuxInboxPopupOptions): string | undefined {
+  const currentWindowId = options.currentWindowId?.trim();
+  if (!currentWindowId || (options.currentWindow?.trim() && /^dashboard/.test(options.currentWindow.trim()))) {
+    return undefined;
+  }
+  try {
+    const tmux = new TmuxRuntimeManager();
+    const match = tmux
+      .listProjectManagedWindows(options.projectRoot)
+      .find((entry) => entry.target.windowId === currentWindowId);
+    return match?.metadata.sessionId?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadInboxEntries(endpoint: string, participantId?: string): Promise<InboxPopupEntry[]> {
+  const query = participantId ? `?participant=${encodeURIComponent(participantId)}` : "";
   const [{ status: inboxStatus, json: inboxBody }, { status: desktopStatus, json: desktopBody }] = await Promise.all([
-    requestJson<{ inbox?: InboxPopupEntry[] }>(`${endpoint}/inbox`, { timeoutMs: 2000 }),
-    requestJson<{ sessions?: any[]; services?: any[] }>(`${endpoint}/desktop-state`, { timeoutMs: 2000 }),
+    requestJson<{ inbox?: InboxPopupEntry[] }>(`${endpoint}/inbox${query}`, { timeoutMs: 2000 }),
+    requestJson<{ sessions?: any[]; teammates?: any[]; services?: any[] }>(`${endpoint}/desktop-state`, {
+      timeoutMs: 2000,
+    }),
   ]);
   if (inboxStatus < 200 || inboxStatus >= 300) {
     throw new Error("failed to load inbox");
@@ -100,7 +120,9 @@ async function loadInboxEntries(endpoint: string): Promise<InboxPopupEntry[]> {
     throw new Error("failed to load desktop state");
   }
 
-  const sessions = new Map<string, any>((desktopBody.sessions ?? []).map((entry) => [entry.id, entry]));
+  const sessions = new Map<string, any>(
+    [...(desktopBody.sessions ?? []), ...(desktopBody.teammates ?? [])].map((entry) => [entry.id, entry]),
+  );
   const services = new Map<string, any>((desktopBody.services ?? []).map((entry) => [entry.id, entry]));
 
   return (inboxBody.inbox ?? []).map((entry) => {
@@ -122,7 +144,8 @@ async function loadInboxEntries(endpoint: string): Promise<InboxPopupEntry[]> {
     }
     return {
       ...entry,
-      targetState: entry.sessionId ? "missing" : "none",
+      sessionId: undefined,
+      targetState: "none",
     };
   });
 }
@@ -192,7 +215,8 @@ function renderPopup(entries: InboxPopupEntry[], index: number, message: string 
 
 export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise<number> {
   const endpoint = loadEndpoint(options.projectStateDir);
-  let entries = await loadInboxEntries(endpoint);
+  const participantId = resolveFocusedParticipant(options);
+  let entries = await loadInboxEntries(endpoint, participantId);
   let index = entries.length > 0 ? 0 : -1;
   let message: string | null = null;
 
@@ -209,7 +233,7 @@ export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise
   };
 
   const refresh = async (nextMessage: string | null = null) => {
-    entries = await loadInboxEntries(endpoint);
+    entries = await loadInboxEntries(endpoint, participantId);
     if (index >= entries.length) index = Math.max(0, entries.length - 1);
     if (entries.length === 0) index = -1;
     message = nextMessage;
@@ -250,7 +274,7 @@ export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise
         return;
       }
       if (key === "R") {
-        await postJson(endpoint, "/inbox/read", {});
+        await postJson(endpoint, "/inbox/read", { participant: participantId });
         await refresh(null);
         return;
       }
@@ -261,7 +285,7 @@ export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise
         return;
       }
       if (key === "C") {
-        await postJson(endpoint, "/inbox/clear", {});
+        await postJson(endpoint, "/inbox/clear", { participant: participantId });
         await refresh(null);
         return;
       }

@@ -4,8 +4,47 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { initPaths } from "../paths.js";
-import { addNotification, listNotifications } from "../notifications.js";
+import type { NotificationRecord } from "../notifications.js";
+import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
+import { appendMessage, createThread } from "../threads.js";
 import { handleNotificationsKey, notificationTargetLabel, notificationTargetState } from "./notifications.js";
+
+function addExchangeNotification(sessionId: string, body: string): NotificationRecord {
+  const thread = createThread({
+    title: "Needs input",
+    kind: "conversation",
+    createdBy: "sender",
+    participants: ["sender", sessionId],
+  });
+  appendMessage(thread.id, {
+    from: "sender",
+    to: [sessionId],
+    kind: "request",
+    body,
+  });
+  const entry = createRuntimeExchangeStore()
+    .read()
+    .inbox.find((candidate) => candidate.participantId === sessionId && candidate.subjectId === thread.id);
+  if (!entry) throw new Error("expected exchange inbox entry");
+  return {
+    id: entry.id,
+    title: thread.title,
+    body,
+    sessionId,
+    targetKind: "session",
+    kind: "thread",
+    unread: true,
+    cleared: false,
+    createdAt: entry.updatedAt,
+    updatedAt: entry.updatedAt,
+  };
+}
+
+function unreadInboxEntries(sessionId: string) {
+  return createRuntimeExchangeStore()
+    .read()
+    .inbox.filter((entry) => entry.participantId === sessionId && entry.state !== "done");
+}
 
 describe("notification target open", () => {
   let host: any;
@@ -15,11 +54,7 @@ describe("notification target open", () => {
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-notification-open-"));
     mkdirSync(join(repoRoot, ".git"), { recursive: true });
     await initPaths(repoRoot);
-    const notification = addNotification({
-      title: "Needs input",
-      body: "Open service",
-      sessionId: "service-1",
-    });
+    const notification = addExchangeNotification("service-1", "Open service");
     host = {
       notificationEntries: [notification],
       notificationIndex: 0,
@@ -65,7 +100,7 @@ describe("notification target open", () => {
     });
     expect(host.resumeOfflineServiceWithFeedback).not.toHaveBeenCalled();
     expect(host.resumeOfflineServiceById).not.toHaveBeenCalled();
-    expect(listNotifications({ unreadOnly: true, sessionId: "service-1" })).toHaveLength(0);
+    expect(unreadInboxEntries("service-1")).toHaveLength(0);
   });
 
   it("keeps a notification unread if target activation fails", async () => {
@@ -76,15 +111,11 @@ describe("notification target open", () => {
     handleNotificationsKey(host, Buffer.from("\r"));
     await vi.waitFor(() => expect(host.activateDashboardService).toHaveBeenCalled());
 
-    expect(listNotifications({ unreadOnly: true, sessionId: "service-1" })).toHaveLength(1);
+    expect(unreadInboxEntries("service-1")).toHaveLength(1);
   });
 
   it("opens teammate notification targets from the hidden teammate cache", async () => {
-    const teammateNotification = addNotification({
-      title: "Needs input",
-      body: "Open teammate",
-      sessionId: "teammate-1",
-    });
+    const teammateNotification = addExchangeNotification("teammate-1", "Open teammate");
     host.notificationEntries = [teammateNotification];
     host.dashboardTeammatesCache = [
       {
@@ -107,6 +138,6 @@ describe("notification target open", () => {
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(expect.objectContaining({ id: "teammate-1" }), {
       preserveDashboardSelection: true,
     });
-    expect(listNotifications({ unreadOnly: true, sessionId: "teammate-1" })).toHaveLength(0);
+    expect(unreadInboxEntries("teammate-1")).toHaveLength(0);
   });
 });
