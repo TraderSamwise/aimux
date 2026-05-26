@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths, getProjectStateDirFor } from "../paths.js";
 import { deriveSessionSemantics, type DeriveSessionSemanticsInput } from "../session-semantics.js";
-import { renderTmuxStatusline } from "./statusline.js";
+import { loadStatusline, renderTmuxStatusline } from "./statusline.js";
 
 describe("renderTmuxStatusline", () => {
   const originalCwd = process.cwd();
@@ -132,6 +132,32 @@ describe("renderTmuxStatusline", () => {
     expect(rendered).toContain("ctl ok");
     expect(rendered).toContain("mobile");
     expect(rendered).toContain("needs input");
+  });
+
+  it("drops metadata rows for sessions absent from the statusline projection", () => {
+    const statusPath = join(getProjectStateDirFor(repoRoot), "statusline.json");
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        updatedAt: freshUpdatedAt(),
+        sessions: [],
+        metadata: {
+          ghost: {
+            statusline: { top: [{ id: "ghost", text: "ghost-plugin" }] },
+            status: { text: "ghost-status" },
+          },
+        },
+      }),
+    );
+
+    expect(loadStatusline(repoRoot)?.metadata).toEqual({});
+    expect(
+      renderTmuxStatusline(repoRoot, "top", {
+        currentWindow: "ghost",
+        currentPath: repoRoot,
+        width: 220,
+      }),
+    ).not.toContain("ghost");
   });
 
   it("trims bottom-line segments to available width", () => {

@@ -23,7 +23,6 @@ export function compactSessionId(sessionId: string): string {
 
 export function metadataDisplayContext(metadata?: SessionMetadata): SessionAlertDisplayContext {
   return {
-    label: metadata?.label,
     worktreePath: metadata?.context?.worktreePath,
     worktreeName: metadata?.context?.worktreeName,
     branch: metadata?.context?.branch,
