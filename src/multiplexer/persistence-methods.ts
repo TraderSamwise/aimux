@@ -521,11 +521,16 @@ export const persistenceMethods = {
     if (!existing) {
       throw new Error(`Graveyard worktree "${path}" not found`);
     }
+    const mainRepo = findMainRepo();
+    if (path === mainRepo) {
+      throw new Error("Cannot remove the main checkout");
+    }
     if (existsSync(path)) {
-      await this.removeDesktopWorktree(path);
+      await removeGraveyardedDesktopWorktree(this, mainRepo, path);
     } else {
       removeWorktreeDependents(this, path);
       removeTopologyWorktree(path);
+      this.saveState?.();
     }
     deleteTopologyWorktreeGraveyardEntry(path);
     this.invalidateDesktopStateSnapshot?.();
@@ -986,6 +991,47 @@ async function removeOrphanedDesktopWorktree(host: any, mainRepo: string, path: 
   await pruneGitWorktrees(mainRepo);
   removeWorktreeDependents(host, path);
   host.saveState();
+}
+
+async function removeGraveyardedDesktopWorktree(host: any, mainRepo: string, path: string): Promise<void> {
+  await removeGitWorktreeCheckout(mainRepo, path);
+  removeWorktreeDependents(host, path);
+  removeTopologyWorktree(path);
+  host.saveState?.();
+}
+
+async function removeGitWorktreeCheckout(mainRepo: string, path: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let stderr = "";
+    let child;
+    try {
+      child = spawn("git", ["worktree", "remove", path, "--force"], {
+        cwd: mainRepo,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", reject);
+    child.on("close", (code: number | null) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const detail = stderr
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1);
+      reject(new Error(detail || `git worktree remove exited with code ${code ?? 1}`));
+    });
+  });
 }
 
 function detachWorktreeServices(host: any, path: string): void {
