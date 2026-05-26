@@ -227,6 +227,27 @@ describe("RuntimeExchangeStore", () => {
     }
   });
 
+  it("does not recover an aged update lock while its owner process is alive", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
+    try {
+      const path = join(dir, "runtime-exchange.yaml");
+      const lockPath = `${path}.lock`;
+      mkdirSync(lockPath, { recursive: true });
+      writeFileSync(join(lockPath, "owner"), `${process.pid}\n`);
+      const staleTime = new Date(Date.now() - 10_000);
+      utimesSync(lockPath, staleTime, staleTime);
+
+      const store = new RuntimeExchangeStore(path) as unknown as {
+        recoverStaleUpdateLock(lockPath: string): boolean;
+      };
+
+      expect(store.recoverStaleUpdateLock(lockPath)).toBe(false);
+      expect(existsSync(lockPath)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("prunes records that reference missing exchange subjects", () => {
     const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
     try {
