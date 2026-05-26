@@ -135,10 +135,13 @@ Project-service HTTP now exposes the live orchestration surface, including:
 
 - `GET /events` (SSE project event stream)
 - `GET /workflow`
+- `GET /notifications`
 - `GET /threads`
 - `GET /threads/:id`
 - `GET /tasks`
 - `GET /tasks/:id`
+- `POST /notifications/read`
+- `POST /notifications/clear`
 - `POST /threads/open`
 - `POST /threads/send`
 - `POST /threads/mark-seen`
@@ -153,6 +156,10 @@ Project-service HTTP now exposes the live orchestration surface, including:
 - `POST /tasks/reopen`
 - `POST /reviews/approve`
 - `POST /reviews/request-changes`
+- `POST /worktrees/remove`
+- `POST /worktrees/graveyard`
+- `POST /graveyard/worktrees/resurrect`
+- `POST /graveyard/worktrees/delete`
 
 Project-service HTTP also exposes low-latency tmux control helpers:
 

@@ -125,6 +125,18 @@ describe("MetadataServer threads API", () => {
     expect(detail.messages.at(-1)?.body).toContain("parser error path");
   });
 
+  it("returns 400 for malformed encoded thread and task ids", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const threadRes = await fetch(`${base}/threads/%E0%A4%A`);
+    expect(threadRes.status).toBe(400);
+
+    const taskRes = await fetch(`${base}/tasks/%E0%A4%A`);
+    expect(taskRes.status).toBe(400);
+  });
+
   it("creates handoffs and task assignments over HTTP", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
