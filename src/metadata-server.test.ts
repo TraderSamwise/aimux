@@ -1956,6 +1956,33 @@ describe("MetadataServer threads API", () => {
       body: "Shell returned to a prompt.",
     });
   });
+
+  it("routes agent rename through lifecycle without writing metadata labels", async () => {
+    server?.stop();
+    const renameAgent = vi.fn(async ({ sessionId, label }: { sessionId: string; label?: string }) => ({
+      sessionId,
+      label: label?.trim() || undefined,
+    }));
+    server = new MetadataServer({
+      lifecycle: {
+        renameAgent,
+      },
+    });
+    await server.start();
+    const endpoint = server.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/rename`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", label: "  review  " }),
+    });
+
+    expect(res.ok).toBe(true);
+    expect(renameAgent).toHaveBeenCalledWith({ sessionId: "codex-1", label: "  review  " });
+    expect(loadMetadataState(repoRoot).sessions["codex-1"]).toBeUndefined();
+  });
 });
 
 describe("MetadataServer plan endpoints", () => {

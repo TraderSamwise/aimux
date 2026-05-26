@@ -8,6 +8,7 @@ import { RuntimeTopologyStore, type RuntimeTopology } from "./runtime-core/topol
 import { RuntimeExchangeStore, type RuntimeExchange } from "./runtime-core/exchange-store.js";
 
 type SourceStatus = "found" | "missing" | "unavailable" | "error";
+type SourceRole = "authority" | "projection" | "cache" | "substrate" | "legacy" | "unavailable";
 type TargetResolutionStatus = "matched" | "missing" | "ambiguous";
 type TargetKind =
   | "session"
@@ -18,6 +19,20 @@ type TargetKind =
   | "operation-failure"
   | "instance-session"
   | "tmux-window";
+type DebugStateSourceKey =
+  | "savedState"
+  | "runtimeTopology"
+  | "metadata"
+  | "tmux"
+  | "gitWorktrees"
+  | "graveyard"
+  | "worktreeGraveyard"
+  | "notifications"
+  | "operationFailures"
+  | "instances"
+  | "runtimeRows"
+  | "pendingActions"
+  | "dashboardSnapshot";
 
 export interface SourceResult<T> {
   status: SourceStatus;
@@ -25,6 +40,12 @@ export interface SourceResult<T> {
   reason?: string;
   error?: string;
   value?: T;
+}
+
+export interface SourceRoleDescriptor {
+  role: SourceRole;
+  authority?: string;
+  note: string;
 }
 
 export interface TargetMatch {
@@ -53,6 +74,7 @@ export interface DebugStateReport {
     entityCount: number;
     matches: TargetMatch[];
   };
+  sourceRoles: Record<DebugStateSourceKey, SourceRoleDescriptor>;
   sources: {
     savedState: SourceResult<{ services: unknown[] }>;
     runtimeTopology: SourceResult<{ sessions: unknown[]; services: unknown[]; worktrees: unknown[] }>;
@@ -226,30 +248,24 @@ function filterMetadata(
     .filter(([sessionId, entry]) => {
       const record = asObject(entry);
       const context = asObject(record?.context);
-      const backendSessionId = getString(record, "backendSessionId");
       const worktreePath = getString(context, "worktreePath");
       const worktreeName = getString(context, "worktreeName");
       const branch = getString(context, "branch");
       const cwd = getString(context, "cwd");
-      const label = getString(record, "label");
       const matched =
         matchesString(sessionId, target) ||
-        matchesString(backendSessionId, target) ||
         matchesString(worktreePath, target) ||
         matchesString(worktreeName, target) ||
         matchesString(branch, target) ||
-        matchesString(cwd, target) ||
-        matchesString(label, target);
+        matchesString(cwd, target);
       if (matched) {
         addMatch(matches, seen, {
-          canonicalKey: sessionCanonical(sessionId, backendSessionId),
-          kind: backendSessionId === target && sessionId !== target ? "backend-session" : "session",
+          canonicalKey: sessionCanonical(sessionId),
+          kind: "session",
           source: "metadata",
           id: sessionId,
-          backendSessionId,
           worktreePath,
           worktreeName,
-          label,
           raw: entry,
         });
       }
@@ -258,6 +274,71 @@ function filterMetadata(
     .map(([sessionId, entry]) => ({ sessionId, ...(asObject(entry) ?? {}) }));
   return { status: "found", path: source.path, value: { sessions } };
 }
+
+const DEBUG_STATE_SOURCE_ROLES: DebugStateReport["sourceRoles"] = {
+  savedState: {
+    role: "legacy",
+    authority: "runtime-topology.yaml for services",
+    note: "legacy service snapshot evidence; it must not create lifecycle truth",
+  },
+  runtimeTopology: {
+    role: "authority",
+    authority: "runtime-topology.yaml",
+    note: "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings",
+  },
+  metadata: {
+    role: "projection",
+    authority: "runtime-topology.yaml and runtime-exchange.yaml",
+    note: "decorates known sessions only; hidden lifecycle and backend identity fields are ignored",
+  },
+  tmux: {
+    role: "substrate",
+    authority: "runtime-topology.yaml",
+    note: "live tmux window evidence and repair input, not durable lifecycle authority",
+  },
+  gitWorktrees: {
+    role: "substrate",
+    authority: "runtime-topology.yaml for aimux worktree lifecycle",
+    note: "git worktree substrate evidence; aimux lifecycle state lives in topology",
+  },
+  graveyard: {
+    role: "authority",
+    authority: "runtime-topology.yaml",
+    note: "filtered topology sessions with graveyard status",
+  },
+  worktreeGraveyard: {
+    role: "authority",
+    authority: "runtime-topology.yaml",
+    note: "topology-owned worktree graveyard entries",
+  },
+  notifications: {
+    role: "projection",
+    authority: "runtime-exchange.yaml",
+    note: "notification rows are exchange threads/messages/inbox entries tagged as notifications",
+  },
+  operationFailures: {
+    role: "projection",
+    authority: "runtime-topology.yaml plus operation execution results",
+    note: "dashboard-facing failure projection, not lifecycle authority",
+  },
+  instances: {
+    role: "legacy",
+    authority: "runtime-topology.yaml for lifecycle; future topology presence for ownership",
+    note: "legacy runtime presence evidence; it must not create sessions",
+  },
+  runtimeRows: {
+    role: "unavailable",
+    note: "live runtime-only view unavailable to standalone debug-state",
+  },
+  pendingActions: {
+    role: "unavailable",
+    note: "in-memory dashboard optimism unavailable to standalone debug-state",
+  },
+  dashboardSnapshot: {
+    role: "unavailable",
+    note: "project-service/dashboard projection unavailable to standalone debug-state",
+  },
+};
 
 function filterTmux(
   tmuxWindows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> | Error | undefined,
@@ -650,6 +731,7 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
       ...resolution,
       matches,
     },
+    sourceRoles: DEBUG_STATE_SOURCE_ROLES,
     sources: {
       savedState,
       runtimeTopology,

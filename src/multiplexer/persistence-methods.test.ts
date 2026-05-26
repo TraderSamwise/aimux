@@ -64,6 +64,7 @@ vi.mock("../metadata-store.js", async (importOriginal) => {
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { getStatePath, initPaths } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
+import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
 import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 import {
@@ -418,6 +419,67 @@ describe("persistenceMethods", () => {
         team: expect.objectContaining({ parentSessionId: "claude-parent" }),
       }),
     );
+  });
+
+  it("derives statusline task counts from runtime exchange", () => {
+    createRuntimeExchangeStore().update((exchange) => ({
+      ...exchange,
+      tasks: [
+        {
+          id: "task-pending",
+          description: "Queued",
+          prompt: "queued",
+          status: "pending",
+          assignedBy: "user",
+          createdAt: "2026-05-25T00:00:00.000Z",
+          updatedAt: "2026-05-25T00:00:00.000Z",
+        },
+        {
+          id: "task-assigned",
+          description: "Assigned",
+          prompt: "assigned",
+          status: "assigned",
+          assignedBy: "user",
+          assignedTo: "codex-1",
+          createdAt: "2026-05-25T00:00:00.000Z",
+          updatedAt: "2026-05-25T00:00:00.000Z",
+        },
+        {
+          id: "task-done",
+          description: "Done",
+          prompt: "done",
+          status: "done",
+          assignedBy: "user",
+          assignedTo: "codex-1",
+          createdAt: "2026-05-25T00:00:00.000Z",
+          updatedAt: "2026-05-25T00:00:00.000Z",
+        },
+      ],
+    }));
+
+    const host = {
+      desktopStateSnapshot: {
+        sessions: [],
+        teammates: [],
+        services: [],
+        worktrees: [],
+        operationFailures: [],
+        mainCheckoutInfo: { name: "Main Checkout", branch: "master" },
+      },
+      dashboardPendingActions: new DashboardPendingActions(() => {}),
+      dashboardUiStateStore: {
+        orderSessionsForWorktree: vi.fn((sessions) => sessions),
+        orderServicesForWorktree: vi.fn((services) => services),
+      },
+      dashboardState: { screen: "dashboard" },
+      footerFlash: null,
+      refreshDesktopStateSnapshot: vi.fn(),
+      buildDesktopStateSnapshot: vi.fn(),
+    };
+
+    const statusline = persistenceMethods.buildStatuslineSnapshot.call(host);
+
+    expect(statusline.tasks).toEqual({ pending: 1, assigned: 1 });
   });
 
   it("does not retain stale session or service pending flags when reapplying pending actions", () => {

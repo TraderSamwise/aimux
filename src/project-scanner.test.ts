@@ -163,6 +163,33 @@ describe("project-scanner", () => {
     expect(result.sessions.map((session) => session.id)).toEqual(["session-a"]);
   });
 
+  it("ignores legacy local statusline projection files", async () => {
+    writeFileSync(
+      join(projectA, ".aimux", "statusline.json"),
+      JSON.stringify({
+        sessions: [
+          {
+            id: "session-a",
+            tool: "codex",
+            label: "local-stale-label",
+            headline: "local stale headline",
+          },
+        ],
+      }),
+    );
+
+    const { scanProject } = await import("./project-scanner.js");
+    const result = scanProject(projectA);
+
+    expect(result.sessions[0]).toEqual(
+      expect.objectContaining({
+        id: "session-a",
+        label: undefined,
+        headline: "Alpha headline",
+      }),
+    );
+  });
+
   it("does not mint project sessions from instances-only data", async () => {
     const projectC = join(tmpHome, "work", "project-c");
     mkdirSync(join(projectC, ".aimux"), { recursive: true });
