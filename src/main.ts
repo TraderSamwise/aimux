@@ -2459,8 +2459,16 @@ graveyardCmd
   .action(async (id: string, opts: { project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      const mux = new Multiplexer();
-      const result = await mux.resurrectGraveyardSession(id);
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/graveyard/resurrect",
+        { sessionId: id },
+        () => {
+          const mux = new Multiplexer();
+          return mux.resurrectGraveyardSession(id);
+        },
+      );
       if (opts.json) {
         console.log(
           JSON.stringify(
