@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Box, GitBranch, Network, Rows3, Table2 } from "lucide-react-native";
 import { Card, PressableCard } from "@/components/ui/card";
+import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Text } from "@/components/ui/text";
 import { StatusDot, StatusPill } from "@/components/status-dot";
@@ -21,6 +22,7 @@ import {
   type TopologyNode,
   type TopologyWorktree,
 } from "@/lib/openrig-topology";
+import { runtimeBrandForKind } from "@/lib/runtime-brand";
 import { cn } from "@/lib/utils";
 
 type TopologyViewMode = "map" | "tree" | "table";
@@ -100,7 +102,10 @@ function NodeCard({ node, onPress }: { node: TopologyNode; onPress?: () => void 
           {node.label}
         </Text>
         {node.status ? (
-          <View className="ml-2">
+          <View className="ml-2 flex-row items-center gap-2">
+            {node.kind === "agent" || node.kind === "service" ? (
+              <RuntimeBadge brand={runtimeBrandForKind(node.kind, node.command)} compact />
+            ) : null}
             <StatusPill status={node.status} />
           </View>
         ) : null}

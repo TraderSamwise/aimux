@@ -16,6 +16,7 @@ export interface TopologyNode {
   label: string;
   subtitle?: string;
   status?: string;
+  command?: string;
   health: TopologyHealth;
   worktreeKey?: string;
   sourceId?: string;
@@ -97,6 +98,7 @@ function agentNode(session: DesktopSession, worktreeKey: string): TopologyNode {
     label: session.label || session.id,
     subtitle: [tool, session.headline || session.previewLine].filter(Boolean).join(" · "),
     status: session.status,
+    command: session.command,
     health: healthForStatus(session.status, session.pendingAction),
     worktreeKey,
     sourceId: session.id,
@@ -111,6 +113,7 @@ function serviceNode(service: DesktopService, worktreeKey: string): TopologyNode
     label: service.label || service.id,
     subtitle: detail,
     status: service.status,
+    command: service.command,
     health: healthForStatus(service.status, service.pendingAction),
     worktreeKey,
     sourceId: service.id,
