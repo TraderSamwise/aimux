@@ -8,14 +8,17 @@ import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runti
 
 describe("runtime lifecycle state persistence", () => {
   let repoRoot = "";
+  let originalCwd = "";
 
   beforeEach(async () => {
+    originalCwd = process.cwd();
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-runtime-lifecycle-"));
     mkdirSync(join(repoRoot, ".git"), { recursive: true });
     await initPaths(repoRoot);
   });
 
   afterEach(() => {
+    process.chdir(originalCwd);
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
@@ -40,6 +43,53 @@ describe("runtime lifecycle state persistence", () => {
   function topologySessions() {
     return listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
   }
+
+  it("merges aimux instructions into existing AGENTS.md without overwriting user content", () => {
+    process.chdir(repoRoot);
+    const agentsPath = join(repoRoot, "AGENTS.md");
+    writeFileSync(agentsPath, "# Project Rules\n\nKeep this user rule.\n");
+    const writtenInstructionFiles = new Set<string>();
+
+    runtimeLifecycleMethods.writeInstructionFiles.call({
+      writtenInstructionFiles,
+    } as never);
+
+    const content = readFileSync(agentsPath, "utf-8");
+    expect(content).toContain("# Project Rules");
+    expect(content).toContain("Keep this user rule.");
+    expect(content).toContain("<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->");
+    expect(content).toContain("# aimux Agent Instructions");
+    expect(content).toContain("<!-- END Aimux MANAGED BLOCK: aimux-agent-instructions -->");
+    expect(writtenInstructionFiles.size).toBe(1);
+  });
+
+  it("removes only aimux managed instructions during cleanup", () => {
+    process.chdir(repoRoot);
+    const agentsPath = join(repoRoot, "AGENTS.md");
+    writeFileSync(agentsPath, "# Project Rules\n\nKeep this user rule.\n");
+    const writtenInstructionFiles = new Set<string>();
+    const lifecycleHost = { writtenInstructionFiles } as never;
+
+    runtimeLifecycleMethods.writeInstructionFiles.call(lifecycleHost);
+    runtimeLifecycleMethods.removeInstructionFiles.call(lifecycleHost);
+
+    const content = readFileSync(agentsPath, "utf-8");
+    expect(content).toBe("# Project Rules\n\nKeep this user rule.\n");
+  });
+
+  it("deletes generated-only instruction files during cleanup", () => {
+    process.chdir(repoRoot);
+    const agentsPath = join(repoRoot, "AGENTS.md");
+    const writtenInstructionFiles = new Set<string>();
+    const lifecycleHost = { writtenInstructionFiles } as never;
+
+    runtimeLifecycleMethods.writeInstructionFiles.call(lifecycleHost);
+    expect(existsSync(agentsPath)).toBe(true);
+
+    runtimeLifecycleMethods.removeInstructionFiles.call(lifecycleHost);
+
+    expect(existsSync(agentsPath)).toBe(false);
+  });
 
   it("does not expose topology sessions through the service state loader", () => {
     writeFileSync(

@@ -583,9 +583,18 @@ export class Multiplexer {
     await this.contextWatcher.syncNow(sourceSessionId).catch(() => {});
     const sourceSnapshot = this.sessionBootstrap.readForkSourceSnapshot(sourceSessionId);
     this.sessionBootstrap.seedForkArtifacts(sourceSessionId, targetSessionId, targetToolConfigKey);
+    const codexContinuityPreamble = !toolCfg.preambleFlag
+      ? this.sessionBootstrap.buildCodexForkContinuityPreamble(
+          sourceSessionId,
+          targetSessionId,
+          sourceSnapshot,
+          instruction,
+        )
+      : undefined;
     const extraPreamble = [
       this.sessionBootstrap.buildForkPreamble(sourceSessionId, targetSessionId),
-      instruction?.trim(),
+      codexContinuityPreamble ? undefined : instruction?.trim(),
+      codexContinuityPreamble,
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -601,15 +610,6 @@ export class Multiplexer {
       targetSessionId,
       !toolCfg.preambleFlag,
     );
-    if (!toolCfg.preambleFlag) {
-      const kickoff = this.sessionBootstrap.buildCodexForkKickoffPrompt(
-        sourceSessionId,
-        targetSessionId,
-        sourceSnapshot,
-        instruction,
-      );
-      await this.sessionBootstrap.deliverDetachedCodexKickoffPrompt(targetSessionId, kickoff, 1800);
-    }
     this.agentTracker.emit(sourceSessionId, {
       kind: "status",
       message: `Forked ${targetSessionId} from this session`,

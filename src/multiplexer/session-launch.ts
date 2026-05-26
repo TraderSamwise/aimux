@@ -83,7 +83,7 @@ export function summarizeLaunchArgs(args: string[]): string[] {
   });
 }
 
-function firstCodexPositionalArg(args: string[]): string | undefined {
+function firstCodexPositionalArgIndex(args: string[]): number {
   let skipNext = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -92,7 +92,7 @@ function firstCodexPositionalArg(args: string[]): string | undefined {
       continue;
     }
     if (arg === "--") {
-      return args.slice(i + 1).find((candidate) => candidate.trim().length > 0);
+      return i;
     }
     if (arg.startsWith("--")) {
       const [name, value] = arg.split("=", 2);
@@ -107,13 +107,19 @@ function firstCodexPositionalArg(args: string[]): string | undefined {
       }
       continue;
     }
-    return arg;
+    return i;
   }
-  return undefined;
+  return args.length;
 }
 
-function canUseCodexInitialPrompt(args: string[], command: string, toolConfigKey?: string): boolean {
-  return toolConfigKey === "codex" && command === "codex" && !firstCodexPositionalArg(args);
+function codexConfigArg(key: string, value: string): string {
+  return `${key}=${JSON.stringify(value)}`;
+}
+
+export function injectCodexDeveloperInstructions(args: string[], key: string, instructions: string): string[] {
+  if (!key.trim() || !instructions.trim()) return [...args];
+  const insertionIndex = firstCodexPositionalArgIndex(args);
+  return [...args.slice(0, insertionIndex), "-c", codexConfigArg(key, instructions), ...args.slice(insertionIndex)];
 }
 
 export async function run(host: SessionLaunchHost, opts: { command: string; args: string[] }): Promise<number> {
@@ -431,23 +437,19 @@ export function createSession(
         team,
       });
   const shouldInjectLaunchPreamble = Boolean(!effectiveSuppressStartupPreamble && preambleFlag && preamble.trim());
-  const shouldUseCodexInitialPrompt = Boolean(
+  const shouldInjectCodexDeveloperInstructions = Boolean(
     !effectiveSuppressStartupPreamble &&
-    !preambleFlag &&
-    automaticPreambleEnabled &&
-    (!extraPreamble || Boolean(team)) &&
-    preamble.trim() &&
-    canUseCodexInitialPrompt(args, command, toolConfigKey),
+    toolCfg?.command === command &&
+    command === "codex" &&
+    toolCfg.developerInstructionsConfigKey &&
+    preamble.trim(),
   );
 
   host.sessionBootstrap.ensurePlanFile(sessionId, command, worktreePath);
 
   let finalArgs = shouldInjectLaunchPreamble ? [...args, ...preambleFlag!, preamble] : [...args];
-  const codexInitialPrompt = shouldUseCodexInitialPrompt
-    ? host.sessionBootstrap.buildInitialKickoffPrompt(sessionId, preamble)
-    : undefined;
-  if (codexInitialPrompt) {
-    finalArgs.push(codexInitialPrompt);
+  if (shouldInjectCodexDeveloperInstructions) {
+    finalArgs = injectCodexDeveloperInstructions(finalArgs, toolCfg!.developerInstructionsConfigKey!, preamble);
   }
   let launchCommand = command;
 
@@ -541,18 +543,6 @@ export function createSession(
   }
 
   host.saveState();
-  if (
-    !effectiveSuppressStartupPreamble &&
-    !preambleFlag &&
-    !extraPreamble &&
-    !shouldUseCodexInitialPrompt &&
-    (toolConfigKey !== "codex" || !firstCodexPositionalArg(args)) &&
-    automaticPreambleEnabled &&
-    preamble.trim()
-  ) {
-    const kickoff = host.sessionBootstrap.buildInitialKickoffPrompt(sessionId, preamble);
-    void host.sessionBootstrap.deliverDetachedCodexKickoffPrompt(sessionId, kickoff, 1800);
-  }
   return session;
 }
 
@@ -620,28 +610,27 @@ export async function migrateAgent(
   await waitForExit().catch(() => {});
 
   if (!toolCfg?.preambleFlag) {
+    const continuityPreamble = host.sessionBootstrap.buildCodexMigrationContinuityPreamble(
+      sessionId,
+      sourceCwd,
+      targetWorktreePath,
+      sourceSnapshot,
+    );
     createSession(
       host,
       session.command,
       migrateArgs,
       undefined,
       toolConfigKey,
-      undefined,
+      continuityPreamble,
       undefined,
       effectiveTarget,
       useBackendResume ? backendSessionId : undefined,
       sessionId,
       true,
-      true,
+      false,
       session.team,
     );
-    const kickoff = host.sessionBootstrap.buildCodexMigrationKickoffPrompt(
-      sessionId,
-      sourceCwd,
-      targetWorktreePath,
-      sourceSnapshot,
-    );
-    await host.sessionBootstrap.deliverDetachedCodexKickoffPrompt(sessionId, kickoff, 1800);
     return;
   }
 

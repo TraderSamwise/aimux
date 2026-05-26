@@ -40,7 +40,7 @@ export interface StatuslineConfig {
 }
 
 export interface RuntimeConfig {
-  /** Whether aimux injects automatic session preamble / kickoff instructions. */
+  /** Whether aimux injects automatic session preamble instructions. */
   agentPreambleEnabled: boolean;
   tmux: TmuxRuntimeConfig;
 }
@@ -92,6 +92,8 @@ export interface ToolConfig {
   sessionIdFlag?: string[];
   /** File to write preamble instructions to (created on start, removed on exit), e.g. "AGENTS.md" */
   instructionsFile?: string;
+  /** Codex config key used for durable standing instructions, e.g. "developer_instructions" */
+  developerInstructionsConfigKey?: string | null;
   /** Regex patterns that indicate the tool is idle/waiting for input */
   promptPatterns?: string[];
   /** Regex patterns to detect user prompts in terminal output (for turn extraction) */
@@ -157,6 +159,7 @@ const DEFAULT_CONFIG: AimuxConfig = {
       resumeArgs: ["resume", "{sessionId}"],
       resumeByBackendSessionId: true,
       resumeFallback: ["resume", "--last"],
+      developerInstructionsConfigKey: "developer_instructions",
       instructionsFile: "AGENTS.md",
       promptPatterns: ["^> $"],
       turnPatterns: ["^[>❯]\\s*(.+)"],
