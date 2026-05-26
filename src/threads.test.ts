@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "./paths.js";
+import { createRuntimeExchangeStore } from "./runtime-core/exchange-store.js";
 import {
   appendMessage,
   createThread,
@@ -57,6 +58,9 @@ describe("threads", () => {
     const updated = readThread(thread.id);
     expect(updated?.unreadBy).toContain("codex-1");
     expect(updated?.unreadBy).not.toContain("claude-1");
+    expect(createRuntimeExchangeStore().read().inbox).toMatchObject([
+      { participantId: "codex-1", subjectKind: "thread", subjectId: thread.id, state: "unread" },
+    ]);
   });
 
   it("marks threads seen per participant", () => {
@@ -83,6 +87,24 @@ describe("threads", () => {
     const updated = setThreadStatus(thread.id, "done");
     expect(updated?.status).toBe("done");
     expect(updated?.waitingOn).toEqual([]);
+    expect(createRuntimeExchangeStore().read().waits).toEqual([]);
+  });
+
+  it("keeps handoff and wait indexes derived from thread state", () => {
+    const thread = createThread({
+      title: "Handoff",
+      kind: "handoff",
+      createdBy: "claude-1",
+      participants: ["claude-1", "codex-1"],
+      owner: "claude-1",
+      waitingOn: ["codex-1"],
+      status: "waiting",
+    });
+
+    expect(createRuntimeExchangeStore().read()).toMatchObject({
+      handoffs: [{ id: `handoff:${thread.id}`, threadId: thread.id, status: "waiting", to: ["codex-1"] }],
+      waits: [{ id: `wait:thread:${thread.id}`, subjectKind: "thread", subjectId: thread.id }],
+    });
   });
 
   it("opens stable task-linked threads", () => {

@@ -1,62 +1,20 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { getThreadsDir } from "./paths.js";
+import { deriveRuntimeExchangeIndexes } from "./runtime-core/exchange-derived.js";
+import {
+  createRuntimeExchangeStore,
+  type RuntimeExchangeMessage,
+  type RuntimeExchangeThread,
+} from "./runtime-core/exchange-store.js";
 
-export type ThreadKind = "conversation" | "task" | "review" | "handoff" | "user";
-export type ThreadStatus = "open" | "waiting" | "blocked" | "done" | "abandoned";
-export type MessageKind = "request" | "reply" | "status" | "decision" | "handoff" | "note";
+export type ThreadKind = RuntimeExchangeThread["kind"];
+export type ThreadStatus = RuntimeExchangeThread["status"];
+export type MessageKind = RuntimeExchangeMessage["kind"];
 
-export interface OrchestrationThread {
-  id: string;
-  title: string;
-  kind: ThreadKind;
-  createdAt: string;
-  updatedAt: string;
-  createdBy: string;
-  participants: string[];
-  status: ThreadStatus;
-  owner?: string;
-  waitingOn?: string[];
-  worktreePath?: string;
-  taskId?: string;
-  relatedPlanIds?: string[];
-  lastMessageId?: string;
-  unreadBy?: string[];
-  tags?: string[];
-}
-
-export interface OrchestrationMessage {
-  id: string;
-  threadId: string;
-  ts: string;
-  from: string;
-  to?: string[];
-  kind: MessageKind;
-  body: string;
-  taskId?: string;
-  planId?: string;
-  metadata?: Record<string, string | number | boolean | null>;
-  deliveredTo?: string[];
-  deliveredAt?: string;
-}
+export type OrchestrationThread = RuntimeExchangeThread;
+export type OrchestrationMessage = RuntimeExchangeMessage;
 
 export interface ThreadSummary {
   thread: OrchestrationThread;
   latestMessage?: OrchestrationMessage;
-}
-
-function threadsDir(): string {
-  const dir = getThreadsDir();
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-function threadPath(threadId: string): string {
-  return join(threadsDir(), `${threadId}.json`);
-}
-
-function messagesPath(threadId: string): string {
-  return join(threadsDir(), `${threadId}.jsonl`);
 }
 
 function nowIso(): string {
@@ -67,18 +25,36 @@ function randomId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function unique(values: Array<string | undefined>): string[] {
+  return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])];
+}
+
+function threadUpdatedForMessage(
+  thread: OrchestrationThread,
+  message: OrchestrationMessage,
+  updatedAt: string,
+): OrchestrationThread {
+  return {
+    ...thread,
+    updatedAt,
+    lastMessageId: message.id,
+    unreadBy: unique((thread.participants ?? []).filter((id) => id !== message.from)),
+  };
+}
+
 export function createThread(
   input: Omit<OrchestrationThread, "id" | "createdAt" | "updatedAt" | "status"> &
     Partial<Pick<OrchestrationThread, "id" | "status">>,
 ): OrchestrationThread {
+  const now = nowIso();
   const thread: OrchestrationThread = {
     id: input.id ?? randomId("thread"),
     title: input.title,
     kind: input.kind,
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
+    createdAt: now,
+    updatedAt: now,
     createdBy: input.createdBy,
-    participants: [...new Set(input.participants)],
+    participants: unique(input.participants),
     status: input.status ?? "open",
     owner: input.owner,
     waitingOn: input.waitingOn,
@@ -89,61 +65,63 @@ export function createThread(
     unreadBy: input.unreadBy,
     tags: input.tags,
   };
-  writeFileSync(threadPath(thread.id), JSON.stringify(thread, null, 2) + "\n");
+  createRuntimeExchangeStore().update((exchange) =>
+    deriveRuntimeExchangeIndexes({
+      ...exchange,
+      generatedAt: now,
+      threads: [...exchange.threads.filter((existing) => existing.id !== thread.id), thread],
+    }),
+  );
   return thread;
 }
 
 export function readThread(threadId: string): OrchestrationThread | undefined {
-  if (!existsSync(threadPath(threadId))) return undefined;
-  try {
-    return JSON.parse(readFileSync(threadPath(threadId), "utf-8")) as OrchestrationThread;
-  } catch {
-    return undefined;
-  }
+  return createRuntimeExchangeStore()
+    .read()
+    .threads.find((thread) => thread.id === threadId);
 }
 
 export function updateThread(
   threadId: string,
   updater: (current: OrchestrationThread) => OrchestrationThread,
 ): OrchestrationThread | undefined {
-  const current = readThread(threadId);
-  if (!current) return undefined;
-  const next: OrchestrationThread = {
-    ...updater(current),
-    id: current.id,
-    createdAt: current.createdAt,
-    updatedAt: nowIso(),
-  };
-  writeFileSync(threadPath(threadId), JSON.stringify(next, null, 2) + "\n");
-  return next;
+  const now = nowIso();
+  let updated: OrchestrationThread | undefined;
+  createRuntimeExchangeStore().update((exchange) => {
+    const threads = exchange.threads.map((current) => {
+      if (current.id !== threadId) return current;
+      updated = {
+        ...updater(current),
+        id: current.id,
+        createdAt: current.createdAt,
+        updatedAt: now,
+      };
+      return updated;
+    });
+    return deriveRuntimeExchangeIndexes({
+      ...exchange,
+      generatedAt: updated ? now : exchange.generatedAt,
+      threads,
+    });
+  });
+  return updated;
 }
 
 export function listThreads(): OrchestrationThread[] {
-  try {
-    return readdirSync(threadsDir())
-      .filter((name) => name.endsWith(".json"))
-      .map((name) => {
-        try {
-          return JSON.parse(readFileSync(join(threadsDir(), name), "utf-8")) as OrchestrationThread;
-        } catch {
-          return undefined;
-        }
-      })
-      .filter((value): value is OrchestrationThread => Boolean(value))
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
-  } catch {
-    return [];
-  }
+  return [...createRuntimeExchangeStore().read().threads].sort((a, b) =>
+    a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
+  );
 }
 
 export function appendMessage(
   threadId: string,
   input: Omit<OrchestrationMessage, "id" | "threadId" | "ts"> & Partial<Pick<OrchestrationMessage, "id" | "ts">>,
 ): OrchestrationMessage {
+  const now = nowIso();
   const message: OrchestrationMessage = {
     id: input.id ?? randomId("msg"),
     threadId,
-    ts: input.ts ?? nowIso(),
+    ts: input.ts ?? now,
     from: input.from,
     to: input.to,
     kind: input.kind,
@@ -151,34 +129,32 @@ export function appendMessage(
     taskId: input.taskId,
     planId: input.planId,
     metadata: input.metadata,
+    deliveredTo: input.deliveredTo,
+    deliveredAt: input.deliveredAt,
   };
-  appendFileSync(messagesPath(threadId), JSON.stringify(message) + "\n");
-  updateThread(threadId, (current) => ({
-    ...current,
-    lastMessageId: message.id,
-    unreadBy: [...new Set((current.participants ?? []).filter((id) => id !== message.from))],
-  }));
+  let threadFound = false;
+  createRuntimeExchangeStore().update((exchange) => {
+    const threads = exchange.threads.map((thread) => {
+      if (thread.id !== threadId) return thread;
+      threadFound = true;
+      return threadUpdatedForMessage(thread, message, now);
+    });
+    if (!threadFound) throw new Error(`thread not found: ${threadId}`);
+    return deriveRuntimeExchangeIndexes({
+      ...exchange,
+      generatedAt: now,
+      threads,
+      messages: [...exchange.messages.filter((existing) => existing.id !== message.id), message],
+    });
+  });
   return message;
 }
 
 export function readMessages(threadId: string): OrchestrationMessage[] {
-  if (!existsSync(messagesPath(threadId))) return [];
-  try {
-    return readFileSync(messagesPath(threadId), "utf-8")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        try {
-          return JSON.parse(line) as OrchestrationMessage;
-        } catch {
-          return undefined;
-        }
-      })
-      .filter((value): value is OrchestrationMessage => Boolean(value));
-  } catch {
-    return [];
-  }
+  return createRuntimeExchangeStore()
+    .read()
+    .messages.filter((message) => message.threadId === threadId)
+    .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
 }
 
 export function updateMessage(
@@ -186,21 +162,24 @@ export function updateMessage(
   messageId: string,
   updater: (current: OrchestrationMessage) => OrchestrationMessage,
 ): OrchestrationMessage | undefined {
-  const messages = readMessages(threadId);
-  if (messages.length === 0) return undefined;
   let updated: OrchestrationMessage | undefined;
-  const nextMessages = messages.map((message) => {
-    if (message.id !== messageId) return message;
-    updated = {
-      ...updater(message),
-      id: message.id,
-      threadId: message.threadId,
-      ts: message.ts,
+  createRuntimeExchangeStore().update((exchange) => {
+    const messages = exchange.messages.map((message) => {
+      if (message.threadId !== threadId || message.id !== messageId) return message;
+      updated = {
+        ...updater(message),
+        id: message.id,
+        threadId: message.threadId,
+        ts: message.ts,
+      };
+      return updated;
+    });
+    return {
+      ...exchange,
+      generatedAt: updated ? nowIso() : exchange.generatedAt,
+      messages,
     };
-    return updated;
   });
-  if (!updated) return undefined;
-  writeFileSync(messagesPath(threadId), nextMessages.map((message) => JSON.stringify(message)).join("\n") + "\n");
   return updated;
 }
 
@@ -210,7 +189,7 @@ export function markMessageDelivered(
   recipient: string,
 ): OrchestrationMessage | undefined {
   return updateMessage(threadId, messageId, (current) => {
-    const deliveredTo = [...new Set([...(current.deliveredTo ?? []), recipient])];
+    const deliveredTo = unique([...(current.deliveredTo ?? []), recipient]);
     return {
       ...current,
       deliveredTo,
