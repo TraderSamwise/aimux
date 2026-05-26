@@ -216,11 +216,16 @@ export function saveRuntimeTopologySessions(input: SaveRuntimeTopologySessionsIn
       nextSessions.push(sessionToTopologySession(session, node.id, now));
     }
     const activeNodeIds = new Set(nextNodes.map((node) => node.id));
-    const preservedNodes = topology.nodes.filter((node) =>
-      preservedGraveyard.some((session) => session.nodeId === node.id),
+    const preservedServiceNodeIds = new Set(topology.services.map((service) => service.nodeId).filter(Boolean));
+    const preservedNodes = topology.nodes.filter(
+      (node) =>
+        preservedServiceNodeIds.has(node.id) || preservedGraveyard.some((session) => session.nodeId === node.id),
     );
     topology.nodes = [...preservedNodes.filter((node) => !activeNodeIds.has(node.id)), ...nextNodes];
-    topology.bindings = nextBindings;
+    topology.bindings = [
+      ...topology.bindings.filter((binding) => preservedServiceNodeIds.has(binding.nodeId)),
+      ...nextBindings,
+    ];
     topology.sessions = [...preservedGraveyard, ...nextSessions];
     const retainedNodeIds = new Set(topology.nodes.map((node) => node.id));
     topology.edges = topology.edges.filter(

@@ -759,6 +759,7 @@ export const persistenceMethods = {
 
         if (!existsSync(path)) {
           await removeOrphanedDesktopWorktree(this, mainRepo, path);
+          removeTopologyWorktree(path);
           clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
           resolveRemoval({ path, status: "removed" });
           return;
@@ -769,6 +770,7 @@ export const persistenceMethods = {
           const worktreeBaseDir = getWorktreeBaseDir();
           if (path.startsWith(`${worktreeBaseDir}/`) || path === worktreeBaseDir) {
             await removeOrphanedDesktopWorktree(this, mainRepo, path);
+            removeTopologyWorktree(path);
             clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
             resolveRemoval({ path, status: "removed" });
             return;

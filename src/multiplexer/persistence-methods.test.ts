@@ -616,6 +616,27 @@ describe("persistenceMethods", () => {
     expect(host.invalidateDesktopStateSnapshot).not.toHaveBeenCalled();
   });
 
+  it("preserves deleted graveyard audit history when the worktree path is already gone", async () => {
+    const worktreePath = join(pathsRoot, "worktrees", "gone");
+    upsertTopologyWorktree({ path: worktreePath, name: "gone", branch: "gone" }, "active");
+    moveTopologyWorktreeToGraveyard(worktreePath);
+    const host = {
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(persistenceMethods.deleteGraveyardWorktree.call(host, worktreePath)).resolves.toEqual({
+      path: worktreePath,
+      status: "removed",
+    });
+
+    expect(listTopologyWorktreeGraveyard()).toEqual([]);
+    expect(listTopologyWorktreeGraveyard({ includeDeleted: true })).toMatchObject([
+      { path: worktreePath, deletedAt: expect.any(String) },
+    ]);
+  });
+
   it("does not detach worktree services when graveyarding is blocked by a live agent", async () => {
     const pending = new DashboardPendingActions(() => {});
     const worktreePath = "/repo/.aimux/worktrees/demo";

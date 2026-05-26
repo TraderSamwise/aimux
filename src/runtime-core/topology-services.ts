@@ -22,6 +22,7 @@ export type RuntimeTopologyServiceState = {
   label?: string;
   createdAt?: string;
   lastSeenAt?: string;
+  retained?: boolean;
   tmuxTarget?: {
     sessionName: string;
     windowId: string;
@@ -145,6 +146,7 @@ export function topologyServiceToServiceState(
     label: service.label ?? node?.label,
     createdAt: service.createdAt,
     lastSeenAt: service.lastSeenAt,
+    retained: service.status === "stopped" && Boolean(binding),
     tmuxTarget:
       binding?.tmuxSession && binding.tmuxWindowId && typeof binding.tmuxWindowIndex === "number"
         ? {

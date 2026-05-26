@@ -54,7 +54,7 @@ export interface DebugStateReport {
   };
   sources: {
     savedState: SourceResult<{ services: unknown[] }>;
-    runtimeTopology: SourceResult<{ sessions: unknown[] }>;
+    runtimeTopology: SourceResult<{ sessions: unknown[]; services: unknown[]; worktrees: unknown[] }>;
     metadata: SourceResult<{ sessions: unknown[] }>;
     tmux: SourceResult<{ windows: Array<{ target: TmuxTarget; metadata: TmuxWindowMetadata }> }>;
     gitWorktrees: SourceResult<{ worktrees: WorktreeInfo[] }>;
@@ -373,7 +373,7 @@ function filterRuntimeTopology(
   target: string,
   matches: TargetMatch[],
   seen: Set<string>,
-): SourceResult<{ sessions: unknown[] }> {
+): SourceResult<{ sessions: unknown[]; services: unknown[]; worktrees: unknown[] }> {
   if (source.status !== "found") return { ...source, value: undefined };
   const topology = source.value as RuntimeTopology;
   const sessions = topology.sessions.filter((entry) => {
@@ -400,7 +400,42 @@ function filterRuntimeTopology(
     }
     return matched;
   });
-  return { status: "found", path: source.path, value: { sessions } };
+  const services = topology.services.filter((entry) => {
+    const matched =
+      matchesString(entry.id, target) ||
+      matchesString(entry.worktreePath, target) ||
+      matchesString(entry.cwd, target) ||
+      matchesString(entry.label, target) ||
+      matchesString(entry.launchCommandLine, target);
+    if (matched) {
+      addMatch(matches, seen, {
+        canonicalKey: serviceCanonical(entry.id, entry.worktreePath),
+        kind: "service",
+        source: "runtimeTopology",
+        id: entry.id,
+        worktreePath: entry.worktreePath,
+        label: entry.label,
+        raw: entry,
+      });
+    }
+    return matched;
+  });
+  const worktrees = topology.worktrees.filter((entry) => {
+    const matched =
+      matchesString(entry.name, target) || matchesString(entry.path, target) || matchesString(entry.branch, target);
+    if (matched) {
+      addMatch(matches, seen, {
+        canonicalKey: worktreeCanonical(entry.path, entry.name),
+        kind: "worktree",
+        source: "runtimeTopology",
+        worktreePath: entry.path,
+        worktreeName: entry.name,
+        raw: entry,
+      });
+    }
+    return matched;
+  });
+  return { status: "found", path: source.path, value: { sessions, services, worktrees } };
 }
 
 function filterWorktreeGraveyard(
