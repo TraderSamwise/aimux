@@ -744,15 +744,9 @@ export const persistenceMethods = {
       rejectRemoval = reject;
     });
     pendingRemovals.set(path, removalPromise);
-    upsertTopologyWorktree(
-      {
-        path,
-        name: path.split("/").pop() ?? path,
-      },
-      "removing",
-    );
     setRemovePending();
 
+    let startedRemoval = false;
     void (async () => {
       try {
         this.syncSessionsFromTopology();
@@ -791,6 +785,16 @@ export const persistenceMethods = {
             `Cannot remove "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
           );
         }
+        upsertTopologyWorktree(
+          {
+            path,
+            name: matching.name,
+            branch: matching.branch,
+            createdAt: matching.createdAt,
+          },
+          "removing",
+        );
+        startedRemoval = true;
         detachWorktreeServices(this, path);
 
         await new Promise<void>((resolve, reject) => {
@@ -838,6 +842,16 @@ export const persistenceMethods = {
         clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
         resolveRemoval({ path, status: "removed" });
       } catch (error) {
+        if (startedRemoval) {
+          upsertTopologyWorktree(
+            {
+              path,
+              name: path.split("/").pop() ?? path,
+              operationFailure: error instanceof Error ? error.message : String(error),
+            },
+            "error",
+          );
+        }
         rejectRemoval(error);
       }
     })();
