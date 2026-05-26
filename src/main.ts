@@ -664,6 +664,11 @@ program
   .option("--log-level <level>", "Enable logging at level: error|warn|info|debug|trace")
   .option("--log-category <categories>", "Comma-separated log categories to include")
   .hook("preAction", async (_thisCommand, actionCommand) => {
+    const names = commandPath(actionCommand);
+    const isMigrationAudit = names.at(-2) === "migration" && names.at(-1) === "audit";
+    if (isMigrationAudit) {
+      return;
+    }
     const opts = typeof actionCommand?.opts === "function" ? actionCommand.opts() : {};
     const requestedProject =
       typeof opts.project === "string"
