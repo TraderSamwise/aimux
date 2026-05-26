@@ -2,7 +2,7 @@ import React from "react";
 import { Pressable, View, useWindowDimensions } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { useAtomValue } from "jotai";
-import { Bell, Home, MessageSquare, Settings } from "lucide-react-native";
+import { Bell, Home, MessageSquare, Network, Settings } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
 import { Text } from "@/components/ui/text";
@@ -14,6 +14,7 @@ import { securityUnreadCountAtom } from "@/stores/security";
 
 const TABS = [
   { id: "dashboard", label: "Dashboard", Icon: Home },
+  { id: "topology", label: "Topology", Icon: Network },
   { id: "inbox", label: "Inbox", Icon: Bell },
   { id: "threads", label: "Threads", Icon: MessageSquare },
   { id: "settings", label: "Settings", Icon: Settings },

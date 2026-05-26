@@ -2,7 +2,15 @@ import React, { useEffect, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Bell, ChevronLeft, GitBranch, Home, MessageSquare, Settings } from "lucide-react-native";
+import {
+  Bell,
+  ChevronLeft,
+  GitBranch,
+  Home,
+  MessageSquare,
+  Network,
+  Settings,
+} from "lucide-react-native";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
@@ -393,6 +401,7 @@ function WorktreeTree({
 
 const BOTTOM_NAV = [
   { id: "dashboard", label: "Dashboard", Icon: Home },
+  { id: "topology", label: "Topology", Icon: Network },
   { id: "inbox", label: "Inbox", Icon: Bell },
   { id: "threads", label: "Threads", Icon: MessageSquare },
   { id: "settings", label: "Settings", Icon: Settings },
