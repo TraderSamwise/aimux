@@ -23,7 +23,12 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
 import { isTeammateSession } from "../team.js";
-import { listTopologySessionStates, resurrectTopologySession } from "../runtime-core/topology-sessions.js";
+import {
+  listTopologySessionStates,
+  removeTopologySessionsForWorktree,
+  resurrectTopologySession,
+} from "../runtime-core/topology-sessions.js";
+import { removeTopologyServicesForWorktree } from "../runtime-core/topology-services.js";
 import {
   deleteTopologyWorktreeGraveyardEntry,
   listTopologyWorktreeGraveyard,
@@ -465,8 +470,7 @@ export const persistenceMethods = {
       );
     }
     detachWorktreeServices(this, path);
-    this.offlineSessions = (this.offlineSessions ?? []).filter((session: any) => session.worktreePath !== path);
-    this.offlineServices = (this.offlineServices ?? []).filter((service: any) => service.worktreePath !== path);
+    removeWorktreeDependents(this, path);
     upsertTopologyWorktree(
       {
         path,
@@ -506,6 +510,7 @@ export const persistenceMethods = {
     if (existsSync(path)) {
       await this.removeDesktopWorktree(path);
     } else {
+      removeWorktreeDependents(this, path);
       removeTopologyWorktree(path);
     }
     deleteTopologyWorktreeGraveyardEntry(path);
@@ -827,8 +832,7 @@ export const persistenceMethods = {
           });
         });
 
-        this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
-        this.offlineServices = this.offlineServices.filter((service: any) => service.worktreePath !== path);
+        removeWorktreeDependents(this, path);
         removeTopologyWorktree(path);
         this.saveState();
         clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
@@ -952,8 +956,7 @@ async function removeOrphanedDesktopWorktree(host: any, mainRepo: string, path: 
     rmSync(path, { recursive: true, force: true });
   }
   await pruneGitWorktrees(mainRepo);
-  host.offlineSessions = host.offlineSessions.filter((session: any) => session.worktreePath !== path);
-  host.offlineServices = host.offlineServices.filter((service: any) => service.worktreePath !== path);
+  removeWorktreeDependents(host, path);
   host.saveState();
 }
 
@@ -967,6 +970,15 @@ function detachWorktreeServices(host: any, path: string): void {
   }
 
   host.offlineServices = host.offlineServices.filter((service: any) => service.worktreePath !== path);
+  removeTopologyServicesForWorktree(path);
+  removePersistedServicesForWorktree(path);
+}
+
+function removeWorktreeDependents(host: any, path: string): void {
+  host.offlineSessions = (host.offlineSessions ?? []).filter((session: any) => session.worktreePath !== path);
+  host.offlineServices = (host.offlineServices ?? []).filter((service: any) => service.worktreePath !== path);
+  removeTopologySessionsForWorktree(path);
+  removeTopologyServicesForWorktree(path);
   removePersistedServicesForWorktree(path);
 }
 

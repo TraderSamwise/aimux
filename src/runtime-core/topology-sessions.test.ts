@@ -7,6 +7,7 @@ import { initPaths } from "../paths.js";
 import { createRuntimeTopologyStore, emptyRuntimeTopology } from "./topology-store.js";
 import {
   moveTopologySessionToGraveyard,
+  removeTopologySessionsForWorktree,
   resurrectTopologySession,
   saveRuntimeTopologySessions,
   topologySessionToSessionState,
@@ -241,5 +242,25 @@ describe("topology session lifecycle", () => {
     expect(topology.services.map((service) => service.id)).toEqual(["service-web"]);
     expect(topology.nodes.map((node) => node.id)).toContain("service:service-web");
     expect(topology.bindings).toMatchObject([{ nodeId: "service:service-web", tmuxWindowId: "@2" }]);
+  });
+
+  it("removes sessions for a worktree and keeps unrelated sessions", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const worktreePath = join(repoRoot, "feature-a");
+    upsertTopologySession({ id: "codex-a", tool: "codex", command: "codex", args: [], worktreePath }, "offline", {
+      store,
+      projectRoot: repoRoot,
+    });
+    upsertTopologySession(
+      { id: "codex-b", tool: "codex", command: "codex", args: [], worktreePath: repoRoot },
+      "offline",
+      { store, projectRoot: repoRoot },
+    );
+
+    const removed = removeTopologySessionsForWorktree(worktreePath, { store });
+
+    expect(removed.map((session) => session.id)).toEqual(["codex-a"]);
+    expect(store.read().sessions.map((session) => session.id)).toEqual(["codex-b"]);
+    expect(store.read().nodes.map((node) => node.id)).toEqual(["agent:codex-b"]);
   });
 });

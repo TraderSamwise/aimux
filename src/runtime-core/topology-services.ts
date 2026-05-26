@@ -216,3 +216,28 @@ export function removeTopologyService(
   });
   return removed;
 }
+
+export function removeTopologyServicesForWorktree(
+  worktreePath: string,
+  input?: { store?: RuntimeTopologyStore; now?: string },
+): RuntimeTopologyServiceState[] {
+  const store = input?.store ?? createRuntimeTopologyStore();
+  const now = input?.now ?? new Date().toISOString();
+  let removed: RuntimeTopologyServiceState[] = [];
+  store.update((topology) => {
+    const removing = topology.services.filter((service) => service.worktreePath === worktreePath);
+    if (removing.length === 0) return topology;
+    const removingServiceIds = new Set(removing.map((service) => service.id));
+    const removingNodeIds = new Set(removing.map((service) => service.nodeId).filter(Boolean));
+    removed = removing.map((service) => topologyServiceToServiceState(service, topology));
+    topology.generatedAt = now;
+    topology.services = topology.services.filter((service) => !removingServiceIds.has(service.id));
+    topology.bindings = topology.bindings.filter((binding) => !removingNodeIds.has(binding.nodeId));
+    topology.nodes = topology.nodes.filter((node) => !removingNodeIds.has(node.id));
+    topology.lifecycleOperations = topology.lifecycleOperations.filter(
+      (operation) => !(operation.targetKind === "service" && removingServiceIds.has(operation.targetId)),
+    );
+    return topology;
+  });
+  return removed;
+}

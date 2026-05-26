@@ -8,6 +8,7 @@ import { createRuntimeTopologyStore } from "./topology-store.js";
 import {
   listTopologyServiceStates,
   removeTopologyService,
+  removeTopologyServicesForWorktree,
   topologyServiceToServiceState,
   upsertTopologyService,
 } from "./topology-services.js";
@@ -124,5 +125,24 @@ describe("topology service lifecycle", () => {
     expect(store.read().services).toEqual([]);
     expect(store.read().nodes).toEqual([]);
     expect(store.read().lifecycleOperations).toEqual([]);
+  });
+
+  it("removes services for a worktree and keeps other services", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const worktreePath = join(repoRoot, "feature-a");
+    upsertTopologyService({ id: "service-a", command: "zsh", worktreePath }, "stopped", {
+      store,
+      projectRoot: repoRoot,
+    });
+    upsertTopologyService({ id: "service-b", command: "zsh", worktreePath: repoRoot }, "stopped", {
+      store,
+      projectRoot: repoRoot,
+    });
+
+    const removed = removeTopologyServicesForWorktree(worktreePath, { store });
+
+    expect(removed.map((service) => service.id)).toEqual(["service-a"]);
+    expect(store.read().services.map((service) => service.id)).toEqual(["service-b"]);
+    expect(store.read().nodes.map((node) => node.id)).toEqual(["service:service-b"]);
   });
 });

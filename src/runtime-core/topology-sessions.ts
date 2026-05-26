@@ -284,6 +284,35 @@ export function moveTopologySessionToGraveyard(
   return moved;
 }
 
+export function removeTopologySessionsForWorktree(
+  worktreePath: string,
+  input?: { store?: RuntimeTopologyStore; now?: string },
+): RuntimeTopologySessionState[] {
+  const store = input?.store ?? createRuntimeTopologyStore();
+  const now = input?.now ?? new Date().toISOString();
+  let removed: RuntimeTopologySessionState[] = [];
+  store.update((topology) => {
+    const removing = topology.sessions.filter((session) => session.worktreePath === worktreePath);
+    if (removing.length === 0) return topology;
+    const removingSessionIds = new Set(removing.map((session) => session.id));
+    const removingNodeIds = new Set(removing.map((session) => session.nodeId));
+    removed = removing.map((session) => topologySessionToSessionState(session, topology));
+    topology.generatedAt = now;
+    topology.sessions = topology.sessions.filter((session) => !removingSessionIds.has(session.id));
+    topology.bindings = topology.bindings.filter((binding) => !removingNodeIds.has(binding.nodeId));
+    topology.nodes = topology.nodes.filter((node) => !removingNodeIds.has(node.id));
+    topology.lifecycleOperations = topology.lifecycleOperations.filter(
+      (operation) => !(operation.targetKind === "session" && removingSessionIds.has(operation.targetId)),
+    );
+    topology.exchangeRefs = topology.exchangeRefs.filter(
+      (ref) =>
+        (!ref.sessionId || !removingSessionIds.has(ref.sessionId)) && (!ref.nodeId || !removingNodeIds.has(ref.nodeId)),
+    );
+    return topology;
+  });
+  return removed;
+}
+
 export function resurrectTopologySession(sessionId: string, input?: { store?: RuntimeTopologyStore; now?: string }) {
   const store = input?.store ?? createRuntimeTopologyStore();
   const now = input?.now ?? new Date().toISOString();
