@@ -25,11 +25,26 @@ function renderStatusRange(range: string, label: string): string {
   return `#[range=user|${range}]${label}#[norange]`;
 }
 
+function sanitizeStatuslineProjection(data: StatuslineData): StatuslineData {
+  const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+  const teammates = Array.isArray(data.teammates) ? data.teammates : [];
+  const knownSessionIds = new Set([...sessions, ...teammates].map((session) => session.id).filter(Boolean));
+  const metadata = Object.fromEntries(
+    Object.entries(data.metadata ?? {}).filter(([sessionId]) => knownSessionIds.has(sessionId)),
+  );
+  return {
+    ...data,
+    sessions,
+    teammates,
+    metadata,
+  };
+}
+
 export function loadStatusline(projectRoot: string): StatuslineData | null {
   try {
     const path = `${getProjectStateDirFor(projectRoot)}/statusline.json`;
     if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf-8")) as StatuslineData;
+    return sanitizeStatuslineProjection(JSON.parse(readFileSync(path, "utf-8")) as StatuslineData);
   } catch {
     return null;
   }

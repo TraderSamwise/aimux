@@ -14,6 +14,7 @@ import { loadDaemonInfo } from "../daemon.js";
 import { type DashboardService, type DashboardSession } from "../dashboard/index.js";
 import { getProjectStateDir, getStatePath } from "../paths.js";
 import { loadMetadataState } from "../metadata-store.js";
+import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
 import {
   listWorktreeGraveyardEntries as listWorktreeGraveyardEntriesImpl,
@@ -90,6 +91,20 @@ function orderStatuslineItemsByWorktree<T extends { id: string; worktreePath?: s
     grouped.set(key, group);
   }
   return [...grouped.values()].flatMap((group) => orderForWorktree(group.items, group.worktreePath));
+}
+
+function exchangeTaskCounts(): { pending: number; assigned: number } {
+  try {
+    const exchange = createRuntimeExchangeStore().read();
+    return {
+      pending: exchange.tasks.filter((task) => task.status === "pending").length,
+      assigned: exchange.tasks.filter(
+        (task) => task.status === "assigned" || task.status === "in_progress" || task.status === "blocked",
+      ).length,
+    };
+  } catch {
+    return { pending: 0, assigned: 0 };
+  }
 }
 
 export const persistenceMethods = {
@@ -193,7 +208,7 @@ export const persistenceMethods = {
       project: basename(process.cwd()),
       sessions: [],
       metadata: {},
-      tasks: { pending: 0, assigned: 0 },
+      tasks: exchangeTaskCounts(),
       controlPlane: { daemonAlive: true, projectServiceAlive: false },
       flash: null,
       updatedAt: new Date().toISOString(),
@@ -312,7 +327,7 @@ export const persistenceMethods = {
         semantic: session.semantic,
         team: session.team,
       })),
-      tasks: { pending: 0, assigned: 0 },
+      tasks: exchangeTaskCounts(),
       controlPlane: {
         daemonAlive: Boolean(loadDaemonInfo()),
         projectServiceAlive: true,
