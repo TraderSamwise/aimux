@@ -54,6 +54,7 @@ import {
   sendHandoff,
   type TaskLifecycleResult,
 } from "./orchestration-actions.js";
+import { readAllTasks, readTask } from "./tasks.js";
 import { buildWorkflowEntries } from "./workflow.js";
 import { markLastUsed } from "./last-used.js";
 import { formatRelativeRecency } from "./recency.js";
@@ -1092,6 +1093,15 @@ export class MetadataServer {
       send(res, 200, buildWorkflowEntries(url.searchParams.get("participant") ?? "user"));
       return;
     }
+    if (req.method === "GET" && url.pathname === "/tasks") {
+      const sessionId = url.searchParams.get("session")?.trim();
+      const status = url.searchParams.get("status")?.trim();
+      const tasks = readAllTasks()
+        .filter((task) => !sessionId || task.assignedTo === sessionId || task.assignedBy === sessionId)
+        .filter((task) => !status || task.status === status);
+      send(res, 200, { ok: true, tasks });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/usage/mark") {
       const body = (await readJson(req)) as { itemId?: string; clientSession?: string };
       const itemId = body.itemId?.trim() || "";
@@ -1223,6 +1233,18 @@ export class MetadataServer {
         return;
       }
       send(res, 200, { thread, messages: readMessages(threadId) });
+      return;
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/tasks/")) {
+      const taskId = decodeURIComponent(url.pathname.slice("/tasks/".length));
+      const task = readTask(taskId);
+      if (!task) {
+        send(res, 404, { ok: false, error: "task not found" });
+        return;
+      }
+      const thread = task.threadId ? readThread(task.threadId) : undefined;
+      const messages = task.threadId ? readMessages(task.threadId) : [];
+      send(res, 200, { ok: true, task, thread, messages });
       return;
     }
 

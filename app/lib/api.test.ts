@@ -11,12 +11,15 @@ import {
   deleteGraveyardWorktree,
   getShare,
   getAgentOutput,
+  getTask,
   graveyardWorktree,
   leaveShare,
   listShares,
   listProjects,
   listNotifications,
+  listTasks,
   listThreads,
+  listWorkflow,
   markNotificationsRead,
   removeService,
   removeWorktree,
@@ -168,6 +171,9 @@ describe("api relay routing", () => {
 
     await listThreads(endpoint, "agent/1");
     await listNotifications(endpoint, { unreadOnly: true, sessionId: "agent/1" });
+    await listWorkflow(endpoint, "codex/1");
+    await listTasks(endpoint, { sessionId: "agent/1", status: "pending" });
+    await getTask(endpoint, "task/1");
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(
@@ -180,6 +186,24 @@ describe("api relay routing", () => {
       2,
       "GET",
       "/proxy/127.0.0.1/43210/notifications?unread=1&sessionId=agent%2F1",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      3,
+      "GET",
+      "/proxy/127.0.0.1/43210/workflow?participant=codex%2F1",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      4,
+      "GET",
+      "/proxy/127.0.0.1/43210/tasks?session=agent%2F1&status=pending",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      5,
+      "GET",
+      "/proxy/127.0.0.1/43210/tasks/task%2F1",
       undefined,
     );
   });

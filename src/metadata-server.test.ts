@@ -1140,6 +1140,18 @@ describe("MetadataServer threads API", () => {
     const task = (await taskRes.json()) as { task: { id: string } };
     expect(taskRes.ok).toBe(true);
 
+    const listRes = await fetch(`${base}/tasks?session=codex-1&status=pending`);
+    const list = (await listRes.json()) as { tasks: Array<{ id: string }> };
+    expect(listRes.ok).toBe(true);
+    expect(list.tasks.some((entry) => entry.id === task.task.id)).toBe(true);
+
+    const showRes = await fetch(`${base}/tasks/${task.task.id}`);
+    const show = (await showRes.json()) as { task: { id: string }; thread?: { id: string }; messages: unknown[] };
+    expect(showRes.ok).toBe(true);
+    expect(show.task.id).toBe(task.task.id);
+    expect(show.thread?.id).toBeTruthy();
+    expect(Array.isArray(show.messages)).toBe(true);
+
     const acceptRes = await fetch(`${base}/tasks/accept`, {
       method: "POST",
       headers: { "content-type": "application/json" },
