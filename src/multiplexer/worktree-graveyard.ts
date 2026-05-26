@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type { ServiceState, SessionState } from "./index.js";
 import {
   listTopologyWorktreeGraveyard,
@@ -16,7 +17,7 @@ export interface WorktreeGraveyardEntry {
 
 export function listWorktreeGraveyardEntries(): WorktreeGraveyardEntry[] {
   return listTopologyWorktreeGraveyard().map((entry) => ({
-    name: entry.name ?? entry.path.split("/").pop() ?? entry.path,
+    name: entry.name ?? (basename(entry.path) || entry.path),
     path: entry.path,
     branch: entry.branch ?? "",
     graveyardedAt: entry.graveyardedAt,

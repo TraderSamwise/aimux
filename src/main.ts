@@ -1596,9 +1596,15 @@ function printWorktrees(projectRoot?: string, worktreesInput?: WorktreeInfo[]): 
 
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
+async function ensureDaemonProjectReadyForFallback(projectRoot: string): Promise<void> {
+  try {
+    await ensureDaemonProjectReady(projectRoot);
+  } catch {}
+}
+
 worktreeCmd.action(async () => {
   const projectRoot = await prepareProjectContext();
-  await ensureDaemonProjectReady(projectRoot);
+  await ensureDaemonProjectReadyForFallback(projectRoot);
   const result = await getLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees", () => ({
     ok: true,
     worktrees: listVisibleLocalWorktrees(projectRoot),
@@ -2269,7 +2275,7 @@ worktreeCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     const projectRoot = await prepareProjectContext(opts.project);
-    await ensureDaemonProjectReady(projectRoot);
+    await ensureDaemonProjectReadyForFallback(projectRoot);
     const result = await getLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees", () => ({
       ok: true,
       worktrees: listVisibleLocalWorktrees(projectRoot),
@@ -2290,7 +2296,7 @@ worktreeCmd
   .action(async (name: string, opts: { project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      await ensureDaemonProjectReady(projectRoot);
+      await ensureDaemonProjectReadyForFallback(projectRoot);
       const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees/create", { name }, () => {
         const path = createWorktree(name, projectRoot);
         upsertTopologyWorktree({ path, name, branch: name, basePath: projectRoot }, "active", { projectRoot });
