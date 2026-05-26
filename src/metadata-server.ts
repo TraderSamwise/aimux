@@ -54,6 +54,7 @@ import {
   sendHandoff,
   type TaskLifecycleResult,
 } from "./orchestration-actions.js";
+import { readAllTasks, readTask } from "./tasks.js";
 import { buildWorkflowEntries } from "./workflow.js";
 import { markLastUsed } from "./last-used.js";
 import { formatRelativeRecency } from "./recency.js";
@@ -1092,6 +1093,15 @@ export class MetadataServer {
       send(res, 200, buildWorkflowEntries(url.searchParams.get("participant") ?? "user"));
       return;
     }
+    if (req.method === "GET" && url.pathname === "/tasks") {
+      const sessionId = url.searchParams.get("session")?.trim();
+      const status = url.searchParams.get("status")?.trim();
+      const tasks = readAllTasks()
+        .filter((task) => !sessionId || task.assignedTo === sessionId || task.assignedBy === sessionId)
+        .filter((task) => !status || task.status === status);
+      send(res, 200, { ok: true, tasks });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/usage/mark") {
       const body = (await readJson(req)) as { itemId?: string; clientSession?: string };
       const itemId = body.itemId?.trim() || "";
@@ -1216,13 +1226,37 @@ export class MetadataServer {
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/threads/")) {
-      const threadId = decodeURIComponent(url.pathname.slice("/threads/".length));
+      let threadId: string;
+      try {
+        threadId = decodeURIComponent(url.pathname.slice("/threads/".length));
+      } catch {
+        send(res, 400, { ok: false, error: "invalid threadId" });
+        return;
+      }
       const thread = readThread(threadId);
       if (!thread) {
         send(res, 404, { ok: false, error: "thread not found" });
         return;
       }
       send(res, 200, { thread, messages: readMessages(threadId) });
+      return;
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/tasks/")) {
+      let taskId: string;
+      try {
+        taskId = decodeURIComponent(url.pathname.slice("/tasks/".length));
+      } catch {
+        send(res, 400, { ok: false, error: "invalid taskId" });
+        return;
+      }
+      const task = readTask(taskId);
+      if (!task) {
+        send(res, 404, { ok: false, error: "task not found" });
+        return;
+      }
+      const thread = task.threadId ? readThread(task.threadId) : undefined;
+      const messages = task.threadId ? readMessages(task.threadId) : [];
+      send(res, 200, { ok: true, task, thread, messages });
       return;
     }
 
@@ -2016,8 +2050,13 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/threads/mark-seen") {
-        const body = (await readJson(req)) as { threadId: string; session: string };
-        const thread = markThreadSeen(body.threadId, body.session);
+        const body = (await readJson(req)) as { threadId: string; session?: string; sessionId?: string };
+        const sessionId = (body.session ?? body.sessionId ?? "").trim();
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "session is required" });
+          return;
+        }
+        const thread = markThreadSeen(body.threadId, sessionId);
         if (!thread) {
           send(res, 404, { ok: false, error: "thread not found" });
           return;

@@ -412,7 +412,12 @@ export async function listNotifications(
   if (opts?.unreadOnly) params.set("unread", "1");
   if (opts?.sessionId) params.set("sessionId", opts.sessionId);
   const query = params.toString();
-  return callProjectJson<NotificationsResponse>(endpoint, "GET", `/notifications${query ? `?${query}` : ""}`, opts);
+  return callProjectJson<NotificationsResponse>(
+    endpoint,
+    "GET",
+    `/notifications${query ? `?${query}` : ""}`,
+    opts,
+  );
 }
 
 export async function markNotificationsRead(
@@ -490,6 +495,14 @@ export async function removeWorktree(
   return callProjectJson(endpoint, "POST", "/worktrees/remove", opts, { path });
 }
 
+export async function graveyardWorktree(
+  endpoint: ServiceEndpoint,
+  path: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; path: string; status: "graveyarded" }> {
+  return callProjectJson(endpoint, "POST", "/worktrees/graveyard", opts, { path });
+}
+
 // ── Worktrees, graveyard, threads ───────────────────────────────────────
 
 export interface WorktreesResponse {
@@ -506,16 +519,53 @@ export interface GraveyardEntryResponse {
   [k: string]: unknown;
 }
 
+export interface WorktreeGraveyardEntryResponse {
+  name: string;
+  path: string;
+  branch?: string;
+  createdAt?: string;
+  graveyardedAt?: string;
+  agents?: GraveyardEntryResponse[];
+  services?: Array<{ id: string; command?: string; [k: string]: unknown }>;
+  [k: string]: unknown;
+}
+
 export interface GraveyardResponse {
   ok: boolean;
   entries: GraveyardEntryResponse[];
-  worktrees?: unknown[];
+  worktrees?: WorktreeGraveyardEntryResponse[];
   [k: string]: unknown;
 }
 
 export interface ThreadSummaryResponse {
   thread: { id: string; title?: string; status?: string; kind?: string };
   lastMessage?: { body?: string; createdAt?: string };
+  [k: string]: unknown;
+}
+
+export interface TaskSummaryResponse {
+  id: string;
+  description?: string;
+  status?: string;
+  assignedTo?: string;
+  assignedBy?: string;
+  assignee?: string;
+  tool?: string;
+  threadId?: string;
+  [k: string]: unknown;
+}
+
+export interface TaskListResponse {
+  ok: boolean;
+  tasks: TaskSummaryResponse[];
+  [k: string]: unknown;
+}
+
+export interface TaskDetailResponse {
+  ok: boolean;
+  task: TaskSummaryResponse;
+  thread?: ThreadSummaryResponse["thread"];
+  messages?: Array<{ id?: string; body?: string; [k: string]: unknown }>;
   [k: string]: unknown;
 }
 
@@ -541,6 +591,22 @@ export async function resurrectGraveyardAgent(
   return callProjectJson(endpoint, "POST", "/graveyard/resurrect", opts, { sessionId });
 }
 
+export async function resurrectGraveyardWorktree(
+  endpoint: ServiceEndpoint,
+  path: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; path: string; status: "active" }> {
+  return callProjectJson(endpoint, "POST", "/graveyard/worktrees/resurrect", opts, { path });
+}
+
+export async function deleteGraveyardWorktree(
+  endpoint: ServiceEndpoint,
+  path: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; path: string; status: "removed" }> {
+  return callProjectJson(endpoint, "POST", "/graveyard/worktrees/delete", opts, { path });
+}
+
 export async function listThreads(
   endpoint: ServiceEndpoint,
   sessionId?: string,
@@ -548,4 +614,47 @@ export async function listThreads(
 ): Promise<ThreadSummaryResponse[]> {
   const path = sessionId ? `/threads?session=${encodeURIComponent(sessionId)}` : "/threads";
   return callProjectJson<ThreadSummaryResponse[]>(endpoint, "GET", path, opts);
+}
+
+export async function listWorkflow(
+  endpoint: ServiceEndpoint,
+  participant = "user",
+  opts?: ApiOpts,
+): Promise<Array<Record<string, unknown>>> {
+  return callProjectJson<Array<Record<string, unknown>>>(
+    endpoint,
+    "GET",
+    `/workflow?participant=${encodeURIComponent(participant)}`,
+    opts,
+  );
+}
+
+export async function listTasks(
+  endpoint: ServiceEndpoint,
+  filters?: { sessionId?: string; status?: string },
+  opts?: ApiOpts,
+): Promise<TaskListResponse> {
+  const params = new URLSearchParams();
+  if (filters?.sessionId) params.set("session", filters.sessionId);
+  if (filters?.status) params.set("status", filters.status);
+  const query = params.toString();
+  return callProjectJson<TaskListResponse>(
+    endpoint,
+    "GET",
+    `/tasks${query ? `?${query}` : ""}`,
+    opts,
+  );
+}
+
+export async function getTask(
+  endpoint: ServiceEndpoint,
+  taskId: string,
+  opts?: ApiOpts,
+): Promise<TaskDetailResponse> {
+  return callProjectJson<TaskDetailResponse>(
+    endpoint,
+    "GET",
+    `/tasks/${encodeURIComponent(taskId)}`,
+    opts,
+  );
 }
