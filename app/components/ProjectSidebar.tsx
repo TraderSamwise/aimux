@@ -5,6 +5,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import {
   Bell,
   ChevronLeft,
+  FolderKanban,
   GitBranch,
   Home,
   MessageSquare,
@@ -402,6 +403,7 @@ function WorktreeTree({
 const BOTTOM_NAV = [
   { id: "dashboard", label: "Dashboard", Icon: Home },
   { id: "topology", label: "Topology", Icon: Network },
+  { id: "project", label: "Project", Icon: FolderKanban },
   { id: "inbox", label: "Inbox", Icon: Bell },
   { id: "threads", label: "Threads", Icon: MessageSquare },
   { id: "settings", label: "Settings", Icon: Settings },

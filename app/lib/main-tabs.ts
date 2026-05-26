@@ -1,13 +1,13 @@
 import { useCallback } from "react";
 import { useRouter, type Href } from "expo-router";
 
-export type MainTabId = "dashboard" | "topology" | "inbox" | "threads" | "settings";
+export type MainTabId = "dashboard" | "topology" | "project" | "inbox" | "threads" | "settings";
 
 export interface MainTabRoute {
   id: MainTabId;
-  href: "/" | "/topology" | "/notifications" | "/threads" | "/settings";
+  href: "/" | "/topology" | "/project" | "/notifications" | "/threads" | "/settings";
   internalHref: Href;
-  screen: "(dashboard)" | "topology" | "(inbox)" | "(threads)" | "(settings)";
+  screen: "(dashboard)" | "topology" | "project" | "(inbox)" | "(threads)" | "(settings)";
 }
 
 export const MAIN_TAB_ROUTES: Record<MainTabId, MainTabRoute> = {
@@ -22,6 +22,12 @@ export const MAIN_TAB_ROUTES: Record<MainTabId, MainTabRoute> = {
     href: "/topology",
     internalHref: "/(main)/(tabs)/topology",
     screen: "topology",
+  },
+  project: {
+    id: "project",
+    href: "/project",
+    internalHref: "/project" as Href,
+    screen: "project",
   },
   inbox: {
     id: "inbox",
@@ -45,6 +51,7 @@ export const MAIN_TAB_ROUTES: Record<MainTabId, MainTabRoute> = {
 
 export function mainTabForPath(pathname: string): MainTabId {
   if (pathname.startsWith("/topology")) return "topology";
+  if (pathname.startsWith("/project")) return "project";
   if (pathname.startsWith("/notifications")) return "inbox";
   if (pathname.startsWith("/threads")) return "threads";
   if (pathname.startsWith("/settings")) return "settings";
