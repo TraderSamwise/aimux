@@ -486,7 +486,7 @@ function optionalStringOrFirst(value: unknown): string | undefined {
 }
 
 function runtimeInboxEntries(
-  input: { unreadOnly?: boolean; participantId?: string } = {},
+  input: { unreadOnly?: boolean; participantId?: string; includeDone?: boolean; includeNotifications?: boolean } = {},
 ): Array<Record<string, unknown>> {
   const exchange = createRuntimeExchangeStore().read();
   const threadById = new Map(exchange.threads.map((thread) => [thread.id, thread] as const));
@@ -498,6 +498,10 @@ function runtimeInboxEntries(
   }
   const entries = exchange.inbox
     .filter((entry) => !input.participantId || entry.participantId === input.participantId)
+    .filter(
+      (entry) => input.includeNotifications || threadById.get(entry.subjectId)?.tags?.includes("notification") !== true,
+    )
+    .filter((entry) => input.includeDone || entry.state !== "done")
     .filter((entry) => !input.unreadOnly || entry.state !== "done")
     .map((entry) => runtimeInboxEntry(entry, threadById, taskById, latestMessageByThread))
     .filter((entry): entry is Record<string, unknown> => Boolean(entry));
@@ -547,9 +551,19 @@ function runtimeInboxEntry(
   };
 }
 
-function markRuntimeInboxRead(id?: string): number {
+function markRuntimeInboxRead(
+  input: { id?: string; participantId?: string; includeNotifications?: boolean } = {},
+): number {
   const store = createRuntimeExchangeStore();
-  const entries = store.read().inbox.filter((entry) => !id || entry.id === id);
+  const exchange = store.read();
+  const threadById = new Map(exchange.threads.map((thread) => [thread.id, thread] as const));
+  const entries = store
+    .read()
+    .inbox.filter((entry) => !input.id || entry.id === input.id)
+    .filter((entry) => !input.participantId || entry.participantId === input.participantId)
+    .filter(
+      (entry) => input.includeNotifications || threadById.get(entry.subjectId)?.tags?.includes("notification") !== true,
+    );
   let updated = 0;
   for (const entry of entries) {
     if (entry.state !== "done") updated += 1;
@@ -559,7 +573,13 @@ function markRuntimeInboxRead(id?: string): number {
   }
   store.update((exchange) => ({
     ...exchange,
-    inbox: exchange.inbox.map((entry) => (!id || entry.id === id ? { ...entry, state: "done" } : entry)),
+    inbox: exchange.inbox.map((entry) =>
+      (!input.id || entry.id === input.id) &&
+      (!input.participantId || entry.participantId === input.participantId) &&
+      (input.includeNotifications || threadById.get(entry.subjectId)?.tags?.includes("notification") !== true)
+        ? { ...entry, state: "done" }
+        : entry,
+    ),
   }));
   return updated;
 }
@@ -995,7 +1015,9 @@ export class MetadataServer {
     if (req.method === "GET" && url.pathname === "/inbox") {
       const unreadOnly = url.searchParams.get("unread") === "1";
       const participantId = url.searchParams.get("participant")?.trim() || undefined;
-      const inbox = runtimeInboxEntries({ unreadOnly, participantId });
+      const includeDone = url.searchParams.get("includeDone") === "1";
+      const includeNotifications = url.searchParams.get("includeNotifications") === "1";
+      const inbox = runtimeInboxEntries({ unreadOnly, participantId, includeDone, includeNotifications });
       send(res, 200, {
         ok: true,
         inbox,
@@ -1884,8 +1906,17 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && (url.pathname === "/inbox/read" || url.pathname === "/inbox/clear")) {
-        const body = (await readJson(req)) as { id?: string };
-        const updated = markRuntimeInboxRead(body.id?.trim() || undefined);
+        const body = (await readJson(req)) as {
+          id?: string;
+          sessionId?: string;
+          participant?: string;
+          includeNotifications?: boolean;
+        };
+        const updated = markRuntimeInboxRead({
+          id: body.id?.trim() || undefined,
+          participantId: body.participant?.trim() || body.sessionId?.trim() || undefined,
+          includeNotifications: body.includeNotifications === true,
+        });
         send(res, 200, { ok: true, updated });
         return;
       }

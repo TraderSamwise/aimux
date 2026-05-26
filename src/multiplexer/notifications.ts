@@ -1,12 +1,13 @@
 import type { NotificationRecord } from "../notifications.js";
-import { clearNotifications, listNotifications, markNotificationsRead } from "../notifications.js";
 import { parseKeys } from "../key-parser.js";
 import { renderNotificationsScreen } from "../tui/screens/subscreen-renderers.js";
+import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
+import { markThreadSeen } from "../threads.js";
 
 type NotificationHost = any;
 
 export function showNotificationPanel(host: NotificationHost): void {
-  const entries = listNotifications({ includeCleared: false }).slice(0, 40);
+  const entries = loadNotificationEntries(host).slice(0, 40);
   host.notificationPanelState = {
     entries,
     index: entries.length > 0 ? 0 : -1,
@@ -55,8 +56,8 @@ export function handleNotificationPanelKey(host: NotificationHost, data: Buffer)
   if (key === "r") {
     const selected = panel.entries[panel.index];
     if (!selected) return;
-    markNotificationsRead({ id: selected.id });
-    panel.entries = listNotifications({ includeCleared: false }).slice(0, 40);
+    markRuntimeInboxEntriesDone({ id: selected.id });
+    panel.entries = loadNotificationEntries(host).slice(0, 40);
     if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
     host.renderDashboard();
     return;
@@ -64,26 +65,101 @@ export function handleNotificationPanelKey(host: NotificationHost, data: Buffer)
   if (key === "c") {
     const selected = panel.entries[panel.index];
     if (!selected) return;
-    clearNotifications({ id: selected.id });
-    panel.entries = listNotifications({ includeCleared: false }).slice(0, 40);
+    markRuntimeInboxEntriesDone({ id: selected.id });
+    panel.entries = loadNotificationEntries(host).slice(0, 40);
     if (panel.index >= panel.entries.length) panel.index = panel.entries.length - 1;
     host.renderDashboard();
     return;
   }
   if (key === "C") {
-    clearNotifications();
+    markRuntimeInboxEntriesDone();
     panel.entries = [];
     panel.index = -1;
     host.renderDashboard();
   }
 }
 
-function loadNotificationEntries(): NotificationRecord[] {
-  return listNotifications({ includeCleared: false }).slice(0, 200);
+function hasNotificationTarget(host: NotificationHost, participantId: string): boolean {
+  return Boolean(
+    findNotificationSessionTarget(host, participantId) ?? findNotificationServiceTarget(host, participantId),
+  );
+}
+
+function notificationTargetSessionId(host: NotificationHost, participantId: string): string | undefined {
+  return hasNotificationTarget(host, participantId) ? participantId : undefined;
+}
+
+function loadNotificationEntries(host: NotificationHost): NotificationRecord[] {
+  const exchange = createRuntimeExchangeStore().read();
+  const threadById = new Map(exchange.threads.map((thread) => [thread.id, thread] as const));
+  const taskById = new Map(exchange.tasks.map((task) => [task.id, task] as const));
+  const latestMessageByThread = new Map<string, (typeof exchange.messages)[number]>();
+  for (const message of exchange.messages) {
+    const existing = latestMessageByThread.get(message.threadId);
+    if (!existing || existing.ts < message.ts) latestMessageByThread.set(message.threadId, message);
+  }
+  return exchange.inbox
+    .filter((entry) => entry.state !== "done")
+    .map((entry): NotificationRecord | undefined => {
+      if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
+        const thread = threadById.get(entry.subjectId);
+        if (!thread) return undefined;
+        const message = latestMessageByThread.get(thread.id);
+        return {
+          id: entry.id,
+          title: thread.title,
+          subtitle: `${thread.kind} · ${thread.status}`,
+          body: message?.body ?? thread.title,
+          sessionId: notificationTargetSessionId(host, entry.participantId),
+          targetKind: notificationTargetSessionId(host, entry.participantId)
+            ? ("session" as const)
+            : ("generic" as const),
+          kind: entry.subjectKind,
+          unread: true,
+          cleared: false,
+          createdAt: entry.updatedAt,
+          updatedAt: entry.updatedAt,
+        };
+      }
+      const task = taskById.get(entry.subjectId);
+      if (!task) return undefined;
+      return {
+        id: entry.id,
+        title: task.description,
+        subtitle: `${task.type ?? "task"} · ${task.status}`,
+        body: task.result ?? task.error ?? task.prompt,
+        sessionId: notificationTargetSessionId(host, entry.participantId),
+        targetKind: notificationTargetSessionId(host, entry.participantId)
+          ? ("session" as const)
+          : ("generic" as const),
+        kind: entry.subjectKind,
+        unread: true,
+        cleared: false,
+        createdAt: entry.updatedAt,
+        updatedAt: entry.updatedAt,
+      };
+    })
+    .filter((entry): entry is NotificationRecord => Boolean(entry))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 200);
+}
+
+function markRuntimeInboxEntriesDone(input: { id?: string } = {}): void {
+  const store = createRuntimeExchangeStore();
+  const entries = store.read().inbox.filter((entry) => !input.id || entry.id === input.id);
+  for (const entry of entries) {
+    if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
+      markThreadSeen(entry.subjectId, entry.participantId);
+    }
+  }
+  store.update((exchange) => ({
+    ...exchange,
+    inbox: exchange.inbox.map((entry) => (!input.id || entry.id === input.id ? { ...entry, state: "done" } : entry)),
+  }));
 }
 
 function refreshNotificationEntries(host: NotificationHost): void {
-  host.notificationEntries = loadNotificationEntries();
+  host.notificationEntries = loadNotificationEntries(host);
   if (host.notificationIndex >= host.notificationEntries.length) {
     host.notificationIndex = Math.max(0, host.notificationEntries.length - 1);
   }
@@ -164,7 +240,7 @@ async function openSelectedNotification(host: NotificationHost): Promise<void> {
   if (!entry) return;
   if (!entry.sessionId) {
     if (entry.unread) {
-      markNotificationsRead({ id: entry.id });
+      markRuntimeInboxEntriesDone({ id: entry.id });
       refreshNotificationEntries(host);
     }
     renderNotifications(host);
@@ -190,7 +266,7 @@ async function openSelectedNotification(host: NotificationHost): Promise<void> {
       return;
     }
     if (entry.unread) {
-      markNotificationsRead({ id: entry.id });
+      markRuntimeInboxEntriesDone({ id: entry.id });
       refreshNotificationEntries(host);
     }
     return;
@@ -211,7 +287,7 @@ async function openSelectedNotification(host: NotificationHost): Promise<void> {
     return;
   }
   if (entry.unread) {
-    markNotificationsRead({ id: entry.id });
+    markRuntimeInboxEntriesDone({ id: entry.id });
     refreshNotificationEntries(host);
   }
 }
@@ -268,13 +344,13 @@ export function handleNotificationsKey(host: NotificationHost, data: Buffer): vo
   if (key === "r") {
     const entry = host.notificationEntries[host.notificationIndex];
     if (!entry) return;
-    markNotificationsRead({ id: entry.id });
+    markRuntimeInboxEntriesDone({ id: entry.id });
     refreshNotificationEntries(host);
     renderNotifications(host);
     return;
   }
   if (key === "R") {
-    markNotificationsRead();
+    markRuntimeInboxEntriesDone();
     refreshNotificationEntries(host);
     renderNotifications(host);
     return;
@@ -282,13 +358,13 @@ export function handleNotificationsKey(host: NotificationHost, data: Buffer): vo
   if (key === "c") {
     const entry = host.notificationEntries[host.notificationIndex];
     if (!entry) return;
-    clearNotifications({ id: entry.id });
+    markRuntimeInboxEntriesDone({ id: entry.id });
     refreshNotificationEntries(host);
     renderNotifications(host);
     return;
   }
   if (key === "C") {
-    clearNotifications();
+    markRuntimeInboxEntriesDone();
     refreshNotificationEntries(host);
     renderNotifications(host);
     return;

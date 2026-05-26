@@ -410,19 +410,9 @@ export async function listNotifications(
 ): Promise<NotificationsResponse> {
   const params = new URLSearchParams();
   if (opts?.unreadOnly) params.set("unread", "1");
-  if (opts?.sessionId) params.set("participant", opts.sessionId);
+  if (opts?.sessionId) params.set("sessionId", opts.sessionId);
   const query = params.toString();
-  const response = await callProjectJson<{
-    ok: boolean;
-    inbox?: NotificationRecord[];
-    notifications?: NotificationRecord[];
-    unreadCount: number;
-  }>(endpoint, "GET", `/inbox${query ? `?${query}` : ""}`, opts);
-  return {
-    ok: response.ok,
-    notifications: response.inbox ?? response.notifications ?? [],
-    unreadCount: response.unreadCount,
-  };
+  return callProjectJson<NotificationsResponse>(endpoint, "GET", `/notifications${query ? `?${query}` : ""}`, opts);
 }
 
 export async function markNotificationsRead(
@@ -430,7 +420,7 @@ export async function markNotificationsRead(
   input: { id?: string; sessionId?: string } = {},
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; updated: number }> {
-  return callProjectJson(endpoint, "POST", "/inbox/read", opts, input);
+  return callProjectJson(endpoint, "POST", "/notifications/read", opts, input);
 }
 
 export async function clearNotifications(
@@ -441,7 +431,7 @@ export async function clearNotifications(
   const response = await callProjectJson<{ ok: boolean; cleared?: number; updated?: number }>(
     endpoint,
     "POST",
-    "/inbox/clear",
+    "/notifications/clear",
     opts,
     input,
   );
