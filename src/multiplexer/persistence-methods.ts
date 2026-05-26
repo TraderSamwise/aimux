@@ -23,7 +23,7 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
 import { isTeammateSession } from "../team.js";
-import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { listTopologySessionStates, resurrectTopologySession } from "../runtime-core/topology-sessions.js";
 import {
   findMainRepo,
   getWorktreeBaseDir,
@@ -771,9 +771,27 @@ export const persistenceMethods = {
   },
 
   async resurrectGraveyardSession(this: any, sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
-    void this;
-    void sessionId;
-    throw new Error("agent graveyard resurrection requires the runtime core replacement");
+    const restored = resurrectTopologySession(sessionId);
+    if (!restored) {
+      throw new Error(`Graveyard session "${sessionId}" not found`);
+    }
+    const offlineEntry = { ...restored, lifecycle: "offline" as const, status: "offline" as const };
+    if (Array.isArray(this.offlineSessions)) {
+      const existingIndex = this.offlineSessions.findIndex((session: any) => session.id === sessionId);
+      if (existingIndex >= 0) {
+        this.offlineSessions[existingIndex] = { ...this.offlineSessions[existingIndex], ...offlineEntry };
+      } else {
+        this.offlineSessions.push(offlineEntry);
+      }
+    }
+    this.loadOfflineTopologySessions?.();
+    this.invalidateDesktopStateSnapshot?.();
+    this.writeStatuslineFile?.();
+    this.metadataServer?.notifyChange?.();
+    if (this.mode === "dashboard") {
+      this.renderCurrentDashboardView?.();
+    }
+    return { sessionId, status: "offline" };
   },
 
   stripAnsi(this: any, text: string): string {

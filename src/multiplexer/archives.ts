@@ -145,7 +145,9 @@ export function resurrectGraveyardEntry(host: ArchivesHost, idx: number): void {
       ? host.mode === "dashboard"
         ? postToProjectService(host, "/graveyard/worktrees/resurrect", { path: item.entry.path }, { timeoutMs: 10_000 })
         : host.resurrectGraveyardWorktree(item.entry.path)
-      : host.resurrectGraveyardSession(item.entry.id);
+      : host.mode === "dashboard"
+        ? postToProjectService(host, "/graveyard/resurrect", { sessionId: item.entry.id }, { timeoutMs: 10_000 })
+        : host.resurrectGraveyardSession(item.entry.id);
   void promise
     .then(() => {
       host.graveyardEntries = host.listGraveyardEntries();
