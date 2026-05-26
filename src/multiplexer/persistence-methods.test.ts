@@ -639,13 +639,67 @@ describe("persistenceMethods", () => {
 
     expect(listTopologyWorktreeStates({ statuses: ["graveyard"] })).toMatchObject([{ path: worktreePath }]);
     expect(listTopologyWorktreeGraveyard()).toMatchObject([{ path: worktreePath, name: "demo" }]);
-    expect(listTopologySessionStates().filter((session) => session.worktreePath === worktreePath)).toEqual([]);
-    expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toEqual([]);
+    expect(listTopologySessionStates().filter((session) => session.worktreePath === worktreePath)).toMatchObject([
+      { id: "codex-demo", status: "offline" },
+    ]);
+    expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toMatchObject([
+      { id: "service-demo", status: "stopped" },
+    ]);
+  });
+
+  it("stops live worktree services without deleting their topology records when graveyarding", async () => {
+    const worktreePath = "/repo/.aimux/worktrees/demo";
+    const target = { sessionName: "aimux-test", windowId: "@service", windowIndex: 1, windowName: "shell" };
+    const killWindow = vi.fn();
+    const host = {
+      listDesktopWorktrees: vi.fn(() => [{ name: "demo", branch: "demo", path: worktreePath }]),
+      sessions: [],
+      sessionWorktreePaths: new Map(),
+      isSessionRuntimeLive: vi.fn(() => false),
+      offlineSessions: [],
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target,
+            metadata: {
+              kind: "service",
+              sessionId: "service-demo",
+              command: "zsh",
+              args: ["-l"],
+              toolConfigKey: "service",
+              createdAt: "2026-05-01T00:00:00.000Z",
+              worktreePath,
+              label: "shell",
+              launchCommandLine: "yarn web",
+            },
+          },
+        ]),
+        killWindow,
+      },
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+    };
+
+    await expect(persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath)).resolves.toEqual({
+      path: worktreePath,
+      status: "graveyarded",
+    });
+
+    expect(killWindow).toHaveBeenCalledWith(target);
+    expect(host.offlineServices).toMatchObject([{ id: "service-demo", worktreePath, launchCommandLine: "yarn web" }]);
+    expect(listTopologyServiceStates({ statuses: ["stopped"] })).toMatchObject([
+      { id: "service-demo", worktreePath, launchCommandLine: "yarn web" },
+    ]);
   });
 
   it("resurrects topology worktree graveyard entries", async () => {
-    const worktreePath = "/repo/.aimux/worktrees/demo";
+    const worktreePath = join(pathsRoot, "worktrees", "demo");
+    mkdirSync(worktreePath, { recursive: true });
     upsertTopologyWorktree({ path: worktreePath, name: "demo", branch: "demo" }, "active");
+    upsertTopologySession({ id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    upsertTopologyService({ id: "service-demo", command: "zsh", worktreePath }, "stopped");
     moveTopologyWorktreeToGraveyard(worktreePath);
     const host = {
       invalidateDesktopStateSnapshot: vi.fn(),
@@ -660,7 +714,33 @@ describe("persistenceMethods", () => {
 
     expect(listTopologyWorktreeGraveyard()).toEqual([]);
     expect(listTopologyWorktreeStates({ statuses: ["active"] })).toMatchObject([{ path: worktreePath }]);
+    expect(listTopologySessionStates().filter((session) => session.worktreePath === worktreePath)).toMatchObject([
+      { id: "codex-demo", status: "offline" },
+    ]);
+    expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toMatchObject([
+      { id: "service-demo", status: "stopped" },
+    ]);
     expect(host.metadataServer.notifyChange).toHaveBeenCalled();
+  });
+
+  it("does not resurrect graveyarded worktrees when the checkout is missing", async () => {
+    const worktreePath = join(pathsRoot, "worktrees", "missing");
+    upsertTopologyWorktree({ path: worktreePath, name: "missing", branch: "missing" }, "active");
+    moveTopologyWorktreeToGraveyard(worktreePath);
+    const host = {
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(persistenceMethods.resurrectGraveyardWorktree.call(host, worktreePath)).rejects.toThrow(
+      `Cannot resurrect worktree "${worktreePath}" because the checkout is missing`,
+    );
+
+    expect(listTopologyWorktreeGraveyard()).toMatchObject([{ path: worktreePath }]);
+    expect(listTopologyWorktreeStates({ statuses: ["active"] })).toEqual([]);
+    expect(host.invalidateDesktopStateSnapshot).not.toHaveBeenCalled();
+    expect(host.metadataServer.notifyChange).not.toHaveBeenCalled();
   });
 
   it("keeps graveyard entries visible when delete physical removal fails", async () => {
@@ -668,19 +748,59 @@ describe("persistenceMethods", () => {
     mkdirSync(worktreePath, { recursive: true });
     upsertTopologyWorktree({ path: worktreePath, name: "demo", branch: "demo" }, "active");
     moveTopologyWorktreeToGraveyard(worktreePath);
+    const child = createSpawnChild();
+    spawnMock.mockReturnValueOnce(child);
     const host = {
-      removeDesktopWorktree: vi.fn(async () => {
-        throw new Error("remove failed");
-      }),
       invalidateDesktopStateSnapshot: vi.fn(),
       refreshLocalDashboardModel: vi.fn(),
       metadataServer: { notifyChange: vi.fn() },
     };
 
-    await expect(persistenceMethods.deleteGraveyardWorktree.call(host, worktreePath)).rejects.toThrow("remove failed");
+    const result = persistenceMethods.deleteGraveyardWorktree.call(host, worktreePath);
+    child.stderr.emit("data", Buffer.from("remove failed\n"));
+    child.emit("close", 1);
+
+    await expect(result).rejects.toThrow("remove failed");
 
     expect(listTopologyWorktreeGraveyard()).toMatchObject([{ path: worktreePath }]);
     expect(host.invalidateDesktopStateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("deletes existing graveyarded worktree checkouts even when hidden from active worktree lists", async () => {
+    const worktreePath = join(pathsRoot, "external-worktrees", "demo");
+    mkdirSync(worktreePath, { recursive: true });
+    upsertTopologyWorktree({ path: worktreePath, name: "demo", branch: "demo" }, "active");
+    upsertTopologySession({ id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    upsertTopologyService({ id: "service-demo", command: "zsh", worktreePath }, "stopped");
+    moveTopologyWorktreeToGraveyard(worktreePath);
+    const child = createSpawnChild();
+    spawnMock.mockReturnValueOnce(child);
+    const host = {
+      listDesktopWorktrees: vi.fn(() => []),
+      offlineSessions: [{ id: "codex-demo", worktreePath }],
+      offlineServices: [{ id: "service-demo", worktreePath }],
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    const result = persistenceMethods.deleteGraveyardWorktree.call(host, worktreePath);
+    child.emit("close", 0);
+
+    await expect(result).resolves.toEqual({ path: worktreePath, status: "removed" });
+
+    expect(spawnMock).toHaveBeenCalledWith("git", ["worktree", "remove", worktreePath, "--force"], {
+      cwd: "/repo",
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    expect(listTopologyWorktreeGraveyard()).toEqual([]);
+    expect(listTopologySessionStates().filter((session) => session.worktreePath === worktreePath)).toEqual([]);
+    expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toEqual([]);
+    expect(host.offlineSessions).toEqual([]);
+    expect(host.offlineServices).toEqual([]);
+    expect(host.saveState).toHaveBeenCalled();
+    expect(host.metadataServer.notifyChange).toHaveBeenCalled();
   });
 
   it("preserves deleted graveyard audit history when the worktree path is already gone", async () => {
@@ -882,3 +1002,10 @@ describe("persistenceMethods", () => {
     }
   });
 });
+
+function createSpawnChild(): EventEmitter & { stderr: EventEmitter; stdout: EventEmitter } {
+  const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter; stdout: EventEmitter };
+  child.stderr = new EventEmitter();
+  child.stdout = new EventEmitter();
+  return child;
+}

@@ -306,7 +306,7 @@ const DEBUG_STATE_SOURCE_ROLES: DebugStateReport["sourceRoles"] = {
   worktreeGraveyard: {
     role: "authority",
     authority: "runtime-topology.yaml",
-    note: "topology-owned worktree graveyard entries",
+    note: "topology-owned worktree graveyard entries; git path existence gates resurrection",
   },
   notifications: {
     role: "projection",

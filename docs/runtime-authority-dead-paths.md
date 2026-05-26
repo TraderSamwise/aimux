@@ -77,6 +77,7 @@ rg -n "git worktree|worktree add|worktree remove|worktree repair" src scripts
 
 - Durable worktree status and worktree graveyard authority lives in topology worktree records.
 - Keep git worktrees as substrate evidence and execution mechanism.
+- Resurrecting a graveyarded worktree requires the checkout path to still exist; deleting one removes the physical git worktree before clearing attached topology records.
 - Keep dashboard pending actions as transient optimistic UI only.
 - Do not restore `.aimux/worktree-graveyard.json` authority.
 

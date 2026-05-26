@@ -1,5 +1,7 @@
 import { basename } from "node:path";
 import type { ServiceState, SessionState } from "./index.js";
+import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { listTopologyServiceStates } from "../runtime-core/topology-services.js";
 import {
   listTopologyWorktreeGraveyard,
   listTopologyWorktreeGraveyardPaths,
@@ -16,13 +18,15 @@ export interface WorktreeGraveyardEntry {
 }
 
 export function listWorktreeGraveyardEntries(): WorktreeGraveyardEntry[] {
+  const sessions = listTopologySessionStates();
+  const services = listTopologyServiceStates();
   return listTopologyWorktreeGraveyard().map((entry) => ({
     name: entry.name ?? (basename(entry.path) || entry.path),
     path: entry.path,
     branch: entry.branch ?? "",
     graveyardedAt: entry.graveyardedAt,
-    agents: [],
-    services: [],
+    agents: sessions.filter((session) => session.worktreePath === entry.path) as SessionState[],
+    services: services.filter((service) => service.worktreePath === entry.path) as ServiceState[],
   }));
 }
 

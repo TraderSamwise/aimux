@@ -7,6 +7,7 @@ This document records the cut line for metadata, notification context, statuslin
 - `runtime-topology.yaml` owns agents, services, worktrees, lifecycle, graveyard, bindings, teams, and topology-backed operation state.
 - `runtime-exchange.yaml` owns messages, tasks, reviews, handoffs, waits, inbox routing, notification records, and notification read or done state.
 - `metadata.json`, `statusline.json`, `notification-context.json`, tmux statusline text files, desktop snapshots, and GUI stores are projections or caches. They may decorate or suppress display for known entities, but they must not mint entities or change lifecycle, ownership, worktree, binding, task, handoff, wait, inbox, or delivery truth.
+- Git worktrees remain substrate evidence and the physical execution mechanism. Topology can hide, graveyard, or restore lifecycle visibility only for checkouts that still exist; permanent delete uses `git worktree remove --force` before clearing topology dependents.
 
 ## Metadata
 
