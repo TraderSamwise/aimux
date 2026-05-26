@@ -130,8 +130,6 @@ export interface ReadOnlyProjectPaths {
   statePath: string;
   runtimeTopologyPath: string;
   runtimeExchangePath: string;
-  instancesPath: string;
-  localInstancesPath: string;
   metadataPath: string;
   notificationContextPath: string;
   dashboardOperationFailuresPath: string;
@@ -155,8 +153,6 @@ export function getReadOnlyProjectPathsFor(cwd: string): ReadOnlyProjectPaths {
     statePath: join(projectStateDir, "state.json"),
     runtimeTopologyPath: join(projectStateDir, "runtime-topology.yaml"),
     runtimeExchangePath: join(projectStateDir, "runtime-exchange.yaml"),
-    instancesPath: join(projectStateDir, "instances.json"),
-    localInstancesPath: join(localAimuxDir, "instances.json"),
     metadataPath: join(projectStateDir, "metadata.json"),
     notificationContextPath: join(projectStateDir, "notification-context.json"),
     dashboardOperationFailuresPath: join(projectStateDir, "dashboard-operation-failures.json"),
@@ -263,10 +259,6 @@ export function getTasksDir(): string {
 
 export function getStatusDir(): string {
   return join(getLocalAimuxDir(), "status");
-}
-
-export function getInstancesPath(): string {
-  return join(getProjectStateDir(), "instances.json");
 }
 
 export function getMetadataPath(): string {

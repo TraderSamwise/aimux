@@ -8,7 +8,6 @@ import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runti
 import { upsertTopologyService } from "../runtime-core/topology-services.js";
 import {
   buildLiveServiceStates,
-  getInstanceSessionRefs,
   graveyardSession,
   loadOfflineServices,
   loadOfflineTopologySessions,
@@ -444,22 +443,12 @@ describe("resumeOfflineSession", () => {
     expect(runtime.backendSessionId).toBe("backend-current");
   });
 
-  it("does not publish instance heartbeat session refs", () => {
-    const host: any = {
-      sessions: [{ id: "claude-racy", command: "claude" }],
-      sessionWorktreePaths: new Map([["claude-racy", repoRoot]]),
-    };
-
-    expect(getInstanceSessionRefs(host)).toEqual([]);
-  });
-
   it("does not reload a starting session as offline from stale saved state", () => {
     const pending = new DashboardPendingActions(() => {});
     pending.setSessionAction("codex-1", "starting");
     const host: any = {
       sessions: [],
       offlineSessions: [],
-      getRemoteInstancesSafe: vi.fn(() => []),
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
@@ -492,7 +481,6 @@ describe("resumeOfflineSession", () => {
     const host: any = {
       sessions: [],
       offlineSessions: [],
-      getRemoteInstancesSafe: vi.fn(() => []),
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
@@ -639,7 +627,6 @@ describe("resumeOfflineSession", () => {
     const host: any = {
       sessions: [],
       offlineSessions: [],
-      getRemoteInstancesSafe: vi.fn(() => []),
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
@@ -656,7 +643,6 @@ describe("resumeOfflineSession", () => {
     const host: any = {
       sessions: [],
       offlineSessions: [],
-      getRemoteInstancesSafe: vi.fn(() => []),
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
@@ -703,7 +689,6 @@ describe("resumeOfflineSession", () => {
     const host: any = {
       sessions: [],
       offlineSessions: [],
-      getRemoteInstancesSafe: vi.fn(() => []),
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
@@ -747,7 +732,6 @@ describe("resumeOfflineSession", () => {
           worktreePath: repoRoot,
         },
       ],
-      getRemoteInstancesSafe: vi.fn(() => []),
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
@@ -775,7 +759,6 @@ describe("resumeOfflineSession", () => {
     const host: any = {
       sessions: [],
       offlineSessions: [],
-      getRemoteInstancesSafe: vi.fn(() => []),
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },
@@ -814,7 +797,6 @@ describe("resumeOfflineSession", () => {
     const host: any = {
       sessions: [],
       offlineSessions: [],
-      getRemoteInstancesSafe: vi.fn(() => []),
       tmuxRuntimeManager: {
         listProjectManagedWindows: vi.fn(() => []),
       },

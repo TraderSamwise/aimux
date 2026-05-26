@@ -319,7 +319,7 @@ export const dashboardInteractionMethods = {
         return;
       case "f": {
         const selected = this.getSelectedDashboardSessionForActions();
-        if (selected && !selected.remoteInstancePid) {
+        if (selected) {
           this.showToolPicker(selected.id);
         } else if (hasWorktrees && this.dashboardState.level === "worktrees") {
           this.showDashboardError("Select an agent to fork", [
@@ -339,14 +339,14 @@ export const dashboardInteractionMethods = {
         return;
       case "o": {
         const selected = this.getSelectedDashboardSessionForActions();
-        if (selected && !selected.remoteInstancePid) {
+        if (selected) {
           this.openRelevantThreadForSession(selected.id);
         }
         return;
       }
       case "R": {
         const selected = this.getSelectedDashboardSessionForActions();
-        if (selected && !selected.remoteInstancePid) {
+        if (selected) {
           if ((selected.threadWaitingOnMeCount ?? 0) > 0) {
             this.openRelevantThreadForSession(selected.id);
           } else {
@@ -497,7 +497,7 @@ export const dashboardInteractionMethods = {
           : !hasWorktrees
             ? allDs2[this.activeIndex]
             : undefined;
-        if (selEntry2 && !selEntry2.remoteInstancePid) {
+        if (selEntry2) {
           this.openDashboardOverlay("label-input");
           this.labelInputBuffer = this.getSessionLabel(selEntry2.id) ?? "";
           this.labelInputTarget = selEntry2.id;

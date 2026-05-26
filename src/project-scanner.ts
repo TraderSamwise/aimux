@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { getAimuxDirFor, getProjectStateDirById, listProjects } from "./paths.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import { RuntimeTopologyStore } from "./runtime-core/topology-store.js";
@@ -37,7 +37,8 @@ function topologyStatusToGlobalStatus(status: string | undefined): GlobalSession
 
 /**
  * Discover local projects with aimux state.
- * Uses the global projects registry plus filesystem scanning as fallback.
+ * Uses the global projects registry. Runtime topology lives in the
+ * registry-owned project state directory, not in legacy presence files.
  */
 export function discoverProjects(): string[] {
   const found = new Set<string>();
@@ -47,33 +48,6 @@ export function discoverProjects(): string[] {
     if (existsSync(entry.repoRoot)) {
       found.add(entry.repoRoot);
     }
-  }
-
-  // Fallback: scan common dev directories for old-style in-repo .aimux/
-  const home = homedir();
-  const scanDirs = [
-    join(home, "cs"),
-    join(home, "projects"),
-    join(home, "dev"),
-    join(home, "src"),
-    join(home, "code"),
-    join(home, "work"),
-  ];
-
-  for (const scanDir of scanDirs) {
-    try {
-      const entries = readdirSync(scanDir);
-      for (const entry of entries) {
-        const projectPath = join(scanDir, entry);
-        try {
-          if (!statSync(projectPath).isDirectory()) continue;
-          const aimuxDir = join(projectPath, ".aimux");
-          if (existsSync(join(aimuxDir, "instances.json"))) {
-            found.add(projectPath);
-          }
-        } catch {}
-      }
-    } catch {}
   }
 
   return [...found];
