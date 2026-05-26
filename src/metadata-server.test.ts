@@ -138,12 +138,34 @@ describe("MetadataServer threads API", () => {
     expect(handoff.thread.kind).toBe("handoff");
     expect(handoff.message.kind).toBe("handoff");
 
+    const roleHandoffRes = await fetch(`${base}/handoff`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "claude-lead",
+        assignee: "reviewer",
+        body: "Review this parser handoff.",
+      }),
+    });
+    const roleHandoff = (await roleHandoffRes.json()) as {
+      thread: { id: string; participants: string[] };
+      message: { to?: string[] };
+    };
+    expect(roleHandoffRes.ok).toBe(true);
+    expect(roleHandoff.thread.participants).toContain("reviewer");
+    expect(roleHandoff.message.to).toEqual(["reviewer"]);
+
+    const inboxRes = await fetch(`${base}/inbox?participant=reviewer`);
+    const inbox = (await inboxRes.json()) as { inbox: Array<{ subjectId: string; title: string }> };
+    expect(inboxRes.ok).toBe(true);
+    expect(inbox.inbox).toEqual([expect.objectContaining({ subjectId: roleHandoff.thread.id })]);
+
     const taskRes = await fetch(`${base}/tasks/assign`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         from: "claude-lead",
-        to: "codex-1",
+        to: ["codex-1"],
         description: "Audit the parser timeout path",
       }),
     });
