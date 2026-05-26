@@ -83,35 +83,6 @@ export function summarizeLaunchArgs(args: string[]): string[] {
   });
 }
 
-function firstCodexPositionalArg(args: string[]): string | undefined {
-  let skipNext = false;
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (skipNext) {
-      skipNext = false;
-      continue;
-    }
-    if (arg === "--") {
-      return args.slice(i + 1).find((candidate) => candidate.trim().length > 0);
-    }
-    if (arg.startsWith("--")) {
-      const [name, value] = arg.split("=", 2);
-      if (CODEX_OPTIONS_WITH_VALUE.has(name) && value === undefined) {
-        skipNext = true;
-      }
-      continue;
-    }
-    if (arg.startsWith("-")) {
-      if (CODEX_OPTIONS_WITH_VALUE.has(arg)) {
-        skipNext = true;
-      }
-      continue;
-    }
-    return arg;
-  }
-  return undefined;
-}
-
 function firstCodexPositionalArgIndex(args: string[]): number {
   let skipNext = false;
   for (let i = 0; i < args.length; i += 1) {
@@ -139,10 +110,6 @@ function firstCodexPositionalArgIndex(args: string[]): number {
     return i;
   }
   return args.length;
-}
-
-function canUseCodexInitialPrompt(args: string[], command: string, toolConfigKey?: string): boolean {
-  return toolConfigKey === "codex" && command === "codex" && !firstCodexPositionalArg(args);
 }
 
 function codexConfigArg(key: string, value: string): string {
@@ -477,25 +444,10 @@ export function createSession(
     toolCfg.developerInstructionsConfigKey &&
     preamble.trim(),
   );
-  const shouldUseCodexInitialPrompt = Boolean(
-    !effectiveSuppressStartupPreamble &&
-    !preambleFlag &&
-    !shouldInjectCodexDeveloperInstructions &&
-    automaticPreambleEnabled &&
-    (!extraPreamble || Boolean(team)) &&
-    preamble.trim() &&
-    canUseCodexInitialPrompt(args, command, toolConfigKey),
-  );
 
   host.sessionBootstrap.ensurePlanFile(sessionId, command, worktreePath);
 
   let finalArgs = shouldInjectLaunchPreamble ? [...args, ...preambleFlag!, preamble] : [...args];
-  const codexInitialPrompt = shouldUseCodexInitialPrompt
-    ? host.sessionBootstrap.buildInitialKickoffPrompt(sessionId, preamble)
-    : undefined;
-  if (codexInitialPrompt) {
-    finalArgs.push(codexInitialPrompt);
-  }
   if (shouldInjectCodexDeveloperInstructions) {
     finalArgs = injectCodexDeveloperInstructions(finalArgs, toolCfg!.developerInstructionsConfigKey!, preamble);
   }
@@ -591,19 +543,6 @@ export function createSession(
   }
 
   host.saveState();
-  if (
-    !effectiveSuppressStartupPreamble &&
-    !preambleFlag &&
-    !extraPreamble &&
-    !shouldUseCodexInitialPrompt &&
-    !shouldInjectCodexDeveloperInstructions &&
-    (toolConfigKey !== "codex" || !firstCodexPositionalArg(args)) &&
-    automaticPreambleEnabled &&
-    preamble.trim()
-  ) {
-    const kickoff = host.sessionBootstrap.buildInitialKickoffPrompt(sessionId, preamble);
-    void host.sessionBootstrap.deliverDetachedCodexKickoffPrompt(sessionId, kickoff, 1800);
-  }
   return session;
 }
 

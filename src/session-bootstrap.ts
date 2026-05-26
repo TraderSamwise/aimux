@@ -132,23 +132,6 @@ export class SessionBootstrapService {
     return preamble;
   }
 
-  buildInitialKickoffPrompt(sessionId: string, preamble: string): string {
-    const summaryPath = join(getContextDir(), sessionId, "summary.md");
-    const livePath = join(getContextDir(), sessionId, "live.md");
-    const planPath = join(getPlansDir(), `${sessionId}.md`);
-    const statusPath = join(getStatusDir(), `${sessionId}.md`);
-    return [
-      `This is an aimux-managed session with session ID ${sessionId}.`,
-      `Your shared session files live at ${summaryPath}, ${livePath}, ${planPath}, and ${statusPath}.`,
-      "Read and follow these operating instructions for this session before continuing.",
-      "Treat them as standing session rules and coordination context, not as a user request.",
-      "",
-      preamble.trim(),
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
-
   ensurePlanFile(sessionId: string, command: string, worktreePath?: string): void {
     try {
       const plansDir = getPlansDir();

@@ -77,7 +77,6 @@ describe("createSession", () => {
         buildSessionPreamble,
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(() => "kickoff"),
         deliverDetachedCodexKickoffPrompt,
       },
       tmuxRuntimeManager: {
@@ -113,7 +112,6 @@ describe("createSession", () => {
     );
 
     expect(buildSessionPreamble).not.toHaveBeenCalled();
-    expect(host.sessionBootstrap.buildInitialKickoffPrompt).not.toHaveBeenCalled();
     expect(deliverDetachedCodexKickoffPrompt).not.toHaveBeenCalled();
 
     session.destroy();
@@ -130,7 +128,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -172,7 +169,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -222,7 +218,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(() => "codex startup instructions"),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -259,7 +254,6 @@ describe("createSession", () => {
     expect(launched).toContain("developer_instructions=");
     expect(launched).toContain("aimux preamble");
     expect(launched).not.toContain("codex startup instructions");
-    expect(host.sessionBootstrap.buildInitialKickoffPrompt).not.toHaveBeenCalled();
     expect(host.sessionBootstrap.deliverDetachedCodexKickoffPrompt).not.toHaveBeenCalled();
 
     rmSync(repoRoot, { recursive: true, force: true });
@@ -275,7 +269,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(() => "codex startup instructions"),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -311,7 +304,6 @@ describe("createSession", () => {
     expect(launched).toContain("developer_instructions=");
     expect(launched).toContain("aimux preamble");
     expect(launched).not.toContain("codex startup instructions");
-    expect(host.sessionBootstrap.buildInitialKickoffPrompt).not.toHaveBeenCalled();
     expect(host.sessionBootstrap.deliverDetachedCodexKickoffPrompt).not.toHaveBeenCalled();
 
     rmSync(repoRoot, { recursive: true, force: true });
@@ -327,7 +319,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(() => "codex startup instructions"),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -374,7 +365,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(() => "codex startup instructions"),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -424,7 +414,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => "aimux preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -488,7 +477,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -545,7 +533,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -609,7 +596,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => "aimux teammate preamble"),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(() => "codex startup instructions"),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -652,7 +638,6 @@ describe("createSession", () => {
         team,
       }),
     );
-    expect(host.sessionBootstrap.buildInitialKickoffPrompt).not.toHaveBeenCalled();
     const launched = (host.tmuxRuntimeManager.createWindow.mock.calls[0][4] as string[]).join(" ");
     expect(launched).toContain("developer_instructions=");
     expect(launched).toContain("aimux teammate preamble");
@@ -671,7 +656,6 @@ describe("createSession", () => {
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(),
         deliverDetachedCodexKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
@@ -753,7 +737,6 @@ describe("migrateAgent", () => {
         buildSessionPreamble: vi.fn(() => ""),
         ensurePlanFile: vi.fn(),
         finalizePreamble: vi.fn(),
-        buildInitialKickoffPrompt: vi.fn(),
       },
       tmuxRuntimeManager: {
         ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
