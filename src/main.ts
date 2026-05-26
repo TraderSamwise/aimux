@@ -27,7 +27,7 @@ import {
   getRuntimeTopologyPath,
 } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
-import { createWorktree, findMainRepo, listWorktrees } from "./worktree.js";
+import { createWorktree, findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import {
   buildTmuxDoctorReport,
@@ -115,6 +115,7 @@ import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/serv
 import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
+import { listTopologyWorktreeGraveyardPaths, upsertTopologyWorktree } from "./runtime-core/topology-worktrees.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -376,6 +377,24 @@ async function postLiveProjectServiceJsonOrLocal(
       method: "POST",
       headers: { "content-type": "application/json" },
       body,
+    });
+    if (status < 200 || status >= 300 || json?.ok === false) {
+      throw new Error(json?.error || `request failed: ${status}`);
+    }
+    return json;
+  } catch {
+    return fallback();
+  }
+}
+
+async function getLiveProjectServiceJsonOrLocal(projectRoot: string, path: string, fallback: () => any): Promise<any> {
+  try {
+    const endpoint = await resolveProjectServiceEndpoint(projectRoot);
+    if (!endpoint) {
+      return fallback();
+    }
+    const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      method: "GET",
     });
     if (status < 200 || status >= 300 || json?.ok === false) {
       throw new Error(json?.error || `request failed: ${status}`);
@@ -1549,9 +1568,14 @@ async function prepareProjectContext(requestedProject?: string): Promise<string>
   return projectRoot;
 }
 
-function printWorktrees(projectRoot?: string): void {
+function listVisibleLocalWorktrees(projectRoot: string): WorktreeInfo[] {
+  const graveyardPaths = listTopologyWorktreeGraveyardPaths();
+  return listWorktrees(projectRoot).filter((worktree) => !graveyardPaths.has(worktree.path));
+}
+
+function printWorktrees(projectRoot?: string, worktreesInput?: WorktreeInfo[]): void {
   try {
-    const worktrees = listWorktrees(projectRoot);
+    const worktrees = worktreesInput ?? listWorktrees(projectRoot);
     if (worktrees.length === 0) {
       console.log("No worktrees found.");
       return;
@@ -2237,12 +2261,17 @@ worktreeCmd
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
     const projectRoot = await prepareProjectContext(opts.project);
-    const worktrees = listWorktrees(projectRoot);
+    await ensureDaemonProjectReady(projectRoot);
+    const result = await getLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees", () => ({
+      ok: true,
+      worktrees: listVisibleLocalWorktrees(projectRoot),
+    }));
+    const worktrees = result.worktrees ?? [];
     if (opts.json) {
       console.log(JSON.stringify(worktrees, null, 2));
       return;
     }
-    printWorktrees(projectRoot);
+    printWorktrees(projectRoot, worktrees);
   });
 
 worktreeCmd
@@ -2253,7 +2282,17 @@ worktreeCmd
   .action(async (name: string, opts: { project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      const createdPath = createWorktree(name, projectRoot);
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees/create", { name }, () => {
+        const path = createWorktree(name, projectRoot);
+        upsertTopologyWorktree({ path, name, branch: name, basePath: projectRoot }, "active", { projectRoot });
+        return {
+          ok: true,
+          path,
+          status: "created",
+        };
+      });
+      const createdPath = result.path;
       if (opts.json) {
         console.log(
           JSON.stringify(
