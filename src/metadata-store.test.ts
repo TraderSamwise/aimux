@@ -17,7 +17,7 @@ function gitInit(cwd: string): void {
 }
 
 describe("metadata store", () => {
-  it("loads metadata with malformed session entries while scrubbing backend session ids", async () => {
+  it("loads metadata with malformed session entries while scrubbing topology-owned identity fields", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-metadata-store-load-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
@@ -30,6 +30,7 @@ describe("metadata store", () => {
           malformed: null,
           valid: {
             backendSessionId: "backend-1",
+            label: "stale-label",
             updatedAt: "2026-01-01T00:00:00.000Z",
           },
         },
@@ -44,7 +45,7 @@ describe("metadata store", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
-  it("saves metadata with malformed session entries while scrubbing backend session ids", async () => {
+  it("saves metadata with malformed session entries while scrubbing topology-owned identity fields", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-metadata-store-save-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
@@ -57,6 +58,7 @@ describe("metadata store", () => {
             malformed: null,
             valid: {
               backendSessionId: "backend-1",
+              label: "stale-label",
               updatedAt: "2026-01-01T00:00:00.000Z",
             },
           },

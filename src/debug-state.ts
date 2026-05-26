@@ -252,14 +252,12 @@ function filterMetadata(
       const worktreeName = getString(context, "worktreeName");
       const branch = getString(context, "branch");
       const cwd = getString(context, "cwd");
-      const label = getString(record, "label");
       const matched =
         matchesString(sessionId, target) ||
         matchesString(worktreePath, target) ||
         matchesString(worktreeName, target) ||
         matchesString(branch, target) ||
-        matchesString(cwd, target) ||
-        matchesString(label, target);
+        matchesString(cwd, target);
       if (matched) {
         addMatch(matches, seen, {
           canonicalKey: sessionCanonical(sessionId),
@@ -268,7 +266,6 @@ function filterMetadata(
           id: sessionId,
           worktreePath,
           worktreeName,
-          label,
           raw: entry,
         });
       }
