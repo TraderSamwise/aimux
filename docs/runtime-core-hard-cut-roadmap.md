@@ -141,7 +141,7 @@ Move coordination authority into a topology-backed or sibling runtime exchange m
 - task/thread links
 - delivery state
 
-The existing `.aimux/threads` and `.aimux/tasks` files may become migrated legacy artifacts, projection/export files, or compatibility inputs. They should not remain parallel authoritative stores.
+The existing `.aimux/threads` and `.aimux/tasks` files are legacy import inputs only. Runtime thread, message, task, handoff, review, wait, and inbox state is authoritative in `runtime-exchange.yaml`.
 
 ### 6. Metadata, Notifications, And Statusline As Projections
 

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
-import { basename, join } from "node:path";
-import { getPlansDir, getStatusDir, getTasksDir, getHistoryDir } from "./paths.js";
+import { basename, dirname, join } from "node:path";
+import { getPlansDir, getStatusDir, getHistoryDir, getRuntimeExchangePath } from "./paths.js";
 import type { AimuxPluginInstance, AimuxPluginAPI } from "./plugin-runtime.js";
 import { debug } from "./debug.js";
 import { readAllTasks } from "./tasks.js";
@@ -97,7 +97,7 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
     }
   });
 
-  const taskWatcher = new DirectoryWatcher(getTasksDir(), () => {
+  const taskWatcher = new DirectoryWatcher(dirname(getRuntimeExchangePath()), () => {
     const tasks = readAllTasks();
     const latestBySession = new Map<string, { message: string; tone?: "warn" | "success" | "error" }>();
     for (const task of tasks) {
@@ -115,8 +115,8 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
       latestBySession.set(sessionId, { message: `${prefix}: ${task.description}`, tone });
     }
     for (const [sessionId, entry] of latestBySession) {
-      metadata.log(sessionId, entry.message, { source: "tasks", tone: entry.tone });
       if (lastTaskBySession.get(sessionId) !== entry.message) {
+        metadata.log(sessionId, entry.message, { source: "tasks", tone: entry.tone });
         if (taskWatcherPrimed) {
           metadata.emitEvent(sessionId, {
             kind: entry.tone === "error" ? "task_failed" : entry.tone === "success" ? "task_done" : "task_assigned",

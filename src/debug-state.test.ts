@@ -23,7 +23,6 @@ function makePaths(): ReadOnlyProjectPaths {
     instancesPath: join(projectStateDir, "instances.json"),
     localInstancesPath: join(localAimuxDir, "instances.json"),
     metadataPath: join(projectStateDir, "metadata.json"),
-    notificationsPath: join(projectStateDir, "notifications.json"),
     notificationContextPath: join(projectStateDir, "notification-context.json"),
     dashboardOperationFailuresPath: join(projectStateDir, "dashboard-operation-failures.json"),
   };
@@ -200,9 +199,45 @@ describe("buildDebugStateReport", () => {
 
   it("resolves targets found only in notifications", () => {
     const paths = makePaths();
-    writeJson(paths.notificationsPath, {
-      notifications: [{ id: "notice-1", sessionId: "codex-a1", targetKey: "session:codex-a1" }],
-    });
+    createRuntimeTopologyStore(paths.runtimeTopologyPath).update((topology) => topology);
+    writeFileSync(
+      paths.runtimeExchangePath,
+      [
+        "version: 1",
+        "generatedAt: '2026-01-01T00:00:00.000Z'",
+        "threads:",
+        "  - id: notice-thread",
+        "    title: Notice",
+        "    kind: conversation",
+        "    status: open",
+        "    createdAt: '2026-01-01T00:00:00.000Z'",
+        "    updatedAt: '2026-01-01T00:00:00.000Z'",
+        "    createdBy: aimux",
+        "    participants: [aimux, codex-a1]",
+        "    tags: [notification]",
+        "messages:",
+        "  - id: notice-1",
+        "    threadId: notice-thread",
+        "    ts: '2026-01-01T00:00:00.000Z'",
+        "    from: aimux",
+        "    to: [codex-a1]",
+        "    kind: note",
+        "    body: Notice",
+        "    metadata:",
+        "      notificationRecordId: notice-1",
+        "      notificationSessionId: codex-a1",
+        "      notificationTargetKey: session:codex-a1",
+        "tasks: []",
+        "handoffs: []",
+        "reviews: []",
+        "waits: []",
+        "inbox: []",
+        "planRefs: []",
+        "continuityRefs: []",
+        "attachmentRefs: []",
+        "",
+      ].join("\n"),
+    );
 
     const report = buildDebugStateReport({
       target: "codex-a1",
@@ -213,7 +248,7 @@ describe("buildDebugStateReport", () => {
 
     expect(report.targetResolution.status).toBe("matched");
     expect(report.targetResolution.matches).toEqual([
-      expect.objectContaining({ kind: "notification", source: "notifications", id: "notice-1" }),
+      expect.objectContaining({ kind: "notification", source: "runtimeExchange", id: "notice-1" }),
     ]);
     expect(report.sources.notifications.value?.notifications).toHaveLength(1);
   });

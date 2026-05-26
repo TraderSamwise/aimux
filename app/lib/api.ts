@@ -412,12 +412,7 @@ export async function listNotifications(
   if (opts?.unreadOnly) params.set("unread", "1");
   if (opts?.sessionId) params.set("sessionId", opts.sessionId);
   const query = params.toString();
-  return callProjectJson<NotificationsResponse>(
-    endpoint,
-    "GET",
-    `/notifications${query ? `?${query}` : ""}`,
-    opts,
-  );
+  return callProjectJson<NotificationsResponse>(endpoint, "GET", `/notifications${query ? `?${query}` : ""}`, opts);
 }
 
 export async function markNotificationsRead(
@@ -433,7 +428,14 @@ export async function clearNotifications(
   input: { id?: string; sessionId?: string } = {},
   opts?: ApiOpts,
 ): Promise<{ ok: boolean; cleared: number }> {
-  return callProjectJson(endpoint, "POST", "/notifications/clear", opts, input);
+  const response = await callProjectJson<{ ok: boolean; cleared?: number; updated?: number }>(
+    endpoint,
+    "POST",
+    "/notifications/clear",
+    opts,
+    input,
+  );
+  return { ok: response.ok, cleared: response.cleared ?? response.updated ?? 0 };
 }
 
 // ── Service actions ──────────────────────────────────────────────────────

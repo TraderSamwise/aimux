@@ -28,9 +28,9 @@ export function buildAimuxAgentInstructions(
       "- Do not call aimux metadata APIs from inside an agent unless the user gives an explicit CLI/API command.\n"
     : "- This session is already a teammate; do not create nested teammate teams.\n";
   const delegationProtocol = includeTeammates
-    ? "When the user specifically asks for delegation, handoff, or teammate coordination, use `.aimux/tasks/` handoff records unless the user gives an explicit aimux CLI command. " +
-      'For generic delegation or handoff records, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. '
-    : 'For generic delegation or handoff records, create `.aimux/tasks/{short-descriptive-name}.json` with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. ';
+    ? "When the user specifically asks for delegation, handoff, or teammate coordination, use explicit aimux CLI/API commands so the runtime exchange records the work. " +
+      'For generic delegation or handoff records, create them with `aimux task assign` or the project service task endpoint with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. '
+    : 'For generic delegation or handoff records, create them with `aimux task assign` or the project service task endpoint with `status: "pending"`, `assignedBy`, `description`, `prompt`, and timestamps. ';
 
   return (
     "You are running inside aimux, an agent multiplexer for this repository. " +
@@ -40,7 +40,7 @@ export function buildAimuxAgentInstructions(
     "## Aimux Model\n" +
     "- The user controls aimux from the dashboard and tmux status/footer UI.\n" +
     "- Agents are normal tool processes running inside aimux-managed tmux windows.\n" +
-    "- Broad cross-agent coordination can use `.aimux/tasks/*.json` when explicitly asked to delegate or hand off work.\n" +
+    "- Broad cross-agent coordination uses aimux task, handoff, and thread commands backed by the runtime exchange.\n" +
     teamCoordinationLine +
     "\n" +
     "## Shared Context Files\n" +
@@ -56,8 +56,8 @@ export function buildAimuxAgentInstructions(
     "\n" +
     "## Delegation Protocol\n" +
     delegationProtocol +
-    "Optional fields are `assignedTo` for a specific session ID and `tool` for coordination metadata. Treat task files as shared handoff records for explicit manual coordination flows.\n" +
-    "When you accept a task file, complete it and mark the task `done` with `result`, or `failed` with `error`."
+    "Optional fields are `assignedTo` for a specific session ID and `tool` for coordination metadata. Treat tasks as shared handoff records for explicit manual coordination flows.\n" +
+    "When you accept a task, complete it and mark the task `done` with `result`, or `failed` with `error`."
   );
 }
 
