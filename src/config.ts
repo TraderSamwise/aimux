@@ -40,7 +40,7 @@ export interface StatuslineConfig {
 }
 
 export interface RuntimeConfig {
-  /** Whether aimux injects automatic session preamble / kickoff instructions. */
+  /** Whether aimux injects automatic session preamble instructions. */
   agentPreambleEnabled: boolean;
   tmux: TmuxRuntimeConfig;
 }
