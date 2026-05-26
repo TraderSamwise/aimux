@@ -363,6 +363,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
   async stopAgent(sessionId) {
     const runtime = (this as any).sessions?.find?.((session: any) => session.id === sessionId);
     if (runtime) {
+      if ((this as any).graveyardAfterStopSessionIds?.has?.(sessionId)) {
+        throw new Error(`Session "${sessionId}" is being sent to graveyard`);
+      }
       if ((this as any).stoppingSessionIds?.has?.(sessionId)) {
         return { sessionId, status: "offline" };
       }
@@ -382,10 +385,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       return { sessionId, status: "offline" };
     }
     if (existing && isLiveTopologyStatus(existing.status)) {
-      upsertTopologySession({ ...existing, lifecycle: "offline" }, "offline");
-      cacheOfflineSession(this, { ...existing, lifecycle: "offline", status: "offline" });
-      refreshLifecycleViews(this);
-      return { sessionId, status: "offline" };
+      throw new Error(`Session "${sessionId}" is live but not owned by this runtime`);
     }
     if (existing?.status === "graveyard") {
       throw new Error(`Session "${sessionId}" is already in graveyard`);
@@ -399,6 +399,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
       runtime || isLiveTopologyStatus(existing?.status) ? "running" : "offline";
     if (existing?.status === "graveyard") {
       return { sessionId, status: "graveyard", previousStatus };
+    }
+    if (!runtime && existing && isLiveTopologyStatus(existing.status)) {
+      throw new Error(`Session "${sessionId}" is live but not owned by this runtime`);
     }
     if (runtime && !existing) {
       upsertTopologySession(runtimeToTopologySessionState(this, runtime), "running");

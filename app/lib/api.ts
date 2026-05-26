@@ -488,7 +488,7 @@ export async function removeWorktree(
   return callProjectJson(endpoint, "POST", "/worktrees/remove", opts, { path });
 }
 
-// ── Worktrees, graveyard, threads (list-only for v1) ────────────────────
+// ── Worktrees, graveyard, threads ───────────────────────────────────────
 
 export interface WorktreesResponse {
   ok: boolean;
@@ -529,6 +529,14 @@ export async function listGraveyard(
   opts?: ApiOpts,
 ): Promise<GraveyardResponse> {
   return callProjectJson<GraveyardResponse>(endpoint, "GET", "/graveyard", opts);
+}
+
+export async function resurrectGraveyardAgent(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  opts?: ApiOpts,
+): Promise<{ ok: boolean; sessionId: string; status: "offline" }> {
+  return callProjectJson(endpoint, "POST", "/graveyard/resurrect", opts, { sessionId });
 }
 
 export async function listThreads(
