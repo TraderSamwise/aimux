@@ -773,14 +773,14 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
 | `compactCommand` | Shell command for LLM-powered history compaction |
 | `instructionsFile` | File to write preamble to (for tools without system prompt flags) |
 
-## Multi-Instance
+## Multi-Client Runtime
 
-Run aimux in multiple terminal tabs for the same project. Each instance registers in `.aimux/instances.json` with a heartbeat. Session lifecycle and ownership stay in runtime topology; `instances.json` is liveness-only.
+Run aimux in multiple terminal tabs or through the dashboard for the same project. Session lifecycle, ownership, graveyard state, and exact resume identity live in runtime topology.
 
-- Remote takeover through `instances.json` is disabled pending the runtime core replacement.
-- `--resume` no longer uses instance-registry session refs for ownership decisions.
-- When an instance exits, its agents become offline and visible to other instances
-- Dead instances are auto-pruned via PID checks and heartbeat staleness
+- `.aimux/instances.json` is legacy and is not an active liveness or ownership source.
+- Remote/share presence belongs to relay/share transport state unless explicitly mirrored from topology.
+- `--resume` does not use instance-registry session refs for ownership decisions.
+- When a runtime exits, topology-backed offline rows keep agents visible to other clients.
 
 ## Agent Lifecycle
 
