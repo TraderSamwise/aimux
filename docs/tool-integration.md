@@ -116,6 +116,7 @@ Each new tool should define as many of these as it can support:
 - `promptPatterns`
 - `turnPatterns`
 - `instructionsFile`
+- `developerInstructionsConfigKey`
 
 ## What A Good Integration Needs
 
@@ -146,23 +147,15 @@ At minimum:
 
 ## Current State
 
-## Prompt Delivery
+## Startup Instructions
 
-Prompt injection is a shared runtime concern, not a per-feature detail.
+Standing startup instructions should use a model-visible configuration or system/developer prompt channel whenever the tool provides one.
 
-Production code that pushes text into a tmux-backed agent and expects it to run must be implemented in the runtime core replacement. Do not reintroduce the removed raw-input HTTP path.
+Codex uses `-c developer_instructions=...` for fresh sessions, teammate sessions, forks, and migrations. Aimux also writes a managed block into the configured `instructionsFile` such as `AGENTS.md`; user-authored content outside that block is preserved.
 
-Do not add new production paths that call `session.write(prompt + "\r")`, plain tmux `Enter`, or ad hoc delayed submits. Those paths can paste into Codex without actually submitting, especially when Codex collapses a large prompt into `[Pasted Content ...]`.
+Do not reintroduce Codex startup prompt injection through tmux typing, delayed submits, or `session.write(prompt + "\r")`. Those paths can paste into Codex without actually submitting, especially when Codex collapses a large prompt into `[Pasted Content ...]`.
 
-The shared delivery path owns:
-
-- Codex single-line submit normalization
-- waiting for the draft or pasted-content marker to appear
-- waiting for the draft to stabilize before submitting
-- raw carriage-return submission
-- bounded retry when the draft remains visible after submit
-
-Raw `session.write(prompt + "\r")` should only remain in non-tmux fallbacks or tests/standalone adapters that are not driving a live tmux pane.
+If the Codex developer-instructions key is disabled with `developerInstructionsConfigKey: null`, aimux does not fall back to prompt injection. It relies on the managed instruction file instead. Verify a local Codex install with `yarn verify:codex-instructions`.
 
 ### Codex
 
@@ -170,19 +163,15 @@ Raw `session.write(prompt + "\r")` should only remain in non-tmux fallbacks or t
 - prompt detection: yes
 - tmux snapshot continuity: yes
 - aimux fallback continuity: yes
-- clean startup handoff flag: no
+- clean startup handoff flag: yes, through `developer_instructions`
 - audit note:
   - native resume is the preferred path
   - tmux-backed sessions can still lack structured `history/*.jsonl` or `live.md`, so the pane-snapshot fallback remains important
   - `fork` therefore uses:
     - detached tmux spawn
     - seeded `.aimux/context/...` and `.aimux/plans/...` files
-    - an auto-submitted first-turn kickoff prompt
-  - that kickoff path is timing-sensitive and must be tested live if touched
-  - do not assume Codex fork startup behaves like Claude preamble startup
-  - do not submit Codex injected prompts with plain tmux `Enter`; use the shared aimux submit path that waits for the visible draft/pasted-content marker and sends raw carriage return
-  - keep Codex injected prompts single-line before submission; multiline pasted drafts are materially less reliable than the startup kickoff shape
-  - this applies to every retained push-injection path, not just fork/migrate: fresh preamble kickoff and future explicit prompt pushes must go through the same hardened submit logic
+    - continuity instructions passed through `developer_instructions`
+  - do not assume the managed `AGENTS.md` fallback carries per-session fork/migration context; the config channel is the durable path for that context
 
 ### Claude
 
@@ -225,11 +214,11 @@ When changing continuity code, verify all three of these separately:
 Do not assume that fixing one path fixes the others:
 
 - Claude fork uses preamble injection
-- Codex fork uses a startup kickoff flow
+- Codex fork uses developer instructions plus seeded continuity artifacts
 - Codex migrate usually uses native backend resume
 - Claude targeted restore uses native backend resume; fork/migrate still use aimux-owned continuity for handoff context
 
-When changing prompt injection code, verify injected prompts are actually submitted, not merely pasted into the input buffer. For Codex, the failure mode is a visible `[Pasted Content ...]` draft or expanded prompt text that never starts running.
+When changing Codex startup instruction code, verify the installed Codex CLI still exposes `developer_instructions` as developer-visible prompt input with `yarn verify:codex-instructions`.
 
 Also keep the ownership boundary clear:
 

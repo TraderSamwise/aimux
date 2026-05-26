@@ -607,7 +607,7 @@ Tool behavior differs:
   - targeted dashboard restore must use that exact id or fail loudly; it must not fall back to `--continue`
 - `Codex`
   - supports backend-session-id resume, so `migrate` usually takes the native resume path
-  - does **not** currently have a clean startup handoff flag, so `fork` uses seeded files plus an auto-submitted first-turn kickoff
+  - uses `developer_instructions` for clean startup and fork/migration continuity, with seeded files as durable carried-over context
 
 For deeper details, see [docs/tool-integration.md](docs/tool-integration.md).
 
@@ -755,7 +755,8 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
       "promptPatterns": ["^> $", "^\\$ $"],
       "turnPatterns": ["^[>❯]\\s*(.+)"],
       "compactCommand": "claude --print --output-format text",
-      "instructionsFile": "AGENTS.md"
+      "instructionsFile": "AGENTS.md",
+      "developerInstructionsConfigKey": "developer_instructions"
     }
   }
 }
@@ -771,7 +772,14 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
 | `promptPatterns` | Regex patterns for idle/prompt detection in status bar |
 | `turnPatterns` | Regex patterns for extracting conversation turns from output |
 | `compactCommand` | Shell command for LLM-powered history compaction |
-| `instructionsFile` | File to write preamble to (for tools without system prompt flags) |
+| `instructionsFile` | File to merge aimux's managed standing instructions into; user-authored content outside the managed block is preserved |
+| `developerInstructionsConfigKey` | Codex config key for model-visible standing instructions, normally `developer_instructions`; set to `null` to rely only on `instructionsFile` |
+
+Codex startup instructions use `-c developer_instructions=...` when configured, with `AGENTS.md` as the durable file fallback. Verify the installed Codex CLI exposes that channel with:
+
+```bash
+yarn verify:codex-instructions
+```
 
 ## Multi-Client Runtime
 

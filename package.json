@@ -36,6 +36,7 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "verify": "yarn typecheck && yarn lint && yarn test",
+    "verify:codex-instructions": "bash scripts/verify-codex-developer-instructions.sh",
     "release:asset": "bash scripts/build-release-asset.sh",
     "release:patch": "yarn version --patch && git push --follow-tags",
     "release:minor": "yarn version --minor && git push --follow-tags",

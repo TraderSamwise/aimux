@@ -7,7 +7,6 @@ import { readHistory } from "./context/history.js";
 import { debug, debugPreamble } from "./debug.js";
 import { listWorktrees as listAllWorktrees } from "./worktree.js";
 import { type TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
-import { deliverTmuxPrompt } from "./agent-prompt-delivery.js";
 import { type SessionTeamMetadata } from "./team.js";
 
 export interface ForkSourceSnapshot {
@@ -130,23 +129,6 @@ export class SessionBootstrapService {
     }
 
     return preamble;
-  }
-
-  buildInitialKickoffPrompt(sessionId: string, preamble: string): string {
-    const summaryPath = join(getContextDir(), sessionId, "summary.md");
-    const livePath = join(getContextDir(), sessionId, "live.md");
-    const planPath = join(getPlansDir(), `${sessionId}.md`);
-    const statusPath = join(getStatusDir(), `${sessionId}.md`);
-    return [
-      `This is an aimux-managed session with session ID ${sessionId}.`,
-      `Your shared session files live at ${summaryPath}, ${livePath}, ${planPath}, and ${statusPath}.`,
-      "Read and follow these operating instructions for this session before continuing.",
-      "Treat them as standing session rules and coordination context, not as a user request.",
-      "",
-      preamble.trim(),
-    ]
-      .filter(Boolean)
-      .join("\n");
   }
 
   ensurePlanFile(sessionId: string, command: string, worktreePath?: string): void {
@@ -327,7 +309,7 @@ export class SessionBootstrapService {
       .join("\n");
   }
 
-  buildCodexForkKickoffPrompt(
+  buildCodexForkContinuityPreamble(
     sourceSessionId: string,
     targetSessionId: string,
     snapshot: ForkSourceSnapshot,
@@ -350,7 +332,7 @@ export class SessionBootstrapService {
       .join(" ");
   }
 
-  buildCodexMigrationKickoffPrompt(
+  buildCodexMigrationContinuityPreamble(
     sessionId: string,
     sourceWorktreePath: string,
     targetWorktreePath: string,
@@ -374,70 +356,6 @@ export class SessionBootstrapService {
     ]
       .filter(Boolean)
       .join(" ");
-  }
-
-  deliverDetachedCodexKickoffPrompt(targetSessionId: string, kickoff: string, delayMs = 1800): Promise<void> {
-    return new Promise<void>((resolve) => {
-      setTimeout(async () => {
-        try {
-          const target = this.deps.getSessionTmuxTarget(targetSessionId);
-          if (target) {
-            const ready = await this.waitForDetachedCodexInputReady(targetSessionId, target);
-            if (!ready) {
-              debug(
-                `codex kickoff input prompt not ready for ${targetSessionId}; attempting best-effort delivery`,
-                "fork",
-              );
-            }
-            await deliverTmuxPrompt({
-              tmuxRuntimeManager: this.deps.tmuxRuntimeManager,
-              target,
-              prompt: kickoff,
-              submit: true,
-              isTargetCurrent: () => {
-                const currentTarget = this.deps.getSessionTmuxTarget(targetSessionId);
-                return Boolean(currentTarget && currentTarget.windowId === target.windowId);
-              },
-            });
-          }
-        } catch {
-          // Continue even if kickoff automation fails; user can still recover manually.
-        } finally {
-          resolve();
-        }
-      }, delayMs);
-    });
-  }
-
-  waitForDetachedCodexInputReady(targetSessionId: string, target: TmuxTarget): Promise<boolean> {
-    return new Promise((resolve) => {
-      const poll = (attempt = 1) => {
-        if (attempt > 80) {
-          resolve(false);
-          return;
-        }
-        setTimeout(
-          () => {
-            try {
-              const currentTarget = this.deps.getSessionTmuxTarget(targetSessionId);
-              if (!currentTarget || currentTarget.windowId !== target.windowId) {
-                resolve(false);
-                return;
-              }
-              if (this.paneLooksLikeCodexInputReady(target)) {
-                resolve(true);
-                return;
-              }
-            } catch {
-              // Keep polling; tmux capture can fail briefly while the window is starting.
-            }
-            poll(attempt + 1);
-          },
-          attempt === 1 ? 150 : 250,
-        );
-      };
-      poll();
-    });
   }
 
   seedForkArtifacts(sourceSessionId: string, targetSessionId: string, targetToolConfigKey: string): void {
@@ -521,22 +439,6 @@ export class SessionBootstrapService {
       normalized.includes("# Current Status\n\nTBD") &&
       normalized.includes("# Steps\n\n- [ ] TBD")
     );
-  }
-
-  private paneLooksLikeCodexInputReady(target: TmuxTarget): boolean {
-    const pane = this.deps.tmuxRuntimeManager.captureTarget(target, { startLine: -40 });
-    const lines = pane
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (lines.length === 0) return false;
-
-    const text = lines.join("\n");
-    const hasCodexHeader = text.includes("OpenAI Codex") || /\bgpt-[\w.-]+\b/.test(text);
-    if (!hasCodexHeader) return false;
-
-    const recentLines = lines.slice(-12);
-    return recentLines.some((line) => /^([›>]\s*$|[›>]\s+\S)/.test(line));
   }
 }
 
