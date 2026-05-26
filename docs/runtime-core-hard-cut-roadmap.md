@@ -4,8 +4,8 @@ This document tracks the long-haul effort to move aimux to one authoritative run
 
 ## Target End State
 
-- Runtime topology owns agents, services, worktrees, bindings, teams, lifecycle, graveyard, and remote ownership/presence.
-- Runtime exchange owns messages, handoffs, tasks, reviews, waits, and inbox/routing semantics.
+- Runtime topology owns agents, services, worktrees, bindings, teams, lifecycle, graveyard, and remote ownership/presence. Relay security/share stores remain relay-owned transport/security policy authority unless they are explicitly mirrored from topology.
+- Runtime exchange owns messages, handoffs, tasks, reviews, plans or plan references, attachments or attachment references, waits, continuity context, and inbox/routing semantics.
 - Project service, GUI, CLI, and tmux controls are clients over those authoritative models.
 - Metadata, notifications, statusline, and debug views are projections derived from topology and exchange state.
 - Remote access uses the same authoritative state and does not introduce a separate lifecycle or presence authority.
@@ -15,7 +15,7 @@ This document tracks the long-haul effort to move aimux to one authoritative run
 
 Already moved or partially moved:
 
-- Agent lifecycle and graveyard are topology-backed through runtime topology session status.
+- Agent lifecycle and graveyard storage are partially topology-backed through runtime topology session status; public resurrection paths still require the runtime-core replacement.
 - Live tmux bindings are represented in topology bindings.
 - Backend session ids for exact resume live in topology session records.
 - Team metadata is carried on topology-backed session records.
@@ -44,6 +44,7 @@ Build a complete source-of-truth matrix for every domain:
 - agent graveyard
 - worktree graveyard
 - threads
+- plans
 - tasks
 - reviews
 - handoffs
@@ -127,8 +128,12 @@ Move coordination authority into a topology-backed or sibling runtime exchange m
 
 - direct messages
 - handoffs
+- plans and plan ownership
 - task assignment
 - review tasks
+- history/context continuity
+- status-file handoff semantics
+- attachment payload references
 - waiting/busy states
 - inbox/routing semantics
 - task/thread links
@@ -157,6 +162,7 @@ Audit and align every external surface:
 - `/services/*`
 - `/worktrees/*`
 - `/threads/*`
+- `/plans/*`
 - `/tasks/*`
 - `/workflow/*`
 - CLI commands
@@ -184,7 +190,7 @@ Do not restore `instances.json`-style lifecycle shadow authority. If a presence 
 Provide a safe migration path:
 
 - import current runtime state files
-- import or project existing threads/tasks/history
+- import or project existing threads/tasks/plans/history/context/recordings/status/attachments
 - preserve graveyard entries
 - detect corrupt or partial state
 - write rollback/debug tooling
