@@ -234,14 +234,14 @@ It does not mean:
 
 ## State Split
 
-Repo-local `.aimux/` remains the agent-facing shared contract:
+Repo-local `.aimux/` remains the agent-facing shared contract for durable artifacts agents can inspect directly:
 
 - plans
 - context
 - history
-- threads
-- tasks
 - sessions discovery artifacts
+
+Runtime exchange owns threads, tasks, handoffs, reviews, workflow state, and notification records. Legacy repo-local thread/task files are import or compatibility inputs only; new external reads and writes should go through exchange-backed APIs.
 
 Global `~/.aimux/projects/<project-id>/...` remains runtime-private project state.
 
