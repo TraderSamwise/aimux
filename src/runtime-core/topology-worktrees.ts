@@ -209,6 +209,53 @@ export function deleteTopologyWorktreeGraveyardEntry(
   return deleted;
 }
 
+export function resurrectTopologyWorktreeFromGraveyard(
+  path: string,
+  input?: { store?: RuntimeTopologyStore; now?: string; projectRoot?: string },
+): RuntimeTopologyWorktreeState | undefined {
+  const store = input?.store ?? createRuntimeTopologyStore();
+  const now = input?.now ?? new Date().toISOString();
+  const projectRoot = input?.projectRoot ?? getRepoRoot();
+  let resurrected: RuntimeTopologyWorktreeState | undefined;
+  store.update((current) => {
+    const topology = current.version ? current : emptyRuntimeTopology(now);
+    topology.generatedAt = now;
+    const rigId = ensureRig(topology, projectRoot, now);
+    const graveyardEntry = topology.worktreeGraveyard.find((entry) => entry.path === path && !entry.deletedAt);
+    if (!graveyardEntry) return topology;
+    const existing = topology.worktrees.find(
+      (worktree) => worktree.id === graveyardEntry.worktreeId || worktree.path === path,
+    );
+    if (existing) {
+      existing.rigId = rigId;
+      existing.path = path;
+      existing.name = existing.name ?? graveyardEntry.name;
+      existing.branch = existing.branch ?? graveyardEntry.branch;
+      existing.status = "active";
+      existing.updatedAt = now;
+      delete existing.removedAt;
+      resurrected = topologyWorktreeToWorktreeState(existing);
+    } else {
+      const next = worktreeToTopologyWorktree(
+        {
+          path,
+          name: graveyardEntry.name,
+          branch: graveyardEntry.branch,
+          createdAt: graveyardEntry.graveyardedAt,
+        },
+        rigId,
+        "active",
+        now,
+      );
+      topology.worktrees.push(next);
+      resurrected = topologyWorktreeToWorktreeState(next);
+    }
+    topology.worktreeGraveyard = topology.worktreeGraveyard.filter((entry) => entry.path !== path);
+    return topology;
+  });
+  return resurrected;
+}
+
 export function removeTopologyWorktree(
   path: string,
   input?: { store?: RuntimeTopologyStore; now?: string },

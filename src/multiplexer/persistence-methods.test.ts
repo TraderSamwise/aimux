@@ -65,7 +65,12 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { getStatePath, initPaths } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
 import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
-import { listTopologyWorktreeGraveyard, listTopologyWorktreeStates } from "../runtime-core/topology-worktrees.js";
+import {
+  listTopologyWorktreeGraveyard,
+  listTopologyWorktreeStates,
+  moveTopologyWorktreeToGraveyard,
+  upsertTopologyWorktree,
+} from "../runtime-core/topology-worktrees.js";
 
 describe("persistenceMethods", () => {
   let pathsRoot = "";
@@ -569,6 +574,26 @@ describe("persistenceMethods", () => {
 
     expect(listTopologyWorktreeStates({ statuses: ["graveyard"] })).toMatchObject([{ path: worktreePath }]);
     expect(listTopologyWorktreeGraveyard()).toMatchObject([{ path: worktreePath, name: "demo" }]);
+  });
+
+  it("resurrects topology worktree graveyard entries", async () => {
+    const worktreePath = "/repo/.aimux/worktrees/demo";
+    upsertTopologyWorktree({ path: worktreePath, name: "demo", branch: "demo" }, "active");
+    moveTopologyWorktreeToGraveyard(worktreePath);
+    const host = {
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(persistenceMethods.resurrectGraveyardWorktree.call(host, worktreePath)).resolves.toEqual({
+      path: worktreePath,
+      status: "active",
+    });
+
+    expect(listTopologyWorktreeGraveyard()).toEqual([]);
+    expect(listTopologyWorktreeStates({ statuses: ["active"] })).toMatchObject([{ path: worktreePath }]);
+    expect(host.metadataServer.notifyChange).toHaveBeenCalled();
   });
 
   it("does not detach worktree services when graveyarding is blocked by a live agent", async () => {
