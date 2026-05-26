@@ -6,7 +6,7 @@ import { getRuntimeExchangePath } from "../paths.js";
 export const RUNTIME_EXCHANGE_VERSION = 1;
 const UPDATE_LOCK_TIMEOUT_MS = 5_000;
 const UPDATE_LOCK_RETRY_MS = 25;
-const UPDATE_LOCK_STALE_MS = 1_000;
+const UPDATE_LOCK_STALE_MS = UPDATE_LOCK_TIMEOUT_MS - 1_000;
 
 export type RuntimeExchangeThreadKind = "conversation" | "task" | "review" | "handoff" | "user";
 export type RuntimeExchangeThreadStatus = "open" | "waiting" | "blocked" | "done" | "abandoned";
@@ -597,13 +597,17 @@ export class RuntimeExchangeStore {
   }
 
   private recoverStaleUpdateLock(lockPath: string): boolean {
+    const ownerPath = join(lockPath, "owner");
     try {
-      const ownerPid = Number.parseInt(readFileSync(join(lockPath, "owner"), "utf-8").trim(), 10);
-      if (Number.isFinite(ownerPid) && ownerPid > 0 && !isProcessAlive(ownerPid)) {
+      const ownerPid = Number.parseInt(readFileSync(ownerPath, "utf-8").trim(), 10);
+      if (Number.isFinite(ownerPid) && ownerPid > 0) {
+        if (isProcessAlive(ownerPid)) return false;
         rmSync(lockPath, { recursive: true, force: true });
         return true;
       }
-    } catch {}
+    } catch {
+      if (existsSync(ownerPath)) return false;
+    }
 
     try {
       if (Date.now() - statSync(lockPath).mtimeMs > UPDATE_LOCK_STALE_MS) {
