@@ -2527,10 +2527,6 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.renameAgent(body);
-        updateSessionMetadata(body.sessionId, (current) => ({
-          ...current,
-          label: body.label?.trim() || undefined,
-        }));
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;

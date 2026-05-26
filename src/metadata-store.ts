@@ -78,7 +78,6 @@ export interface SessionDerivedMetadata extends SessionDerivedState {
 }
 
 export interface SessionMetadata {
-  label?: string;
   status?: SessionStatusMetadata;
   progress?: SessionProgressMetadata;
   logs?: SessionLogEntry[];
@@ -129,12 +128,13 @@ function saveJson(path: string, value: unknown): void {
   writeJsonAtomic(path, value);
 }
 
-function scrubBackendSessionIds(state: MetadataState): MetadataState {
+function scrubProjectionAuthorityFields(state: MetadataState): MetadataState {
   const sessions = (state as { sessions?: unknown }).sessions;
   if (!sessions || typeof sessions !== "object") return state;
   for (const session of Object.values(sessions as Record<string, unknown>)) {
     if (session && typeof session === "object") {
       delete (session as { backendSessionId?: unknown }).backendSessionId;
+      delete (session as { label?: unknown }).label;
     }
   }
   return state;
@@ -142,11 +142,11 @@ function scrubBackendSessionIds(state: MetadataState): MetadataState {
 
 export function loadMetadataState(projectRoot?: string): MetadataState {
   const state = loadJson<MetadataState>(metadataPathFor(projectRoot), { version: 1, sessions: {} });
-  return scrubBackendSessionIds(state);
+  return scrubProjectionAuthorityFields(state);
 }
 
 export function saveMetadataState(state: MetadataState, projectRoot?: string): void {
-  saveJson(metadataPathFor(projectRoot), scrubBackendSessionIds(state));
+  saveJson(metadataPathFor(projectRoot), scrubProjectionAuthorityFields(state));
 }
 
 export function updateSessionMetadata(

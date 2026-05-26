@@ -138,13 +138,14 @@ describe("buildDebugStateReport", () => {
     expect(snapshot([...before.keys()])).toEqual(before);
   });
 
-  it("does not resolve backend session ids from stale metadata projection fields", () => {
+  it("does not resolve topology-owned identity from stale metadata projection fields", () => {
     const paths = makePaths();
     writeJson(paths.metadataPath, {
       version: 1,
       sessions: {
         "codex-stale": {
           backendSessionId: "backend-stale",
+          label: "stale-label",
           context: { worktreePath: "/repo/worktree-a" },
         },
       },
@@ -159,6 +160,16 @@ describe("buildDebugStateReport", () => {
 
     expect(report.targetResolution.status).toBe("missing");
     expect(report.sources.metadata.value?.sessions).toEqual([]);
+
+    const labelReport = buildDebugStateReport({
+      target: "stale-label",
+      paths,
+      tmuxWindows: [],
+      worktrees: [],
+    });
+
+    expect(labelReport.targetResolution.status).toBe("missing");
+    expect(labelReport.sources.metadata.value?.sessions).toEqual([]);
   });
 
   it("matches service and worktree sources", () => {

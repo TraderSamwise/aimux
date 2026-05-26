@@ -15,6 +15,7 @@ This document records the cut line for metadata, notification context, statuslin
 It must not store or resolve:
 
 - backend session ids
+- session labels or other topology-owned identity
 - lifecycle status
 - runtime ownership or presence
 - authoritative worktree status
