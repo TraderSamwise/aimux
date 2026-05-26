@@ -157,6 +157,8 @@ rg -n "unreadNotificationCount|summarizeUnreadNotificationsBySession|markNotific
 
 ## Projections
 
+Projection contract: [runtime-projection-contract.md](runtime-projection-contract.md).
+
 Audit commands:
 
 ```bash
