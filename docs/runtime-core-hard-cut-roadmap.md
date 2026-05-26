@@ -153,6 +153,8 @@ Demote metadata and notifications to projections:
 - hidden lifecycle and backend identity fields are permanently absent from metadata
 - debug-state clearly labels authority versus projection
 
+Projection contract: [runtime-projection-contract.md](runtime-projection-contract.md).
+
 ### 7. GUI, Project-Service, And CLI Consistency Sweep
 
 Audit and align every external surface:

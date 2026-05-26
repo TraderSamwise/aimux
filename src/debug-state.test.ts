@@ -130,9 +130,35 @@ describe("buildDebugStateReport", () => {
     expect(report.targetResolution.entityCount).toBe(1);
     expect(report.sources.savedState.value).not.toHaveProperty("sessions");
     expect(report.sources.runtimeTopology.value?.sessions).toHaveLength(1);
-    expect(report.sources.metadata.value?.sessions).toHaveLength(1);
+    expect(report.sources.metadata.value?.sessions).toHaveLength(0);
+    expect(report.sourceRoles.runtimeTopology.role).toBe("authority");
+    expect(report.sourceRoles.metadata.role).toBe("projection");
+    expect(report.sourceRoles.metadata.note).toContain("backend identity fields are ignored");
     expect(report.sources.tmux.value?.windows).toHaveLength(1);
     expect(snapshot([...before.keys()])).toEqual(before);
+  });
+
+  it("does not resolve backend session ids from stale metadata projection fields", () => {
+    const paths = makePaths();
+    writeJson(paths.metadataPath, {
+      version: 1,
+      sessions: {
+        "codex-stale": {
+          backendSessionId: "backend-stale",
+          context: { worktreePath: "/repo/worktree-a" },
+        },
+      },
+    });
+
+    const report = buildDebugStateReport({
+      target: "backend-stale",
+      paths,
+      tmuxWindows: [],
+      worktrees: [],
+    });
+
+    expect(report.targetResolution.status).toBe("missing");
+    expect(report.sources.metadata.value?.sessions).toEqual([]);
   });
 
   it("matches service and worktree sources", () => {
