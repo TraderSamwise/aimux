@@ -135,8 +135,13 @@ Project-service HTTP now exposes the live orchestration surface, including:
 
 - `GET /events` (SSE project event stream)
 - `GET /workflow`
+- `GET /notifications`
 - `GET /threads`
 - `GET /threads/:id`
+- `GET /tasks`
+- `GET /tasks/:id`
+- `POST /notifications/read`
+- `POST /notifications/clear`
 - `POST /threads/open`
 - `POST /threads/send`
 - `POST /threads/mark-seen`
@@ -151,6 +156,10 @@ Project-service HTTP now exposes the live orchestration surface, including:
 - `POST /tasks/reopen`
 - `POST /reviews/approve`
 - `POST /reviews/request-changes`
+- `POST /worktrees/remove`
+- `POST /worktrees/graveyard`
+- `POST /graveyard/worktrees/resurrect`
+- `POST /graveyard/worktrees/delete`
 
 Project-service HTTP also exposes low-latency tmux control helpers:
 
@@ -182,6 +191,10 @@ aimux graveyard send <sessionId> --project /abs/path/to/repo --json
 aimux graveyard resurrect <sessionId> --project /abs/path/to/repo --json
 aimux worktree list --project /abs/path/to/repo --json
 aimux worktree create feature-x --project /abs/path/to/repo --json
+aimux worktree remove /abs/path/to/worktree --project /abs/path/to/repo --json
+aimux worktree graveyard /abs/path/to/worktree --project /abs/path/to/repo --json
+aimux worktree resurrect /abs/path/to/worktree --project /abs/path/to/repo --json
+aimux worktree delete-graveyard /abs/path/to/worktree --project /abs/path/to/repo --json
 desktop terminal focus uses the same shell transport with the project-scoped `tmuxWindowId` from `desktop-state`
 ```
 
@@ -228,14 +241,14 @@ It does not mean:
 
 ## State Split
 
-Repo-local `.aimux/` remains the agent-facing shared contract:
+Repo-local `.aimux/` remains the agent-facing shared contract for durable artifacts agents can inspect directly:
 
 - plans
 - context
 - history
-- threads
-- tasks
 - sessions discovery artifacts
+
+Runtime exchange owns threads, tasks, handoffs, reviews, workflow state, and notification records. Legacy repo-local thread/task files are import or compatibility inputs only; new external reads and writes should go through exchange-backed APIs.
 
 Global `~/.aimux/projects/<project-id>/...` remains runtime-private project state.
 

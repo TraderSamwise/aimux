@@ -43,17 +43,17 @@ Supplementary desktop views can read directly from project-service HTTP too:
 
 - `GET /workflow` for activity-style workflow/task feeds
 - `GET /threads` and `GET /threads/:id` for thread browsing
+- `GET /tasks` and `GET /tasks/:id` for task browsing
 - `GET /graveyard` for graveyard browsing
 - `GET /events` as SSE for ephemeral per-project alerts and other live push events
 
 Heartbeat is for reconciliation and external changes, not for action initiation.
 
-Desktop alerts should be treated as ephemeral event-stream UI, not persisted notifications:
+Desktop alerts and notification inbox state are separate surfaces:
 
-- subscribe to project-service SSE
-- render transient alert surfaces in-app
-- do not scrape files or poll CLI for alert delivery
-- do not build seen/dismissed notification state unless the product explicitly needs an inbox later
+- subscribe to project-service SSE for transient alert surfaces
+- use `GET /notifications`, `POST /notifications/read`, and `POST /notifications/clear` for the inbox/read-state surface
+- do not scrape files or poll CLI for alert delivery or inbox state
 
 ## Semantic Source Of Truth
 
@@ -96,7 +96,10 @@ Desktop actions should call awaited project-service endpoints:
 - `POST /agents/kill`
 - `POST /worktrees/create`
 - `POST /worktrees/remove`
+- `POST /worktrees/graveyard`
 - `POST /graveyard/resurrect`
+- `POST /graveyard/worktrees/resurrect`
+- `POST /graveyard/worktrees/delete`
 - `POST /threads/send`
 - `POST /threads/status`
 - `POST /handoff`

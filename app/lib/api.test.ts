@@ -5,17 +5,28 @@ vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 import {
   acceptShareInvite,
   clearNotifications,
+  createService,
+  createWorktree,
   createShareInvite,
+  deleteGraveyardWorktree,
   getShare,
   getAgentOutput,
+  getTask,
+  graveyardWorktree,
   leaveShare,
   listShares,
   listProjects,
   listNotifications,
+  listTasks,
   listThreads,
+  listWorkflow,
   markNotificationsRead,
+  removeService,
+  removeWorktree,
   removeShareParticipant,
   putPlan,
+  resurrectGraveyardWorktree,
+  resumeService,
   setApiRelay,
   stopService,
 } from "@/lib/api";
@@ -90,15 +101,68 @@ describe("api relay routing", () => {
     const request = installRelayMock({ ok: true, sessionId: "agent-1" });
 
     await putPlan(endpoint, "agent-1", "ship it");
+    await createService(endpoint, {
+      command: "yarn dev",
+      worktreePath: "/tmp/a",
+      serviceId: "svc-1",
+    });
     await stopService(endpoint, "svc-1");
+    await resumeService(endpoint, "svc-1");
+    await removeService(endpoint, "svc-1");
+    await createWorktree(endpoint, "feature/a");
+    await removeWorktree(endpoint, "/repo/feature/a");
+    await graveyardWorktree(endpoint, "/repo/feature/a");
+    await resurrectGraveyardWorktree(endpoint, "/repo/feature/a");
+    await deleteGraveyardWorktree(endpoint, "/repo/feature/a");
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(1, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
       content: "ship it",
     });
-    expect(request).toHaveBeenNthCalledWith(2, "POST", "/proxy/127.0.0.1/43210/services/stop", {
+    expect(request).toHaveBeenNthCalledWith(2, "POST", "/proxy/127.0.0.1/43210/services/create", {
+      command: "yarn dev",
+      worktreePath: "/tmp/a",
       serviceId: "svc-1",
     });
+    expect(request).toHaveBeenNthCalledWith(3, "POST", "/proxy/127.0.0.1/43210/services/stop", {
+      serviceId: "svc-1",
+    });
+    expect(request).toHaveBeenNthCalledWith(4, "POST", "/proxy/127.0.0.1/43210/services/resume", {
+      serviceId: "svc-1",
+    });
+    expect(request).toHaveBeenNthCalledWith(5, "POST", "/proxy/127.0.0.1/43210/services/remove", {
+      serviceId: "svc-1",
+    });
+    expect(request).toHaveBeenNthCalledWith(6, "POST", "/proxy/127.0.0.1/43210/worktrees/create", {
+      name: "feature/a",
+    });
+    expect(request).toHaveBeenNthCalledWith(7, "POST", "/proxy/127.0.0.1/43210/worktrees/remove", {
+      path: "/repo/feature/a",
+    });
+    expect(request).toHaveBeenNthCalledWith(
+      8,
+      "POST",
+      "/proxy/127.0.0.1/43210/worktrees/graveyard",
+      {
+        path: "/repo/feature/a",
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      9,
+      "POST",
+      "/proxy/127.0.0.1/43210/graveyard/worktrees/resurrect",
+      {
+        path: "/repo/feature/a",
+      },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      10,
+      "POST",
+      "/proxy/127.0.0.1/43210/graveyard/worktrees/delete",
+      {
+        path: "/repo/feature/a",
+      },
+    );
   });
 
   it("preserves optional list query parameters through the relay proxy", async () => {
@@ -107,6 +171,9 @@ describe("api relay routing", () => {
 
     await listThreads(endpoint, "agent/1");
     await listNotifications(endpoint, { unreadOnly: true, sessionId: "agent/1" });
+    await listWorkflow(endpoint, "codex/1");
+    await listTasks(endpoint, { sessionId: "agent/1", status: "pending" });
+    await getTask(endpoint, "task/1");
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(
@@ -119,6 +186,24 @@ describe("api relay routing", () => {
       2,
       "GET",
       "/proxy/127.0.0.1/43210/notifications?unread=1&sessionId=agent%2F1",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      3,
+      "GET",
+      "/proxy/127.0.0.1/43210/workflow?participant=codex%2F1",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      4,
+      "GET",
+      "/proxy/127.0.0.1/43210/tasks?session=agent%2F1&status=pending",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      5,
+      "GET",
+      "/proxy/127.0.0.1/43210/tasks/task%2F1",
       undefined,
     );
   });

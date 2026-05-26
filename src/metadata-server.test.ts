@@ -109,11 +109,32 @@ describe("MetadataServer threads API", () => {
     expect(listRes.ok).toBe(true);
     expect(summaries.some((summary) => summary.thread.id === opened.thread.id)).toBe(true);
 
+    const seenRes = await fetch(`${base}/threads/mark-seen`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: opened.thread.id, session: "codex-1" }),
+    });
+    const seen = (await seenRes.json()) as { thread: { unreadBy?: string[] } };
+    expect(seenRes.ok).toBe(true);
+    expect(seen.thread.unreadBy ?? []).not.toContain("codex-1");
+
     const showRes = await fetch(`${base}/threads/${opened.thread.id}`);
     const detail = (await showRes.json()) as { thread: { id: string }; messages: Array<{ body: string }> };
     expect(showRes.ok).toBe(true);
     expect(detail.thread.id).toBe(opened.thread.id);
     expect(detail.messages.at(-1)?.body).toContain("parser error path");
+  });
+
+  it("returns 400 for malformed encoded thread and task ids", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const threadRes = await fetch(`${base}/threads/%E0%A4%A`);
+    expect(threadRes.status).toBe(400);
+
+    const taskRes = await fetch(`${base}/tasks/%E0%A4%A`);
+    expect(taskRes.status).toBe(400);
   });
 
   it("creates handoffs and task assignments over HTTP", async () => {
@@ -1139,6 +1160,18 @@ describe("MetadataServer threads API", () => {
     });
     const task = (await taskRes.json()) as { task: { id: string } };
     expect(taskRes.ok).toBe(true);
+
+    const listRes = await fetch(`${base}/tasks?session=codex-1&status=pending`);
+    const list = (await listRes.json()) as { tasks: Array<{ id: string }> };
+    expect(listRes.ok).toBe(true);
+    expect(list.tasks.some((entry) => entry.id === task.task.id)).toBe(true);
+
+    const showRes = await fetch(`${base}/tasks/${task.task.id}`);
+    const show = (await showRes.json()) as { task: { id: string }; thread?: { id: string }; messages: unknown[] };
+    expect(showRes.ok).toBe(true);
+    expect(show.task.id).toBe(task.task.id);
+    expect(show.thread?.id).toBeTruthy();
+    expect(Array.isArray(show.messages)).toBe(true);
 
     const acceptRes = await fetch(`${base}/tasks/accept`, {
       method: "POST",
