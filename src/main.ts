@@ -119,6 +119,14 @@ import {
   listTopologyWorktreeGraveyard,
   listTopologyWorktreeGraveyardPaths,
 } from "./runtime-core/topology-worktrees.js";
+import {
+  buildRuntimeMigrationReport,
+  importRuntimeMigration,
+  renderRuntimeMigrationImportResult,
+  renderRuntimeMigrationReport,
+  renderRuntimeMigrationRollbackResult,
+  rollbackRuntimeMigration,
+} from "./runtime-migration.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -2983,6 +2991,36 @@ program
   .action((target: string) => {
     const report = buildDebugStateReport({ cwd: process.cwd(), target });
     console.log(renderDebugStateReport(report));
+  });
+
+const migrationCmd = program
+  .command("migration")
+  .description("Explicit runtime-core migration audit, import, and rollback tooling");
+
+migrationCmd
+  .command("audit")
+  .description("Inspect legacy runtime artifacts without mutating project state")
+  .option("--project <path>", "Project path", process.cwd())
+  .action((opts: { project: string }) => {
+    const projectRoot = resolveProjectRoot(pathResolve(opts.project));
+    console.log(renderRuntimeMigrationReport(buildRuntimeMigrationReport({ cwd: projectRoot })));
+  });
+
+migrationCmd
+  .command("import")
+  .description("Import legacy exchange artifacts into runtime-exchange.yaml with a rollback manifest")
+  .option("--project <path>", "Project path", process.cwd())
+  .action(async (opts: { project: string }) => {
+    const projectRoot = resolveProjectRoot(pathResolve(opts.project));
+    await initPaths(projectRoot);
+    console.log(renderRuntimeMigrationImportResult(importRuntimeMigration({ cwd: projectRoot })));
+  });
+
+migrationCmd
+  .command("rollback <manifest>")
+  .description("Restore files recorded by a runtime migration manifest")
+  .action((manifest: string) => {
+    console.log(renderRuntimeMigrationRollbackResult(rollbackRuntimeMigration(pathResolve(manifest))));
   });
 
 const logsCmd = program.command("logs").description("Inspect persistent aimux logs");

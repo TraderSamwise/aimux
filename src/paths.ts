@@ -13,7 +13,7 @@
 
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, basename, resolve, dirname, sep } from "node:path";
 import { homedir } from "node:os";
 
@@ -95,7 +95,6 @@ export async function initPaths(cwd?: string): Promise<void> {
   writeFileSync(join(projectDir, "project-root.txt"), `${_repoRoot}\n`);
 
   ensureLocalSharedDirs();
-  migrateAgentFacingStateToLocal();
 
   registerProject();
 }
@@ -331,28 +330,6 @@ function ensureLocalSharedDirs(): void {
   for (const subdir of ["plans", "context", "history", "status", "attachments"]) {
     mkdirSync(join(localDir, subdir), { recursive: true });
   }
-}
-
-function migrateDirIfNeeded(globalSubdir: string, localDir: string): void {
-  const source = join(getProjectStateDir(), globalSubdir);
-  if (!existsSync(source) || !existsSync(localDir)) return;
-  const hasLocalEntries = (() => {
-    try {
-      return readdirSync(localDir).length > 0;
-    } catch {
-      return false;
-    }
-  })();
-  if (hasLocalEntries) return;
-  try {
-    cpSync(source, localDir, { recursive: true, force: false });
-  } catch {}
-}
-
-function migrateAgentFacingStateToLocal(): void {
-  migrateDirIfNeeded("context", getContextDir());
-  migrateDirIfNeeded("history", getHistoryDir());
-  migrateDirIfNeeded("status", getStatusDir());
 }
 
 // ── Global non-project paths ───────────────────────────────────────
