@@ -333,7 +333,15 @@ export function buildRuntimeExchangeFromLegacySnapshot(input: RuntimeExchangeLeg
   return exchange;
 }
 
-export function importRuntimeExchangeFromLegacyFiles(input: { now?: string } = {}): RuntimeExchange {
+export function importRuntimeExchangeFromLegacyFiles(
+  input: {
+    now?: string;
+    additionalHistoryPaths?: string[];
+    additionalContextPaths?: string[];
+    additionalRecordingPaths?: string[];
+    additionalStatusPaths?: string[];
+  } = {},
+): RuntimeExchange {
   const now = input.now ?? new Date().toISOString();
   const threads = readLegacyThreads();
   return buildRuntimeExchangeFromLegacySnapshot({
@@ -342,10 +350,19 @@ export function importRuntimeExchangeFromLegacyFiles(input: { now?: string } = {
     messages: readLegacyMessages(threads.map((thread) => thread.id)),
     tasks: readLegacyTasks(),
     planPaths: listFiles(getPlansDir(), (name) => name.endsWith(".md")),
-    historyPaths: listFiles(getHistoryDir(), (name) => name.endsWith(".jsonl")),
-    contextPaths: listNestedFiles(getContextDir(), (name) => name.endsWith(".md") || name.endsWith(".jsonl")),
-    recordingPaths: listFiles(getRecordingsDir(), (name) => name.endsWith(".txt") || name.endsWith(".log")),
-    statusPaths: listFiles(getStatusDir(), (name) => name.endsWith(".md")),
+    historyPaths: [
+      ...listFiles(getHistoryDir(), (name) => name.endsWith(".jsonl")),
+      ...(input.additionalHistoryPaths ?? []),
+    ],
+    contextPaths: [
+      ...listNestedFiles(getContextDir(), (name) => name.endsWith(".md") || name.endsWith(".jsonl")),
+      ...(input.additionalContextPaths ?? []),
+    ],
+    recordingPaths: [
+      ...listFiles(getRecordingsDir(), (name) => name.endsWith(".txt") || name.endsWith(".log")),
+      ...(input.additionalRecordingPaths ?? []),
+    ],
+    statusPaths: [...listFiles(getStatusDir(), (name) => name.endsWith(".md")), ...(input.additionalStatusPaths ?? [])],
     attachments: readLegacyAttachments(),
   });
 }

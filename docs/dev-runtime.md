@@ -45,6 +45,15 @@ Override `AIMUX_RELAY_URL` when testing a preview or local relay.
 
 Repo-local `.aimux/` files still live inside each project checkout. Use a scratch project when testing destructive project workflows.
 
+Runtime-core migration commands are explicit and lane-aware:
+
+```sh
+aimux-dev migration audit --project /path/to/scratch-project
+aimux-dev migration import --project /path/to/scratch-project
+```
+
+`migration audit` is read-only. `migration import` writes only the selected project's state under the active `AIMUX_HOME` lane plus repo-local `.aimux/` files for that project, then records a rollback manifest under `migration-backups/`.
+
 ## Local GUI
 
 Run the isolated daemon:

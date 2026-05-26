@@ -211,6 +211,9 @@ rg -n "debug-state|runtimeTopology|metadata|notifications|graveyard|worktreeGrav
 
 - Keep debug state read-only and recomputable.
 - Keep compatibility code only as a named importer/exporter or fail-closed route.
+- Use `aimux migration audit` to inspect legacy exchange and agent-facing artifacts without side effects.
+- Use `aimux migration import` as the only allowed legacy exchange import path; it writes `runtime-exchange.yaml`, copies old global `context/history/status` directories only when local targets are empty, and records a rollback manifest under the project state directory.
+- Use `aimux migration rollback <manifest>` only after stopping the relevant runtime; rollback restores recorded backups and removes directories copied by the explicit import.
 - Remove silent dual writes after the importer exists.
 - Add tests that assert removed paths fail closed or no longer write.
 
