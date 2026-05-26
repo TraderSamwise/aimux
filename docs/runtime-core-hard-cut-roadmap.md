@@ -13,9 +13,10 @@ This document tracks the long-haul effort to move aimux to one authoritative run
 
 ## Current Cut Line
 
-Already moved or partially moved:
+Already moved:
 
-- Agent lifecycle and graveyard storage are partially topology-backed through runtime topology session status; public resurrection paths still require the runtime-core replacement.
+- Agent lifecycle public operations now route through the multiplexer lifecycle adapter instead of a disabled runtime-core placeholder.
+- Agent stop, kill/graveyard, resurrection, and duplicate-resume reconciliation are topology-backed through runtime topology session status.
 - Live tmux bindings are represented in topology bindings.
 - Backend session ids for exact resume live in topology session records.
 - Team metadata is carried on topology-backed session records.
@@ -24,6 +25,7 @@ Already moved or partially moved:
 
 Still not fully cut:
 
+- Agent lifecycle still has legacy cache/projection cleanup work around `offlineSessions`, `saveState()`, and restore helpers; those paths must remain non-authoritative.
 - Direct messages, handoffs, tasks, reviews, and waits still use the existing threads/tasks files as authoritative storage.
 - Notifications and metadata remain their own state/projection files.
 - Service lifecycle is not fully topology-owned.

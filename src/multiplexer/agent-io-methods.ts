@@ -3,7 +3,6 @@ import { sendHandoff } from "../orchestration-actions.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
 import type { DashboardSession } from "../dashboard/index.js";
 import type { MessageKind } from "../threads.js";
-import { disabledRuntimeCore } from "../runtime-core/index.js";
 import { stopProjectServices as stopProjectServicesImpl } from "./dashboard-model.js";
 import {
   applyDashboardSessionLabel as applyDashboardSessionLabelImpl,
@@ -14,6 +13,7 @@ import {
   readStatusHeadline as readStatusHeadlineImpl,
   resolveRunningSession as resolveRunningSessionImpl,
   updateSessionLabel as updateSessionLabelImpl,
+  interruptAgent as interruptAgentImpl,
 } from "./session-runtime-core.js";
 
 export const agentIoMethods = {
@@ -200,7 +200,7 @@ export const agentIoMethods = {
   },
 
   async interruptAgent(this: any, sessionId: string): Promise<{ sessionId: string }> {
-    return disabledRuntimeCore.interruptAgent({ sessionId });
+    return interruptAgentImpl(this, sessionId);
   },
 
   async readAgentOutput(this: any, sessionId: string, startLine?: number): Promise<any> {

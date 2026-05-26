@@ -725,10 +725,13 @@ describe("MetadataServer threads API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "child" }),
     });
-    expect(res.status).toBe(410);
+    expect(res.status).toBe(200);
     expect((await res.json()) as Record<string, unknown>).toMatchObject({
-      ok: false,
-      error: expect.stringContaining("runtime core replacement"),
+      ok: true,
+      parentSessionId: "parent",
+      teammateSessionId: "child",
+      sessionId: "child",
+      status: "offline",
     });
 
     const foreign = await fetch(`${base}/agents/teammates/resurrect`, {
@@ -737,9 +740,33 @@ describe("MetadataServer threads API", () => {
       body: JSON.stringify({ parentSessionId: "parent", teammateSessionId: "other-child" }),
     });
     const foreignBody = (await foreign.json()) as { ok: boolean; error: string };
-    expect(foreign.status).toBe(410);
-    expect(foreignBody.error).toContain("runtime core replacement");
-    expect(calls).toEqual([]);
+    expect(foreign.status).toBe(404);
+    expect(foreignBody.error).toContain("not attached");
+    expect(calls).toEqual(["resurrect:child"]);
+  });
+
+  it("passes graveyard resurrection over HTTP", async () => {
+    server?.stop();
+    const resurrectGraveyard = vi.fn(({ sessionId }) => ({ sessionId, status: "offline" as const }));
+    server = new MetadataServer({
+      desktop: { resurrectGraveyard },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/graveyard/resurrect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-old" }),
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, sessionId: "codex-old", status: "offline" });
+    expect(resurrectGraveyard).toHaveBeenCalledWith({ sessionId: "codex-old" });
   });
 
   it("passes reused teammate creation responses over HTTP", async () => {

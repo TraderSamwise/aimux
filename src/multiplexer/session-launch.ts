@@ -27,6 +27,11 @@ function listLaunchableTopologySessions(toolFilter?: string): any[] {
   return toolFilter ? sessions.filter((s: any) => s.tool === toolFilter || s.toolConfigKey === toolFilter) : sessions;
 }
 
+function reconcileLaunchableTopology(host: SessionLaunchHost): void {
+  host.syncSessionsFromTopology?.();
+  host.saveState?.();
+}
+
 const CODEX_OPTIONS_WITH_VALUE = new Set([
   "-a",
   "--add-dir",
@@ -266,6 +271,7 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
   initProject();
   await host.instanceDirectory.registerInstance(host.instanceId, process.cwd());
   host.startHeartbeat();
+  reconcileLaunchableTopology(host);
   const sessionsToResume = listLaunchableTopologySessions(toolFilter);
   if (sessionsToResume.length === 0) {
     console.error("No saved session state found (or state is stale). Starting fresh.");
@@ -329,6 +335,7 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
 
 export async function restoreSessions(host: SessionLaunchHost, toolFilter?: string): Promise<number> {
   initProject();
+  reconcileLaunchableTopology(host);
   const sessionsToRestore = listLaunchableTopologySessions(toolFilter);
   if (sessionsToRestore.length === 0) {
     console.error("No saved session state found (or state is stale). Starting fresh.");

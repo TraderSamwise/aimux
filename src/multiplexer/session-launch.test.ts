@@ -1088,6 +1088,72 @@ describe("resumeSessions", () => {
     error.mockRestore();
     rmSync(repoRoot, { recursive: true, force: true });
   });
+
+  it("reconciles live tmux state before selecting topology sessions to resume", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-resume-reconcile-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "codex-live",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          backendSessionId: "backend-live",
+          worktreePath: repoRoot,
+        },
+      ],
+      projectRoot: repoRoot,
+    });
+
+    class Host {
+      instanceId = "inst-1";
+      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
+      startHeartbeat = vi.fn();
+      syncSessionsFromTopology = vi.fn();
+      saveState = vi.fn(() => {
+        saveRuntimeTopologySessions({
+          sessions: [
+            {
+              id: "codex-live",
+              command: "codex",
+              tool: "codex",
+              toolConfigKey: "codex",
+              args: [],
+              lifecycle: "live",
+              backendSessionId: "backend-live",
+              worktreePath: repoRoot,
+            },
+          ],
+          projectRoot: repoRoot,
+        });
+      });
+      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
+      sessionBootstrap = {
+        canResumeWithBackendSessionId: vi.fn(() => true),
+        composeToolArgs: vi.fn(),
+      };
+      createSession = vi.fn();
+      openTmuxDashboardTarget = vi.fn();
+      runDashboard = vi.fn();
+    }
+
+    const host = new Host();
+
+    await resumeSessions(host as any);
+
+    expect(host.syncSessionsFromTopology.mock.invocationCallOrder[0]).toBeLessThan(
+      host.saveState.mock.invocationCallOrder[0],
+    );
+    expect(host.createSession).not.toHaveBeenCalled();
+    expect(host.openTmuxDashboardTarget).not.toHaveBeenCalled();
+    expect(host.runDashboard).toHaveBeenCalledOnce();
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
 });
 
 describe("runProjectService", () => {

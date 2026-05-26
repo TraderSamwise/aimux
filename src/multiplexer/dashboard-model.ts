@@ -51,6 +51,11 @@ function listOfflineSessionsForAction(host: DashboardModelHost): any[] {
   return [...sessionsById.values()];
 }
 
+function reconcileSessionsForLifecycleAction(host: DashboardModelHost): void {
+  host.syncSessionsFromTopology?.();
+  host.saveState?.();
+}
+
 function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: string): any | undefined {
   return listOfflineSessionsForAction(host).find((session: any) => session.id === sessionId);
 }
@@ -344,6 +349,7 @@ async function resumeOfflineAgentWithPending(
     sessionId,
     "starting",
     () => {
+      reconcileSessionsForLifecycleAction(host);
       const offline = resolveOfflineSessionForAction(host, sessionId);
       if (!offline) {
         throw new Error(`Agent "${sessionId}" not found`);
@@ -374,6 +380,7 @@ async function resumeAgentAndDirectTeammates(
   warning?: string;
   teammateFailures?: Array<{ sessionId: string; error: string }>;
 }> {
+  reconcileSessionsForLifecycleAction(host);
   const offline = resolveOfflineSessionForAction(host, sessionId);
   if (!offline) {
     throw new Error(`Agent "${sessionId}" not found`);
@@ -1039,6 +1046,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       resumeAgent: ({ sessionId }: any) =>
         enqueueProjectServiceAgentResume(host, () => resumeAgentAndDirectTeammates(host, sessionId)),
       listGraveyard: () => host.listGraveyardEntries(),
+      resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
     },
     threads: {
       sendMessage: (input: any) => host.sendOrchestrationMessage(input),

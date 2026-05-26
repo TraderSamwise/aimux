@@ -2293,8 +2293,27 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/agents/teammates/resurrect") {
-        await readJson(req);
-        send(res, 410, { ok: false, error: "teammate graveyard resurrection requires the runtime core replacement" });
+        const body = (await readJson(req)) as { parentSessionId: string; teammateSessionId: string };
+        const resolved = this.resolveDirectGraveyardTeammate(
+          body.parentSessionId?.trim() ?? "",
+          body.teammateSessionId?.trim() ?? "",
+        );
+        if (!resolved.ok) {
+          send(res, resolved.status, { ok: false, error: resolved.error });
+          return;
+        }
+        if (!this.options.desktop?.resurrectGraveyard) {
+          send(res, 501, { ok: false, error: "agent graveyard resurrection not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.resurrectGraveyard({ sessionId: resolved.teammate.id });
+        this.options.onChange?.();
+        send(res, 200, {
+          ok: true,
+          parentSessionId: resolved.parent.id,
+          teammateSessionId: resolved.teammate.id,
+          ...result,
+        });
         return;
       }
 
@@ -2574,8 +2593,19 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/graveyard/resurrect") {
-        await readJson(req);
-        send(res, 410, { ok: false, error: "agent graveyard resurrection requires the runtime core replacement" });
+        const body = (await readJson(req)) as { sessionId?: string; id?: string };
+        const sessionId = (body.sessionId ?? body.id ?? "").trim();
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        if (!this.options.desktop?.resurrectGraveyard) {
+          send(res, 501, { ok: false, error: "agent graveyard resurrection not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.resurrectGraveyard({ sessionId });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
         return;
       }
 

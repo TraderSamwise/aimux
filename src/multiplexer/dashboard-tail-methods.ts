@@ -1,6 +1,5 @@
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { Multiplexer, SessionState } from "./index.js";
-import { disabledRuntimeCore } from "../runtime-core/index.js";
 import {
   buildPlanPreview as buildPlanPreviewImpl,
   handleGraveyardKey as handleGraveyardKeyImpl,
@@ -61,6 +60,14 @@ import type { PendingServiceActionKind, PendingSessionActionKind } from "../pend
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
+import { loadConfig } from "../config.js";
+import type { SessionTeamMetadata } from "../team.js";
+import {
+  listTopologySessionStates,
+  moveTopologySessionToGraveyard,
+  upsertTopologySession,
+  type RuntimeTopologySessionState,
+} from "../runtime-core/topology-sessions.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";
@@ -68,6 +75,59 @@ type DashboardTailHost = {
   dashboardServicesCache: DashboardService[];
   dashboardWorktreeGroupsCache: Array<{ sessions: DashboardSession[] }>;
 };
+
+function isLiveTopologyStatus(status: RuntimeTopologySessionState["status"] | undefined): boolean {
+  return status === "running" || status === "idle" || status === "starting";
+}
+
+function runtimeToTopologySessionState(host: Multiplexer, session: any): RuntimeTopologySessionState {
+  return {
+    id: session.id,
+    tool: session.command,
+    toolConfigKey: (host as any).sessionToolKeys?.get?.(session.id) ?? session.command,
+    command: session.command,
+    args: (host as any).sessionOriginalArgs?.get?.(session.id) ?? [],
+    lifecycle: "offline",
+    createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
+    backendSessionId: session.backendSessionId,
+    team: session.team,
+    worktreePath: (host as any).sessionWorktreePaths?.get?.(session.id),
+    label: (host as any).getSessionLabel?.(session.id),
+    headline: (host as any).deriveHeadline?.(session.id),
+  };
+}
+
+function cacheOfflineSession(host: Multiplexer, entry: RuntimeTopologySessionState): void {
+  const cache = (host as any).offlineSessions;
+  if (!Array.isArray(cache)) return;
+  const offlineEntry = { ...entry, lifecycle: "offline" as const, status: "offline" as const };
+  const existingIndex = cache.findIndex((session: any) => session.id === entry.id);
+  if (existingIndex >= 0) {
+    cache[existingIndex] = { ...cache[existingIndex], ...offlineEntry };
+  } else {
+    cache.push(offlineEntry);
+  }
+}
+
+function removeOfflineSessionCache(host: Multiplexer, sessionId: string): void {
+  if (!Array.isArray((host as any).offlineSessions)) return;
+  (host as any).offlineSessions = (host as any).offlineSessions.filter((session: any) => session.id !== sessionId);
+}
+
+function findTopologySession(sessionId: string): RuntimeTopologySessionState | undefined {
+  return listTopologySessionStates({ statuses: ["running", "idle", "starting", "offline", "graveyard"] }).find(
+    (session) => session.id === sessionId,
+  );
+}
+
+function refreshLifecycleViews(host: Multiplexer): void {
+  (host as any).invalidateDesktopStateSnapshot?.();
+  (host as any).writeStatuslineFile?.();
+  if ((host as any).mode === "dashboard") {
+    (host as any).renderCurrentDashboardView?.();
+  }
+  (host as any).updateContextWatcherSessions?.();
+}
 
 export type DashboardTailMethods = {
   forkAgent(
@@ -213,25 +273,158 @@ export type DashboardTailMethods = {
 
 export const dashboardTailMethods: DashboardTailMethods = {
   async forkAgent(opts) {
-    return disabledRuntimeCore.forkAgent(opts);
+    const result = await (this as any).forkSessionFromSource(
+      opts.sourceSessionId,
+      opts.targetToolConfigKey,
+      opts.targetSessionId,
+      opts.instruction,
+      opts.targetWorktreePath,
+      opts.extraArgs ?? [],
+    );
+    if (!result) {
+      throw new Error(`Unable to fork agent "${opts.sourceSessionId}"`);
+    }
+    if (opts.open) {
+      this.openLiveTmuxWindowForEntry({ id: result.sessionId });
+    }
+    return { sessionId: result.sessionId, threadId: result.threadId };
   },
   async spawnAgent(opts) {
-    return disabledRuntimeCore.spawnAgent(opts);
+    const config = loadConfig();
+    const tool = config.tools[opts.toolConfigKey];
+    if (!tool) {
+      throw new Error(`Unknown tool config: ${opts.toolConfigKey}`);
+    }
+    const sessionId = opts.targetSessionId ?? (this as any).generateDashboardSessionId?.(tool.command);
+    const transport = this.createSession(
+      tool.command,
+      [...tool.args, ...(opts.extraArgs ?? [])],
+      tool.preambleFlag,
+      opts.toolConfigKey,
+      undefined,
+      tool.sessionIdFlag,
+      opts.targetWorktreePath,
+      undefined,
+      sessionId,
+      !opts.open,
+    );
+    if (opts.open) {
+      this.openLiveTmuxWindowForEntry({ id: transport.id });
+    }
+    return { sessionId: transport.id };
   },
   async createTeammateAgent(opts) {
-    return disabledRuntimeCore.createTeammateAgent(opts);
+    const config = loadConfig();
+    const toolConfigKey = opts.toolConfigKey ?? config.defaultTool;
+    const tool = config.tools[toolConfigKey];
+    if (!tool) {
+      throw new Error(`Unknown tool config: ${toolConfigKey}`);
+    }
+    const sessionId = opts.targetSessionId ?? (this as any).generateDashboardSessionId?.(tool.command);
+    const team: SessionTeamMetadata = {
+      teamId: `team-${opts.parentSessionId}`,
+      parentSessionId: opts.parentSessionId,
+      role: opts.role,
+      label: opts.label,
+      order: typeof opts.order === "number" ? opts.order : undefined,
+    };
+    const transport = this.createSession(
+      tool.command,
+      [...tool.args, ...(opts.extraArgs ?? [])],
+      tool.preambleFlag,
+      toolConfigKey,
+      undefined,
+      tool.sessionIdFlag,
+      opts.targetWorktreePath,
+      undefined,
+      sessionId,
+      !opts.open,
+      false,
+      team,
+    );
+    if (opts.label) {
+      this.applySessionLabel(transport.id, opts.label);
+    }
+    if (opts.open) {
+      this.openLiveTmuxWindowForEntry({ id: transport.id });
+    }
+    return {
+      sessionId: transport.id,
+      parentSessionId: opts.parentSessionId,
+      teamId: team.teamId,
+      role: opts.role,
+      label: opts.label,
+    };
   },
   async renameAgent(sessionId, label) {
-    return disabledRuntimeCore.renameAgent({ sessionId, label });
+    await this.updateSessionLabel(sessionId, label);
+    return { sessionId, label: label?.trim() || undefined };
   },
   async stopAgent(sessionId) {
-    return disabledRuntimeCore.stopAgent({ sessionId });
+    const runtime = (this as any).sessions?.find?.((session: any) => session.id === sessionId);
+    if (runtime) {
+      if ((this as any).graveyardAfterStopSessionIds?.has?.(sessionId)) {
+        throw new Error(`Session "${sessionId}" is being sent to graveyard`);
+      }
+      if ((this as any).stoppingSessionIds?.has?.(sessionId)) {
+        return { sessionId, status: "offline" };
+      }
+      const offlineEntry = runtimeToTopologySessionState(this, runtime);
+      upsertTopologySession(offlineEntry, "offline");
+      cacheOfflineSession(this, offlineEntry);
+      (this as any).stoppingSessionIds?.add?.(sessionId);
+      (this as any).startedInDashboard = true;
+      runtime.kill();
+      refreshLifecycleViews(this);
+      (this as any).debug?.(`stopped session ${sessionId} -> offline`, "session");
+      return { sessionId, status: "offline" };
+    }
+    const existing = findTopologySession(sessionId);
+    if (existing?.status === "offline") {
+      cacheOfflineSession(this, existing);
+      return { sessionId, status: "offline" };
+    }
+    if (existing && isLiveTopologyStatus(existing.status)) {
+      throw new Error(`Session "${sessionId}" is live but not owned by this runtime`);
+    }
+    if (existing?.status === "graveyard") {
+      throw new Error(`Session "${sessionId}" is already in graveyard`);
+    }
+    throw new Error(`Unknown session "${sessionId}"`);
   },
   async sendAgentToGraveyard(sessionId) {
-    return disabledRuntimeCore.killAgent({ sessionId });
+    const runtime = (this as any).sessions?.find?.((session: any) => session.id === sessionId);
+    const existing = findTopologySession(sessionId);
+    const previousStatus: "running" | "offline" =
+      runtime || isLiveTopologyStatus(existing?.status) ? "running" : "offline";
+    if (existing?.status === "graveyard") {
+      return { sessionId, status: "graveyard", previousStatus };
+    }
+    if (!runtime && existing && isLiveTopologyStatus(existing.status)) {
+      throw new Error(`Session "${sessionId}" is live but not owned by this runtime`);
+    }
+    if (runtime && !existing) {
+      upsertTopologySession(runtimeToTopologySessionState(this, runtime), "running");
+    } else if (!runtime && !existing) {
+      throw new Error(`Unknown session "${sessionId}"`);
+    }
+    const moved = moveTopologySessionToGraveyard(sessionId);
+    if (!moved) {
+      throw new Error(`Unable to graveyard session "${sessionId}"`);
+    }
+    removeOfflineSessionCache(this, sessionId);
+    if (runtime) {
+      (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
+      (this as any).stoppingSessionIds?.add?.(sessionId);
+      runtime.kill();
+    }
+    refreshLifecycleViews(this);
+    (this as any).debug?.(`graveyarded session ${sessionId}`, "session");
+    return { sessionId, status: "graveyard", previousStatus };
   },
   async migrateAgentSession(sessionId, targetWorktreePath) {
-    return disabledRuntimeCore.migrateAgent({ sessionId, targetWorktreePath });
+    await this.migrateAgent(sessionId, targetWorktreePath);
+    return { sessionId, worktreePath: targetWorktreePath };
   },
   showGraveyard() {
     showGraveyardImpl(this);
