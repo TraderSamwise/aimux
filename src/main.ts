@@ -412,9 +412,15 @@ async function getLiveProjectServiceJsonOrLocal(projectRoot: string, path: strin
   if (!endpoint) {
     return fallback();
   }
-  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-    method: "GET",
-  });
+  let status: number;
+  let json: any;
+  try {
+    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      method: "GET",
+    }));
+  } catch {
+    return fallback();
+  }
   if (status === 404 || status === 405 || status === 501) {
     return fallback();
   }
