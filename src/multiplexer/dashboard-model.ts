@@ -1039,6 +1039,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       resumeAgent: ({ sessionId }: any) =>
         enqueueProjectServiceAgentResume(host, () => resumeAgentAndDirectTeammates(host, sessionId)),
       listGraveyard: () => host.listGraveyardEntries(),
+      resurrectGraveyard: ({ sessionId }: any) => host.resurrectGraveyardSession(sessionId),
     },
     threads: {
       sendMessage: (input: any) => host.sendOrchestrationMessage(input),

@@ -2451,16 +2451,18 @@ graveyardCmd
   .option("--project <path>", "Project path")
   .option("--json", "Emit JSON")
   .action(async (id: string, opts: { project?: string; json?: boolean }) => {
-    await prepareProjectContext(opts.project);
     try {
-      void id;
-      const error = "agent graveyard resurrection requires the runtime core replacement";
+      const projectRoot = await prepareProjectContext(opts.project);
+      const mux = new Multiplexer();
+      const result = await mux.resurrectGraveyardSession(id);
       if (opts.json) {
         console.log(
           JSON.stringify(
             {
-              ok: false,
-              error,
+              ok: true,
+              projectRoot,
+              sessionId: result.sessionId,
+              status: result.status,
             },
             null,
             2,
@@ -2468,7 +2470,7 @@ graveyardCmd
         );
         return;
       }
-      throw new Error(error);
+      console.log(`resurrected ${result.sessionId}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);

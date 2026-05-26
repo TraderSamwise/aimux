@@ -618,7 +618,7 @@ describe("persistenceMethods", () => {
     expect(pending.getWorktreeAction(worktreePath)).toBeUndefined();
   });
 
-  it("blocks direct teammate graveyard resurrection until the runtime core owns it", async () => {
+  it("resurrects graveyard sessions into offline topology state", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-resurrect-team-"));
     try {
       await initPaths(repoRoot);
@@ -651,24 +651,26 @@ describe("persistenceMethods", () => {
         listGraveyardEntries: vi.fn(() => listTopologySessionStates({ statuses: ["graveyard"] })),
       };
 
-      await expect(persistenceMethods.resurrectGraveyardSession.call(host, "claude-parent")).rejects.toThrow(
-        "runtime core replacement",
-      );
+      await expect(persistenceMethods.resurrectGraveyardSession.call(host, "claude-parent")).resolves.toEqual({
+        sessionId: "claude-parent",
+        status: "offline",
+      });
 
-      expect(host.offlineSessions.map((session: any) => session.id)).toEqual([]);
+      expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["claude-parent"]);
       expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session: any) => session.id)).toEqual([
-        "claude-parent",
         "codex-reviewer",
         "claude-nested",
         "codex-independent",
       ]);
-      expect(listTopologySessionStates({ statuses: ["offline"] })).toEqual([]);
+      expect(listTopologySessionStates({ statuses: ["offline"] }).map((session: any) => session.id)).toEqual([
+        "claude-parent",
+      ]);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
   });
 
-  it("blocks teammate graveyard resurrection until the runtime core owns it", async () => {
+  it("resurrects teammate graveyard sessions without resurrecting the parent", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-resurrect-teammate-"));
     try {
       await initPaths(repoRoot);
@@ -693,13 +695,16 @@ describe("persistenceMethods", () => {
         listGraveyardEntries: vi.fn(() => listTopologySessionStates({ statuses: ["graveyard"] })),
       };
 
-      await expect(persistenceMethods.resurrectGraveyardSession.call(host, "codex-reviewer")).rejects.toThrow(
-        "runtime core replacement",
-      );
+      await expect(persistenceMethods.resurrectGraveyardSession.call(host, "codex-reviewer")).resolves.toEqual({
+        sessionId: "codex-reviewer",
+        status: "offline",
+      });
 
-      expect(host.offlineSessions.map((session: any) => session.id)).toEqual([]);
+      expect(host.offlineSessions.map((session: any) => session.id)).toEqual(["codex-reviewer"]);
       expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session: any) => session.id)).toEqual([
         "claude-parent",
+      ]);
+      expect(listTopologySessionStates({ statuses: ["offline"] }).map((session: any) => session.id)).toEqual([
         "codex-reviewer",
       ]);
     } finally {
