@@ -251,6 +251,76 @@ describe("dashboard lifecycle adapter", () => {
     expect(listTopologySessionStates({ statuses: ["graveyard"] }).map((session) => session.id)).toEqual(["codex-1"]);
   });
 
+  it("refuses to stop live topology agents that are not owned by this runtime", async () => {
+    upsertTopologySession(
+      {
+        id: "codex-live",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "running",
+        worktreePath: repoRoot,
+      },
+      "running",
+    );
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+    };
+
+    await expect(dashboardTailMethods.stopAgent.call(host, "codex-live")).rejects.toThrow(
+      'Session "codex-live" is live but not owned by this runtime',
+    );
+
+    expect(listTopologySessionStates({ statuses: ["running"] }).map((session) => session.id)).toEqual(["codex-live"]);
+    expect(listTopologySessionStates({ statuses: ["offline"] })).toEqual([]);
+  });
+
+  it("refuses to graveyard live topology agents that are not owned by this runtime", async () => {
+    upsertTopologySession(
+      {
+        id: "claude-live",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "idle",
+        worktreePath: repoRoot,
+      },
+      "idle",
+    );
+    const host: any = {
+      sessions: [],
+      offlineSessions: [],
+    };
+
+    await expect(dashboardTailMethods.sendAgentToGraveyard.call(host, "claude-live")).rejects.toThrow(
+      'Session "claude-live" is live but not owned by this runtime',
+    );
+
+    expect(listTopologySessionStates({ statuses: ["idle"] }).map((session) => session.id)).toEqual(["claude-live"]);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] })).toEqual([]);
+  });
+
+  it("does not report offline while a live runtime is already being sent to graveyard", async () => {
+    const runtime = {
+      id: "claude-kill",
+      command: "claude",
+      kill: vi.fn(),
+    };
+    const host: any = {
+      sessions: [runtime],
+      stoppingSessionIds: new Set(["claude-kill"]),
+      graveyardAfterStopSessionIds: new Set(["claude-kill"]),
+    };
+
+    await expect(dashboardTailMethods.stopAgent.call(host, "claude-kill")).rejects.toThrow(
+      'Session "claude-kill" is being sent to graveyard',
+    );
+    expect(runtime.kill).not.toHaveBeenCalled();
+  });
+
   it("interrupts live non-tmux sessions through the session runtime helper", async () => {
     const write = vi.fn();
     const host: any = {

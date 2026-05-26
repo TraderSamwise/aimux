@@ -784,8 +784,11 @@ program
     try {
       if (sessionId) {
         const projectRoot = await prepareProjectContext(opts.project);
-        const mux = new Multiplexer();
-        const result = await mux.stopAgent(sessionId);
+        await ensureDaemonProjectReady(projectRoot);
+        const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/stop", { sessionId }, () => {
+          const mux = new Multiplexer();
+          return mux.stopAgent(sessionId);
+        });
         if (opts.json) {
           console.log(
             JSON.stringify(
@@ -2419,8 +2422,11 @@ graveyardCmd
   .action(async (id: string, opts: { project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      const mux = new Multiplexer();
-      const result = await mux.sendAgentToGraveyard(id);
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/kill", { sessionId: id }, () => {
+        const mux = new Multiplexer();
+        return mux.sendAgentToGraveyard(id);
+      });
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -2600,8 +2606,11 @@ program
   .action(async (sessionId: string, opts: { project?: string; json?: boolean }) => {
     try {
       const projectRoot = await prepareProjectContext(opts.project);
-      const mux = new Multiplexer();
-      const result = await mux.sendAgentToGraveyard(sessionId);
+      await ensureDaemonProjectReady(projectRoot);
+      const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/agents/kill", { sessionId }, () => {
+        const mux = new Multiplexer();
+        return mux.sendAgentToGraveyard(sessionId);
+      });
       if (opts.json) {
         console.log(
           JSON.stringify(
