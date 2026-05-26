@@ -1226,7 +1226,13 @@ export class MetadataServer {
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/threads/")) {
-      const threadId = decodeURIComponent(url.pathname.slice("/threads/".length));
+      let threadId: string;
+      try {
+        threadId = decodeURIComponent(url.pathname.slice("/threads/".length));
+      } catch {
+        send(res, 400, { ok: false, error: "invalid threadId" });
+        return;
+      }
       const thread = readThread(threadId);
       if (!thread) {
         send(res, 404, { ok: false, error: "thread not found" });
@@ -1236,7 +1242,13 @@ export class MetadataServer {
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/tasks/")) {
-      const taskId = decodeURIComponent(url.pathname.slice("/tasks/".length));
+      let taskId: string;
+      try {
+        taskId = decodeURIComponent(url.pathname.slice("/tasks/".length));
+      } catch {
+        send(res, 400, { ok: false, error: "invalid taskId" });
+        return;
+      }
       const task = readTask(taskId);
       if (!task) {
         send(res, 404, { ok: false, error: "task not found" });

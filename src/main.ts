@@ -393,6 +393,9 @@ async function postLiveProjectServiceJsonOrLocal(
     headers: { "content-type": "application/json" },
     body,
   });
+  if (status === 404 || status === 405 || status === 501) {
+    return fallback();
+  }
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `request failed: ${status}`);
   }
@@ -2432,9 +2435,10 @@ worktreeCmd
   .option("--json", "Emit JSON")
   .action(async (targetPath: string, opts: { project?: string; json?: boolean }) => {
     try {
+      const inputCwd = process.cwd();
+      const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReadyForFallback(projectRoot);
-      const resolvedPath = pathResolve(targetPath);
       const result = await postLiveProjectServiceJsonOrLocal(
         projectRoot,
         "/worktrees/remove",
@@ -2463,9 +2467,10 @@ worktreeCmd
   .option("--json", "Emit JSON")
   .action(async (targetPath: string, opts: { project?: string; json?: boolean }) => {
     try {
+      const inputCwd = process.cwd();
+      const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReadyForFallback(projectRoot);
-      const resolvedPath = pathResolve(targetPath);
       const result = await postLiveProjectServiceJsonOrLocal(
         projectRoot,
         "/worktrees/graveyard",
@@ -2494,9 +2499,10 @@ worktreeCmd
   .option("--json", "Emit JSON")
   .action(async (targetPath: string, opts: { project?: string; json?: boolean }) => {
     try {
+      const inputCwd = process.cwd();
+      const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReadyForFallback(projectRoot);
-      const resolvedPath = pathResolve(targetPath);
       const result = await postLiveProjectServiceJsonOrLocal(
         projectRoot,
         "/graveyard/worktrees/resurrect",
@@ -2525,9 +2531,10 @@ worktreeCmd
   .option("--json", "Emit JSON")
   .action(async (targetPath: string, opts: { project?: string; json?: boolean }) => {
     try {
+      const inputCwd = process.cwd();
+      const resolvedPath = pathResolve(inputCwd, targetPath);
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReadyForFallback(projectRoot);
-      const resolvedPath = pathResolve(targetPath);
       const result = await postLiveProjectServiceJsonOrLocal(
         projectRoot,
         "/graveyard/worktrees/delete",
