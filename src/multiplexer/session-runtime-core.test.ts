@@ -43,6 +43,41 @@ describe("session runtime prompt submission", () => {
     expect(host.setPendingDashboardSessionAction).toHaveBeenLastCalledWith("codex-1", null);
   });
 
+  it("does not re-add graveyarded live sessions as offline when their process exits", () => {
+    const runtime: any = {
+      id: "codex-1",
+      command: "codex",
+      startTime: Date.now(),
+      backendSessionId: "backend-1",
+      transport: {},
+    };
+    const host: any = {
+      sessions: [runtime],
+      offlineSessions: [],
+      stoppingSessionIds: new Set(["codex-1"]),
+      graveyardAfterStopSessionIds: new Set(["codex-1"]),
+      sessionToolKeys: new Map([["codex-1", "codex"]]),
+      sessionOriginalArgs: new Map([["codex-1", []]]),
+      sessionWorktreePaths: new Map(),
+      sessionTmuxTargets: new Map(),
+      getSessionLabel: vi.fn(),
+      deriveHeadline: vi.fn(),
+      updateContextWatcherSessions: vi.fn(),
+      saveState: vi.fn(),
+      debug: vi.fn(),
+      renderDashboard: vi.fn(),
+      publishAlert: vi.fn(),
+    };
+
+    handleSessionRuntimeEvent(host, runtime, { type: "exit", code: 0 });
+
+    expect(host.sessions).toEqual([]);
+    expect(host.offlineSessions).toEqual([]);
+    expect(host.stoppingSessionIds.has("codex-1")).toBe(false);
+    expect(host.graveyardAfterStopSessionIds.has("codex-1")).toBe(false);
+    expect(host.saveState).toHaveBeenCalledOnce();
+  });
+
   it("allows a live just-created tmux target before metadata has been written", () => {
     const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "claude" };
     const resolved = { ...target, windowIndex: 2 };
