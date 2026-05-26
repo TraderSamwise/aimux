@@ -287,7 +287,7 @@ Delete over time:
 Keep or adapt:
 
 - `metadata.json`
-- `instances.json` for liveness only
+- relay/share presence state for liveness only; do not restore `instances.json` lifecycle or ownership semantics
 - `state.json` for service/project state only
 - `runtime-topology.yaml` for agent lifecycle, including graveyard entries
 - `recordings/`

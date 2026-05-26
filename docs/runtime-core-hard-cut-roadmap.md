@@ -28,10 +28,10 @@ Still not fully cut:
 - Agent lifecycle still has legacy cache/projection cleanup work around `offlineSessions`, `saveState()`, and restore helpers; those paths must remain non-authoritative.
 - Direct messages, handoffs, tasks, reviews, and waits still use the existing threads/tasks files as authoritative storage.
 - Notifications and metadata remain their own state/projection files.
-- Service lifecycle is not fully topology-owned.
-- Worktree lifecycle and worktree graveyard are not fully topology-owned.
-- Remote takeover/presence semantics still need a topology-backed replacement.
-- Migration/debug tooling is not complete enough to make the hard cut operationally safe.
+- Service lifecycle uses topology service records with remaining `state.json` compatibility snapshots for service/project state only.
+- Worktree lifecycle and worktree graveyard use topology records; git remains substrate evidence.
+- Remote takeover/presence semantics use relay/share transport state and must not reintroduce `instances.json` lifecycle authority.
+- Migration/debug tooling is explicit and fail-closed; keep expanding audits as new compatibility paths appear.
 
 ## Execution Epics
 
@@ -218,6 +218,8 @@ Build tests and stress checks around the failure modes this project is meant to 
 - SSE/event consistency
 - projection rebuilds
 - final `rg` audit for removed authority paths
+
+Root verification runs Vitest test files serially because the runtime harness includes process-level mocks, local shell-script fakes, and project-service endpoint state. Keep `yarn verify` deterministic; if a developer wants parallelism for a narrow local run, pass an explicit Vitest CLI override for that one command.
 
 ## Recommended Order
 
