@@ -926,7 +926,7 @@ export const dashboardInteractionMethods = {
         const count = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
         this.footerFlash = `Sent message to ${count} recipient${count === 1 ? "" : "s"}`;
       } else if (mode === "handoff") {
-        await this.postToProjectService("/tasks/handoff", {
+        await this.postToProjectService("/handoff", {
           ...requestBody,
           body,
         });
@@ -934,7 +934,7 @@ export const dashboardInteractionMethods = {
       } else {
         await this.postToProjectService("/tasks/assign", {
           ...requestBody,
-          body,
+          description: body,
         });
         this.footerFlash = `Assigned task to ${target.label}`;
       }
