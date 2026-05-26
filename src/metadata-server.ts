@@ -92,6 +92,9 @@ interface MetadataServerOptions {
       path: string;
     }) => Promise<{ path: string; status: "graveyarded" }> | { path: string; status: "graveyarded" };
     listWorktreeGraveyard?: () => unknown[];
+    resurrectGraveyardWorktree?: (input: {
+      path: string;
+    }) => Promise<{ path: string; status: "active" }> | { path: string; status: "active" };
     deleteGraveyardWorktree?: (input: {
       path: string;
     }) => Promise<{ path: string; status: "removed" }> | { path: string; status: "removed" };
@@ -2616,14 +2619,26 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/graveyard/worktrees/resurrect") {
-        await readJson(req);
-        send(res, 410, { ok: false, error: "worktree graveyard resurrection requires the runtime core replacement" });
+        const body = (await readJson(req)) as { path: string };
+        if (!this.options.desktop?.resurrectGraveyardWorktree) {
+          send(res, 501, { ok: false, error: "worktree graveyard resurrection not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.resurrectGraveyardWorktree(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/graveyard/worktrees/delete") {
-        await readJson(req);
-        send(res, 410, { ok: false, error: "worktree graveyard delete requires the runtime core replacement" });
+        const body = (await readJson(req)) as { path: string };
+        if (!this.options.desktop?.deleteGraveyardWorktree) {
+          send(res, 501, { ok: false, error: "worktree graveyard delete not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.deleteGraveyardWorktree(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
         return;
       }
 

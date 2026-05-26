@@ -1016,6 +1016,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       removeWorktree: ({ path }: any) => host.removeDesktopWorktree(path),
       graveyardWorktree: ({ path }: any) => host.graveyardDesktopWorktree(path),
       listWorktreeGraveyard: () => host.listWorktreeGraveyardEntries(),
+      resurrectGraveyardWorktree: ({ path }: any) => host.resurrectGraveyardWorktree(path),
       deleteGraveyardWorktree: ({ path }: any) => host.deleteGraveyardWorktree(path),
       createService: ({ command, worktreePath, serviceId }: any) =>
         host.createService(command ?? "", worktreePath, { serviceId }),

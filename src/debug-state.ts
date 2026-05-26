@@ -556,12 +556,20 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
   const target = options.target;
 
   const savedState = filterSavedState(readJson(paths.statePath), target, matches, seen);
-  const runtimeTopology = filterRuntimeTopology(readRuntimeTopology(paths.runtimeTopologyPath), target, matches, seen);
+  const rawRuntimeTopology = readRuntimeTopology(paths.runtimeTopologyPath);
+  const runtimeTopology = filterRuntimeTopology(rawRuntimeTopology, target, matches, seen);
   const metadata = filterMetadata(readJson(paths.metadataPath), target, matches, seen);
   const tmux = filterTmux(options.tmuxWindows, paths, target, matches, seen);
   const gitWorktrees = filterGitWorktrees(options.worktrees, paths, target, matches, seen);
   const graveyard = filterGraveyard(runtimeTopology, target, matches, seen);
-  const worktreeGraveyard = filterWorktreeGraveyard(readJson(paths.worktreeGraveyardPath), target, matches, seen);
+  const worktreeGraveyard = filterWorktreeGraveyard(
+    rawRuntimeTopology.status === "found"
+      ? { status: "found", path: rawRuntimeTopology.path, value: rawRuntimeTopology.value?.worktreeGraveyard ?? [] }
+      : rawRuntimeTopology,
+    target,
+    matches,
+    seen,
+  );
   const notifications = filterNotifications(readJson(paths.notificationsPath), target, matches, seen);
   const operationFailures = filterOperationFailures(
     readJson(paths.dashboardOperationFailuresPath),

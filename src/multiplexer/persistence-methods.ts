@@ -28,6 +28,7 @@ import {
   deleteTopologyWorktreeGraveyardEntry,
   moveTopologyWorktreeToGraveyard,
   removeTopologyWorktree,
+  resurrectTopologyWorktreeFromGraveyard,
   upsertTopologyWorktree,
 } from "../runtime-core/topology-worktrees.js";
 import {
@@ -485,10 +486,15 @@ export const persistenceMethods = {
     return { path, status: "graveyarded" };
   },
 
-  async resurrectGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "offline" }> {
-    void this;
-    void path;
-    throw new Error("worktree graveyard resurrection requires the runtime core replacement");
+  async resurrectGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "active" }> {
+    const resurrected = resurrectTopologyWorktreeFromGraveyard(path);
+    if (!resurrected) {
+      throw new Error(`Graveyard worktree "${path}" not found`);
+    }
+    this.invalidateDesktopStateSnapshot?.();
+    this.refreshLocalDashboardModel?.();
+    this.metadataServer?.notifyChange?.();
+    return { path, status: "active" };
   },
 
   async deleteGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "removed" }> {

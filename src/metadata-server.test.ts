@@ -769,6 +769,46 @@ describe("MetadataServer threads API", () => {
     expect(resurrectGraveyard).toHaveBeenCalledWith({ sessionId: "codex-old" });
   });
 
+  it("passes worktree graveyard resurrection and delete over HTTP", async () => {
+    server?.stop();
+    const resurrectGraveyardWorktree = vi.fn(({ path }) => ({ path, status: "active" as const }));
+    const deleteGraveyardWorktree = vi.fn(({ path }) => ({ path, status: "removed" as const }));
+    server = new MetadataServer({
+      desktop: { resurrectGraveyardWorktree, deleteGraveyardWorktree },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const resurrectRes = await fetch(`${base}/graveyard/worktrees/resurrect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "/tmp/feature-a" }),
+    });
+    expect(resurrectRes.status).toBe(200);
+    expect((await resurrectRes.json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      path: "/tmp/feature-a",
+      status: "active",
+    });
+    expect(resurrectGraveyardWorktree).toHaveBeenCalledWith({ path: "/tmp/feature-a" });
+
+    const deleteRes = await fetch(`${base}/graveyard/worktrees/delete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "/tmp/feature-a" }),
+    });
+    expect(deleteRes.status).toBe(200);
+    expect((await deleteRes.json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      path: "/tmp/feature-a",
+      status: "removed",
+    });
+    expect(deleteGraveyardWorktree).toHaveBeenCalledWith({ path: "/tmp/feature-a" });
+  });
+
   it("passes reused teammate creation responses over HTTP", async () => {
     server?.stop();
     const calls: unknown[] = [];
