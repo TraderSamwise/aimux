@@ -1,6 +1,5 @@
 import type { DashboardService, DashboardSession } from "../dashboard/index.js";
 import type { Multiplexer, SessionState } from "./index.js";
-import { disabledRuntimeCore } from "../runtime-core/index.js";
 import {
   buildPlanPreview as buildPlanPreviewImpl,
   handleGraveyardKey as handleGraveyardKeyImpl,
@@ -61,6 +60,8 @@ import type { PendingServiceActionKind, PendingSessionActionKind } from "../pend
 import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
+import { loadConfig } from "../config.js";
+import type { SessionTeamMetadata } from "../team.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";
@@ -213,25 +214,110 @@ export type DashboardTailMethods = {
 
 export const dashboardTailMethods: DashboardTailMethods = {
   async forkAgent(opts) {
-    return disabledRuntimeCore.forkAgent(opts);
+    const result = await (this as any).forkSessionFromSource(
+      opts.sourceSessionId,
+      opts.targetToolConfigKey,
+      opts.targetSessionId,
+      opts.instruction,
+      opts.targetWorktreePath,
+      opts.extraArgs ?? [],
+    );
+    if (!result) {
+      throw new Error(`Unable to fork agent "${opts.sourceSessionId}"`);
+    }
+    if (opts.open) {
+      this.openLiveTmuxWindowForEntry({ id: result.sessionId });
+    }
+    return { sessionId: result.sessionId, threadId: result.threadId };
   },
   async spawnAgent(opts) {
-    return disabledRuntimeCore.spawnAgent(opts);
+    const config = loadConfig();
+    const tool = config.tools[opts.toolConfigKey];
+    if (!tool) {
+      throw new Error(`Unknown tool config: ${opts.toolConfigKey}`);
+    }
+    const sessionId = opts.targetSessionId ?? (this as any).generateDashboardSessionId?.(tool.command);
+    const transport = this.createSession(
+      tool.command,
+      [...tool.args, ...(opts.extraArgs ?? [])],
+      tool.preambleFlag,
+      opts.toolConfigKey,
+      undefined,
+      tool.sessionIdFlag,
+      opts.targetWorktreePath,
+      undefined,
+      sessionId,
+      !opts.open,
+    );
+    if (opts.open) {
+      this.openLiveTmuxWindowForEntry({ id: transport.id });
+    }
+    return { sessionId: transport.id };
   },
   async createTeammateAgent(opts) {
-    return disabledRuntimeCore.createTeammateAgent(opts);
+    const config = loadConfig();
+    const toolConfigKey = opts.toolConfigKey ?? config.defaultTool;
+    const tool = config.tools[toolConfigKey];
+    if (!tool) {
+      throw new Error(`Unknown tool config: ${toolConfigKey}`);
+    }
+    const sessionId = opts.targetSessionId ?? (this as any).generateDashboardSessionId?.(tool.command);
+    const team: SessionTeamMetadata = {
+      teamId: `team-${opts.parentSessionId}`,
+      parentSessionId: opts.parentSessionId,
+      role: opts.role,
+      label: opts.label,
+      order: typeof opts.order === "number" ? opts.order : undefined,
+    };
+    const transport = this.createSession(
+      tool.command,
+      [...tool.args, ...(opts.extraArgs ?? [])],
+      tool.preambleFlag,
+      toolConfigKey,
+      undefined,
+      tool.sessionIdFlag,
+      opts.targetWorktreePath,
+      undefined,
+      sessionId,
+      !opts.open,
+      false,
+      team,
+    );
+    if (opts.label) {
+      this.applySessionLabel(transport.id, opts.label);
+    }
+    if (opts.open) {
+      this.openLiveTmuxWindowForEntry({ id: transport.id });
+    }
+    return {
+      sessionId: transport.id,
+      parentSessionId: opts.parentSessionId,
+      teamId: team.teamId,
+      role: opts.role,
+      label: opts.label,
+    };
   },
   async renameAgent(sessionId, label) {
-    return disabledRuntimeCore.renameAgent({ sessionId, label });
+    await this.updateSessionLabel(sessionId, label);
+    return { sessionId, label: label?.trim() || undefined };
   },
   async stopAgent(sessionId) {
-    return disabledRuntimeCore.stopAgent({ sessionId });
+    const runtime = (this as any).sessions?.find?.((session: any) => session.id === sessionId);
+    if (runtime) {
+      this.stopSessionToOffline(runtime);
+    }
+    return { sessionId, status: "offline" };
   },
   async sendAgentToGraveyard(sessionId) {
-    return disabledRuntimeCore.killAgent({ sessionId });
+    const previousStatus = (this as any).sessions?.some?.((session: any) => session.id === sessionId)
+      ? "running"
+      : "offline";
+    this.graveyardSession(sessionId);
+    return { sessionId, status: "graveyard", previousStatus };
   },
   async migrateAgentSession(sessionId, targetWorktreePath) {
-    return disabledRuntimeCore.migrateAgent({ sessionId, targetWorktreePath });
+    await this.migrateAgent(sessionId, targetWorktreePath);
+    return { sessionId, worktreePath: targetWorktreePath };
   },
   showGraveyard() {
     showGraveyardImpl(this);
