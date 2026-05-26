@@ -179,18 +179,6 @@ export interface RuntimeTopologyExchangeRef {
   updatedAt: string;
 }
 
-export interface RuntimeTopologyQueueItem {
-  id: string;
-  sourceSessionId?: string;
-  targetSessionId?: string;
-  status: "queued" | "assigned" | "in_progress" | "blocked" | "done" | "failed";
-  kind: "task" | "handoff" | "message";
-  title?: string;
-  body?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface RuntimeTopology {
   version: typeof RUNTIME_TOPOLOGY_VERSION;
   generatedAt: string;
@@ -206,7 +194,6 @@ export interface RuntimeTopology {
   remoteClients: RuntimeTopologyRemoteClient[];
   lifecycleOperations: RuntimeTopologyLifecycleOperation[];
   exchangeRefs: RuntimeTopologyExchangeRef[];
-  queue: RuntimeTopologyQueueItem[];
 }
 
 export function emptyRuntimeTopology(now = new Date().toISOString()): RuntimeTopology {
@@ -225,7 +212,6 @@ export function emptyRuntimeTopology(now = new Date().toISOString()): RuntimeTop
     remoteClients: [],
     lifecycleOperations: [],
     exchangeRefs: [],
-    queue: [],
   };
 }
 
@@ -315,11 +301,6 @@ function normalizeRuntimeTopology(topology: RuntimeTopology): RuntimeTopology {
         (!ref.nodeId || nodeIds.has(ref.nodeId)) &&
         (!ref.sessionId || sessionIds.has(ref.sessionId)),
     ),
-    queue: topology.queue.filter((item) => {
-      if (item.sourceSessionId && !sessionIds.has(item.sourceSessionId)) return false;
-      if (item.targetSessionId && !sessionIds.has(item.targetSessionId)) return false;
-      return true;
-    }),
   };
 }
 
@@ -506,20 +487,6 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
         updatedAt: asString(row.updatedAt, `exchangeRefs[${index}].updatedAt`),
       };
     }),
-    queue: asArray(record.queue).map((entry, index) => {
-      const row = asRecord(entry, `queue[${index}]`);
-      return {
-        id: asString(row.id, `queue[${index}].id`),
-        sourceSessionId: asOptionalString(row.sourceSessionId),
-        targetSessionId: asOptionalString(row.targetSessionId),
-        status: asQueueStatus(row.status),
-        kind: asQueueKind(row.kind),
-        title: asOptionalString(row.title),
-        body: asOptionalString(row.body),
-        createdAt: asString(row.createdAt, `queue[${index}].createdAt`),
-        updatedAt: asString(row.updatedAt, `queue[${index}].updatedAt`),
-      };
-    }),
   });
 }
 
@@ -613,27 +580,6 @@ function asExchangeRefKind(value: unknown): RuntimeTopologyExchangeRef["kind"] {
     return kind;
   }
   return "message";
-}
-
-function asQueueStatus(value: unknown): RuntimeTopologyQueueItem["status"] {
-  const status = String(value);
-  if (
-    status === "queued" ||
-    status === "assigned" ||
-    status === "in_progress" ||
-    status === "blocked" ||
-    status === "done" ||
-    status === "failed"
-  ) {
-    return status;
-  }
-  return "failed";
-}
-
-function asQueueKind(value: unknown): RuntimeTopologyQueueItem["kind"] {
-  const kind = String(value);
-  if (kind === "task" || kind === "handoff" || kind === "message") return kind;
-  return "task";
 }
 
 function sleepSync(ms: number): void {
