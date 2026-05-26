@@ -249,4 +249,46 @@ describe("buildDebugStateReport", () => {
       expect.objectContaining({ name: "feature-a", path: "/repo/feature-a" }),
     ]);
   });
+
+  it("matches topology-only services and worktrees", () => {
+    const paths = makePaths();
+    const now = new Date().toISOString();
+    createRuntimeTopologyStore(paths.runtimeTopologyPath).write({
+      ...emptyRuntimeTopology(now),
+      rigs: [{ id: "rig:test", name: "repo", projectRoot: paths.repoRoot, createdAt: now, updatedAt: now }],
+      nodes: [{ id: "service:service-web", rigId: "rig:test", logicalId: "service-web", createdAt: now }],
+      services: [
+        {
+          id: "service-web",
+          rigId: "rig:test",
+          nodeId: "service:service-web",
+          status: "stopped",
+          launchCommandLine: "yarn web",
+          label: "web",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      worktrees: [
+        {
+          id: "worktree-feature-b",
+          rigId: "rig:test",
+          path: "/repo/feature-b",
+          name: "feature-b",
+          status: "active",
+          branch: "feature-b",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    const serviceReport = buildDebugStateReport({ target: "service-web", paths, tmuxWindows: [], worktrees: [] });
+    expect(serviceReport.targetResolution.status).toBe("matched");
+    expect(serviceReport.sources.runtimeTopology.value?.services).toHaveLength(1);
+
+    const worktreeReport = buildDebugStateReport({ target: "feature-b", paths, tmuxWindows: [], worktrees: [] });
+    expect(worktreeReport.targetResolution.status).toBe("matched");
+    expect(worktreeReport.sources.runtimeTopology.value?.worktrees).toHaveLength(1);
+  });
 });

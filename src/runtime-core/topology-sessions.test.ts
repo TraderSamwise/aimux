@@ -12,6 +12,7 @@ import {
   topologySessionToSessionState,
   upsertTopologySession,
 } from "./topology-sessions.js";
+import { upsertTopologyService } from "./topology-services.js";
 
 describe("topology session lifecycle", () => {
   let repoRoot = "";
@@ -208,5 +209,37 @@ describe("topology session lifecycle", () => {
     expect(topology.edges).toEqual([]);
     expect(topology.exchangeRefs).toEqual([]);
     expect(topologySessionToSessionState(topology.sessions[0], topology).tmuxTarget).toBeUndefined();
+  });
+
+  it("preserves service nodes and bindings when saving replacement session topology", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologyService(
+      {
+        id: "service-web",
+        launchCommandLine: "yarn web",
+        tmuxTarget: { sessionName: "aimux-repo", windowId: "@2", windowIndex: 2, windowName: "web" },
+      },
+      "running",
+      { store, projectRoot: repoRoot },
+    );
+
+    const topology = saveRuntimeTopologySessions({
+      store,
+      projectRoot: repoRoot,
+      sessions: [
+        {
+          id: "codex-1",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          lifecycle: "offline",
+        },
+      ],
+    });
+
+    expect(topology.services.map((service) => service.id)).toEqual(["service-web"]);
+    expect(topology.nodes.map((node) => node.id)).toContain("service:service-web");
+    expect(topology.bindings).toMatchObject([{ nodeId: "service:service-web", tmuxWindowId: "@2" }]);
   });
 });

@@ -82,6 +82,25 @@ describe("topology service lifecycle", () => {
     ]);
   });
 
+  it("marks stopped services with retained tmux bindings", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologyService(
+      {
+        id: "service-api",
+        command: "zsh",
+        args: ["-lc", "yarn api"],
+        launchCommandLine: "yarn api",
+        tmuxTarget: { sessionName: "aimux-repo", windowId: "@3", windowIndex: 3, windowName: "api" },
+      },
+      "stopped",
+      { store, projectRoot: repoRoot },
+    );
+
+    expect(listTopologyServiceStates({ statuses: ["stopped"], store })).toMatchObject([
+      { id: "service-api", status: "stopped", launchCommandLine: "yarn api", retained: true },
+    ]);
+  });
+
   it("removes service topology and dependent operation references", () => {
     const store = createRuntimeTopologyStore(topologyPath);
     upsertTopologyService({ id: "service-web", command: "zsh" }, "stopped", { store, projectRoot: repoRoot });

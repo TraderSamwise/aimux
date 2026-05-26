@@ -368,41 +368,43 @@ async function postLiveProjectServiceJsonOrLocal(
   body: unknown,
   fallback: () => any,
 ): Promise<any> {
+  let endpoint;
   try {
-    const endpoint = await resolveProjectServiceEndpoint(projectRoot);
-    if (!endpoint) {
-      return fallback();
-    }
-    const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body,
-    });
-    if (status < 200 || status >= 300 || json?.ok === false) {
-      throw new Error(json?.error || `request failed: ${status}`);
-    }
-    return json;
+    endpoint = await resolveProjectServiceEndpoint(projectRoot);
   } catch {
     return fallback();
   }
+  if (!endpoint) {
+    return fallback();
+  }
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
+  }
+  return json;
 }
 
 async function getLiveProjectServiceJsonOrLocal(projectRoot: string, path: string, fallback: () => any): Promise<any> {
+  let endpoint;
   try {
-    const endpoint = await resolveProjectServiceEndpoint(projectRoot);
-    if (!endpoint) {
-      return fallback();
-    }
-    const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-      method: "GET",
-    });
-    if (status < 200 || status >= 300 || json?.ok === false) {
-      throw new Error(json?.error || `request failed: ${status}`);
-    }
-    return json;
+    endpoint = await resolveProjectServiceEndpoint(projectRoot);
   } catch {
     return fallback();
   }
+  if (!endpoint) {
+    return fallback();
+  }
+  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+    method: "GET",
+  });
+  if (status < 200 || status >= 300 || json?.ok === false) {
+    throw new Error(json?.error || `request failed: ${status}`);
+  }
+  return json;
 }
 
 async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSessionId?: string): Promise<string> {
@@ -1594,8 +1596,14 @@ function printWorktrees(projectRoot?: string, worktreesInput?: WorktreeInfo[]): 
 
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
-worktreeCmd.action(() => {
-  printWorktrees();
+worktreeCmd.action(async () => {
+  const projectRoot = await prepareProjectContext();
+  await ensureDaemonProjectReady(projectRoot);
+  const result = await getLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees", () => ({
+    ok: true,
+    worktrees: listVisibleLocalWorktrees(projectRoot),
+  }));
+  printWorktrees(projectRoot, result.worktrees ?? []);
 });
 
 const threadCmd = program.command("thread").description("Inspect and manage orchestration threads");
