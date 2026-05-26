@@ -465,7 +465,7 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
         rigId: asString(row.rigId, `lifecycleOperations[${index}].rigId`),
         kind: asString(row.kind, `lifecycleOperations[${index}].kind`),
         status: asLifecycleOperationStatus(row.status),
-        targetKind: asLifecycleOperationTargetKind(row.targetKind),
+        targetKind: asLifecycleOperationTargetKind(row.targetKind, `lifecycleOperations[${index}].targetKind`),
         targetId: asString(row.targetId, `lifecycleOperations[${index}].targetId`),
         requestedBy: asOptionalString(row.requestedBy),
         startedAt: asString(row.startedAt, `lifecycleOperations[${index}].startedAt`),
@@ -479,7 +479,7 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
       return {
         id: asString(row.id, `exchangeRefs[${index}].id`),
         rigId: asString(row.rigId, `exchangeRefs[${index}].rigId`),
-        kind: asExchangeRefKind(row.kind),
+        kind: asExchangeRefKind(row.kind, `exchangeRefs[${index}].kind`),
         exchangeId: asString(row.exchangeId, `exchangeRefs[${index}].exchangeId`),
         nodeId: asOptionalString(row.nodeId),
         sessionId: asOptionalString(row.sessionId),
@@ -557,15 +557,15 @@ function asLifecycleOperationStatus(value: unknown): RuntimeTopologyLifecycleOpe
   return "failed";
 }
 
-function asLifecycleOperationTargetKind(value: unknown): RuntimeTopologyLifecycleOperationTargetKind {
+function asLifecycleOperationTargetKind(value: unknown, context: string): RuntimeTopologyLifecycleOperationTargetKind {
   const kind = String(value);
   if (kind === "session" || kind === "service" || kind === "worktree" || kind === "node" || kind === "rig") {
     return kind;
   }
-  return "rig";
+  throw new Error(`invalid runtime topology: ${context} must be a supported target kind`);
 }
 
-function asExchangeRefKind(value: unknown): RuntimeTopologyExchangeRef["kind"] {
+function asExchangeRefKind(value: unknown, context: string): RuntimeTopologyExchangeRef["kind"] {
   const kind = String(value);
   if (
     kind === "message" ||
@@ -579,7 +579,7 @@ function asExchangeRefKind(value: unknown): RuntimeTopologyExchangeRef["kind"] {
   ) {
     return kind;
   }
-  return "message";
+  throw new Error(`invalid runtime topology: ${context} must be a supported exchange ref kind`);
 }
 
 function sleepSync(ms: number): void {

@@ -175,6 +175,98 @@ describe("RuntimeTopologyStore", () => {
     }
   });
 
+  it("rejects unsupported lifecycle target kinds instead of remapping them", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-topology-"));
+    try {
+      const path = join(dir, "runtime-topology.yaml");
+      const now = "2026-05-25T00:00:00.000Z";
+      writeFileSync(
+        path,
+        [
+          "version: 1",
+          `generatedAt: ${now}`,
+          "rigs:",
+          "  - id: rig-main",
+          "    name: repo",
+          "    projectRoot: /repo",
+          `    createdAt: ${now}`,
+          `    updatedAt: ${now}`,
+          "nodes: []",
+          "edges: []",
+          "bindings: []",
+          "sessions: []",
+          "services: []",
+          "worktrees: []",
+          "worktreeGraveyard: []",
+          "teamRoles: []",
+          "remoteClients: []",
+          "lifecycleOperations:",
+          "  - id: op-bad",
+          "    rigId: rig-main",
+          "    kind: agent.stop",
+          "    status: pending",
+          "    targetKind: bogus",
+          "    targetId: rig-main",
+          `    startedAt: ${now}`,
+          `    updatedAt: ${now}`,
+          "exchangeRefs: []",
+          "",
+        ].join("\n"),
+      );
+
+      expect(() => new RuntimeTopologyStore(path).read()).toThrow(
+        "lifecycleOperations[0].targetKind must be a supported target kind",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unsupported exchange reference kinds instead of remapping them", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-topology-"));
+    try {
+      const path = join(dir, "runtime-topology.yaml");
+      const now = "2026-05-25T00:00:00.000Z";
+      writeFileSync(
+        path,
+        [
+          "version: 1",
+          `generatedAt: ${now}`,
+          "rigs:",
+          "  - id: rig-main",
+          "    name: repo",
+          "    projectRoot: /repo",
+          `    createdAt: ${now}`,
+          `    updatedAt: ${now}`,
+          "nodes: []",
+          "edges: []",
+          "bindings: []",
+          "sessions: []",
+          "services: []",
+          "worktrees: []",
+          "worktreeGraveyard: []",
+          "teamRoles: []",
+          "remoteClients: []",
+          "lifecycleOperations: []",
+          "exchangeRefs:",
+          "  - id: exchange-bad",
+          "    rigId: rig-main",
+          "    kind: bogus",
+          "    exchangeId: item-1",
+          `    createdAt: ${now}`,
+          `    updatedAt: ${now}`,
+          "",
+        ].join("\n"),
+      );
+
+      expect(() => new RuntimeTopologyStore(path).read()).toThrow(
+        "exchangeRefs[0].kind must be a supported exchange ref kind",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("serializes update with a filesystem lock and releases it after writing", () => {
     const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-topology-"));
     try {

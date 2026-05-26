@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { getRuntimeExchangePath } from "../paths.js";
@@ -6,6 +6,7 @@ import { getRuntimeExchangePath } from "../paths.js";
 export const RUNTIME_EXCHANGE_VERSION = 1;
 const UPDATE_LOCK_TIMEOUT_MS = 5_000;
 const UPDATE_LOCK_RETRY_MS = 25;
+const UPDATE_LOCK_STALE_MS = 60_000;
 
 export type RuntimeExchangeThreadKind = "conversation" | "task" | "review" | "handoff" | "user";
 export type RuntimeExchangeThreadStatus = "open" | "waiting" | "blocked" | "done" | "abandoned";
@@ -536,6 +537,15 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 export class RuntimeExchangeStore {
   constructor(readonly path = getRuntimeExchangePath()) {}
 
@@ -575,12 +585,34 @@ export class RuntimeExchangeStore {
         }
         return () => rmSync(lockPath, { recursive: true, force: true });
       } catch (error) {
+        if (this.recoverStaleUpdateLock(lockPath)) {
+          continue;
+        }
         if (Date.now() >= deadline) {
           throw new Error(`Timed out acquiring runtime exchange update lock at ${lockPath}`, { cause: error });
         }
         sleepSync(UPDATE_LOCK_RETRY_MS);
       }
     }
+  }
+
+  private recoverStaleUpdateLock(lockPath: string): boolean {
+    try {
+      const ownerPid = Number.parseInt(readFileSync(join(lockPath, "owner"), "utf-8").trim(), 10);
+      if (Number.isFinite(ownerPid) && ownerPid > 0 && !isProcessAlive(ownerPid)) {
+        rmSync(lockPath, { recursive: true, force: true });
+        return true;
+      }
+    } catch {}
+
+    try {
+      if (Date.now() - statSync(lockPath).mtimeMs > UPDATE_LOCK_STALE_MS) {
+        rmSync(lockPath, { recursive: true, force: true });
+        return true;
+      }
+    } catch {}
+
+    return false;
   }
 
   update(mutator: (exchange: RuntimeExchange) => RuntimeExchange): RuntimeExchange {
