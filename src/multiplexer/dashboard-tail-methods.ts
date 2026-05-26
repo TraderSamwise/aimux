@@ -62,6 +62,12 @@ import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-reg
 import type { SessionRuntime } from "../session-runtime.js";
 import { loadConfig } from "../config.js";
 import type { SessionTeamMetadata } from "../team.js";
+import {
+  listTopologySessionStates,
+  moveTopologySessionToGraveyard,
+  upsertTopologySession,
+  type RuntimeTopologySessionState,
+} from "../runtime-core/topology-sessions.js";
 
 type DashboardTailHost = {
   mode: "dashboard" | "project-service";
@@ -69,6 +75,59 @@ type DashboardTailHost = {
   dashboardServicesCache: DashboardService[];
   dashboardWorktreeGroupsCache: Array<{ sessions: DashboardSession[] }>;
 };
+
+function isLiveTopologyStatus(status: RuntimeTopologySessionState["status"] | undefined): boolean {
+  return status === "running" || status === "idle" || status === "starting";
+}
+
+function runtimeToTopologySessionState(host: Multiplexer, session: any): RuntimeTopologySessionState {
+  return {
+    id: session.id,
+    tool: session.command,
+    toolConfigKey: (host as any).sessionToolKeys?.get?.(session.id) ?? session.command,
+    command: session.command,
+    args: (host as any).sessionOriginalArgs?.get?.(session.id) ?? [],
+    lifecycle: "offline",
+    createdAt: session.startTime ? new Date(session.startTime).toISOString() : undefined,
+    backendSessionId: session.backendSessionId,
+    team: session.team,
+    worktreePath: (host as any).sessionWorktreePaths?.get?.(session.id),
+    label: (host as any).getSessionLabel?.(session.id),
+    headline: (host as any).deriveHeadline?.(session.id),
+  };
+}
+
+function cacheOfflineSession(host: Multiplexer, entry: RuntimeTopologySessionState): void {
+  const cache = (host as any).offlineSessions;
+  if (!Array.isArray(cache)) return;
+  const offlineEntry = { ...entry, lifecycle: "offline" as const, status: "offline" as const };
+  const existingIndex = cache.findIndex((session: any) => session.id === entry.id);
+  if (existingIndex >= 0) {
+    cache[existingIndex] = { ...cache[existingIndex], ...offlineEntry };
+  } else {
+    cache.push(offlineEntry);
+  }
+}
+
+function removeOfflineSessionCache(host: Multiplexer, sessionId: string): void {
+  if (!Array.isArray((host as any).offlineSessions)) return;
+  (host as any).offlineSessions = (host as any).offlineSessions.filter((session: any) => session.id !== sessionId);
+}
+
+function findTopologySession(sessionId: string): RuntimeTopologySessionState | undefined {
+  return listTopologySessionStates({ statuses: ["running", "idle", "starting", "offline", "graveyard"] }).find(
+    (session) => session.id === sessionId,
+  );
+}
+
+function refreshLifecycleViews(host: Multiplexer): void {
+  (host as any).invalidateDesktopStateSnapshot?.();
+  (host as any).writeStatuslineFile?.();
+  if ((host as any).mode === "dashboard") {
+    (host as any).renderCurrentDashboardView?.();
+  }
+  (host as any).updateContextWatcherSessions?.();
+}
 
 export type DashboardTailMethods = {
   forkAgent(
@@ -304,15 +363,60 @@ export const dashboardTailMethods: DashboardTailMethods = {
   async stopAgent(sessionId) {
     const runtime = (this as any).sessions?.find?.((session: any) => session.id === sessionId);
     if (runtime) {
-      this.stopSessionToOffline(runtime);
+      if ((this as any).stoppingSessionIds?.has?.(sessionId)) {
+        return { sessionId, status: "offline" };
+      }
+      const offlineEntry = runtimeToTopologySessionState(this, runtime);
+      upsertTopologySession(offlineEntry, "offline");
+      cacheOfflineSession(this, offlineEntry);
+      (this as any).stoppingSessionIds?.add?.(sessionId);
+      (this as any).startedInDashboard = true;
+      runtime.kill();
+      refreshLifecycleViews(this);
+      (this as any).debug?.(`stopped session ${sessionId} -> offline`, "session");
+      return { sessionId, status: "offline" };
     }
-    return { sessionId, status: "offline" };
+    const existing = findTopologySession(sessionId);
+    if (existing?.status === "offline") {
+      cacheOfflineSession(this, existing);
+      return { sessionId, status: "offline" };
+    }
+    if (existing && isLiveTopologyStatus(existing.status)) {
+      upsertTopologySession({ ...existing, lifecycle: "offline" }, "offline");
+      cacheOfflineSession(this, { ...existing, lifecycle: "offline", status: "offline" });
+      refreshLifecycleViews(this);
+      return { sessionId, status: "offline" };
+    }
+    if (existing?.status === "graveyard") {
+      throw new Error(`Session "${sessionId}" is already in graveyard`);
+    }
+    throw new Error(`Unknown session "${sessionId}"`);
   },
   async sendAgentToGraveyard(sessionId) {
-    const previousStatus = (this as any).sessions?.some?.((session: any) => session.id === sessionId)
-      ? "running"
-      : "offline";
-    this.graveyardSession(sessionId);
+    const runtime = (this as any).sessions?.find?.((session: any) => session.id === sessionId);
+    const existing = findTopologySession(sessionId);
+    const previousStatus: "running" | "offline" =
+      runtime || isLiveTopologyStatus(existing?.status) ? "running" : "offline";
+    if (existing?.status === "graveyard") {
+      return { sessionId, status: "graveyard", previousStatus };
+    }
+    if (runtime && !existing) {
+      upsertTopologySession(runtimeToTopologySessionState(this, runtime), "running");
+    } else if (!runtime && !existing) {
+      throw new Error(`Unknown session "${sessionId}"`);
+    }
+    const moved = moveTopologySessionToGraveyard(sessionId);
+    if (!moved) {
+      throw new Error(`Unable to graveyard session "${sessionId}"`);
+    }
+    removeOfflineSessionCache(this, sessionId);
+    if (runtime) {
+      (this as any).graveyardAfterStopSessionIds?.add?.(sessionId);
+      (this as any).stoppingSessionIds?.add?.(sessionId);
+      runtime.kill();
+    }
+    refreshLifecycleViews(this);
+    (this as any).debug?.(`graveyarded session ${sessionId}`, "session");
     return { sessionId, status: "graveyard", previousStatus };
   },
   async migrateAgentSession(sessionId, targetWorktreePath) {

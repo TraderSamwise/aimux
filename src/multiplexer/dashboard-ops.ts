@@ -895,7 +895,7 @@ export function dashboardSessionActionDeps(host: DashboardOpsHost) {
     getPendingAction: (sessionId: string) => host.dashboardPendingActions.getSessionAction(sessionId),
     setPendingAction: (sessionId: string, kind: PendingSessionActionKind | null) =>
       setPendingDashboardSessionAction(host, sessionId, kind),
-    stopSessionToOffline: (session: any) => host.stopSessionToOffline(session),
+    stopSessionToOffline: (session: any) => host.stopAgent(session.id),
     isGraveyardAfterStop: (sessionId: string) => host.graveyardAfterStopSessionIds.has(sessionId),
     sendAgentToGraveyard: (sessionId: string) => host.sendAgentToGraveyard(sessionId).then(() => undefined),
     resumeOfflineSession: async (session: any) => {
