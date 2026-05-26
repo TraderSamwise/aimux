@@ -33,7 +33,7 @@ Local `.aimux/statusline.json` is a retired cache location and must not be read 
 
 ## Notifications
 
-Notification records live in `runtime-exchange.yaml` as tagged exchange threads/messages/inbox entries. Notification views are projections over exchange state.
+Notification records, unread/read state, and clear/done state live in `runtime-exchange.yaml` as tagged exchange threads/messages/inbox entries. Notification views are projections over exchange state.
 
 `notification-context.json` records focused client display context for notification suppression only. It must not become delivery state, wait state, inbox state, or attention authority.
 
