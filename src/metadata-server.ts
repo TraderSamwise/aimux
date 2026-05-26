@@ -2038,8 +2038,13 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/threads/mark-seen") {
-        const body = (await readJson(req)) as { threadId: string; session: string };
-        const thread = markThreadSeen(body.threadId, body.session);
+        const body = (await readJson(req)) as { threadId: string; session?: string; sessionId?: string };
+        const sessionId = (body.session ?? body.sessionId ?? "").trim();
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "session is required" });
+          return;
+        }
+        const thread = markThreadSeen(body.threadId, sessionId);
         if (!thread) {
           send(res, 404, { ok: false, error: "thread not found" });
           return;

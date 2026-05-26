@@ -1830,7 +1830,7 @@ threadCmd
   .argument("<threadId>")
   .requiredOption("--session <sessionId>", "Participant session id")
   .action(async (threadId: string, opts: { session: string }) => {
-    await postProjectServiceJsonOrLocal("/threads/mark-seen", { threadId, sessionId: opts.session }, () => {
+    await postProjectServiceJsonOrLocal("/threads/mark-seen", { threadId, session: opts.session }, () => {
       const thread = markThreadSeen(threadId, opts.session);
       if (!thread) {
         console.error(`aimux: thread not found: ${threadId}`);
