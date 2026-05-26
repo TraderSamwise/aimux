@@ -62,6 +62,7 @@ to read-only shared session routes, and the owner daemon enforces the same
 restriction as defense in depth:
 
 - `GET /agents/output`
+- `GET /agents/history`
 - `GET /events`
 
 Guests must not access daemon-level project management routes or other sessions.
@@ -92,8 +93,8 @@ Relay-proxied daemon requests carry this metadata in `x-aimux-*` headers:
 - `x-aimux-share-session-id`: session ID the share is allowed to read
 
 The daemon treats owner or local requests as full-control requests. A guest role
-is read-only and may only access the shared session output, event, history, and
-history read routes. Shared session output, event, and history routes require
+is read-only and may only access the guest-readable routes listed above. Shared
+session output, event, and history routes require
 `x-aimux-share-session-id` and reject requests for any other session. Attachment
 reads are not exposed to guests until attachment records have a session-bound
 authorization check. Presence and device metadata are remote security inputs,

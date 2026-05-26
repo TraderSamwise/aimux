@@ -36,75 +36,79 @@ describe("RelayTransport remote security state", () => {
     vi.useFakeTimers();
     const originalWebSocket = globalThis.WebSocket;
     const sockets: MockWebSocket[] = [];
-    vi.stubGlobal(
-      "WebSocket",
-      class extends MockWebSocket {
-        constructor(url: string, protocols: string[]) {
-          super(url, protocols);
-          sockets.push(this);
-        }
-      },
-    );
-    const statuses: RelayStatus[] = [];
-    const transport = new RelayTransport(
-      "wss://relay.example.test",
-      async () => "token",
-      async () => ({
-        deviceId: "client_1",
-        kind: "web",
-        name: "Web browser",
-        platform: "web",
-      }),
-    );
-    transport.onStatusChange((status) => statuses.push(status));
+    try {
+      vi.stubGlobal(
+        "WebSocket",
+        class extends MockWebSocket {
+          constructor(url: string, protocols: string[]) {
+            super(url, protocols);
+            sockets.push(this);
+          }
+        },
+      );
+      const statuses: RelayStatus[] = [];
+      const transport = new RelayTransport(
+        "wss://relay.example.test",
+        async () => "token",
+        async () => ({
+          deviceId: "client_1",
+          kind: "web",
+          name: "Web browser",
+          platform: "web",
+        }),
+      );
+      transport.onStatusChange((status) => statuses.push(status));
 
-    await transport.connect();
-    expect(sockets).toHaveLength(1);
-    sockets[0]!.onclose?.({ code: 4003 });
-    await vi.advanceTimersByTimeAsync(30_000);
+      await transport.connect();
+      expect(sockets).toHaveLength(1);
+      sockets[0]!.onclose?.({ code: 4003 });
+      await vi.advanceTimersByTimeAsync(30_000);
 
-    expect(statuses).toContain("auth_failed");
-    expect(sockets).toHaveLength(1);
-
-    vi.stubGlobal("WebSocket", originalWebSocket);
-    vi.useRealTimers();
+      expect(statuses).toContain("auth_failed");
+      expect(sockets).toHaveLength(1);
+    } finally {
+      vi.stubGlobal("WebSocket", originalWebSocket);
+      vi.useRealTimers();
+    }
   });
 
   it("stops reconnecting after repeated failed WebSocket handshakes", async () => {
     vi.useFakeTimers();
     const originalWebSocket = globalThis.WebSocket;
     const sockets: MockWebSocket[] = [];
-    vi.stubGlobal(
-      "WebSocket",
-      class extends MockWebSocket {
-        constructor(url: string, protocols: string[]) {
-          super(url, protocols);
-          sockets.push(this);
-          setTimeout(() => this.onclose?.({ code: 1006 }), 0);
-        }
-      },
-    );
-    const statuses: RelayStatus[] = [];
-    const transport = new RelayTransport(
-      "wss://relay.example.test",
-      async () => "token",
-      async () => ({
-        deviceId: "client_1",
-        kind: "web",
-        name: "Web browser",
-        platform: "web",
-      }),
-    );
-    transport.onStatusChange((status) => statuses.push(status));
+    try {
+      vi.stubGlobal(
+        "WebSocket",
+        class extends MockWebSocket {
+          constructor(url: string, protocols: string[]) {
+            super(url, protocols);
+            sockets.push(this);
+            setTimeout(() => this.onclose?.({ code: 1006 }), 0);
+          }
+        },
+      );
+      const statuses: RelayStatus[] = [];
+      const transport = new RelayTransport(
+        "wss://relay.example.test",
+        async () => "token",
+        async () => ({
+          deviceId: "client_1",
+          kind: "web",
+          name: "Web browser",
+          platform: "web",
+        }),
+      );
+      transport.onStatusChange((status) => statuses.push(status));
 
-    await transport.connect();
-    await vi.advanceTimersByTimeAsync(3_500);
-    await vi.advanceTimersByTimeAsync(30_000);
+      await transport.connect();
+      await vi.advanceTimersByTimeAsync(3_500);
+      await vi.advanceTimersByTimeAsync(30_000);
 
-    expect(statuses).toContain("auth_failed");
-    expect(sockets).toHaveLength(3);
-
-    vi.stubGlobal("WebSocket", originalWebSocket);
-    vi.useRealTimers();
+      expect(statuses).toContain("auth_failed");
+      expect(sockets).toHaveLength(3);
+    } finally {
+      vi.stubGlobal("WebSocket", originalWebSocket);
+      vi.useRealTimers();
+    }
   });
 });
