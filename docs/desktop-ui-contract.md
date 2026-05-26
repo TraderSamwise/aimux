@@ -43,6 +43,7 @@ Supplementary desktop views can read directly from project-service HTTP too:
 
 - `GET /workflow` for activity-style workflow/task feeds
 - `GET /threads` and `GET /threads/:id` for thread browsing
+- `GET /tasks` and `GET /tasks/:id` for task browsing
 - `GET /graveyard` for graveyard browsing
 - `GET /events` as SSE for ephemeral per-project alerts and other live push events
 
@@ -96,7 +97,10 @@ Desktop actions should call awaited project-service endpoints:
 - `POST /agents/kill`
 - `POST /worktrees/create`
 - `POST /worktrees/remove`
+- `POST /worktrees/graveyard`
 - `POST /graveyard/resurrect`
+- `POST /graveyard/worktrees/resurrect`
+- `POST /graveyard/worktrees/delete`
 - `POST /threads/send`
 - `POST /threads/status`
 - `POST /handoff`

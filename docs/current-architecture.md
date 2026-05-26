@@ -137,6 +137,8 @@ Project-service HTTP now exposes the live orchestration surface, including:
 - `GET /workflow`
 - `GET /threads`
 - `GET /threads/:id`
+- `GET /tasks`
+- `GET /tasks/:id`
 - `POST /threads/open`
 - `POST /threads/send`
 - `POST /threads/mark-seen`
@@ -182,6 +184,10 @@ aimux graveyard send <sessionId> --project /abs/path/to/repo --json
 aimux graveyard resurrect <sessionId> --project /abs/path/to/repo --json
 aimux worktree list --project /abs/path/to/repo --json
 aimux worktree create feature-x --project /abs/path/to/repo --json
+aimux worktree remove /abs/path/to/worktree --project /abs/path/to/repo --json
+aimux worktree graveyard /abs/path/to/worktree --project /abs/path/to/repo --json
+aimux worktree resurrect /abs/path/to/worktree --project /abs/path/to/repo --json
+aimux worktree delete-graveyard /abs/path/to/worktree --project /abs/path/to/repo --json
 desktop terminal focus uses the same shell transport with the project-scoped `tmuxWindowId` from `desktop-state`
 ```
 
