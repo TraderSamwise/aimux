@@ -27,7 +27,7 @@ import {
   getRuntimeTopologyPath,
 } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
-import { createWorktree, findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
+import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import {
   buildTmuxDoctorReport,
@@ -115,7 +115,10 @@ import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/serv
 import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
-import { listTopologyWorktreeGraveyardPaths, upsertTopologyWorktree } from "./runtime-core/topology-worktrees.js";
+import {
+  listTopologyWorktreeGraveyard,
+  listTopologyWorktreeGraveyardPaths,
+} from "./runtime-core/topology-worktrees.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -1594,6 +1597,40 @@ function printWorktrees(projectRoot?: string, worktreesInput?: WorktreeInfo[]): 
   }
 }
 
+function printGraveyard(input: { entries?: any[]; worktrees?: any[] }): void {
+  const entries = Array.isArray(input.entries) ? input.entries : [];
+  const worktrees = Array.isArray(input.worktrees) ? input.worktrees : [];
+  if (entries.length === 0 && worktrees.length === 0) {
+    console.log("Graveyard is empty.");
+    return;
+  }
+  if (worktrees.length > 0) {
+    console.log("Worktrees");
+    console.log("Name".padEnd(30) + "Branch".padEnd(35) + "Path");
+    console.log("-".repeat(95));
+    for (const worktree of worktrees) {
+      console.log(
+        String(worktree.name ?? "?").padEnd(30) +
+          String(worktree.branch ?? "").padEnd(35) +
+          String(worktree.path ?? "?"),
+      );
+    }
+  }
+  if (entries.length > 0) {
+    if (worktrees.length > 0) console.log("");
+    console.log("Agents");
+    console.log("ID".padEnd(25) + "Tool".padEnd(15) + "Backend Session ID");
+    console.log("-".repeat(70));
+    for (const session of entries) {
+      console.log(
+        String(session.id ?? "?").padEnd(25) +
+          String(session.command ?? session.tool ?? "?").padEnd(15) +
+          String(session.backendSessionId ?? "(none)"),
+      );
+    }
+  }
+}
+
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
 async function ensureDaemonProjectReadyForFallback(projectRoot: string): Promise<void> {
@@ -2306,13 +2343,8 @@ worktreeCmd
       const projectRoot = await prepareProjectContext(opts.project);
       await ensureDaemonProjectReadyForFallback(projectRoot);
       const result = await postLiveProjectServiceJsonOrLocal(projectRoot, "/worktrees/create", { name }, () => {
-        const path = createWorktree(name, projectRoot);
-        upsertTopologyWorktree({ path, name, branch: name, basePath: projectRoot }, "active", { projectRoot });
-        return {
-          ok: true,
-          path,
-          status: "created",
-        };
+        const mux = new Multiplexer();
+        return mux.createDesktopWorktree(name);
       });
       const createdPath = result.path;
       if (opts.json) {
@@ -2331,6 +2363,130 @@ worktreeCmd
         return;
       }
       console.log(`Created worktree "${name}" at ${createdPath}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command("remove <path>")
+  .description("Remove a git worktree")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (targetPath: string, opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      await ensureDaemonProjectReadyForFallback(projectRoot);
+      const resolvedPath = pathResolve(targetPath);
+      const result = await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/worktrees/remove",
+        { path: resolvedPath },
+        () => {
+          const mux = new Multiplexer();
+          return mux.removeDesktopWorktree(resolvedPath);
+        },
+      );
+      if (opts.json) {
+        console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
+        return;
+      }
+      console.log(`${result.status === "removing" ? "removing" : "removed"} ${result.path}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command("graveyard <path>")
+  .description("Move a worktree to the graveyard without deleting the checkout")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (targetPath: string, opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      await ensureDaemonProjectReadyForFallback(projectRoot);
+      const resolvedPath = pathResolve(targetPath);
+      const result = await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/worktrees/graveyard",
+        { path: resolvedPath },
+        () => {
+          const mux = new Multiplexer();
+          return mux.graveyardDesktopWorktree(resolvedPath);
+        },
+      );
+      if (opts.json) {
+        console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
+        return;
+      }
+      console.log(`graveyarded ${result.path}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command("resurrect <path>")
+  .description("Restore a graveyarded worktree to the active worktree list")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (targetPath: string, opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      await ensureDaemonProjectReadyForFallback(projectRoot);
+      const resolvedPath = pathResolve(targetPath);
+      const result = await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/graveyard/worktrees/resurrect",
+        { path: resolvedPath },
+        () => {
+          const mux = new Multiplexer();
+          return mux.resurrectGraveyardWorktree(resolvedPath);
+        },
+      );
+      if (opts.json) {
+        console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
+        return;
+      }
+      console.log(`resurrected ${result.path}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+worktreeCmd
+  .command("delete-graveyard <path>")
+  .description("Permanently delete a graveyarded worktree entry")
+  .option("--project <path>", "Project path")
+  .option("--json", "Emit JSON")
+  .action(async (targetPath: string, opts: { project?: string; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      await ensureDaemonProjectReadyForFallback(projectRoot);
+      const resolvedPath = pathResolve(targetPath);
+      const result = await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/graveyard/worktrees/delete",
+        { path: resolvedPath },
+        () => {
+          const mux = new Multiplexer();
+          return mux.deleteGraveyardWorktree(resolvedPath);
+        },
+      );
+      if (opts.json) {
+        console.log(JSON.stringify({ ok: true, projectRoot, path: result.path, status: result.status }, null, 2));
+        return;
+      }
+      console.log(`deleted ${result.path}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);
@@ -2448,27 +2604,31 @@ graveyardCmd
   .option("--project <path>", "Project path")
   .option("--json", "Emit JSON")
   .action(async (opts: { project?: string; json?: boolean }) => {
-    await prepareProjectContext(opts.project);
+    const projectRoot = await prepareProjectContext(opts.project);
+    await ensureDaemonProjectReadyForFallback(projectRoot);
     try {
-      const graveyard = listTopologySessionStates({ statuses: ["graveyard"] });
+      const graveyard = await getLiveProjectServiceJsonOrLocal(projectRoot, "/graveyard", () => ({
+        ok: true,
+        entries: listTopologySessionStates({ statuses: ["graveyard"] }),
+        worktrees: listTopologyWorktreeGraveyard(),
+      }));
       if (opts.json) {
-        console.log(JSON.stringify(Array.isArray(graveyard) ? graveyard : [], null, 2));
-        return;
-      }
-      if (!Array.isArray(graveyard) || graveyard.length === 0) {
-        console.log("Graveyard is empty.");
-        return;
-      }
-      console.log("ID".padEnd(25) + "Tool".padEnd(15) + "Backend Session ID");
-      console.log("-".repeat(70));
-      for (const s of graveyard) {
         console.log(
-          (s.id ?? "?").padEnd(25) + (s.command ?? s.tool ?? "?").padEnd(15) + (s.backendSessionId ?? "(none)"),
+          JSON.stringify(
+            {
+              entries: Array.isArray(graveyard.entries) ? graveyard.entries : [],
+              worktrees: Array.isArray(graveyard.worktrees) ? graveyard.worktrees : [],
+            },
+            null,
+            2,
+          ),
         );
+        return;
       }
+      printGraveyard(graveyard);
     } catch {
       if (opts.json) {
-        console.log("[]");
+        console.log(JSON.stringify({ entries: [], worktrees: [] }, null, 2));
         return;
       }
       console.log("Graveyard is empty.");

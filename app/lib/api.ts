@@ -569,7 +569,7 @@ export async function resurrectGraveyardWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string; status: "restored" }> {
+): Promise<{ ok: boolean; path: string; status: "active" }> {
   return callProjectJson(endpoint, "POST", "/graveyard/worktrees/resurrect", opts, { path });
 }
 
@@ -577,7 +577,7 @@ export async function deleteGraveyardWorktree(
   endpoint: ServiceEndpoint,
   path: string,
   opts?: ApiOpts,
-): Promise<{ ok: boolean; path: string; status: "deleted" }> {
+): Promise<{ ok: boolean; path: string; status: "removed" }> {
   return callProjectJson(endpoint, "POST", "/graveyard/worktrees/delete", opts, { path });
 }
 
