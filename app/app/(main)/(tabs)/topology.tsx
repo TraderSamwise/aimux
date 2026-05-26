@@ -487,15 +487,7 @@ export default function TopologyScreen() {
               />
             </View>
 
-            {mode === "map" ? (
-              <View>
-                <TopologyMap topology={topology} width={width} />
-                <Text className="mt-3 text-[11px] text-muted-foreground">
-                  The map mirrors OpenRig's topology concept with Aimux worktrees, agents, and
-                  services.
-                </Text>
-              </View>
-            ) : null}
+            {mode === "map" ? <TopologyMap topology={topology} width={width} /> : null}
 
             {mode === "tree" ? (
               <View>
