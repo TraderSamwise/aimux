@@ -1599,7 +1599,11 @@ const worktreeCmd = program.command("worktree").description("Manage git worktree
 async function ensureDaemonProjectReadyForFallback(projectRoot: string): Promise<void> {
   try {
     await ensureDaemonProjectReady(projectRoot);
-  } catch {}
+  } catch (err) {
+    if (err instanceof ProjectServiceVersionError) {
+      throw err;
+    }
+  }
 }
 
 worktreeCmd.action(async () => {
