@@ -18,6 +18,7 @@ function gitInit(cwd: string): void {
 import {
   createSession,
   focusSession,
+  injectCodexDeveloperInstructions,
   migrateAgent,
   resumeSessions,
   restoreSessions,
@@ -28,6 +29,19 @@ import {
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 
 describe("createSession", () => {
+  it("inserts Codex developer instructions before subcommands", () => {
+    expect(
+      injectCodexDeveloperInstructions(["--model", "gpt-5", "resume", "abc"], "developer_instructions", "stand"),
+    ).toEqual(["--model", "gpt-5", "-c", 'developer_instructions="stand"', "resume", "abc"]);
+    expect(
+      injectCodexDeveloperInstructions(
+        ["--dangerously-bypass-approvals-and-sandbox", "--", "Explain"],
+        "developer_instructions",
+        "stand",
+      ),
+    ).toEqual(["--dangerously-bypass-approvals-and-sandbox", "-c", 'developer_instructions="stand"', "--", "Explain"]);
+  });
+
   it("redacts sensitive launch arg values in debug summaries", () => {
     expect(
       summarizeLaunchArgs([
@@ -198,7 +212,7 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
-  it("passes fresh Codex aimux instructions as the initial prompt", async () => {
+  it("passes fresh Codex aimux instructions through developer_instructions config", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-prompt-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
@@ -241,13 +255,17 @@ describe("createSession", () => {
 
     const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
     const launched = (createWindowArgs[4] as string[]).join(" ");
-    expect(launched).toContain("codex startup instructions");
+    expect(launched).toContain("-c");
+    expect(launched).toContain("developer_instructions=");
+    expect(launched).toContain("aimux preamble");
+    expect(launched).not.toContain("codex startup instructions");
+    expect(host.sessionBootstrap.buildInitialKickoffPrompt).not.toHaveBeenCalled();
     expect(host.sessionBootstrap.deliverDetachedCodexKickoffPrompt).not.toHaveBeenCalled();
 
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
-  it("does not append initial Codex instructions to explicit Codex subcommands", async () => {
+  it("keeps Codex developer instructions before explicit Codex subcommands", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-subcommand-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
@@ -290,8 +308,10 @@ describe("createSession", () => {
 
     const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
     const launched = (createWindowArgs[4] as string[]).join(" ");
-    expect(launched).toContain("resume");
+    expect(launched).toContain("developer_instructions=");
+    expect(launched).toContain("aimux preamble");
     expect(launched).not.toContain("codex startup instructions");
+    expect(host.sessionBootstrap.buildInitialKickoffPrompt).not.toHaveBeenCalled();
     expect(host.sessionBootstrap.deliverDetachedCodexKickoffPrompt).not.toHaveBeenCalled();
 
     rmSync(repoRoot, { recursive: true, force: true });
@@ -574,7 +594,7 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
-  it("sends Codex teammate preambles through the initial kickoff prompt", async () => {
+  it("sends Codex teammate preambles through developer_instructions config", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-codex-team-preamble-"));
     gitInit(repoRoot);
     await initPaths(repoRoot);
@@ -632,12 +652,11 @@ describe("createSession", () => {
         team,
       }),
     );
-    expect(host.sessionBootstrap.buildInitialKickoffPrompt).toHaveBeenCalledWith(
-      "codex-team",
-      "aimux teammate preamble",
-    );
+    expect(host.sessionBootstrap.buildInitialKickoffPrompt).not.toHaveBeenCalled();
     const launched = (host.tmuxRuntimeManager.createWindow.mock.calls[0][4] as string[]).join(" ");
-    expect(launched).toContain("codex startup instructions");
+    expect(launched).toContain("developer_instructions=");
+    expect(launched).toContain("aimux teammate preamble");
+    expect(launched).not.toContain("codex startup instructions");
 
     rmSync(repoRoot, { recursive: true, force: true });
   });

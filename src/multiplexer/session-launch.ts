@@ -112,8 +112,47 @@ function firstCodexPositionalArg(args: string[]): string | undefined {
   return undefined;
 }
 
+function firstCodexPositionalArgIndex(args: string[]): number {
+  let skipNext = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    if (arg === "--") {
+      return i;
+    }
+    if (arg.startsWith("--")) {
+      const [name, value] = arg.split("=", 2);
+      if (CODEX_OPTIONS_WITH_VALUE.has(name) && value === undefined) {
+        skipNext = true;
+      }
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      if (CODEX_OPTIONS_WITH_VALUE.has(arg)) {
+        skipNext = true;
+      }
+      continue;
+    }
+    return i;
+  }
+  return args.length;
+}
+
 function canUseCodexInitialPrompt(args: string[], command: string, toolConfigKey?: string): boolean {
   return toolConfigKey === "codex" && command === "codex" && !firstCodexPositionalArg(args);
+}
+
+function codexConfigArg(key: string, value: string): string {
+  return `${key}=${JSON.stringify(value)}`;
+}
+
+export function injectCodexDeveloperInstructions(args: string[], key: string, instructions: string): string[] {
+  if (!key.trim() || !instructions.trim()) return [...args];
+  const insertionIndex = firstCodexPositionalArgIndex(args);
+  return [...args.slice(0, insertionIndex), "-c", codexConfigArg(key, instructions), ...args.slice(insertionIndex)];
 }
 
 export async function run(host: SessionLaunchHost, opts: { command: string; args: string[] }): Promise<number> {
@@ -431,9 +470,17 @@ export function createSession(
         team,
       });
   const shouldInjectLaunchPreamble = Boolean(!effectiveSuppressStartupPreamble && preambleFlag && preamble.trim());
+  const shouldInjectCodexDeveloperInstructions = Boolean(
+    !effectiveSuppressStartupPreamble &&
+    toolCfg?.command === command &&
+    command === "codex" &&
+    toolCfg.developerInstructionsConfigKey &&
+    preamble.trim(),
+  );
   const shouldUseCodexInitialPrompt = Boolean(
     !effectiveSuppressStartupPreamble &&
     !preambleFlag &&
+    !shouldInjectCodexDeveloperInstructions &&
     automaticPreambleEnabled &&
     (!extraPreamble || Boolean(team)) &&
     preamble.trim() &&
@@ -448,6 +495,9 @@ export function createSession(
     : undefined;
   if (codexInitialPrompt) {
     finalArgs.push(codexInitialPrompt);
+  }
+  if (shouldInjectCodexDeveloperInstructions) {
+    finalArgs = injectCodexDeveloperInstructions(finalArgs, toolCfg!.developerInstructionsConfigKey!, preamble);
   }
   let launchCommand = command;
 
@@ -546,6 +596,7 @@ export function createSession(
     !preambleFlag &&
     !extraPreamble &&
     !shouldUseCodexInitialPrompt &&
+    !shouldInjectCodexDeveloperInstructions &&
     (toolConfigKey !== "codex" || !firstCodexPositionalArg(args)) &&
     automaticPreambleEnabled &&
     preamble.trim()
