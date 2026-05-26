@@ -26,11 +26,17 @@ type RelayMessage = RelayResponse | RelayControl;
 const REQUEST_TIMEOUT_MS = 30_000;
 const INITIAL_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
+const HANDSHAKE_FAILURE_AUTH_THRESHOLD = 3;
 const TOKEN_PROTOCOL_PREFIX = "aimux-token.";
 
 let idCounter = 0;
 
-export type RelayStatus = "disconnected" | "connecting" | "connected" | "daemon_offline";
+export type RelayStatus =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "daemon_offline"
+  | "auth_failed";
 
 export type RelayStatusListener = (status: RelayStatus) => void;
 export type RelaySecurityEventListener = (event: SecurityEventRecord) => void;
@@ -47,6 +53,7 @@ export class RelayTransport {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private daemonOnline = false;
+  private consecutiveHandshakeFailures = 0;
   private _status: RelayStatus = "disconnected";
   private listeners = new Set<RelayStatusListener>();
   private securityEventListeners = new Set<RelaySecurityEventListener>();
@@ -105,7 +112,11 @@ export class RelayTransport {
       return;
     }
 
+    let opened = false;
+
     this.ws.onopen = () => {
+      opened = true;
+      this.consecutiveHandshakeFailures = 0;
       this.retryMs = INITIAL_RETRY_MS;
     };
 
@@ -113,9 +124,23 @@ export class RelayTransport {
       this.handleMessage(String(event.data));
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
       this.ws = null;
       this.rejectAllPending("Connection lost");
+      const code = (event as CloseEvent).code;
+      if (code === 1008 || code === 4001 || code === 4003) {
+        this.stopped = true;
+        this.setStatus("auth_failed");
+        return;
+      }
+      if (!opened) {
+        this.consecutiveHandshakeFailures += 1;
+        if (this.consecutiveHandshakeFailures >= HANDSHAKE_FAILURE_AUTH_THRESHOLD) {
+          this.stopped = true;
+          this.setStatus("auth_failed");
+          return;
+        }
+      }
       if (!this.stopped) {
         this.setStatus("disconnected");
         this.scheduleRetry();

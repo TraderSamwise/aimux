@@ -58,11 +58,12 @@ the invited email, and never be stored in plaintext.
 ## Relay Authorization
 
 Owner clients can access their own relay as before. Guest clients are restricted
-to read-only shared session routes:
+to read-only shared session routes, and the owner daemon enforces the same
+restriction as defense in depth:
 
 - `GET /agents/output`
+- `GET /agents/history`
 - `GET /events`
-- attachment read routes needed to render existing attachment records
 
 Guests must not access daemon-level project management routes or other sessions.
 The owner Durable Object injects trusted actor metadata into proxied requests
@@ -81,6 +82,23 @@ only trust actor metadata injected by the relay. The trusted actor shape is:
   role: "owner" | "guest";
 }
 ```
+
+Relay-proxied daemon requests carry this metadata in `x-aimux-*` headers:
+
+- `x-aimux-actor-role`: `owner` or `guest`
+- `x-aimux-actor-user-id`: authenticated Clerk user ID
+- `x-aimux-actor-display-name`: display name for archived UI only
+- `x-aimux-actor-email`: optional authenticated email
+- `x-aimux-share-id`: active share ID for shared-session guests
+- `x-aimux-share-session-id`: session ID the share is allowed to read
+
+The daemon treats owner or local requests as full-control requests. A guest role
+is read-only and may only access the guest-readable routes listed above. Shared
+session output, event, and history routes require
+`x-aimux-share-session-id` and reject requests for any other session. Attachment
+reads are not exposed to guests until attachment records have a session-bound
+authorization check. Presence and device metadata are remote security inputs,
+not lifecycle authority.
 
 Session history records may keep actor metadata for archived display. There is
 no active shared input writer in the current runtime cut.

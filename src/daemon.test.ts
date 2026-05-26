@@ -411,6 +411,66 @@ describe("daemon routing (relay + proxy)", () => {
     );
   });
 
+  it("blocks shared guest relay requests from mutating daemon or project state", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+    const headers = {
+      "x-aimux-actor-role": "guest",
+      "x-aimux-share-id": "share_1",
+      "x-aimux-share-session-id": "claude-1",
+    };
+
+    const daemonMutation = await daemon.routeRequest("POST", "/projects/ensure", { projectRoot }, headers);
+    const projectMutation = await daemon.routeRequest(
+      "POST",
+      "/proxy/127.0.0.1/4321/agents/stop",
+      { sessionId: "claude-1" },
+      headers,
+    );
+    const otherSessionRead = await daemon.routeRequest(
+      "GET",
+      "/proxy/127.0.0.1/4321/agents/output?sessionId=claude-2",
+      undefined,
+      headers,
+    );
+    const unscopedSessionRead = await daemon.routeRequest(
+      "GET",
+      "/proxy/127.0.0.1/4321/agents/output?sessionId=claude-1",
+      undefined,
+      { "x-aimux-actor-role": "guest", "x-aimux-share-id": "share_1" },
+    );
+    const attachmentRead = await daemon.routeRequest(
+      "GET",
+      "/proxy/127.0.0.1/4321/attachments/att_1/content",
+      undefined,
+      headers,
+    );
+
+    expect(daemonMutation.status).toBe(403);
+    expect(projectMutation.status).toBe(403);
+    expect(otherSessionRead.status).toBe(403);
+    expect(unscopedSessionRead.status).toBe(403);
+    expect(attachmentRead.status).toBe(403);
+    expect(vi.mocked(requestJson)).not.toHaveBeenCalled();
+  });
+
+  it("allows shared guest relay requests to read the authorized session output", async () => {
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    const res = await daemon.routeRequest("GET", "/proxy/127.0.0.1/4321/agents/output?sessionId=claude-1", undefined, {
+      "x-aimux-actor-role": "guest",
+      "x-aimux-share-id": "share_1",
+      "x-aimux-share-session-id": "claude-1",
+    });
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(requestJson)).toHaveBeenCalledWith(
+      "http://127.0.0.1:4321/agents/output?sessionId=claude-1",
+      expect.objectContaining({ method: "GET", timeoutMs: expect.any(Number) }),
+    );
+  });
+
   it("returns 504 when the proxied target times out", async () => {
     vi.mocked(requestJson).mockRejectedValueOnce(new Error("request timed out after 10000ms"));
     const { AimuxDaemon } = await import("./daemon.js");

@@ -185,9 +185,6 @@ export function loadOfflineTopologySessions(
   const liveIds = new Set(liveAgentWindows.map(({ metadata }) => metadata.sessionId));
   const ownedIds = new Set<string>();
   for (const s of host.sessions) ownedIds.add(s.id);
-  for (const inst of host.getRemoteInstancesSafe()) {
-    for (const rs of inst.sessions) ownedIds.add(rs.id);
-  }
 
   const ownedBackendIds = new Set(
     host.sessions
@@ -587,20 +584,6 @@ export function startProjectServiceRefresh(host: RuntimeStateHost): void {
 
 export function stopProjectServiceRefresh(host: RuntimeStateHost): void {
   host.runtimeSync.stopProjectServiceRefresh();
-}
-
-export function getRemoteInstancesSafe(host: RuntimeStateHost) {
-  return host.instanceDirectory.getRemoteInstancesSafe(host.instanceId, process.cwd());
-}
-
-export function getRemoteOwnedSessionKeys(host: RuntimeStateHost): Set<string> {
-  void host;
-  return new Set();
-}
-
-export function getInstanceSessionRefs(host: RuntimeStateHost): any[] {
-  void host;
-  return [];
 }
 
 export function listDesktopWorktrees(

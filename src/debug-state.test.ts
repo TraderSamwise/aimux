@@ -20,8 +20,6 @@ function makePaths(): ReadOnlyProjectPaths {
     statePath: join(projectStateDir, "state.json"),
     runtimeTopologyPath: join(projectStateDir, "runtime-topology.yaml"),
     runtimeExchangePath: join(projectStateDir, "runtime-exchange.yaml"),
-    instancesPath: join(projectStateDir, "instances.json"),
-    localInstancesPath: join(localAimuxDir, "instances.json"),
     metadataPath: join(projectStateDir, "metadata.json"),
     notificationContextPath: join(projectStateDir, "notification-context.json"),
     dashboardOperationFailuresPath: join(projectStateDir, "dashboard-operation-failures.json"),
@@ -96,15 +94,7 @@ describe("buildDebugStateReport", () => {
         },
       },
     });
-    writeJson(paths.instancesPath, [
-      {
-        instanceId: "instance-a",
-        pid: 123,
-        sessions: [{ id: "codex-a1", backendSessionId: "backend-a1", worktreePath: "/repo/worktree-a" }],
-      },
-    ]);
-    writeJson(paths.localInstancesPath, []);
-    const before = snapshot([paths.statePath, paths.metadataPath, paths.instancesPath, paths.localInstancesPath]);
+    const before = snapshot([paths.statePath, paths.metadataPath]);
 
     const report = buildDebugStateReport({
       target: "backend-a1",
@@ -179,8 +169,6 @@ describe("buildDebugStateReport", () => {
       services: [{ id: "service-1", worktreePath: "/repo/app", cwd: "/repo/app/apps/web", label: "web" }],
     });
     writeJson(paths.metadataPath, { version: 1, sessions: {} });
-    writeJson(paths.instancesPath, []);
-
     const report = buildDebugStateReport({
       target: "service-1",
       paths,

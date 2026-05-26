@@ -118,19 +118,6 @@ export function renderDashboardFrame(
       : "";
     const lastUsedHint = session.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(session.lastUsedAt)}\x1b[0m` : "";
 
-    if (session.remoteInstancePid) {
-      const icon = "\x1b[2;36m◈\x1b[0m";
-      const ownerTag = `\x1b[2mother tab (PID ${session.remoteInstancePid})\x1b[0m`;
-      const identity = session.label ?? session.command;
-      const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 40)}\x1b[0m` : "";
-      const remoteRoleTag = session.role ? ` \x1b[2;36m(${session.role})\x1b[0m` : "";
-      const notificationBadge =
-        session.semantic && session.semantic.notifications.unreadCount > 0
-          ? ` \x1b[36m${Math.min(session.semantic.notifications.unreadCount, 99)}\x1b[0m`
-          : "";
-      return `${indent}${prefix}${icon} ${numberBadge}${identity}${remoteRoleTag}${headlineText}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${notificationBadge}${lastUsedHint} — ${ownerTag}`;
-    }
-
     const icon = colorSessionIcon(session);
     const statusLabel = state.derivedStatusLabel(session);
     const coloredStatusLabel = colorSessionStatus(session, statusLabel);
@@ -232,12 +219,10 @@ export function renderDashboardFrame(
       ? "[x] stop"
       : selectedSession?.status === "offline"
         ? "[x] kill"
-        : selectedSession?.remoteInstancePid
-          ? ""
-          : selectedSession
-            ? "[x] stop"
-            : "";
-    const rLabel = selectedSession && !selectedSession.remoteInstancePid ? "  [r] name" : "";
+        : selectedSession
+          ? "[x] stop"
+          : "";
+    const rLabel = selectedSession ? "  [r] name" : "";
     const teamLabel = selectedSession && state.selectedTeammates.length > 0 ? "  [e] team" : "";
     const enterLabel = selectedService
       ? "Enter open"

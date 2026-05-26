@@ -29,7 +29,6 @@ describe("runtime lifecycle state persistence", () => {
       sessionWorktreePaths: new Map(),
       sessionTmuxTargets: new Map(),
       buildLiveServiceStates: vi.fn(() => []),
-      getRemoteInstancesSafe: vi.fn(() => []),
       invalidateDesktopStateSnapshot: vi.fn(),
       isSessionRuntimeLive: vi.fn(() => true),
       getSessionLabel: vi.fn(() => undefined),
@@ -168,7 +167,7 @@ describe("runtime lifecycle state persistence", () => {
     expect(saved.services).toEqual([]);
   });
 
-  it("does not erase live remote sessions when this instance has no local rows", () => {
+  it("preserves existing topology sessions when this instance has no local rows", () => {
     writeFileSync(
       getStatePath(),
       JSON.stringify(
@@ -186,62 +185,11 @@ describe("runtime lifecycle state persistence", () => {
       sessions: [{ id: "remote-agent", command: "claude", tool: "claude", toolConfigKey: "claude", args: [] }],
     });
 
-    runtimeLifecycleMethods.saveState.call(
-      host({
-        getRemoteInstancesSafe: vi.fn(() => [
-          {
-            instanceId: "remote",
-            pid: 123,
-            cwd: repoRoot,
-            updatedAt: new Date().toISOString(),
-            sessions: [{ id: "remote-agent", tool: "claude" }],
-          },
-        ]),
-      }) as never,
-    );
+    runtimeLifecycleMethods.saveState.call(host() as never);
 
     const saved = JSON.parse(readFileSync(getStatePath(), "utf-8")) as { services: Array<{ id: string }> };
     expect(topologySessions().map((session) => session.id)).toEqual(["remote-agent"]);
     expect(saved.services.map((service) => service.id)).toEqual(["stale-service"]);
-  });
-
-  it("does not mint topology sessions from remote instance refs", () => {
-    writeFileSync(
-      getStatePath(),
-      JSON.stringify(
-        {
-          savedAt: new Date().toISOString(),
-          cwd: repoRoot,
-          sessions: [],
-          services: [],
-        },
-        null,
-        2,
-      ) + "\n",
-    );
-
-    runtimeLifecycleMethods.saveState.call(
-      host({
-        getRemoteInstancesSafe: vi.fn(() => [
-          {
-            instanceId: "remote",
-            pid: 123,
-            cwd: repoRoot,
-            updatedAt: new Date().toISOString(),
-            sessions: [
-              {
-                id: "remote-agent",
-                tool: "claude",
-                backendSessionId: "native-session",
-                worktreePath: repoRoot,
-              },
-            ],
-          },
-        ]),
-      }) as never,
-    );
-
-    expect(topologySessions()).toEqual([]);
   });
 
   it("preserves recoverable existing live sessions when saving partial state", () => {

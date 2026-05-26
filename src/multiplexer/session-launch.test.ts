@@ -827,10 +827,7 @@ describe("resumeSessions", () => {
     });
 
     class Host {
-      instanceId = "inst-1";
-      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();
-      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
       sessionBootstrap = {
         canResumeWithBackendSessionId: vi.fn(() => true),
         composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
@@ -877,10 +874,7 @@ describe("resumeSessions", () => {
     });
 
     class Host {
-      instanceId = "inst-1";
-      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();
-      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
       sessionBootstrap = {
         canResumeWithBackendSessionId: vi.fn(() => true),
         composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
@@ -946,10 +940,7 @@ describe("resumeSessions", () => {
     });
 
     class Host {
-      instanceId = "inst-1";
-      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();
-      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
       sessionBootstrap = {
         canResumeWithBackendSessionId: vi.fn(() => true),
         composeToolArgs: vi.fn((_toolCfg, resumeArgs: string[], originalArgs: string[]) => [
@@ -1060,10 +1051,7 @@ describe("resumeSessions", () => {
     });
 
     class Host {
-      instanceId = "inst-1";
-      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();
-      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
       sessionBootstrap = {
         canResumeWithBackendSessionId: vi.fn(() => false),
         composeToolArgs: vi.fn(),
@@ -1110,8 +1098,6 @@ describe("resumeSessions", () => {
     });
 
     class Host {
-      instanceId = "inst-1";
-      instanceDirectory = { registerInstance: vi.fn(async () => undefined) };
       startHeartbeat = vi.fn();
       syncSessionsFromTopology = vi.fn();
       saveState = vi.fn(() => {
@@ -1131,7 +1117,6 @@ describe("resumeSessions", () => {
           projectRoot: repoRoot,
         });
       });
-      getRemoteOwnedSessionKeys = vi.fn(() => new Set());
       sessionBootstrap = {
         canResumeWithBackendSessionId: vi.fn(() => true),
         composeToolArgs: vi.fn(),
@@ -1184,8 +1169,6 @@ describe("runProjectService", () => {
 describe("runDashboard", () => {
   it("hydrates restored subscreens and syncs footer state on initial startup", async () => {
     const host: any = {
-      instanceId: "inst-1",
-      instanceDirectory: { registerInstance: vi.fn(async () => undefined) },
       startHeartbeat: vi.fn(),
       startedInDashboard: false,
       mode: "session",

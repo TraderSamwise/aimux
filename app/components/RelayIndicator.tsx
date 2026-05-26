@@ -14,6 +14,7 @@ const STATUS_META: Record<RelayStatus, { label: string; dot: string; text: strin
   connected: { label: "Remote", dot: "bg-emerald-500", text: "text-emerald-400" },
   connecting: { label: "Connecting", dot: "bg-amber-500", text: "text-amber-400" },
   daemon_offline: { label: "Host offline", dot: "bg-zinc-500", text: "text-zinc-400" },
+  auth_failed: { label: "Auth blocked", dot: "bg-red-500", text: "text-red-400" },
   disconnected: { label: "Offline", dot: "bg-zinc-600", text: "text-zinc-500" },
 };
 
