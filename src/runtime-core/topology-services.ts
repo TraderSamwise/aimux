@@ -114,7 +114,7 @@ function serviceToBinding(
   status: RuntimeTopologyServiceStatus,
   now: string,
 ): RuntimeTopologyBinding | undefined {
-  if (status !== "running" && status !== "starting") return undefined;
+  if (status !== "running" && status !== "starting" && status !== "stopped") return undefined;
   const target = service.tmuxTarget;
   if (!target) return undefined;
   return {

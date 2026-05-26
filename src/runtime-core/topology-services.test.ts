@@ -68,9 +68,12 @@ describe("topology service lifecycle", () => {
       command: "zsh",
       args: ["-lc", "yarn api"],
       launchCommandLine: "yarn api",
-      tmuxTarget: { sessionName: "aimux-repo", windowId: "@3", windowIndex: 3, windowName: "api" },
     };
-    upsertTopologyService(service, "running", { store, projectRoot: repoRoot });
+    upsertTopologyService(
+      { ...service, tmuxTarget: { sessionName: "aimux-repo", windowId: "@3", windowIndex: 3, windowName: "api" } },
+      "running",
+      { store, projectRoot: repoRoot },
+    );
     upsertTopologyService(service, "stopped", { store, projectRoot: repoRoot });
 
     expect(store.read().bindings).toEqual([]);

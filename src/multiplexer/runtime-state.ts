@@ -12,6 +12,7 @@ import {
   moveTopologySessionToGraveyard,
   upsertTopologySession,
 } from "../runtime-core/topology-sessions.js";
+import { listTopologyServiceStates } from "../runtime-core/topology-services.js";
 
 type RuntimeStateHost = any;
 
@@ -226,7 +227,8 @@ export function loadOfflineTopologySessions(
 }
 
 export function loadOfflineServices(host: RuntimeStateHost, state = host.constructor.loadState()): boolean {
-  const savedServices = state?.services ?? [];
+  const topologyServices = listTopologyServiceStates({ statuses: ["stopped", "offline"] });
+  const savedServices = topologyServices.length > 0 ? topologyServices : (state?.services ?? []);
   if (savedServices.length === 0) {
     const changed = host.offlineServices.length > 0;
     host.offlineServices = [];

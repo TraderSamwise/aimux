@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
+import { upsertTopologyService } from "../runtime-core/topology-services.js";
 import {
   buildLiveServiceStates,
   getInstanceSessionRefs,
@@ -570,6 +571,35 @@ describe("resumeOfflineSession", () => {
 
     expect(changed).toBe(true);
     expect(host.offlineServices).toMatchObject([{ id: "service-1" }]);
+  });
+
+  it("loads stopped services from topology before legacy saved state", () => {
+    upsertTopologyService(
+      {
+        id: "service-topology",
+        label: "web",
+        launchCommandLine: "yarn web",
+        worktreePath: repoRoot,
+      },
+      "stopped",
+      { projectRoot: repoRoot },
+    );
+    const host: any = {
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      dashboardPendingActions: new DashboardPendingActions(() => {}),
+    };
+
+    const changed = loadOfflineServices(host, {
+      sessions: [],
+      services: [{ id: "service-legacy", label: "legacy" }],
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(changed).toBe(true);
+    expect(host.offlineServices).toMatchObject([{ id: "service-topology", launchCommandLine: "yarn web" }]);
   });
 
   it("does not resurrect legacy live snapshots as offline sessions", () => {
