@@ -109,6 +109,15 @@ describe("MetadataServer threads API", () => {
     expect(listRes.ok).toBe(true);
     expect(summaries.some((summary) => summary.thread.id === opened.thread.id)).toBe(true);
 
+    const seenRes = await fetch(`${base}/threads/mark-seen`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: opened.thread.id, session: "codex-1" }),
+    });
+    const seen = (await seenRes.json()) as { thread: { unreadBy?: string[] } };
+    expect(seenRes.ok).toBe(true);
+    expect(seen.thread.unreadBy ?? []).not.toContain("codex-1");
+
     const showRes = await fetch(`${base}/threads/${opened.thread.id}`);
     const detail = (await showRes.json()) as { thread: { id: string }; messages: Array<{ body: string }> };
     expect(showRes.ok).toBe(true);
