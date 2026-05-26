@@ -95,7 +95,7 @@ export function assertRemoteAccessAllowed(
     if (!actor.shareSessionId) {
       return { ok: false, status: 403, error: "shared guest route requires an authorized share session" };
     }
-    const requestedSessionId = searchParams.get("sessionId") ?? searchParams.get("session");
+    const requestedSessionId = searchParams.get("sessionId");
     if (!requestedSessionId) {
       return { ok: false, status: 403, error: "shared session route requires a session id" };
     }
