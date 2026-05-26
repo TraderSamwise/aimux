@@ -25,9 +25,11 @@ Any generic metadata API write is projection-only unless the route explicitly ca
 
 ## Statusline
 
-`statusline.json` and tmux statusline text files are generated caches. Statusline readers may use them to render or enrich already-known topology sessions and services. They must not create sessions, services, teammates, worktrees, graveyard rows, or notification/inbox rows.
+The global project `statusline.json` and tmux statusline text files are generated caches. Statusline readers may use them to render or enrich already-known topology sessions and services. They must not create sessions, services, teammates, worktrees, graveyard rows, or notification/inbox rows.
 
 When statusline cache data disagrees with topology or exchange, topology and exchange win.
+
+Local `.aimux/statusline.json` is a retired cache location and must not be read as runtime evidence.
 
 ## Notifications
 

@@ -167,6 +167,7 @@ rg -n "notifications\\.json|notification-context\\.json|getNotificationContextPa
 ```
 
 - Keep metadata, notifications, statusline, desktop snapshots, and GUI stores as derived views.
+- Do not read retired local `.aimux/statusline.json`; statusline cache reads use the global project state dir only.
 - Remove any projection write path that changes lifecycle, worktree, ownership, or exchange truth.
 - Route activity/attention/event/shell-state writes through projection rules; they must not become hidden wait or lifecycle authority.
 - Keep notification focus/suppression context projection-only; it must not become hidden inbox, attention, or delivery authority.

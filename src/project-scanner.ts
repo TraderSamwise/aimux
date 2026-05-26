@@ -149,14 +149,8 @@ export function scanProject(projectPath: string): ProjectInfo {
     } catch {}
   }
 
-  // Enrich known sessions with statusline.json when available.
-  const statuslinePaths = [join(getAimuxDirFor(projectPath), "statusline.json")];
-  if (registryEntry) {
-    const globalStatusline = join(getProjectStateDirById(registryEntry.id), "statusline.json");
-    if (!statuslinePaths.includes(globalStatusline)) {
-      statuslinePaths.unshift(globalStatusline);
-    }
-  }
+  // Enrich known sessions with the global statusline projection when available.
+  const statuslinePaths = registryEntry ? [join(getProjectStateDirById(registryEntry.id), "statusline.json")] : [];
 
   for (const statuslinePath of statuslinePaths) {
     if (!existsSync(statuslinePath)) continue;
