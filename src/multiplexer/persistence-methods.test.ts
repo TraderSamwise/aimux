@@ -65,6 +65,7 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { getStatePath, initPaths } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
 import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
+import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 import {
   listTopologyWorktreeGraveyard,
   listTopologyWorktreeStates,
@@ -552,6 +553,8 @@ describe("persistenceMethods", () => {
 
   it("graveyards a worktree into topology", async () => {
     const worktreePath = "/repo/.aimux/worktrees/demo";
+    upsertTopologySession({ id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    upsertTopologyService({ id: "service-demo", command: "zsh", worktreePath }, "stopped");
     const host = {
       listDesktopWorktrees: vi.fn(() => [{ name: "demo", branch: "demo", path: worktreePath }]),
       sessions: [],
@@ -574,6 +577,8 @@ describe("persistenceMethods", () => {
 
     expect(listTopologyWorktreeStates({ statuses: ["graveyard"] })).toMatchObject([{ path: worktreePath }]);
     expect(listTopologyWorktreeGraveyard()).toMatchObject([{ path: worktreePath, name: "demo" }]);
+    expect(listTopologySessionStates().filter((session) => session.worktreePath === worktreePath)).toEqual([]);
+    expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toEqual([]);
   });
 
   it("resurrects topology worktree graveyard entries", async () => {
@@ -619,8 +624,12 @@ describe("persistenceMethods", () => {
   it("preserves deleted graveyard audit history when the worktree path is already gone", async () => {
     const worktreePath = join(pathsRoot, "worktrees", "gone");
     upsertTopologyWorktree({ path: worktreePath, name: "gone", branch: "gone" }, "active");
+    upsertTopologySession({ id: "codex-gone", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    upsertTopologyService({ id: "service-gone", command: "zsh", worktreePath }, "stopped");
     moveTopologyWorktreeToGraveyard(worktreePath);
     const host = {
+      offlineSessions: [{ id: "codex-gone", worktreePath }],
+      offlineServices: [{ id: "service-gone", worktreePath }],
       invalidateDesktopStateSnapshot: vi.fn(),
       refreshLocalDashboardModel: vi.fn(),
       metadataServer: { notifyChange: vi.fn() },
@@ -635,6 +644,10 @@ describe("persistenceMethods", () => {
     expect(listTopologyWorktreeGraveyard({ includeDeleted: true })).toMatchObject([
       { path: worktreePath, deletedAt: expect.any(String) },
     ]);
+    expect(listTopologySessionStates().filter((session) => session.worktreePath === worktreePath)).toEqual([]);
+    expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toEqual([]);
+    expect(host.offlineSessions).toEqual([]);
+    expect(host.offlineServices).toEqual([]);
   });
 
   it("does not detach worktree services when graveyarding is blocked by a live agent", async () => {
