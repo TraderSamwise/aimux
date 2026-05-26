@@ -118,12 +118,12 @@ describe("api relay routing", () => {
     expect(request).toHaveBeenNthCalledWith(
       2,
       "GET",
-      "/proxy/127.0.0.1/43210/notifications?unread=1&sessionId=agent%2F1",
+      "/proxy/127.0.0.1/43210/inbox?unread=1&participant=agent%2F1",
       undefined,
     );
   });
 
-  it("routes notification mutations through the relay proxy", async () => {
+  it("routes inbox mutations through the relay proxy", async () => {
     const fetchMock = installFetchMock();
     const request = installRelayMock({ ok: true, updated: 1 });
 
@@ -134,7 +134,7 @@ describe("api relay routing", () => {
     expect(request).toHaveBeenNthCalledWith(
       1,
       "POST",
-      "/proxy/127.0.0.1/43210/notifications/read",
+      "/proxy/127.0.0.1/43210/inbox/read",
       {
         id: "notice-1",
       },
@@ -142,7 +142,7 @@ describe("api relay routing", () => {
     expect(request).toHaveBeenNthCalledWith(
       2,
       "POST",
-      "/proxy/127.0.0.1/43210/notifications/clear",
+      "/proxy/127.0.0.1/43210/inbox/clear",
       {
         sessionId: "agent-1",
       },

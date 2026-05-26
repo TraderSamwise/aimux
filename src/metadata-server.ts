@@ -548,15 +548,19 @@ function runtimeInboxEntry(
 }
 
 function markRuntimeInboxRead(id?: string): number {
-  const entries = createRuntimeExchangeStore()
-    .read()
-    .inbox.filter((entry) => !id || entry.id === id);
+  const store = createRuntimeExchangeStore();
+  const entries = store.read().inbox.filter((entry) => !id || entry.id === id);
   let updated = 0;
   for (const entry of entries) {
+    if (entry.state !== "done") updated += 1;
     if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
-      if (markThreadSeen(entry.subjectId, entry.participantId)) updated += 1;
+      markThreadSeen(entry.subjectId, entry.participantId);
     }
   }
+  store.update((exchange) => ({
+    ...exchange,
+    inbox: exchange.inbox.map((entry) => (!id || entry.id === id ? { ...entry, state: "done" } : entry)),
+  }));
   return updated;
 }
 

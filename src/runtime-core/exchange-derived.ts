@@ -149,6 +149,20 @@ function inboxFromTask(task: RuntimeExchangeTask): RuntimeExchangeInboxEntry[] {
   }));
 }
 
+function preserveAcknowledgedInbox(
+  nextEntries: RuntimeExchangeInboxEntry[],
+  previousEntries: RuntimeExchangeInboxEntry[],
+): RuntimeExchangeInboxEntry[] {
+  const previousById = new Map(previousEntries.map((entry) => [entry.id, entry] as const));
+  return nextEntries.map((entry) => {
+    const previous = previousById.get(entry.id);
+    if (previous?.state === "done" && previous.updatedAt === entry.updatedAt) {
+      return { ...entry, state: "done" };
+    }
+    return entry;
+  });
+}
+
 export function deriveRuntimeExchangeIndexes(exchange: RuntimeExchange): RuntimeExchange {
   const messagesByThread = new Map<string, RuntimeExchangeMessage[]>();
   for (const message of exchange.messages) {
@@ -156,6 +170,7 @@ export function deriveRuntimeExchangeIndexes(exchange: RuntimeExchange): Runtime
     existing.push(message);
     messagesByThread.set(message.threadId, existing);
   }
+  const nextInbox = [...exchange.threads.flatMap(inboxFromThread), ...exchange.tasks.flatMap(inboxFromTask)];
   return {
     ...exchange,
     handoffs: exchange.threads
@@ -163,6 +178,6 @@ export function deriveRuntimeExchangeIndexes(exchange: RuntimeExchange): Runtime
       .filter((handoff): handoff is RuntimeExchangeHandoff => Boolean(handoff)),
     reviews: exchange.tasks.map(reviewFromTask).filter((review): review is RuntimeExchangeReview => Boolean(review)),
     waits: [...exchange.threads.flatMap(waitsFromThread), ...exchange.tasks.flatMap(waitsFromTask)],
-    inbox: [...exchange.threads.flatMap(inboxFromThread), ...exchange.tasks.flatMap(inboxFromTask)],
+    inbox: preserveAcknowledgedInbox(nextInbox, exchange.inbox),
   };
 }
