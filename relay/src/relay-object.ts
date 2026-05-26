@@ -500,6 +500,7 @@ export class RelayObject extends DurableObject<Env> {
         headers: {
           ...stripTrustedAimuxHeaders(request.headers),
           "X-Aimux-Share-Id": share.id,
+          "X-Aimux-Share-Session-Id": share.sessionId,
           "X-Aimux-Share-Mode": getShareChatMode(share),
           "X-Aimux-Actor-User-Id": participant.userId,
           "X-Aimux-Actor-Name": participant.displayName,

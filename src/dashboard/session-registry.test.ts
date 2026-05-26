@@ -20,7 +20,6 @@ describe("buildDashboardSessions", () => {
       ],
       activeIndex: 0,
       offlineSessions: [],
-      remoteInstances: [],
       getSessionLabel: vi.fn(() => "claude"),
       getSessionHeadline: vi.fn(() => undefined),
       getSessionTaskDescription: vi.fn(() => undefined),
@@ -60,7 +59,6 @@ describe("buildDashboardSessions", () => {
           worktreePath: "/repo/.aimux/worktrees/hidden",
         },
       ],
-      remoteInstances: [],
       hiddenWorktreePaths: new Set(["/repo/.aimux/worktrees/hidden"]),
       getSessionLabel: vi.fn(() => undefined),
       getSessionHeadline: vi.fn(() => undefined),
@@ -73,7 +71,7 @@ describe("buildDashboardSessions", () => {
     expect(sessions.map((session) => session.id)).toEqual(["claude-visible"]);
   });
 
-  it("hides teammate sessions by default across local remote and offline sources", () => {
+  it("hides teammate sessions by default across local and offline sources", () => {
     const sessions = buildDashboardSessions({
       sessions: [
         {
@@ -107,22 +105,6 @@ describe("buildDashboardSessions", () => {
           team: { teamId: "team-1", parentSessionId: "claude-parent", role: "coder" },
         },
       ],
-      remoteInstances: [
-        {
-          instanceId: "remote-1",
-          pid: 123,
-          startedAt: "2026-05-01T00:00:00.000Z",
-          heartbeat: "2026-05-01T00:00:01.000Z",
-          cwd: "/repo",
-          sessions: [
-            {
-              id: "claude-teammate-remote",
-              tool: "claude",
-              team: { teamId: "team-1", parentSessionId: "claude-parent", role: "explorer" },
-            },
-          ],
-        },
-      ],
       getSessionLabel: vi.fn(() => undefined),
       getSessionHeadline: vi.fn(() => undefined),
       getSessionTaskDescription: vi.fn(() => undefined),
@@ -146,7 +128,6 @@ describe("buildDashboardSessions", () => {
       ],
       activeIndex: 0,
       offlineSessions: [],
-      remoteInstances: [],
       includeTeammates: true,
       getSessionLabel: vi.fn(() => undefined),
       getSessionHeadline: vi.fn(() => undefined),

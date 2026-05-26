@@ -17,7 +17,6 @@ type TargetKind =
   | "backend-session"
   | "notification"
   | "operation-failure"
-  | "instance-session"
   | "tmux-window";
 type DebugStateSourceKey =
   | "savedState"
@@ -29,7 +28,6 @@ type DebugStateSourceKey =
   | "worktreeGraveyard"
   | "notifications"
   | "operationFailures"
-  | "instances"
   | "runtimeRows"
   | "pendingActions"
   | "dashboardSnapshot";
@@ -85,7 +83,6 @@ export interface DebugStateReport {
     worktreeGraveyard: SourceResult<{ entries: unknown[] }>;
     notifications: SourceResult<{ notifications: unknown[] }>;
     operationFailures: SourceResult<{ failures: unknown[] }>;
-    instances: SourceResult<{ files: Array<SourceResult<{ instances: unknown[] }>> }>;
     runtimeRows: SourceResult<never>;
     pendingActions: SourceResult<never>;
     dashboardSnapshot: SourceResult<never>;
@@ -320,11 +317,6 @@ const DEBUG_STATE_SOURCE_ROLES: DebugStateReport["sourceRoles"] = {
     role: "projection",
     authority: "runtime-topology.yaml plus operation execution results",
     note: "dashboard-facing failure projection, not lifecycle authority",
-  },
-  instances: {
-    role: "legacy",
-    authority: "runtime-topology.yaml for lifecycle; future topology presence for ownership",
-    note: "legacy runtime presence evidence; it must not create sessions",
   },
   runtimeRows: {
     role: "unavailable",
@@ -639,45 +631,6 @@ function filterOperationFailures(
   return { status: "found", path: source.path, value: { failures } };
 }
 
-function filterInstances(
-  paths: ReadOnlyProjectPaths,
-  target: string,
-  matches: TargetMatch[],
-  seen: Set<string>,
-): SourceResult<{ files: Array<SourceResult<{ instances: unknown[] }>> }> {
-  const uniquePaths = [...new Set([paths.instancesPath, paths.localInstancesPath])];
-  const files = uniquePaths.map((path) => {
-    const source = readJson(path);
-    if (source.status !== "found") return { ...source, value: undefined } as SourceResult<{ instances: unknown[] }>;
-    const instances = asArray(source.value).filter((instance) => {
-      const instanceRecord = asObject(instance);
-      const sessions = asArray(instanceRecord?.sessions);
-      return sessions.some((session) => {
-        const sessionRecord = asObject(session);
-        const id = getString(sessionRecord, "id");
-        const backendSessionId = getString(sessionRecord, "backendSessionId");
-        const worktreePath = getString(sessionRecord, "worktreePath");
-        const matched =
-          matchesString(id, target) || matchesString(backendSessionId, target) || matchesString(worktreePath, target);
-        if (matched) {
-          addMatch(matches, seen, {
-            canonicalKey: sessionCanonical(id, backendSessionId),
-            kind: "instance-session",
-            source: `instances:${path}`,
-            id,
-            backendSessionId,
-            worktreePath,
-            raw: instance,
-          });
-        }
-        return matched;
-      });
-    });
-    return { status: "found", path, value: { instances } } as SourceResult<{ instances: unknown[] }>;
-  });
-  return { status: "found", value: { files } };
-}
-
 function resolveStatus(matches: TargetMatch[]): { status: TargetResolutionStatus; entityCount: number } {
   const canonicalKeys = new Set(matches.map((match) => match.canonicalKey));
   if (canonicalKeys.size === 0) return { status: "missing", entityCount: 0 };
@@ -715,7 +668,6 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
     matches,
     seen,
   );
-  const instances = filterInstances(paths, target, matches, seen);
   const resolution = resolveStatus(matches);
 
   return {
@@ -742,7 +694,6 @@ export function buildDebugStateReport(options: BuildDebugStateReportOptions): De
       worktreeGraveyard,
       notifications,
       operationFailures,
-      instances,
       runtimeRows: sourceUnavailable("standalone debug-state does not attach to the live project runtime"),
       pendingActions: sourceUnavailable("pending actions are in-memory dashboard state"),
       dashboardSnapshot: sourceUnavailable("dashboard snapshot requires project-service/dashboard runtime"),

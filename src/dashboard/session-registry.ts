@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import type { DashboardSession } from "./index.js";
 import type { SessionState } from "../multiplexer/index.js";
-import type { InstanceInfo } from "../instance-registry.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { compareTeammateSessions, isTeammateSession } from "../team.js";
 import { listWorktrees as listAllWorktrees } from "../worktree.js";
@@ -21,7 +20,6 @@ export interface DashboardSessionRegistryOptions {
   sessions: DashboardLocalSession[];
   activeIndex: number;
   offlineSessions: SessionState[];
-  remoteInstances: InstanceInfo[];
   hiddenWorktreePaths?: Set<string>;
   mainRepoPath?: string;
   includeTeammates?: boolean;
@@ -47,17 +45,6 @@ export interface DashboardSessionRegistryOptions {
         threadName?: string;
       }
     | undefined;
-}
-
-export function getRemoteOwnedSessionKeys(remoteInstances: InstanceInfo[]): Set<string> {
-  const owned = new Set<string>();
-  for (const inst of remoteInstances) {
-    for (const session of inst.sessions) {
-      owned.add(session.id);
-      if (session.backendSessionId) owned.add(session.backendSessionId);
-    }
-  }
-  return owned;
 }
 
 export function buildDashboardSessions(options: DashboardSessionRegistryOptions): DashboardSession[] {
@@ -106,45 +93,6 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
     });
   }
 
-  for (const inst of options.remoteInstances) {
-    for (const session of inst.sessions) {
-      if (!includeTeammates && isTeammateSession(session)) continue;
-      const normalizedWorktreePath = normalizeWtPath(session.worktreePath);
-      if (normalizedWorktreePath && hiddenWorktreePaths.has(normalizedWorktreePath)) continue;
-      if (dashSessions.some((existing) => existing.id === session.id)) continue;
-      dashSessions.push({
-        index: dashSessions.length,
-        id: session.id,
-        command: session.tool,
-        backendSessionId: session.backendSessionId,
-        team: session.team,
-        createdAt: session.createdAt,
-        status: "running",
-        active: false,
-        worktreePath: normalizedWorktreePath,
-        remoteInstancePid: inst.pid,
-        remoteInstanceId: inst.instanceId,
-        remoteBackendSessionId: session.backendSessionId,
-        label: options.getSessionLabel(session.id),
-        headline: options.getSessionHeadline(session.id),
-        cwd: options.getSessionContext(session.id)?.cwd,
-        repoOwner: options.getSessionContext(session.id)?.repo?.owner,
-        repoName: options.getSessionContext(session.id)?.repo?.name,
-        repoRemote: options.getSessionContext(session.id)?.repo?.remote,
-        prNumber: options.getSessionContext(session.id)?.pr?.number,
-        prTitle: options.getSessionContext(session.id)?.pr?.title,
-        prUrl: options.getSessionContext(session.id)?.pr?.url,
-        activity: options.getSessionDerived(session.id)?.activity,
-        attention: options.getSessionDerived(session.id)?.attention,
-        unseenCount: options.getSessionDerived(session.id)?.unseenCount,
-        lastEvent: options.getSessionDerived(session.id)?.lastEvent,
-        services: options.getSessionDerived(session.id)?.services,
-        threadId: options.getSessionDerived(session.id)?.threadId,
-        threadName: options.getSessionDerived(session.id)?.threadName,
-      });
-    }
-  }
-
   for (const offline of options.offlineSessions) {
     if (!includeTeammates && isTeammateSession(offline)) continue;
     const alreadyShown = dashSessions.some(
@@ -170,7 +118,6 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       worktreePath,
       worktreeName: worktreeInfo?.name,
       worktreeBranch: worktreeInfo?.branch,
-      remoteBackendSessionId: offline.backendSessionId,
       label: offline.label,
       headline: offline.headline,
       cwd: options.getSessionContext(offline.id)?.cwd,

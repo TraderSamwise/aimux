@@ -12,9 +12,6 @@ import {
   adjustAfterRemove as adjustAfterRemoveImpl,
   buildLiveServiceStates as buildLiveServiceStatesImpl,
   evictZombieSession as evictZombieSessionImpl,
-  getInstanceSessionRefs as getInstanceSessionRefsImpl,
-  getRemoteInstancesSafe as getRemoteInstancesSafeImpl,
-  getRemoteOwnedSessionKeys as getRemoteOwnedSessionKeysImpl,
   graveyardSession as graveyardSessionImpl,
   isSessionRuntimeLive as isSessionRuntimeLiveImpl,
   loadOfflineServices as loadOfflineServicesImpl,
@@ -72,8 +69,6 @@ type RuntimeLifecycleHost = {
   offlineSessions: SessionState[];
   offlineServices: ServiceState[];
   removedServiceIds?: Set<string>;
-  instanceDirectory: { unregisterInstance(instanceId: string, cwd: string): Promise<void> };
-  instanceId: string;
   contextWatcher: { stop(): void };
   onStdinData: ((data: Buffer) => void) | null;
   onResize: (() => void) | null;
@@ -115,9 +110,6 @@ export type RuntimeLifecycleMethods = {
   stopHeartbeat(this: Multiplexer): void;
   startProjectServiceRefresh(this: Multiplexer): void;
   stopProjectServiceRefresh(this: Multiplexer): void;
-  getRemoteInstancesSafe(this: Multiplexer): ReturnType<typeof getRemoteInstancesSafeImpl>;
-  getRemoteOwnedSessionKeys(this: Multiplexer): Set<string>;
-  getInstanceSessionRefs(this: Multiplexer): any[];
   saveState(this: Multiplexer): void;
   teardown(this: Multiplexer): void;
   cleanup(this: Multiplexer): void;
@@ -241,15 +233,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   stopProjectServiceRefresh(this: Multiplexer) {
     stopProjectServiceRefreshImpl(this);
   },
-  getRemoteInstancesSafe(this: Multiplexer) {
-    return getRemoteInstancesSafeImpl(this);
-  },
-  getRemoteOwnedSessionKeys(this: Multiplexer) {
-    return getRemoteOwnedSessionKeysImpl(this);
-  },
-  getInstanceSessionRefs(this: Multiplexer) {
-    return getInstanceSessionRefsImpl(this);
-  },
   saveState(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
     const liveSessions = mux.sessions
@@ -329,7 +312,6 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     this.clearDashboardBusy();
     this.stopHeartbeat();
     this.stopProjectServiceRefresh();
-    mux.instanceDirectory.unregisterInstance(mux.instanceId, process.cwd()).catch(() => {});
     this.saveState();
     this.stopStatusRefresh();
     mux.contextWatcher.stop();

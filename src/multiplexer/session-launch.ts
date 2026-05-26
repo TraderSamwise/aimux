@@ -118,7 +118,6 @@ function canUseCodexInitialPrompt(args: string[], command: string, toolConfigKey
 
 export async function run(host: SessionLaunchHost, opts: { command: string; args: string[] }): Promise<number> {
   initProject();
-  await host.instanceDirectory.registerInstance(host.instanceId, process.cwd());
   host.startHeartbeat();
   host.syncSessionsFromTopology();
   host.defaultCommand = opts.command;
@@ -145,7 +144,6 @@ export async function run(host: SessionLaunchHost, opts: { command: string; args
 
 export async function runDashboard(host: SessionLaunchHost): Promise<number> {
   initProject();
-  await host.instanceDirectory.registerInstance(host.instanceId, process.cwd());
   host.startHeartbeat();
   host.startedInDashboard = true;
   host.mode = "dashboard";
@@ -269,7 +267,6 @@ export async function runProjectService(host: SessionLaunchHost): Promise<number
 
 export async function resumeSessions(host: SessionLaunchHost, toolFilter?: string): Promise<number> {
   initProject();
-  await host.instanceDirectory.registerInstance(host.instanceId, process.cwd());
   host.startHeartbeat();
   reconcileLaunchableTopology(host);
   const sessionsToResume = listLaunchableTopologySessions(toolFilter);
@@ -284,17 +281,8 @@ export async function resumeSessions(host: SessionLaunchHost, toolFilter?: strin
     count: sessionsToResume.length,
   });
 
-  const ownedByOthers = host.getRemoteOwnedSessionKeys();
   for (const saved of sessionsToResume) {
     const backendSessionId = saved.backendSessionId;
-    if (ownedByOthers.has(saved.id) || (backendSessionId && ownedByOthers.has(backendSessionId))) {
-      log.warn("skipping resume owned by another instance", "session", {
-        sessionId: saved.id,
-        backendSessionId,
-      });
-      continue;
-    }
-
     const toolCfg = config.tools[saved.toolConfigKey];
     if (!toolCfg) continue;
 

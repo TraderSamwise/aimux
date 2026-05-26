@@ -24,10 +24,6 @@ export interface DashboardSession {
   worktreePath?: string;
   worktreeName?: string;
   worktreeBranch?: string;
-  /** If set, this session belongs to another aimux instance */
-  remoteInstancePid?: number;
-  remoteInstanceId?: string;
-  remoteBackendSessionId?: string;
   /** Active task description assigned to this session */
   taskDescription?: string;
   /** Auto-derived or user-set label for offline agents */
