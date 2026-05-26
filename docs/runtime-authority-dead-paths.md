@@ -75,10 +75,10 @@ rg -n "listWorktrees|createDesktopWorktree|removeDesktopWorktree|pendingWorktree
 rg -n "git worktree|worktree add|worktree remove|worktree repair" src scripts
 ```
 
-- Replace durable worktree status and worktree graveyard authority with topology worktree records.
+- Durable worktree status and worktree graveyard authority lives in topology worktree records.
 - Keep git worktrees as substrate evidence and execution mechanism.
 - Keep dashboard pending actions as transient optimistic UI only.
-- Remove `.aimux/worktree-graveyard.json` authority after topology graveyard records exist.
+- Do not restore `.aimux/worktree-graveyard.json` authority.
 
 ## Exchange: Threads, Messages, Handoffs
 
