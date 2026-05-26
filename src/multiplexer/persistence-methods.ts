@@ -26,6 +26,7 @@ import { isTeammateSession } from "../team.js";
 import { listTopologySessionStates, resurrectTopologySession } from "../runtime-core/topology-sessions.js";
 import {
   deleteTopologyWorktreeGraveyardEntry,
+  listTopologyWorktreeGraveyard,
   moveTopologyWorktreeToGraveyard,
   removeTopologyWorktree,
   resurrectTopologyWorktreeFromGraveyard,
@@ -498,8 +499,8 @@ export const persistenceMethods = {
   },
 
   async deleteGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "removed" }> {
-    const deleted = deleteTopologyWorktreeGraveyardEntry(path);
-    if (!deleted) {
+    const existing = listTopologyWorktreeGraveyard().find((entry) => entry.path === path);
+    if (!existing) {
       throw new Error(`Graveyard worktree "${path}" not found`);
     }
     if (existsSync(path)) {
@@ -507,6 +508,7 @@ export const persistenceMethods = {
     } else {
       removeTopologyWorktree(path);
     }
+    deleteTopologyWorktreeGraveyardEntry(path);
     this.invalidateDesktopStateSnapshot?.();
     this.refreshLocalDashboardModel?.();
     this.metadataServer?.notifyChange?.();
