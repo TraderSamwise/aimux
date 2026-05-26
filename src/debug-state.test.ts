@@ -19,7 +19,7 @@ function makePaths(): ReadOnlyProjectPaths {
     localAimuxDir,
     statePath: join(projectStateDir, "state.json"),
     runtimeTopologyPath: join(projectStateDir, "runtime-topology.yaml"),
-    worktreeGraveyardPath: join(projectStateDir, "worktree-graveyard.json"),
+    runtimeExchangePath: join(projectStateDir, "runtime-exchange.yaml"),
     instancesPath: join(projectStateDir, "instances.json"),
     localInstancesPath: join(localAimuxDir, "instances.json"),
     metadataPath: join(projectStateDir, "metadata.json"),
@@ -216,5 +216,79 @@ describe("buildDebugStateReport", () => {
       expect.objectContaining({ kind: "notification", source: "notifications", id: "notice-1" }),
     ]);
     expect(report.sources.notifications.value?.notifications).toHaveLength(1);
+  });
+
+  it("reads worktree graveyard entries from runtime topology", () => {
+    const paths = makePaths();
+    const now = new Date().toISOString();
+    createRuntimeTopologyStore(paths.runtimeTopologyPath).write({
+      ...emptyRuntimeTopology(now),
+      rigs: [{ id: "rig:test", name: "repo", projectRoot: paths.repoRoot, createdAt: now, updatedAt: now }],
+      worktreeGraveyard: [
+        {
+          id: "graveyard-feature-a",
+          rigId: "rig:test",
+          path: "/repo/feature-a",
+          name: "feature-a",
+          branch: "feature-a",
+          graveyardedAt: now,
+        },
+      ],
+    });
+
+    const report = buildDebugStateReport({
+      target: "feature-a",
+      paths,
+      tmuxWindows: [],
+      worktrees: [],
+    });
+
+    expect(report.targetResolution.status).toBe("matched");
+    expect(report.sources.worktreeGraveyard.path).toBe(paths.runtimeTopologyPath);
+    expect(report.sources.worktreeGraveyard.value?.entries).toEqual([
+      expect.objectContaining({ name: "feature-a", path: "/repo/feature-a" }),
+    ]);
+  });
+
+  it("matches topology-only services and worktrees", () => {
+    const paths = makePaths();
+    const now = new Date().toISOString();
+    createRuntimeTopologyStore(paths.runtimeTopologyPath).write({
+      ...emptyRuntimeTopology(now),
+      rigs: [{ id: "rig:test", name: "repo", projectRoot: paths.repoRoot, createdAt: now, updatedAt: now }],
+      nodes: [{ id: "service:service-web", rigId: "rig:test", logicalId: "service-web", createdAt: now }],
+      services: [
+        {
+          id: "service-web",
+          rigId: "rig:test",
+          nodeId: "service:service-web",
+          status: "stopped",
+          launchCommandLine: "yarn web",
+          label: "web",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      worktrees: [
+        {
+          id: "worktree-feature-b",
+          rigId: "rig:test",
+          path: "/repo/feature-b",
+          name: "feature-b",
+          status: "active",
+          branch: "feature-b",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    const serviceReport = buildDebugStateReport({ target: "service-web", paths, tmuxWindows: [], worktrees: [] });
+    expect(serviceReport.targetResolution.status).toBe("matched");
+    expect(serviceReport.sources.runtimeTopology.value?.services).toHaveLength(1);
+
+    const worktreeReport = buildDebugStateReport({ target: "feature-b", paths, tmuxWindows: [], worktrees: [] });
+    expect(worktreeReport.targetResolution.status).toBe("matched");
+    expect(worktreeReport.sources.runtimeTopology.value?.worktrees).toHaveLength(1);
   });
 });

@@ -277,9 +277,7 @@ function normalizeRuntimeTopology(topology: RuntimeTopology): RuntimeTopology {
     sessions,
     services,
     worktrees,
-    worktreeGraveyard: topology.worktreeGraveyard.filter(
-      (entry) => rigIds.has(entry.rigId) && (!entry.worktreeId || worktreeIds.has(entry.worktreeId)),
-    ),
+    worktreeGraveyard: topology.worktreeGraveyard.filter((entry) => rigIds.has(entry.rigId)),
     teamRoles: topology.teamRoles.filter(
       (role) =>
         rigIds.has(role.rigId) &&

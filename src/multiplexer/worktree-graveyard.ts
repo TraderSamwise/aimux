@@ -1,7 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
-
-import { getWorktreeGraveyardPath } from "../paths.js";
+import { basename } from "node:path";
 import type { ServiceState, SessionState } from "./index.js";
+import {
+  listTopologyWorktreeGraveyard,
+  listTopologyWorktreeGraveyardPaths,
+} from "../runtime-core/topology-worktrees.js";
 
 export interface WorktreeGraveyardEntry {
   name: string;
@@ -14,16 +16,16 @@ export interface WorktreeGraveyardEntry {
 }
 
 export function listWorktreeGraveyardEntries(): WorktreeGraveyardEntry[] {
-  const path = getWorktreeGraveyardPath();
-  if (!existsSync(path)) return [];
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8"));
-    return Array.isArray(parsed) ? (parsed as WorktreeGraveyardEntry[]) : [];
-  } catch {
-    return [];
-  }
+  return listTopologyWorktreeGraveyard().map((entry) => ({
+    name: entry.name ?? (basename(entry.path) || entry.path),
+    path: entry.path,
+    branch: entry.branch ?? "",
+    graveyardedAt: entry.graveyardedAt,
+    agents: [],
+    services: [],
+  }));
 }
 
 export function listWorktreeGraveyardPaths(): Set<string> {
-  return new Set(listWorktreeGraveyardEntries().map((entry) => entry.path));
+  return listTopologyWorktreeGraveyardPaths();
 }

@@ -23,7 +23,20 @@ import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline
 import { ensureTmuxStatuslineDir, invalidateTmuxStatuslineArtifacts } from "../tmux/statusline-cache.js";
 import { markLastUsed } from "../last-used.js";
 import { isTeammateSession } from "../team.js";
-import { listTopologySessionStates, resurrectTopologySession } from "../runtime-core/topology-sessions.js";
+import {
+  listTopologySessionStates,
+  removeTopologySessionsForWorktree,
+  resurrectTopologySession,
+} from "../runtime-core/topology-sessions.js";
+import { removeTopologyServicesForWorktree } from "../runtime-core/topology-services.js";
+import {
+  deleteTopologyWorktreeGraveyardEntry,
+  listTopologyWorktreeGraveyard,
+  moveTopologyWorktreeToGraveyard,
+  removeTopologyWorktree,
+  resurrectTopologyWorktreeFromGraveyard,
+  upsertTopologyWorktree,
+} from "../runtime-core/topology-worktrees.js";
 import {
   findMainRepo,
   getWorktreeBaseDir,
@@ -440,21 +453,71 @@ export const persistenceMethods = {
   },
 
   async graveyardDesktopWorktree(this: any, path: string): Promise<{ path: string; status: "graveyarded" }> {
-    void this;
-    void path;
-    throw new Error("worktree graveyard requires the runtime core replacement");
+    const mainRepo = findMainRepo();
+    if (path === mainRepo) {
+      throw new Error("Cannot graveyard the main checkout");
+    }
+    const matching = this.listDesktopWorktrees().find((worktree: any) => worktree.path === path);
+    if (!matching) {
+      throw new Error(`Worktree "${path}" not found`);
+    }
+    const attachedSession = this.sessions?.find(
+      (session: any) => this.sessionWorktreePaths?.get(session.id) === path && this.isSessionRuntimeLive?.(session),
+    );
+    if (attachedSession) {
+      throw new Error(
+        `Cannot graveyard "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
+      );
+    }
+    detachWorktreeServices(this, path);
+    removeWorktreeDependents(this, path);
+    upsertTopologyWorktree(
+      {
+        path,
+        name: matching.name,
+        branch: matching.branch,
+        createdAt: matching.createdAt,
+      },
+      "active",
+    );
+    const moved = moveTopologyWorktreeToGraveyard(path, { reason: "user-requested" });
+    if (!moved) {
+      throw new Error(`Unable to graveyard worktree "${path}"`);
+    }
+    this.saveState?.();
+    this.invalidateDesktopStateSnapshot?.();
+    this.refreshLocalDashboardModel?.();
+    this.metadataServer?.notifyChange?.();
+    return { path, status: "graveyarded" };
   },
 
-  async resurrectGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "offline" }> {
-    void this;
-    void path;
-    throw new Error("worktree graveyard resurrection requires the runtime core replacement");
+  async resurrectGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "active" }> {
+    const resurrected = resurrectTopologyWorktreeFromGraveyard(path);
+    if (!resurrected) {
+      throw new Error(`Graveyard worktree "${path}" not found`);
+    }
+    this.invalidateDesktopStateSnapshot?.();
+    this.refreshLocalDashboardModel?.();
+    this.metadataServer?.notifyChange?.();
+    return { path, status: "active" };
   },
 
   async deleteGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "removed" }> {
-    void this;
-    void path;
-    throw new Error("worktree graveyard delete requires the runtime core replacement");
+    const existing = listTopologyWorktreeGraveyard().find((entry) => entry.path === path);
+    if (!existing) {
+      throw new Error(`Graveyard worktree "${path}" not found`);
+    }
+    if (existsSync(path)) {
+      await this.removeDesktopWorktree(path);
+    } else {
+      removeWorktreeDependents(this, path);
+      removeTopologyWorktree(path);
+    }
+    deleteTopologyWorktreeGraveyardEntry(path);
+    this.invalidateDesktopStateSnapshot?.();
+    this.refreshLocalDashboardModel?.();
+    this.metadataServer?.notifyChange?.();
+    return { path, status: "removed" };
   },
 
   createDesktopWorktree(this: any, name: string): { path: string; status: "creating" | "created" } {
@@ -489,6 +552,15 @@ export const persistenceMethods = {
       name,
       startedAt: createStartedAt,
     };
+    upsertTopologyWorktree(
+      {
+        path: targetPath,
+        name,
+        branch: name,
+        createdAt: new Date(createStartedAt).toISOString(),
+      },
+      "creating",
+    );
     const clearPendingCreate = () => {
       if (pendingCreates.get(targetPath) === createPromise) {
         pendingCreates.delete(targetPath);
@@ -569,8 +641,28 @@ export const persistenceMethods = {
             reject(new Error(detail || `git worktree add exited with code ${code ?? 1}`));
           });
         });
+        upsertTopologyWorktree(
+          {
+            path: targetPath,
+            name,
+            branch: name,
+            basePath: mainRepo,
+            createdAt: new Date(createStartedAt).toISOString(),
+          },
+          "active",
+        );
         resolveCreate({ path: targetPath, status: "created" });
       } catch (error) {
+        upsertTopologyWorktree(
+          {
+            path: targetPath,
+            name,
+            branch: name,
+            createdAt: new Date(createStartedAt).toISOString(),
+            operationFailure: error instanceof Error ? error.message : String(error),
+          },
+          "error",
+        );
         rejectCreate(error);
       }
     })();
@@ -654,6 +746,7 @@ export const persistenceMethods = {
     pendingRemovals.set(path, removalPromise);
     setRemovePending();
 
+    let startedRemoval = false;
     void (async () => {
       try {
         this.syncSessionsFromTopology();
@@ -665,6 +758,7 @@ export const persistenceMethods = {
 
         if (!existsSync(path)) {
           await removeOrphanedDesktopWorktree(this, mainRepo, path);
+          removeTopologyWorktree(path);
           clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
           resolveRemoval({ path, status: "removed" });
           return;
@@ -675,6 +769,7 @@ export const persistenceMethods = {
           const worktreeBaseDir = getWorktreeBaseDir();
           if (path.startsWith(`${worktreeBaseDir}/`) || path === worktreeBaseDir) {
             await removeOrphanedDesktopWorktree(this, mainRepo, path);
+            removeTopologyWorktree(path);
             clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
             resolveRemoval({ path, status: "removed" });
             return;
@@ -690,6 +785,16 @@ export const persistenceMethods = {
             `Cannot remove "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
           );
         }
+        upsertTopologyWorktree(
+          {
+            path,
+            name: matching.name,
+            branch: matching.branch,
+            createdAt: matching.createdAt,
+          },
+          "removing",
+        );
+        startedRemoval = true;
         detachWorktreeServices(this, path);
 
         await new Promise<void>((resolve, reject) => {
@@ -731,12 +836,22 @@ export const persistenceMethods = {
           });
         });
 
-        this.offlineSessions = this.offlineSessions.filter((session: any) => session.worktreePath !== path);
-        this.offlineServices = this.offlineServices.filter((service: any) => service.worktreePath !== path);
+        removeWorktreeDependents(this, path);
+        removeTopologyWorktree(path);
         this.saveState();
         clearDashboardOperationFailures({ targetKind: "worktree", operation: "remove", worktreePath: path });
         resolveRemoval({ path, status: "removed" });
       } catch (error) {
+        if (startedRemoval) {
+          upsertTopologyWorktree(
+            {
+              path,
+              name: path.split("/").pop() ?? path,
+              operationFailure: error instanceof Error ? error.message : String(error),
+            },
+            "error",
+          );
+        }
         rejectRemoval(error);
       }
     })();
@@ -855,8 +970,7 @@ async function removeOrphanedDesktopWorktree(host: any, mainRepo: string, path: 
     rmSync(path, { recursive: true, force: true });
   }
   await pruneGitWorktrees(mainRepo);
-  host.offlineSessions = host.offlineSessions.filter((session: any) => session.worktreePath !== path);
-  host.offlineServices = host.offlineServices.filter((service: any) => service.worktreePath !== path);
+  removeWorktreeDependents(host, path);
   host.saveState();
 }
 
@@ -870,6 +984,15 @@ function detachWorktreeServices(host: any, path: string): void {
   }
 
   host.offlineServices = host.offlineServices.filter((service: any) => service.worktreePath !== path);
+  removeTopologyServicesForWorktree(path);
+  removePersistedServicesForWorktree(path);
+}
+
+function removeWorktreeDependents(host: any, path: string): void {
+  host.offlineSessions = (host.offlineSessions ?? []).filter((session: any) => session.worktreePath !== path);
+  host.offlineServices = (host.offlineServices ?? []).filter((service: any) => service.worktreePath !== path);
+  removeTopologySessionsForWorktree(path);
+  removeTopologyServicesForWorktree(path);
   removePersistedServicesForWorktree(path);
 }
 
