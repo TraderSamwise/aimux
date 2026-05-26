@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { TerminalHost } from "../terminal-host.js";
 import { parseKeys } from "../key-parser.js";
 import { requestJson } from "../http-client.js";
-import type { NotificationRecord } from "../notifications.js";
 
 export interface TmuxInboxPopupOptions {
   projectRoot: string;
@@ -17,7 +16,14 @@ export interface TmuxInboxPopupOptions {
 
 type InboxTargetState = "live" | "offline" | "missing" | "none";
 
-interface InboxPopupEntry extends NotificationRecord {
+interface InboxPopupEntry {
+  id: string;
+  sessionId?: string;
+  title: string;
+  subtitle?: string;
+  body: string;
+  createdAt: string;
+  unread: boolean;
   targetLabel?: string;
   targetState: InboxTargetState;
 }
@@ -83,12 +89,11 @@ function loadEndpoint(projectStateDir: string): string {
 }
 
 async function loadInboxEntries(endpoint: string): Promise<InboxPopupEntry[]> {
-  const [{ status: notificationsStatus, json: notificationsBody }, { status: desktopStatus, json: desktopBody }] =
-    await Promise.all([
-      requestJson<{ notifications?: NotificationRecord[] }>(`${endpoint}/notifications`, { timeoutMs: 2000 }),
-      requestJson<{ sessions?: any[]; services?: any[] }>(`${endpoint}/desktop-state`, { timeoutMs: 2000 }),
-    ]);
-  if (notificationsStatus < 200 || notificationsStatus >= 300) {
+  const [{ status: inboxStatus, json: inboxBody }, { status: desktopStatus, json: desktopBody }] = await Promise.all([
+    requestJson<{ inbox?: InboxPopupEntry[] }>(`${endpoint}/inbox`, { timeoutMs: 2000 }),
+    requestJson<{ sessions?: any[]; services?: any[] }>(`${endpoint}/desktop-state`, { timeoutMs: 2000 }),
+  ]);
+  if (inboxStatus < 200 || inboxStatus >= 300) {
     throw new Error("failed to load inbox");
   }
   if (desktopStatus < 200 || desktopStatus >= 300) {
@@ -98,7 +103,7 @@ async function loadInboxEntries(endpoint: string): Promise<InboxPopupEntry[]> {
   const sessions = new Map<string, any>((desktopBody.sessions ?? []).map((entry) => [entry.id, entry]));
   const services = new Map<string, any>((desktopBody.services ?? []).map((entry) => [entry.id, entry]));
 
-  return (notificationsBody.notifications ?? []).map((entry) => {
+  return (inboxBody.inbox ?? []).map((entry) => {
     const session = entry.sessionId ? sessions.get(entry.sessionId) : undefined;
     if (session) {
       return {
@@ -240,23 +245,23 @@ export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise
       const selected = index >= 0 ? entries[index] : undefined;
       if (key === "r") {
         if (!selected) return;
-        await postJson(endpoint, "/notifications/read", { id: selected.id });
+        await postJson(endpoint, "/inbox/read", { id: selected.id });
         await refresh(null);
         return;
       }
       if (key === "R") {
-        await postJson(endpoint, "/notifications/read", {});
+        await postJson(endpoint, "/inbox/read", {});
         await refresh(null);
         return;
       }
       if (key === "c") {
         if (!selected) return;
-        await postJson(endpoint, "/notifications/clear", { id: selected.id });
+        await postJson(endpoint, "/inbox/clear", { id: selected.id });
         await refresh(null);
         return;
       }
       if (key === "C") {
-        await postJson(endpoint, "/notifications/clear", {});
+        await postJson(endpoint, "/inbox/clear", {});
         await refresh(null);
         return;
       }
@@ -277,7 +282,7 @@ export async function runTmuxInboxPopup(options: TmuxInboxPopupOptions): Promise
             clientTty: options.clientTty,
           });
           if (selected.unread) {
-            await postJson(endpoint, "/notifications/read", { id: selected.id });
+            await postJson(endpoint, "/inbox/read", { id: selected.id });
           }
           process.stdin.off("data", onData);
           resolve(exit(0));

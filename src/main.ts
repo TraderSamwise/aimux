@@ -1921,7 +1921,11 @@ handoffCmd
       } catch {
         const result = sendHandoff({
           from: opts.from ?? "user",
-          to: to ?? [],
+          to: to?.length
+            ? to
+            : [opts.assignee, opts.tool]
+                .map((value) => value?.trim())
+                .filter((value): value is string => Boolean(value)),
           body,
           title: opts.title,
           worktreePath: opts.worktree,

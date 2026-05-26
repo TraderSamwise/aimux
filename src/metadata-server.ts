@@ -74,6 +74,13 @@ import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import type { TmuxTarget } from "./tmux/runtime-manager.js";
 import { openTargetForClient } from "./tmux/window-open.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
+import {
+  createRuntimeExchangeStore,
+  type RuntimeExchangeInboxEntry,
+  type RuntimeExchangeMessage,
+  type RuntimeExchangeTask,
+  type RuntimeExchangeThread,
+} from "./runtime-core/exchange-store.js";
 import { listTopologySessionStates, type RuntimeTopologySessionState } from "./runtime-core/topology-sessions.js";
 
 interface MetadataServerOptions {
@@ -470,6 +477,87 @@ function teammateTaskPrompt(body: TeammateTaskBody): string | undefined {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function optionalStringOrFirst(value: unknown): string | undefined {
+  if (typeof value === "string") return optionalString(value);
+  if (!Array.isArray(value)) return undefined;
+  return value.map(optionalString).find(Boolean);
+}
+
+function runtimeInboxEntries(
+  input: { unreadOnly?: boolean; participantId?: string } = {},
+): Array<Record<string, unknown>> {
+  const exchange = createRuntimeExchangeStore().read();
+  const threadById = new Map(exchange.threads.map((thread) => [thread.id, thread] as const));
+  const taskById = new Map(exchange.tasks.map((task) => [task.id, task] as const));
+  const latestMessageByThread = new Map<string, (typeof exchange.messages)[number]>();
+  for (const message of exchange.messages) {
+    const existing = latestMessageByThread.get(message.threadId);
+    if (!existing || existing.ts < message.ts) latestMessageByThread.set(message.threadId, message);
+  }
+  const entries = exchange.inbox
+    .filter((entry) => !input.participantId || entry.participantId === input.participantId)
+    .filter((entry) => !input.unreadOnly || entry.state !== "done")
+    .map((entry) => runtimeInboxEntry(entry, threadById, taskById, latestMessageByThread))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  return entries.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+function runtimeInboxEntry(
+  entry: RuntimeExchangeInboxEntry,
+  threadById: Map<string, RuntimeExchangeThread>,
+  taskById: Map<string, RuntimeExchangeTask>,
+  latestMessageByThread: Map<string, RuntimeExchangeMessage>,
+): Record<string, unknown> | undefined {
+  if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
+    const thread = threadById.get(entry.subjectId);
+    if (!thread) return undefined;
+    const message = latestMessageByThread.get(thread.id);
+    return {
+      id: entry.id,
+      subjectKind: entry.subjectKind,
+      subjectId: entry.subjectId,
+      participantId: entry.participantId,
+      sessionId: entry.participantId,
+      title: thread.title,
+      subtitle: `${thread.kind} · ${thread.status}`,
+      body: message?.body ?? thread.title,
+      createdAt: entry.updatedAt,
+      unread: entry.state !== "done",
+      state: entry.state,
+      urgency: entry.urgency,
+    };
+  }
+  const task = taskById.get(entry.subjectId);
+  if (!task) return undefined;
+  return {
+    id: entry.id,
+    subjectKind: entry.subjectKind,
+    subjectId: entry.subjectId,
+    participantId: entry.participantId,
+    sessionId: entry.participantId,
+    title: task.description,
+    subtitle: `${task.type ?? "task"} · ${task.status}`,
+    body: task.result ?? task.error ?? task.prompt,
+    createdAt: entry.updatedAt,
+    unread: entry.state !== "done",
+    state: entry.state,
+    urgency: entry.urgency,
+  };
+}
+
+function markRuntimeInboxRead(id?: string): number {
+  const entries = createRuntimeExchangeStore()
+    .read()
+    .inbox.filter((entry) => !id || entry.id === id);
+  let updated = 0;
+  for (const entry of entries) {
+    if (entry.subjectKind === "thread" || entry.subjectKind === "handoff" || entry.subjectKind === "message") {
+      if (markThreadSeen(entry.subjectId, entry.participantId)) updated += 1;
+    }
+  }
+  return updated;
 }
 
 function teammateApiRecord(session: DesktopSessionRecord): Record<string, unknown> {
@@ -896,6 +984,18 @@ export class MetadataServer {
         ok: true,
         notifications,
         unreadCount: unreadNotificationCount({ sessionId }),
+      });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/inbox") {
+      const unreadOnly = url.searchParams.get("unread") === "1";
+      const participantId = url.searchParams.get("participant")?.trim() || undefined;
+      const inbox = runtimeInboxEntries({ unreadOnly, participantId });
+      send(res, 200, {
+        ok: true,
+        inbox,
+        unreadCount: inbox.filter((entry) => entry.unread).length,
       });
       return;
     }
@@ -1779,6 +1879,13 @@ export class MetadataServer {
         return;
       }
 
+      if (req.method === "POST" && (url.pathname === "/inbox/read" || url.pathname === "/inbox/clear")) {
+        const body = (await readJson(req)) as { id?: string };
+        const updated = markRuntimeInboxRead(body.id?.trim() || undefined);
+        send(res, 200, { ok: true, updated });
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/shell-state") {
         const body = (await readJson(req)) as { state: string; sessionId: string; tool?: string; command?: string };
         const result = applyShellStateTransition({
@@ -1919,7 +2026,9 @@ export class MetadataServer {
           ? this.options.actions.sendHandoff(body)
           : sendHandoff({
               from: body.from?.trim() || "user",
-              to: body.to ?? [],
+              to: body.to?.length
+                ? body.to
+                : [body.assignee, body.tool].map(optionalString).filter((value): value is string => Boolean(value)),
               body: body.body,
               title: body.title,
               worktreePath: body.worktreePath,
@@ -1970,7 +2079,7 @@ export class MetadataServer {
       if (req.method === "POST" && url.pathname === "/tasks/assign") {
         const body = (await readJson(req)) as {
           from?: string;
-          to?: string;
+          to?: string | string[];
           assignee?: string;
           tool?: string;
           description: string;
@@ -1981,7 +2090,7 @@ export class MetadataServer {
         };
         const result = await assignTask({
           from: body.from?.trim() || "user",
-          to: body.to?.trim(),
+          to: optionalStringOrFirst(body.to),
           assignee: body.assignee?.trim(),
           tool: body.tool?.trim(),
           description: body.description,
