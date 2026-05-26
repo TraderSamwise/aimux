@@ -10,6 +10,7 @@ import {
   resumeOfflineService,
   stopService,
 } from "./services.js";
+import { listTopologyServiceStates } from "../runtime-core/topology-services.js";
 
 describe("services", () => {
   let repoRoot = "";
@@ -114,6 +115,14 @@ describe("services", () => {
         retained: true,
       },
     ]);
+    expect(listTopologyServiceStates({ statuses: ["stopped"] })).toMatchObject([
+      {
+        id: "svc-1",
+        status: "stopped",
+        cwd: join(repoRoot, "apps/web"),
+        tmuxTarget: target,
+      },
+    ]);
   });
 
   it("kills a retained service window when removing an offline service", () => {
@@ -138,6 +147,7 @@ describe("services", () => {
 
     expect(killWindow).toHaveBeenCalledWith(target);
     expect(host.offlineServices).toEqual([]);
+    expect(listTopologyServiceStates()).toEqual([]);
   });
 
   it("wraps created service commands to drop into an interactive shell on failure", () => {
@@ -172,6 +182,14 @@ describe("services", () => {
     expect(joined).toContain("interactive shell for debugging");
     expect(joined).toContain("exec");
     expect(joined).toContain("-i");
+    expect(listTopologyServiceStates({ statuses: ["running"] })).toMatchObject([
+      {
+        status: "running",
+        launchCommandLine: "yarn dev",
+        worktreePath: repoRoot,
+        tmuxTarget: { windowId: "@9" },
+      },
+    ]);
   });
 
   it("wraps resumed service commands to drop into an interactive shell on failure", () => {
@@ -210,6 +228,9 @@ describe("services", () => {
       expect.objectContaining({ windowId: "@11" }),
       expect.objectContaining({ launchCommandLine: "yarn dev" }),
     );
+    expect(listTopologyServiceStates({ statuses: ["running"] })).toMatchObject([
+      { id: "svc-1", status: "running", launchCommandLine: "yarn dev", tmuxTarget: { windowId: "@11" } },
+    ]);
   });
 
   it("restarts a retained service command in its existing tmux window", () => {
