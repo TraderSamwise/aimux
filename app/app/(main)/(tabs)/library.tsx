@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useAtomValue } from "jotai";
 import { BookOpen, FileText, RefreshCw } from "lucide-react-native";
+import { DetailPanel } from "@/components/DetailPanel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
@@ -157,24 +158,17 @@ export default function LibraryScreen() {
                 />
               ))}
             </Card>
-            <Card className="min-h-[420px] flex-1 rounded-xl p-0">
-              <View className="border-b border-border px-4 py-3">
-                <View className="flex-row items-center">
-                  <BookOpen size={17} color="#a1a1aa" />
-                  <Text className="ml-2 flex-1 text-[16px] font-bold text-foreground">
-                    {selectedDocument?.title}
-                  </Text>
-                </View>
-                <Text className="mt-1 text-[11px] uppercase tracking-widest text-muted-foreground">
-                  {selectedDocument?.path}
-                </Text>
-              </View>
-              <ScrollView className="max-h-[620px] px-4 py-4">
+            <DetailPanel
+              title={selectedDocument?.title ?? "Document"}
+              meta={selectedDocument?.path}
+              icon={<BookOpen size={17} color="#a1a1aa" />}
+            >
+              <View>
                 <Text className="font-mono text-[12px] leading-5 text-foreground">
                   {selectedDocument?.content}
                 </Text>
-              </ScrollView>
-            </Card>
+              </View>
+            </DetailPanel>
           </View>
         )}
       </View>
