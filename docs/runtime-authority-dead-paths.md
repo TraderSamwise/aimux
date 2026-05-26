@@ -89,7 +89,7 @@ rg -n "getThreadsDir|createThread|readThread|updateThread|listThreads|appendMess
 rg -n "\"/threads|\"/handoff|\"/tasks/handoff|threadId|waitingOn|unreadBy|deliveredTo|deliveredAt|exchangeRefs|runtime-exchange" src app
 ```
 
-- Replace `.aimux/threads/*.json` and `.jsonl` authority with runtime exchange records.
+- `.aimux/threads/*.json` and `.jsonl` are no longer write authorities; thread/message compatibility APIs write runtime exchange records.
 - Keep thread/message API DTOs and GUI summaries as projections.
 - Move delivery state into exchange; do not leave `deliveredTo`/`deliveredAt` only in JSONL message records.
 - Move recipient routing/scoring into exchange-owned routing semantics; do not leave `src/orchestration-routing.ts` as a hidden authority over assignee/tool/worktree/liveness selection.
@@ -132,7 +132,7 @@ rg -n "getTasksDir|readTask|readAllTasks|writeTask|hasActiveTask|cleanupTasks|as
 rg -n "\"/tasks|\"/reviews|/agents/teammates/tasks|/agents/teammates/create|initialTask|reviewStatus|reviewFeedback|reviewOf|assignee|assigner|exchangeRefs|runtime-exchange" src app
 ```
 
-- Replace `.aimux/tasks/*.json` authority with runtime exchange records.
+- `.aimux/tasks/*.json` is no longer a write authority; task compatibility APIs write runtime exchange records.
 - Keep task/review cards and workflow lists as projections.
 - Remove task side effects from metadata watchers once exchange emits activity directly.
 - Audit `/agents/teammates/tasks` and `/agents/teammates/create` `initialTask` with the task routes; both are public task-authority surfaces over `assignTask`.

@@ -342,7 +342,7 @@ export function getAimuxDirFor(cwd: string): string {
 function ensureLocalSharedDirs(): void {
   const localDir = getLocalAimuxDir();
   mkdirSync(localDir, { recursive: true });
-  for (const subdir of ["plans", "context", "history", "tasks", "status", "threads", "attachments"]) {
+  for (const subdir of ["plans", "context", "history", "status", "attachments"]) {
     mkdirSync(join(localDir, subdir), { recursive: true });
   }
 }
@@ -366,7 +366,6 @@ function migrateDirIfNeeded(globalSubdir: string, localDir: string): void {
 function migrateAgentFacingStateToLocal(): void {
   migrateDirIfNeeded("context", getContextDir());
   migrateDirIfNeeded("history", getHistoryDir());
-  migrateDirIfNeeded("tasks", getTasksDir());
   migrateDirIfNeeded("status", getStatusDir());
 }
 
