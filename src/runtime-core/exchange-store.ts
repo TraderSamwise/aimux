@@ -6,7 +6,7 @@ import { getRuntimeExchangePath } from "../paths.js";
 export const RUNTIME_EXCHANGE_VERSION = 1;
 const UPDATE_LOCK_TIMEOUT_MS = 5_000;
 const UPDATE_LOCK_RETRY_MS = 25;
-const UPDATE_LOCK_STALE_MS = 60_000;
+const UPDATE_LOCK_STALE_MS = 1_000;
 
 export type RuntimeExchangeThreadKind = "conversation" | "task" | "review" | "handoff" | "user";
 export type RuntimeExchangeThreadStatus = "open" | "waiting" | "blocked" | "done" | "abandoned";
