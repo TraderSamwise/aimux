@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   Bell,
+  BookOpen,
   ChevronLeft,
   FolderKanban,
   GitBranch,
@@ -404,6 +405,7 @@ const BOTTOM_NAV = [
   { id: "dashboard", label: "Dashboard", Icon: Home },
   { id: "topology", label: "Topology", Icon: Network },
   { id: "project", label: "Project", Icon: FolderKanban },
+  { id: "library", label: "Library", Icon: BookOpen },
   { id: "inbox", label: "Inbox", Icon: Bell },
   { id: "threads", label: "Threads", Icon: MessageSquare },
   { id: "settings", label: "Settings", Icon: Settings },
