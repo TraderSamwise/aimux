@@ -143,12 +143,13 @@ Move coordination authority into a topology-backed or sibling runtime exchange m
 
 The existing `.aimux/threads` and `.aimux/tasks` files are legacy import inputs only. Runtime thread, message, task, handoff, review, wait, and inbox state is authoritative in `runtime-exchange.yaml`.
 
-### 6. Metadata, Notifications, And Statusline As Projections
+### 6. Metadata, Notification Views, And Statusline As Projections
 
-Demote metadata and notifications to projections:
+Demote metadata, notification display views, and statusline to projections:
 
 - statusline reads topology/exchange projections
-- notifications derive from exchange/activity/lifecycle transitions
+- notification records, unread/read state, and clear/done state live in runtime exchange
+- notification views derive from exchange/activity/lifecycle transitions
 - metadata API writes are either projection-only or routed into authoritative domain actions
 - hidden lifecycle and backend identity fields are permanently absent from metadata
 - debug-state clearly labels authority versus projection
