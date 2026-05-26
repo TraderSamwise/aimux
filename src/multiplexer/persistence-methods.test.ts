@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { listWorktreesMock, spawnMock } = vi.hoisted(() => ({
   listWorktreesMock: vi.fn(() => []),
@@ -65,12 +65,21 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { getStatePath, initPaths } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
 import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
+import { listTopologyWorktreeGraveyard, listTopologyWorktreeStates } from "../runtime-core/topology-worktrees.js";
 
 describe("persistenceMethods", () => {
-  beforeEach(() => {
+  let pathsRoot = "";
+
+  beforeEach(async () => {
+    pathsRoot = mkdtempSync(join(tmpdir(), "aimux-persistence-paths-"));
+    await initPaths(pathsRoot);
     listWorktreesMock.mockReset();
     listWorktreesMock.mockReturnValue([]);
     spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    rmSync(pathsRoot, { recursive: true, force: true });
   });
 
   it("seeds desktop state when creating a worktree", () => {
@@ -536,14 +545,33 @@ describe("persistenceMethods", () => {
     ]);
   });
 
-  it("blocks worktree graveyard until the runtime core owns it", async () => {
+  it("graveyards a worktree into topology", async () => {
     const worktreePath = "/repo/.aimux/worktrees/demo";
-    await expect(persistenceMethods.graveyardDesktopWorktree.call({}, worktreePath)).rejects.toThrow(
-      "worktree graveyard requires the runtime core replacement",
-    );
+    const host = {
+      listDesktopWorktrees: vi.fn(() => [{ name: "demo", branch: "demo", path: worktreePath }]),
+      sessions: [],
+      sessionWorktreePaths: new Map(),
+      isSessionRuntimeLive: vi.fn(() => false),
+      offlineSessions: [],
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => []),
+      },
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+    };
+
+    await expect(persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath)).resolves.toEqual({
+      path: worktreePath,
+      status: "graveyarded",
+    });
+
+    expect(listTopologyWorktreeStates({ statuses: ["graveyard"] })).toMatchObject([{ path: worktreePath }]);
+    expect(listTopologyWorktreeGraveyard()).toMatchObject([{ path: worktreePath, name: "demo" }]);
   });
 
-  it("does not detach worktree services when blocked graveyarding is requested", async () => {
+  it("does not detach worktree services when graveyarding is blocked by a live agent", async () => {
     const pending = new DashboardPendingActions(() => {});
     const worktreePath = "/repo/.aimux/worktrees/demo";
     const service = {
@@ -575,6 +603,7 @@ describe("persistenceMethods", () => {
       footerFlash: "",
       footerFlashTicks: 0,
       syncSessionsFromTopology: vi.fn(),
+      listDesktopWorktrees: vi.fn(() => [{ name: "demo", branch: "demo", path: worktreePath }]),
       listWorktreeGraveyardEntries: vi.fn(() => []),
       invalidateDesktopStateSnapshot: vi.fn(),
       refreshLocalDashboardModel: vi.fn(),
@@ -609,7 +638,7 @@ describe("persistenceMethods", () => {
     };
 
     await expect(persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath)).rejects.toThrow(
-      "worktree graveyard requires the runtime core replacement",
+      'Cannot graveyard "demo" while agent "claude-1" is attached',
     );
 
     expect(liveSession.kill).not.toHaveBeenCalled();

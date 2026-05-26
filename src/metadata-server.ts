@@ -2539,8 +2539,14 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/worktrees/graveyard") {
-        await readJson(req);
-        send(res, 410, { ok: false, error: "worktree graveyard requires the runtime core replacement" });
+        const body = (await readJson(req)) as { path: string };
+        if (!this.options.desktop?.graveyardWorktree) {
+          send(res, 501, { ok: false, error: "worktree graveyard not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.graveyardWorktree(body);
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
         return;
       }
 

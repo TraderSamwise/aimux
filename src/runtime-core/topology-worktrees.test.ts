@@ -11,6 +11,7 @@ import {
   listTopologyWorktreeGraveyardPaths,
   listTopologyWorktreeStates,
   moveTopologyWorktreeToGraveyard,
+  removeTopologyWorktree,
   upsertTopologyWorktree,
 } from "./topology-worktrees.js";
 
@@ -105,5 +106,17 @@ describe("topology worktree lifecycle", () => {
     expect(listTopologyWorktreeGraveyard({ store, includeDeleted: true })).toMatchObject([
       { path: worktreePath, deletedAt: "2026-05-25T02:00:00.000Z" },
     ]);
+  });
+
+  it("removes active worktree topology without creating graveyard state", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const worktreePath = join(repoRoot, "../feature-d");
+    upsertTopologyWorktree({ path: worktreePath, name: "feature-d" }, "active", { store, projectRoot: repoRoot });
+
+    const removed = removeTopologyWorktree(worktreePath, { store });
+
+    expect(removed?.path).toBe(worktreePath);
+    expect(listTopologyWorktreeStates({ store })).toEqual([]);
+    expect(listTopologyWorktreeGraveyard({ store })).toEqual([]);
   });
 });
