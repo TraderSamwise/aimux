@@ -29,7 +29,7 @@ import {
   removeTopologySessionsForWorktree,
   resurrectTopologySession,
 } from "../runtime-core/topology-sessions.js";
-import { removeTopologyServicesForWorktree } from "../runtime-core/topology-services.js";
+import { removeTopologyServicesForWorktree, upsertTopologyService } from "../runtime-core/topology-services.js";
 import {
   deleteTopologyWorktreeGraveyardEntry,
   listTopologyWorktreeGraveyard,
@@ -484,8 +484,7 @@ export const persistenceMethods = {
         `Cannot graveyard "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
       );
     }
-    detachWorktreeServices(this, path);
-    removeWorktreeDependents(this, path);
+    stopWorktreeServicesForGraveyard(this, path);
     upsertTopologyWorktree(
       {
         path,
@@ -507,6 +506,9 @@ export const persistenceMethods = {
   },
 
   async resurrectGraveyardWorktree(this: any, path: string): Promise<{ path: string; status: "active" }> {
+    if (!existsSync(path)) {
+      throw new Error(`Cannot resurrect worktree "${path}" because the checkout is missing`);
+    }
     const resurrected = resurrectTopologyWorktreeFromGraveyard(path);
     if (!resurrected) {
       throw new Error(`Graveyard worktree "${path}" not found`);
@@ -522,11 +524,16 @@ export const persistenceMethods = {
     if (!existing) {
       throw new Error(`Graveyard worktree "${path}" not found`);
     }
+    const mainRepo = findMainRepo();
+    if (path === mainRepo) {
+      throw new Error("Cannot remove the main checkout");
+    }
     if (existsSync(path)) {
-      await this.removeDesktopWorktree(path);
+      await removeGraveyardedDesktopWorktree(this, mainRepo, path);
     } else {
       removeWorktreeDependents(this, path);
       removeTopologyWorktree(path);
+      this.saveState?.();
     }
     deleteTopologyWorktreeGraveyardEntry(path);
     this.invalidateDesktopStateSnapshot?.();
@@ -989,6 +996,47 @@ async function removeOrphanedDesktopWorktree(host: any, mainRepo: string, path: 
   host.saveState();
 }
 
+async function removeGraveyardedDesktopWorktree(host: any, mainRepo: string, path: string): Promise<void> {
+  await removeGitWorktreeCheckout(mainRepo, path);
+  removeWorktreeDependents(host, path);
+  removeTopologyWorktree(path);
+  host.saveState?.();
+}
+
+async function removeGitWorktreeCheckout(mainRepo: string, path: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let stderr = "";
+    let child;
+    try {
+      child = spawn("git", ["worktree", "remove", path, "--force"], {
+        cwd: mainRepo,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", reject);
+    child.on("close", (code: number | null) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const detail = stderr
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1);
+      reject(new Error(detail || `git worktree remove exited with code ${code ?? 1}`));
+    });
+  });
+}
+
 function detachWorktreeServices(host: any, path: string): void {
   for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
     if (metadata.kind !== "service" || metadata.worktreePath !== path) continue;
@@ -1001,6 +1049,34 @@ function detachWorktreeServices(host: any, path: string): void {
   host.offlineServices = host.offlineServices.filter((service: any) => service.worktreePath !== path);
   removeTopologyServicesForWorktree(path);
   removePersistedServicesForWorktree(path);
+}
+
+function stopWorktreeServicesForGraveyard(host: any, path: string): void {
+  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+    if (metadata.kind !== "service" || metadata.worktreePath !== path) continue;
+    markLifecycleUsed(host, metadata.sessionId);
+    try {
+      host.tmuxRuntimeManager.killWindow(target);
+    } catch {}
+    const serviceState = {
+      id: metadata.sessionId,
+      command: metadata.command,
+      args: metadata.args ?? [],
+      launchCommandLine: metadata.launchCommandLine,
+      worktreePath: metadata.worktreePath,
+      cwd: metadata.worktreePath,
+      label: metadata.label,
+      createdAt: metadata.createdAt,
+    };
+    upsertTopologyService(serviceState, "stopped");
+    host.offlineServices ??= [];
+    const existingIndex = host.offlineServices.findIndex((service: any) => service.id === metadata.sessionId);
+    if (existingIndex >= 0) {
+      host.offlineServices[existingIndex] = { ...host.offlineServices[existingIndex], ...serviceState };
+    } else {
+      host.offlineServices.push(serviceState);
+    }
+  }
 }
 
 function removeWorktreeDependents(host: any, path: string): void {
