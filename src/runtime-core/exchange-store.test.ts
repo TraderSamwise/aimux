@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -197,6 +197,25 @@ describe("RuntimeExchangeStore", () => {
       const lockPath = `${path}.lock`;
       mkdirSync(lockPath, { recursive: true });
       writeFileSync(join(lockPath, "owner"), "999999\n");
+
+      const store = new RuntimeExchangeStore(path);
+      store.update((exchange) => exchange);
+
+      expect(existsSync(lockPath)).toBe(false);
+      expect(store.read()).toMatchObject({ version: 1 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers an aged update lock without an owner file before timing out", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-exchange-"));
+    try {
+      const path = join(dir, "runtime-exchange.yaml");
+      const lockPath = `${path}.lock`;
+      mkdirSync(lockPath, { recursive: true });
+      const staleTime = new Date(Date.now() - 5_000);
+      utimesSync(lockPath, staleTime, staleTime);
 
       const store = new RuntimeExchangeStore(path);
       store.update((exchange) => exchange);
