@@ -251,12 +251,8 @@ export function isSharedRelayRequestAllowed(
   const path = normalizePath(input.path);
   const sessionId = input.sessionId?.trim();
 
-  if (sessionId && sessionId !== share.sessionId) return false;
+  if (!sessionId || sessionId !== share.sessionId) return false;
   if (method === "GET" && (path === "/agents/history" || path === "/agents/output" || path === "/events")) return true;
-  if (method === "POST" && path === "/agents/input") return true;
-  if ((method === "GET" || method === "POST") && isAllowedAttachmentPath(path)) {
-    return true;
-  }
   return false;
 }
 
@@ -386,23 +382,6 @@ function sanitizeServiceEndpoint(endpoint: ShareServiceEndpoint | undefined): Sh
   const port = Number(endpoint?.port);
   if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) return undefined;
   return { host: host.slice(0, 253), port };
-}
-
-function isAllowedAttachmentPath(path: string): boolean {
-  if (path === "/attachments") return true;
-  if (!path.startsWith("/attachments/")) return false;
-  const rest = path.slice("/attachments/".length);
-  for (const segment of rest.split("/")) {
-    if (!segment) continue;
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(segment);
-    } catch {
-      return false;
-    }
-    if (decoded === "." || decoded === "..") return false;
-  }
-  return true;
 }
 
 function normalizePath(path: string): string {

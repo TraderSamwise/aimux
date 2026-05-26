@@ -16,6 +16,7 @@ import { requestJson } from "./http-client.js";
 import { getLoggingConfig, log } from "./debug.js";
 import { RelayClient, type RelayStatusSnapshot } from "./relay-client.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
+import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 
 const DEFAULT_DAEMON_PORT = 43190;
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
@@ -679,6 +680,11 @@ export class AimuxDaemon {
     this.refreshState();
     const routeUrl = new URL(path, getDaemonBaseUrl());
     const pathname = routeUrl.pathname;
+    const actor = parseRemoteActor(headers);
+    const access = assertRemoteAccessAllowed(actor, method, pathname, routeUrl.searchParams);
+    if (!access.ok) {
+      return { status: access.status ?? 403, body: { ok: false, error: access.error ?? "remote access denied" } };
+    }
 
     if (method === "GET" && pathname === "/health") {
       return { status: 200, body: { ok: true, pid: process.pid, port: getDaemonPort() } };

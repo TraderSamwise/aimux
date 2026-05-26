@@ -197,7 +197,7 @@ rg -n "daemon-state|/projects|ensureProject|stopProject|loadMetadataEndpoint|sav
 
 - Keep daemon project registry as daemon-private project supervision state.
 - Do not let daemon registry carry per-agent lifecycle or exchange truth.
-- Replace `instances.json` ownership/presence semantics with topology presence or remove them.
+- `instances.json` ownership/presence semantics are removed from active runtime code; do not reintroduce them as lifecycle authority.
 - Keep relay/share state as transport/security state unless explicitly mirrored from topology ownership.
 - Classify relay Durable Object security/share stores as relay-owned policy authority, then ensure they do not decide runtime topology ownership or exchange state.
 

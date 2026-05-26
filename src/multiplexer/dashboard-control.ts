@@ -434,7 +434,7 @@ export function showOrchestrationRoutePicker(host: DashboardControlHost, mode: "
     };
   });
 
-  if (selected && !selected.remoteInstancePid) {
+  if (selected) {
     options.push({
       label: `${selected.label ?? selected.command ?? selected.id} (${selected.id})`,
       sessionId: selected.id,

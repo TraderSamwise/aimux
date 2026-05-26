@@ -95,7 +95,6 @@ function toDashboardSessionSeed(seed: any): DashboardSession | undefined {
     worktreePath: seed.worktreePath,
     createdAt: seed.createdAt,
     backendSessionId: seed.backendSessionId,
-    remoteBackendSessionId: seed.remoteBackendSessionId,
     headline: seed.headline,
     team: seed.team,
   };
@@ -684,7 +683,6 @@ export function computeDashboardSessions(
     })),
     activeIndex: host.activeIndex,
     offlineSessions: host.offlineSessions,
-    remoteInstances: [],
     hiddenWorktreePaths: listWorktreeGraveyardPaths(),
     mainRepoPath,
     includeTeammates: options.includeTeammates,

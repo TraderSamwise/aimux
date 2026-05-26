@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { HotkeyHandler, type HotkeyAction } from "../hotkeys.js";
 import { Dashboard, type DashboardService, type DashboardSession, type WorktreeGroup } from "../dashboard/index.js";
 import { DashboardOverlayState, DashboardState } from "../dashboard/state.js";
@@ -8,7 +7,6 @@ import { findMainRepo } from "../worktree.js";
 import { TerminalHost } from "../terminal-host.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "../session-runtime.js";
 import { AgentTracker } from "../agent-tracker.js";
-import { InstanceDirectory } from "../instance-directory.js";
 import { TmuxRuntimeManager, type TmuxTarget, type TmuxWindowMetadata } from "../tmux/runtime-manager.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { MetadataServer } from "../metadata-server.js";
@@ -222,7 +220,6 @@ export class Multiplexer {
   /** MRU order of session IDs (most recent first) */
   private sessionMRU: string[] = [];
   /** Sessions confirmed registered in the instance registry (for claim detection) */
-  private confirmedRegistered = new Set<string>();
   /** The focused worktree path on the dashboard (undefined = main repo) */
   private dashboardState = new DashboardState();
   private dashboardUiStateStore = new DashboardUiStateStore();
@@ -234,7 +231,6 @@ export class Multiplexer {
   private dashboardPendingExpandedViewportCount = 0;
   private dashboardModelVersion = 0;
   private agentTracker = new AgentTracker();
-  private instanceId = randomUUID();
   private contextWatcher = new ContextWatcher((target) =>
     this.tmuxRuntimeManager.captureTarget(target, { startLine: -120 }),
   );
@@ -251,7 +247,6 @@ export class Multiplexer {
   /** Offline sessions from previous runs (loaded from runtime topology) */
   private offlineSessions: SessionState[] = [];
   /** Cross-instance discovery and claim/heartbeat ownership */
-  private instanceDirectory = new InstanceDirectory();
   private tmuxRuntimeManager = new TmuxRuntimeManager();
   private sessionBootstrap = new SessionBootstrapService({
     tmuxRuntimeManager: this.tmuxRuntimeManager,
@@ -295,14 +290,8 @@ export class Multiplexer {
     this.hotkeys = new HotkeyHandler((action) => this.handleAction(action));
     this.dashboard = new Dashboard();
     this.runtimeSync = new MultiplexerRuntimeSync({
-      instanceDirectory: this.instanceDirectory,
-      instanceId: this.instanceId,
       cwd: process.cwd(),
       getMode: () => this.mode,
-      getConfirmedRegistered: () => this.confirmedRegistered,
-      setConfirmedRegistered: (value) => {
-        this.confirmedRegistered = value;
-      },
       syncSessionsFromTopology: () => this.syncSessionsFromTopology(),
       loadOfflineTopologySessions: () => this.loadOfflineTopologySessions(),
       renderCurrentDashboardView: () => this.renderCurrentDashboardView(),
