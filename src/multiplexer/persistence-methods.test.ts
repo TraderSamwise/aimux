@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -594,6 +594,26 @@ describe("persistenceMethods", () => {
     expect(listTopologyWorktreeGraveyard()).toEqual([]);
     expect(listTopologyWorktreeStates({ statuses: ["active"] })).toMatchObject([{ path: worktreePath }]);
     expect(host.metadataServer.notifyChange).toHaveBeenCalled();
+  });
+
+  it("keeps graveyard entries visible when delete physical removal fails", async () => {
+    const worktreePath = join(pathsRoot, "worktrees", "demo");
+    mkdirSync(worktreePath, { recursive: true });
+    upsertTopologyWorktree({ path: worktreePath, name: "demo", branch: "demo" }, "active");
+    moveTopologyWorktreeToGraveyard(worktreePath);
+    const host = {
+      removeDesktopWorktree: vi.fn(async () => {
+        throw new Error("remove failed");
+      }),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(persistenceMethods.deleteGraveyardWorktree.call(host, worktreePath)).rejects.toThrow("remove failed");
+
+    expect(listTopologyWorktreeGraveyard()).toMatchObject([{ path: worktreePath }]);
+    expect(host.invalidateDesktopStateSnapshot).not.toHaveBeenCalled();
   });
 
   it("does not detach worktree services when graveyarding is blocked by a live agent", async () => {
