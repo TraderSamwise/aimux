@@ -86,7 +86,7 @@ Audit commands:
 
 ```bash
 rg -n "getThreadsDir|createThread|readThread|updateThread|listThreads|appendMessage|readMessages|updateMessage|markMessageDelivered|markThreadSeen|setThreadStatus|sendDirectMessage|sendThreadMessage|sendHandoff|acceptHandoff|completeHandoff|resolveOrchestrationRecipients|orchestration-routing|buildWorkflowEntries|filterWorkflowEntries|describeWorkflowNextAction" src app
-rg -n "\"/threads|\"/handoff|\"/tasks/handoff|threadId|waitingOn|unreadBy|deliveredTo|deliveredAt|RuntimeTopologyQueueItem|topology\\.queue|queue:" src app
+rg -n "\"/threads|\"/handoff|\"/tasks/handoff|threadId|waitingOn|unreadBy|deliveredTo|deliveredAt|exchangeRefs|runtime-exchange" src app
 ```
 
 - Replace `.aimux/threads/*.json` and `.jsonl` authority with runtime exchange records.
@@ -95,7 +95,7 @@ rg -n "\"/threads|\"/handoff|\"/tasks/handoff|threadId|waitingOn|unreadBy|delive
 - Move recipient routing/scoring into exchange-owned routing semantics; do not leave `src/orchestration-routing.ts` as a hidden authority over assignee/tool/worktree/liveness selection.
 - Model handoff lifecycle as first-class exchange state, not just thread kind/status/message metadata conventions.
 - Audit both `/handoff*` and `/tasks/handoff`; the dashboard currently posts to `/tasks/handoff`, but no project-service route backs it, so treat it as a dead/client-only path to remove or rewire rather than authoritative handoff persistence.
-- Classify the existing topology `queue` schema as migrated exchange authority or remove it; do not leave it as a shadow task/handoff/message model.
+- Keep topology limited to `exchangeRefs`; do not reintroduce a topology-owned task/handoff/message queue now that `runtime-exchange.yaml` exists.
 
 ## Plans
 
@@ -129,7 +129,7 @@ Audit commands:
 
 ```bash
 rg -n "getTasksDir|readTask|readAllTasks|writeTask|hasActiveTask|cleanupTasks|assignTask|acceptTask|blockTask|completeTask|reopenTask|requestReview|approveReview|requestTaskChanges|TaskWorkflow|listPendingReviews|listTasksForRole|buildWorkflowEntries|filterWorkflowEntries|describeWorkflowNextAction" src app
-rg -n "\"/tasks|\"/reviews|/agents/teammates/tasks|/agents/teammates/create|initialTask|reviewStatus|reviewFeedback|reviewOf|assignee|assigner|RuntimeTopologyQueueItem|topology\\.queue|queue:" src app
+rg -n "\"/tasks|\"/reviews|/agents/teammates/tasks|/agents/teammates/create|initialTask|reviewStatus|reviewFeedback|reviewOf|assignee|assigner|exchangeRefs|runtime-exchange" src app
 ```
 
 - Replace `.aimux/tasks/*.json` authority with runtime exchange records.
@@ -138,7 +138,7 @@ rg -n "\"/tasks|\"/reviews|/agents/teammates/tasks|/agents/teammates/create|init
 - Audit `/agents/teammates/tasks` and `/agents/teammates/create` `initialTask` with the task routes; both are public task-authority surfaces over `assignTask`.
 - Attach role and assignee resolution to topology identity, not detached task JSON fields.
 - Model review lifecycle as first-class exchange state, not only task subtype/status.
-- Resolve or remove topology `queue` overlap before declaring exchange authority clean.
+- Keep task/review exchange records in `runtime-exchange.yaml`; topology may reference them through `exchangeRefs` only.
 
 ## Waiting, Inbox, Attention
 

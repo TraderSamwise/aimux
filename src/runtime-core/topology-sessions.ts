@@ -223,14 +223,13 @@ export function saveRuntimeTopologySessions(input: SaveRuntimeTopologySessionsIn
     topology.bindings = nextBindings;
     topology.sessions = [...preservedGraveyard, ...nextSessions];
     const retainedNodeIds = new Set(topology.nodes.map((node) => node.id));
-    const retainedSessionIds = new Set(topology.sessions.map((session) => session.id));
     topology.edges = topology.edges.filter(
       (edge) => retainedNodeIds.has(edge.sourceNodeId) && retainedNodeIds.has(edge.targetNodeId),
     );
-    topology.queue = topology.queue.filter(
-      (item) =>
-        (!item.sourceSessionId || retainedSessionIds.has(item.sourceSessionId)) &&
-        (!item.targetSessionId || retainedSessionIds.has(item.targetSessionId)),
+    const retainedSessionIds = new Set(topology.sessions.map((session) => session.id));
+    topology.exchangeRefs = topology.exchangeRefs.filter(
+      (ref) =>
+        (!ref.sessionId || retainedSessionIds.has(ref.sessionId)) && (!ref.nodeId || retainedNodeIds.has(ref.nodeId)),
     );
     return topology;
   });
