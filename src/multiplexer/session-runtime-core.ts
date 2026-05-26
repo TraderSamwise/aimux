@@ -297,8 +297,9 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
   if (idx === -1) return;
 
   const explicitStop = host.stoppingSessionIds.has(runtime.id);
+  const graveyardAfterStop = host.graveyardAfterStopSessionIds?.has?.(runtime.id) ?? false;
   const backendSessionId = runtime.backendSessionId;
-  const shouldPreserveOffline = explicitStop || Boolean(backendSessionId) || uptime >= 10_000;
+  const shouldPreserveOffline = !graveyardAfterStop && (explicitStop || Boolean(backendSessionId) || uptime >= 10_000);
   if (shouldPreserveOffline && !host.offlineSessions.some((entry: any) => entry.id === runtime.id)) {
     host.offlineSessions.push({
       id: runtime.id,
@@ -321,6 +322,10 @@ export function handleSessionRuntimeEvent(host: SessionRuntimeHost, runtime: any
 
   host.sessions.splice(idx, 1);
   host.stoppingSessionIds.delete(runtime.id);
+  host.graveyardAfterStopSessionIds?.delete?.(runtime.id);
+  if (graveyardAfterStop) {
+    host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== runtime.id);
+  }
   host.updateContextWatcherSessions();
   const mappedTarget = host.sessionTmuxTargets.get(runtime.id);
   const runtimeTarget = runtime.transport instanceof TmuxSessionTransport ? runtime.transport.tmuxTarget : undefined;
