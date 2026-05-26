@@ -415,6 +415,9 @@ async function getLiveProjectServiceJsonOrLocal(projectRoot: string, path: strin
   const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
     method: "GET",
   });
+  if (status === 404 || status === 405 || status === 501) {
+    return fallback();
+  }
   if (status < 200 || status >= 300 || json?.ok === false) {
     throw new Error(json?.error || `request failed: ${status}`);
   }
