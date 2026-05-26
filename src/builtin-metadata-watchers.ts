@@ -115,8 +115,8 @@ export function createBuiltinMetadataWatchers(api: AimuxPluginAPI): AimuxPluginI
       latestBySession.set(sessionId, { message: `${prefix}: ${task.description}`, tone });
     }
     for (const [sessionId, entry] of latestBySession) {
-      metadata.log(sessionId, entry.message, { source: "tasks", tone: entry.tone });
       if (lastTaskBySession.get(sessionId) !== entry.message) {
+        metadata.log(sessionId, entry.message, { source: "tasks", tone: entry.tone });
         if (taskWatcherPrimed) {
           metadata.emitEvent(sessionId, {
             kind: entry.tone === "error" ? "task_failed" : entry.tone === "success" ? "task_done" : "task_assigned",
