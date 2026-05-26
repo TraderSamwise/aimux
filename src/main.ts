@@ -361,6 +361,14 @@ async function postProjectServiceJsonOrLocal(path: string, body: unknown, fallba
   }
 }
 
+async function getProjectServiceJsonOrLocal(path: string, fallback: () => any): Promise<any> {
+  try {
+    return await getProjectServiceJson(path);
+  } catch {
+    return fallback();
+  }
+}
+
 function exitAfterOpen(): never {
   process.exit(0);
 }
@@ -1659,8 +1667,9 @@ program
   .description("Alias for thread list")
   .option("--session <sessionId>", "Filter to threads involving a session")
   .option("--json", "Emit JSON")
-  .action((opts: { session?: string; json?: boolean }) => {
-    const summaries = listThreadSummaries(opts.session);
+  .action(async (opts: { session?: string; json?: boolean }) => {
+    const query = opts.session ? `?session=${encodeURIComponent(opts.session)}` : "";
+    const summaries = await getProjectServiceJsonOrLocal(`/threads${query}`, () => listThreadSummaries(opts.session));
     if (opts.json) {
       console.log(JSON.stringify(summaries, null, 2));
       return;
@@ -1687,8 +1696,9 @@ threadCmd
   .description("List orchestration threads")
   .option("--session <sessionId>", "Filter to threads involving a session")
   .option("--json", "Emit JSON")
-  .action((opts: { session?: string; json?: boolean }) => {
-    const summaries = listThreadSummaries(opts.session);
+  .action(async (opts: { session?: string; json?: boolean }) => {
+    const query = opts.session ? `?session=${encodeURIComponent(opts.session)}` : "";
+    const summaries = await getProjectServiceJsonOrLocal(`/threads${query}`, () => listThreadSummaries(opts.session));
     if (opts.json) {
       console.log(JSON.stringify(summaries, null, 2));
       return;
@@ -1715,13 +1725,17 @@ threadCmd
   .description("Show a thread and its messages")
   .argument("<threadId>")
   .option("--json", "Emit JSON")
-  .action((threadId: string, opts: { json?: boolean }) => {
-    const thread = readThread(threadId);
-    if (!thread) {
+  .action(async (threadId: string, opts: { json?: boolean }) => {
+    const detail = await getProjectServiceJsonOrLocal(`/threads/${encodeURIComponent(threadId)}`, () => {
+      const thread = readThread(threadId);
+      if (!thread) return null;
+      return { thread, messages: readMessages(threadId) };
+    });
+    if (!detail?.thread) {
       console.error(`aimux: thread not found: ${threadId}`);
       process.exit(1);
     }
-    const messages = readMessages(threadId);
+    const { thread, messages } = detail;
     if (opts.json) {
       console.log(JSON.stringify({ thread, messages }, null, 2));
       return;
@@ -1746,18 +1760,29 @@ threadCmd
   .requiredOption("--from <sessionId>", "Creating session")
   .requiredOption("--participants <ids>", "Comma-separated participant session ids")
   .option("--kind <kind>", "conversation|task|review|handoff|user", "conversation")
-  .action((opts: { title: string; from: string; participants: string; kind?: ThreadKind }) => {
+  .action(async (opts: { title: string; from: string; participants: string; kind?: ThreadKind }) => {
     const participants = opts.participants
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const thread = createThread({
-      title: opts.title,
-      kind: (opts.kind as ThreadKind) ?? "conversation",
-      createdBy: opts.from,
-      participants: [...new Set([opts.from, ...participants])],
-    });
-    console.log(thread.id);
+    const result = await postProjectServiceJsonOrLocal(
+      "/threads/open",
+      {
+        title: opts.title,
+        from: opts.from,
+        participants,
+        kind: (opts.kind as ThreadKind) ?? "conversation",
+      },
+      () => ({
+        thread: createThread({
+          title: opts.title,
+          kind: (opts.kind as ThreadKind) ?? "conversation",
+          createdBy: opts.from,
+          participants: [...new Set([opts.from, ...participants])],
+        }),
+      }),
+    );
+    console.log(result.thread.id);
   });
 
 threadCmd
@@ -1768,24 +1793,35 @@ threadCmd
   .requiredOption("--from <sessionId>", "Sending session")
   .option("--to <ids>", "Comma-separated recipient session ids")
   .option("--kind <kind>", "request|reply|status|decision|handoff|note", "note")
-  .action((threadId: string, body: string, opts: { from: string; to?: string; kind?: MessageKind }) => {
-    const thread = readThread(threadId);
-    if (!thread) {
-      console.error(`aimux: thread not found: ${threadId}`);
-      process.exit(1);
-    }
+  .action(async (threadId: string, body: string, opts: { from: string; to?: string; kind?: MessageKind }) => {
     const to = opts.to
       ?.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const message = sendThreadMessage({
-      threadId,
-      from: opts.from,
-      to,
-      kind: (opts.kind as MessageKind) ?? "note",
-      body,
-    }).message;
-    console.log(message.id);
+    const result = await postProjectServiceJsonOrLocal(
+      "/threads/send",
+      {
+        threadId,
+        from: opts.from,
+        to,
+        kind: (opts.kind as MessageKind) ?? "note",
+        body,
+      },
+      () => {
+        if (!readThread(threadId)) {
+          console.error(`aimux: thread not found: ${threadId}`);
+          process.exit(1);
+        }
+        return sendThreadMessage({
+          threadId,
+          from: opts.from,
+          to,
+          kind: (opts.kind as MessageKind) ?? "note",
+          body,
+        });
+      },
+    );
+    console.log(result.message.id);
   });
 
 threadCmd
@@ -1793,12 +1829,15 @@ threadCmd
   .description("Mark a thread as seen for a participant")
   .argument("<threadId>")
   .requiredOption("--session <sessionId>", "Participant session id")
-  .action((threadId: string, opts: { session: string }) => {
-    const thread = markThreadSeen(threadId, opts.session);
-    if (!thread) {
-      console.error(`aimux: thread not found: ${threadId}`);
-      process.exit(1);
-    }
+  .action(async (threadId: string, opts: { session: string }) => {
+    await postProjectServiceJsonOrLocal("/threads/mark-seen", { threadId, sessionId: opts.session }, () => {
+      const thread = markThreadSeen(threadId, opts.session);
+      if (!thread) {
+        console.error(`aimux: thread not found: ${threadId}`);
+        process.exit(1);
+      }
+      return { ok: true, thread };
+    });
     console.log("ok");
   });
 
@@ -2035,10 +2074,18 @@ taskCmd
   .option("--session <sessionId>", "Filter to tasks assigned to or created by a session")
   .option("--status <status>", "Filter by task status")
   .option("--json", "Emit JSON")
-  .action((opts: { session?: string; status?: string; json?: boolean }) => {
-    const tasks = readAllTasks()
-      .filter((task) => !opts.session || task.assignedTo === opts.session || task.assignedBy === opts.session)
-      .filter((task) => !opts.status || task.status === opts.status);
+  .action(async (opts: { session?: string; status?: string; json?: boolean }) => {
+    const params = new URLSearchParams();
+    if (opts.session) params.set("session", opts.session);
+    if (opts.status) params.set("status", opts.status);
+    const query = params.toString();
+    const result = await getProjectServiceJsonOrLocal(`/tasks${query ? `?${query}` : ""}`, () => ({
+      ok: true,
+      tasks: readAllTasks()
+        .filter((task) => !opts.session || task.assignedTo === opts.session || task.assignedBy === opts.session)
+        .filter((task) => !opts.status || task.status === opts.status),
+    }));
+    const tasks = Array.isArray(result.tasks) ? result.tasks : [];
     if (opts.json) {
       console.log(JSON.stringify({ tasks }, null, 2));
       return;
@@ -2060,14 +2107,22 @@ taskCmd
   .description("Show an orchestrated task")
   .argument("<taskId>")
   .option("--json", "Emit JSON")
-  .action((taskId: string, opts: { json?: boolean }) => {
-    const task = readTask(taskId);
-    if (!task) {
+  .action(async (taskId: string, opts: { json?: boolean }) => {
+    const detail = await getProjectServiceJsonOrLocal(`/tasks/${encodeURIComponent(taskId)}`, () => {
+      const task = readTask(taskId);
+      if (!task) return null;
+      return {
+        ok: true,
+        task,
+        thread: task.threadId ? readThread(task.threadId) : undefined,
+        messages: task.threadId ? readMessages(task.threadId) : [],
+      };
+    });
+    if (!detail?.task) {
       console.error(`aimux: task not found: ${taskId}`);
       process.exit(1);
     }
-    const thread = task.threadId ? readThread(task.threadId) : undefined;
-    const messages = task.threadId ? readMessages(task.threadId) : [];
+    const { task, thread, messages } = detail;
     if (opts.json) {
       console.log(JSON.stringify({ task, thread, messages }, null, 2));
       return;
