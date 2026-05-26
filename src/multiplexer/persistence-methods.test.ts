@@ -639,8 +639,59 @@ describe("persistenceMethods", () => {
 
     expect(listTopologyWorktreeStates({ statuses: ["graveyard"] })).toMatchObject([{ path: worktreePath }]);
     expect(listTopologyWorktreeGraveyard()).toMatchObject([{ path: worktreePath, name: "demo" }]);
-    expect(listTopologySessionStates().filter((session) => session.worktreePath === worktreePath)).toEqual([]);
-    expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toEqual([]);
+    expect(listTopologySessionStates().filter((session) => session.worktreePath === worktreePath)).toMatchObject([
+      { id: "codex-demo", status: "offline" },
+    ]);
+    expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toMatchObject([
+      { id: "service-demo", status: "stopped" },
+    ]);
+  });
+
+  it("stops live worktree services without deleting their topology records when graveyarding", async () => {
+    const worktreePath = "/repo/.aimux/worktrees/demo";
+    const target = { sessionName: "aimux-test", windowId: "@service", windowIndex: 1, windowName: "shell" };
+    const killWindow = vi.fn();
+    const host = {
+      listDesktopWorktrees: vi.fn(() => [{ name: "demo", branch: "demo", path: worktreePath }]),
+      sessions: [],
+      sessionWorktreePaths: new Map(),
+      isSessionRuntimeLive: vi.fn(() => false),
+      offlineSessions: [],
+      offlineServices: [],
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target,
+            metadata: {
+              kind: "service",
+              sessionId: "service-demo",
+              command: "zsh",
+              args: ["-l"],
+              toolConfigKey: "service",
+              createdAt: "2026-05-01T00:00:00.000Z",
+              worktreePath,
+              label: "shell",
+              launchCommandLine: "yarn web",
+            },
+          },
+        ]),
+        killWindow,
+      },
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+    };
+
+    await expect(persistenceMethods.graveyardDesktopWorktree.call(host, worktreePath)).resolves.toEqual({
+      path: worktreePath,
+      status: "graveyarded",
+    });
+
+    expect(killWindow).toHaveBeenCalledWith(target);
+    expect(host.offlineServices).toMatchObject([{ id: "service-demo", worktreePath, launchCommandLine: "yarn web" }]);
+    expect(listTopologyServiceStates({ statuses: ["stopped"] })).toMatchObject([
+      { id: "service-demo", worktreePath, launchCommandLine: "yarn web" },
+    ]);
   });
 
   it("resurrects topology worktree graveyard entries", async () => {

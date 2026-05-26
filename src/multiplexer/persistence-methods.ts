@@ -29,7 +29,7 @@ import {
   removeTopologySessionsForWorktree,
   resurrectTopologySession,
 } from "../runtime-core/topology-sessions.js";
-import { removeTopologyServicesForWorktree } from "../runtime-core/topology-services.js";
+import { removeTopologyServicesForWorktree, upsertTopologyService } from "../runtime-core/topology-services.js";
 import {
   deleteTopologyWorktreeGraveyardEntry,
   listTopologyWorktreeGraveyard,
@@ -484,8 +484,7 @@ export const persistenceMethods = {
         `Cannot graveyard "${matching.name}" while agent "${attachedSession.label || attachedSession.id}" is attached`,
       );
     }
-    detachWorktreeServices(this, path);
-    removeWorktreeDependents(this, path);
+    stopWorktreeServicesForGraveyard(this, path);
     upsertTopologyWorktree(
       {
         path,
@@ -1001,6 +1000,34 @@ function detachWorktreeServices(host: any, path: string): void {
   host.offlineServices = host.offlineServices.filter((service: any) => service.worktreePath !== path);
   removeTopologyServicesForWorktree(path);
   removePersistedServicesForWorktree(path);
+}
+
+function stopWorktreeServicesForGraveyard(host: any, path: string): void {
+  for (const { target, metadata } of host.tmuxRuntimeManager.listProjectManagedWindows(process.cwd())) {
+    if (metadata.kind !== "service" || metadata.worktreePath !== path) continue;
+    markLifecycleUsed(host, metadata.sessionId);
+    try {
+      host.tmuxRuntimeManager.killWindow(target);
+    } catch {}
+    const serviceState = {
+      id: metadata.sessionId,
+      command: metadata.command,
+      args: metadata.args ?? [],
+      launchCommandLine: metadata.launchCommandLine,
+      worktreePath: metadata.worktreePath,
+      cwd: metadata.worktreePath,
+      label: metadata.label,
+      createdAt: metadata.createdAt,
+    };
+    upsertTopologyService(serviceState, "stopped");
+    host.offlineServices ??= [];
+    const existingIndex = host.offlineServices.findIndex((service: any) => service.id === metadata.sessionId);
+    if (existingIndex >= 0) {
+      host.offlineServices[existingIndex] = { ...host.offlineServices[existingIndex], ...serviceState };
+    } else {
+      host.offlineServices.push(serviceState);
+    }
+  }
 }
 
 function removeWorktreeDependents(host: any, path: string): void {
