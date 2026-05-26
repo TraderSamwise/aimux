@@ -49,12 +49,11 @@ Supplementary desktop views can read directly from project-service HTTP too:
 
 Heartbeat is for reconciliation and external changes, not for action initiation.
 
-Desktop alerts should be treated as ephemeral event-stream UI, not persisted notifications:
+Desktop alerts and notification inbox state are separate surfaces:
 
-- subscribe to project-service SSE
-- render transient alert surfaces in-app
-- do not scrape files or poll CLI for alert delivery
-- do not build seen/dismissed notification state unless the product explicitly needs an inbox later
+- subscribe to project-service SSE for transient alert surfaces
+- use `GET /notifications`, `POST /notifications/read`, and `POST /notifications/clear` for the inbox/read-state surface
+- do not scrape files or poll CLI for alert delivery or inbox state
 
 ## Semantic Source Of Truth
 
