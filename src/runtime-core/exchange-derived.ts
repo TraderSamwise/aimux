@@ -2,6 +2,7 @@ import type {
   RuntimeExchange,
   RuntimeExchangeHandoff,
   RuntimeExchangeInboxEntry,
+  RuntimeExchangeMessage,
   RuntimeExchangeReview,
   RuntimeExchangeTask,
   RuntimeExchangeThread,
@@ -12,20 +13,50 @@ function unique(values: Array<string | undefined>): string[] {
   return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])];
 }
 
-function handoffFromThread(thread: RuntimeExchangeThread): RuntimeExchangeHandoff | undefined {
+function handoffActionFromMessages(messages: RuntimeExchangeMessage[]): {
+  action?: "accepted" | "completed";
+  actor?: string;
+} {
+  const lifecycleMessage = [...messages]
+    .reverse()
+    .find(
+      (message) => message.metadata?.handoffAction === "accepted" || message.metadata?.handoffAction === "completed",
+    );
+  return {
+    action: lifecycleMessage?.metadata?.handoffAction as "accepted" | "completed" | undefined,
+    actor: lifecycleMessage?.from,
+  };
+}
+
+function handoffFromThread(
+  thread: RuntimeExchangeThread,
+  messages: RuntimeExchangeMessage[],
+): RuntimeExchangeHandoff | undefined {
   if (thread.kind !== "handoff") return undefined;
   const recipients = unique(
     thread.waitingOn?.length ? thread.waitingOn : thread.participants.filter((id) => id !== thread.createdBy),
   );
   if (recipients.length === 0) return undefined;
+  const lifecycle = handoffActionFromMessages(messages);
+  const status =
+    lifecycle.action === "completed"
+      ? "completed"
+      : lifecycle.action === "accepted"
+        ? "accepted"
+        : thread.status === "done"
+          ? "completed"
+          : thread.status === "abandoned"
+            ? "cancelled"
+            : "waiting";
   return {
     id: `handoff:${thread.id}`,
     threadId: thread.id,
-    status: thread.status === "done" ? "completed" : thread.status === "abandoned" ? "cancelled" : "waiting",
+    status,
     from: thread.createdBy,
     to: recipients,
-    acceptedBy: thread.status === "open" ? thread.owner : undefined,
-    completedBy: thread.status === "done" ? thread.owner : undefined,
+    acceptedBy: lifecycle.action === "accepted" ? lifecycle.actor : thread.status === "open" ? thread.owner : undefined,
+    completedBy:
+      lifecycle.action === "completed" ? lifecycle.actor : thread.status === "done" ? thread.owner : undefined,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
   };
@@ -119,10 +150,16 @@ function inboxFromTask(task: RuntimeExchangeTask): RuntimeExchangeInboxEntry[] {
 }
 
 export function deriveRuntimeExchangeIndexes(exchange: RuntimeExchange): RuntimeExchange {
+  const messagesByThread = new Map<string, RuntimeExchangeMessage[]>();
+  for (const message of exchange.messages) {
+    const existing = messagesByThread.get(message.threadId) ?? [];
+    existing.push(message);
+    messagesByThread.set(message.threadId, existing);
+  }
   return {
     ...exchange,
     handoffs: exchange.threads
-      .map(handoffFromThread)
+      .map((thread) => handoffFromThread(thread, messagesByThread.get(thread.id) ?? []))
       .filter((handoff): handoff is RuntimeExchangeHandoff => Boolean(handoff)),
     reviews: exchange.tasks.map(reviewFromTask).filter((review): review is RuntimeExchangeReview => Boolean(review)),
     waits: [...exchange.threads.flatMap(waitsFromThread), ...exchange.tasks.flatMap(waitsFromTask)],
