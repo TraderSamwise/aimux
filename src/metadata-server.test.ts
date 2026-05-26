@@ -156,9 +156,19 @@ describe("MetadataServer threads API", () => {
     expect(roleHandoff.message.to).toEqual(["reviewer"]);
 
     const inboxRes = await fetch(`${base}/inbox?participant=reviewer`);
-    const inbox = (await inboxRes.json()) as { inbox: Array<{ subjectId: string; title: string }> };
+    const inbox = (await inboxRes.json()) as { inbox: Array<{ id: string; subjectId: string; title: string }> };
     expect(inboxRes.ok).toBe(true);
     expect(inbox.inbox).toEqual([expect.objectContaining({ subjectId: roleHandoff.thread.id })]);
+
+    const readInboxRes = await fetch(`${base}/inbox/read`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: inbox.inbox[0]!.id }),
+    });
+    expect(readInboxRes.ok).toBe(true);
+    const readInboxAgainRes = await fetch(`${base}/inbox?participant=reviewer&unread=1`);
+    const readInboxAgain = (await readInboxAgainRes.json()) as { inbox: unknown[] };
+    expect(readInboxAgain.inbox).toEqual([]);
 
     const taskRes = await fetch(`${base}/tasks/assign`, {
       method: "POST",
