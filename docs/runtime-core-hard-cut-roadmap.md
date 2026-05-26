@@ -216,16 +216,11 @@ Build tests and stress checks around the failure modes this project is meant to 
 
 ## Recommended Order
 
-1. Authority map and dead-path inventory.
-2. Topology and exchange schema completion.
-3. Agent lifecycle hard cut.
-4. Service and worktree hard cut.
-5. Communication and exchange hard cut.
-6. Metadata, notifications, and statusline projection cleanup.
-7. GUI, project-service, and CLI consistency sweep.
-8. Remote and multi-client semantics.
-9. Migration and compatibility tooling.
-10. Reliability harness and final dead-path audit.
+Start with authority map and dead-path inventory because later cuts need a complete list of competing writers. Follow with topology and exchange schema completion so lifecycle, service, worktree, and communication phases have a stable target instead of creating another temporary authority.
+
+Agent lifecycle should precede service/worktree cleanup because session identity, graveyard behavior, and tmux binding recovery are the most visible recovery paths. Communication and exchange can run after the lifecycle model is stable, with metadata/notification/statusline cleanup following as projection work rather than parallel authority.
+
+GUI, project-service, CLI, remote, and migration phases should happen after the core model is authoritative enough to serve clients consistently. Reliability harness work can run in parallel once a phase has a concrete target, but the final dead-path audit must close the loop after all client and migration compatibility paths are cut.
 
 ## Risk Notes
 
