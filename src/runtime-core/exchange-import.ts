@@ -276,9 +276,10 @@ function planRefFromPath(path: string, now: string): RuntimeExchangePlanRef {
 }
 
 function continuityKindForPath(path: string): RuntimeExchangeContinuityRef["kind"] {
-  if (path.includes("/recordings/")) return "recording";
-  if (path.includes("/status/")) return "status";
-  if (path.includes("/history/")) return "history";
+  const normalized = path.replaceAll("\\", "/");
+  if (normalized.includes("/recordings/")) return "recording";
+  if (normalized.includes("/status/")) return "status";
+  if (normalized.includes("/history/")) return "history";
   return "context";
 }
 

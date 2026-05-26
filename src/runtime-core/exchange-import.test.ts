@@ -81,6 +81,7 @@ describe("runtime exchange legacy import helpers", () => {
       planPaths: [join(repoRoot, ".aimux", "plans", "codex-1.md")],
       historyPaths: [join(repoRoot, ".aimux", "history", "codex-1.jsonl")],
       contextPaths: [join(repoRoot, ".aimux", "context", "codex-1", "live.md")],
+      recordingPaths: ["C:\\repo\\.aimux\\recordings\\codex-1.txt"],
       statusPaths: [join(repoRoot, ".aimux", "status", "codex-1.md")],
       attachments: [
         {
@@ -105,7 +106,7 @@ describe("runtime exchange legacy import helpers", () => {
     expect(exchange.waits).toMatchObject([{ id: "wait:thread:thread-1", waitingOn: ["codex-1"] }]);
     expect(exchange.inbox).toMatchObject([{ id: "inbox:codex-1:thread:thread-1", state: "waiting", urgency: 13 }]);
     expect(exchange.planRefs).toMatchObject([{ id: "plan:codex-1", ownerSessionId: "codex-1" }]);
-    expect(exchange.continuityRefs.map((ref) => ref.kind)).toEqual(["history", "context", "status"]);
+    expect(exchange.continuityRefs.map((ref) => ref.kind)).toEqual(["history", "context", "recording", "status"]);
     expect(exchange.attachmentRefs).toMatchObject([{ id: "attachment-1", mediaType: "image/png" }]);
   });
 
