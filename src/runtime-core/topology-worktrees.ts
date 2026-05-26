@@ -208,3 +208,24 @@ export function deleteTopologyWorktreeGraveyardEntry(
   });
   return deleted;
 }
+
+export function removeTopologyWorktree(
+  path: string,
+  input?: { store?: RuntimeTopologyStore; now?: string },
+): RuntimeTopologyWorktreeState | undefined {
+  const store = input?.store ?? createRuntimeTopologyStore();
+  const now = input?.now ?? new Date().toISOString();
+  let removed: RuntimeTopologyWorktreeState | undefined;
+  store.update((topology) => {
+    const existing = topology.worktrees.find((worktree) => worktree.path === path);
+    if (!existing) return topology;
+    removed = topologyWorktreeToWorktreeState(existing);
+    topology.generatedAt = now;
+    topology.worktrees = topology.worktrees.filter((worktree) => worktree.path !== path);
+    topology.lifecycleOperations = topology.lifecycleOperations.filter(
+      (operation) => !(operation.targetKind === "worktree" && operation.targetId === existing.id),
+    );
+    return topology;
+  });
+  return removed;
+}
