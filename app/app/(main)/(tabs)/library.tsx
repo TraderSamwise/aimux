@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useAtomValue } from "jotai";
 import { BookOpen, FileText, RefreshCw } from "lucide-react-native";
+import { useColorScheme } from "nativewind";
 import { DetailPanel } from "@/components/DetailPanel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -48,6 +49,8 @@ function DocumentRow({
 }
 
 export default function LibraryScreen() {
+  const { colorScheme } = useColorScheme();
+  const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
   const { getToken } = useAuth();
@@ -69,6 +72,8 @@ export default function LibraryScreen() {
       return;
     }
     setLoading(true);
+    setDocuments([]);
+    setSelectedId(null);
     try {
       const token = await getToken();
       const response = await listProjectLibrary(endpoint, { token });
@@ -116,7 +121,7 @@ export default function LibraryScreen() {
             onPress={() => void refresh()}
             accessibilityLabel="Refresh library"
           >
-            <RefreshCw size={18} color="#fafafa" />
+            <RefreshCw size={18} color={foregroundIconColor} />
           </Button>
         </View>
 

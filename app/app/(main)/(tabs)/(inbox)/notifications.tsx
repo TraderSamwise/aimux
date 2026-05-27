@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
+import { useColorScheme } from "nativewind";
 import {
   Activity,
   AlertTriangle,
@@ -180,6 +181,8 @@ function ForYouCardRow({
   onRead: (card: ForYouCard) => void;
   onClear: (card: ForYouCard) => void;
 }) {
+  const { colorScheme } = useColorScheme();
+  const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const canOpen = Boolean(card.sessionId || card.serviceId);
   const canMutateNotification = Boolean(card.notificationId);
 
@@ -220,7 +223,7 @@ function ForYouCardRow({
             onPress={() => onOpen(card)}
             className="gap-1.5"
           >
-            <ExternalLink size={14} color="#fafafa" />
+            <ExternalLink size={14} color={foregroundIconColor} />
             <Text className="text-sm font-medium text-foreground">Open</Text>
           </Button>
         ) : null}
@@ -232,7 +235,7 @@ function ForYouCardRow({
             onPress={() => onRead(card)}
             className="gap-1.5"
           >
-            <Check size={14} color="#fafafa" />
+            <Check size={14} color={foregroundIconColor} />
             <Text className="text-sm font-medium text-foreground">Read</Text>
           </Button>
         ) : null}
@@ -255,6 +258,8 @@ function ForYouCardRow({
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const { colorScheme } = useColorScheme();
+  const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const project = useAtomValue(selectedProjectAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
@@ -383,7 +388,7 @@ export default function NotificationsScreen() {
             onPress={refresh}
             accessibilityLabel="Refresh attention feed"
           >
-            <RotateCw size={18} color="#fafafa" />
+            <RotateCw size={18} color={foregroundIconColor} />
           </Button>
         </View>
 
@@ -420,7 +425,7 @@ export default function NotificationsScreen() {
             onPress={() => void mutate("read-all", "read")}
             className="gap-1.5"
           >
-            <Check size={14} color="#fafafa" />
+            <Check size={14} color={foregroundIconColor} />
             <Text className="text-sm font-medium text-foreground">Read notifications</Text>
           </Button>
           {hasSecurityEvents ? (
@@ -431,7 +436,7 @@ export default function NotificationsScreen() {
               onPress={() => markSecurityEventsRead()}
               className="gap-1.5"
             >
-              <ShieldAlert size={14} color="#fafafa" />
+              <ShieldAlert size={14} color={foregroundIconColor} />
               <Text className="text-sm font-medium text-foreground">Read security</Text>
             </Button>
           ) : null}
@@ -472,25 +477,7 @@ export default function NotificationsScreen() {
               Pick a project from the sidebar to see its attention feed.
             </Text>
           </Card>
-        ) : !endpoint ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">Project host offline</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              Start the project host to load attention items.
-            </Text>
-          </Card>
-        ) : !feed ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">Loading feed...</Text>
-          </Card>
-        ) : visibleCards.length === 0 ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">All caught up</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              New agent activity, approvals, security alerts, and shipped work will appear here.
-            </Text>
-          </Card>
-        ) : (
+        ) : visibleCards.length > 0 ? (
           visibleCards.map((card) => (
             <ForYouCardRow
               key={card.id}
@@ -511,6 +498,24 @@ export default function NotificationsScreen() {
               }
             />
           ))
+        ) : !endpoint ? (
+          <Card className="rounded-lg p-5">
+            <Text className="text-base font-semibold text-foreground">Project host offline</Text>
+            <Text className="mt-1 text-sm text-muted-foreground">
+              Start the project host to load attention items.
+            </Text>
+          </Card>
+        ) : !feed ? (
+          <Card className="rounded-lg p-5">
+            <Text className="text-base font-semibold text-foreground">Loading feed...</Text>
+          </Card>
+        ) : (
+          <Card className="rounded-lg p-5">
+            <Text className="text-base font-semibold text-foreground">All caught up</Text>
+            <Text className="mt-1 text-sm text-muted-foreground">
+              New agent activity, approvals, security alerts, and shipped work will appear here.
+            </Text>
+          </Card>
         )}
       </View>
     </ScrollView>

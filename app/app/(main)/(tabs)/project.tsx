@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useAtomValue } from "jotai";
 import { ClipboardList, FileText, GitBranch, Network, RefreshCw } from "lucide-react-native";
+import { useColorScheme } from "nativewind";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
@@ -147,6 +148,8 @@ function ProgressSection({ model }: { model: ProjectObservability }) {
 }
 
 export default function ProjectScreen() {
+  const { colorScheme } = useColorScheme();
+  const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const [section, setSection] = useState<ProjectSection>("story");
   const [tasks, setTasks] = useState<TaskSummaryResponse[]>([]);
   const [taskError, setTaskError] = useState<string | null>(null);
@@ -171,6 +174,7 @@ export default function ProjectScreen() {
       setTasks(response.tasks);
       setTaskError(null);
     } catch (err) {
+      setTasks([]);
       setTaskError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoadingTasks(false);
@@ -226,7 +230,7 @@ export default function ProjectScreen() {
             onPress={() => void refreshTasks()}
             accessibilityLabel="Refresh project tasks"
           >
-            <RefreshCw size={18} color="#fafafa" />
+            <RefreshCw size={18} color={foregroundIconColor} />
           </Button>
         </View>
 
