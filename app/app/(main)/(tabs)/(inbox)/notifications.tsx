@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
-import { useRouter } from "expo-router";
+import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useColorScheme } from "nativewind";
 import {
@@ -26,6 +26,7 @@ import {
   type ForYouSource,
 } from "@/lib/for-you-feed";
 import { cn } from "@/lib/utils";
+import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { desktopStateFamily } from "@/stores/desktopState";
 import {
   kickNotificationFeedRefreshAtom,
@@ -55,6 +56,10 @@ const LENSES: Array<{ id: ForYouKind | "all"; label: string }> = [
   { id: "progress", label: "Progress" },
   { id: "observation", label: "Observe" },
 ];
+
+function resolveLens(value: string | null): ForYouKind | "all" {
+  return LENSES.some((lens) => lens.id === value) ? (value as ForYouKind | "all") : "all";
+}
 
 function relativeTime(value: string): string {
   const then = Date.parse(value);
@@ -277,7 +282,8 @@ export default function NotificationsScreen() {
   const clearSecurityEvents = useSetAtom(clearSecurityEventsAtom);
   const { getToken } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
-  const [lens, setLens] = useState<ForYouKind | "all">("all");
+  const searchParams = useGlobalSearchParams<{ lens?: string | string[] }>();
+  const lens = resolveLens(cleanSearchValue(searchParams.lens));
 
   const notificationRecords = useMemo(() => feed?.notifications ?? [], [feed?.notifications]);
   const forYou = useMemo(
@@ -399,7 +405,11 @@ export default function NotificationsScreen() {
               label={item.label}
               count={item.id === "all" ? forYou.cards.length : forYou.counts[item.id]}
               active={lens === item.id}
-              onPress={() => setLens(item.id)}
+              onPress={() =>
+                router.replace(
+                  buildViewHref("/notifications", { project: selectedProjectPath, lens: item.id }),
+                )
+              }
             />
           ))}
         </View>

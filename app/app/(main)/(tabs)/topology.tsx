@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import Svg, { Circle, Line, Rect, Text as SvgText } from "react-native-svg";
-import { useRouter } from "expo-router";
+import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Box, GitBranch, Network, Rows3, Table2 } from "lucide-react-native";
 import { Card, PressableCard } from "@/components/ui/card";
@@ -24,6 +24,7 @@ import {
 } from "@/lib/openrig-topology";
 import { runtimeBrandForKind } from "@/lib/runtime-brand";
 import { cn } from "@/lib/utils";
+import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 
 type TopologyViewMode = "map" | "tree" | "table";
 
@@ -32,6 +33,10 @@ const VIEW_OPTIONS = [
   { value: "tree", label: "Tree" },
   { value: "table", label: "Table" },
 ] satisfies { value: TopologyViewMode; label: string }[];
+
+function resolveTopologyMode(value: string | null): TopologyViewMode {
+  return value === "tree" || value === "table" ? value : "map";
+}
 
 function healthColor(health: TopologyHealth): string {
   switch (health) {
@@ -391,7 +396,6 @@ function TopologyTable({
 }
 
 export default function TopologyScreen() {
-  const [mode, setMode] = useState<TopologyViewMode>("map");
   const { width } = useWindowDimensions();
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
@@ -399,6 +403,8 @@ export default function TopologyScreen() {
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
+  const searchParams = useGlobalSearchParams<{ mode?: string | string[] }>();
+  const mode = resolveTopologyMode(cleanSearchValue(searchParams.mode));
 
   const topology = useMemo(
     () => (project ? buildProjectTopology(project, groups, desktopState) : null),
@@ -482,7 +488,11 @@ export default function TopologyScreen() {
               <SegmentedControl
                 options={VIEW_OPTIONS}
                 value={mode}
-                onChange={setMode}
+                onChange={(nextMode) =>
+                  router.replace(
+                    buildViewHref("/topology", { project: project.path, mode: nextMode }),
+                  )
+                }
                 className="ml-3"
               />
             </View>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
-import { usePathname, useRouter } from "expo-router";
+import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   Bell,
@@ -20,7 +20,13 @@ import { StatusDot } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
-import { mainTabForPath, useMainTabNavigation, type MainTabId } from "@/lib/main-tabs";
+import {
+  MAIN_TAB_ROUTES,
+  mainTabForPath,
+  useMainTabNavigation,
+  type MainTabId,
+} from "@/lib/main-tabs";
+import { buildViewHref, mergeViewParams, type SearchValue } from "@/lib/view-location";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
@@ -470,6 +476,8 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
   const showPicker = useAtomValue(sidebarShowProjectPickerAtom);
   const setShowPicker = useSetAtom(sidebarShowProjectPickerAtom);
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
 
   // Fetch auth token once (auth context is stable in LOCAL_MODE; refetch is cheap).
   const { getToken } = useAuth();
@@ -500,6 +508,10 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
   function handlePickProject(path: string) {
     selectProject(path);
     setShowPicker(false);
+    const tabId = mainTabForPath(pathname);
+    router.replace(
+      buildViewHref(MAIN_TAB_ROUTES[tabId].href, mergeViewParams(searchParams, { project: path })),
+    );
   }
 
   function handlePickSession(sessionId: string) {
