@@ -34,6 +34,8 @@ const CORS_ALLOWED_ORIGINS = new Set([
   "http://127.0.0.1:8081",
   "http://localhost:8091",
   "http://127.0.0.1:8091",
+  "http://localhost:43192",
+  "http://127.0.0.1:43192",
 ]);
 
 export function getDaemonHost(): string {
@@ -168,7 +170,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 
 function setCorsHeaders(req: IncomingMessage, res: ServerResponse): boolean {
   const origin = req.headers.origin;
-  if (origin && !CORS_ALLOWED_ORIGINS.has(origin)) return false;
+  if (origin && !isAllowedCorsOrigin(origin)) return false;
   if (origin) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
@@ -176,6 +178,16 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): boolean {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   return true;
+}
+
+function isAllowedCorsOrigin(origin: string): boolean {
+  if (CORS_ALLOWED_ORIGINS.has(origin)) return true;
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === "http:" && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+  } catch {
+    return false;
+  }
 }
 
 function rejectCors(res: ServerResponse): void {
