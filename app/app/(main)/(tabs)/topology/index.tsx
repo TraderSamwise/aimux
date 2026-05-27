@@ -228,12 +228,18 @@ function TopologyMap({
                 </SvgText>
                 {leaves.map((node, leafIndex) => {
                   const leafY = leafStart + leafIndex * leafStep;
+                  const canOpen = Boolean(node.sourceId);
                   const openNode = () => {
                     if (node.kind === "agent" && node.sourceId) onPickAgent(node.sourceId);
                     if (node.kind === "service" && node.sourceId) onPickService(node.sourceId);
                   };
                   return (
-                    <G key={node.id} onPress={openNode}>
+                    <G
+                      key={node.id}
+                      onPress={canOpen ? openNode : undefined}
+                      accessibilityLabel={canOpen ? `Open ${node.label}` : undefined}
+                      style={canOpen ? ({ cursor: "pointer" } as object) : undefined}
+                    >
                       <Line
                         x1={worktreeX + 146}
                         y1={y}
@@ -270,6 +276,17 @@ function TopologyMap({
                       <SvgText x={leafX + 15} y={leafY + 13} fill="#a1a1aa" fontSize="8">
                         {node.kind}
                       </SvgText>
+                      {canOpen ? (
+                        <SvgText
+                          x={leafX + 104}
+                          y={leafY + 13}
+                          fill="#a1a1aa"
+                          fontSize="8"
+                          fontWeight="700"
+                        >
+                          open
+                        </SvgText>
+                      ) : null}
                     </G>
                   );
                 })}
