@@ -10,10 +10,12 @@
   "files": [
     "bin",
     "dist",
+    "dist-ui",
     "README.md"
   ],
   "scripts": {
     "build": "rm -rf dist && tsc",
+    "build:ui:local": "bash scripts/build-local-ui.sh",
     "dev": "tsc --watch",
     "dev:gui": "yarn dev:gui:web",
     "dev:gui:web": "yarn build && node bin/aimux-dev daemon ensure && yarn --cwd app dev:web:local",
@@ -41,7 +43,7 @@
     "release:patch": "yarn version --patch && git push --follow-tags",
     "release:minor": "yarn version --minor && git push --follow-tags",
     "release:major": "yarn version --major && git push --follow-tags",
-    "prepack": "yarn build",
+    "prepack": "yarn build && yarn build:ui:local",
     "prepare": "husky",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
   },
