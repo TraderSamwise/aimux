@@ -513,6 +513,37 @@ describe("daemon routing (relay + proxy)", () => {
     }
   });
 
+  it("allows browser preflight requests from the parallel dev web port", async () => {
+    const originalPort = process.env.AIMUX_DAEMON_PORT;
+    const port = "49193";
+    process.env.AIMUX_DAEMON_PORT = port;
+    const { AimuxDaemon } = await import("./daemon.js");
+    const daemon = new AimuxDaemon();
+
+    try {
+      await daemon.start();
+
+      const res = await fetch(`http://127.0.0.1:${port}/projects`, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://localhost:8091",
+          "Access-Control-Request-Method": "GET",
+        },
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8091");
+      expect(res.headers.get("access-control-allow-methods")).toContain("GET");
+    } finally {
+      daemon.stop();
+      if (originalPort === undefined) {
+        delete process.env.AIMUX_DAEMON_PORT;
+      } else {
+        process.env.AIMUX_DAEMON_PORT = originalPort;
+      }
+    }
+  });
+
   it("rejects browser requests from disallowed origins", async () => {
     const originalPort = process.env.AIMUX_DAEMON_PORT;
     const port = "49192";

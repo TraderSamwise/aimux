@@ -29,7 +29,12 @@ const PROXY_TIMEOUT_MS = 10_000;
 // `::1` is intentionally excluded — building http://::1:port is invalid (IPv6
 // needs brackets) and metadata services bind to 127.0.0.1 anyway.
 const PROXY_ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost"]);
-const CORS_ALLOWED_ORIGINS = new Set(["http://localhost:8081", "http://127.0.0.1:8081"]);
+const CORS_ALLOWED_ORIGINS = new Set([
+  "http://localhost:8081",
+  "http://127.0.0.1:8081",
+  "http://localhost:8091",
+  "http://127.0.0.1:8091",
+]);
 
 export function getDaemonHost(): string {
   const host = process.env.AIMUX_DAEMON_HOST?.trim();

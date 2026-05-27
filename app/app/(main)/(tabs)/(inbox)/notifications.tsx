@@ -1,19 +1,32 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Check, ExternalLink, RotateCw, ShieldAlert, Trash2 } from "lucide-react-native";
+import { useColorScheme } from "nativewind";
+import {
+  Activity,
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ExternalLink,
+  GitPullRequest,
+  RotateCw,
+  ShieldAlert,
+  Trash2,
+} from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
-import {
-  clearNotifications,
-  listNotifications,
-  markNotificationsRead,
-  type NotificationRecord,
-} from "@/lib/api";
+import { clearNotifications, listNotifications, markNotificationsRead } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import {
+  buildForYouFeed,
+  type ForYouCard,
+  type ForYouKind,
+  type ForYouSource,
+} from "@/lib/for-you-feed";
 import { cn } from "@/lib/utils";
+import { desktopStateFamily } from "@/stores/desktopState";
 import {
   kickNotificationFeedRefreshAtom,
   notificationFeedErrorFamily,
@@ -30,10 +43,18 @@ import {
   markSecurityEventsReadAtom,
   securityEventsAtom,
   securityUnreadCountAtom,
-  type SecurityInboxEvent,
 } from "@/stores/security";
 
 const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
+
+const LENSES: Array<{ id: ForYouKind | "all"; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "action-required", label: "Action" },
+  { id: "approval", label: "Approval" },
+  { id: "shipped", label: "Shipped" },
+  { id: "progress", label: "Progress" },
+  { id: "observation", label: "Observe" },
+];
 
 function relativeTime(value: string): string {
   const then = Date.parse(value);
@@ -49,130 +70,187 @@ function relativeTime(value: string): string {
   return new Date(then).toLocaleDateString();
 }
 
-function kindLabel(record: NotificationRecord): string {
-  return record.kind?.replace(/_/g, " ") || record.targetKind || "notification";
+function kindLabel(kind: ForYouKind): string {
+  switch (kind) {
+    case "action-required":
+      return "Action required";
+    case "approval":
+      return "Approval";
+    case "shipped":
+      return "Shipped";
+    case "progress":
+      return "Progress";
+    case "observation":
+      return "Observation";
+  }
 }
 
-function notificationTitle(record: NotificationRecord): string {
-  return record.title || record.subtitle || "aimux";
+function sourceLabel(source: ForYouSource): string {
+  switch (source) {
+    case "notification":
+      return "notification";
+    case "security":
+      return "security";
+    case "agent":
+      return "agent";
+    case "service":
+      return "service";
+  }
 }
 
-function NotificationRow({
-  record,
+function kindTone(kind: ForYouKind): string {
+  switch (kind) {
+    case "action-required":
+      return "border-amber-500/40 bg-amber-500/10";
+    case "approval":
+      return "border-sky-500/40 bg-sky-500/10";
+    case "shipped":
+      return "border-emerald-500/40 bg-emerald-500/10";
+    case "progress":
+      return "border-violet-500/40 bg-violet-500/10";
+    case "observation":
+      return "border-border bg-card";
+  }
+}
+
+function KindIcon({ kind, source }: { kind: ForYouKind; source: ForYouSource }) {
+  const color =
+    kind === "action-required"
+      ? "#f59e0b"
+      : kind === "approval"
+        ? "#38bdf8"
+        : kind === "shipped"
+          ? "#22c55e"
+          : kind === "progress"
+            ? "#a78bfa"
+            : "#a1a1aa";
+
+  if (source === "security") return <ShieldAlert size={18} color="#f87171" />;
+  if (kind === "approval") return <GitPullRequest size={18} color={color} />;
+  if (kind === "shipped") return <CheckCircle2 size={18} color={color} />;
+  if (kind === "progress") return <Activity size={18} color={color} />;
+  return <AlertTriangle size={18} color={color} />;
+}
+
+function LensChip({
+  label,
+  count,
+  active,
+  onPress,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      className={cn(
+        "mr-2 mb-2 flex-row items-center rounded-full border px-3 py-1.5 active:opacity-80",
+        active ? "border-foreground bg-foreground" : "border-border bg-card",
+      )}
+    >
+      <Text
+        className={cn("text-[12px] font-semibold", active ? "text-background" : "text-foreground")}
+      >
+        {label}
+      </Text>
+      <Text
+        className={cn(
+          "ml-1.5 text-[11px] font-bold",
+          active ? "text-background/70" : "text-muted-foreground",
+        )}
+      >
+        {count}
+      </Text>
+    </Pressable>
+  );
+}
+
+function ForYouCardRow({
+  card,
   busy,
   onOpen,
   onRead,
   onClear,
 }: {
-  record: NotificationRecord;
+  card: ForYouCard;
   busy: boolean;
-  onOpen: (record: NotificationRecord) => void;
-  onRead: (record: NotificationRecord) => void;
-  onClear: (record: NotificationRecord) => void;
+  onOpen: (card: ForYouCard) => void;
+  onRead: (card: ForYouCard) => void;
+  onClear: (card: ForYouCard) => void;
 }) {
-  const canOpen = Boolean(record.sessionId);
+  const { colorScheme } = useColorScheme();
+  const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
+  const canOpen = Boolean(card.sessionId || card.serviceId);
+  const canMutateNotification = Boolean(card.notificationId);
+
   return (
-    <Card
-      className={cn(
-        "mb-3 rounded-lg p-4",
-        record.unread ? "border-emerald-500/40 bg-secondary" : "bg-card",
-      )}
-    >
+    <Card className={cn("mb-3 rounded-lg p-4", kindTone(card.kind), card.unread && "bg-secondary")}>
       <View className="flex-row items-start">
-        <View className="flex-1 min-w-0 pr-3">
+        <View className="mr-3 mt-0.5 rounded-full bg-background/60 p-2">
+          <KindIcon kind={card.kind} source={card.source} />
+        </View>
+        <View className="min-w-0 flex-1">
           <View className="flex-row items-center">
-            {record.unread ? <View className="mr-2 h-2 w-2 rounded-full bg-emerald-500" /> : null}
+            {card.unread ? <View className="mr-2 h-2 w-2 rounded-full bg-emerald-500" /> : null}
             <Text
-              className="flex-1 min-w-0 text-[15px] font-semibold text-foreground"
+              className="min-w-0 flex-1 text-[15px] font-semibold text-foreground"
               numberOfLines={2}
             >
-              {notificationTitle(record)}
+              {card.title}
             </Text>
           </View>
-          {record.subtitle ? (
-            <Text className="mt-1 text-[12px] text-muted-foreground" numberOfLines={1}>
-              {record.subtitle}
-            </Text>
-          ) : null}
-          {record.body ? (
-            <Text className="mt-2 text-[13px] leading-snug text-foreground/90">{record.body}</Text>
+          {card.body ? (
+            <Text className="mt-2 text-[13px] leading-snug text-foreground/90">{card.body}</Text>
           ) : null}
           <Text className="mt-3 text-[11px] uppercase tracking-widest text-muted-foreground">
-            {kindLabel(record)}
-            {record.sessionId ? ` · ${record.sessionId}` : ""}
-            {relativeTime(record.createdAt) ? ` · ${relativeTime(record.createdAt)}` : ""}
+            {kindLabel(card.kind)}
+            {` · ${sourceLabel(card.source)}`}
+            {card.subtitle ? ` · ${card.subtitle}` : ""}
+            {relativeTime(card.createdAt) ? ` · ${relativeTime(card.createdAt)}` : ""}
           </Text>
         </View>
       </View>
+
       <View className="mt-4 flex-row flex-wrap gap-2">
         {canOpen ? (
           <Button
             variant="outline"
             size="sm"
             disabled={busy}
-            onPress={() => onOpen(record)}
+            onPress={() => onOpen(card)}
             className="gap-1.5"
           >
-            <ExternalLink size={14} color="#fafafa" />
+            <ExternalLink size={14} color={foregroundIconColor} />
             <Text className="text-sm font-medium text-foreground">Open</Text>
           </Button>
         ) : null}
-        {record.unread ? (
+        {canMutateNotification && card.unread ? (
           <Button
             variant="outline"
             size="sm"
             disabled={busy}
-            onPress={() => onRead(record)}
+            onPress={() => onRead(card)}
             className="gap-1.5"
           >
-            <Check size={14} color="#fafafa" />
+            <Check size={14} color={foregroundIconColor} />
             <Text className="text-sm font-medium text-foreground">Read</Text>
           </Button>
         ) : null}
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={busy}
-          onPress={() => onClear(record)}
-          className="gap-1.5"
-        >
-          <Trash2 size={14} color="#a1a1aa" />
-          <Text className="text-sm font-medium text-muted-foreground">Clear</Text>
-        </Button>
-      </View>
-    </Card>
-  );
-}
-
-function SecurityEventRow({ event }: { event: SecurityInboxEvent }) {
-  return (
-    <Card
-      className={cn(
-        "mb-3 rounded-lg p-4",
-        event.readAt ? "bg-card" : "border-red-500/40 bg-red-950/20",
-      )}
-    >
-      <View className="flex-row items-start gap-3">
-        <View className="mt-0.5 rounded-full bg-red-500/15 p-2">
-          <ShieldAlert size={18} color="#f87171" />
-        </View>
-        <View className="min-w-0 flex-1">
-          <View className="flex-row items-center">
-            {!event.readAt ? <View className="mr-2 h-2 w-2 rounded-full bg-red-400" /> : null}
-            <Text
-              className="min-w-0 flex-1 text-[15px] font-semibold text-foreground"
-              numberOfLines={2}
-            >
-              {event.title || "Security alert"}
-            </Text>
-          </View>
-          <Text className="mt-2 text-[13px] leading-snug text-foreground/90">{event.body}</Text>
-          <Text className="mt-3 text-[11px] uppercase tracking-widest text-muted-foreground">
-            {event.kind.replace(/_/g, " ")}
-            {event.country ? ` · ${event.country}` : ""}
-            {relativeTime(event.createdAt) ? ` · ${relativeTime(event.createdAt)}` : ""}
-          </Text>
-        </View>
+        {canMutateNotification ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onPress={() => onClear(card)}
+            className="gap-1.5"
+          >
+            <Trash2 size={14} color="#a1a1aa" />
+            <Text className="text-sm font-medium text-muted-foreground">Clear</Text>
+          </Button>
+        ) : null}
       </View>
     </Card>
   );
@@ -180,12 +258,15 @@ function SecurityEventRow({ event }: { event: SecurityInboxEvent }) {
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const { colorScheme } = useColorScheme();
+  const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
   const project = useAtomValue(selectedProjectAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
   const projectPathKey = selectedProjectPath ?? EMPTY_PROJECT_PATH;
   const feed = useAtomValue(notificationFeedFamily(projectPathKey));
   const feedError = useAtomValue(notificationFeedErrorFamily(projectPathKey));
+  const desktopState = useAtomValue(desktopStateFamily(projectPathKey));
   const setFeed = useSetAtom(notificationFeedFamily(projectPathKey));
   const setFeedError = useSetAtom(notificationFeedErrorFamily(projectPathKey));
   const selectSession = useSetAtom(selectedSessionIdAtom);
@@ -196,20 +277,23 @@ export default function NotificationsScreen() {
   const clearSecurityEvents = useSetAtom(clearSecurityEventsAtom);
   const { getToken } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
+  const [lens, setLens] = useState<ForYouKind | "all">("all");
 
+  const notificationRecords = useMemo(() => feed?.notifications ?? [], [feed?.notifications]);
+  const forYou = useMemo(
+    () =>
+      buildForYouFeed({
+        notifications: notificationRecords,
+        securityEvents,
+        desktopState,
+      }),
+    [desktopState, notificationRecords, securityEvents],
+  );
+  const visibleCards =
+    lens === "all" ? forYou.cards : forYou.cards.filter((card) => card.kind === lens);
   const unreadCount = feed?.unreadCount ?? 0;
   const lastUpdated = feed?.fetchedAt ? relativeTime(feed.fetchedAt) : "";
-
-  const groupedNotifications = useMemo(() => {
-    const notifications = feed?.notifications ?? [];
-    return [...notifications].sort((a, b) => {
-      if (a.unread !== b.unread) return a.unread ? -1 : 1;
-      const bTime = Date.parse(b.createdAt);
-      const aTime = Date.parse(a.createdAt);
-      return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
-    });
-  }, [feed?.notifications]);
-  const hasNotifications = groupedNotifications.length > 0;
+  const hasNotifications = notificationRecords.length > 0;
   const hasSecurityEvents = securityEvents.length > 0;
 
   const refresh = useCallback(async () => {
@@ -265,27 +349,35 @@ export default function NotificationsScreen() {
     [endpoint, getToken, kickRefresh, setFeed, setFeedError],
   );
 
-  async function openNotification(record: NotificationRecord) {
-    if (!record.sessionId) return;
-    if (record.unread) await mutate(`open:${record.id}`, "read", { id: record.id });
-    selectSession(record.sessionId);
-    router.push({
-      pathname: "/agent/[sessionId]/chat",
-      params: { sessionId: record.sessionId },
-    });
+  async function openCard(card: ForYouCard) {
+    if (card.notificationId && card.unread) {
+      await mutate(`open:${card.notificationId}`, "read", { id: card.notificationId });
+    }
+    if (card.sessionId) {
+      selectSession(card.sessionId);
+      router.push({
+        pathname: "/agent/[sessionId]/chat",
+        params: { sessionId: card.sessionId },
+      });
+    } else if (card.serviceId) {
+      router.push({
+        pathname: "/service/[serviceId]",
+        params: { serviceId: card.serviceId },
+      });
+    }
   }
 
   return (
     <ScrollView className="flex-1 bg-background" contentContainerClassName="px-4 py-5 md:px-8">
       <View className="mx-auto w-full max-w-3xl">
         <View className="mb-5 flex-row items-start justify-between gap-3">
-          <View className="flex-1 min-w-0">
+          <View className="min-w-0 flex-1">
             <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-              Notifications
+              For You
             </Text>
-            <Text className="mt-1 text-2xl font-bold text-foreground">Inbox</Text>
+            <Text className="mt-1 text-2xl font-bold text-foreground">Attention Feed</Text>
             <Text className="mt-1 text-sm text-muted-foreground" numberOfLines={2}>
-              {project ? project.name : "Select a project to view notifications"}
+              {project ? project.name : "Select a project to view attention items"}
               {project?.path ? ` · ${project.path}` : ""}
             </Text>
           </View>
@@ -294,10 +386,22 @@ export default function NotificationsScreen() {
             size="icon"
             disabled={!endpoint || busy === "refresh"}
             onPress={refresh}
-            accessibilityLabel="Refresh notifications"
+            accessibilityLabel="Refresh attention feed"
           >
-            <RotateCw size={18} color="#fafafa" />
+            <RotateCw size={18} color={foregroundIconColor} />
           </Button>
+        </View>
+
+        <View className="mb-4 flex-row flex-wrap">
+          {LENSES.map((item) => (
+            <LensChip
+              key={item.id}
+              label={item.label}
+              count={item.id === "all" ? forYou.cards.length : forYou.counts[item.id]}
+              active={lens === item.id}
+              onPress={() => setLens(item.id)}
+            />
+          ))}
         </View>
 
         <View className="mb-4 flex-row flex-wrap items-center gap-2">
@@ -310,7 +414,7 @@ export default function NotificationsScreen() {
           ) : null}
           <View className="rounded-full border border-border bg-card px-3 py-1.5">
             <Text className="text-xs font-medium text-foreground">
-              {unreadCount} unread
+              {unreadCount} notification unread
               {lastUpdated ? ` · updated ${lastUpdated}` : ""}
             </Text>
           </View>
@@ -321,9 +425,21 @@ export default function NotificationsScreen() {
             onPress={() => void mutate("read-all", "read")}
             className="gap-1.5"
           >
-            <Check size={14} color="#fafafa" />
-            <Text className="text-sm font-medium text-foreground">Mark all read</Text>
+            <Check size={14} color={foregroundIconColor} />
+            <Text className="text-sm font-medium text-foreground">Read notifications</Text>
           </Button>
+          {hasSecurityEvents ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={securityUnreadCount === 0}
+              onPress={() => markSecurityEventsRead()}
+              className="gap-1.5"
+            >
+              <ShieldAlert size={14} color={foregroundIconColor} />
+              <Text className="text-sm font-medium text-foreground">Read security</Text>
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="sm"
@@ -332,87 +448,74 @@ export default function NotificationsScreen() {
             className="gap-1.5"
           >
             <Trash2 size={14} color="#a1a1aa" />
-            <Text className="text-sm font-medium text-muted-foreground">Clear all</Text>
+            <Text className="text-sm font-medium text-muted-foreground">Clear notifications</Text>
           </Button>
+          {hasSecurityEvents ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onPress={() => clearSecurityEvents()}
+              className="gap-1.5"
+            >
+              <Trash2 size={14} color="#a1a1aa" />
+              <Text className="text-sm font-medium text-muted-foreground">Clear security</Text>
+            </Button>
+          ) : null}
         </View>
 
         {feedError ? (
           <Card className="mb-4 rounded-lg border-destructive/50 bg-destructive/10">
-            <Text className="text-sm font-semibold text-foreground">Notification feed failed</Text>
+            <Text className="text-sm font-semibold text-foreground">Attention feed failed</Text>
             <Text className="mt-1 text-xs text-muted-foreground">{feedError}</Text>
           </Card>
-        ) : null}
-
-        {hasSecurityEvents ? (
-          <View className="mb-5">
-            <View className="mb-3 flex-row items-center justify-between gap-3">
-              <View className="min-w-0 flex-1">
-                <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-                  Security
-                </Text>
-              </View>
-              <View className="flex-row gap-2">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  disabled={securityUnreadCount === 0}
-                  onPress={() => markSecurityEventsRead()}
-                  accessibilityLabel="Mark security alerts read"
-                >
-                  <Check size={14} color="#fafafa" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onPress={() => clearSecurityEvents()}
-                  accessibilityLabel="Clear security alerts"
-                >
-                  <Trash2 size={14} color="#a1a1aa" />
-                </Button>
-              </View>
-            </View>
-            {securityEvents.map((event) => (
-              <SecurityEventRow key={event.id} event={event} />
-            ))}
-          </View>
         ) : null}
 
         {!project ? (
           <Card className="rounded-lg p-5">
             <Text className="text-base font-semibold text-foreground">No project selected</Text>
             <Text className="mt-1 text-sm text-muted-foreground">
-              Pick a project from the sidebar to see its notification inbox.
+              Pick a project from the sidebar to see its attention feed.
             </Text>
           </Card>
+        ) : visibleCards.length > 0 ? (
+          visibleCards.map((card) => (
+            <ForYouCardRow
+              key={card.id}
+              card={card}
+              busy={busy !== null}
+              onOpen={(item) => void openCard(item)}
+              onRead={(item) =>
+                item.notificationId
+                  ? void mutate(`read:${item.notificationId}`, "read", { id: item.notificationId })
+                  : undefined
+              }
+              onClear={(item) =>
+                item.notificationId
+                  ? void mutate(`clear:${item.notificationId}`, "clear", {
+                      id: item.notificationId,
+                    })
+                  : undefined
+              }
+            />
+          ))
         ) : !endpoint ? (
           <Card className="rounded-lg p-5">
             <Text className="text-base font-semibold text-foreground">Project host offline</Text>
             <Text className="mt-1 text-sm text-muted-foreground">
-              Start the project host to load notifications.
+              Start the project host to load attention items.
             </Text>
           </Card>
         ) : !feed ? (
           <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">Loading inbox...</Text>
-          </Card>
-        ) : groupedNotifications.length === 0 ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">No notifications</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              New agent activity will appear here.
-            </Text>
+            <Text className="text-base font-semibold text-foreground">Loading feed...</Text>
           </Card>
         ) : (
-          groupedNotifications.map((record) => (
-            <NotificationRow
-              key={record.id}
-              record={record}
-              busy={busy !== null}
-              onOpen={(item) => void openNotification(item)}
-              onRead={(item) => void mutate(`read:${item.id}`, "read", { id: item.id })}
-              onClear={(item) => void mutate(`clear:${item.id}`, "clear", { id: item.id })}
-            />
-          ))
+          <Card className="rounded-lg p-5">
+            <Text className="text-base font-semibold text-foreground">All caught up</Text>
+            <Text className="mt-1 text-sm text-muted-foreground">
+              New agent activity, approvals, security alerts, and shipped work will appear here.
+            </Text>
+          </Card>
         )}
       </View>
     </ScrollView>
