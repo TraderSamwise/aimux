@@ -1,5 +1,6 @@
-import React, { useEffect } from "react";
-import { Stack } from "expo-router";
+import React, { useEffect, useLayoutEffect } from "react";
+import { Platform } from "react-native";
+import { Stack, useGlobalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
 import { NotificationProvider } from "@/components/NotificationProvider";
@@ -9,6 +10,7 @@ import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser
 import { env } from "@/lib/env";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
+import { projectPathFromSearchOrLocation } from "@/lib/view-location";
 import {
   desktopStateErrorFamily,
   desktopStateFamily,
@@ -20,6 +22,7 @@ import {
   notificationFeedRefreshNonceAtom,
 } from "@/stores/notifications";
 import {
+  projectsAtom,
   reconcileProjectsAtom,
   selectedProjectEndpointAtom,
   selectedProjectPathAtom,
@@ -30,16 +33,31 @@ import { activeSharedSessionAtom, type ActiveSharedSession } from "@/stores/sett
 import { addSecurityEventAtom } from "@/stores/security";
 
 const POLL_INTERVAL_MS = 2000;
+const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
 
 export default function MainLayout() {
   const reconcileProjects = useSetAtom(reconcileProjectsAtom);
+  const projects = useAtomValue(projectsAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const activeShare = useAtomValue(activeSharedSessionAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
+  const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
   const notificationRefreshNonce = useAtomValue(notificationFeedRefreshNonceAtom);
   const store = useStore();
   const { getToken } = useAuth();
+  const searchParams = useGlobalSearchParams<{ project?: string | string[] }>();
+  const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
+  const effectiveProjectPath = urlProjectPath ?? selectedProjectPath;
+  const effectiveProject = projects.find((project) => project.path === effectiveProjectPath);
+  const endpoint =
+    effectiveProject?.serviceEndpoint ??
+    (urlProjectPath && urlProjectPath !== selectedProjectPath ? null : selectedProjectEndpoint);
+
+  usePrePaintEffect(() => {
+    if (activeShare || !urlProjectPath || urlProjectPath === selectedProjectPath) return;
+    store.set(selectedProjectPathAtom, urlProjectPath);
+    store.set(selectedSessionIdAtom, null);
+  }, [activeShare, selectedProjectPath, store, urlProjectPath]);
 
   // Relay transport lifecycle: connect when a relay URL is configured, mirror
   // its status into the store, and register it with the API layer so requests
@@ -131,10 +149,10 @@ export default function MainLayout() {
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
   useEffect(() => {
     if (activeShare) return;
-    if (!selectedProjectPath) return;
+    if (!effectiveProjectPath) return;
     if (!endpoint) {
-      store.set(desktopStateFamily(selectedProjectPath), null);
-      store.set(desktopStateErrorFamily(selectedProjectPath), null);
+      store.set(desktopStateFamily(effectiveProjectPath), null);
+      store.set(desktopStateErrorFamily(effectiveProjectPath), null);
       return;
     }
     let cancelled = false;
@@ -146,12 +164,12 @@ export default function MainLayout() {
         const token = await getToken();
         const state = await getDesktopState(endpoint!, { token });
         if (cancelled) return;
-        store.set(desktopStateFamily(selectedProjectPath!), state);
-        store.set(desktopStateErrorFamily(selectedProjectPath!), null);
+        store.set(desktopStateFamily(effectiveProjectPath!), state);
+        store.set(desktopStateErrorFamily(effectiveProjectPath!), null);
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
-          store.set(desktopStateErrorFamily(selectedProjectPath!), msg);
+          store.set(desktopStateErrorFamily(effectiveProjectPath!), msg);
           console.warn("desktop-state fetch failed:", err);
         }
       }
@@ -166,17 +184,17 @@ export default function MainLayout() {
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeShare, selectedProjectPath, endpointKey, refreshNonce, getToken, store]);
+  }, [activeShare, effectiveProjectPath, endpointKey, refreshNonce, getToken, store]);
 
   // Poll durable notifications for the selected project. This mirrors
   // desktop-state polling but uses the daemon's notification records as the
   // canonical feed for cross-device delivery work.
   useEffect(() => {
     if (activeShare) return;
-    if (!selectedProjectPath) return;
+    if (!effectiveProjectPath) return;
     if (!endpoint) {
-      store.set(notificationFeedFamily(selectedProjectPath), null);
-      store.set(notificationFeedErrorFamily(selectedProjectPath), null);
+      store.set(notificationFeedFamily(effectiveProjectPath), null);
+      store.set(notificationFeedErrorFamily(effectiveProjectPath), null);
       return;
     }
     let cancelled = false;
@@ -188,16 +206,16 @@ export default function MainLayout() {
         const token = await getToken();
         const feed = await listNotifications(endpoint!, { token });
         if (cancelled) return;
-        store.set(notificationFeedFamily(selectedProjectPath!), {
+        store.set(notificationFeedFamily(effectiveProjectPath!), {
           notifications: feed.notifications,
           unreadCount: feed.unreadCount,
           fetchedAt: new Date().toISOString(),
         });
-        store.set(notificationFeedErrorFamily(selectedProjectPath!), null);
+        store.set(notificationFeedErrorFamily(effectiveProjectPath!), null);
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
-          store.set(notificationFeedErrorFamily(selectedProjectPath!), msg);
+          store.set(notificationFeedErrorFamily(effectiveProjectPath!), msg);
           console.warn("notification fetch failed:", err);
         }
       }
@@ -212,7 +230,7 @@ export default function MainLayout() {
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeShare, selectedProjectPath, endpointKey, notificationRefreshNonce, getToken, store]);
+  }, [activeShare, effectiveProjectPath, endpointKey, notificationRefreshNonce, getToken, store]);
 
   return (
     <>

@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
-import { usePathname, useRouter } from "expo-router";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Platform, Pressable, ScrollView, View } from "react-native";
+import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   Bell,
@@ -19,8 +19,25 @@ import { ServiceActions } from "@/components/service-actions";
 import { StatusDot } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
-import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
-import { mainTabForPath, useMainTabNavigation, type MainTabId } from "@/lib/main-tabs";
+import type {
+  DesktopService,
+  DesktopSession,
+  DesktopState,
+  WorktreeBucket,
+} from "@/lib/desktop-state";
+import {
+  MAIN_TAB_ROUTES,
+  mainTabForPath,
+  useMainTabNavigation,
+  type MainTabId,
+} from "@/lib/main-tabs";
+import {
+  buildViewHref,
+  detailHrefForPath,
+  mergeViewParams,
+  projectPathFromSearchOrLocation,
+  type SearchValue,
+} from "@/lib/view-location";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
@@ -46,6 +63,7 @@ import { sidebarShowProjectPickerAtom } from "@/stores/ui";
 
 const SIDEBAR_WIDTH = 320;
 const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
+const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
 
 // ─── Project picker ───────────────────────────────────────────────────────
 
@@ -347,6 +365,7 @@ function WorktreeTree({
   projectPath,
   endpoint,
   token,
+  desktopState,
   selectedSessionId,
   onPickSession,
   onPickService,
@@ -354,12 +373,12 @@ function WorktreeTree({
   projectPath: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  desktopState: DesktopState | null;
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
 }) {
   const groups = useAtomValue(worktreeGroupsFamily(projectPath));
-  const desktopState = useAtomValue(desktopStateFamily(projectPath));
 
   if (!endpoint && desktopState === null) {
     return (
@@ -370,6 +389,14 @@ function WorktreeTree({
         <Text className="text-[11px] text-muted-foreground mt-1 leading-snug">
           Start the host to see worktrees, agents, and services.
         </Text>
+      </View>
+    );
+  }
+
+  if (endpoint && desktopState === null) {
+    return (
+      <View className="px-4 py-4">
+        <Text className="text-xs text-muted-foreground">Loading project state...</Text>
       </View>
     );
   }
@@ -463,13 +490,20 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
   const projects = useAtomValue(projectsAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
+  const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const selectedSessionId = useAtomValue(selectedSessionIdAtom);
   const selectProject = useSetAtom(selectProjectAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
   const showPicker = useAtomValue(sidebarShowProjectPickerAtom);
   const setShowPicker = useSetAtom(sidebarShowProjectPickerAtom);
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
+  const effectiveProjectPath =
+    projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
+  const effectiveProject =
+    projects.find((project) => project.path === effectiveProjectPath) ?? selectedProject;
+  const endpoint = effectiveProject?.serviceEndpoint ?? selectedProjectEndpoint;
 
   // Fetch auth token once (auth context is stable in LOCAL_MODE; refetch is cheap).
   const { getToken } = useAuth();
@@ -491,30 +525,41 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
 
   // Auto-close the picker when the selected project path changes externally
   // (e.g., auto-reconcile fallback when the stored project disappears).
-  useEffect(() => {
-    setShowPicker(false);
-  }, [selectedProjectPath, setShowPicker]);
+  const previousProjectPathRef = useRef({
+    effectiveProjectPath,
+    selectedProjectPath,
+  });
+  usePrePaintEffect(() => {
+    const previous = previousProjectPathRef.current;
+    previousProjectPathRef.current = { effectiveProjectPath, selectedProjectPath };
+    if (
+      showPicker &&
+      (previous.effectiveProjectPath !== effectiveProjectPath ||
+        previous.selectedProjectPath !== selectedProjectPath)
+    ) {
+      setShowPicker(false);
+    }
+  }, [effectiveProjectPath, selectedProjectPath, setShowPicker, showPicker]);
 
-  const pickerMode = !selectedProject || showPicker;
+  const desktopState = useAtomValue(desktopStateFamily(effectiveProjectPath ?? EMPTY_PROJECT_PATH));
+  const pickerMode = !effectiveProject || showPicker;
 
   function handlePickProject(path: string) {
     selectProject(path);
     setShowPicker(false);
+    const tabId = mainTabForPath(pathname);
+    router.replace(
+      buildViewHref(MAIN_TAB_ROUTES[tabId].href, mergeViewParams(searchParams, { project: path })),
+    );
   }
 
   function handlePickSession(sessionId: string) {
     setSelectedSession(sessionId);
-    router.push({
-      pathname: "/agent/[sessionId]/chat",
-      params: { sessionId },
-    });
+    router.push(detailHrefForPath(pathname, "agent", sessionId, effectiveProjectPath));
   }
 
   function handlePickService(serviceId: string) {
-    router.push({
-      pathname: "/service/[serviceId]",
-      params: { serviceId },
-    });
+    router.push(detailHrefForPath(pathname, "service", serviceId, effectiveProjectPath));
   }
 
   return (
@@ -526,16 +571,20 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
         {pickerMode ? (
           <ProjectPicker
             projects={projects}
-            selectedPath={selectedProjectPath}
+            selectedPath={effectiveProjectPath}
             onSelect={handlePickProject}
           />
         ) : (
           <>
-            <ProjectHeader project={selectedProject!} onSwitchProject={() => setShowPicker(true)} />
+            <ProjectHeader
+              project={effectiveProject!}
+              onSwitchProject={() => setShowPicker(true)}
+            />
             <WorktreeTree
-              projectPath={selectedProject!.path}
+              projectPath={effectiveProject!.path}
               endpoint={endpoint}
               token={token}
+              desktopState={desktopState}
               selectedSessionId={selectedSessionId}
               onPickSession={handlePickSession}
               onPickService={handlePickService}

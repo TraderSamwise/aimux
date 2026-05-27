@@ -1,5 +1,8 @@
 import { useCallback } from "react";
 import { useRouter, type Href } from "expo-router";
+import { useAtomValue } from "jotai";
+import { selectedProjectPathAtom } from "@/stores/projects";
+import { buildViewHref } from "@/lib/view-location";
 
 export type MainTabId =
   | "dashboard"
@@ -81,11 +84,12 @@ export function mainTabForPath(pathname: string): MainTabId {
 
 export function useMainTabNavigation() {
   const router = useRouter();
+  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
 
   return useCallback(
     (tabId: MainTabId) => {
-      router.navigate(MAIN_TAB_ROUTES[tabId].internalHref);
+      router.navigate(buildViewHref(MAIN_TAB_ROUTES[tabId].href, { project: selectedProjectPath }));
     },
-    [router],
+    [router, selectedProjectPath],
   );
 }

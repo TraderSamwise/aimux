@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
+import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import { BookOpen, FileText, RefreshCw } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
@@ -10,6 +11,7 @@ import { Text } from "@/components/ui/text";
 import { listProjectLibrary, type LibraryDocument } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
 
 function formatBytes(size: number): string {
@@ -54,35 +56,30 @@ export default function LibraryScreen() {
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
   const { getToken } = useAuth();
+  const router = useRouter();
+  const searchParams = useGlobalSearchParams<{ document?: string | string[] }>();
+  const selectedDocumentId = cleanSearchValue(searchParams.document);
   const [documents, setDocuments] = useState<LibraryDocument[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedDocument = useMemo(
-    () => documents.find((document) => document.id === selectedId) ?? documents[0] ?? null,
-    [documents, selectedId],
+    () => documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null,
+    [documents, selectedDocumentId],
   );
 
   const refresh = useCallback(async () => {
     if (!endpoint) {
       setDocuments([]);
-      setSelectedId(null);
       setError(null);
       return;
     }
     setLoading(true);
     setDocuments([]);
-    setSelectedId(null);
     try {
       const token = await getToken();
       const response = await listProjectLibrary(endpoint, { token });
       setDocuments(response.documents);
-      setSelectedId((current) =>
-        current && response.documents.some((document) => document.id === current)
-          ? current
-          : (response.documents[0]?.id ?? null),
-      );
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -159,7 +156,11 @@ export default function LibraryScreen() {
                   key={document.id}
                   document={document}
                   selected={document.id === selectedDocument?.id}
-                  onPress={() => setSelectedId(document.id)}
+                  onPress={() =>
+                    router.replace(
+                      buildViewHref("/library", { project: project?.path, document: document.id }),
+                    )
+                  }
                 />
               ))}
             </Card>

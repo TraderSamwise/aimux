@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
-import Svg, { Circle, Line, Rect, Text as SvgText } from "react-native-svg";
-import { useRouter } from "expo-router";
+import Svg, { Circle, G, Line, Rect, Text as SvgText } from "react-native-svg";
+import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Box, GitBranch, Network, Rows3, Table2 } from "lucide-react-native";
 import { Card, PressableCard } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState"
 import {
   selectedProjectAtom,
   selectedProjectEndpointAtom,
+  projectsAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
 import {
@@ -24,6 +25,12 @@ import {
 } from "@/lib/openrig-topology";
 import { runtimeBrandForKind } from "@/lib/runtime-brand";
 import { cn } from "@/lib/utils";
+import {
+  buildViewHref,
+  cleanSearchValue,
+  detailHrefForPath,
+  projectPathFromSearchOrLocation,
+} from "@/lib/view-location";
 
 type TopologyViewMode = "map" | "tree" | "table";
 
@@ -32,6 +39,10 @@ const VIEW_OPTIONS = [
   { value: "tree", label: "Tree" },
   { value: "table", label: "Table" },
 ] satisfies { value: TopologyViewMode; label: string }[];
+
+function resolveTopologyMode(value: string | null): TopologyViewMode {
+  return value === "tree" || value === "table" ? value : "map";
+}
 
 function healthColor(health: TopologyHealth): string {
   switch (health) {
@@ -57,6 +68,12 @@ function healthLabel(health: TopologyHealth): string {
     case "idle":
       return "idle";
   }
+}
+
+function compactMapLabel(label: string, maxLength: number): string {
+  if (label.length <= maxLength) return label;
+  if (maxLength <= 3) return label.slice(0, maxLength);
+  return `${label.slice(0, maxLength - 3)}...`;
 }
 
 function SummaryTile({
@@ -132,7 +149,17 @@ function NodeCard({ node, onPress }: { node: TopologyNode; onPress?: () => void 
   return <Card className="mb-2 rounded-lg bg-secondary p-3">{content}</Card>;
 }
 
-function TopologyMap({ topology, width }: { topology: ProjectTopology; width: number }) {
+function TopologyMap({
+  topology,
+  width,
+  onPickAgent,
+  onPickService,
+}: {
+  topology: ProjectTopology;
+  width: number;
+  onPickAgent: (id: string) => void;
+  onPickService: (id: string) => void;
+}) {
   const mapWidth = Math.max(680, width - 64);
   const rowHeight = 112;
   const height = Math.max(240, 92 + topology.worktrees.length * rowHeight);
@@ -165,7 +192,7 @@ function TopologyMap({ topology, width }: { topology: ProjectTopology; width: nu
           />
           <Circle cx={44} cy={centerY - 15} r={5} fill={healthColor(topology.project.health)} />
           <SvgText x={62} y={centerY - 9} fill="#fafafa" fontSize="13" fontWeight="700">
-            {topology.project.label.slice(0, 16)}
+            {compactMapLabel(topology.project.label, 12)}
           </SvgText>
           <SvgText x={44} y={centerY + 15} fill="#a1a1aa" fontSize="10">
             project
@@ -206,15 +233,25 @@ function TopologyMap({ topology, width }: { topology: ProjectTopology; width: nu
                 />
                 <Circle cx={worktreeX + 10} cy={y - 10} r={4} fill={healthColor(worktree.health)} />
                 <SvgText x={worktreeX + 24} y={y - 5} fill="#fafafa" fontSize="12" fontWeight="700">
-                  {worktree.name.slice(0, 18)}
+                  {compactMapLabel(worktree.name, 16)}
                 </SvgText>
                 <SvgText x={worktreeX + 10} y={y + 15} fill="#a1a1aa" fontSize="9">
-                  {worktree.branch ? worktree.branch.slice(0, 22) : "worktree"}
+                  {worktree.branch ? compactMapLabel(worktree.branch, 22) : "worktree"}
                 </SvgText>
                 {leaves.map((node, leafIndex) => {
                   const leafY = leafStart + leafIndex * leafStep;
+                  const canOpen = Boolean(node.sourceId);
+                  const openNode = () => {
+                    if (node.kind === "agent" && node.sourceId) onPickAgent(node.sourceId);
+                    if (node.kind === "service" && node.sourceId) onPickService(node.sourceId);
+                  };
                   return (
-                    <React.Fragment key={node.id}>
+                    <G
+                      key={node.id}
+                      onPress={canOpen ? openNode : undefined}
+                      accessibilityLabel={canOpen ? `Open ${node.label}` : undefined}
+                      style={canOpen ? ({ cursor: "pointer" } as object) : undefined}
+                    >
                       <Line
                         x1={worktreeX + 146}
                         y1={y}
@@ -246,12 +283,23 @@ function TopologyMap({ topology, width }: { topology: ProjectTopology; width: nu
                         fontSize="11"
                         fontWeight="700"
                       >
-                        {node.label.slice(0, 15)}
+                        {compactMapLabel(node.label, 12)}
                       </SvgText>
                       <SvgText x={leafX + 15} y={leafY + 13} fill="#a1a1aa" fontSize="8">
                         {node.kind}
                       </SvgText>
-                    </React.Fragment>
+                      {canOpen ? (
+                        <SvgText
+                          x={leafX + 104}
+                          y={leafY + 13}
+                          fill="#a1a1aa"
+                          fontSize="8"
+                          fontWeight="700"
+                        >
+                          open
+                        </SvgText>
+                      ) : null}
+                    </G>
                   );
                 })}
               </React.Fragment>
@@ -391,14 +439,27 @@ function TopologyTable({
 }
 
 export default function TopologyScreen() {
-  const [mode, setMode] = useState<TopologyViewMode>("map");
   const { width } = useWindowDimensions();
-  const project = useAtomValue(selectedProjectAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
+  const projects = useAtomValue(projectsAtom);
+  const selectedProject = useAtomValue(selectedProjectAtom);
+  const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
+  const searchParams = useGlobalSearchParams<{
+    mode?: string | string[];
+    project?: string | string[];
+  }>();
+  const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
+  const project = urlProjectPath
+    ? projects.find((item) => item.path === urlProjectPath)
+    : selectedProject;
+  const endpoint =
+    project?.serviceEndpoint ??
+    (project?.path === selectedProject?.path ? selectedProjectEndpoint : undefined);
   const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
+  const pathname = usePathname();
+  const mode = resolveTopologyMode(cleanSearchValue(searchParams.mode));
 
   const topology = useMemo(
     () => (project ? buildProjectTopology(project, groups, desktopState) : null),
@@ -407,11 +468,11 @@ export default function TopologyScreen() {
 
   function handlePickAgent(sessionId: string) {
     selectSession(sessionId);
-    router.push({ pathname: "/agent/[sessionId]/chat", params: { sessionId } });
+    router.push(detailHrefForPath(pathname, "agent", sessionId, project?.path));
   }
 
   function handlePickService(serviceId: string) {
-    router.push({ pathname: "/service/[serviceId]", params: { serviceId } });
+    router.push(detailHrefForPath(pathname, "service", serviceId, project?.path));
   }
 
   return (
@@ -421,6 +482,8 @@ export default function TopologyScreen() {
           <Text className="text-sm text-muted-foreground">
             Select a project from the sidebar to view topology.
           </Text>
+        ) : endpoint && desktopState === null ? (
+          <Text className="text-sm text-muted-foreground">Loading topology...</Text>
         ) : (
           <View className="w-full max-w-[1100px]">
             <View className="mb-5">
@@ -482,12 +545,23 @@ export default function TopologyScreen() {
               <SegmentedControl
                 options={VIEW_OPTIONS}
                 value={mode}
-                onChange={setMode}
+                onChange={(nextMode) =>
+                  router.replace(
+                    buildViewHref("/topology", { project: project.path, mode: nextMode }),
+                  )
+                }
                 className="ml-3"
               />
             </View>
 
-            {mode === "map" ? <TopologyMap topology={topology} width={width} /> : null}
+            {mode === "map" ? (
+              <TopologyMap
+                topology={topology}
+                width={width}
+                onPickAgent={handlePickAgent}
+                onPickService={handlePickService}
+              />
+            ) : null}
 
             {mode === "tree" ? (
               <View>
