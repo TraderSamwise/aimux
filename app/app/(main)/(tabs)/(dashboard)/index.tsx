@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
-import { useRouter } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { GitBranch } from "lucide-react-native";
 import { Card, PressableCard } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
+import { detailHrefForPath } from "@/lib/view-location";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import {
   selectedProjectAtom,
@@ -223,6 +224,7 @@ export default function DashboardIndex() {
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
+  const pathname = usePathname();
 
   // Auth token for inline service actions.
   const { getToken } = useAuth();
@@ -244,17 +246,11 @@ export default function DashboardIndex() {
 
   function handlePickSession(sessionId: string) {
     selectSession(sessionId);
-    router.push({
-      pathname: "/agent/[sessionId]/chat",
-      params: { sessionId },
-    });
+    router.push(detailHrefForPath(pathname, "agent", sessionId, project?.path));
   }
 
   function handlePickService(serviceId: string) {
-    router.push({
-      pathname: "/service/[serviceId]",
-      params: { serviceId },
-    });
+    router.push(detailHrefForPath(pathname, "service", serviceId, project?.path));
   }
 
   return (

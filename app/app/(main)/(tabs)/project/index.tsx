@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
+import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import { ClipboardList, FileText, GitBranch, Network, RefreshCw } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
@@ -15,6 +16,7 @@ import {
   type ProjectStoryItem,
 } from "@/lib/project-observability";
 import { cn } from "@/lib/utils";
+import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { notificationFeedFamily } from "@/stores/notifications";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
@@ -29,6 +31,10 @@ const SECTIONS: Array<{ id: ProjectSection; label: string }> = [
   { id: "queue", label: "Queue" },
   { id: "topology", label: "Topology" },
 ];
+
+function resolveProjectSection(value: string | null): ProjectSection {
+  return SECTIONS.some((section) => section.id === value) ? (value as ProjectSection) : "story";
+}
 
 function SummaryTile({ label, value }: { label: string; value: number }) {
   return (
@@ -150,7 +156,6 @@ function ProgressSection({ model }: { model: ProjectObservability }) {
 export default function ProjectScreen() {
   const { colorScheme } = useColorScheme();
   const foregroundIconColor = colorScheme === "dark" ? "#fafafa" : "#09090b";
-  const [section, setSection] = useState<ProjectSection>("story");
   const [tasks, setTasks] = useState<TaskSummaryResponse[]>([]);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [loadingTasks, setLoadingTasks] = useState(false);
@@ -160,6 +165,9 @@ export default function ProjectScreen() {
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const notificationFeed = useAtomValue(notificationFeedFamily(project?.path ?? ""));
   const { getToken } = useAuth();
+  const router = useRouter();
+  const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
+  const section = resolveProjectSection(cleanSearchValue(searchParams.section));
 
   const refreshTasks = useCallback(async () => {
     if (!endpoint) {
@@ -248,7 +256,11 @@ export default function ProjectScreen() {
               key={item.id}
               label={item.label}
               active={section === item.id}
-              onPress={() => setSection(item.id)}
+              onPress={() =>
+                router.replace(
+                  buildViewHref("/project", { project: project?.path, section: item.id }),
+                )
+              }
             />
           ))}
         </View>

@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, View, useWindowDimensions } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
+import { useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import {
   Bell,
@@ -16,6 +17,7 @@ import { resolveChromeBottomInset } from "@/lib/native-safe-area";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 import { MAIN_TAB_ROUTES, type MainTabId } from "@/lib/main-tabs";
+import { buildViewHref } from "@/lib/view-location";
 import { notificationUnreadCountFamily } from "@/stores/notifications";
 import { selectedProjectPathAtom } from "@/stores/projects";
 import { securityUnreadCountAtom } from "@/stores/security";
@@ -37,6 +39,7 @@ function formatCount(count: number): string {
 }
 
 export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
+  const router = useRouter();
   const { width } = useWindowDimensions();
   const isMobile = width < 640;
   const insets = useSafeAreaInsets();
@@ -71,7 +74,7 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
                 canPreventDefault: true,
               });
               if (!active && !event.defaultPrevented) {
-                navigation.navigate(route.name, route.params);
+                router.navigate(buildViewHref(tabRoute.href, { project: selectedProjectPath }));
               }
             }}
             className="flex-1 items-center justify-center active:bg-accent/50"
