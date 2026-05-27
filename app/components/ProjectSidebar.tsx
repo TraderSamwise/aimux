@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import React, { useEffect, useLayoutEffect, useState } from "react";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
@@ -19,7 +19,12 @@ import { ServiceActions } from "@/components/service-actions";
 import { StatusDot } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
-import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
+import type {
+  DesktopService,
+  DesktopSession,
+  DesktopState,
+  WorktreeBucket,
+} from "@/lib/desktop-state";
 import {
   MAIN_TAB_ROUTES,
   mainTabForPath,
@@ -30,6 +35,7 @@ import {
   buildViewHref,
   detailHrefForPath,
   mergeViewParams,
+  projectPathFromSearchOrLocation,
   type SearchValue,
 } from "@/lib/view-location";
 import { firstTokenOf } from "@/lib/status-tone";
@@ -57,6 +63,7 @@ import { sidebarShowProjectPickerAtom } from "@/stores/ui";
 
 const SIDEBAR_WIDTH = 320;
 const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
+const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
 
 // ─── Project picker ───────────────────────────────────────────────────────
 
@@ -358,6 +365,7 @@ function WorktreeTree({
   projectPath,
   endpoint,
   token,
+  desktopState,
   selectedSessionId,
   onPickSession,
   onPickService,
@@ -365,12 +373,12 @@ function WorktreeTree({
   projectPath: string;
   endpoint: ServiceEndpoint | null;
   token: string | null;
+  desktopState: DesktopState | null;
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
 }) {
   const groups = useAtomValue(worktreeGroupsFamily(projectPath));
-  const desktopState = useAtomValue(desktopStateFamily(projectPath));
 
   if (!endpoint && desktopState === null) {
     return (
@@ -381,6 +389,14 @@ function WorktreeTree({
         <Text className="text-[11px] text-muted-foreground mt-1 leading-snug">
           Start the host to see worktrees, agents, and services.
         </Text>
+      </View>
+    );
+  }
+
+  if (endpoint && desktopState === null) {
+    return (
+      <View className="px-4 py-4">
+        <Text className="text-xs text-muted-foreground">Loading project state...</Text>
       </View>
     );
   }
@@ -474,7 +490,7 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
   const projects = useAtomValue(projectsAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
+  const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const selectedSessionId = useAtomValue(selectedSessionIdAtom);
   const selectProject = useSetAtom(selectProjectAtom);
   const setSelectedSession = useSetAtom(selectedSessionIdAtom);
@@ -483,6 +499,11 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
+  const effectiveProjectPath =
+    projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
+  const effectiveProject =
+    projects.find((project) => project.path === effectiveProjectPath) ?? selectedProject;
+  const endpoint = effectiveProject?.serviceEndpoint ?? selectedProjectEndpoint;
 
   // Fetch auth token once (auth context is stable in LOCAL_MODE; refetch is cheap).
   const { getToken } = useAuth();
@@ -504,11 +525,13 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
 
   // Auto-close the picker when the selected project path changes externally
   // (e.g., auto-reconcile fallback when the stored project disappears).
-  useEffect(() => {
+  usePrePaintEffect(() => {
+    if (!showPicker) return;
     setShowPicker(false);
-  }, [selectedProjectPath, setShowPicker]);
+  }, [effectiveProjectPath, selectedProjectPath, setShowPicker, showPicker]);
 
-  const pickerMode = !selectedProject || showPicker;
+  const desktopState = useAtomValue(desktopStateFamily(effectiveProjectPath ?? EMPTY_PROJECT_PATH));
+  const pickerMode = !effectiveProject || showPicker;
 
   function handlePickProject(path: string) {
     selectProject(path);
@@ -521,11 +544,11 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
 
   function handlePickSession(sessionId: string) {
     setSelectedSession(sessionId);
-    router.push(detailHrefForPath(pathname, "agent", sessionId, selectedProjectPath));
+    router.push(detailHrefForPath(pathname, "agent", sessionId, effectiveProjectPath));
   }
 
   function handlePickService(serviceId: string) {
-    router.push(detailHrefForPath(pathname, "service", serviceId, selectedProjectPath));
+    router.push(detailHrefForPath(pathname, "service", serviceId, effectiveProjectPath));
   }
 
   return (
@@ -537,16 +560,20 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
         {pickerMode ? (
           <ProjectPicker
             projects={projects}
-            selectedPath={selectedProjectPath}
+            selectedPath={effectiveProjectPath}
             onSelect={handlePickProject}
           />
         ) : (
           <>
-            <ProjectHeader project={selectedProject!} onSwitchProject={() => setShowPicker(true)} />
+            <ProjectHeader
+              project={effectiveProject!}
+              onSwitchProject={() => setShowPicker(true)}
+            />
             <WorktreeTree
-              projectPath={selectedProject!.path}
+              projectPath={effectiveProject!.path}
               endpoint={endpoint}
               token={token}
+              desktopState={desktopState}
               selectedSessionId={selectedSessionId}
               onPickSession={handlePickSession}
               onPickService={handlePickService}

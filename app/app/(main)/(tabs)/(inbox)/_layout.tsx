@@ -5,8 +5,6 @@ export default function InboxStackLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="notifications" />
-      <Stack.Screen name="agent/[sessionId]/chat" />
-      <Stack.Screen name="service/[serviceId]" />
     </Stack>
   );
 }

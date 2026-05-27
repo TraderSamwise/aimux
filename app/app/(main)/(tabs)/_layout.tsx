@@ -1,4 +1,5 @@
 import React from "react";
+import { Platform } from "react-native";
 import { Tabs } from "expo-router";
 import { MobileTabBar } from "@/components/MobileTabBar";
 
@@ -12,7 +13,7 @@ export default function MainTabsLayout() {
       backBehavior="history"
       screenOptions={{
         headerShown: false,
-        freezeOnBlur: true,
+        freezeOnBlur: Platform.OS === "web",
       }}
       tabBar={(props) => <MobileTabBar {...props} />}
     >

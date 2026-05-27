@@ -27,6 +27,21 @@ export function projectPathFromSearch(value: SearchValue): string | null {
   return cleanSearchValue(value);
 }
 
+export function projectPathFromSearchOrLocation(value: SearchValue): string | null {
+  return projectPathFromSearch(value) ?? projectPathFromBrowserLocation();
+}
+
+function projectPathFromBrowserLocation(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return projectPathFromSearch(
+      new URLSearchParams(window.location.search).get("project") ?? undefined,
+    );
+  } catch {
+    return null;
+  }
+}
+
 export function buildViewHref(pathname: string, params: AimuxViewParams = {}): Href {
   const cleanParams = Object.fromEntries(
     Object.entries(params).filter((entry): entry is [string, string] => {

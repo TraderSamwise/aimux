@@ -44,7 +44,6 @@ export default function RootLayout() {
           <AuthGate>
             <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
             <Stack>
-              <Stack.Screen name="index" options={{ headerShown: false }} />
               <Stack.Screen name="(main)" options={{ headerShown: false }} />
               <Stack.Screen name="landing" options={{ headerShown: false }} />
               <Stack.Screen

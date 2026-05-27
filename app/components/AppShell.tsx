@@ -22,13 +22,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Mobile drawer should start closed — users don't expect it open on load.
   useEffect(() => {
-    if (isMobile) setSidebarOpen(false);
-  }, [isMobile, setSidebarOpen]);
+    if (isMobile && sidebarOpen) setSidebarOpen(false);
+  }, [isMobile, setSidebarOpen, sidebarOpen]);
 
   // Close the mobile drawer on navigation so picking an agent/service dismisses it.
   useEffect(() => {
-    if (isMobile) setSidebarOpen(false);
-  }, [pathname, isMobile, setSidebarOpen]);
+    if (isMobile && sidebarOpen) setSidebarOpen(false);
+  }, [pathname, isMobile, setSidebarOpen, sidebarOpen]);
 
   useEffect(() => {
     Animated.timing(translateX, {

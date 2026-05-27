@@ -13,6 +13,7 @@ import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState"
 import {
   selectedProjectAtom,
   selectedProjectEndpointAtom,
+  projectsAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
 import {
@@ -24,7 +25,12 @@ import {
 } from "@/lib/openrig-topology";
 import { runtimeBrandForKind } from "@/lib/runtime-brand";
 import { cn } from "@/lib/utils";
-import { buildViewHref, cleanSearchValue, detailHrefForPath } from "@/lib/view-location";
+import {
+  buildViewHref,
+  cleanSearchValue,
+  detailHrefForPath,
+  projectPathFromSearchOrLocation,
+} from "@/lib/view-location";
 
 type TopologyViewMode = "map" | "tree" | "table";
 
@@ -62,6 +68,12 @@ function healthLabel(health: TopologyHealth): string {
     case "idle":
       return "idle";
   }
+}
+
+function compactMapLabel(label: string, maxLength: number): string {
+  if (label.length <= maxLength) return label;
+  if (maxLength <= 3) return label.slice(0, maxLength);
+  return `${label.slice(0, maxLength - 3)}...`;
 }
 
 function SummaryTile({
@@ -180,7 +192,7 @@ function TopologyMap({
           />
           <Circle cx={44} cy={centerY - 15} r={5} fill={healthColor(topology.project.health)} />
           <SvgText x={62} y={centerY - 9} fill="#fafafa" fontSize="13" fontWeight="700">
-            {topology.project.label.slice(0, 16)}
+            {compactMapLabel(topology.project.label, 12)}
           </SvgText>
           <SvgText x={44} y={centerY + 15} fill="#a1a1aa" fontSize="10">
             project
@@ -221,10 +233,10 @@ function TopologyMap({
                 />
                 <Circle cx={worktreeX + 10} cy={y - 10} r={4} fill={healthColor(worktree.health)} />
                 <SvgText x={worktreeX + 24} y={y - 5} fill="#fafafa" fontSize="12" fontWeight="700">
-                  {worktree.name.slice(0, 18)}
+                  {compactMapLabel(worktree.name, 16)}
                 </SvgText>
                 <SvgText x={worktreeX + 10} y={y + 15} fill="#a1a1aa" fontSize="9">
-                  {worktree.branch ? worktree.branch.slice(0, 22) : "worktree"}
+                  {worktree.branch ? compactMapLabel(worktree.branch, 22) : "worktree"}
                 </SvgText>
                 {leaves.map((node, leafIndex) => {
                   const leafY = leafStart + leafIndex * leafStep;
@@ -271,7 +283,7 @@ function TopologyMap({
                         fontSize="11"
                         fontWeight="700"
                       >
-                        {node.label.slice(0, 15)}
+                        {compactMapLabel(node.label, 12)}
                       </SvgText>
                       <SvgText x={leafX + 15} y={leafY + 13} fill="#a1a1aa" fontSize="8">
                         {node.kind}
@@ -428,14 +440,21 @@ function TopologyTable({
 
 export default function TopologyScreen() {
   const { width } = useWindowDimensions();
-  const project = useAtomValue(selectedProjectAtom);
-  const endpoint = useAtomValue(selectedProjectEndpointAtom);
+  const projects = useAtomValue(projectsAtom);
+  const selectedProject = useAtomValue(selectedProjectAtom);
+  const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
+  const searchParams = useGlobalSearchParams<{
+    mode?: string | string[];
+    project?: string | string[];
+  }>();
+  const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
+  const project = projects.find((item) => item.path === urlProjectPath) ?? selectedProject;
+  const endpoint = project?.serviceEndpoint ?? selectedProjectEndpoint;
   const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useGlobalSearchParams<{ mode?: string | string[] }>();
   const mode = resolveTopologyMode(cleanSearchValue(searchParams.mode));
 
   const topology = useMemo(
@@ -459,6 +478,8 @@ export default function TopologyScreen() {
           <Text className="text-sm text-muted-foreground">
             Select a project from the sidebar to view topology.
           </Text>
+        ) : endpoint && desktopState === null ? (
+          <Text className="text-sm text-muted-foreground">Loading topology...</Text>
         ) : (
           <View className="w-full max-w-[1100px]">
             <View className="mb-5">
