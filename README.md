@@ -324,6 +324,17 @@ The app talks to two HTTP surfaces:
 - the global aimux daemon at `http://localhost:43190` for project discovery
 - per-project metadata servers (port supplied via `/projects` response) for state, agent I/O, plans, and the `/events` SSE stream
 
+For a built local web UI without Cloudflare relay or hosted auth, run:
+
+```bash
+aimux ui --open
+```
+
+`aimux ui` serves the exported first-party web app from the local machine, ensures
+the loopback daemon is running, and injects local runtime config for the daemon
+port. The UI server binds to `127.0.0.1:43192` by default; use `--port` to choose
+a different local UI port.
+
 For simulator-local development, the helper scripts use `http://127.0.0.1:43191`
 for iOS and `http://10.0.2.2:43191` for Android. For mobile use against a remote
 machine, set `EXPO_PUBLIC_AIMUX_DAEMON_URL=http://<machine>:43190` in `app/.env`.

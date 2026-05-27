@@ -39,12 +39,13 @@ trap cleanup EXIT
 
 cd "$ROOT_DIR"
 yarn build
+yarn build:ui:local
 
 PKG_DIR="$TMP_DIR/aimux"
 mkdir -p "$PKG_DIR"
 
 cp package.json yarn.lock README.md "$PKG_DIR/"
-cp -R bin dist scripts "$PKG_DIR/"
+cp -R bin dist dist-ui scripts "$PKG_DIR/"
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 
 (

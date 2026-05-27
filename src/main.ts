@@ -54,6 +54,8 @@ import {
   AimuxDaemon,
   ensureDaemonRunning,
   ensureProjectService,
+  getDaemonHost,
+  getDaemonPort,
   loadDaemonInfo,
   loadDaemonState,
   projectServiceStatus,
@@ -127,6 +129,12 @@ import {
   renderRuntimeMigrationRollbackResult,
   rollbackRuntimeMigration,
 } from "./runtime-migration.js";
+import {
+  DEFAULT_LOCAL_UI_HOST,
+  DEFAULT_LOCAL_UI_PORT,
+  openUrlInBrowser,
+  startLocalUiServer,
+} from "./local-ui-server.js";
 const program = new Command();
 
 class ProjectServiceVersionError extends Error {
@@ -635,6 +643,14 @@ function parseLineCount(value: string | undefined): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 80;
 }
 
+function parsePortOption(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? String(fallback), 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
+    throw new Error(`Port must be an integer between 1 and 65535, got ${value}`);
+  }
+  return parsed;
+}
+
 function selectedLogPath(opts: { daemon?: boolean }): string {
   return opts.daemon ? getDaemonLogPath() : getProjectLogPath();
 }
@@ -938,6 +954,47 @@ program
 const hostCmd = program
   .command("host")
   .description("Advanced compatibility wrappers for legacy daemon-managed project services");
+
+program
+  .command("ui")
+  .description("Run the first-party local web UI from the built app bundle")
+  .option("--host <host>", "Loopback host to bind", DEFAULT_LOCAL_UI_HOST)
+  .option("--port <port>", "Local UI port", String(DEFAULT_LOCAL_UI_PORT))
+  .option("--daemon-url <url>", "Daemon URL for the UI to call")
+  .option("--no-daemon", "Do not ensure the local daemon before serving")
+  .option("--open", "Open the UI in the default browser")
+  .action(async (opts: { host?: string; port?: string; daemonUrl?: string; daemon?: boolean; open?: boolean }) => {
+    try {
+      const shouldEnsureDaemon = opts.daemon !== false;
+      const daemonInfo = shouldEnsureDaemon ? await ensureDaemonRunning() : null;
+      const daemonUrl = opts.daemonUrl?.trim() || `http://${getDaemonHost()}:${daemonInfo?.port ?? getDaemonPort()}`;
+      const server = await startLocalUiServer({
+        host: opts.host,
+        port: parsePortOption(opts.port, DEFAULT_LOCAL_UI_PORT),
+        config: {
+          connectionMode: "local",
+          daemonUrl,
+        },
+      });
+      console.log(`aimux UI: ${server.url}`);
+      console.log(`Daemon: ${daemonUrl}`);
+      console.log("Press Ctrl-C to stop.");
+      if (opts.open) {
+        openUrlInBrowser(server.url);
+      }
+      const shutdown = async () => {
+        await server.close();
+        process.exit(0);
+      };
+      process.on("SIGINT", () => void shutdown());
+      process.on("SIGTERM", () => void shutdown());
+      await new Promise(() => {});
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
 
 program
   .command("serve")
