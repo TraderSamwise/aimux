@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -525,9 +525,20 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
 
   // Auto-close the picker when the selected project path changes externally
   // (e.g., auto-reconcile fallback when the stored project disappears).
+  const previousProjectPathRef = useRef({
+    effectiveProjectPath,
+    selectedProjectPath,
+  });
   usePrePaintEffect(() => {
-    if (!showPicker) return;
-    setShowPicker(false);
+    const previous = previousProjectPathRef.current;
+    previousProjectPathRef.current = { effectiveProjectPath, selectedProjectPath };
+    if (
+      showPicker &&
+      (previous.effectiveProjectPath !== effectiveProjectPath ||
+        previous.selectedProjectPath !== selectedProjectPath)
+    ) {
+      setShowPicker(false);
+    }
   }, [effectiveProjectPath, selectedProjectPath, setShowPicker, showPicker]);
 
   const desktopState = useAtomValue(desktopStateFamily(effectiveProjectPath ?? EMPTY_PROJECT_PATH));

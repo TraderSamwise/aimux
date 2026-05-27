@@ -448,8 +448,12 @@ export default function TopologyScreen() {
     project?: string | string[];
   }>();
   const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
-  const project = projects.find((item) => item.path === urlProjectPath) ?? selectedProject;
-  const endpoint = project?.serviceEndpoint ?? selectedProjectEndpoint;
+  const project = urlProjectPath
+    ? projects.find((item) => item.path === urlProjectPath)
+    : selectedProject;
+  const endpoint =
+    project?.serviceEndpoint ??
+    (project?.path === selectedProject?.path ? selectedProjectEndpoint : undefined);
   const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);

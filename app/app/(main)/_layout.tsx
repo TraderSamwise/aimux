@@ -49,7 +49,9 @@ export default function MainLayout() {
   const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
   const effectiveProjectPath = urlProjectPath ?? selectedProjectPath;
   const effectiveProject = projects.find((project) => project.path === effectiveProjectPath);
-  const endpoint = effectiveProject?.serviceEndpoint ?? selectedProjectEndpoint;
+  const endpoint =
+    effectiveProject?.serviceEndpoint ??
+    (urlProjectPath && urlProjectPath !== selectedProjectPath ? null : selectedProjectEndpoint);
 
   usePrePaintEffect(() => {
     if (activeShare || !urlProjectPath || urlProjectPath === selectedProjectPath) return;

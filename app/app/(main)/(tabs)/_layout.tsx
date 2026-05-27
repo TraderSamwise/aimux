@@ -13,7 +13,7 @@ export default function MainTabsLayout() {
       backBehavior="history"
       screenOptions={{
         headerShown: false,
-        freezeOnBlur: Platform.OS === "web",
+        freezeOnBlur: Platform.OS !== "web",
       }}
       tabBar={(props) => <MobileTabBar {...props} />}
     >

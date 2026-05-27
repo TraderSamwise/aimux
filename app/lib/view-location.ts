@@ -57,11 +57,11 @@ export function mergeViewParams(
   next: AimuxViewParams,
 ): AimuxViewParams {
   return {
-    project: next.project ?? projectPathFromSearch(current.project),
-    mode: next.mode ?? cleanSearchValue(current.mode),
-    lens: next.lens ?? cleanSearchValue(current.lens),
-    section: next.section ?? cleanSearchValue(current.section),
-    document: next.document ?? cleanSearchValue(current.document),
+    project: next.project !== undefined ? next.project : projectPathFromSearch(current.project),
+    mode: next.mode !== undefined ? next.mode : cleanSearchValue(current.mode),
+    lens: next.lens !== undefined ? next.lens : cleanSearchValue(current.lens),
+    section: next.section !== undefined ? next.section : cleanSearchValue(current.section),
+    document: next.document !== undefined ? next.document : cleanSearchValue(current.document),
   };
 }
 
