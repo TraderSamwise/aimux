@@ -646,6 +646,29 @@ export async function listTasks(
   );
 }
 
+export interface LibraryDocument {
+  id: string;
+  title: string;
+  path: string;
+  kind: string;
+  size: number;
+  updatedAt: string;
+  content: string;
+  truncated?: boolean;
+}
+
+export interface LibraryResponse {
+  ok: boolean;
+  documents: LibraryDocument[];
+}
+
+export async function listProjectLibrary(
+  endpoint: ServiceEndpoint,
+  opts?: ApiOpts,
+): Promise<LibraryResponse> {
+  return callProjectJson<LibraryResponse>(endpoint, "GET", "/library", opts);
+}
+
 export async function getTask(
   endpoint: ServiceEndpoint,
   taskId: string,
