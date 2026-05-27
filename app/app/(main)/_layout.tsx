@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { Stack } from "expo-router";
+import { Stack, useGlobalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
 import { NotificationProvider } from "@/components/NotificationProvider";
@@ -9,6 +9,7 @@ import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser
 import { env } from "@/lib/env";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
+import { projectPathFromSearch } from "@/lib/view-location";
 import {
   desktopStateErrorFamily,
   desktopStateFamily,
@@ -40,6 +41,14 @@ export default function MainLayout() {
   const notificationRefreshNonce = useAtomValue(notificationFeedRefreshNonceAtom);
   const store = useStore();
   const { getToken } = useAuth();
+  const searchParams = useGlobalSearchParams<{ project?: string | string[] }>();
+  const urlProjectPath = projectPathFromSearch(searchParams.project);
+
+  useEffect(() => {
+    if (activeShare || !urlProjectPath || urlProjectPath === selectedProjectPath) return;
+    store.set(selectedProjectPathAtom, urlProjectPath);
+    store.set(selectedSessionIdAtom, null);
+  }, [activeShare, selectedProjectPath, store, urlProjectPath]);
 
   // Relay transport lifecycle: connect when a relay URL is configured, mirror
   // its status into the store, and register it with the API layer so requests
