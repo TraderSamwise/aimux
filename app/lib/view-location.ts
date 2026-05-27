@@ -10,6 +10,8 @@ export interface AimuxViewParams {
   document?: string | null;
 }
 
+export type DetailRouteKind = "agent" | "service";
+
 export function firstSearchValue(value: SearchValue): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -46,4 +48,41 @@ export function mergeViewParams(
     section: next.section ?? cleanSearchValue(current.section),
     document: next.document ?? cleanSearchValue(current.document),
   };
+}
+
+export function detailHrefForPath(
+  pathname: string,
+  kind: "agent",
+  id: string,
+  projectPath?: string | null,
+): Href;
+export function detailHrefForPath(
+  pathname: string,
+  kind: "service",
+  id: string,
+  projectPath?: string | null,
+): Href;
+export function detailHrefForPath(
+  pathname: string,
+  kind: DetailRouteKind,
+  id: string,
+  projectPath?: string | null,
+): Href {
+  const tabPrefix = detailTabPrefix(pathname);
+  const suffix =
+    kind === "agent" ? `agent/${encodeURIComponent(id)}/chat` : `service/${encodeURIComponent(id)}`;
+  return buildViewHref(`${tabPrefix}/${suffix}`, { project: projectPath });
+}
+
+function detailTabPrefix(pathname: string): string {
+  if (pathname.startsWith("/topology")) return "/topology";
+  if (pathname.startsWith("/project")) return "/project";
+  if (pathname.startsWith("/library")) return "/library";
+  if (pathname.startsWith("/notifications")) return "/notifications";
+  return "";
+}
+
+export function parentViewHrefForPath(pathname: string, projectPath?: string | null): Href {
+  const prefix = detailTabPrefix(pathname);
+  return buildViewHref(prefix || "/", { project: projectPath });
 }

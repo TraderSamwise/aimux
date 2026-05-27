@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import { ChevronLeft } from "lucide-react-native";
 import { Card } from "@/components/ui/card";
@@ -9,6 +9,7 @@ import { ServiceActions } from "@/components/service-actions";
 import { StatusDot } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import { singleRouteParam } from "@/lib/route-params";
+import { parentViewHrefForPath } from "@/lib/view-location";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, WorktreeBucket } from "@/lib/desktop-state";
 import { worktreeGroupsFamily } from "@/stores/desktopState";
@@ -46,6 +47,7 @@ export default function ServiceDetailScreen() {
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const router = useRouter();
+  const pathname = usePathname();
 
   const { getToken } = useAuth();
   const [token, setToken] = useState<string | null>(null);
@@ -68,7 +70,7 @@ export default function ServiceDetailScreen() {
 
   function goBack() {
     if (router.canGoBack()) router.back();
-    else router.replace("/");
+    else router.replace(parentViewHrefForPath(pathname, project?.path));
   }
 
   return (

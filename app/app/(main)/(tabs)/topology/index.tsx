@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
-import Svg, { Circle, Line, Rect, Text as SvgText } from "react-native-svg";
-import { useGlobalSearchParams, useRouter } from "expo-router";
+import Svg, { Circle, G, Line, Rect, Text as SvgText } from "react-native-svg";
+import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Box, GitBranch, Network, Rows3, Table2 } from "lucide-react-native";
 import { Card, PressableCard } from "@/components/ui/card";
@@ -24,7 +24,7 @@ import {
 } from "@/lib/openrig-topology";
 import { runtimeBrandForKind } from "@/lib/runtime-brand";
 import { cn } from "@/lib/utils";
-import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
+import { buildViewHref, cleanSearchValue, detailHrefForPath } from "@/lib/view-location";
 
 type TopologyViewMode = "map" | "tree" | "table";
 
@@ -137,7 +137,17 @@ function NodeCard({ node, onPress }: { node: TopologyNode; onPress?: () => void 
   return <Card className="mb-2 rounded-lg bg-secondary p-3">{content}</Card>;
 }
 
-function TopologyMap({ topology, width }: { topology: ProjectTopology; width: number }) {
+function TopologyMap({
+  topology,
+  width,
+  onPickAgent,
+  onPickService,
+}: {
+  topology: ProjectTopology;
+  width: number;
+  onPickAgent: (id: string) => void;
+  onPickService: (id: string) => void;
+}) {
   const mapWidth = Math.max(680, width - 64);
   const rowHeight = 112;
   const height = Math.max(240, 92 + topology.worktrees.length * rowHeight);
@@ -218,8 +228,12 @@ function TopologyMap({ topology, width }: { topology: ProjectTopology; width: nu
                 </SvgText>
                 {leaves.map((node, leafIndex) => {
                   const leafY = leafStart + leafIndex * leafStep;
+                  const openNode = () => {
+                    if (node.kind === "agent" && node.sourceId) onPickAgent(node.sourceId);
+                    if (node.kind === "service" && node.sourceId) onPickService(node.sourceId);
+                  };
                   return (
-                    <React.Fragment key={node.id}>
+                    <G key={node.id} onPress={openNode}>
                       <Line
                         x1={worktreeX + 146}
                         y1={y}
@@ -256,7 +270,7 @@ function TopologyMap({ topology, width }: { topology: ProjectTopology; width: nu
                       <SvgText x={leafX + 15} y={leafY + 13} fill="#a1a1aa" fontSize="8">
                         {node.kind}
                       </SvgText>
-                    </React.Fragment>
+                    </G>
                   );
                 })}
               </React.Fragment>
@@ -403,6 +417,7 @@ export default function TopologyScreen() {
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useGlobalSearchParams<{ mode?: string | string[] }>();
   const mode = resolveTopologyMode(cleanSearchValue(searchParams.mode));
 
@@ -413,11 +428,11 @@ export default function TopologyScreen() {
 
   function handlePickAgent(sessionId: string) {
     selectSession(sessionId);
-    router.push({ pathname: "/agent/[sessionId]/chat", params: { sessionId } });
+    router.push(detailHrefForPath(pathname, "agent", sessionId, project?.path));
   }
 
   function handlePickService(serviceId: string) {
-    router.push({ pathname: "/service/[serviceId]", params: { serviceId } });
+    router.push(detailHrefForPath(pathname, "service", serviceId, project?.path));
   }
 
   return (
@@ -497,7 +512,14 @@ export default function TopologyScreen() {
               />
             </View>
 
-            {mode === "map" ? <TopologyMap topology={topology} width={width} /> : null}
+            {mode === "map" ? (
+              <TopologyMap
+                topology={topology}
+                width={width}
+                onPickAgent={handlePickAgent}
+                onPickService={handlePickService}
+              />
+            ) : null}
 
             {mode === "tree" ? (
               <View>

@@ -26,7 +26,12 @@ import {
   useMainTabNavigation,
   type MainTabId,
 } from "@/lib/main-tabs";
-import { buildViewHref, mergeViewParams, type SearchValue } from "@/lib/view-location";
+import {
+  buildViewHref,
+  detailHrefForPath,
+  mergeViewParams,
+  type SearchValue,
+} from "@/lib/view-location";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
@@ -516,17 +521,11 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
 
   function handlePickSession(sessionId: string) {
     setSelectedSession(sessionId);
-    router.push({
-      pathname: "/agent/[sessionId]/chat",
-      params: { sessionId },
-    });
+    router.push(detailHrefForPath(pathname, "agent", sessionId, selectedProjectPath));
   }
 
   function handlePickService(serviceId: string) {
-    router.push({
-      pathname: "/service/[serviceId]",
-      params: { serviceId },
-    });
+    router.push(detailHrefForPath(pathname, "service", serviceId, selectedProjectPath));
   }
 
   return (

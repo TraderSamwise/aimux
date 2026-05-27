@@ -1,9 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Columns2, MessageSquare, SquareTerminal, UserPlus } from "lucide-react-native";
+import {
+  ChevronLeft,
+  Columns2,
+  MessageSquare,
+  SquareTerminal,
+  UserPlus,
+} from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +28,7 @@ import {
 import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
+import { parentViewHrefForPath } from "@/lib/view-location";
 import {
   ingestEventAtom,
   lastErrorFamily,
@@ -60,6 +67,7 @@ export default function ChatScreen() {
   const [activeShare, setActiveShare] = useAtom(activeSharedSessionAtom);
   const { getToken } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const { width } = useWindowDimensions();
   const [token, setToken] = useState<string | null>(null);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
@@ -299,6 +307,11 @@ export default function ChatScreen() {
     }
   }
 
+  function goBack() {
+    if (router.canGoBack()) router.back();
+    else router.replace(parentViewHrefForPath(pathname, project?.path));
+  }
+
   const terminalPane = (
     <View className="flex-1 bg-card" onLayout={handleTerminalPaneLayout}>
       <ScrollView ref={terminalScrollRef} className="flex-1 px-4 py-3" horizontal={false}>
@@ -314,6 +327,13 @@ export default function ChatScreen() {
         {Platform.OS !== "web" ? null /* sidebar lives in (main)/_layout on web */ : null}
         <View className="flex-1">
           <View className="border-b border-border px-4 py-3 flex-row items-center justify-between">
+            <Pressable
+              onPress={goBack}
+              accessibilityLabel="Back"
+              className="mr-3 h-8 w-8 items-center justify-center rounded-md border border-border active:bg-accent"
+            >
+              <ChevronLeft size={16} color="#a1a1aa" />
+            </Pressable>
             <View className="flex-1">
               <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
                 {session?.label || sessionId || "Unknown session"}

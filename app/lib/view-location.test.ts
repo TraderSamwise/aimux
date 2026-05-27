@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildViewHref, mergeViewParams, projectPathFromSearch } from "./view-location";
+import {
+  buildViewHref,
+  detailHrefForPath,
+  mergeViewParams,
+  parentViewHrefForPath,
+  projectPathFromSearch,
+} from "./view-location";
 
 describe("view location helpers", () => {
   it("reads the first project search value", () => {
@@ -27,6 +33,32 @@ describe("view location helpers", () => {
       lens: "all",
       section: "queue",
       document: null,
+    });
+  });
+
+  it("builds stack-local detail hrefs for the current tab", () => {
+    expect(detailHrefForPath("/topology", "agent", "claude-1", "/p")).toEqual({
+      pathname: "/topology/agent/claude-1/chat",
+      params: { project: "/p" },
+    });
+    expect(detailHrefForPath("/notifications", "service", "svc/1", "/p")).toEqual({
+      pathname: "/notifications/service/svc%2F1",
+      params: { project: "/p" },
+    });
+    expect(detailHrefForPath("/", "agent", "claude-1", "/p")).toEqual({
+      pathname: "/agent/claude-1/chat",
+      params: { project: "/p" },
+    });
+  });
+
+  it("builds parent hrefs for stack-local fallback back navigation", () => {
+    expect(parentViewHrefForPath("/topology/agent/claude-1/chat", "/p")).toEqual({
+      pathname: "/topology",
+      params: { project: "/p" },
+    });
+    expect(parentViewHrefForPath("/agent/claude-1/chat", "/p")).toEqual({
+      pathname: "/",
+      params: { project: "/p" },
     });
   });
 });
