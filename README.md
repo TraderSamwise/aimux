@@ -766,7 +766,6 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
       "promptPatterns": ["^> $", "^\\$ $"],
       "turnPatterns": ["^[>❯]\\s*(.+)"],
       "compactCommand": "claude --print --output-format text",
-      "instructionsFile": "AGENTS.md",
       "developerInstructionsConfigKey": "developer_instructions"
     }
   }
@@ -783,10 +782,10 @@ All tool behavior is config-driven. No tool-specific code exists in the multiple
 | `promptPatterns` | Regex patterns for idle/prompt detection in status bar |
 | `turnPatterns` | Regex patterns for extracting conversation turns from output |
 | `compactCommand` | Shell command for LLM-powered history compaction |
-| `instructionsFile` | File to merge aimux's managed standing instructions into; user-authored content outside the managed block is preserved |
-| `developerInstructionsConfigKey` | Codex config key for model-visible standing instructions, normally `developer_instructions`; set to `null` to rely only on `instructionsFile` |
+| `instructionsFile` | Optional opt-in file to merge aimux's managed standing instructions into; disabled by default so aimux does not create `AGENTS.md` |
+| `developerInstructionsConfigKey` | Codex config key for model-visible standing instructions, normally `developer_instructions`; set to `null` only when you do not want aimux to inject Codex startup instructions |
 
-Codex startup instructions use `-c developer_instructions=...` when configured, with `AGENTS.md` as the durable file fallback. Verify the installed Codex CLI exposes that channel with:
+Codex startup instructions use `-c developer_instructions=...` when configured. Aimux does not create `AGENTS.md` by default; existing user-authored `AGENTS.md` files are still read by Codex itself. Verify the installed Codex CLI exposes the developer-instructions channel with:
 
 ```bash
 yarn verify:codex-instructions
