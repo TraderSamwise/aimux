@@ -197,7 +197,9 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
 
     for (const instructionFile of LEGACY_DEFAULT_INSTRUCTION_FILES) {
       if (!configuredInstructionFiles.has(instructionFile)) {
-        cleanupManagedInstructionFile(join(process.cwd(), instructionFile));
+        try {
+          cleanupManagedInstructionFile(join(process.cwd(), instructionFile));
+        } catch {}
       }
     }
 
