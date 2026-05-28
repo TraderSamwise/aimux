@@ -90,7 +90,7 @@ export interface ToolConfig {
   resumeFallback?: string[];
   /** Flag to set a session ID when starting, with {sessionId} placeholder, e.g. ["--session-id", "{sessionId}"] */
   sessionIdFlag?: string[];
-  /** File to write preamble instructions to (created on start, removed on exit), e.g. "AGENTS.md" */
+  /** Optional file to write preamble instructions to; disabled by default to avoid surprise repo edits. */
   instructionsFile?: string;
   /** Codex config key used for durable standing instructions, e.g. "developer_instructions" */
   developerInstructionsConfigKey?: string | null;
@@ -160,7 +160,6 @@ const DEFAULT_CONFIG: AimuxConfig = {
       resumeByBackendSessionId: true,
       resumeFallback: ["resume", "--last"],
       developerInstructionsConfigKey: "developer_instructions",
-      instructionsFile: "AGENTS.md",
       promptPatterns: ["^> $"],
       turnPatterns: ["^[>❯]\\s*(.+)"],
     },

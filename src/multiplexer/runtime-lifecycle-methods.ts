@@ -32,6 +32,7 @@ import {
 const AIMUX_MANAGED_BLOCK_ID = "aimux-agent-instructions";
 const AIMUX_MANAGED_BLOCK_START = `<!-- BEGIN Aimux MANAGED BLOCK: ${AIMUX_MANAGED_BLOCK_ID} -->`;
 const AIMUX_MANAGED_BLOCK_END = `<!-- END Aimux MANAGED BLOCK: ${AIMUX_MANAGED_BLOCK_ID} -->`;
+const LEGACY_DEFAULT_INSTRUCTION_FILES = ["AGENTS.md"];
 
 function managedInstructionBlock(content: string): string {
   return `${AIMUX_MANAGED_BLOCK_START}\n${content.trim()}\n${AIMUX_MANAGED_BLOCK_END}`;
@@ -59,6 +60,18 @@ function stripManagedInstructionBlock(existing: string): string {
     .replace(pattern, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function cleanupManagedInstructionFile(filePath: string): void {
+  if (!existsSync(filePath)) return;
+  const existing = readFileSync(filePath, "utf-8");
+  if (!existing.includes(AIMUX_MANAGED_BLOCK_START) || !existing.includes(AIMUX_MANAGED_BLOCK_END)) return;
+  const cleaned = stripManagedInstructionBlock(existing);
+  if (cleaned) {
+    writeFileSync(filePath, `${cleaned}\n`);
+  } else {
+    unlinkSync(filePath);
+  }
 }
 
 function escapeRegex(value: string): string {
@@ -176,6 +189,18 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
   writeInstructionFiles(this: Multiplexer) {
     const mux = this as unknown as RuntimeLifecycleHost;
     const config = loadConfig();
+    const configuredInstructionFiles = new Set(
+      Object.values(config.tools)
+        .filter((tool) => tool.enabled && tool.instructionsFile)
+        .map((tool) => tool.instructionsFile!),
+    );
+
+    for (const instructionFile of LEGACY_DEFAULT_INSTRUCTION_FILES) {
+      if (!configuredInstructionFiles.has(instructionFile)) {
+        cleanupManagedInstructionFile(join(process.cwd(), instructionFile));
+      }
+    }
+
     const preamble =
       "# aimux Agent Instructions\n\n" +
       buildAimuxAgentInstructions() +
@@ -207,13 +232,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     const mux = this as unknown as RuntimeLifecycleHost;
     for (const filePath of mux.writtenInstructionFiles) {
       try {
-        if (!existsSync(filePath)) continue;
-        const cleaned = stripManagedInstructionBlock(readFileSync(filePath, "utf-8"));
-        if (cleaned) {
-          writeFileSync(filePath, `${cleaned}\n`);
-        } else {
-          unlinkSync(filePath);
-        }
+        cleanupManagedInstructionFile(filePath);
       } catch {}
     }
     mux.writtenInstructionFiles.clear();

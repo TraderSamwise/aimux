@@ -115,7 +115,7 @@ Each new tool should define as many of these as it can support:
 - `sessionIdFlag`
 - `promptPatterns`
 - `turnPatterns`
-- `instructionsFile`
+- `instructionsFile` only when the user explicitly opts into repo-file projection
 - `developerInstructionsConfigKey`
 
 ## What A Good Integration Needs
@@ -151,11 +151,11 @@ At minimum:
 
 Standing startup instructions should use a model-visible configuration or system/developer prompt channel whenever the tool provides one.
 
-Codex uses `-c developer_instructions=...` for fresh sessions, teammate sessions, forks, and migrations. Aimux also writes a managed block into the configured `instructionsFile` such as `AGENTS.md`; user-authored content outside that block is preserved.
+Codex uses `-c developer_instructions=...` for fresh sessions, teammate sessions, forks, and migrations. Aimux does not write `AGENTS.md` by default. If a user explicitly configures an `instructionsFile`, aimux writes only its managed block and preserves user-authored content outside that block.
 
 Do not reintroduce Codex startup prompt injection through tmux typing, delayed submits, or `session.write(prompt + "\r")`. Those paths can paste into Codex without actually submitting, especially when Codex collapses a large prompt into `[Pasted Content ...]`.
 
-If the Codex developer-instructions key is disabled with `developerInstructionsConfigKey: null`, aimux does not fall back to prompt injection. It relies on the managed instruction file instead. Verify a local Codex install with `yarn verify:codex-instructions`.
+If the Codex developer-instructions key is disabled with `developerInstructionsConfigKey: null`, aimux does not fall back to prompt injection or implicit `AGENTS.md` writes. To use file-based instructions, the user must explicitly configure `instructionsFile`. Verify a local Codex install with `yarn verify:codex-instructions`.
 
 ### Codex
 
