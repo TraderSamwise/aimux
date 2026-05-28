@@ -44,8 +44,26 @@ describe("runtime lifecycle state persistence", () => {
     return listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
   }
 
-  it("merges aimux instructions into existing AGENTS.md without overwriting user content", () => {
+  it("does not create AGENTS.md by default", () => {
     process.chdir(repoRoot);
+    const agentsPath = join(repoRoot, "AGENTS.md");
+    const writtenInstructionFiles = new Set<string>();
+
+    runtimeLifecycleMethods.writeInstructionFiles.call({
+      writtenInstructionFiles,
+    } as never);
+
+    expect(existsSync(agentsPath)).toBe(false);
+    expect(writtenInstructionFiles.size).toBe(0);
+  });
+
+  it("merges aimux instructions into configured instruction files without overwriting user content", () => {
+    process.chdir(repoRoot);
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux", "config.json"),
+      JSON.stringify({ tools: { codex: { instructionsFile: "AGENTS.md" } } }, null, 2) + "\n",
+    );
     const agentsPath = join(repoRoot, "AGENTS.md");
     writeFileSync(agentsPath, "# Project Rules\n\nKeep this user rule.\n");
     const writtenInstructionFiles = new Set<string>();
@@ -65,6 +83,11 @@ describe("runtime lifecycle state persistence", () => {
 
   it("removes only aimux managed instructions during cleanup", () => {
     process.chdir(repoRoot);
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux", "config.json"),
+      JSON.stringify({ tools: { codex: { instructionsFile: "AGENTS.md" } } }, null, 2) + "\n",
+    );
     const agentsPath = join(repoRoot, "AGENTS.md");
     writeFileSync(agentsPath, "# Project Rules\n\nKeep this user rule.\n");
     const writtenInstructionFiles = new Set<string>();
@@ -77,8 +100,13 @@ describe("runtime lifecycle state persistence", () => {
     expect(content).toBe("# Project Rules\n\nKeep this user rule.\n");
   });
 
-  it("deletes generated-only instruction files during cleanup", () => {
+  it("deletes configured generated-only instruction files during cleanup", () => {
     process.chdir(repoRoot);
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux", "config.json"),
+      JSON.stringify({ tools: { codex: { instructionsFile: "AGENTS.md" } } }, null, 2) + "\n",
+    );
     const agentsPath = join(repoRoot, "AGENTS.md");
     const writtenInstructionFiles = new Set<string>();
     const lifecycleHost = { writtenInstructionFiles } as never;
@@ -89,6 +117,72 @@ describe("runtime lifecycle state persistence", () => {
     runtimeLifecycleMethods.removeInstructionFiles.call(lifecycleHost);
 
     expect(existsSync(agentsPath)).toBe(false);
+  });
+
+  it("removes stale default AGENTS.md managed blocks when file projection is no longer configured", () => {
+    process.chdir(repoRoot);
+    const agentsPath = join(repoRoot, "AGENTS.md");
+    writeFileSync(
+      agentsPath,
+      [
+        "# Project Rules",
+        "",
+        "Keep this user rule.",
+        "",
+        "<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->",
+        "# aimux Agent Instructions",
+        "old generated content",
+        "<!-- END Aimux MANAGED BLOCK: aimux-agent-instructions -->",
+        "",
+      ].join("\n"),
+    );
+    const writtenInstructionFiles = new Set<string>();
+
+    runtimeLifecycleMethods.writeInstructionFiles.call({
+      writtenInstructionFiles,
+    } as never);
+
+    const content = readFileSync(agentsPath, "utf-8");
+    expect(content).toBe("# Project Rules\n\nKeep this user rule.\n");
+    expect(writtenInstructionFiles.size).toBe(0);
+  });
+
+  it("leaves user-authored AGENTS.md untouched when no aimux managed block exists", () => {
+    process.chdir(repoRoot);
+    const agentsPath = join(repoRoot, "AGENTS.md");
+    const userContent = "# Project Rules\n\nKeep this user rule.\n\n";
+    writeFileSync(agentsPath, userContent);
+    const writtenInstructionFiles = new Set<string>();
+
+    runtimeLifecycleMethods.writeInstructionFiles.call({
+      writtenInstructionFiles,
+    } as never);
+
+    expect(readFileSync(agentsPath, "utf-8")).toBe(userContent);
+    expect(writtenInstructionFiles.size).toBe(0);
+  });
+
+  it("deletes stale generated-only AGENTS.md when file projection is no longer configured", () => {
+    process.chdir(repoRoot);
+    const agentsPath = join(repoRoot, "AGENTS.md");
+    writeFileSync(
+      agentsPath,
+      [
+        "<!-- BEGIN Aimux MANAGED BLOCK: aimux-agent-instructions -->",
+        "# aimux Agent Instructions",
+        "old generated content",
+        "<!-- END Aimux MANAGED BLOCK: aimux-agent-instructions -->",
+        "",
+      ].join("\n"),
+    );
+    const writtenInstructionFiles = new Set<string>();
+
+    runtimeLifecycleMethods.writeInstructionFiles.call({
+      writtenInstructionFiles,
+    } as never);
+
+    expect(existsSync(agentsPath)).toBe(false);
+    expect(writtenInstructionFiles.size).toBe(0);
   });
 
   it("does not expose topology sessions through the service state loader", () => {
