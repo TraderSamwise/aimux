@@ -160,7 +160,7 @@ export default function CliAuthScreen() {
                 onPress={() => {
                   if (Platform.OS === "web") {
                     const here = window.location.pathname + window.location.search;
-                    window.location.href = `/sign-in?redirect=${encodeURIComponent(here)}`;
+                    window.location.href = `/auth?mode=sign-in&redirect=${encodeURIComponent(here)}`;
                   }
                 }}
               />

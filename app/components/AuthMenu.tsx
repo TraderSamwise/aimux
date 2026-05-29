@@ -30,7 +30,7 @@ export function AuthMenu() {
 
   if (!isSignedIn) {
     return (
-      <Button variant="outline" size="sm" label="Sign in" onPress={() => router.push("/sign-in")} />
+      <Button variant="outline" size="sm" label="Sign in" onPress={() => router.push("/auth")} />
     );
   }
 
@@ -51,7 +51,7 @@ export function AuthMenu() {
         className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
         onPress={() => {
           close();
-          void signOut().then(() => router.replace("/sign-in"));
+          void signOut().then(() => router.replace("/auth"));
         }}
       >
         <Text className="text-sm text-destructive">Sign out</Text>
