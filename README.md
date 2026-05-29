@@ -73,6 +73,30 @@ yarn link
 
 Requires Node.js >= 22 and `tmux` in `PATH`.
 
+### Develop the App from Source
+
+The browser/mobile client lives in `app/` and talks to the local aimux daemon.
+
+```bash
+yarn install
+cp app/.env.example app/.env
+yarn dev:gui:web      # web app + local daemon
+yarn dev:gui:ios      # build/install/open iOS simulator dev build
+yarn dev:gui:android  # build/install/open Android emulator dev build
+```
+
+For an already-installed native dev build:
+
+```bash
+yarn build
+node bin/aimux-dev daemon ensure
+cd app
+yarn dev:native:local
+```
+
+Only one Expo/Metro process can own port `8081`. If the simulator loads another
+app's JavaScript bundle, stop that other Expo process and restart Aimux Metro.
+
 ## Quick Start
 
 ```bash
