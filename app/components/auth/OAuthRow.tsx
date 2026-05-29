@@ -2,6 +2,7 @@ import React from "react";
 import { Pressable, View } from "react-native";
 import { Apple, Github, Mail } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
+import { cn } from "@/lib/utils";
 
 // Flip to true to enable OAuth. Day-one ships disabled with "Coming soon" copy.
 export const OAUTH_ENABLED = false;
@@ -29,7 +30,10 @@ export function OAuthRow() {
             // TODO: when OAUTH_ENABLED, call useSSO().startSSOFlow({ strategy: key }).
             // WebBrowser.maybeCompleteAuthSession() must be called once at the route module top.
           }}
-          className="h-11 flex-row items-center justify-center rounded-lg border border-border bg-background opacity-50"
+          className={cn(
+            "h-11 flex-row items-center justify-center rounded-lg border border-border bg-background",
+            !OAUTH_ENABLED && "opacity-50",
+          )}
         >
           <Icon size={16} color="hsl(var(--foreground))" />
           <Text className="ml-2 text-sm font-medium text-foreground">{label}</Text>
