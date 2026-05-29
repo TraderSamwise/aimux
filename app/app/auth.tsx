@@ -52,6 +52,7 @@ export default function AuthScreen() {
   }
 
   function switchMode(next: AuthMode) {
+    if (loading) return;
     setMode(next);
     setPhase("form");
     reset();
@@ -342,6 +343,7 @@ export default function AuthScreen() {
                   mode === "sign-in" ? "Don’t have an account? Sign up" : "Have an account? Sign in"
                 }
                 onPress={() => switchMode(mode === "sign-in" ? "sign-up" : "sign-in")}
+                disabled={loading}
               />
             ) : null}
           </View>
