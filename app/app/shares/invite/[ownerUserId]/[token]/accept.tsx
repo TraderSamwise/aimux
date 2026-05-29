@@ -81,8 +81,10 @@ export default function AcceptShareInviteScreen() {
             label="Sign in"
             onPress={() =>
               router.push({
-                pathname: "/sign-in",
-                params: invitePath ? { redirect: invitePath } : {},
+                pathname: "/auth",
+                params: invitePath
+                  ? { mode: "sign-in", redirect: invitePath }
+                  : { mode: "sign-in" },
               })
             }
           />
