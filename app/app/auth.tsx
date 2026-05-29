@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -206,7 +206,7 @@ export default function AuthScreen() {
     }
   }
 
-  const card = useMemo(() => {
+  const card = (() => {
     if (phase === "verify") {
       return (
         <VerificationForm
@@ -314,9 +314,7 @@ export default function AuthScreen() {
         ) : null}
       </View>
     );
-    // We intentionally exclude handlers from deps — they close over fresh state on each render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, mode, loading, error, pendingEmail, newPassword]);
+  })();
 
   return (
     <KeyboardAvoidingView
