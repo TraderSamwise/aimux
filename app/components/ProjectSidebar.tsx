@@ -57,7 +57,7 @@ import {
 import { notificationUnreadCountFamily } from "@/stores/notifications";
 import { securityUnreadCountAtom } from "@/stores/security";
 import { sidebarShowProjectPickerAtom } from "@/stores/ui";
-import { projectStateErrorCopy } from "@/lib/project-connection-display";
+import { getProjectServiceEndpoint, projectStateErrorCopy } from "@/lib/project-connection-display";
 
 // Type ladder used throughout the sidebar:
 //   - Project name / worktree name (title)      → text-[15px] font-bold
@@ -95,6 +95,7 @@ function ProjectPicker({
       ) : (
         projects.map((project) => {
           const isSelected = project.path === selectedPath;
+          const isOnline = project.serviceAlive;
           return (
             <Pressable
               key={project.path}
@@ -106,15 +107,31 @@ function ProjectPicker({
                   : "border-l-transparent active:bg-accent/60",
               )}
             >
+              <View className="flex-row items-center gap-2">
+                <View
+                  className={cn(
+                    "h-2 w-2 rounded-full",
+                    isOnline ? "bg-emerald-400" : "bg-muted-foreground/35",
+                  )}
+                />
+                <Text
+                  className="text-[14px] font-semibold text-foreground flex-1 min-w-0"
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {project.name}
+                </Text>
+                <Text
+                  className={cn(
+                    "text-[9px] font-bold uppercase tracking-wide",
+                    isOnline ? "text-emerald-400" : "text-muted-foreground",
+                  )}
+                >
+                  {isOnline ? "online" : "offline"}
+                </Text>
+              </View>
               <Text
-                className="text-[14px] font-semibold text-foreground"
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {project.name}
-              </Text>
-              <Text
-                className="text-[11px] text-muted-foreground mt-0.5"
+                className="text-[11px] text-muted-foreground mt-0.5 ml-4"
                 numberOfLines={1}
                 ellipsizeMode="middle"
               >
@@ -522,7 +539,9 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
     projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
   const effectiveProject =
     projects.find((project) => project.path === effectiveProjectPath) ?? selectedProject;
-  const endpoint = effectiveProject?.serviceEndpoint ?? selectedProjectEndpoint;
+  const endpoint = effectiveProject
+    ? getProjectServiceEndpoint(effectiveProject)
+    : selectedProjectEndpoint;
 
   // Fetch auth token once (auth context is stable in LOCAL_MODE; refetch is cheap).
   const { getToken } = useAuth();

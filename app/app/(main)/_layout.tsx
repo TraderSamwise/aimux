@@ -8,6 +8,7 @@ import { getDesktopState, listNotifications, listProjects, setApiRelay } from "@
 import { useAuth } from "@/lib/auth";
 import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser-notifications";
 import { env } from "@/lib/env";
+import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
 import { projectPathFromSearchOrLocation } from "@/lib/view-location";
@@ -51,9 +52,11 @@ export default function MainLayout() {
   const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
   const effectiveProjectPath = urlProjectPath ?? selectedProjectPath;
   const effectiveProject = projects.find((project) => project.path === effectiveProjectPath);
-  const endpoint =
-    effectiveProject?.serviceEndpoint ??
-    (urlProjectPath && urlProjectPath !== selectedProjectPath ? null : selectedProjectEndpoint);
+  const endpoint = effectiveProject
+    ? getProjectServiceEndpoint(effectiveProject)
+    : urlProjectPath && urlProjectPath !== selectedProjectPath
+      ? null
+      : selectedProjectEndpoint;
   const relayUrl = env.AIMUX_RELAY_URL;
   const relayReadyForRequests = !relayUrl || relayStatus === "connected";
   const activeShareOwnerUserId = activeShare?.ownerUserId;

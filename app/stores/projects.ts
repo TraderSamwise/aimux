@@ -4,6 +4,7 @@ import type { DaemonProject } from "@/lib/api";
 import type { DesktopSession } from "@/lib/desktop-state";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import { createSsrSafeJsonStorage } from "@/lib/jotai-storage";
+import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { desktopStateFamily } from "@/stores/desktopState";
 
 // ─── Base atoms ────────────────────────────────────────────────────────────
@@ -34,7 +35,7 @@ export const selectedProjectAtom = atom<DaemonProject | null>((get) => {
 // should depend on host/port primitives rather than this object identity.
 export const selectedProjectEndpointAtom = atom<ServiceEndpoint | null>((get) => {
   const project = get(selectedProjectAtom);
-  return project?.serviceEndpoint ?? null;
+  return getProjectServiceEndpoint(project);
 });
 
 export const selectedSessionAtom = atom<DesktopSession | null>((get) => {
