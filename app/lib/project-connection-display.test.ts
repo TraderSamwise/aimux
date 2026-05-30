@@ -26,4 +26,18 @@ describe("projectStateErrorCopy", () => {
       detail: "Open Inbox and approve this device, then refresh project state.",
     });
   });
+
+  it("turns relay disconnection into reconnect guidance", () => {
+    expect(projectStateErrorCopy("Relay not connected")).toEqual({
+      title: "Relay not connected.",
+      detail: "Reconnect the remote session, then refresh project state.",
+    });
+  });
+
+  it("falls back to generic copy with the original error detail", () => {
+    expect(projectStateErrorCopy("Unexpected daemon timeout")).toEqual({
+      title: "Could not load project state.",
+      detail: "Unexpected daemon timeout",
+    });
+  });
 });
