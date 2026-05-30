@@ -387,6 +387,62 @@ describe("daemon routing (relay + proxy)", () => {
     expect(res.body).toEqual({ ok: true, relay: { status: "off" } });
   });
 
+  it("reloads stored relay credentials when relay is enabled again", async () => {
+    const previousWebSocket = globalThis.WebSocket;
+    const sockets: Array<{ url: string; protocols: string[]; closed: boolean }> = [];
+    class FakeWebSocket extends EventTarget {
+      closed = false;
+
+      constructor(
+        readonly url: string,
+        readonly protocols: string[],
+      ) {
+        super();
+        sockets.push(this);
+      }
+
+      close(): void {
+        this.closed = true;
+      }
+    }
+
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    try {
+      const { saveCredentials } = await import("./credentials.js");
+      const { AimuxDaemon } = await import("./daemon.js");
+      const daemon = new AimuxDaemon();
+      const baseCredentials = {
+        version: 1 as const,
+        relayUrl: "wss://relay.example",
+        userId: "user_123",
+        createdAt: new Date().toISOString(),
+        remoteEnabled: true,
+      };
+
+      saveCredentials({ ...baseCredentials, token: "old-token" });
+      const first = daemon.enableRelay();
+
+      saveCredentials({ ...baseCredentials, token: "new-token" });
+      const second = daemon.enableRelay();
+
+      expect(first.status).toBe("connecting");
+      expect(second.status).toBe("connecting");
+      expect(sockets).toHaveLength(2);
+      expect(sockets[0]).toMatchObject({
+        url: "wss://relay.example/daemon/connect",
+        protocols: ["aimux", "aimux-token.old-token"],
+        closed: true,
+      });
+      expect(sockets[1]).toMatchObject({
+        url: "wss://relay.example/daemon/connect",
+        protocols: ["aimux", "aimux-token.new-token"],
+        closed: false,
+      });
+    } finally {
+      globalThis.WebSocket = previousWebSocket;
+    }
+  });
+
   it("rejects /proxy requests to non-loopback hosts with 403", async () => {
     const { AimuxDaemon } = await import("./daemon.js");
     const daemon = new AimuxDaemon();
