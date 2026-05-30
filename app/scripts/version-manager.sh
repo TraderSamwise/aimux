@@ -32,8 +32,12 @@ read_current_version() {
 create_backups() {
     echo "📦 Creating version backup..."
     cp "$VERSION_FILE" "$VERSION_FILE.backup"
-    [ -f "$INFO_PLIST" ] && cp "$INFO_PLIST" "$INFO_PLIST.backup"
-    [ -f "$PBXPROJ" ] && cp "$PBXPROJ" "$PBXPROJ.backup"
+    if [ -f "$INFO_PLIST" ]; then
+        cp "$INFO_PLIST" "$INFO_PLIST.backup"
+    fi
+    if [ -f "$PBXPROJ" ]; then
+        cp "$PBXPROJ" "$PBXPROJ.backup"
+    fi
 }
 
 update_versions() {
@@ -119,8 +123,12 @@ commit_version() {
     echo "📝 Committing version changes..."
     # Commit only version files — don't pick up unrelated staged changes
     local files=("$VERSION_FILE")
-    [ -f "$INFO_PLIST" ] && files+=("$INFO_PLIST")
-    [ -f "$PBXPROJ" ] && files+=("$PBXPROJ")
+    if [ -f "$INFO_PLIST" ]; then
+        files+=("$INFO_PLIST")
+    fi
+    if [ -f "$PBXPROJ" ]; then
+        files+=("$PBXPROJ")
+    fi
     git commit -m "$message" --no-verify -- "${files[@]}" || {
         echo "⚠️  No changes to commit or commit failed"
         return 1
