@@ -2653,7 +2653,8 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "sessionId is required" });
           return;
         }
-        if (typeof body.text !== "string" || body.text.length === 0) {
+        const text = typeof body.text === "string" ? body.text : "";
+        if (!text.trim()) {
           send(res, 400, { ok: false, error: "text is required" });
           return;
         }
@@ -2661,7 +2662,7 @@ export class MetadataServer {
           send(res, 501, { ok: false, error: "agent input not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.sendAgentInput({ sessionId, text: body.text });
+        const result = await this.options.lifecycle.sendAgentInput({ sessionId, text });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
