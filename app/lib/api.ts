@@ -193,6 +193,24 @@ export async function getAgentOutput(
   );
 }
 
+export interface SendAgentInputResponse {
+  ok: boolean;
+  sessionId: string;
+  accepted: true;
+}
+
+export async function sendAgentInput(
+  endpoint: ServiceEndpoint,
+  sessionId: string,
+  text: string,
+  opts?: ApiOpts,
+): Promise<SendAgentInputResponse> {
+  return callProjectJson<SendAgentInputResponse>(endpoint, "POST", "/agents/input", opts, {
+    sessionId,
+    text,
+  });
+}
+
 // ── Relay sharing ────────────────────────────────────────────────────────
 
 export interface ShareParticipant {

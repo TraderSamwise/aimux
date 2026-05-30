@@ -27,6 +27,7 @@ import {
   putPlan,
   resurrectGraveyardWorktree,
   resumeService,
+  sendAgentInput,
   setApiRelay,
   stopService,
 } from "@/lib/api";
@@ -114,6 +115,7 @@ describe("api relay routing", () => {
     await graveyardWorktree(endpoint, "/repo/feature/a");
     await resurrectGraveyardWorktree(endpoint, "/repo/feature/a");
     await deleteGraveyardWorktree(endpoint, "/repo/feature/a");
+    await sendAgentInput(endpoint, "agent-1", "hello");
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(1, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
@@ -163,6 +165,10 @@ describe("api relay routing", () => {
         path: "/repo/feature/a",
       },
     );
+    expect(request).toHaveBeenNthCalledWith(11, "POST", "/proxy/127.0.0.1/43210/agents/input", {
+      sessionId: "agent-1",
+      text: "hello",
+    });
   });
 
   it("preserves optional list query parameters through the relay proxy", async () => {

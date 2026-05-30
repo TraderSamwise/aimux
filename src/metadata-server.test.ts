@@ -1345,6 +1345,64 @@ describe("MetadataServer threads API", () => {
     });
   });
 
+  it("sends agent input over HTTP", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", text: "hello from gui" }),
+    });
+    const inputJson = (await inputRes.json()) as { ok: boolean; sessionId: string; accepted: boolean };
+
+    expect(inputRes.ok).toBe(true);
+    expect(inputJson).toMatchObject({ ok: true, sessionId: "codex-1", accepted: true });
+    expect(sent).toEqual([{ sessionId: "codex-1", text: "hello from gui" }]);
+  });
+
+  it("rejects blank agent input over HTTP", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", text: "   \n\t  " }),
+    });
+    const inputJson = (await inputRes.json()) as { ok: boolean; error: string };
+
+    expect(inputRes.status).toBe(400);
+    expect(inputJson).toEqual({ ok: false, error: "text is required" });
+    expect(sent).toEqual([]);
+  });
+
   it("streams alert events over SSE", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

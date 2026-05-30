@@ -172,6 +172,25 @@ export async function interruptAgent(host: SessionRuntimeHost, sessionId: string
   return { sessionId };
 }
 
+export async function sendAgentInput(
+  host: SessionRuntimeHost,
+  sessionId: string,
+  text: string,
+): Promise<{ sessionId: string; accepted: true }> {
+  const session = resolveRunningSession(host, sessionId);
+  if (session.transport instanceof TmuxSessionTransport) {
+    const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
+    if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
+    session.transport.retarget(target);
+    session.transport.write(text);
+    session.transport.write("\r");
+  } else {
+    session.write(text);
+    session.write("\r");
+  }
+  return { sessionId, accepted: true };
+}
+
 export async function readAgentOutput(
   host: SessionRuntimeHost,
   sessionId: string,
