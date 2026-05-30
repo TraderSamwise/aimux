@@ -3,8 +3,8 @@ const { APP_VERSION } = require("./lib/version.ts");
 // EAS project ID is set by `eas init` (or passed at build time via env).
 // Without a real ID, OTA updates can't function — keep them disabled
 // instead of pointing at a placeholder UUID that 404s on every launch.
-const EAS_PROJECT_ID = process.env.EAS_PROJECT_ID || "00000000-0000-0000-0000-000000000000";
-const HAS_REAL_EAS_PROJECT = EAS_PROJECT_ID !== "00000000-0000-0000-0000-000000000000";
+const EAS_PROJECT_ID = process.env.EAS_PROJECT_ID || "f617e4a4-cc8d-4fee-b69c-a2211c5e15c1";
+const HAS_REAL_EAS_PROJECT = Boolean(EAS_PROJECT_ID);
 
 module.exports = {
   expo: {
@@ -18,7 +18,7 @@ module.exports = {
     newArchEnabled: true,
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.tradersamwise.aimux",
+      bundleIdentifier: "app.aimux.mobile",
       buildNumber: String(APP_VERSION.buildNumber),
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
@@ -27,7 +27,7 @@ module.exports = {
     android: {
       adaptiveIcon: {
         foregroundImage: "./assets/images/adaptive-icon.png",
-        backgroundColor: "#ffffff",
+        backgroundColor: "#0a0a0c",
       },
       versionCode: APP_VERSION.buildNumber,
       edgeToEdgeEnabled: true,
@@ -44,15 +44,25 @@ module.exports = {
       checkAutomatically: "ON_LOAD",
       fallbackToCacheTimeout: 30000,
     },
-    plugins: HAS_REAL_EAS_PROJECT ? ["expo-router", "expo-updates"] : ["expo-router"],
+    plugins: [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          image: "./assets/images/icon.png",
+          imageWidth: 180,
+          backgroundColor: "#0a0a0c",
+          resizeMode: "contain",
+        },
+      ],
+      ...(HAS_REAL_EAS_PROJECT ? ["expo-updates"] : []),
+    ],
     experiments: {
       typedRoutes: true,
     },
     extra: {
       router: {},
-      eas: {
-        projectId: EAS_PROJECT_ID,
-      },
+      ...(HAS_REAL_EAS_PROJECT ? { eas: { projectId: EAS_PROJECT_ID } } : {}),
     },
     owner: "tradersamwise",
   },
