@@ -13,12 +13,21 @@ import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/deskt
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { detailHrefForPath } from "@/lib/view-location";
-import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
+import {
+  desktopStateErrorFamily,
+  desktopStateFamily,
+  worktreeGroupsFamily,
+} from "@/stores/desktopState";
 import {
   selectedProjectAtom,
   selectedProjectEndpointAtom,
   selectedSessionIdAtom,
 } from "@/stores/projects";
+import { env } from "@/lib/env";
+import {
+  formatProjectEndpointLabel,
+  projectStateErrorCopy,
+} from "@/lib/project-connection-display";
 
 // ─── Agent card ───────────────────────────────────────────────────────────
 
@@ -221,6 +230,7 @@ export default function DashboardIndex() {
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
   const desktopState = useAtomValue(desktopStateFamily(project?.path ?? ""));
+  const desktopStateError = useAtomValue(desktopStateErrorFamily(project?.path ?? ""));
   const groups = useAtomValue(worktreeGroupsFamily(project?.path ?? ""));
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const router = useRouter();
@@ -252,6 +262,8 @@ export default function DashboardIndex() {
   function handlePickService(serviceId: string) {
     router.push(detailHrefForPath(pathname, "service", serviceId, project?.path));
   }
+
+  const endpointLabel = formatProjectEndpointLabel(endpoint, env.AIMUX_CONNECTION_MODE);
 
   return (
     <View className="flex-1 bg-background">
@@ -285,7 +297,7 @@ export default function DashboardIndex() {
                   {endpoint ? (
                     <View className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30">
                       <Text className="text-[10px] font-mono text-emerald-400">
-                        {endpoint.host}:{endpoint.port}
+                        {endpointLabel}
                       </Text>
                     </View>
                   ) : (
@@ -308,6 +320,24 @@ export default function DashboardIndex() {
                   Start the host to see worktrees, agents, and services for this project.
                 </Text>
               </Card>
+            ) : endpoint && desktopState === null && desktopStateError ? (
+              <Card className="p-5 border-amber-500/30 bg-amber-500/10">
+                {(() => {
+                  const copy = projectStateErrorCopy(desktopStateError);
+                  return (
+                    <>
+                      <Text className="text-[14px] font-medium text-foreground leading-snug">
+                        {copy.title}
+                      </Text>
+                      <Text className="text-[12px] text-muted-foreground mt-1.5 leading-snug">
+                        {copy.detail}
+                      </Text>
+                    </>
+                  );
+                })()}
+              </Card>
+            ) : endpoint && desktopState === null ? (
+              <Text className="text-sm text-muted-foreground">Loading project state...</Text>
             ) : groups.length === 0 ? (
               <Text className="text-sm text-muted-foreground">No worktrees yet</Text>
             ) : (
