@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import type { LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -23,6 +30,7 @@ import {
   leaveShare,
   listShares,
   removeShareParticipant,
+  sendAgentInput,
   type SharedSessionSummary,
 } from "@/lib/api";
 import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
@@ -76,6 +84,9 @@ export default function ChatScreen() {
   const [inviteStatus, setInviteStatus] = useState<string | null>(null);
   const [shareSummary, setShareSummary] = useState<SharedSessionSummary | null>(null);
   const [shareAction, setShareAction] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [sendBusy, setSendBusy] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
   const scrollRef = useRef<ScrollView>(null);
@@ -212,6 +223,33 @@ export default function ChatScreen() {
 
   function handleTerminalPaneLayout(event: LayoutChangeEvent) {
     setTerminalPaneWidth(event.nativeEvent.layout.width);
+  }
+
+  async function handleSendMessage() {
+    const text = draft.trim();
+    if (!serviceEndpoint || !sessionId || !text || sendBusy) return;
+    setDraft("");
+    setSendBusy(true);
+    setSendError(null);
+    try {
+      await sendAgentInput(serviceEndpoint, sessionId, text, { token });
+    } catch (err) {
+      setDraft(text);
+      setSendError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSendBusy(false);
+    }
+  }
+
+  function handleComposerKeyPress(event: {
+    nativeEvent: { key?: string; shiftKey?: boolean };
+    preventDefault?: () => void;
+  }) {
+    if (Platform.OS !== "web") return;
+    if (event.nativeEvent.key === "Enter" && !event.nativeEvent.shiftKey) {
+      event.preventDefault?.();
+      void handleSendMessage();
+    }
   }
 
   useEffect(() => {
@@ -496,8 +534,15 @@ export default function ChatScreen() {
               </Text>
             </View>
           ) : (
-            <>
-              <View className="flex-1" style={showSplit ? { flexDirection: "row" } : undefined}>
+            <KeyboardAvoidingView
+              className="flex-1"
+              behavior={Platform.OS === "ios" ? "padding" : undefined}
+              style={{ flex: 1 }}
+            >
+              <View
+                className="flex-1"
+                style={showSplit ? { flex: 1, flexDirection: "row" } : { flex: 1 }}
+              >
                 {showSplit ? (
                   <View className="flex-1 border-r border-border">{terminalPane}</View>
                 ) : null}
@@ -524,11 +569,37 @@ export default function ChatScreen() {
                       {lastError ? (
                         <Text className="text-xs text-destructive my-2">{lastError}</Text>
                       ) : null}
+                      {sendError ? (
+                        <Text className="text-xs text-destructive my-2">{sendError}</Text>
+                      ) : null}
                     </ScrollView>
                   </View>
                 )}
               </View>
-            </>
+              <View
+                className="border-t border-border bg-background px-3 py-3"
+                style={{ flexShrink: 0 }}
+              >
+                <View className="flex-row items-end gap-2">
+                  <Input
+                    value={draft}
+                    onChangeText={setDraft}
+                    onKeyPress={handleComposerKeyPress}
+                    placeholder="Message the agent..."
+                    multiline
+                    editable={!sendBusy}
+                    className="min-h-11 max-h-32 flex-1 py-2 text-sm"
+                    textAlignVertical="top"
+                  />
+                  <Button
+                    label={sendBusy ? "Sending..." : "Send"}
+                    disabled={sendBusy || !draft.trim()}
+                    onPress={handleSendMessage}
+                    className="h-11 px-4"
+                  />
+                </View>
+              </View>
+            </KeyboardAvoidingView>
           )}
         </View>
       </View>
