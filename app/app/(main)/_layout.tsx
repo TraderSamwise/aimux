@@ -140,7 +140,7 @@ export default function MainLayout() {
       }
       if (!relayReadyForRequests) return;
       try {
-        const token = await getToken();
+        const token = await getTokenRef.current();
         const projects = await listProjects({ token });
         if (!cancelled) reconcileProjects(projects);
       } catch (err) {
@@ -157,7 +157,7 @@ export default function MainLayout() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeShare, getToken, reconcileProjects, relayReadyForRequests, store]);
+  }, [activeShare, reconcileProjects, relayReadyForRequests, store]);
 
   // Poll /desktop-state for the selected project every 2s. Re-triggers on
   // selection change and on a refresh-nonce bump (from optimistic mutations).
@@ -179,7 +179,7 @@ export default function MainLayout() {
     async function poll() {
       if (cancelled) return;
       try {
-        const token = await getToken();
+        const token = await getTokenRef.current();
         const state = await getDesktopState(endpoint!, { token });
         if (cancelled) return;
         store.set(desktopStateFamily(effectiveProjectPath!), state);
@@ -202,15 +202,7 @@ export default function MainLayout() {
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    activeShare,
-    effectiveProjectPath,
-    endpointKey,
-    refreshNonce,
-    getToken,
-    relayReadyForRequests,
-    store,
-  ]);
+  }, [activeShare, effectiveProjectPath, endpointKey, refreshNonce, relayReadyForRequests, store]);
 
   // Poll durable notifications for the selected project. This mirrors
   // desktop-state polling but uses the daemon's notification records as the
@@ -230,7 +222,7 @@ export default function MainLayout() {
     async function poll() {
       if (cancelled) return;
       try {
-        const token = await getToken();
+        const token = await getTokenRef.current();
         const feed = await listNotifications(endpoint!, { token });
         if (cancelled) return;
         store.set(notificationFeedFamily(effectiveProjectPath!), {
@@ -262,7 +254,6 @@ export default function MainLayout() {
     effectiveProjectPath,
     endpointKey,
     notificationRefreshNonce,
-    getToken,
     relayReadyForRequests,
     store,
   ]);
