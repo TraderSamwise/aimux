@@ -1,5 +1,11 @@
 import type { AppConnectionMode } from "@/lib/connection-targets";
+import type { DaemonProject } from "@/lib/api";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
+
+export function getProjectServiceEndpoint(project: DaemonProject | null | undefined) {
+  if (!project?.serviceAlive) return null;
+  return project.serviceEndpoint;
+}
 
 export function formatProjectEndpointLabel(
   endpoint: ServiceEndpoint | null,
@@ -14,6 +20,12 @@ export function projectStateErrorCopy(error: string): {
   title: string;
   detail: string;
 } {
+  if (isProjectHostOfflineError(error)) {
+    return {
+      title: "Project host not running.",
+      detail: "Start the host to see worktrees, agents, and services for this project.",
+    };
+  }
   if (/pending security approval/i.test(error)) {
     return {
       title: "Remote client pending approval.",
@@ -30,4 +42,8 @@ export function projectStateErrorCopy(error: string): {
     title: "Could not load project state.",
     detail: error,
   };
+}
+
+export function isProjectHostOfflineError(error: string) {
+  return /ECONNREFUSED|Failed to fetch|Network request failed|Load failed/i.test(error);
 }
