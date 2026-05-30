@@ -399,10 +399,13 @@ export class AimuxDaemon {
 
   // Resolve relay config from stored credentials (`aimux login`), with env-var
   // overrides for advanced/CI use. Connects only when remote access is enabled.
-  private connectRelayIfConfigured(): void {
+  private connectRelayIfConfigured(options: { force?: boolean } = {}): void {
     const status = this.relayClient?.getStatus().status;
-    if (this.relayClient && status !== "auth_failed" && status !== "disconnected") return;
-    if (this.relayClient) this.relayClient.disconnect();
+    if (!options.force && this.relayClient && status !== "auth_failed" && status !== "disconnected") return;
+    if (this.relayClient) {
+      this.relayClient.disconnect();
+      this.relayClient = null;
+    }
     const creds = loadCredentials();
     const relayUrl = process.env.AIMUX_RELAY_URL ?? creds?.relayUrl;
     const relayToken = process.env.AIMUX_RELAY_TOKEN ?? creds?.token;
@@ -420,7 +423,7 @@ export class AimuxDaemon {
 
   enableRelay(): RelayStatusSnapshot | { status: "off" } {
     setRemoteEnabled(true);
-    this.connectRelayIfConfigured();
+    this.connectRelayIfConfigured({ force: true });
     return this.getRelayStatus();
   }
 

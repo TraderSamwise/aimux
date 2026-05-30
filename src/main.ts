@@ -1520,8 +1520,26 @@ program
   .action(async (opts: { webAppUrl?: string }) => {
     try {
       const { userId } = await runLoginFlow({ webAppUrl: opts.webAppUrl });
+      let relayStatus: string | null = null;
+      let relayError: string | null = null;
+      if (loadDaemonInfo()) {
+        try {
+          const result = await requestDaemonJson("/relay/enable", { method: "POST" });
+          const relay = result.relay as { status?: string; lastError?: string | null };
+          relayStatus = relay.status ?? "unknown";
+          relayError = relay.lastError ?? null;
+        } catch (err) {
+          relayError = err instanceof Error ? err.message : String(err);
+        }
+      }
       console.log(`\n✓ Logged in as ${userId}`);
-      console.log("Remote access is enabled. Restart the daemon to connect, or it will connect on next start.");
+      if (relayStatus) {
+        console.log(`Remote access is enabled (connection: ${relayStatus}).`);
+        if (relayError) console.log(`Last error: ${relayError}`);
+      } else {
+        console.log("Remote access is enabled. The daemon will connect on next start.");
+        if (relayError) console.log(`Daemon refresh failed: ${relayError}`);
+      }
     } catch (err) {
       console.error(`Login failed: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
