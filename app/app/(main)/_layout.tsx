@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect } from "react";
+import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { Stack, useGlobalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
@@ -43,8 +43,10 @@ export default function MainLayout() {
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
   const notificationRefreshNonce = useAtomValue(notificationFeedRefreshNonceAtom);
+  const relayStatus = useAtomValue(relayStatusAtom);
   const store = useStore();
   const { getToken } = useAuth();
+  const getTokenRef = useRef(getToken);
   const searchParams = useGlobalSearchParams<{ project?: string | string[] }>();
   const urlProjectPath = projectPathFromSearchOrLocation(searchParams.project);
   const effectiveProjectPath = urlProjectPath ?? selectedProjectPath;
@@ -52,6 +54,17 @@ export default function MainLayout() {
   const endpoint =
     effectiveProject?.serviceEndpoint ??
     (urlProjectPath && urlProjectPath !== selectedProjectPath ? null : selectedProjectEndpoint);
+  const relayUrl = env.AIMUX_RELAY_URL;
+  const relayReadyForRequests = !relayUrl || relayStatus === "connected";
+  const activeShareOwnerUserId = activeShare?.ownerUserId;
+  const activeShareShareId = activeShare?.shareId;
+  const activeShareRelayKey = activeShare
+    ? `${activeShare.ownerUserId}:${activeShare.shareId}`
+    : "";
+
+  useEffect(() => {
+    getTokenRef.current = getToken;
+  }, [getToken]);
 
   usePrePaintEffect(() => {
     if (activeShare || !urlProjectPath || urlProjectPath === selectedProjectPath) return;
@@ -63,18 +76,21 @@ export default function MainLayout() {
   // its status into the store, and register it with the API layer so requests
   // route through the tunnel. No-op when EXPO_PUBLIC_AIMUX_RELAY_URL is unset.
   useEffect(() => {
-    const relayUrl = env.AIMUX_RELAY_URL;
     if (!relayUrl) {
       store.set(relayConfiguredAtom, false);
       store.set(relayStatusAtom, "disconnected");
       return;
     }
     store.set(relayConfiguredAtom, true);
+    const activeShareRelayOptions =
+      activeShareOwnerUserId && activeShareShareId
+        ? { ownerUserId: activeShareOwnerUserId, shareId: activeShareShareId }
+        : {};
     const transport = new RelayTransport(
       relayUrl,
-      getToken,
+      () => getTokenRef.current(),
       undefined,
-      activeShare ? { ownerUserId: activeShare.ownerUserId, shareId: activeShare.shareId } : {},
+      activeShareRelayOptions,
     );
     const unsub = transport.onStatusChange((status) => store.set(relayStatusAtom, status));
     const unsubSecurity = transport.onSecurityEvent((event) => {
@@ -94,8 +110,8 @@ export default function MainLayout() {
     void transport.connect();
     void registerSecurityPushToken(
       relayUrl,
-      getToken,
-      activeShare ? { ownerUserId: activeShare.ownerUserId, shareId: activeShare.shareId } : {},
+      () => getTokenRef.current(),
+      activeShareRelayOptions,
     ).catch((err) => {
       console.warn("security push registration failed:", err);
     });
@@ -106,7 +122,7 @@ export default function MainLayout() {
       transport.disconnect();
       store.set(relayStatusAtom, "disconnected");
     };
-  }, [activeShare, getToken, store]);
+  }, [activeShareOwnerUserId, activeShareRelayKey, activeShareShareId, relayUrl, store]);
 
   // Poll /projects every 2s; reconcile into the projects atom.
   useEffect(() => {
@@ -122,6 +138,7 @@ export default function MainLayout() {
         timer = setTimeout(loop, POLL_INTERVAL_MS);
         return;
       }
+      if (!relayReadyForRequests) return;
       try {
         const token = await getToken();
         const projects = await listProjects({ token });
@@ -140,7 +157,7 @@ export default function MainLayout() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeShare, getToken, reconcileProjects, store]);
+  }, [activeShare, getToken, reconcileProjects, relayReadyForRequests, store]);
 
   // Poll /desktop-state for the selected project every 2s. Re-triggers on
   // selection change and on a refresh-nonce bump (from optimistic mutations).
@@ -150,6 +167,7 @@ export default function MainLayout() {
   useEffect(() => {
     if (activeShare) return;
     if (!effectiveProjectPath) return;
+    if (!relayReadyForRequests) return;
     if (!endpoint) {
       store.set(desktopStateFamily(effectiveProjectPath), null);
       store.set(desktopStateErrorFamily(effectiveProjectPath), null);
@@ -184,7 +202,15 @@ export default function MainLayout() {
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeShare, effectiveProjectPath, endpointKey, refreshNonce, getToken, store]);
+  }, [
+    activeShare,
+    effectiveProjectPath,
+    endpointKey,
+    refreshNonce,
+    getToken,
+    relayReadyForRequests,
+    store,
+  ]);
 
   // Poll durable notifications for the selected project. This mirrors
   // desktop-state polling but uses the daemon's notification records as the
@@ -192,6 +218,7 @@ export default function MainLayout() {
   useEffect(() => {
     if (activeShare) return;
     if (!effectiveProjectPath) return;
+    if (!relayReadyForRequests) return;
     if (!endpoint) {
       store.set(notificationFeedFamily(effectiveProjectPath), null);
       store.set(notificationFeedErrorFamily(effectiveProjectPath), null);
@@ -230,7 +257,15 @@ export default function MainLayout() {
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeShare, effectiveProjectPath, endpointKey, notificationRefreshNonce, getToken, store]);
+  }, [
+    activeShare,
+    effectiveProjectPath,
+    endpointKey,
+    notificationRefreshNonce,
+    getToken,
+    relayReadyForRequests,
+    store,
+  ]);
 
   return (
     <>
