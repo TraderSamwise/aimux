@@ -313,6 +313,10 @@ interface MetadataServerOptions {
           status: "graveyard";
           previousStatus: "running" | "offline";
         };
+    sendAgentInput?: (input: {
+      sessionId: string;
+      text: string;
+    }) => Promise<{ sessionId: string; accepted: true }> | { sessionId: string; accepted: true };
     readAgentOutput?: (input: {
       sessionId: string;
       startLine?: number;
@@ -2637,6 +2641,27 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.lifecycle.killAgent({ sessionId: body.sessionId });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/input") {
+        const body = (await readJson(req)) as { sessionId?: string; text?: string };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        if (typeof body.text !== "string" || body.text.length === 0) {
+          send(res, 400, { ok: false, error: "text is required" });
+          return;
+        }
+        if (!this.options.lifecycle?.sendAgentInput) {
+          send(res, 501, { ok: false, error: "agent input not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.sendAgentInput({ sessionId, text: body.text });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
