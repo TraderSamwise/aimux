@@ -131,7 +131,6 @@ export default function MainLayout() {
 
     async function loop() {
       if (cancelled) return;
-      if (!relayReadyForRequests) return;
       if (activeShare) {
         reconcileProjects([projectFromActiveShare(activeShare)]);
         store.set(selectedProjectPathAtom, activeShare.projectRoot);
@@ -139,6 +138,7 @@ export default function MainLayout() {
         timer = setTimeout(loop, POLL_INTERVAL_MS);
         return;
       }
+      if (!relayReadyForRequests) return;
       try {
         const token = await getToken();
         const projects = await listProjects({ token });
