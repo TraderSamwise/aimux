@@ -15,6 +15,13 @@ Aimux is an agent multiplexer. It runs long-lived Claude, Codex, and shell sessi
 
 Agents inside aimux coordinate through aimux task, handoff, and thread commands backed by the runtime exchange, not by directly spawning each other unless the user gives an explicit CLI command. Use explicit aimux CLI/API task or handoff operations only when the user explicitly asks for delegation or handoff. Do not proactively write `.aimux/plans/*` or `.aimux/status/*` for simple questions, read-only inspections, or one-shot tasks.
 
+## Stable vs Dev CLI
+
+- `aimux` should be a frozen, versioned local or release install under `~/.aimux/native/`. It is for real project work and production remote auth, so defaults should point at `https://aimux.app` and the production relay unless explicitly overridden.
+- `aimux-dev` should stay repo-linked for Aimux development. It sets `AIMUX_HOME=~/.aimux-dev`, `AIMUX_DAEMON_PORT=43191`, `AIMUX_ENV=development`, and `AIMUX_WEB_APP_URL=http://localhost:8081`.
+- Do not point `~/.local/bin/aimux` directly at this checkout for normal development. Use `aimux-dev` for live source iteration and rebuild with `yarn build` after `src/*.ts` changes.
+- To create a local stable build from current source, build a release asset with `AIMUX_RELEASE_VERSION=<version-or-local-label> yarn release:asset`, then install it with `scripts/install.sh release/aimux-<platform>-<arch>.tar.gz`.
+
 ## App (`app/`) - Expo Router + RN + Web
 
 The browser and native clients live in `app/`. Single Expo codebase targeting web, iOS, and Android.

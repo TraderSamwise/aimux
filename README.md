@@ -58,6 +58,15 @@ To install a specific version:
 curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/install.sh | AIMUX_VERSION=0.1.13 sh
 ```
 
+To install a frozen local build from the current checkout:
+
+```bash
+AIMUX_RELEASE_VERSION=0.1.16-local.$(git rev-parse --short HEAD) yarn release:asset
+scripts/install.sh release/aimux-darwin-arm64.tar.gz
+```
+
+That keeps `aimux` as a stable installed artifact under `~/.aimux/native/` instead of a live symlink to the repository.
+
 ### Build from source
 
 ```bash
@@ -84,6 +93,8 @@ yarn dev:gui:web      # web app + local daemon
 yarn dev:gui:ios      # build/install/open iOS simulator dev build
 yarn dev:gui:android  # build/install/open Android emulator dev build
 ```
+
+Use `aimux-dev` for repo-linked Aimux development. It uses `~/.aimux-dev`, daemon port `43191`, development defaults, and the local web app at `http://localhost:8081`. Keep `aimux` reserved for stable/prod-like project work and remote auth against `https://aimux.app`.
 
 For an already-installed native dev build:
 
