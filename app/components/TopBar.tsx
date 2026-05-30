@@ -23,7 +23,7 @@ export function TopBar({ left }: { left?: React.ReactNode }) {
       <View className="flex-row items-center">
         <Image
           source={require("@/assets/images/icon.png")}
-          className="h-6 w-6 rounded-md mr-2"
+          style={{ width: 24, height: 24, borderRadius: 6, marginRight: 8 }}
           resizeMode="contain"
           accessibilityLabel="aimux logo"
         />
