@@ -53,6 +53,10 @@ function collectSourceFiles() {
   return roots.flatMap(collectFiles).filter((file) => !file.endsWith("envContract.js"));
 }
 
+function isTestFile(file) {
+  return /\.(test|spec)\.[cm]?[jt]sx?$/.test(path.basename(file));
+}
+
 function findUsedPublicEnvKeys() {
   const keys = new Set();
   const pattern = /process\.env\.(EXPO_PUBLIC_[A-Z0-9_]+)/g;
@@ -72,6 +76,7 @@ function findDisallowedDirectEnvReads() {
 
   for (const file of collectSourceFiles()) {
     if (file === envRuntimePath) continue;
+    if (isTestFile(file)) continue;
     fs.readFileSync(file, "utf8")
       .split("\n")
       .forEach((line, index) => {

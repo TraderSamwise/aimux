@@ -12,6 +12,7 @@
       }
     },
     "testflight": {
+      "environment": "production",
       "ios": {
         "buildConfiguration": "Release",
         "image": "latest"
@@ -21,6 +22,7 @@
       "channel": "testflight"
     },
     "production": {
+      "environment": "production",
       "ios": {
         "buildConfiguration": "Release",
         "image": "latest"
