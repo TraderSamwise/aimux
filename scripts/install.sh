@@ -5,6 +5,7 @@ REPO="${AIMUX_REPO:-TraderSamwise/aimux}"
 VERSION="${AIMUX_VERSION:-latest}"
 INSTALL_ROOT="${AIMUX_INSTALL_ROOT:-$HOME/.aimux/native}"
 BIN_DIR="${AIMUX_BIN_DIR:-$HOME/.local/bin}"
+LOCAL_ARCHIVE="${AIMUX_ARCHIVE:-${1:-}}"
 
 fail() {
   printf 'aimux install failed: %s\n' "$*" >&2
@@ -89,14 +90,20 @@ trap cleanup EXIT
 ARCHIVE="$TMP_DIR/$ASSET"
 CHECKSUM="$TMP_DIR/$ASSET.sha256"
 
-printf 'Downloading aimux %s for %s-%s...\n' "$VERSION_LABEL" "$PLATFORM" "$ARCH"
-download "$BASE_URL/$ASSET" "$ARCHIVE"
+if [ -n "$LOCAL_ARCHIVE" ]; then
+  [ -f "$LOCAL_ARCHIVE" ] || fail "local archive not found: $LOCAL_ARCHIVE"
+  printf 'Installing aimux from local archive %s...\n' "$LOCAL_ARCHIVE"
+  cp "$LOCAL_ARCHIVE" "$ARCHIVE"
+else
+  printf 'Downloading aimux %s for %s-%s...\n' "$VERSION_LABEL" "$PLATFORM" "$ARCH"
+  download "$BASE_URL/$ASSET" "$ARCHIVE"
 
-if download_optional "$BASE_URL/$ASSET.sha256" "$CHECKSUM"; then
-  if command -v shasum >/dev/null 2>&1; then
-    (cd "$TMP_DIR" && shasum -a 256 -c "$ASSET.sha256" >/dev/null)
-  else
-    printf 'Skipping checksum verification: shasum not found.\n' >&2
+  if download_optional "$BASE_URL/$ASSET.sha256" "$CHECKSUM"; then
+    if command -v shasum >/dev/null 2>&1; then
+      (cd "$TMP_DIR" && shasum -a 256 -c "$ASSET.sha256" >/dev/null)
+    else
+      printf 'Skipping checksum verification: shasum not found.\n' >&2
+    fi
   fi
 fi
 

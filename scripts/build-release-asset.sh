@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="$(node -e "const fs=require('fs'); process.stdout.write(JSON.parse(fs.readFileSync('package.json','utf8')).version)")"
+PACKAGE_VERSION="$(node -e "const fs=require('fs'); process.stdout.write(JSON.parse(fs.readFileSync('package.json','utf8')).version)")"
+VERSION="${AIMUX_RELEASE_VERSION:-$PACKAGE_VERSION}"
 
 detect_platform() {
   case "$(uname -s)" in
@@ -50,7 +51,7 @@ printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 
 (
   cd "$PKG_DIR"
-  yarn install --production --frozen-lockfile --ignore-scripts
+  yarn install --production --frozen-lockfile --ignore-scripts --ignore-engines
 )
 
 chmod +x "$PKG_DIR/bin/aimux"
