@@ -123,14 +123,15 @@ commit_version() {
     echo "📝 Committing version changes..."
     # Commit only version files — don't pick up unrelated staged changes
     local files=("$VERSION_FILE")
-    if [ -f "$INFO_PLIST" ]; then
+    if git ls-files --error-unmatch "$INFO_PLIST" >/dev/null 2>&1; then
         files+=("$INFO_PLIST")
     fi
-    if [ -f "$PBXPROJ" ]; then
+    if git ls-files --error-unmatch "$PBXPROJ" >/dev/null 2>&1; then
         files+=("$PBXPROJ")
     fi
     git commit -m "$message" --no-verify -- "${files[@]}" || {
         echo "⚠️  No changes to commit or commit failed"
+        cleanup_backups
         return 1
     }
     echo "✅ Version changes committed"
