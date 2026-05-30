@@ -27,7 +27,7 @@ export function BrandPanel({ variant }: BrandPanelProps) {
       <View className="items-center mb-8">
         <Image
           source={require("@/assets/images/icon.png")}
-          className="h-14 w-14 rounded-2xl mb-3"
+          style={{ width: 56, height: 56, borderRadius: 16, marginBottom: 12 }}
           resizeMode="contain"
           accessibilityLabel="aimux logo"
         />
@@ -47,7 +47,7 @@ export function BrandPanel({ variant }: BrandPanelProps) {
         <View className="flex-row items-center">
           <Image
             source={require("@/assets/images/icon.png")}
-            className="h-12 w-12 rounded-xl mr-3"
+            style={{ width: 48, height: 48, borderRadius: 12, marginRight: 12 }}
             resizeMode="contain"
             accessibilityLabel="aimux logo"
           />
