@@ -40,7 +40,11 @@ import {
 } from "@/lib/view-location";
 import { firstTokenOf } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
-import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
+import {
+  desktopStateErrorFamily,
+  desktopStateFamily,
+  worktreeGroupsFamily,
+} from "@/stores/desktopState";
 import type { DaemonProject } from "@/lib/api";
 import {
   projectsAtom,
@@ -53,6 +57,7 @@ import {
 import { notificationUnreadCountFamily } from "@/stores/notifications";
 import { securityUnreadCountAtom } from "@/stores/security";
 import { sidebarShowProjectPickerAtom } from "@/stores/ui";
+import { projectStateErrorCopy } from "@/lib/project-connection-display";
 
 // Type ladder used throughout the sidebar:
 //   - Project name / worktree name (title)      → text-[15px] font-bold
@@ -366,6 +371,7 @@ function WorktreeTree({
   endpoint,
   token,
   desktopState,
+  desktopStateError,
   selectedSessionId,
   onPickSession,
   onPickService,
@@ -374,6 +380,7 @@ function WorktreeTree({
   endpoint: ServiceEndpoint | null;
   token: string | null;
   desktopState: DesktopState | null;
+  desktopStateError: string | null;
   selectedSessionId: string | null;
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
@@ -389,6 +396,18 @@ function WorktreeTree({
         <Text className="text-[11px] text-muted-foreground mt-1 leading-snug">
           Start the host to see worktrees, agents, and services.
         </Text>
+      </View>
+    );
+  }
+
+  if (endpoint && desktopState === null && desktopStateError) {
+    const copy = projectStateErrorCopy(desktopStateError);
+    return (
+      <View className="mx-3 mt-3 mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3">
+        <Text className="text-[12px] font-medium text-foreground/90 leading-snug">
+          {copy.title}
+        </Text>
+        <Text className="text-[11px] text-muted-foreground mt-1 leading-snug">{copy.detail}</Text>
       </View>
     );
   }
@@ -542,6 +561,9 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
   }, [effectiveProjectPath, selectedProjectPath, setShowPicker, showPicker]);
 
   const desktopState = useAtomValue(desktopStateFamily(effectiveProjectPath ?? EMPTY_PROJECT_PATH));
+  const desktopStateError = useAtomValue(
+    desktopStateErrorFamily(effectiveProjectPath ?? EMPTY_PROJECT_PATH),
+  );
   const pickerMode = !effectiveProject || showPicker;
 
   function handlePickProject(path: string) {
@@ -585,6 +607,7 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
               endpoint={endpoint}
               token={token}
               desktopState={desktopState}
+              desktopStateError={desktopStateError}
               selectedSessionId={selectedSessionId}
               onPickSession={handlePickSession}
               onPickService={handlePickService}
