@@ -27,6 +27,7 @@ type RelayMessage = RelayRequest | RelayControl;
 const INITIAL_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
 const MAX_HANDSHAKE_FAILURES = 5;
+const REMOTE_CLIENT_NOTIFICATION_DEDUPE_MS = 5 * 60 * 1000;
 const TOKEN_PROTOCOL_PREFIX = "aimux-token.";
 
 export type RelayConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected" | "auth_failed";
@@ -48,6 +49,7 @@ export class RelayClient {
   private lastError: string | null = null;
   private readonly relayUrl: string;
   private handshakeFailures = 0;
+  private readonly recentRemoteClientNotifications = new Map<string, number>();
 
   constructor(
     relayUrl: string,
@@ -175,10 +177,13 @@ export class RelayClient {
 
     if (msg.type === "security_event") {
       if (msg.event?.kind === "client_connected") {
-        notifyRemoteClientConnected({
-          title: msg.event.title,
-          body: msg.event.body,
-        });
+        const dedupeKey = msg.event.deviceId ?? `${msg.event.title}:${msg.event.body}`;
+        if (this.shouldNotifyRemoteClientConnected(dedupeKey)) {
+          notifyRemoteClientConnected({
+            title: msg.event.title,
+            body: msg.event.body,
+          });
+        }
       }
       return;
     }
@@ -204,6 +209,19 @@ export class RelayClient {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(data);
     }
+  }
+
+  private shouldNotifyRemoteClientConnected(key: string): boolean {
+    const now = Date.now();
+    for (const [existingKey, lastNotifiedAt] of this.recentRemoteClientNotifications) {
+      if (now - lastNotifiedAt > REMOTE_CLIENT_NOTIFICATION_DEDUPE_MS) {
+        this.recentRemoteClientNotifications.delete(existingKey);
+      }
+    }
+    const previous = this.recentRemoteClientNotifications.get(key);
+    if (previous && now - previous <= REMOTE_CLIENT_NOTIFICATION_DEDUPE_MS) return false;
+    this.recentRemoteClientNotifications.set(key, now);
+    return true;
   }
 
   private scheduleRetry(): void {
