@@ -537,8 +537,12 @@ export default function ChatScreen() {
             <KeyboardAvoidingView
               className="flex-1"
               behavior={Platform.OS === "ios" ? "padding" : undefined}
+              style={{ flex: 1 }}
             >
-              <View className="flex-1" style={showSplit ? { flexDirection: "row" } : undefined}>
+              <View
+                className="flex-1"
+                style={showSplit ? { flex: 1, flexDirection: "row" } : { flex: 1 }}
+              >
                 {showSplit ? (
                   <View className="flex-1 border-r border-border">{terminalPane}</View>
                 ) : null}
@@ -572,7 +576,10 @@ export default function ChatScreen() {
                   </View>
                 )}
               </View>
-              <View className="border-t border-border bg-background px-3 py-3">
+              <View
+                className="border-t border-border bg-background px-3 py-3"
+                style={{ flexShrink: 0 }}
+              >
                 <View className="flex-row items-end gap-2">
                   <Input
                     value={draft}
