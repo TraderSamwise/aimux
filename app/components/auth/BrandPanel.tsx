@@ -1,5 +1,5 @@
 import React from "react";
-import { Platform, View } from "react-native";
+import { Image, Platform, View } from "react-native";
 import { Text } from "@/components/ui/text";
 
 const FEATURES: Array<{ title: string; description: string }> = [
@@ -25,6 +25,12 @@ export function BrandPanel({ variant }: BrandPanelProps) {
   if (variant === "compact") {
     return (
       <View className="items-center mb-8">
+        <Image
+          source={require("@/assets/images/icon.png")}
+          className="h-14 w-14 rounded-2xl mb-3"
+          resizeMode="contain"
+          accessibilityLabel="aimux logo"
+        />
         <Text className="font-mono text-[32px] font-bold text-foreground tracking-tight">
           aimux
         </Text>
@@ -38,9 +44,17 @@ export function BrandPanel({ variant }: BrandPanelProps) {
   return (
     <View className="flex-1 bg-secondary px-12 py-16 justify-between">
       <View>
-        <Text className="font-mono text-[44px] font-bold text-foreground tracking-tight">
-          aimux
-        </Text>
+        <View className="flex-row items-center">
+          <Image
+            source={require("@/assets/images/icon.png")}
+            className="h-12 w-12 rounded-xl mr-3"
+            resizeMode="contain"
+            accessibilityLabel="aimux logo"
+          />
+          <Text className="font-mono text-[44px] font-bold text-foreground tracking-tight">
+            aimux
+          </Text>
+        </View>
         <Text className="text-[18px] text-muted-foreground mt-5 leading-relaxed max-w-[360px]">
           Manage your AI agents from anywhere. One dashboard for Claude, Codex, and shell sessions.
         </Text>
