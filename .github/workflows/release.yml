@@ -50,6 +50,15 @@ jobs:
           AIMUX_RELEASE_PLATFORM: ${{ matrix.platform }}
           AIMUX_RELEASE_ARCH: ${{ matrix.arch }}
 
+      - name: Verify release asset has no source maps
+        run: |
+          set -euo pipefail
+          ASSET="release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          if tar -tzf "$ASSET" | grep -E '(^|/)[^/]+\.map$'; then
+            echo "Release asset contains source maps." >&2
+            exit 1
+          fi
+
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
@@ -97,7 +106,27 @@ jobs:
             exit 1
           fi
 
-      - run: yarn build
+      - run: yarn build:release
+
+      - name: Verify npm package has no source maps
+        run: |
+          set -euo pipefail
+          npm pack --dry-run --json > npm-pack.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const raw = fs.readFileSync('npm-pack.json', 'utf8');
+          const jsonStart = raw.lastIndexOf('\n[');
+          const json = jsonStart >= 0 ? raw.slice(jsonStart + 1) : raw;
+          const pack = JSON.parse(json)[0];
+          const maps = pack.files
+            .map((file) => file.path)
+            .filter((path) => path.endsWith('.map'));
+          if (maps.length > 0) {
+            console.error('npm package contains source maps:');
+            for (const path of maps) console.error(`- ${path}`);
+            process.exit(1);
+          }
+          NODE
 
       - run: npm publish --access public --provenance
 

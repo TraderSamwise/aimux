@@ -15,6 +15,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsc",
+    "build:release": "rm -rf dist && tsc -p tsconfig.release.json",
     "build:ui:local": "bash scripts/build-local-ui.sh",
     "dev": "tsc --watch",
     "dev:gui": "yarn dev:gui:web",
@@ -43,7 +44,7 @@
     "release:patch": "yarn version --patch && git push --follow-tags",
     "release:minor": "yarn version --minor && git push --follow-tags",
     "release:major": "yarn version --major && git push --follow-tags",
-    "prepack": "yarn build && yarn build:ui:local",
+    "prepack": "yarn build:release && yarn build:ui:local",
     "prepare": "husky",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
   },
