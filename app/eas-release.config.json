@@ -1,0 +1,21 @@
+{
+  "versionFile": "lib/version.ts",
+  "native": {
+    "ios": {
+      "infoPlist": "ios/aimux/Info.plist",
+      "pbxproj": "ios/aimux.xcodeproj/project.pbxproj"
+    }
+  },
+  "eas": {
+    "testflightProfile": "testflight",
+    "productionProfile": "production",
+    "testflightChannel": "testflight",
+    "productionChannel": "production",
+    "defaultBuildPlatform": "ios",
+    "defaultUpdatePlatform": "ios",
+    "autoSubmit": true
+  },
+  "commands": {
+    "checkReleaseEnv": "node scripts/check-release-env.js {target}"
+  }
+}
