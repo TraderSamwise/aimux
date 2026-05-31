@@ -65,7 +65,11 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
+  },
+  "volta": {
+    "node": "24.16.0",
+    "yarn": "1.22.21"
   },
   "dependencies": {
     "commander": "^14.0.0",
@@ -79,7 +83,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@humanfs/core": "^0.19.1",
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.0.0",
     "@types/node-notifier": "^8.0.5",
     "@types/proper-lockfile": "^4.1.4",
     "eslint": "^10.0.3",
