@@ -18,6 +18,8 @@ const owner = {
   email: "sam@example.com",
   role: "owner" as const,
 };
+const activeInviteCreatedAt = "2099-05-24T00:00:00.000Z";
+const activeInviteAcceptedAt = "2099-05-24T00:01:00.000Z";
 
 describe("sharing state", () => {
   it("creates hashed invites and enters multi mode after acceptance", async () => {
@@ -27,7 +29,7 @@ describe("sharing state", () => {
       serviceEndpoint: { host: "127.0.0.1", port: 43192 },
       sessionId: "claude-abc",
       email: "ALEX@EXAMPLE.COM",
-      now: "2026-05-24T00:00:00.000Z",
+      now: activeInviteCreatedAt,
     });
 
     const share = Object.values(created.state.shares)[0];
@@ -45,7 +47,7 @@ describe("sharing state", () => {
         email: "alex@example.com",
         role: "guest",
       },
-      now: "2026-05-24T00:01:00.000Z",
+      now: activeInviteAcceptedAt,
     });
 
     expect(accepted.participant.email).toBe("alex@example.com");
