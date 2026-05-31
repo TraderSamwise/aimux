@@ -32,10 +32,15 @@ jobs:
         with:
           node-version: 22
           cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            app/yarn.lock
 
       - run: corepack enable
 
       - run: yarn install --frozen-lockfile
+
+      - run: yarn --cwd app install --frozen-lockfile
 
       - run: yarn verify
 
@@ -66,11 +71,16 @@ jobs:
         with:
           node-version: 22
           cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            app/yarn.lock
           registry-url: https://registry.npmjs.org
 
       - run: corepack enable
 
       - run: yarn install --frozen-lockfile
+
+      - run: yarn --cwd app install --frozen-lockfile
 
       - name: Verify package.json version matches tag
         env:
