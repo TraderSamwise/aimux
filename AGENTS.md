@@ -102,7 +102,7 @@ Do not re-implement similar logic in `src/hotkeys.ts` or `src/multiplexer/sessio
 
 ### Building The Native Bundle
 
-For distribution, EAS produces native bundles via the `app/scripts/build.sh` pipeline:
+For distribution, EAS produces native bundles via the shared `@tradersamwise/eas-release` pipeline:
 
 ```bash
 cd app

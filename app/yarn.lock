@@ -2990,6 +2990,13 @@
   resolved "https://registry.yarnpkg.com/@tanstack/query-core/-/query-core-5.87.4.tgz#1601d05ee5bf611328f2852cec763ed0c9a090cd"
   integrity sha512-uNsg6zMxraEPDVO2Bn+F3/ctHi+Zsk+MMpcN8h6P7ozqD088F6mFY5TfGM7zuyIrL7HKpDyu6QHfLWiDxh3cuw==
 
+"@tradersamwise/eas-release@0.1.4":
+  version "0.1.4"
+  resolved "https://registry.yarnpkg.com/@tradersamwise/eas-release/-/eas-release-0.1.4.tgz#3ac9761361f42e11219d3ffc1b210b65643005a7"
+  integrity sha512-bhf0zph/cB6cSJukOXpHLQpdOMrgp9FQQuu2cNHFWnzpgvzVReOZSzjkuxR+4pJL39b5/k45Mk3OaPzvi9LHyg==
+  dependencies:
+    commander "^14.0.0"
+
 "@tsconfig/node10@^1.0.7":
   version "1.0.12"
   resolved "https://registry.yarnpkg.com/@tsconfig/node10/-/node10-1.0.12.tgz#be57ceac1e4692b41be9de6be8c32a106636dba4"
@@ -4323,7 +4330,7 @@ combined-stream@^1.0.8:
   dependencies:
     delayed-stream "~1.0.0"
 
-commander@14.0.3:
+commander@14.0.3, commander@^14.0.0:
   version "14.0.3"
   resolved "https://registry.yarnpkg.com/commander/-/commander-14.0.3.tgz#425d79b48f9af82fcd9e4fc1ea8af6c5ec07bbc2"
   integrity sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==

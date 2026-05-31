@@ -28,16 +28,17 @@
     "check:env": "node scripts/check-release-env.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "build": "./scripts/build.sh",
-    "build:testflight": "./scripts/build.sh --testflight",
-    "build:production": "./scripts/build.sh --production",
-    "update": "./scripts/update.sh --testflight",
-    "update:production": "./scripts/update.sh --production",
-    "version:current": "./scripts/version-manager.sh current",
-    "version:bump-build": "./scripts/version-manager.sh bump-build",
-    "version:bump-ota": "./scripts/version-manager.sh bump-ota",
-    "version:rollback": "./scripts/version-manager.sh rollback",
-    "version:set": "./scripts/version-manager.sh set"
+    "build": "eas-release build testflight",
+    "build:testflight": "eas-release build testflight",
+    "build:production": "eas-release build production",
+    "update": "eas-release update testflight",
+    "update:production": "eas-release update production",
+    "version:current": "eas-release current",
+    "version:bump-build": "eas-release bump-build",
+    "version:bump-ota": "eas-release bump-ota",
+    "version:rollback": "eas-release rollback",
+    "version:set": "eas-release set",
+    "version:sync": "eas-release sync"
   },
   "dependencies": {
     "@clerk/clerk-expo": "^2.19.22",
@@ -78,6 +79,7 @@
     "tailwindcss": "3"
   },
   "devDependencies": {
+    "@tradersamwise/eas-release": "0.1.4",
     "@types/event-source-polyfill": "^1.0.5",
     "@types/react": "~19.1.0",
     "eas-cli": "^18.5.0",
