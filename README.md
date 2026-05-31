@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/TraderSamwise/aimux/master/scripts/
 ```
 
 This installs the bundled release under `~/.aimux/native/` and links `aimux` into `~/.local/bin`.
-It still requires Node.js >= 22 and `tmux` in `PATH`; it does not require npm/yarn on the target machine.
+It still requires Node.js >= 24 and `tmux` in `PATH`; it does not require npm/yarn on the target machine.
 
 To install a specific version:
 
@@ -80,7 +80,7 @@ yarn build
 yarn link
 ```
 
-Requires Node.js >= 22 and `tmux` in `PATH`.
+Requires Node.js >= 24 and `tmux` in `PATH`.
 
 ### Develop the App from Source
 
@@ -894,7 +894,7 @@ Relative `baseDir` values are resolved from the main repo root. Absolute paths a
 ## Requirements
 
 - macOS (Linux support planned)
-- Node.js >= 22
+- Node.js >= 24
 - At least one supported AI tool installed: `claude`, `codex`, or `aider`
 - Notifications work out of the box on macOS, Linux, and Windows
 

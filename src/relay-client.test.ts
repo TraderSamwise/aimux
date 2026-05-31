@@ -30,7 +30,7 @@ describe("RelayClient runtime compatibility", () => {
       relayUrl: "wss://relay.aimux.app",
       lastConnectedAt: null,
     });
-    expect(status.lastError).toContain("Node 22+");
+    expect(status.lastError).toContain("Node 24+");
   });
 
   it("turns relay client_connected security events into local notifications", async () => {

@@ -6,8 +6,8 @@
 - Cloudflare account with Workers + Durable Objects enabled
 - Domain: aimux.app with DNS managed by Cloudflare
 - Vercel account (for the web app) or EAS (for native builds)
-- Node.js 22+ on machines running the local aimux daemon; remote relay mode
-  uses the runtime `WebSocket` implementation shipped with Node 22+
+- Node.js 24+ on machines running the local aimux daemon; remote relay mode
+  uses the runtime `WebSocket` implementation shipped with Node 24+
 
 ## 1. Clerk Setup
 
