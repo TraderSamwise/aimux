@@ -39,7 +39,7 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$ROOT_DIR"
-yarn build
+yarn build:release
 yarn build:ui:local
 
 PKG_DIR="$TMP_DIR/aimux"
@@ -61,6 +61,8 @@ chmod +x "$PKG_DIR/node_modules/node-pty/prebuilds/darwin-"*/spawn-helper 2>/dev
 if [ -d "$PKG_DIR/node_modules/node-pty/prebuilds" ]; then
   find "$PKG_DIR/node_modules/node-pty/prebuilds" -mindepth 1 -maxdepth 1 -type d ! -name "$PLATFORM-$ARCH" -exec rm -rf {} +
 fi
+
+find "$PKG_DIR" -name '*.map' -type f -delete
 
 mkdir -p "$OUT_DIR"
 rm -f "$OUT_DIR/$ASSET" "$OUT_DIR/$ASSET.sha256"
