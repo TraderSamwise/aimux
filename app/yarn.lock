@@ -2990,10 +2990,10 @@
   resolved "https://registry.yarnpkg.com/@tanstack/query-core/-/query-core-5.87.4.tgz#1601d05ee5bf611328f2852cec763ed0c9a090cd"
   integrity sha512-uNsg6zMxraEPDVO2Bn+F3/ctHi+Zsk+MMpcN8h6P7ozqD088F6mFY5TfGM7zuyIrL7HKpDyu6QHfLWiDxh3cuw==
 
-"@tradersamwise/eas-release@0.1.7":
-  version "0.1.7"
-  resolved "https://registry.yarnpkg.com/@tradersamwise/eas-release/-/eas-release-0.1.7.tgz#7df9e1ccf32d99b56f42c7601331bbec49e94a22"
-  integrity sha512-w553rJ2dmKapgqRKf9ALfU1+mKXO3Jlc26/6Mc3flFfpaPAyPuu/gLJx1iabYd6xvSGo22A9cT8c4sqZE5zdlw==
+"@tradersamwise/eas-release@0.1.9":
+  version "0.1.9"
+  resolved "https://registry.yarnpkg.com/@tradersamwise/eas-release/-/eas-release-0.1.9.tgz#2276a36d28aabb43457ec5b045d005489cbcbda6"
+  integrity sha512-D1OjrL60B71SSLhLrArB5vesQEg1dpqSFHmiFrdne3c8Cna4Dx1Kv57tdkKxSCc7j4zHFRkQ+xB/BKt+0/KazQ==
   dependencies:
     commander "^14.0.0"
 
