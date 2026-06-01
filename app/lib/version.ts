@@ -1,12 +1,12 @@
 // Auto-generated version file - DO NOT EDIT MANUALLY
-// Use 'yarn build:testflight' for new native builds or 'yarn update' for OTA updates
+// Use release scripts for new native builds or OTA updates
 
 export const APP_VERSION = {
   version: "1.0.0", // Marketing version for app stores
   buildNumber: 2, // Native build number (increments only for native builds)
-  otaVersion: 3, // OTA update version (increments for JS updates)
-  timestamp: "2026-05-30T23:25:54Z", // Last update timestamp
-  channel: "testflight", // 'testflight' for TestFlight or 'production' for App Store
+  otaVersion: 4, // OTA update version (increments for JS updates)
+  timestamp: "2026-06-01T03:21:54Z", // Last update timestamp
+  channel: "testflight", // Release channel
 };
 
 export const getVersionString = () => {
