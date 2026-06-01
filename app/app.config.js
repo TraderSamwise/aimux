@@ -38,7 +38,10 @@ module.exports = {
       output: "single",
       favicon: "./assets/images/favicon.png",
     },
-    runtimeVersion: { policy: "fingerprint" },
+    // OTA updates must stay on the same runtime for a given native build.
+    // The generated version file changes on every OTA bump, so fingerprint
+    // runtime versions would make each OTA target a runtime no installed app has.
+    runtimeVersion: `${APP_VERSION.version}-${APP_VERSION.buildNumber}`,
     updates: {
       url: `https://u.expo.dev/${EAS_PROJECT_ID}`,
       enabled: HAS_REAL_EAS_PROJECT,
