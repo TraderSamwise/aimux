@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { LOCAL_MODE, useAuth, useUser } from "@/lib/auth";
 import { useMainTabNavigation } from "@/lib/main-tabs";
+import { APP_VERSION, getVersionString } from "@/lib/version";
 
 function initialsFromUser(user: ReturnType<typeof useUser>["user"]): string {
   if (!user) return "?";
@@ -36,8 +37,11 @@ export function AuthMenu() {
 
   const close = () => setOpen(false);
 
+  const versionLabel = `Version ${getVersionString()}`;
+  const buildLabel = `Build ${APP_VERSION.buildNumber} · OTA ${APP_VERSION.otaVersion}`;
+
   const menu = (
-    <Card className="w-48 p-1">
+    <Card className="w-56 p-1">
       <Pressable
         className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
         onPress={() => {
@@ -56,6 +60,10 @@ export function AuthMenu() {
       >
         <Text className="text-sm text-destructive">Sign out</Text>
       </Pressable>
+      <View className="mt-1 border-t border-border px-3 py-2">
+        <Text className="text-xs text-muted-foreground">{versionLabel}</Text>
+        <Text className="mt-0.5 text-xs text-muted-foreground">{buildLabel}</Text>
+      </View>
     </Card>
   );
 
