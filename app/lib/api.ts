@@ -199,15 +199,54 @@ export interface SendAgentInputResponse {
   accepted: true;
 }
 
+export interface SendAgentInputOptions extends ApiOpts {
+  attachmentIds?: string[];
+}
+
 export async function sendAgentInput(
   endpoint: ServiceEndpoint,
   sessionId: string,
   text: string,
-  opts?: ApiOpts,
+  opts?: SendAgentInputOptions,
 ): Promise<SendAgentInputResponse> {
   return callProjectJson<SendAgentInputResponse>(endpoint, "POST", "/agents/input", opts, {
     sessionId,
     text,
+    ...(opts?.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
+  });
+}
+
+export interface UploadImageAttachmentInput {
+  filename: string;
+  mimeType: string;
+  dataBase64: string;
+}
+
+export interface UploadImageAttachmentResponse {
+  ok: boolean;
+  attachment: {
+    id: string;
+    kind: "image";
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+    sha256: string;
+    createdAt: string;
+    source: "path" | "upload";
+    contentUrl: string;
+  };
+}
+
+export async function uploadImageAttachment(
+  endpoint: ServiceEndpoint,
+  input: UploadImageAttachmentInput,
+  opts?: ApiOpts,
+): Promise<UploadImageAttachmentResponse> {
+  return callProjectJson<UploadImageAttachmentResponse>(endpoint, "POST", "/attachments", opts, {
+    kind: "image",
+    filename: input.filename,
+    mimeType: input.mimeType,
+    dataBase64: input.dataBase64,
   });
 }
 

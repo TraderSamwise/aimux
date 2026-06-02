@@ -30,6 +30,7 @@ import {
   sendAgentInput,
   setApiRelay,
   stopService,
+  uploadImageAttachment,
 } from "@/lib/api";
 import type { RelayTransport } from "@/lib/relay-transport";
 
@@ -115,7 +116,12 @@ describe("api relay routing", () => {
     await graveyardWorktree(endpoint, "/repo/feature/a");
     await resurrectGraveyardWorktree(endpoint, "/repo/feature/a");
     await deleteGraveyardWorktree(endpoint, "/repo/feature/a");
-    await sendAgentInput(endpoint, "agent-1", "hello");
+    await sendAgentInput(endpoint, "agent-1", "hello", { attachmentIds: ["att_one"] });
+    await uploadImageAttachment(endpoint, {
+      filename: "shot.png",
+      mimeType: "image/png",
+      dataBase64: "aGVsbG8=",
+    });
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(request).toHaveBeenNthCalledWith(1, "PUT", "/proxy/127.0.0.1/43210/plans/agent-1", {
@@ -168,7 +174,53 @@ describe("api relay routing", () => {
     expect(request).toHaveBeenNthCalledWith(11, "POST", "/proxy/127.0.0.1/43210/agents/input", {
       sessionId: "agent-1",
       text: "hello",
+      attachmentIds: ["att_one"],
     });
+    expect(request).toHaveBeenNthCalledWith(12, "POST", "/proxy/127.0.0.1/43210/attachments", {
+      kind: "image",
+      filename: "shot.png",
+      mimeType: "image/png",
+      dataBase64: "aGVsbG8=",
+    });
+  });
+
+  it("uploads image attachments through direct project HTTP with auth", async () => {
+    const fetchMock = installFetchMock({
+      ok: true,
+      attachment: {
+        id: "att_one",
+        kind: "image",
+        filename: "shot.png",
+        mimeType: "image/png",
+        sizeBytes: 5,
+        sha256: "hash",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        source: "upload",
+        contentUrl: "/attachments/att_one/content",
+      },
+    });
+
+    await uploadImageAttachment(
+      endpoint,
+      {
+        filename: "shot.png",
+        mimeType: "image/png",
+        dataBase64: "aGVsbG8=",
+      },
+      { token: "local-token" },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:43210/attachments");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      kind: "image",
+      filename: "shot.png",
+      mimeType: "image/png",
+      dataBase64: "aGVsbG8=",
+    });
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer local-token");
   });
 
   it("preserves optional list query parameters through the relay proxy", async () => {
