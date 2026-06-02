@@ -34,6 +34,7 @@ import {
   type SharedSessionSummary,
 } from "@/lib/api";
 import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
+import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { parentViewHrefForPath } from "@/lib/view-location";
@@ -220,14 +221,20 @@ export default function ChatScreen() {
       }),
     [output, terminalDividerWidth],
   );
+  const composerSendText = getComposerSendText({
+    draft,
+    hasServiceEndpoint: Boolean(serviceEndpoint),
+    hasSessionId: Boolean(sessionId),
+    sendBusy,
+  });
 
   function handleTerminalPaneLayout(event: LayoutChangeEvent) {
     setTerminalPaneWidth(event.nativeEvent.layout.width);
   }
 
   async function handleSendMessage() {
-    const text = draft.trim();
-    if (!serviceEndpoint || !sessionId || !text || sendBusy) return;
+    const text = composerSendText;
+    if (!serviceEndpoint || !sessionId || !text) return;
     setDraft("");
     setSendBusy(true);
     setSendError(null);
@@ -242,11 +249,17 @@ export default function ChatScreen() {
   }
 
   function handleComposerKeyPress(event: {
-    nativeEvent: { key?: string; shiftKey?: boolean };
+    nativeEvent: {
+      key?: string;
+      shiftKey?: boolean;
+      ctrlKey?: boolean;
+      metaKey?: boolean;
+      altKey?: boolean;
+    };
     preventDefault?: () => void;
   }) {
     if (Platform.OS !== "web") return;
-    if (event.nativeEvent.key === "Enter" && !event.nativeEvent.shiftKey) {
+    if (shouldSubmitComposerKey(event.nativeEvent)) {
       event.preventDefault?.();
       void handleSendMessage();
     }
@@ -593,7 +606,7 @@ export default function ChatScreen() {
                   />
                   <Button
                     label={sendBusy ? "Sending..." : "Send"}
-                    disabled={sendBusy || !draft.trim()}
+                    disabled={!composerSendText}
                     onPress={handleSendMessage}
                     className="h-11 px-4"
                   />
