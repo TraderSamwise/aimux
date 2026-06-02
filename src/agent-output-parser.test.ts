@@ -175,6 +175,29 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[4]?.text).toContain("bypass permissions on");
   });
 
+  it("keeps assistant markdown bullets with timing as response text", () => {
+    const raw = [
+      "› should I retry?",
+      "",
+      "• I'll wait for 5s before retrying.",
+      "  Then I will check the result.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "response"]);
+    expect(parsed.blocks[1]?.text).toBe("I'll wait for 5s before retrying.\n  Then I will check the result.");
+  });
+
+  it("keeps assistant star bullets with parentheticals as response text", () => {
+    const raw = ["› summarize changes", "", "* Added tests (2 files)"].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "response"]);
+    expect(parsed.blocks[1]?.text).toBe("* Added tests (2 files)");
+  });
+
   it("parses Claude spinner/progress rows as status instead of assistant chat", () => {
     const raw = [
       "❯ hi",
