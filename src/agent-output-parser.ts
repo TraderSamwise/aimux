@@ -69,12 +69,18 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /gpt-|claude|context\)|bypass permissions|shift\+tab|to cycle/i.test(trimmed)
     );
   };
+  const isCodexUiLine = (line: string) => {
+    const trimmed = line.trim();
+    return /^│/.test(trimmed) || /^╰/.test(trimmed) || /^╭/.test(trimmed);
+  };
   const isStatusLine = (line: string) => {
     const trimmed = line.trim();
     if (!trimmed) return false;
     return (
       /^■\s?/.test(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
+      /^•\s?Starting MCP servers\b/.test(trimmed) ||
+      /^•\s?\S.*\bfor \d+s\b/.test(trimmed) ||
       /^⏵⏵\s/.test(trimmed) ||
       /^\*\s+[A-Z][A-Za-z-]+(?:\.\.\.|…)?$/.test(trimmed) ||
       /^[*✻✽✶]\s+\S.*(?:\bfor \d+s\b|\.\.\.|…|\(.+\))$/.test(trimmed) ||
@@ -98,6 +104,10 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const trimmed = line.trimEnd();
 
     if (isDivider(trimmed)) continue;
+    if (isCodexUiLine(trimmed)) {
+      pushLine(sawPrompt ? "status" : "meta", trimmed);
+      continue;
+    }
     if (isPromptLine(trimmed)) {
       const promptText = stripPromptMarker(trimmed);
       if (!promptText.trim()) {
@@ -110,7 +120,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       expectingResponse = false;
       continue;
     }
-    if (/^(•|⏺)\s?/.test(trimmed) && !/^•\s?Working\b/.test(trimmed)) {
+    if (/^(•|⏺)\s?/.test(trimmed) && !isStatusLine(trimmed)) {
       pushLine("response", stripResponseMarker(trimmed));
       sawPrompt = true;
       expectingResponse = false;
@@ -241,36 +251,5 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[]): AgentOutputBlock
     merged.push(block);
   }
 
-  return stripTrailingVisiblePrompt(merged);
-}
-
-function stripTrailingVisiblePrompt(blocks: AgentOutputBlock[]): AgentOutputBlock[] {
-  const promptIndex = findLastIndex(blocks, (block) => block.type === "prompt");
-  if (promptIndex === -1) {
-    return blocks;
-  }
-
-  const hasResponseAfterPrompt = blocks.slice(promptIndex + 1).some((block) => block.type === "response");
-  if (hasResponseAfterPrompt) {
-    return blocks;
-  }
-
-  const trailingBlocks = blocks.slice(promptIndex + 1);
-  const hasOnlyNonConversationTail = trailingBlocks.every(
-    (block) => block.type === "status" || block.type === "meta" || block.type === "raw",
-  );
-  if (!hasOnlyNonConversationTail) {
-    return blocks;
-  }
-
-  return blocks.filter((_, index) => index !== promptIndex);
-}
-
-function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    if (predicate(items[index]!)) {
-      return index;
-    }
-  }
-  return -1;
+  return merged;
 }
