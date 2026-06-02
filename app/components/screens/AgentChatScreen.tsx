@@ -64,6 +64,10 @@ const TERMINAL_HORIZONTAL_PADDING = 32;
 const APPROX_TERMINAL_CHAR_WIDTH = 8;
 const MAX_PENDING_ATTACHMENTS = 4;
 
+type PendingImageAttachment = PickedImageAttachment & {
+  uploadedAttachmentId?: string;
+};
+
 export default function ChatScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
   const sessionId = singleRouteParam(params.sessionId);
@@ -92,7 +96,7 @@ export default function ChatScreen() {
   const [shareSummary, setShareSummary] = useState<SharedSessionSummary | null>(null);
   const [shareAction, setShareAction] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [pendingAttachments, setPendingAttachments] = useState<PickedImageAttachment[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingImageAttachment[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
@@ -245,30 +249,35 @@ export default function ChatScreen() {
 
   async function handleSendMessage() {
     const text = composerSendText ?? "";
-    const attachments = pendingAttachments;
+    const attachments = [...pendingAttachments];
     if (!serviceEndpoint || !sessionId || (!text && attachments.length === 0)) return;
     setDraft("");
     setPendingAttachments([]);
     setSendBusy(true);
     setSendError(null);
     try {
-      const uploaded = [];
-      for (const attachment of attachments) {
-        uploaded.push(
-          await uploadImageAttachment(
-            serviceEndpoint,
-            {
-              filename: attachment.filename,
-              mimeType: attachment.mimeType,
-              dataBase64: attachment.dataBase64,
-            },
-            { token },
-          ),
+      for (let idx = 0; idx < attachments.length; idx += 1) {
+        const attachment = attachments[idx];
+        if (attachment.uploadedAttachmentId) continue;
+        const uploaded = await uploadImageAttachment(
+          serviceEndpoint,
+          {
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            dataBase64: attachment.dataBase64,
+          },
+          { token },
         );
+        attachments[idx] = {
+          ...attachment,
+          uploadedAttachmentId: uploaded.attachment.id,
+        };
       }
       await sendAgentInput(serviceEndpoint, sessionId, text, {
         token,
-        attachmentIds: uploaded.map((result) => result.attachment.id),
+        attachmentIds: attachments
+          .map((attachment) => attachment.uploadedAttachmentId)
+          .filter((id): id is string => Boolean(id)),
       });
     } catch (err) {
       setDraft(text);

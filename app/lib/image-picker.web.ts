@@ -20,7 +20,18 @@ export async function pickImageAttachment(): Promise<PickedImageAttachment | nul
   input.accept = ACCEPTED_IMAGE_TYPES;
 
   const file = await new Promise<File | null>((resolve) => {
-    input.onchange = () => resolve(input.files?.[0] ?? null);
+    const cleanup = () => {
+      input.removeEventListener("change", handleChange);
+      input.removeEventListener("cancel", handleCancel);
+    };
+    const finish = (file: File | null) => {
+      cleanup();
+      resolve(file);
+    };
+    const handleChange = () => finish(input.files?.[0] ?? null);
+    const handleCancel = () => finish(null);
+    input.addEventListener("change", handleChange);
+    input.addEventListener("cancel", handleCancel);
     input.click();
   });
   if (!file) return null;
