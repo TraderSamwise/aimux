@@ -1403,6 +1403,200 @@ describe("MetadataServer threads API", () => {
     expect(sent).toEqual([]);
   });
 
+  it("uploads image attachments and serves their content over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const imageBytes = Buffer.from("uploaded-image-bytes");
+
+    const uploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "../shot.png",
+        mimeType: "image/png",
+        dataBase64: imageBytes.toString("base64"),
+      }),
+    });
+    const uploaded = (await uploadRes.json()) as {
+      ok: boolean;
+      attachment: { id: string; filename: string; contentUrl: string; sizeBytes: number; source: string };
+    };
+
+    expect(uploadRes.ok).toBe(true);
+    expect(uploaded.attachment.id).toMatch(/^att_/);
+    expect(uploaded.attachment.filename).toBe("shot.png");
+    expect(uploaded.attachment.sizeBytes).toBe(imageBytes.length);
+    expect(uploaded.attachment.source).toBe("upload");
+
+    const contentRes = await fetch(`${base}${uploaded.attachment.contentUrl}`);
+    const contentBytes = Buffer.from(await contentRes.arrayBuffer());
+    expect(contentRes.ok).toBe(true);
+    expect(contentRes.headers.get("content-type")).toBe("image/png");
+    expect(contentBytes.equals(imageBytes)).toBe(true);
+  });
+
+  it("rejects malformed uploaded image data", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const uploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "bad.png",
+        mimeType: "image/png",
+        dataBase64: "not-base64",
+      }),
+    });
+    const uploaded = (await uploadRes.json()) as { ok: boolean; error: string };
+
+    expect(uploadRes.status).toBe(400);
+    expect(uploaded).toEqual({ ok: false, error: "attachment content must be base64" });
+  });
+
+  it("sends agent input with uploaded attachment file references", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const uploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "chart.webp",
+        mimeType: "image/webp",
+        dataBase64: Buffer.from("webp-bytes").toString("base64"),
+      }),
+    });
+    const uploaded = (await uploadRes.json()) as { attachment: { id: string } };
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "codex-1",
+        text: "please inspect",
+        attachmentIds: [uploaded.attachment.id],
+      }),
+    });
+
+    expect(inputRes.ok).toBe(true);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("please inspect");
+    expect(sent[0]!.text).toContain("Attached image files:");
+    expect(sent[0]!.text).toContain("chart.webp (image/webp, 10 bytes):");
+    expect(sent[0]!.text).toContain(join(repoRoot, ".aimux", "attachments", `${uploaded.attachment.id}.webp`));
+  });
+
+  it("accepts attachment-only agent input with a default prompt", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const uploadRes = await fetch(`${base}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "chart.png",
+        mimeType: "image/png",
+        dataBase64: Buffer.from("png-bytes").toString("base64"),
+      }),
+    });
+    const uploaded = (await uploadRes.json()) as { attachment: { id: string } };
+
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", text: "", attachmentIds: [uploaded.attachment.id] }),
+    });
+
+    expect(inputRes.ok).toBe(true);
+    expect(sent[0]!.text).toContain("Please review the attached image file(s).");
+    expect(sent[0]!.text).toContain("chart.png");
+  });
+
+  it("rejects agent input with missing attachment ids", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", text: "inspect", attachmentIds: ["att_missing"] }),
+    });
+    const inputJson = (await inputRes.json()) as { ok: boolean; error: string };
+
+    expect(inputRes.status).toBe(400);
+    expect(inputJson).toEqual({ ok: false, error: "attachment not found: att_missing" });
+    expect(sent).toEqual([]);
+  });
+
+  it("rejects agent input with unsafe attachment ids", async () => {
+    const sent: Array<{ sessionId: string; text: string }> = [];
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        sendAgentInput: ({ sessionId, text }) => {
+          sent.push({ sessionId, text });
+          return { sessionId, accepted: true };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const inputRes = await fetch(`${base}/agents/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", text: "inspect", attachmentIds: ["../secrets"] }),
+    });
+    const inputJson = (await inputRes.json()) as { ok: boolean; error: string };
+
+    expect(inputRes.status).toBe(400);
+    expect(inputJson).toEqual({ ok: false, error: "attachment not found: ../secrets" });
+    expect(sent).toEqual([]);
+  });
+
   it("streams alert events over SSE", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();

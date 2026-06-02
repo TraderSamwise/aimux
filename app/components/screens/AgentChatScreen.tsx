@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -14,8 +15,10 @@ import {
   ChevronLeft,
   Columns2,
   MessageSquare,
+  Paperclip,
   SquareTerminal,
   UserPlus,
+  X,
 } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { Button } from "@/components/ui/button";
@@ -31,8 +34,10 @@ import {
   listShares,
   removeShareParticipant,
   sendAgentInput,
+  uploadImageAttachment,
   type SharedSessionSummary,
 } from "@/lib/api";
+import { pickImageAttachment, type PickedImageAttachment } from "@/lib/image-picker";
 import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { singleRouteParam } from "@/lib/route-params";
@@ -57,6 +62,11 @@ const WIDE_TERMINAL_DIVIDER_WIDTH = 96;
 const MIN_TERMINAL_DIVIDER_WIDTH = 24;
 const TERMINAL_HORIZONTAL_PADDING = 32;
 const APPROX_TERMINAL_CHAR_WIDTH = 8;
+const MAX_PENDING_ATTACHMENTS = 4;
+
+type PendingImageAttachment = PickedImageAttachment & {
+  uploadedAttachmentId?: string;
+};
 
 export default function ChatScreen() {
   const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
@@ -86,10 +96,12 @@ export default function ChatScreen() {
   const [shareSummary, setShareSummary] = useState<SharedSessionSummary | null>(null);
   const [shareAction, setShareAction] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<PendingImageAttachment[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
+  const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const terminalScrollRef = useRef<ScrollView>(null);
 
@@ -227,25 +239,83 @@ export default function ChatScreen() {
     hasSessionId: Boolean(sessionId),
     sendBusy,
   });
+  const hasPendingAttachments = pendingAttachments.length > 0;
+  const canSendMessage = Boolean(
+    serviceEndpoint && sessionId && !sendBusy && (composerSendText || hasPendingAttachments),
+  );
 
   function handleTerminalPaneLayout(event: LayoutChangeEvent) {
     setTerminalPaneWidth(event.nativeEvent.layout.width);
   }
 
   async function handleSendMessage() {
-    const text = composerSendText;
-    if (!serviceEndpoint || !sessionId || !text) return;
+    const text = composerSendText ?? "";
+    const attachments = [...pendingAttachments];
+    if (
+      !serviceEndpoint ||
+      !sessionId ||
+      sendBusyRef.current ||
+      (!text && attachments.length === 0)
+    ) {
+      return;
+    }
+    sendBusyRef.current = true;
     setDraft("");
+    setPendingAttachments([]);
     setSendBusy(true);
     setSendError(null);
     try {
-      await sendAgentInput(serviceEndpoint, sessionId, text, { token });
+      for (let idx = 0; idx < attachments.length; idx += 1) {
+        const attachment = attachments[idx];
+        if (attachment.uploadedAttachmentId) continue;
+        const uploaded = await uploadImageAttachment(
+          serviceEndpoint,
+          {
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            dataBase64: attachment.dataBase64,
+          },
+          { token },
+        );
+        attachments[idx] = {
+          ...attachment,
+          uploadedAttachmentId: uploaded.attachment.id,
+        };
+      }
+      await sendAgentInput(serviceEndpoint, sessionId, text, {
+        token,
+        attachmentIds: attachments
+          .map((attachment) => attachment.uploadedAttachmentId)
+          .filter((id): id is string => Boolean(id)),
+      });
     } catch (err) {
       setDraft(text);
+      setPendingAttachments(attachments);
       setSendError(err instanceof Error ? err.message : String(err));
     } finally {
+      sendBusyRef.current = false;
       setSendBusy(false);
     }
+  }
+
+  async function handleAttachImage() {
+    if (sendBusy || sendBusyRef.current) return;
+    if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
+      setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} images.`);
+      return;
+    }
+    setSendError(null);
+    try {
+      const picked = await pickImageAttachment();
+      if (!picked) return;
+      setPendingAttachments((current) => [...current, picked]);
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function removePendingAttachment(id: string) {
+    setPendingAttachments((current) => current.filter((attachment) => attachment.id !== id));
   }
 
   function handleComposerKeyPress(event: {
@@ -593,6 +663,37 @@ export default function ChatScreen() {
                 className="border-t border-border bg-background px-3 py-3"
                 style={{ flexShrink: 0 }}
               >
+                {pendingAttachments.length > 0 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
+                    <View className="flex-row gap-2">
+                      {pendingAttachments.map((attachment) => (
+                        <View
+                          key={attachment.id}
+                          className="w-24 rounded-md border border-border bg-card p-1"
+                        >
+                          <Image
+                            source={{ uri: attachment.previewUri }}
+                            className="h-14 w-full rounded"
+                            resizeMode="cover"
+                          />
+                          <Text
+                            className="mt-1 text-[10px] text-muted-foreground"
+                            numberOfLines={1}
+                          >
+                            {attachment.filename}
+                          </Text>
+                          <Pressable
+                            onPress={() => removePendingAttachment(attachment.id)}
+                            accessibilityLabel={`Remove ${attachment.filename}`}
+                            className="absolute right-1 top-1 h-5 w-5 items-center justify-center rounded-full bg-background/90"
+                          >
+                            <X size={12} color="#a1a1aa" />
+                          </Pressable>
+                        </View>
+                      ))}
+                    </View>
+                  </ScrollView>
+                ) : null}
                 <View className="flex-row items-end gap-2">
                   <Input
                     value={draft}
@@ -604,9 +705,17 @@ export default function ChatScreen() {
                     className="min-h-11 max-h-32 flex-1 py-2 text-sm"
                     textAlignVertical="top"
                   />
+                  <Pressable
+                    onPress={handleAttachImage}
+                    disabled={sendBusy}
+                    accessibilityLabel="Attach image"
+                    className="h-11 w-11 items-center justify-center rounded-md border border-border disabled:opacity-40"
+                  >
+                    <Paperclip size={17} color="#a1a1aa" />
+                  </Pressable>
                   <Button
                     label={sendBusy ? "Sending..." : "Send"}
-                    disabled={!composerSendText}
+                    disabled={!canSendMessage}
                     onPress={handleSendMessage}
                     className="h-11 px-4"
                   />

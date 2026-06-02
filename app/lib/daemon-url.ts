@@ -19,3 +19,17 @@ export interface ServiceEndpoint {
 export function getServiceUrl(endpoint: ServiceEndpoint): string {
   return `http://${endpoint.host}:${endpoint.port}`;
 }
+
+export function getRelayHttpUrl(): string | undefined {
+  const relayUrl = env.AIMUX_RELAY_URL;
+  if (!relayUrl) return undefined;
+  if (relayUrl.startsWith("wss://")) return `https://${relayUrl.slice("wss://".length)}`;
+  if (relayUrl.startsWith("ws://")) return `http://${relayUrl.slice("ws://".length)}`;
+  return relayUrl;
+}
+
+export function getRelayServiceUrl(endpoint: ServiceEndpoint, path: string): string | null {
+  const relayHttpUrl = getRelayHttpUrl();
+  if (!relayHttpUrl) return null;
+  return `${relayHttpUrl}/proxy/${endpoint.host}/${endpoint.port}${path}`;
+}

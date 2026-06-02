@@ -59,7 +59,13 @@ import { buildWorkflowEntries } from "./workflow.js";
 import { markLastUsed } from "./last-used.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
-import { getAttachment, getAttachmentContent } from "./attachment-store.js";
+import {
+  createUploadedAttachment,
+  getAttachment,
+  getAttachmentContent,
+  getAttachmentRecord,
+  type AttachmentRecord,
+} from "./attachment-store.js";
 import { ProjectEventBus, type AlertKind } from "./project-events.js";
 import { getProjectServiceManifest } from "./project-service-manifest.js";
 import { applyShellStateTransition } from "./shell-state.js";
@@ -459,6 +465,18 @@ function sendBytes(res: ServerResponse, status: number, body: Buffer, mimeType: 
   res.setHeader("access-control-allow-origin", "*");
   res.setHeader("connection", "close");
   res.end(body);
+}
+
+function formatAgentInputWithAttachments(text: string, attachments: AttachmentRecord[]): string {
+  const trimmedText = text.trim();
+  if (attachments.length === 0) return text;
+
+  const body = trimmedText || "Please review the attached image file(s).";
+  const attachmentLines = attachments.map((attachment) => {
+    return `- ${attachment.filename} (${attachment.mimeType}, ${attachment.sizeBytes} bytes): ${attachment.contentPath}`;
+  });
+
+  return `${body}\n\nAttached image files:\n${attachmentLines.join("\n")}`;
 }
 
 function sendSseEvent(res: ServerResponse, event: string, data: unknown): void {
@@ -2647,24 +2665,63 @@ export class MetadataServer {
       }
 
       if (req.method === "POST" && url.pathname === "/agents/input") {
-        const body = (await readJson(req)) as { sessionId?: string; text?: string };
+        const body = (await readJson(req)) as { sessionId?: string; text?: string; attachmentIds?: unknown };
         const sessionId = body.sessionId?.trim() ?? "";
         if (!sessionId) {
           send(res, 400, { ok: false, error: "sessionId is required" });
           return;
         }
         const text = typeof body.text === "string" ? body.text : "";
-        if (!text.trim()) {
+        const attachmentIds = Array.isArray(body.attachmentIds)
+          ? body.attachmentIds
+              .filter((id): id is string => typeof id === "string")
+              .map((id) => id.trim())
+              .filter(Boolean)
+          : [];
+        if (!text.trim() && attachmentIds.length === 0) {
           send(res, 400, { ok: false, error: "text is required" });
+          return;
+        }
+        const attachments = attachmentIds.map((id) => getAttachmentRecord(id));
+        const missingAttachmentId = attachmentIds.find((_, index) => attachments[index] === null);
+        if (missingAttachmentId) {
+          send(res, 400, { ok: false, error: `attachment not found: ${missingAttachmentId}` });
           return;
         }
         if (!this.options.lifecycle?.sendAgentInput) {
           send(res, 501, { ok: false, error: "agent input not supported by this service" });
           return;
         }
-        const result = await this.options.lifecycle.sendAgentInput({ sessionId, text });
+        const formattedText = formatAgentInputWithAttachments(
+          text,
+          attachments.filter((entry): entry is AttachmentRecord => !!entry),
+        );
+        const result = await this.options.lifecycle.sendAgentInput({ sessionId, text: formattedText });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/attachments") {
+        const body = (await readJson(req)) as { filename?: unknown; mimeType?: unknown; dataBase64?: unknown };
+        if (
+          typeof body.filename !== "string" ||
+          typeof body.mimeType !== "string" ||
+          typeof body.dataBase64 !== "string"
+        ) {
+          send(res, 400, { ok: false, error: "filename, mimeType, and dataBase64 are required" });
+          return;
+        }
+        try {
+          const attachment = createUploadedAttachment({
+            filename: body.filename,
+            mimeType: body.mimeType,
+            dataBase64: body.dataBase64,
+          });
+          send(res, 200, { ok: true, attachment });
+        } catch (error) {
+          send(res, 400, { ok: false, error: error instanceof Error ? error.message : "invalid attachment" });
+        }
         return;
       }
 
