@@ -11,6 +11,7 @@ import { messageSpeakerLabel, resolveImageUrl } from "@/components/MessageBlock"
 
 const endpoint = { host: "127.0.0.1", port: 43210 };
 const originalConnectionMode = process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
+const originalRelayUrl = process.env.EXPO_PUBLIC_AIMUX_RELAY_URL;
 
 describe("MessageBlock image URLs", () => {
   afterEach(() => {
@@ -18,6 +19,11 @@ describe("MessageBlock image URLs", () => {
       delete process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE;
     } else {
       process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = originalConnectionMode;
+    }
+    if (originalRelayUrl === undefined) {
+      delete process.env.EXPO_PUBLIC_AIMUX_RELAY_URL;
+    } else {
+      process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = originalRelayUrl;
     }
   });
 
@@ -43,15 +49,16 @@ describe("MessageBlock image URLs", () => {
     ).toBe("http://127.0.0.1:43210/attachments/att_1/content");
   });
 
-  it("does not synthesize direct project HTTP image URLs in relay mode", () => {
+  it("resolves relative image URLs through the relay proxy in relay mode", () => {
     process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
+    process.env.EXPO_PUBLIC_AIMUX_RELAY_URL = "wss://relay.example.test";
 
     expect(
       resolveImageUrl(
         { type: "image", attachmentId: "att_1", contentUrl: "/attachments/att_1/content" },
         endpoint,
       ),
-    ).toBeNull();
+    ).toBe("https://relay.example.test/proxy/127.0.0.1/43210/attachments/att_1/content");
   });
 
   it("preserves absolute image URLs in relay mode", () => {

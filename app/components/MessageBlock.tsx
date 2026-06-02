@@ -2,7 +2,7 @@ import React from "react";
 import { Image, View } from "react-native";
 import { Text } from "@/components/ui/text";
 import type { ChatMessage, HistoryImagePart } from "@/lib/events";
-import { getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
+import { getRelayServiceUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
 import { env } from "@/lib/env";
 
 interface Props {
@@ -15,8 +15,8 @@ export function resolveImageUrl(part: HistoryImagePart, endpoint: ServiceEndpoin
   if (part.contentUrl.startsWith("http://") || part.contentUrl.startsWith("https://")) {
     return part.contentUrl;
   }
-  if (env.AIMUX_CONNECTION_MODE === "relay") return null;
   const path = part.contentUrl.startsWith("/") ? part.contentUrl : `/${part.contentUrl}`;
+  if (env.AIMUX_CONNECTION_MODE === "relay") return getRelayServiceUrl(endpoint, path);
   return `${getServiceUrl(endpoint)}${path}`;
 }
 
