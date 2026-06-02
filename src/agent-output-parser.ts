@@ -73,17 +73,45 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const trimmed = line.trim();
     return /^│/.test(trimmed) || /^╰/.test(trimmed) || /^╭/.test(trimmed);
   };
+  const statusLeadWords = new Set([
+    "Baked",
+    "Building",
+    "Checking",
+    "Compacting",
+    "Cooking",
+    "Crunched",
+    "Loading",
+    "Reading",
+    "Restarting",
+    "Running",
+    "Searching",
+    "Starting",
+    "Stopped",
+    "Sublimating",
+    "Sautéed",
+    "Thinking",
+    "Updating",
+    "Warping",
+    "Working",
+    "Writing",
+  ]);
+  const startsWithStatusLead = (text: string) => statusLeadWords.has((text.trim().match(/^[\p{L}-]+/u) || [""])[0]);
+  const hasStatusProgressSuffix = (text: string) =>
+    /\bfor \d+(?:ms|s)\b/.test(text) || /\.{3}|…/.test(text) || /\([^)]*\b\d+(?:ms|s)\b[^)]*\)/.test(text);
   const isStatusLine = (line: string) => {
     const trimmed = line.trim();
     if (!trimmed) return false;
+    const dotBulletText = trimmed.replace(/^•\s?/, "");
+    const starBulletText = trimmed.replace(/^\*\s+/, "");
     return (
       /^■\s?/.test(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
       /^•\s?Starting MCP servers\b/.test(trimmed) ||
-      /^•\s?\S.*\bfor \d+s\b/.test(trimmed) ||
+      (/^•\s?/.test(trimmed) && startsWithStatusLead(dotBulletText) && hasStatusProgressSuffix(dotBulletText)) ||
       /^⏵⏵\s/.test(trimmed) ||
       /^\*\s+[A-Z][A-Za-z-]+(?:\.\.\.|…)?$/.test(trimmed) ||
-      /^[*✻✽✶]\s+\S.*(?:\bfor \d+s\b|\.\.\.|…|\(.+\))$/.test(trimmed) ||
+      /^[✻✽✶]\s+\S.*(?:\bfor \d+(?:ms|s)\b|\.\.\.|…|\([^)]*\b\d+(?:ms|s)\b[^)]*\))$/.test(trimmed) ||
+      (/^\*\s+/.test(trimmed) && startsWithStatusLead(starBulletText) && hasStatusProgressSuffix(starBulletText)) ||
       /^[╰└]\s*Tip:/i.test(trimmed) ||
       /^Tip:\s/i.test(trimmed) ||
       /(Plan Mode|default permission mode)/i.test(trimmed) ||
