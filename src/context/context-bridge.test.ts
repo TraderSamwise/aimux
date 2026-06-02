@@ -64,7 +64,7 @@ describe("ContextWatcher tmux continuity", () => {
     expect(Buffer.byteLength(live)).toBeLessThan(55 * 1024);
   });
 
-  it("captures a synthetic response turn when Claude returns to a visible prompt", () => {
+  it("does not capture terminal chrome as a Claude response turn", () => {
     const watcher = new ContextWatcher(() =>
       ["sam@host ~/repo main", "▶▶ bypass permissions on (shift+tab to cycle)", "❯ "].join("\n"),
     );
@@ -78,14 +78,12 @@ describe("ContextWatcher tmux continuity", () => {
     (watcher as any).capturePaneSnapshot(session);
 
     const turns = readHistory("claude-prompt");
-    expect(turns).toHaveLength(1);
-    expect(turns[0]?.type).toBe("response");
-    expect(turns[0]?.content).toContain("bypass permissions");
+    expect(turns).toEqual([]);
   });
 
-  it("captures a synthetic response turn when Codex returns to a visible prompt", () => {
+  it("captures only the last parsed response when Codex returns to a visible prompt", () => {
     const watcher = new ContextWatcher(() =>
-      ["The work is complete.", "", "› Find and fix a bug in @filename"].join("\n"),
+      ["• The work is complete.", "", "› Find and fix a bug in @filename"].join("\n"),
     );
     const session = {
       id: "codex-prompt",
@@ -100,6 +98,51 @@ describe("ContextWatcher tmux continuity", () => {
     expect(turns).toHaveLength(1);
     expect(turns[0]?.type).toBe("response");
     expect(turns[0]?.content).toContain("The work is complete.");
-    expect(turns[0]?.content).toContain("Find and fix a bug");
+    expect(turns[0]?.content).not.toContain("Find and fix a bug");
+  });
+
+  it("does not capture Codex startup chrome as a response turn", () => {
+    const watcher = new ContextWatcher(() =>
+      [
+        "╭──────────────────────────────────────────────╮",
+        "│ >_ OpenAI Codex (v0.60.0)                    │",
+        "│                                              │",
+        "│ cwd: ~/repo                                  │",
+        "╰──────────────────────────────────────────────╯",
+        "",
+        "› Find and fix a bug in @filename",
+      ].join("\n"),
+    );
+    const session = {
+      id: "codex-startup",
+      command: "codex",
+      tmuxTarget: target("@7"),
+    };
+
+    (watcher as any).capturePaneSnapshot(session);
+
+    expect(readHistory("codex-startup")).toEqual([]);
+  });
+
+  it("does not capture Codex progress rows as a response turn", () => {
+    const watcher = new ContextWatcher(() =>
+      [
+        "› reply exactly CODEX_OK",
+        "",
+        "• Starting MCP servers",
+        "• Sautéed for 5s",
+        "",
+        "›",
+      ].join("\n"),
+    );
+    const session = {
+      id: "codex-progress",
+      command: "codex",
+      tmuxTarget: target("@8"),
+    };
+
+    (watcher as any).capturePaneSnapshot(session);
+
+    expect(readHistory("codex-progress")).toEqual([]);
   });
 });

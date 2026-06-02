@@ -32,6 +32,17 @@ describe("MessageBlock image URLs", () => {
     ).toBe("http://127.0.0.1:43210/attachments/att_1/content");
   });
 
+  it("normalizes attachment content paths without a leading slash", () => {
+    process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "local";
+
+    expect(
+      resolveImageUrl(
+        { type: "image", attachmentId: "att_1", contentUrl: "attachments/att_1/content" },
+        endpoint,
+      ),
+    ).toBe("http://127.0.0.1:43210/attachments/att_1/content");
+  });
+
   it("does not synthesize direct project HTTP image URLs in relay mode", () => {
     process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "relay";
 
@@ -52,6 +63,12 @@ describe("MessageBlock image URLs", () => {
         endpoint,
       ),
     ).toBe("https://example.test/shot.png");
+  });
+
+  it("omits images without a content URL", () => {
+    process.env.EXPO_PUBLIC_AIMUX_CONNECTION_MODE = "local";
+
+    expect(resolveImageUrl({ type: "image", attachmentId: "att_1" }, endpoint)).toBeNull();
   });
 });
 

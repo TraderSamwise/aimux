@@ -9,8 +9,10 @@ import {
   handleSessionRuntimeEvent,
   registerManagedSession,
   resolveLiveSessionTmuxTarget,
+  sendAgentInput,
   updateSessionLabel,
 } from "./session-runtime-core.js";
+import { TmuxSessionTransport } from "../tmux/session-transport.js";
 
 describe("session runtime prompt submission", () => {
   afterEach(() => {
@@ -41,6 +43,51 @@ describe("session runtime prompt submission", () => {
     expect(host.footerFlash).toBe("Rename failed: boom");
     expect(host.refreshDashboardModelFromService).toHaveBeenCalledWith(true);
     expect(host.setPendingDashboardSessionAction).toHaveBeenLastCalledWith("codex-1", null);
+  });
+
+  it("submits tmux-backed chat input through the carriage-return prompt path", async () => {
+    vi.useFakeTimers();
+    const target = { sessionName: "aimux-test", windowId: "@1", windowIndex: 1, windowName: "codex" };
+    const captures = [
+      "› line one line two",
+      "› line one line two",
+      "› line one line two",
+      "› line one line two",
+      "",
+    ];
+    const tmuxRuntimeManager = {
+      sendText: vi.fn(),
+      sendKey: vi.fn(),
+      sendEnter: vi.fn(),
+      sendCarriageReturn: vi.fn(),
+      getTargetByWindowId: vi.fn(() => target),
+      getWindowMetadata: vi.fn(() => ({ kind: "agent", sessionId: "codex-1" })),
+      captureTarget: vi.fn(() => captures.shift() ?? ""),
+      isWindowAlive: vi.fn(() => true),
+    };
+    const transport = new TmuxSessionTransport("codex-1", "codex", target, tmuxRuntimeManager as any, 80, 24);
+    const host: any = {
+      sessions: [{ id: "codex-1", command: "codex", transport }],
+      sessionTmuxTargets: new Map([["codex-1", target]]),
+      sessionToolKeys: new Map([["codex-1", "codex"]]),
+      tmuxRuntimeManager,
+    };
+
+    try {
+      const sent = sendAgentInput(host, "codex-1", "line one\nline two");
+
+      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(700);
+
+      await expect(sent).resolves.toEqual({ sessionId: "codex-1", accepted: true });
+      expect(tmuxRuntimeManager.sendText).toHaveBeenCalledWith(target, "line one line two");
+      expect(tmuxRuntimeManager.sendEnter).not.toHaveBeenCalled();
+      expect(tmuxRuntimeManager.sendCarriageReturn).toHaveBeenCalledWith(target);
+    } finally {
+      transport.destroy();
+    }
   });
 
   it("does not re-add graveyarded live sessions as offline when their process exits", () => {
