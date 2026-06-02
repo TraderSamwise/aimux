@@ -69,14 +69,49 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /gpt-|claude|context\)|bypass permissions|shift\+tab|to cycle/i.test(trimmed)
     );
   };
+  const isCodexUiLine = (line: string) => {
+    const trimmed = line.trim();
+    return /^│/.test(trimmed) || /^╰/.test(trimmed) || /^╭/.test(trimmed);
+  };
+  const statusLeadWords = new Set([
+    "Baked",
+    "Building",
+    "Checking",
+    "Compacting",
+    "Cooking",
+    "Crunched",
+    "Loading",
+    "Reading",
+    "Restarting",
+    "Running",
+    "Searching",
+    "Starting",
+    "Stopped",
+    "Sublimating",
+    "Sautéed",
+    "Thinking",
+    "Updating",
+    "Warping",
+    "Working",
+    "Writing",
+  ]);
+  const startsWithStatusLead = (text: string) => statusLeadWords.has((text.trim().match(/^[\p{L}-]+/u) || [""])[0]);
+  const hasStatusProgressSuffix = (text: string) =>
+    /\bfor \d+(?:ms|s)\b/.test(text) || /\.{3}|…/.test(text) || /\([^)]*\b\d+(?:ms|s)\b[^)]*\)/.test(text);
   const isStatusLine = (line: string) => {
     const trimmed = line.trim();
     if (!trimmed) return false;
+    const dotBulletText = trimmed.replace(/^•\s?/, "");
+    const starBulletText = trimmed.replace(/^\*\s+/, "");
     return (
       /^■\s?/.test(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
+      /^•\s?Starting MCP servers\b/.test(trimmed) ||
+      (/^•\s?/.test(trimmed) && startsWithStatusLead(dotBulletText) && hasStatusProgressSuffix(dotBulletText)) ||
       /^⏵⏵\s/.test(trimmed) ||
       /^\*\s+[A-Z][A-Za-z-]+(?:\.\.\.|…)?$/.test(trimmed) ||
+      /^[✻✽✶]\s+\S.*(?:\bfor \d+(?:ms|s)\b|\.\.\.|…|\([^)]*\b\d+(?:ms|s)\b[^)]*\))$/.test(trimmed) ||
+      (/^\*\s+/.test(trimmed) && startsWithStatusLead(starBulletText) && hasStatusProgressSuffix(starBulletText)) ||
       /^[╰└]\s*Tip:/i.test(trimmed) ||
       /^Tip:\s/i.test(trimmed) ||
       /(Plan Mode|default permission mode)/i.test(trimmed) ||
@@ -91,12 +126,16 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   };
   const stripPromptMarker = (line: string) => line.trimStart().replace(/^(›|>|❯)\s?/, "");
   const stripResponseMarker = (line: string) => line.trimStart().replace(/^(•|⏺)\s?/, "");
-  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|\*\s+)\s?/, "");
+  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[*✻✽✶]\s+)\s?/, "");
 
   for (const line of lines) {
     const trimmed = line.trimEnd();
 
     if (isDivider(trimmed)) continue;
+    if (isCodexUiLine(trimmed)) {
+      pushLine(sawPrompt ? "status" : "meta", trimmed);
+      continue;
+    }
     if (isPromptLine(trimmed)) {
       const promptText = stripPromptMarker(trimmed);
       if (!promptText.trim()) {
@@ -106,10 +145,10 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       }
       pushLine("prompt", promptText);
       sawPrompt = true;
-      expectingResponse = true;
+      expectingResponse = false;
       continue;
     }
-    if (/^(•|⏺)\s?/.test(trimmed) && !/^•\s?Working\b/.test(trimmed)) {
+    if (/^(•|⏺)\s?/.test(trimmed) && !isStatusLine(trimmed)) {
       pushLine("response", stripResponseMarker(trimmed));
       sawPrompt = true;
       expectingResponse = false;
@@ -133,9 +172,15 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       const active = current as ActiveBlock | null;
       if (active && active.type !== "raw") {
         active.lines.push("");
+        if (active.type === "prompt") expectingResponse = true;
         continue;
       }
       flush();
+      continue;
+    }
+    const promptBlock = current as ActiveBlock | null;
+    if (promptBlock?.type === "prompt" && !expectingResponse) {
+      promptBlock.lines.push(trimmed);
       continue;
     }
     if (expectingResponse || (current as ActiveBlock | null)?.type === "response") {
@@ -234,36 +279,5 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[]): AgentOutputBlock
     merged.push(block);
   }
 
-  return stripTrailingVisiblePrompt(merged);
-}
-
-function stripTrailingVisiblePrompt(blocks: AgentOutputBlock[]): AgentOutputBlock[] {
-  const promptIndex = findLastIndex(blocks, (block) => block.type === "prompt");
-  if (promptIndex === -1) {
-    return blocks;
-  }
-
-  const hasResponseAfterPrompt = blocks.slice(promptIndex + 1).some((block) => block.type === "response");
-  if (hasResponseAfterPrompt) {
-    return blocks;
-  }
-
-  const trailingBlocks = blocks.slice(promptIndex + 1);
-  const hasOnlyNonConversationTail = trailingBlocks.every(
-    (block) => block.type === "status" || block.type === "meta" || block.type === "raw",
-  );
-  if (!hasOnlyNonConversationTail) {
-    return blocks;
-  }
-
-  return blocks.filter((_, index) => index !== promptIndex);
-}
-
-function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    if (predicate(items[index]!)) {
-      return index;
-    }
-  }
-  return -1;
+  return merged;
 }

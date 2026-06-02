@@ -9,6 +9,7 @@ import { algorithmicCompact } from "./compactor.js";
 import { debugTurn, debugGit, debugContext, debugCompact } from "../debug.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "../tmux/runtime-manager.js";
 import { classifyToolPane } from "../tool-output-watchers.js";
+import { parseAgentOutput } from "../agent-output-parser.js";
 
 const git = simpleGit();
 
@@ -270,7 +271,9 @@ export class ContextWatcher {
 
     const turns = readHistory(session.id, { lastN: 1 });
     if (promptVisible) {
-      const snapshotTurn = normalized.split("\n").slice(-80).join("\n").trim();
+      const blocks = parseAgentOutput(normalized, { tool: session.command }).blocks;
+      const lastResponseBlock = blocks.filter((block) => block.type === "response").at(-1);
+      const snapshotTurn = lastResponseBlock?.text.trim() ?? "";
       if (snapshotTurn) {
         const lastTurn = turns.at(-1);
         if (!lastTurn || lastTurn.content !== snapshotTurn) {

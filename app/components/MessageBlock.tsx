@@ -16,7 +16,8 @@ export function resolveImageUrl(part: HistoryImagePart, endpoint: ServiceEndpoin
     return part.contentUrl;
   }
   if (env.AIMUX_CONNECTION_MODE === "relay") return null;
-  return `${getServiceUrl(endpoint)}${part.contentUrl}`;
+  const path = part.contentUrl.startsWith("/") ? part.contentUrl : `/${part.contentUrl}`;
+  return `${getServiceUrl(endpoint)}${path}`;
 }
 
 export function messageSpeakerLabel(message: Pick<ChatMessage, "actor">): string | null {
