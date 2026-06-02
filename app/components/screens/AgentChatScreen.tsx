@@ -101,6 +101,7 @@ export default function ChatScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [terminalPaneWidth, setTerminalPaneWidth] = useState<number | null>(null);
   const [showTerminalSplit, setShowTerminalSplit] = useAtom(chatTerminalSplitAtom);
+  const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const terminalScrollRef = useRef<ScrollView>(null);
 
@@ -250,7 +251,15 @@ export default function ChatScreen() {
   async function handleSendMessage() {
     const text = composerSendText ?? "";
     const attachments = [...pendingAttachments];
-    if (!serviceEndpoint || !sessionId || (!text && attachments.length === 0)) return;
+    if (
+      !serviceEndpoint ||
+      !sessionId ||
+      sendBusyRef.current ||
+      (!text && attachments.length === 0)
+    ) {
+      return;
+    }
+    sendBusyRef.current = true;
     setDraft("");
     setPendingAttachments([]);
     setSendBusy(true);
@@ -284,12 +293,13 @@ export default function ChatScreen() {
       setPendingAttachments(attachments);
       setSendError(err instanceof Error ? err.message : String(err));
     } finally {
+      sendBusyRef.current = false;
       setSendBusy(false);
     }
   }
 
   async function handleAttachImage() {
-    if (sendBusy) return;
+    if (sendBusy || sendBusyRef.current) return;
     if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
       setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} images.`);
       return;
