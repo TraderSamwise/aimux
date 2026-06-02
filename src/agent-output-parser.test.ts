@@ -85,4 +85,49 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[1]?.text).toContain("What about you?");
     expect(parsed.blocks[2]?.text).toContain("sam@host ~/repo/test3");
   });
+
+  it("keeps wrapped Codex prompts together instead of turning continuations into replies", () => {
+    const raw = [
+      "› This is a very very long input message I am testing how this",
+      "  message deal with wrapping etc wow so long very nice",
+      "  don’t bother responding",
+      "",
+      "• Got it.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "response"]);
+    expect(parsed.blocks[0]?.text).toBe(
+      "This is a very very long input message I am testing how this\n" +
+        "  message deal with wrapping etc wow so long very nice\n" +
+        "  don’t bother responding",
+    );
+    expect(parsed.blocks[1]?.text).toBe("Got it.");
+  });
+
+  it("parses Codex spinner/progress rows as status instead of assistant chat", () => {
+    const raw = [
+      "› ui composer after restart - ignore",
+      "",
+      "• Ignored.",
+      "",
+      "* Sautéed for 5s",
+      "",
+      "› continue",
+      "",
+      "* Warping… (running stop hook · 11s · ↓ 16 tokens)",
+      "",
+      "  sam@MacBook-Pro-4 ~/cs/glyde-frontend feat/simplify-topbar-accounts ██░░░░5% Opus 4.7",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "response", "status", "status"]);
+    expect(parsed.blocks[1]?.text).toBe("Ignored.");
+    expect(parsed.blocks[2]?.text).toBe("Sautéed for 5s");
+    expect(parsed.blocks[3]?.text).toContain("Warping…");
+    expect(parsed.blocks[3]?.text).toContain("bypass permissions on");
+  });
 });

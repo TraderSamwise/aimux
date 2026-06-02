@@ -77,6 +77,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /^•\s?Working\b/.test(trimmed) ||
       /^⏵⏵\s/.test(trimmed) ||
       /^\*\s+[A-Z][A-Za-z-]+(?:\.\.\.|…)?$/.test(trimmed) ||
+      /^[*✻✽✶]\s+\S.*(?:\bfor \d+s\b|\.\.\.|…|\(.+\))$/.test(trimmed) ||
       /^[╰└]\s*Tip:/i.test(trimmed) ||
       /^Tip:\s/i.test(trimmed) ||
       /(Plan Mode|default permission mode)/i.test(trimmed) ||
@@ -91,7 +92,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   };
   const stripPromptMarker = (line: string) => line.trimStart().replace(/^(›|>|❯)\s?/, "");
   const stripResponseMarker = (line: string) => line.trimStart().replace(/^(•|⏺)\s?/, "");
-  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|\*\s+)\s?/, "");
+  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[*✻✽✶]\s+)\s?/, "");
 
   for (const line of lines) {
     const trimmed = line.trimEnd();
@@ -106,7 +107,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       }
       pushLine("prompt", promptText);
       sawPrompt = true;
-      expectingResponse = true;
+      expectingResponse = false;
       continue;
     }
     if (/^(•|⏺)\s?/.test(trimmed) && !/^•\s?Working\b/.test(trimmed)) {
@@ -133,9 +134,15 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       const active = current as ActiveBlock | null;
       if (active && active.type !== "raw") {
         active.lines.push("");
+        if (active.type === "prompt") expectingResponse = true;
         continue;
       }
       flush();
+      continue;
+    }
+    const promptBlock = current as ActiveBlock | null;
+    if (promptBlock?.type === "prompt" && !expectingResponse) {
+      promptBlock.lines.push(trimmed);
       continue;
     }
     if (expectingResponse || (current as ActiveBlock | null)?.type === "response") {
