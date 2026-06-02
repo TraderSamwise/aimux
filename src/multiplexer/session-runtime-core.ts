@@ -9,6 +9,7 @@ import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
+import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
 import { captureGitContext } from "../context/context-bridge.js";
 import type { SessionTeamMetadata } from "../team.js";
 
@@ -182,8 +183,14 @@ export async function sendAgentInput(
     const target = resolveLiveSessionTmuxTarget(host, sessionId, session.transport.tmuxTarget);
     if (!target) throw new Error(`Session "${sessionId}" does not have a live tmux target`);
     session.transport.retarget(target);
-    session.transport.write(text);
-    session.transport.write("\r");
+    const prompt = normalizeSubmittedPrompt(host.sessionToolKeys.get(sessionId), text, true);
+    session.transport.write(prompt);
+    await waitForTmuxPromptSubmit({
+      tmuxRuntimeManager: host.tmuxRuntimeManager,
+      target,
+      draft: prompt,
+      isTargetCurrent: () => resolveLiveSessionTmuxTarget(host, sessionId, target)?.windowId === target.windowId,
+    });
   } else {
     session.write(text);
     session.write("\r");
