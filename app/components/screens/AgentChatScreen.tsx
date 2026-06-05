@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  KeyboardAvoidingView,
   Image,
   Platform,
   Pressable,
@@ -42,6 +41,7 @@ import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
 import { getComposerSendText, shouldSubmitComposerKey } from "@/lib/composer-protocol";
 import { singleRouteParam } from "@/lib/route-params";
 import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
+import { useKeyboardInset } from "@/lib/use-keyboard-visible";
 import { parentViewHrefForPath } from "@/lib/view-location";
 import {
   ingestEventAtom,
@@ -104,6 +104,8 @@ export default function ChatScreen() {
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const terminalScrollRef = useRef<ScrollView>(null);
+  const keyboardInset = useKeyboardInset();
+  const chatKeyboardInset = Platform.OS === "ios" ? keyboardInset : 0;
 
   // Keep selectedSessionId in the projects store in sync with the route param so the sidebar highlights it.
   useEffect(() => {
@@ -199,6 +201,11 @@ export default function ChatScreen() {
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: true });
   }, [allMessages.length, output]);
+
+  useEffect(() => {
+    if (!chatKeyboardInset) return;
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+  }, [chatKeyboardInset]);
 
   useEffect(() => {
     terminalScrollRef.current?.scrollToEnd({ animated: false });
@@ -443,11 +450,17 @@ export default function ChatScreen() {
   );
 
   return (
-    <View className="flex-1 bg-background">
+    <View
+      className="flex-1 bg-background"
+      style={{ flex: 1, paddingBottom: chatKeyboardInset }}
+    >
       <View className="flex-1" style={Platform.OS === "web" ? { flexDirection: "row" } : undefined}>
         {Platform.OS !== "web" ? null /* sidebar lives in (main)/_layout on web */ : null}
         <View className="flex-1">
-          <View className="border-b border-border px-4 py-3 flex-row items-center justify-between">
+          <View
+            className="border-b border-border px-4 py-3 flex-row items-center justify-between"
+            style={{ flexShrink: 0 }}
+          >
             <Pressable
               onPress={goBack}
               accessibilityLabel="Back"
@@ -500,7 +513,10 @@ export default function ChatScreen() {
             </View>
           </View>
           {sharePanelOpen ? (
-            <View className="border-b border-border bg-card px-4 py-3">
+            <View
+              className="border-b border-border bg-card px-4 py-3"
+              style={{ flexShrink: 0 }}
+            >
               {activeShare ? (
                 <View className="flex-row items-center justify-between gap-3">
                   <View className="flex-1">
@@ -611,18 +627,13 @@ export default function ChatScreen() {
           ) : null}
 
           {!serviceEndpoint ? (
-            <View className="p-4">
+            <View className="flex-1 p-4">
               <Text className="text-sm text-muted-foreground">
                 Project service not running. Start the project host to view this session.
               </Text>
             </View>
           ) : (
-            <KeyboardAvoidingView
-              className="flex-1"
-              behavior={Platform.OS === "ios" ? "padding" : undefined}
-              keyboardVerticalOffset={0}
-              style={{ flex: 1 }}
-            >
+            <>
               <View
                 className="flex-1"
                 style={showSplit ? { flex: 1, flexDirection: "row" } : { flex: 1 }}
@@ -637,6 +648,8 @@ export default function ChatScreen() {
                     <ScrollView
                       ref={scrollRef}
                       className="flex-1 px-4 py-2"
+                      contentContainerStyle={{ flexGrow: 1 }}
+                      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
                       keyboardShouldPersistTaps="handled"
                     >
                       {allMessages.map((m, idx) => (
@@ -726,7 +739,7 @@ export default function ChatScreen() {
                   />
                 </View>
               </View>
-            </KeyboardAvoidingView>
+            </>
           )}
         </View>
       </View>
