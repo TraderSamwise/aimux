@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Keyboard, Platform } from "react-native";
+import { Dimensions, Keyboard, Platform } from "react-native";
 import type { KeyboardEvent } from "react-native";
 
 type KeyboardState = {
@@ -13,16 +13,19 @@ export function useKeyboardState() {
   useEffect(() => {
     if (Platform.OS === "web") return;
 
-    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const frameEvent = Platform.OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow";
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const showSub = Keyboard.addListener(showEvent, (event: KeyboardEvent) => {
+    const applyKeyboardFrame = (event: KeyboardEvent) => {
       Keyboard.scheduleLayoutAnimation(event);
-      setState({ visible: true, inset: event.endCoordinates.height });
-    });
-    const hideSub = Keyboard.addListener(hideEvent, (event: KeyboardEvent) => {
-      Keyboard.scheduleLayoutAnimation(event);
-      setState({ visible: false, inset: 0 });
-    });
+      const screenHeight = Dimensions.get("window").height;
+      const inset =
+        Platform.OS === "ios"
+          ? Math.max(0, screenHeight - event.endCoordinates.screenY)
+          : event.endCoordinates.height;
+      setState({ visible: inset > 0, inset });
+    };
+    const showSub = Keyboard.addListener(frameEvent, applyKeyboardFrame);
+    const hideSub = Keyboard.addListener(hideEvent, applyKeyboardFrame);
 
     return () => {
       showSub.remove();
