@@ -14,6 +14,7 @@ import {
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { resolveChromeBottomInset } from "@/lib/native-safe-area";
+import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 import { MAIN_TAB_ROUTES, type MainTabId } from "@/lib/main-tabs";
@@ -44,6 +45,7 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
   const isMobile = width < 640;
   const insets = useSafeAreaInsets();
   const bottomInset = resolveChromeBottomInset(insets.bottom);
+  const keyboardVisible = useKeyboardVisible();
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const unreadCount = useAtomValue(
     notificationUnreadCountFamily(selectedProjectPath ?? EMPTY_PROJECT_PATH),
@@ -51,7 +53,7 @@ export function MobileTabBar({ state, navigation }: BottomTabBarProps) {
   const securityUnreadCount = useAtomValue(securityUnreadCountAtom);
   const inboxUnreadCount = unreadCount + securityUnreadCount;
 
-  if (!isMobile) return null;
+  if (!isMobile || keyboardVisible) return null;
 
   return (
     <View
