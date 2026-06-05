@@ -67,7 +67,19 @@ export interface HistoryImagePart {
   contentUrl?: string;
 }
 
-export type HistoryPart = { type: "text"; text: string } | HistoryImagePart;
+export interface HistoryImageReferencePart {
+  type: "image_reference";
+  label: string;
+  attachmentId?: string;
+  filename?: string;
+  mimeType?: string;
+  contentUrl?: string;
+}
+
+export type HistoryPart =
+  | { type: "text"; text: string }
+  | HistoryImagePart
+  | HistoryImageReferencePart;
 
 export interface ChatActor {
   userId: string;
