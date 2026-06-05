@@ -24,6 +24,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   let current: ActiveBlock | null = null;
   let sawPrompt = false;
   let expectingResponse = false;
+  let lastLineWasDivider = false;
 
   const flush = () => {
     if (!current) return;
@@ -133,19 +134,25 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   for (const line of lines) {
     const trimmed = line.trimEnd();
 
-    if (isDivider(trimmed)) continue;
+    if (isDivider(trimmed)) {
+      lastLineWasDivider = true;
+      continue;
+    }
     if (isCodexUiLine(trimmed)) {
+      lastLineWasDivider = false;
       pushLine(sawPrompt ? "status" : "meta", trimmed);
       continue;
     }
     if (isPromptLine(trimmed)) {
       const promptText = stripPromptMarker(trimmed);
       const active = current as ActiveBlock | null;
-      if (active?.type === "status" && active.lines.some(isClaudeFeedbackSurvey)) {
+      if (lastLineWasDivider || (active?.type === "status" && active.lines.some(isClaudeFeedbackSurvey))) {
         if (promptText.trim()) pushLine("status", promptText);
+        lastLineWasDivider = false;
         expectingResponse = false;
         continue;
       }
+      lastLineWasDivider = false;
       if (!promptText.trim()) {
         flush();
         expectingResponse = false;
@@ -156,6 +163,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       expectingResponse = false;
       continue;
     }
+    lastLineWasDivider = false;
     if (/^(•|⏺)\s?/.test(trimmed) && !isStatusLine(trimmed)) {
       pushLine("response", stripResponseMarker(trimmed));
       sawPrompt = true;

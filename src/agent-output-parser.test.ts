@@ -253,4 +253,30 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[1]?.text).toContain("How is Claude doing this session?");
     expect(parsed.blocks[1]?.text).toContain("no that's fine, what's next?");
   });
+
+  it("keeps Codex active input suggestions out of chat prompts", () => {
+    const raw = [
+      "• PR #5914 is merged.",
+      "",
+      "  CodeRabbit loop completed:",
+      "",
+      "  - CodeRabbit status: green.",
+      "  - Copilot left 5 comments; fixed them in 52826d48e9 and replied to each thread.",
+      "  - CI passed before merge.",
+      "",
+      "  Worktree is clean.",
+      "",
+      "- Worked for 20m 16s",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "› Find and fix a bug in @filename",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "  gpt-5.5 medium · ~/cs/tealstreet-next · Main [default]",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status"]);
+    expect(parsed.blocks[0]?.text).toContain("PR #5914 is merged.");
+    expect(parsed.blocks[1]?.text).toContain("Find and fix a bug in @filename");
+  });
 });
