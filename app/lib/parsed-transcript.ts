@@ -1,4 +1,21 @@
-import type { ChatMessage, HistoryPart, ParsedAgentOutput } from "@/lib/events";
+import type {
+  ChatMessage,
+  HistoryImageReferencePart,
+  HistoryPart,
+  ParsedAgentOutput,
+} from "@/lib/events";
+
+type ImageLabelState = {
+  labelsByKey: Map<string, string>;
+  nextIndex: number;
+};
+
+const ATTACHED_IMAGE_LINE =
+  /^\s*-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(.+?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)\s*$/;
+const INLINE_ATTACHED_IMAGE =
+  /^(.*?)\s*Attached image files:\s*-\s+(.+?)\s+\((image\/[^,]+),\s+\d+\s+bytes\):\s+(.+?\.aimux\/attachments\/(att_[A-Za-z0-9_-]+)\.[^\s/]+)\s*$/;
+const VIEWED_IMAGE_PATH =
+  /^\s*(?:[└⎿L]\s*)?(?:\.aimux\/attachments\/|.+?\.aimux\/attachments\/)(att_[A-Za-z0-9_-]+)\.[^\s/]+\s*$/;
 
 function blockType(block: { type?: string; kind?: string }): string {
   return String(block.type ?? block.kind ?? "").trim();
@@ -6,6 +23,99 @@ function blockType(block: { type?: string; kind?: string }): string {
 
 function normalizeText(text: string): string {
   return text.replace(/\r/g, "").trim();
+}
+
+function imageLabelFor(state: ImageLabelState, key: string): string {
+  const existing = state.labelsByKey.get(key);
+  if (existing) return existing;
+  const label = `[image #${state.nextIndex}]`;
+  state.nextIndex += 1;
+  state.labelsByKey.set(key, label);
+  return label;
+}
+
+function imageReferenceFor(
+  state: ImageLabelState,
+  attachmentId: string,
+  opts: { filename?: string; mimeType?: string } = {},
+): HistoryImageReferencePart {
+  return {
+    type: "image_reference",
+    label: imageLabelFor(state, attachmentId),
+    attachmentId,
+    filename: opts.filename,
+    mimeType: opts.mimeType,
+    contentUrl: `/attachments/${attachmentId}/content`,
+  };
+}
+
+function flushTextPart(parts: HistoryPart[], lines: string[]) {
+  const text = lines.join("\n").trim();
+  if (text) parts.push({ type: "text", text });
+  lines.length = 0;
+}
+
+function partsFromTranscriptText(text: string, imageLabels: ImageLabelState): HistoryPart[] {
+  const lines = text.split("\n");
+  const parts: HistoryPart[] = [];
+  const textLines: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const inlineAttachment = line.match(INLINE_ATTACHED_IMAGE);
+    if (inlineAttachment?.[5]) {
+      const prefix = inlineAttachment[1]?.trim();
+      if (prefix) textLines.push(prefix);
+      flushTextPart(parts, textLines);
+      parts.push(
+        imageReferenceFor(imageLabels, inlineAttachment[5], {
+          filename: inlineAttachment[2],
+          mimeType: inlineAttachment[3],
+        }),
+      );
+      continue;
+    }
+
+    if (/^\s*Attached image files:\s*$/.test(line)) {
+      const imageParts: HistoryImageReferencePart[] = [];
+      let nextIndex = index + 1;
+
+      while (nextIndex < lines.length) {
+        const match = (lines[nextIndex] ?? "").match(ATTACHED_IMAGE_LINE);
+        if (!match) break;
+        imageParts.push(
+          imageReferenceFor(imageLabels, match[4] ?? match[3] ?? "", {
+            filename: match[1],
+            mimeType: match[2],
+          }),
+        );
+        nextIndex += 1;
+      }
+
+      if (imageParts.length > 0) {
+        flushTextPart(parts, textLines);
+        parts.push(...imageParts);
+        index = nextIndex - 1;
+        continue;
+      }
+    }
+
+    if (/^\s*Viewed Image\s*$/i.test(line)) {
+      const pathLineIndex = index + 1;
+      const match = (lines[pathLineIndex] ?? "").match(VIEWED_IMAGE_PATH);
+      if (match?.[1]) {
+        flushTextPart(parts, textLines);
+        parts.push(imageReferenceFor(imageLabels, match[1]));
+        index = pathLineIndex;
+        continue;
+      }
+    }
+
+    textLines.push(line);
+  }
+
+  flushTextPart(parts, textLines);
+  return parts.length > 0 ? parts : [{ type: "text", text }];
 }
 
 export function messageText(message: Pick<ChatMessage, "parts" | "text">): string {
@@ -22,6 +132,7 @@ export function messageText(message: Pick<ChatMessage, "parts" | "text">): strin
 export function messagesFromParsedAgentOutput(parsed?: ParsedAgentOutput | null): ChatMessage[] {
   const blocks = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
   const messages: ChatMessage[] = [];
+  const imageLabels: ImageLabelState = { labelsByKey: new Map(), nextIndex: 1 };
 
   blocks.forEach((block, index) => {
     const type = blockType(block);
@@ -32,7 +143,7 @@ export function messagesFromParsedAgentOutput(parsed?: ParsedAgentOutput | null)
     messages.push({
       id: `parsed-${index}-${type}`,
       role: type === "prompt" ? "user" : "assistant",
-      parts: [{ type: "text", text }],
+      parts: partsFromTranscriptText(text, imageLabels),
     });
   });
 
