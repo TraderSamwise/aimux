@@ -314,4 +314,15 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[0]?.text).toContain("A spiral wakes");
     expect(parsed.blocks[1]?.text).toContain("Explain this codebase");
   });
+
+  it("keeps non-Codex prompts that match Codex suggestions", () => {
+    const raw = ["⏺ Ready when you are.", "", "❯ Explain this codebase", "", "  claude · ~/cs/glyde-frontend"].join(
+      "\n",
+    );
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "prompt", "status"]);
+    expect(parsed.blocks[1]?.text).toBe("Explain this codebase");
+  });
 });
