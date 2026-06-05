@@ -620,6 +620,7 @@ export default function ChatScreen() {
             <KeyboardAvoidingView
               className="flex-1"
               behavior={Platform.OS === "ios" ? "padding" : undefined}
+              keyboardVerticalOffset={0}
               style={{ flex: 1 }}
             >
               <View
@@ -633,7 +634,11 @@ export default function ChatScreen() {
                   <View className="flex-1">{terminalPane}</View>
                 ) : (
                   <View className="flex-1">
-                    <ScrollView ref={scrollRef} className="flex-1 px-4 py-2">
+                    <ScrollView
+                      ref={scrollRef}
+                      className="flex-1 px-4 py-2"
+                      keyboardShouldPersistTaps="handled"
+                    >
                       {allMessages.map((m, idx) => (
                         <MessageBlock
                           key={m.id ?? m.clientMessageId ?? `idx-${idx}`}
