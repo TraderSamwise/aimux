@@ -218,7 +218,10 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   flush();
 
   return {
-    blocks: normalizeTranscriptBlocks(blocks.filter((block) => block.text.trim().length > 0)),
+    blocks: normalizeTranscriptBlocks(
+      blocks.filter((block) => block.text.trim().length > 0),
+      tool,
+    ),
     parser: {
       tool,
       version: 1,
@@ -227,7 +230,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   };
 }
 
-function normalizeTranscriptBlocks(blocks: AgentOutputBlock[]): AgentOutputBlock[] {
+function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): AgentOutputBlock[] {
   const next = blocks.map((block) => ({ ...block }));
 
   const looksLikeFooterStatus = (text: string) => {
@@ -317,7 +320,7 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[]): AgentOutputBlock
       following?.type === "status" &&
       looksLikeFooterStatus(following.text) &&
       ((previous?.type === "status" && looksLikeInProgressStatus(previous.text)) ||
-        isCodexSuggestedPrompt(current.text))
+        (tool === "codex" && isCodexSuggestedPrompt(current.text)))
     ) {
       current.type = "status";
     }
