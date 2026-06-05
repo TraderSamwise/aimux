@@ -24,6 +24,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   let current: ActiveBlock | null = null;
   let sawPrompt = false;
   let expectingResponse = false;
+  let lastLineWasDivider = false;
 
   const flush = () => {
     if (!current) return;
@@ -107,6 +108,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /^■\s?/.test(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
       /^•\s?Starting MCP servers\b/.test(trimmed) ||
+      /^•\s?How is Claude doing this session\?\s*\(optional\)/i.test(trimmed) ||
       (/^•\s?/.test(trimmed) && startsWithStatusLead(dotBulletText) && hasStatusProgressSuffix(dotBulletText)) ||
       /^⏵⏵\s/.test(trimmed) ||
       /^\*\s+[A-Z][A-Za-z-]+(?:\.\.\.|…)?$/.test(trimmed) ||
@@ -124,6 +126,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const trimmed = line.trimStart();
     return /^›\s?/.test(trimmed) || /^>\s?/.test(trimmed) || /^❯\s?/.test(trimmed);
   };
+  const isClaudeFeedbackSurvey = (line: string) => /\bHow is Claude doing this session\?\s*\(optional\)/i.test(line);
   const stripPromptMarker = (line: string) => line.trimStart().replace(/^(›|>|❯)\s?/, "");
   const stripResponseMarker = (line: string) => line.trimStart().replace(/^(•|⏺)\s?/, "");
   const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[*✻✽✶]\s+)\s?/, "");
@@ -131,13 +134,25 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   for (const line of lines) {
     const trimmed = line.trimEnd();
 
-    if (isDivider(trimmed)) continue;
+    if (isDivider(trimmed)) {
+      lastLineWasDivider = true;
+      continue;
+    }
     if (isCodexUiLine(trimmed)) {
+      lastLineWasDivider = false;
       pushLine(sawPrompt ? "status" : "meta", trimmed);
       continue;
     }
     if (isPromptLine(trimmed)) {
       const promptText = stripPromptMarker(trimmed);
+      const active = current as ActiveBlock | null;
+      if (lastLineWasDivider || (active?.type === "status" && active.lines.some(isClaudeFeedbackSurvey))) {
+        if (promptText.trim()) pushLine("status", promptText);
+        lastLineWasDivider = false;
+        expectingResponse = false;
+        continue;
+      }
+      lastLineWasDivider = false;
       if (!promptText.trim()) {
         flush();
         expectingResponse = false;
@@ -148,6 +163,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       expectingResponse = false;
       continue;
     }
+    lastLineWasDivider = false;
     if (/^(•|⏺)\s?/.test(trimmed) && !isStatusLine(trimmed)) {
       pushLine("response", stripResponseMarker(trimmed));
       sawPrompt = true;
