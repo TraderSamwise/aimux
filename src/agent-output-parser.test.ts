@@ -279,4 +279,39 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[0]?.text).toContain("PR #5914 is merged.");
     expect(parsed.blocks[1]?.text).toContain("Find and fix a bug in @filename");
   });
+
+  it("keeps Codex active input followed by the footer out of chat prompts", () => {
+    const raw = [
+      "› can you see this? Attached image files: - Screenshot.png (image/png, 120484 bytes): /Users/sam/cs/glyde-frontend/.aimux/attachments/att_3cbe0ace620a4e54aec6b885062ad615.png",
+      "",
+      "• Working (4s • esc to interrupt)",
+      "",
+      "› Explain this codebase",
+      "",
+      "  gpt-5.5 medium · ~/cs/glyde-frontend",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "status"]);
+    expect(parsed.blocks[0]?.text).toContain("can you see this?");
+    expect(parsed.blocks[1]?.text).toContain("Explain this codebase");
+  });
+
+  it("keeps completed-state Codex suggested prompts out of chat prompts", () => {
+    const raw = [
+      "• A spiral wakes in ember light,",
+      "  pink at the edge of morning.",
+      "",
+      "› Explain this codebase",
+      "",
+      "  gpt-5.5 medium · ~/cs/glyde-frontend",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status"]);
+    expect(parsed.blocks[0]?.text).toContain("A spiral wakes");
+    expect(parsed.blocks[1]?.text).toContain("Explain this codebase");
+  });
 });
