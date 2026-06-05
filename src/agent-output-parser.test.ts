@@ -220,4 +220,63 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[2]?.text).toContain("Baked for 3s");
     expect(parsed.blocks[2]?.text).toContain("bypass permissions on");
   });
+
+  it("keeps Claude feedback survey input out of chat prompts", () => {
+    const raw = [
+      "⏺ There's our 2 at the top, then ~30 sequential Pine-related PRs (#584-616) — looks like autonomous-agent churn on",
+      "  Pinescript compatibility.",
+      "",
+      "  Want a closer look at any particular one, or a diff stat to see what files changed?",
+      "",
+      "* Churned for 15s",
+      "",
+      "  4 tasks (3 done, 1 in progress, 0 open)",
+      "  ✓ Soft-archive retiring channels (lock + pinned redirect)",
+      "  ✓ Apply target category structure",
+      "  ■ Refresh #start-here welcome post via webhook",
+      "  ✓ Move non-secret Discord/Slack channel config out of .env",
+      "",
+      "• How is Claude doing this session? (optional)",
+      "  1: Bad     2: Fine    3: Good    0: Dismiss",
+      "",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "❯ no that's fine, what's next?",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "  sam@MacBook-Pro-4 ~/cs/tealstreet-next master ██░░░░38% Opus 4.7",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status"]);
+    expect(parsed.blocks[0]?.text).toContain("Want a closer look");
+    expect(parsed.blocks[1]?.text).toContain("How is Claude doing this session?");
+    expect(parsed.blocks[1]?.text).toContain("no that's fine, what's next?");
+  });
+
+  it("keeps Codex active input suggestions out of chat prompts", () => {
+    const raw = [
+      "• PR #5914 is merged.",
+      "",
+      "  CodeRabbit loop completed:",
+      "",
+      "  - CodeRabbit status: green.",
+      "  - Copilot left 5 comments; fixed them in 52826d48e9 and replied to each thread.",
+      "  - CI passed before merge.",
+      "",
+      "  Worktree is clean.",
+      "",
+      "- Worked for 20m 16s",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "› Find and fix a bug in @filename",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "  gpt-5.5 medium · ~/cs/tealstreet-next · Main [default]",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status"]);
+    expect(parsed.blocks[0]?.text).toContain("PR #5914 is merged.");
+    expect(parsed.blocks[1]?.text).toContain("Find and fix a bug in @filename");
+  });
 });
