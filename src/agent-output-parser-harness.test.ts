@@ -147,6 +147,12 @@ describe("agent output parser harness", () => {
     await expectHarnessReadMatchesFixture("claude-compact-terminal-notifier-status");
   });
 
+  it("parses generic activity status rows through the runtime read path", async () => {
+    await expectHarnessReadMatchesFixture("codex-unknown-activity-verb-status");
+    await expectHarnessReadMatchesFixture("codex-ellipsis-activity-status");
+    await expectHarnessReadMatchesFixture("codex-dash-activity-status");
+  });
+
   it("fails loudly when a test tries to update an unknown dummy session", () => {
     const harness = createAgentOutputParserHarness([]);
 
