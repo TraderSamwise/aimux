@@ -231,6 +231,14 @@ describe("parsed transcript conversion", () => {
     expect(JSON.stringify(messages)).not.toContain("Read 2 files");
     expect(JSON.stringify(messages)).not.toContain("Update(src/relay.ts)");
   });
+
+  it("does not render malformed Claude animation captures as chat messages", () => {
+    expect(messagesFromFixture("claude-malformed-animation-status")).toEqual([]);
+  });
+
+  it("does not render collapsed Claude approval captures as chat messages", () => {
+    expect(messagesFromFixture("claude-collapsed-approval-status")).toEqual([]);
+  });
 });
 
 function messagesFromFixture(name: string) {
