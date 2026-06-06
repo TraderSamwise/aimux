@@ -167,6 +167,20 @@ const assistantMarkdown = (tool: Tool, seed: number): Fragment => {
   };
 };
 
+const assistantToolMention = (tool: Tool, seed: number, rng: () => number): Fragment => {
+  const response = `TOOL_MENTION_RESPONSE_SENTINEL_${tool}_${seed}`;
+  const marker = tool === "codex" ? "•" : "⏺";
+  const variants = [
+    "mentions Claude Code and OpenAI Codex as plain assistant text.",
+    "compares OpenAI Codex with Claude Code without changing parser mode.",
+    "says Claude Code can coexist with OpenAI Codex in prose.",
+  ];
+  return {
+    lines: [`${marker} ${response} ${pick(rng, variants)}`],
+    responses: [response],
+  };
+};
+
 const mcpStartup = (tool: Tool, seed: number): Fragment => {
   const status = `MCP_STATUS_SENTINEL_${tool}_${seed}`;
   return {
@@ -177,8 +191,23 @@ const mcpStartup = (tool: Tool, seed: number): Fragment => {
 
 const fragmentMakersForTool = (tool: Tool) =>
   tool === "claude"
-    ? ([activeInput, activityRow, toolActionRow, feedbackSurvey, assistantMarkdown, mcpStartup] as const)
-    : ([activeInput, activityRow, toolActionRow, assistantMarkdown, mcpStartup] as const);
+    ? ([
+        activeInput,
+        activityRow,
+        toolActionRow,
+        feedbackSurvey,
+        assistantMarkdown,
+        assistantToolMention,
+        mcpStartup,
+      ] as const)
+    : ([
+        activeInput,
+        activityRow,
+        toolActionRow,
+        assistantMarkdown,
+        assistantToolMention,
+        mcpStartup,
+      ] as const);
 
 const collectByType = (raw: string, tool: Tool) => {
   const parsed = parseAgentOutput(raw, { tool });
@@ -209,8 +238,11 @@ describe("parseAgentOutput deterministic fuzz", () => {
 
         const raw = fragments.flatMap((fragment) => fragment.lines).join("\n");
         const { parsed, grouped } = collectByType(raw, tool);
+        const inferred = parseAgentOutput(raw);
 
         expect(parseAgentOutput(raw, { tool }).blocks).toEqual(parsed.blocks);
+        expect(inferred.parser.tool, `${tool} seed ${seed} inferred tool`).toBe(tool);
+        expect(inferred.blocks, `${tool} seed ${seed} inferred blocks`).toEqual(parsed.blocks);
         expect(parsed.blocks.map((block) => block.type)).not.toContain("raw");
 
         for (const prompt of fragments.flatMap((fragment) => fragment.prompts ?? [])) {
@@ -229,5 +261,19 @@ describe("parseAgentOutput deterministic fuzz", () => {
         }
       });
     }
+  }
+
+  for (let seed = 1; seed <= 40; seed += 1) {
+    it(`does not infer parser mode from casual tool mentions without chrome ${seed}`, () => {
+      const rng = rngForSeed(seed * 47);
+      const tool = pick(rng, ["claude", "codex"] as const);
+      const fragment = assistantToolMention(tool, seed, rng);
+      const raw = fragment.lines.join("\n");
+      const parsed = parseAgentOutput(raw);
+
+      expect(parsed.parser.tool).toBe("unknown");
+      expect(parsed.blocks.map((block) => block.type)).toEqual(["response"]);
+      expect(parsed.blocks[0]?.text).toContain(fragment.responses?.[0]);
+    });
   }
 });
