@@ -8,6 +8,8 @@ import { loadMetadataState } from "./metadata-store.js";
 import { upsertNotification } from "./notifications.js";
 import { readTask } from "./tasks.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
+import { parseAgentOutput } from "./agent-output-parser.js";
+import { getParserFixture } from "./agent-output-parser-test-utils.js";
 import {
   moveTopologySessionToGraveyard,
   saveRuntimeTopologySessions,
@@ -1345,6 +1347,39 @@ describe("MetadataServer threads API", () => {
     });
   });
 
+  it("preserves mined parser blocks in agent output HTTP responses", async () => {
+    const fixture = getParserFixture("codex-live-startup-suggestion-loop");
+    server?.stop();
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => ({
+          sessionId,
+          startLine: startLine ?? -120,
+          output: fixture.raw,
+          parsed: parseAgentOutput(fixture.raw, { tool: fixture.tool }),
+        }),
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const outputRes = await fetch(`${base}/agents/output?sessionId=codex-1&startLine=-160`);
+    const outputJson = (await outputRes.json()) as {
+      parsed: {
+        blocks: Array<{ type: string; text: string }>;
+      };
+    };
+
+    expect(outputRes.ok).toBe(true);
+    expect(outputJson.parsed.blocks.map((block) => block.type)).toEqual(["meta", "status"]);
+    expect(outputJson.parsed.blocks.some((block) => block.type === "prompt")).toBe(false);
+    expect(outputJson.parsed.blocks[1]?.text).toContain("Explain this codebase");
+    expect(outputJson.parsed.blocks[1]?.text).toContain("Starting MCP servers");
+  });
+
   it("sends agent input over HTTP", async () => {
     const sent: Array<{ sessionId: string; text: string }> = [];
     server?.stop();
@@ -2100,6 +2135,54 @@ describe("MetadataServer threads API", () => {
     expect(text).toContain(
       '"parsed":{"blocks":[{"type":"response","text":"updated output"}],"parser":{"tool":"codex","version":1,"confidence":"heuristic"}}',
     );
+  });
+
+  it("preserves mined parser blocks in agent output SSE events", async () => {
+    const fixture = getParserFixture("claude-live-tool-action-rows");
+    server?.stop();
+    let reads = 0;
+    server = new MetadataServer({
+      lifecycle: {
+        readAgentOutput: ({ sessionId, startLine }) => {
+          reads += 1;
+          return {
+            sessionId,
+            startLine: startLine ?? -120,
+            output: reads >= 2 ? fixture.raw : "initial output",
+            parsed:
+              reads >= 2
+                ? parseAgentOutput(fixture.raw, { tool: fixture.tool })
+                : {
+                    blocks: [{ type: "response" as const, text: "initial output" }],
+                    parser: {
+                      tool: "claude",
+                      version: 1,
+                      confidence: "heuristic" as const,
+                    },
+                  },
+          };
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+    const controller = new AbortController();
+
+    const res = await fetch(`${base}/agents/output/stream?sessionId=claude-1&startLine=-160&intervalMs=100`, {
+      signal: controller.signal,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(res.body).toBeTruthy();
+    const text = await readSseUntil(res.body!, (value) => value.includes("All checks are green"));
+    controller.abort();
+
+    expect(text).toContain('"parsed":{"blocks":[{"type":"response","text":"Good question. Let me check the relay status."}');
+    expect(text).toContain('{"type":"status","text":"⏺ Bash(cd /workspace/project; gh pr checks 5968)');
+    expect(text).toContain('{"type":"response","text":"All checks are green. I can merge now."}');
   });
 
   it("lists and clears notifications over HTTP", async () => {
