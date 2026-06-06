@@ -277,6 +277,31 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
     ],
   },
   {
+    name: "codex-bare-ran-command-status",
+    tool: "codex",
+    raw: [
+      "• Checking the branch.",
+      "",
+      "Ran git worktree list --porcelain",
+      "",
+      "• Bash(cd /tmp) is only a prose example here.",
+    ].join("\n"),
+    expected: [
+      {
+        type: "response",
+        includes: ["Checking the branch"],
+      },
+      {
+        type: "status",
+        includes: ["Ran git worktree list --porcelain"],
+      },
+      {
+        type: "response",
+        includes: ["Bash(cd /tmp) is only a prose example here."],
+      },
+    ],
+  },
+  {
     name: "codex-result-summary-after-metadata-path",
     tool: "codex",
     raw: [
@@ -432,6 +457,36 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
       {
         type: "status",
         includes: ["Brewing… (thinking)", "terminal-notifier"],
+      },
+    ],
+  },
+  {
+    name: "claude-compact-terminal-notifier-status",
+    tool: "claude",
+    raw: [
+      "⏺Read1file(ctrl+otoexpand)",
+      "⏺I'vereadyour~/CLAUDE.md.Ihaveallyourinstructionsloaded.",
+      '⏺Bash(terminal-notifier-title"ClaudeCode"-message"Readyfortasks-whatwouldyouliketoworkon?"-sound',
+      "default)",
+      "⎿ (Nooutput)",
+      "⏺Whatwouldyouliketoworkon?",
+    ].join("\n"),
+    expected: [
+      {
+        type: "status",
+        includes: ["Read1file"],
+      },
+      {
+        type: "response",
+        includes: ["I'vereadyour~/CLAUDE.md"],
+      },
+      {
+        type: "status",
+        includes: ["terminal-notifier", "Nooutput"],
+      },
+      {
+        type: "response",
+        includes: ["Whatwouldyouliketoworkon?"],
       },
     ],
   },
