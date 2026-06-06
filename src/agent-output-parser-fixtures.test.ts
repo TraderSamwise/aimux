@@ -90,4 +90,30 @@ describe("agent output parser tool inference", () => {
 
     expect(parsed.parser.tool).toBe("claude");
   });
+
+  it("does not infer from casual tool mentions inside assistant text", () => {
+    const raw = [
+      "• Claude Code and OpenAI Codex both support terminal workflows.",
+      "",
+      "  I can compare them if useful.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw);
+
+    expect(parsed.parser.tool).toBe("unknown");
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response"]);
+  });
+
+  it("does not infer when both tool chrome signatures are present", () => {
+    const raw = [
+      "│ >_ OpenAI Codex (v0.136.0) │",
+      "Claude Code",
+      "› Explain this codebase",
+      "  gpt-5.5 medium · ~/workspace/project",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw);
+
+    expect(parsed.parser.tool).toBe("unknown");
+  });
 });
