@@ -74,6 +74,20 @@ const promptLeakLooksActionable = (blocks: AgentOutputBlock[], blockIndex: numbe
   return looksLikePromptLeakFooter(blocks[blockIndex + 1]);
 };
 
+const rawBlockLooksActionable = (text: string) => {
+  const lines = String(text || "")
+    .split("\n")
+    .map((line) => line.trim().replace(/^\d+\s+(?:[+-]\s*)?/, ""))
+    .filter(Boolean);
+  if (lines.length === 0) return false;
+  if (lines.every((line) => /^[{}\][(),;:\s]+$/.test(line))) return false;
+  if (lines.every((line) => /^[\d⋮\s:+\-{},()[\];"\u2500-\u257f]+$/.test(line))) return false;
+  if (lines.every((line) => /^[bcdlps-][rwx-]{9}@?\s+\d+\s+\S+\s+\S+\s+\d+\s+\w{3}\s+\d+/i.test(line))) {
+    return false;
+  }
+  return true;
+};
+
 function* historyCandidates(historyDir: string): Generator<AuditCandidate> {
   if (!existsSync(historyDir) || !statSync(historyDir).isDirectory()) return;
   for (const entry of readdirSync(historyDir).filter((name) => name.endsWith(".jsonl")).sort()) {
@@ -141,7 +155,7 @@ export function auditAgentOutputParserCorpus(options: ParserAuditOptions): Parse
     const parsed = parseAgentOutput(candidate.content, { tool: candidate.tool });
     parsed.blocks.forEach((block, blockIndex) => {
       const flags: ParserAuditFindingFlag[] = [];
-      if (block.type === "raw") {
+      if (block.type === "raw" && rawBlockLooksActionable(block.text)) {
         flags.push("raw-block");
       }
       if (block.type === "response" && STATUS_LEAK_RESPONSE_PATTERNS.some((pattern) => pattern.test(block.text))) {
