@@ -12,7 +12,7 @@ Defaults:
   --context .aimux/context
 `;
 
-const validFlags = new Set(["prompt-from-response-record", "raw-block", "status-leak-response"]);
+const validFlags = new Set(["prompt-from-response-record", "raw-block", "status-leak-response", "action-status-leak"]);
 const args = process.argv.slice(2);
 const historyDirs = [];
 const contextDirs = [];
