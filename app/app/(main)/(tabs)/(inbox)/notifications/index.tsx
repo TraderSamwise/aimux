@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useColorScheme } from "nativewind";
@@ -16,6 +16,7 @@ import {
 } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Page, PageHeader } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { clearNotifications, listNotifications, markNotificationsRead } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -369,19 +370,16 @@ export default function NotificationsScreen() {
   }
 
   return (
-    <ScrollView className="flex-1 bg-background" contentContainerClassName="px-4 py-5 md:px-8">
-      <View className="mx-auto w-full max-w-3xl">
-        <View className="mb-5 flex-row items-start justify-between gap-3">
-          <View className="min-w-0 flex-1">
-            <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-              For You
-            </Text>
-            <Text className="mt-1 text-2xl font-bold text-foreground">Attention Feed</Text>
-            <Text className="mt-1 text-sm text-muted-foreground" numberOfLines={2}>
-              {project ? project.name : "Select a project to view attention items"}
-              {project?.path ? ` · ${project.path}` : ""}
-            </Text>
-          </View>
+    <Page>
+      <PageHeader
+        eyebrow="For You"
+        title="Attention Feed"
+        subtitle={
+          project
+            ? `${project.name}${project.path ? ` · ${project.path}` : ""}`
+            : "Select a project to view attention items"
+        }
+        actions={
           <Button
             variant="outline"
             size="icon"
@@ -391,138 +389,138 @@ export default function NotificationsScreen() {
           >
             <RotateCw size={18} color={foregroundIconColor} />
           </Button>
-        </View>
+        }
+      />
 
-        <View className="mb-4 flex-row flex-wrap">
-          {LENSES.map((item) => (
-            <LensChip
-              key={item.id}
-              label={item.label}
-              count={item.id === "all" ? forYou.cards.length : forYou.counts[item.id]}
-              active={lens === item.id}
-              onPress={() =>
-                router.replace(
-                  buildViewHref("/notifications", { project: selectedProjectPath, lens: item.id }),
-                )
-              }
-            />
-          ))}
-        </View>
+      <View className="mb-4 flex-row flex-wrap">
+        {LENSES.map((item) => (
+          <LensChip
+            key={item.id}
+            label={item.label}
+            count={item.id === "all" ? forYou.cards.length : forYou.counts[item.id]}
+            active={lens === item.id}
+            onPress={() =>
+              router.replace(
+                buildViewHref("/notifications", { project: selectedProjectPath, lens: item.id }),
+              )
+            }
+          />
+        ))}
+      </View>
 
-        <View className="mb-4 flex-row flex-wrap items-center gap-2">
-          {hasSecurityEvents ? (
-            <View className="rounded-full border border-red-500/40 bg-red-950/20 px-3 py-1.5">
-              <Text className="text-xs font-medium text-foreground">
-                {securityUnreadCount} security unread
-              </Text>
-            </View>
-          ) : null}
-          <View className="rounded-full border border-border bg-card px-3 py-1.5">
+      <View className="mb-4 flex-row flex-wrap items-center gap-2">
+        {hasSecurityEvents ? (
+          <View className="rounded-full border border-red-500/40 bg-red-950/20 px-3 py-1.5">
             <Text className="text-xs font-medium text-foreground">
-              {unreadCount} notification unread
-              {lastUpdated ? ` · updated ${lastUpdated}` : ""}
+              {securityUnreadCount} security unread
             </Text>
           </View>
+        ) : null}
+        <View className="rounded-full border border-border bg-card px-3 py-1.5">
+          <Text className="text-xs font-medium text-foreground">
+            {unreadCount} notification unread
+            {lastUpdated ? ` · updated ${lastUpdated}` : ""}
+          </Text>
+        </View>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!endpoint || unreadCount === 0 || busy !== null}
+          onPress={() => void mutate("read-all", "read")}
+          className="gap-1.5"
+        >
+          <Check size={14} color={foregroundIconColor} />
+          <Text className="text-sm font-medium text-foreground">Read notifications</Text>
+        </Button>
+        {hasSecurityEvents ? (
           <Button
             variant="outline"
             size="sm"
-            disabled={!endpoint || unreadCount === 0 || busy !== null}
-            onPress={() => void mutate("read-all", "read")}
+            disabled={securityUnreadCount === 0}
+            onPress={() => markSecurityEventsRead()}
             className="gap-1.5"
           >
-            <Check size={14} color={foregroundIconColor} />
-            <Text className="text-sm font-medium text-foreground">Read notifications</Text>
+            <ShieldAlert size={14} color={foregroundIconColor} />
+            <Text className="text-sm font-medium text-foreground">Read security</Text>
           </Button>
-          {hasSecurityEvents ? (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={securityUnreadCount === 0}
-              onPress={() => markSecurityEventsRead()}
-              className="gap-1.5"
-            >
-              <ShieldAlert size={14} color={foregroundIconColor} />
-              <Text className="text-sm font-medium text-foreground">Read security</Text>
-            </Button>
-          ) : null}
+        ) : null}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!endpoint || !hasNotifications || busy !== null}
+          onPress={() => void mutate("clear-all", "clear")}
+          className="gap-1.5"
+        >
+          <Trash2 size={14} color="#a1a1aa" />
+          <Text className="text-sm font-medium text-muted-foreground">Clear notifications</Text>
+        </Button>
+        {hasSecurityEvents ? (
           <Button
             variant="ghost"
             size="sm"
-            disabled={!endpoint || !hasNotifications || busy !== null}
-            onPress={() => void mutate("clear-all", "clear")}
+            onPress={() => clearSecurityEvents()}
             className="gap-1.5"
           >
             <Trash2 size={14} color="#a1a1aa" />
-            <Text className="text-sm font-medium text-muted-foreground">Clear notifications</Text>
+            <Text className="text-sm font-medium text-muted-foreground">Clear security</Text>
           </Button>
-          {hasSecurityEvents ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onPress={() => clearSecurityEvents()}
-              className="gap-1.5"
-            >
-              <Trash2 size={14} color="#a1a1aa" />
-              <Text className="text-sm font-medium text-muted-foreground">Clear security</Text>
-            </Button>
-          ) : null}
-        </View>
-
-        {feedError ? (
-          <Card className="mb-4 rounded-lg border-destructive/50 bg-destructive/10">
-            <Text className="text-sm font-semibold text-foreground">Attention feed failed</Text>
-            <Text className="mt-1 text-xs text-muted-foreground">{feedError}</Text>
-          </Card>
         ) : null}
-
-        {!project ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">No project selected</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              Pick a project from the sidebar to see its attention feed.
-            </Text>
-          </Card>
-        ) : visibleCards.length > 0 ? (
-          visibleCards.map((card) => (
-            <ForYouCardRow
-              key={card.id}
-              card={card}
-              busy={busy !== null}
-              onOpen={(item) => void openCard(item)}
-              onRead={(item) =>
-                item.notificationId
-                  ? void mutate(`read:${item.notificationId}`, "read", { id: item.notificationId })
-                  : undefined
-              }
-              onClear={(item) =>
-                item.notificationId
-                  ? void mutate(`clear:${item.notificationId}`, "clear", {
-                      id: item.notificationId,
-                    })
-                  : undefined
-              }
-            />
-          ))
-        ) : !endpoint ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">Project host offline</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              Start the project host to load attention items.
-            </Text>
-          </Card>
-        ) : !feed ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">Loading feed...</Text>
-          </Card>
-        ) : (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">All caught up</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              New agent activity, approvals, security alerts, and shipped work will appear here.
-            </Text>
-          </Card>
-        )}
       </View>
-    </ScrollView>
+
+      {feedError ? (
+        <Card className="mb-4 rounded-lg border-destructive/50 bg-destructive/10">
+          <Text className="text-sm font-semibold text-foreground">Attention feed failed</Text>
+          <Text className="mt-1 text-xs text-muted-foreground">{feedError}</Text>
+        </Card>
+      ) : null}
+
+      {!project ? (
+        <Card className="rounded-lg p-5">
+          <Text className="text-base font-semibold text-foreground">No project selected</Text>
+          <Text className="mt-1 text-sm text-muted-foreground">
+            Pick a project from the sidebar to see its attention feed.
+          </Text>
+        </Card>
+      ) : visibleCards.length > 0 ? (
+        visibleCards.map((card) => (
+          <ForYouCardRow
+            key={card.id}
+            card={card}
+            busy={busy !== null}
+            onOpen={(item) => void openCard(item)}
+            onRead={(item) =>
+              item.notificationId
+                ? void mutate(`read:${item.notificationId}`, "read", { id: item.notificationId })
+                : undefined
+            }
+            onClear={(item) =>
+              item.notificationId
+                ? void mutate(`clear:${item.notificationId}`, "clear", {
+                    id: item.notificationId,
+                  })
+                : undefined
+            }
+          />
+        ))
+      ) : !endpoint ? (
+        <Card className="rounded-lg p-5">
+          <Text className="text-base font-semibold text-foreground">Project host offline</Text>
+          <Text className="mt-1 text-sm text-muted-foreground">
+            Start the project host to load attention items.
+          </Text>
+        </Card>
+      ) : !feed ? (
+        <Card className="rounded-lg p-5">
+          <Text className="text-base font-semibold text-foreground">Loading feed...</Text>
+        </Card>
+      ) : (
+        <Card className="rounded-lg p-5">
+          <Text className="text-base font-semibold text-foreground">All caught up</Text>
+          <Text className="mt-1 text-sm text-muted-foreground">
+            New agent activity, approvals, security alerts, and shipped work will appear here.
+          </Text>
+        </Card>
+      )}
+    </Page>
   );
 }

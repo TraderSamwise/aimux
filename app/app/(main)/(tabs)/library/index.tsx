@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import { BookOpen, FileText, RefreshCw } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { DetailPanel } from "@/components/DetailPanel";
+import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
@@ -109,21 +110,16 @@ export default function LibraryScreen() {
   }, [endpointKey, refresh]);
 
   return (
-    <ScrollView className="flex-1 bg-background" contentContainerClassName="px-4 py-5 md:px-8">
-      <View className="w-full max-w-[1100px]">
-        <View className="mb-5 flex-row items-start justify-between gap-3">
-          <View className="min-w-0 flex-1">
-            <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-              Library
-            </Text>
-            <Text className="mt-1 text-[28px] font-bold leading-tight text-foreground">
-              Project Specs
-            </Text>
-            <Text className="mt-1 text-sm text-muted-foreground" numberOfLines={1}>
-              {project?.name ?? "No project selected"}
-              {project?.path ? ` · ${project.path}` : ""}
-            </Text>
-          </View>
+    <Page>
+      <PageHeader
+        eyebrow="Library"
+        title="Project Specs"
+        subtitle={
+          project
+            ? `${project.name}${project.path ? ` · ${project.path}` : ""}`
+            : "No project selected"
+        }
+        actions={
           <Button
             variant="outline"
             size="icon"
@@ -133,66 +129,52 @@ export default function LibraryScreen() {
           >
             <RefreshCw size={18} color={foregroundIconColor} />
           </Button>
-        </View>
+        }
+      />
 
-        {!project ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">No project selected</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              Pick a project from the sidebar.
-            </Text>
+      {!project ? (
+        <PageStateCard title="No project selected" body="Pick a project from the sidebar." />
+      ) : !endpoint ? (
+        <PageStateCard
+          title="Project host offline"
+          body="Start the project host to load library documents."
+        />
+      ) : error ? (
+        <PageStateCard title="Library failed" body={error} tone="danger" />
+      ) : documents.length === 0 ? (
+        <PageStateCard
+          title={loading ? "Loading library..." : "No library documents"}
+          body="Durable project instruction files will appear here when present."
+        />
+      ) : (
+        <View className="gap-4 lg:flex-row">
+          <Card className="overflow-hidden rounded-xl p-0 lg:w-[320px]">
+            {documents.map((document) => (
+              <DocumentRow
+                key={document.id}
+                document={document}
+                selected={document.id === selectedDocument?.id}
+                onPress={() =>
+                  router.replace(
+                    buildViewHref("/library", { project: project?.path, document: document.id }),
+                  )
+                }
+              />
+            ))}
           </Card>
-        ) : !endpoint ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">Project host offline</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              Start the project host to load library documents.
-            </Text>
-          </Card>
-        ) : error ? (
-          <Card className="rounded-lg border-destructive/50 bg-destructive/10 p-5">
-            <Text className="text-base font-semibold text-foreground">Library failed</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">{error}</Text>
-          </Card>
-        ) : documents.length === 0 ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">
-              {loading ? "Loading library..." : "No library documents"}
-            </Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              Durable project instruction files will appear here when present.
-            </Text>
-          </Card>
-        ) : (
-          <View className="gap-4 lg:flex-row">
-            <Card className="overflow-hidden rounded-xl p-0 lg:w-[320px]">
-              {documents.map((document) => (
-                <DocumentRow
-                  key={document.id}
-                  document={document}
-                  selected={document.id === selectedDocument?.id}
-                  onPress={() =>
-                    router.replace(
-                      buildViewHref("/library", { project: project?.path, document: document.id }),
-                    )
-                  }
-                />
-              ))}
-            </Card>
-            <DetailPanel
-              title={selectedDocument?.title ?? "Document"}
-              meta={selectedDocument?.path}
-              icon={<BookOpen size={17} color="#a1a1aa" />}
-            >
-              <View>
-                <Text className="font-mono text-[12px] leading-5 text-foreground">
-                  {selectedDocument?.content}
-                </Text>
-              </View>
-            </DetailPanel>
-          </View>
-        )}
-      </View>
-    </ScrollView>
+          <DetailPanel
+            title={selectedDocument?.title ?? "Document"}
+            meta={selectedDocument?.path}
+            icon={<BookOpen size={17} color="#a1a1aa" />}
+          >
+            <View>
+              <Text className="font-mono text-[12px] leading-5 text-foreground">
+                {selectedDocument?.content}
+              </Text>
+            </View>
+          </DetailPanel>
+        </View>
+      )}
+    </Page>
   );
 }

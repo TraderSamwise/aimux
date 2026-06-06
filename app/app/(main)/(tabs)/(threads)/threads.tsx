@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { ScrollView, View } from "react-native";
+import { View } from "react-native";
 import { useGlobalSearchParams } from "expo-router";
 import { useAtomValue } from "jotai";
+import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { useAuth } from "@/lib/auth";
 import { listThreads, type ThreadSummaryResponse } from "@/lib/api";
@@ -49,41 +50,53 @@ export default function ThreadsScreen() {
   }, [endpoint?.host, endpoint?.port, getToken]);
 
   return (
-    <View className="flex-1 bg-background">
-      <View className="border-b border-border px-4 py-3">
-        <Text className="text-base font-semibold text-foreground">Threads</Text>
-      </View>
-      <ScrollView className="flex-1 p-4">
-        {error ? <Text className="text-xs text-destructive mb-2">{error}</Text> : null}
-        {threads.length === 0 ? (
-          <Text className="text-sm text-muted-foreground">No threads</Text>
-        ) : (
-          threads.map((t) => {
-            const selected = t.thread.id === selectedThreadId;
-            return (
-              <View
-                key={t.thread.id}
-                className={cn(
-                  "rounded-lg border border-border bg-card p-3 mb-2",
-                  selected && "border-ring bg-secondary",
-                )}
-              >
-                <Text className="text-base font-medium text-foreground">
-                  {t.thread.title || t.thread.id}
+    <Page>
+      <PageHeader
+        eyebrow="Project"
+        title="Threads"
+        subtitle={
+          project
+            ? `${project.name}${project.path ? ` · ${project.path}` : ""}`
+            : "No project selected"
+        }
+      />
+      {!project ? (
+        <PageStateCard title="No project selected" body="Pick a project from the sidebar." />
+      ) : !endpoint ? (
+        <PageStateCard
+          title="Project host offline"
+          body="Start the project host to load threads."
+        />
+      ) : error ? (
+        <PageStateCard title="Unable to load threads" body={error} tone="danger" />
+      ) : threads.length === 0 ? (
+        <PageStateCard title="No threads" body="Thread conversations will appear here." />
+      ) : (
+        threads.map((t) => {
+          const selected = t.thread.id === selectedThreadId;
+          return (
+            <View
+              key={t.thread.id}
+              className={cn(
+                "mb-2 rounded-lg border border-border bg-card p-3",
+                selected && "border-ring bg-secondary",
+              )}
+            >
+              <Text className="text-base font-medium text-foreground">
+                {t.thread.title || t.thread.id}
+              </Text>
+              <Text className="text-xs text-muted-foreground">
+                {t.thread.kind ?? "thread"} · {t.thread.status ?? ""}
+              </Text>
+              {t.lastMessage?.body ? (
+                <Text className="mt-1 text-sm text-foreground" numberOfLines={2}>
+                  {t.lastMessage.body}
                 </Text>
-                <Text className="text-xs text-muted-foreground">
-                  {t.thread.kind ?? "thread"} · {t.thread.status ?? ""}
-                </Text>
-                {t.lastMessage?.body ? (
-                  <Text className="text-sm text-foreground mt-1" numberOfLines={2}>
-                    {t.lastMessage.body}
-                  </Text>
-                ) : null}
-              </View>
-            );
-          })
-        )}
-      </ScrollView>
-    </View>
+              ) : null}
+            </View>
+          );
+        })
+      )}
+    </Page>
   );
 }

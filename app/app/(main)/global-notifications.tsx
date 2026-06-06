@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AlertTriangle, Bell, RotateCw } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { listNotifications, type NotificationRecord } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -137,19 +138,14 @@ export default function GlobalNotificationsScreen() {
   }
 
   return (
-    <ScrollView className="flex-1 bg-background" contentContainerClassName="px-4 py-5 md:px-8">
-      <View className="mx-auto w-full max-w-5xl">
-        <View className="mb-5 flex-row items-start justify-between gap-3">
-          <View className="min-w-0 flex-1">
-            <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-              All Projects
-            </Text>
-            <Text className="mt-1 text-2xl font-bold text-foreground">Inbox</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              {unreadCount} unread across {onlineProjects.length} online project
-              {onlineProjects.length === 1 ? "" : "s"}
-            </Text>
-          </View>
+    <Page>
+      <PageHeader
+        eyebrow="All Projects"
+        title="Inbox"
+        subtitle={`${unreadCount} unread across ${onlineProjects.length} online project${
+          onlineProjects.length === 1 ? "" : "s"
+        }`}
+        actions={
           <Button
             variant="outline"
             size="icon"
@@ -159,76 +155,71 @@ export default function GlobalNotificationsScreen() {
           >
             <RotateCw size={18} color="#fafafa" />
           </Button>
-        </View>
+        }
+      />
 
-        {hasFetchError ? (
-          <Card className="mb-4 rounded-lg border-amber-500/40 bg-amber-500/10">
-            <Text className="text-sm font-semibold text-foreground">Some projects failed</Text>
-            <Text className="mt-1 text-xs text-muted-foreground">{errors.join("\n")}</Text>
-          </Card>
-        ) : null}
+      {hasFetchError ? (
+        <Card className="mb-4 rounded-lg border-amber-500/40 bg-amber-500/10">
+          <Text className="text-sm font-semibold text-foreground">Some projects failed</Text>
+          <Text className="mt-1 text-xs text-muted-foreground">{errors.join("\n")}</Text>
+        </Card>
+      ) : null}
 
-        {rows.length === 0 && hasFetchError && !loading ? (
-          <Card className="rounded-lg border-amber-500/40 bg-amber-500/10 p-5">
-            <Text className="text-base font-semibold text-foreground">Unable to load inbox</Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              Fix the failed project connection or refresh to try again.
-            </Text>
-          </Card>
-        ) : rows.length === 0 ? (
-          <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">
-              {loading ? "Loading inbox..." : "All caught up"}
-            </Text>
-            <Text className="mt-1 text-sm text-muted-foreground">
-              Project-scoped notifications will appear here as a flattened feed.
-            </Text>
-          </Card>
-        ) : (
-          rows.map((row) => {
-            const iconColor = row.notification.unread ? "#f59e0b" : "#a1a1aa";
-            return (
-              <Pressable
-                key={`${row.projectPath}:${row.notification.id}`}
-                onPress={() => openRow(row)}
-                className="mb-2"
-              >
-                <Card className="rounded-lg p-3 active:bg-accent/60">
-                  <View className="flex-row items-start gap-3">
-                    <View className="mt-0.5 rounded-md border border-border bg-background p-2">
-                      {row.notification.unread ? (
-                        <AlertTriangle size={16} color={iconColor} />
-                      ) : (
-                        <Bell size={16} color={iconColor} />
-                      )}
-                    </View>
-                    <View className="min-w-0 flex-1">
-                      <View className="flex-row items-center">
-                        {row.notification.unread ? (
-                          <View className="mr-2 h-2 w-2 rounded-full bg-emerald-500" />
-                        ) : null}
-                        <Text className="min-w-0 flex-1 text-base font-medium text-foreground">
-                          {row.notification.title}
-                        </Text>
-                      </View>
-                      <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
-                        {row.projectName}
-                        {row.notification.kind ? ` · ${row.notification.kind}` : ""}
-                        {relativeTime(row.notification.createdAt)
-                          ? ` · ${relativeTime(row.notification.createdAt)}`
-                          : ""}
-                      </Text>
-                      <Text className="mt-2 text-sm text-foreground/90" numberOfLines={3}>
-                        {row.notification.body}
-                      </Text>
-                    </View>
+      {rows.length === 0 && hasFetchError && !loading ? (
+        <PageStateCard
+          title="Unable to load inbox"
+          body="Fix the failed project connection or refresh to try again."
+          tone="warning"
+        />
+      ) : rows.length === 0 ? (
+        <PageStateCard
+          title={loading ? "Loading inbox..." : "All caught up"}
+          body="Project-scoped notifications will appear here as a flattened feed."
+        />
+      ) : (
+        rows.map((row) => {
+          const iconColor = row.notification.unread ? "#f59e0b" : "#a1a1aa";
+          return (
+            <Pressable
+              key={`${row.projectPath}:${row.notification.id}`}
+              onPress={() => openRow(row)}
+              className="mb-2"
+            >
+              <Card className="rounded-lg p-3 active:bg-accent/60">
+                <View className="flex-row items-start gap-3">
+                  <View className="mt-0.5 rounded-md border border-border bg-background p-2">
+                    {row.notification.unread ? (
+                      <AlertTriangle size={16} color={iconColor} />
+                    ) : (
+                      <Bell size={16} color={iconColor} />
+                    )}
                   </View>
-                </Card>
-              </Pressable>
-            );
-          })
-        )}
-      </View>
-    </ScrollView>
+                  <View className="min-w-0 flex-1">
+                    <View className="flex-row items-center">
+                      {row.notification.unread ? (
+                        <View className="mr-2 h-2 w-2 rounded-full bg-emerald-500" />
+                      ) : null}
+                      <Text className="min-w-0 flex-1 text-base font-medium text-foreground">
+                        {row.notification.title}
+                      </Text>
+                    </View>
+                    <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
+                      {row.projectName}
+                      {row.notification.kind ? ` · ${row.notification.kind}` : ""}
+                      {relativeTime(row.notification.createdAt)
+                        ? ` · ${relativeTime(row.notification.createdAt)}`
+                        : ""}
+                    </Text>
+                    <Text className="mt-2 text-sm text-foreground/90" numberOfLines={3}>
+                      {row.notification.body}
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            </Pressable>
+          );
+        })
+      )}
+    </Page>
   );
 }

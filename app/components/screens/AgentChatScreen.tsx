@@ -1,12 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Image,
-  Platform,
-  Pressable,
-  ScrollView,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { Image, Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -450,10 +443,7 @@ export default function ChatScreen() {
   );
 
   return (
-    <View
-      className="flex-1 bg-background"
-      style={{ flex: 1, paddingBottom: chatKeyboardInset }}
-    >
+    <View className="flex-1 bg-background" style={{ flex: 1, paddingBottom: chatKeyboardInset }}>
       <View className="flex-1" style={Platform.OS === "web" ? { flexDirection: "row" } : undefined}>
         {Platform.OS !== "web" ? null /* sidebar lives in (main)/_layout on web */ : null}
         <View className="flex-1">
@@ -513,10 +503,7 @@ export default function ChatScreen() {
             </View>
           </View>
           {sharePanelOpen ? (
-            <View
-              className="border-b border-border bg-card px-4 py-3"
-              style={{ flexShrink: 0 }}
-            >
+            <View className="border-b border-border bg-card px-4 py-3" style={{ flexShrink: 0 }}>
               {activeShare ? (
                 <View className="flex-row items-center justify-between gap-3">
                   <View className="flex-1">

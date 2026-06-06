@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pressable, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
 import { ClipboardList, FileText, GitBranch, Network, RefreshCw } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { listTasks, type TaskSummaryResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -74,12 +75,7 @@ function SectionChip({
 }
 
 function EmptyCard({ title, body }: { title: string; body: string }) {
-  return (
-    <Card className="rounded-lg p-5">
-      <Text className="text-base font-semibold text-foreground">{title}</Text>
-      <Text className="mt-1 text-sm text-muted-foreground">{body}</Text>
-    </Card>
-  );
+  return <PageStateCard title={title} body={body} />;
 }
 
 function StoryList({ items }: { items: ProjectStoryItem[] }) {
@@ -168,33 +164,46 @@ export default function ProjectScreen() {
   const router = useRouter();
   const searchParams = useGlobalSearchParams<{ section?: string | string[] }>();
   const section = resolveProjectSection(cleanSearchValue(searchParams.section));
+  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointRef = useRef(endpoint);
+  const getTokenRef = useRef(getToken);
+  const refreshSeqRef = useRef(0);
+
+  useEffect(() => {
+    endpointRef.current = endpoint;
+    getTokenRef.current = getToken;
+  }, [endpoint, getToken]);
 
   const refreshTasks = useCallback(async () => {
-    if (!endpoint) {
+    const seq = ++refreshSeqRef.current;
+    const currentEndpoint = endpointRef.current;
+    if (!currentEndpoint) {
       setTasks([]);
       setTaskError(null);
+      setLoadingTasks(false);
       return;
     }
     setLoadingTasks(true);
     try {
-      const token = await getToken();
-      const response = await listTasks(endpoint, undefined, { token });
+      const token = await getTokenRef.current();
+      const response = await listTasks(currentEndpoint, undefined, { token });
+      if (seq !== refreshSeqRef.current) return;
       setTasks(response.tasks);
       setTaskError(null);
     } catch (err) {
-      setTasks([]);
+      if (seq !== refreshSeqRef.current) return;
       setTaskError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingTasks(false);
+      if (seq === refreshSeqRef.current) setLoadingTasks(false);
     }
-  }, [endpoint, getToken]);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       void refreshTasks();
     }, 0);
     return () => clearTimeout(timer);
-  }, [refreshTasks]);
+  }, [endpointKey, refreshTasks]);
 
   const model = useMemo(
     () =>
@@ -211,26 +220,12 @@ export default function ProjectScreen() {
   );
 
   return (
-    <ScrollView className="flex-1 bg-background" contentContainerClassName="px-4 py-5 md:px-8">
-      <View className="w-full max-w-[1100px]">
-        <View className="mb-5 flex-row items-start justify-between gap-3">
-          <View className="min-w-0 flex-1">
-            <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-              Project
-            </Text>
-            <Text
-              className="mt-1 text-[28px] font-bold leading-tight text-foreground"
-              numberOfLines={1}
-              ellipsizeMode="tail"
-            >
-              {project?.name ?? "No project selected"}
-            </Text>
-            {project?.path ? (
-              <Text className="mt-1 text-sm text-muted-foreground" numberOfLines={1}>
-                {project.path}
-              </Text>
-            ) : null}
-          </View>
+    <Page>
+      <PageHeader
+        eyebrow="Project"
+        title={project?.name ?? "No project selected"}
+        subtitle={project?.path}
+        actions={
           <Button
             variant="outline"
             size="icon"
@@ -240,86 +235,86 @@ export default function ProjectScreen() {
           >
             <RefreshCw size={18} color={foregroundIconColor} />
           </Button>
-        </View>
+        }
+      />
 
-        <View className="mb-5 flex-row flex-wrap">
-          <SummaryTile label="Agents" value={model.summary.agents} />
-          <SummaryTile label="Services" value={model.summary.services} />
-          <SummaryTile label="Worktrees" value={model.summary.worktrees} />
-          <SummaryTile label="Tasks" value={model.summary.tasks} />
-          <SummaryTile label="Unread" value={model.summary.unreadNotifications} />
-        </View>
+      <View className="mb-5 flex-row flex-wrap">
+        <SummaryTile label="Agents" value={model.summary.agents} />
+        <SummaryTile label="Services" value={model.summary.services} />
+        <SummaryTile label="Worktrees" value={model.summary.worktrees} />
+        <SummaryTile label="Tasks" value={model.summary.tasks} />
+        <SummaryTile label="Unread" value={model.summary.unreadNotifications} />
+      </View>
 
-        <View className="mb-4 flex-row flex-wrap">
-          {SECTIONS.map((item) => (
-            <SectionChip
-              key={item.id}
-              label={item.label}
-              active={section === item.id}
-              onPress={() =>
-                router.replace(
-                  buildViewHref("/project", { project: project?.path, section: item.id }),
-                )
-              }
-            />
-          ))}
-        </View>
+      <View className="mb-4 flex-row flex-wrap">
+        {SECTIONS.map((item) => (
+          <SectionChip
+            key={item.id}
+            label={item.label}
+            active={section === item.id}
+            onPress={() =>
+              router.replace(
+                buildViewHref("/project", { project: project?.path, section: item.id }),
+              )
+            }
+          />
+        ))}
+      </View>
 
-        {!project ? (
-          <EmptyCard title="No project selected" body="Pick a project from the sidebar." />
-        ) : !endpoint ? (
-          <EmptyCard title="Project host offline" body="Start the project host to load tasks." />
-        ) : taskError ? (
-          <Card className="mb-4 rounded-lg border-destructive/50 bg-destructive/10">
-            <Text className="text-sm font-semibold text-foreground">Project queue failed</Text>
-            <Text className="mt-1 text-xs text-muted-foreground">{taskError}</Text>
-          </Card>
-        ) : null}
+      {!project ? (
+        <EmptyCard title="No project selected" body="Pick a project from the sidebar." />
+      ) : !endpoint ? (
+        <EmptyCard title="Project host offline" body="Start the project host to load tasks." />
+      ) : taskError ? (
+        <Card className="mb-4 rounded-lg border-destructive/50 bg-destructive/10">
+          <Text className="text-sm font-semibold text-foreground">Project queue failed</Text>
+          <Text className="mt-1 text-xs text-muted-foreground">{taskError}</Text>
+        </Card>
+      ) : null}
 
-        {project && endpoint ? (
-          <>
-            {section === "story" ? <StoryList items={model.story} /> : null}
-            {section === "progress" ? <ProgressSection model={model} /> : null}
-            {section === "artifacts" ? <StoryList items={model.artifactHints} /> : null}
-            {section === "tests" ? <StoryList items={model.verificationHints} /> : null}
-            {section === "queue" ? <TaskList tasks={model.openTasks} /> : null}
-            {section === "topology" ? (
-              <View>
-                <Card className="mb-3 rounded-lg p-4">
+      {project && endpoint ? (
+        <>
+          {section === "story" ? <StoryList items={model.story} /> : null}
+          {section === "progress" ? <ProgressSection model={model} /> : null}
+          {section === "artifacts" ? <StoryList items={model.artifactHints} /> : null}
+          {section === "tests" ? <StoryList items={model.verificationHints} /> : null}
+          {section === "queue" ? <TaskList tasks={model.openTasks} /> : null}
+          {section === "topology" ? (
+            <View>
+              <Card className="mb-3 rounded-lg p-4">
+                <View className="flex-row items-center">
+                  <Network size={17} color="#a1a1aa" />
+                  <Text className="ml-2 text-[15px] font-semibold text-foreground">
+                    Runtime topology
+                  </Text>
+                </View>
+                <Text className="mt-2 text-[13px] text-muted-foreground">
+                  {topology?.summary.worktrees ?? 0} worktrees · {topology?.summary.agents ?? 0}{" "}
+                  agents · {topology?.summary.services ?? 0} services
+                </Text>
+              </Card>
+              {groups.map((bucket) => (
+                <Card key={bucket.key} className="mb-3 rounded-lg p-4">
                   <View className="flex-row items-center">
-                    <Network size={17} color="#a1a1aa" />
-                    <Text className="ml-2 text-[15px] font-semibold text-foreground">
-                      Runtime topology
+                    <GitBranch size={15} color="#a1a1aa" />
+                    <Text className="ml-2 flex-1 text-[14px] font-semibold text-foreground">
+                      {bucket.name}
+                    </Text>
+                    <Text className="text-[11px] text-muted-foreground">
+                      {bucket.sessions.length + bucket.services.length} nodes
                     </Text>
                   </View>
-                  <Text className="mt-2 text-[13px] text-muted-foreground">
-                    {topology?.summary.worktrees ?? 0} worktrees · {topology?.summary.agents ?? 0}{" "}
-                    agents · {topology?.summary.services ?? 0} services
-                  </Text>
+                  {bucket.branch ? (
+                    <Text className="mt-2 text-[11px] font-mono text-muted-foreground">
+                      {bucket.branch}
+                    </Text>
+                  ) : null}
                 </Card>
-                {groups.map((bucket) => (
-                  <Card key={bucket.key} className="mb-3 rounded-lg p-4">
-                    <View className="flex-row items-center">
-                      <GitBranch size={15} color="#a1a1aa" />
-                      <Text className="ml-2 flex-1 text-[14px] font-semibold text-foreground">
-                        {bucket.name}
-                      </Text>
-                      <Text className="text-[11px] text-muted-foreground">
-                        {bucket.sessions.length + bucket.services.length} nodes
-                      </Text>
-                    </View>
-                    {bucket.branch ? (
-                      <Text className="mt-2 text-[11px] font-mono text-muted-foreground">
-                        {bucket.branch}
-                      </Text>
-                    ) : null}
-                  </Card>
-                ))}
-              </View>
-            ) : null}
-          </>
-        ) : null}
-      </View>
-    </ScrollView>
+              ))}
+            </View>
+          ) : null}
+        </>
+      ) : null}
+    </Page>
   );
 }
