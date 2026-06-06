@@ -1,17 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createAgentOutputParserHarness } from "./agent-output-parser-harness.js";
-import { AGENT_OUTPUT_PARSER_FIXTURES } from "./agent-output-parser-fixtures.js";
-
-const fixture = (name: string) => {
-  const found = AGENT_OUTPUT_PARSER_FIXTURES.find((candidate) => candidate.name === name);
-  if (!found) throw new Error(`Missing parser fixture ${name}`);
-  return found;
-};
+import { getParserFixture } from "./agent-output-parser-test-utils.js";
 
 describe("agent output parser harness", () => {
   it("parses dummy Claude and Codex live panes through the runtime read path", async () => {
-    const claude = fixture("claude-multi-unit-activity-status");
-    const codex = fixture("codex-repeated-template-suggestion");
+    const claude = getParserFixture("claude-multi-unit-activity-status");
+    const codex = getParserFixture("codex-repeated-template-suggestion");
     const harness = createAgentOutputParserHarness([
       {
         id: "claude-dummy",
@@ -41,8 +35,8 @@ describe("agent output parser harness", () => {
   });
 
   it("parses mined live-pane edge cases through the runtime read path", async () => {
-    const claude = fixture("claude-live-tool-action-rows");
-    const codex = fixture("codex-live-startup-suggestion-loop");
+    const claude = getParserFixture("claude-live-tool-action-rows");
+    const codex = getParserFixture("codex-live-startup-suggestion-loop");
     const harness = createAgentOutputParserHarness([
       {
         id: "claude-actions",

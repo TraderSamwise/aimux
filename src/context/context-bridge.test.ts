@@ -6,7 +6,7 @@ import { ContextWatcher } from "./context-bridge.js";
 import { readHistory } from "./history.js";
 import { initPaths, getContextDir, getProjectStateDir } from "../paths.js";
 import { type TmuxTarget } from "../tmux-runtime-manager.js";
-import { AGENT_OUTPUT_PARSER_FIXTURES } from "../agent-output-parser-fixtures.js";
+import { getParserFixture } from "../agent-output-parser-test-utils.js";
 
 function target(windowId = "@3"): TmuxTarget {
   return {
@@ -16,12 +16,6 @@ function target(windowId = "@3"): TmuxTarget {
     windowName: "claude",
   };
 }
-
-const parserFixture = (name: string) => {
-  const fixture = AGENT_OUTPUT_PARSER_FIXTURES.find((candidate) => candidate.name === name);
-  if (!fixture) throw new Error(`Missing parser fixture ${name}`);
-  return fixture;
-};
 
 describe("ContextWatcher tmux continuity", () => {
   let repoRoot = "";
@@ -154,7 +148,7 @@ describe("ContextWatcher tmux continuity", () => {
   });
 
   it("does not capture mined Codex startup suggestion loops as response turns", () => {
-    const fixture = parserFixture("codex-live-startup-suggestion-loop");
+    const fixture = getParserFixture("codex-live-startup-suggestion-loop");
     const watcher = new ContextWatcher(() => fixture.raw);
     const session = {
       id: "codex-startup-loop",
@@ -168,7 +162,7 @@ describe("ContextWatcher tmux continuity", () => {
   });
 
   it("captures Claude responses without capturing mined tool action rows", () => {
-    const fixture = parserFixture("claude-live-tool-action-rows");
+    const fixture = getParserFixture("claude-live-tool-action-rows");
     const watcher = new ContextWatcher(() => [fixture.raw, "", "❯ "].join("\n"));
     const session = {
       id: "claude-tool-actions",
