@@ -355,18 +355,26 @@ interface ProjectsRegistry {
 
 const MAX_PROJECT_REGISTRY_ENTRIES = 500;
 const OS_TMP_DIR = tmpdir();
-const REAL_OS_TMP_DIR = (() => {
-  try {
-    return realpathSync(OS_TMP_DIR);
-  } catch {
-    return OS_TMP_DIR;
+const TEMP_DIR_CANDIDATES = [OS_TMP_DIR, "/tmp", "/private/tmp", "/var/tmp"];
+const TEMP_DIRS = (() => {
+  const dirs = new Set<string>();
+  for (const dir of TEMP_DIR_CANDIDATES) {
+    const resolved = resolve(dir);
+    dirs.add(resolved);
+    try {
+      dirs.add(realpathSync(resolved));
+    } catch {}
   }
+  return [...dirs];
 })();
+
+function isPathInsideDir(path: string, dir: string): boolean {
+  return path === dir || path.startsWith(`${dir}${sep}`);
+}
 
 function isEphemeralTempProjectRoot(repoRoot: string): boolean {
   const resolved = resolve(repoRoot);
-  const inTmp = resolved.startsWith(`${OS_TMP_DIR}${sep}`) || resolved.startsWith(`${REAL_OS_TMP_DIR}${sep}`);
-  return inTmp && basename(resolved).startsWith("aimux-");
+  return basename(resolved).startsWith("aimux-") && TEMP_DIRS.some((dir) => isPathInsideDir(resolved, dir));
 }
 
 function assertRegistryWithinCap(projects: ProjectEntry[]): void {
