@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
 import { debug, log } from "../debug.js";
 import { getProjectStateDirFor } from "../paths.js";
+import { getRuntimeOwnerId, TMUX_RUNTIME_OWNER_OPTION } from "../runtime-owner.js";
 import type { SessionTeamMetadata } from "../team.js";
 
 export interface TmuxExecOptions {
@@ -822,6 +823,7 @@ export class TmuxRuntimeManager {
     const statuslineCommand = this.getStatuslineCommandSpec();
     const projectStateDir = getProjectStateDirFor(projectRoot);
     this.exec(["set-option", "-t", sessionName, "@aimux-project-root", projectRoot]);
+    this.exec(["set-option", "-t", sessionName, TMUX_RUNTIME_OWNER_OPTION, getRuntimeOwnerId()]);
     this.exec(["set-option", "-t", sessionName, "prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix]);
     this.exec(["set-option", "-t", sessionName, "prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2]);
     this.exec(["set-option", "-t", sessionName, "mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse]);
