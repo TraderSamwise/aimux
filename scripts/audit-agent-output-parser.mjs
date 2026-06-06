@@ -5,16 +5,18 @@ import { auditAgentOutputParserCorpus } from "../dist/agent-output-parser-audit.
 
 const usage = `Usage:
   yarn build
-  node scripts/audit-agent-output-parser.mjs [--history <dir>] [--context <dir>] [--max <n>] [--json] [--fail-on-findings]
+  node scripts/audit-agent-output-parser.mjs [--history <dir>] [--context <dir>] [--max <n>] [--flag <flag>] [--json] [--fail-on-findings]
 
 Defaults:
   --history .aimux/history
   --context .aimux/context
 `;
 
+const validFlags = new Set(["prompt-from-response-record", "raw-block", "status-leak-response"]);
 const args = process.argv.slice(2);
 const historyDirs = [];
 const contextDirs = [];
+const flags = [];
 let maxFindings = 80;
 let json = false;
 let failOnFindings = false;
@@ -54,6 +56,15 @@ for (let index = 0; index < args.length; index += 1) {
     index += 1;
     continue;
   }
+  if (arg === "--flag") {
+    const value = args[index + 1];
+    if (!value || !validFlags.has(value)) {
+      throw new Error(`--flag requires one of: ${Array.from(validFlags).join(", ")}`);
+    }
+    flags.push(value);
+    index += 1;
+    continue;
+  }
   throw new Error(`Unknown argument: ${arg}\n${usage}`);
 }
 
@@ -66,6 +77,7 @@ const summary = auditAgentOutputParserCorpus({
   historyDirs: existingHistoryDirs,
   contextDirs: existingContextDirs,
   maxFindings,
+  flags,
 });
 
 if (json) {
