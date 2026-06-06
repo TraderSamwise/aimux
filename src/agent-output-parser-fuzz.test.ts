@@ -116,6 +116,20 @@ const activityRow = (tool: Tool, seed: number, rng: () => number): Fragment => {
   };
 };
 
+const assistantActivityMention = (tool: Tool, seed: number, rng: () => number): Fragment => {
+  const response = `ACTIVITY_MENTION_RESPONSE_SENTINEL_${tool}_${seed}`;
+  const marker = tool === "codex" ? "•" : "⏺";
+  const variants = [
+    `mentions a leaked activity row: Carbonated for 42s while explaining the bug.`,
+    `says Worked for 20m 16s was visible in the transcript, but this is prose.`,
+    `describes Indexing… (running stop hook · 11s) as text the parser should not overmatch.`,
+  ];
+  return {
+    lines: [`${marker} ${response} ${pick(rng, variants)}`],
+    responses: [response],
+  };
+};
+
 const toolActionRow = (tool: Tool, seed: number, rng: () => number): Fragment => {
   const status = `ACTION_SENTINEL_${tool}_${seed}`;
   const variants =
@@ -133,6 +147,18 @@ const toolActionRow = (tool: Tool, seed: number, rng: () => number): Fragment =>
         ];
   return {
     lines: [pick(rng, variants)],
+    statuses: [status],
+  };
+};
+
+const wrappedClaudeToolActionRow = (tool: Tool, seed: number): Fragment => {
+  const status = `WRAPPED_ACTION_SENTINEL_${tool}_${seed}`;
+  return {
+    lines: [
+      `⏺ Bash(cd /workspace/project/${status}`,
+      "  git status…)",
+      "  ⎿  Running in the background (down arrow to manage)",
+    ],
     statuses: [status],
   };
 };
@@ -299,7 +325,9 @@ const fragmentMakersForTool = (tool: Tool) =>
     ? ([
         activeInput,
         activityRow,
+        assistantActivityMention,
         toolActionRow,
+        wrappedClaudeToolActionRow,
         feedbackSurvey,
         assistantMarkdown,
         assistantToolMention,
@@ -308,6 +336,7 @@ const fragmentMakersForTool = (tool: Tool) =>
     : ([
         activeInput,
         activityRow,
+        assistantActivityMention,
         toolActionRow,
         assistantMarkdown,
         assistantToolMention,
