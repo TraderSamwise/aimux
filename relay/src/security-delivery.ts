@@ -44,6 +44,9 @@ export async function deliverNotificationPush(input: NotificationPushInput): Pro
       to: record.token,
       title: input.title,
       body: input.body,
+      priority: "high",
+      // sound and interruptionLevel are iOS-only in the Expo push API.
+      ...(record.platform === "ios" ? { sound: "default", interruptionLevel: "timeSensitive" } : {}),
       data: {
         category: "agent",
         kind: input.kind,
