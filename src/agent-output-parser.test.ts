@@ -342,6 +342,29 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[1]?.text).toContain("terminal-notifier");
   });
 
+  it("keeps collapsed Claude approval prompts out of assistant chat", () => {
+    const raw = [
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "Brewing…",
+      "⏺\r────────────────────────────────────────────────────────────────────────────────────────────────\rBash command\r",
+      '   terminal-notifier-title"ClaudeCode"-message"Notificationtest-sessionstarted"-sounddefault',
+      "   Test notification at session start",
+      "Thiscommandrequiresapproval",
+      "Doyouwanttoproceed?",
+      "7;185;249m❯1.Yes",
+      "2.Yes,anddon’taskagainfor:terminal-notifier:*",
+      "3.No",
+      "Esctocancel·Tabtoamend·ctrl+etoexplain",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["status"]);
+    expect(parsed.blocks[0]?.text).toContain("Brewing…");
+    expect(parsed.blocks[0]?.text).toContain("Thiscommandrequiresapproval");
+    expect(parsed.blocks[0]?.text).toContain("Doyouwanttoproceed?");
+  });
+
   it("keeps Claude feedback survey input out of chat prompts", () => {
     const raw = [
       "⏺ There's our 2 at the top, then ~30 sequential Pine-related PRs (#584-616) — looks like autonomous-agent churn on",

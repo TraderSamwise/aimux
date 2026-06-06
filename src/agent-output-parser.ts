@@ -137,6 +137,9 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const conversationBulletText = trimmed.replace(/^(?:•|⏺)\s?/, "");
     return (
       /^■\s?/.test(trimmed) ||
+      /^⏺\s*$/.test(trimmed) ||
+      /^⏺\s*[\u2500-\u257f\-_=\s]+Bash command\b/i.test(trimmed) ||
+      looksLikeActivityProgressText(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
       /^•\s?Starting MCP servers\b/.test(trimmed) ||
       /^•\s?How is Claude doing this session\?\s*\(optional\)/i.test(trimmed) ||
@@ -318,6 +321,7 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
+    const joined = lines.join("\n");
     const runtimeLineCount = lines.filter((line) => {
       return (
         /^[✢✳✶✻✽·]/.test(line) ||
@@ -325,7 +329,11 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
         /^Bash\([^)]*terminal-notifier/i.test(line)
       );
     }).length;
-    return runtimeLineCount >= 2 || /terminal-notifier.*Running/i.test(lines.join("\n"));
+    return (
+      runtimeLineCount >= 2 ||
+      /terminal-notifier.*Running/i.test(joined) ||
+      (/terminal-notifier/i.test(joined) && /(?:Bash command|Thiscommandrequiresapproval|Doyouwanttoproceed)/i.test(joined))
+    );
   };
 
   for (const block of next) {
