@@ -33,6 +33,7 @@ describe("view location helpers", () => {
       lens: "all",
       section: "queue",
       document: null,
+      threadId: null,
     });
   });
 
