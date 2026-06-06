@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_OUTPUT_PARSER_CONTRACT } from "./agent-output-parser-contract.js";
 import { AGENT_OUTPUT_PARSER_FIXTURES } from "./agent-output-parser-fixtures.js";
+import { getParserFixture } from "./agent-output-parser-test-utils.js";
 import { parseAgentOutput } from "./agent-output-parser.js";
 
 describe("agent output parser contract", () => {
@@ -57,4 +58,62 @@ describe("agent output parser fixtures", () => {
       expect(parseAgentOutput(fixture.raw, { tool: fixture.tool }).blocks).toEqual(parsed.blocks);
     });
   }
+});
+
+describe("agent output parser tool inference", () => {
+  it("infers Codex mode when callers omit tool context", () => {
+    const fixture = getParserFixture("codex-live-startup-suggestion-loop");
+
+    const parsed = parseAgentOutput(fixture.raw);
+
+    expect(parsed.parser.tool).toBe("codex");
+    expect(parsed.blocks.map((block) => block.type)).toEqual(fixture.expected.map((block) => block.type));
+    const hasSuggestionPrompt = parsed.blocks.some(
+      (block) => block.type === "prompt" && block.text.includes("Explain this codebase"),
+    );
+    expect(hasSuggestionPrompt).toBe(false);
+  });
+
+  it("infers Claude mode when callers omit tool context", () => {
+    const fixture = getParserFixture("claude-real-prompt-that-matches-codex-suggestion");
+
+    const parsed = parseAgentOutput(fixture.raw);
+
+    expect(parsed.parser.tool).toBe("claude");
+    expect(parsed.blocks.map((block) => block.type)).toEqual(fixture.expected.map((block) => block.type));
+  });
+
+  it("preserves explicit non-unknown tool context", () => {
+    const fixture = getParserFixture("codex-live-startup-suggestion-loop");
+
+    const parsed = parseAgentOutput(fixture.raw, { tool: "claude" });
+
+    expect(parsed.parser.tool).toBe("claude");
+  });
+
+  it("does not infer from casual tool mentions inside assistant text", () => {
+    const raw = [
+      "• Claude Code and OpenAI Codex both support terminal workflows.",
+      "",
+      "  I can compare them if useful.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw);
+
+    expect(parsed.parser.tool).toBe("unknown");
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response"]);
+  });
+
+  it("does not infer when both tool chrome signatures are present", () => {
+    const raw = [
+      "│ >_ OpenAI Codex (v0.136.0) │",
+      "Claude Code",
+      "› Explain this codebase",
+      "  gpt-5.5 medium · ~/workspace/project",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw);
+
+    expect(parsed.parser.tool).toBe("unknown");
+  });
 });
