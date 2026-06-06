@@ -47,6 +47,9 @@ describe("deliverNotificationPush", () => {
     expect(body[0]).toMatchObject({
       title: "Agent needs input",
       body: "claude-abc is waiting",
+      sound: "default",
+      priority: "high",
+      interruptionLevel: "time-sensitive",
       data: { category: "agent", kind: "needs_input", sessionId: "claude-abc", projectRoot: "/repo" },
     });
   });
