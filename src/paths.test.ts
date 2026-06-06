@@ -15,6 +15,10 @@ import {
 } from "./paths.js";
 
 describe("path project identity", () => {
+  it("isolates tests from real runtime homes by default", () => {
+    expect(getGlobalAimuxDir()).toMatch(/aimux-vitest-home-/);
+  });
+
   it("resolves aimux-managed worktrees to the parent project", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-paths-"));
     try {
@@ -76,6 +80,40 @@ describe("path project identity", () => {
       await initPaths(repoRoot);
 
       expect(listProjects()).toEqual([]);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AIMUX_HOME;
+      } else {
+        process.env.AIMUX_HOME = previous;
+      }
+      rmSync(aimuxHome, { recursive: true, force: true });
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes claude temp aimux roots before enforcing the registry cap", async () => {
+    const previous = process.env.AIMUX_HOME;
+    const aimuxHome = mkdtempSync(join(tmpdir(), "aimux-home-"));
+    const repoRoot = mkdtempSync(join(tmpdir(), "real-project-"));
+    try {
+      process.env.AIMUX_HOME = aimuxHome;
+      const projects = Array.from({ length: 600 }, (_, index) => {
+        const prefix = index % 2 === 0 ? "/tmp/claude-501" : "/private/tmp/claude-501";
+        const root = `${prefix}/aimux-metadata-server-${index}`;
+        return {
+          id: `${basename(root)}-${index}`,
+          name: basename(root),
+          repoRoot: root,
+          lastSeen: new Date(0).toISOString(),
+        };
+      });
+      mkdirSync(aimuxHome, { recursive: true });
+      writeFileSync(getProjectsRegistryPath(), JSON.stringify({ version: 1, projects }, null, 2));
+
+      await initPaths(repoRoot);
+
+      expect(listProjects()).toHaveLength(1);
+      expect(listProjects()[0]?.repoRoot).toBe(repoRoot);
     } finally {
       if (previous === undefined) {
         delete process.env.AIMUX_HOME;
