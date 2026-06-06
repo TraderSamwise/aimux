@@ -37,13 +37,13 @@ function AgentCard({ session, onPress }: { session: DesktopSession; onPress: () 
   const metaParts = [tool, session.headline].filter(Boolean) as string[];
   const meta = metaParts.join(" · ");
   return (
-    <PressableCard onPress={onPress} className="mb-2 p-3.5 rounded-lg bg-secondary border-border">
+    <PressableCard onPress={onPress} className="mb-1 rounded-lg bg-secondary px-2.5 py-1.5 border-border">
       <View className="flex-row items-center">
         <View className="mr-3">
           <StatusDot status={session.status} size="md" />
         </View>
         <Text
-          className="text-[15px] font-semibold text-foreground flex-1 min-w-0"
+          className="min-w-0 flex-1 text-[14px] font-semibold text-foreground"
           numberOfLines={1}
           ellipsizeMode="tail"
         >
@@ -55,7 +55,7 @@ function AgentCard({ session, onPress }: { session: DesktopSession; onPress: () 
       </View>
       {meta ? (
         <Text
-          className="text-[12px] text-muted-foreground mt-1.5 ml-[26px] leading-snug"
+          className="ml-[26px] text-[11px] leading-tight text-muted-foreground"
           numberOfLines={2}
           ellipsizeMode="tail"
         >
@@ -81,7 +81,7 @@ function ServiceCard({
 }) {
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
   return (
-    <Card className="mb-2 p-3.5 rounded-lg bg-secondary border-border">
+    <Card className="mb-1 rounded-lg bg-secondary px-2.5 py-1.5 border-border">
       <View className="flex-row items-center">
         <Pressable
           onPress={onPress}
@@ -91,7 +91,7 @@ function ServiceCard({
             <StatusDot status={service.status} size="md" />
           </View>
           <Text
-            className="text-[15px] font-semibold text-foreground flex-1 min-w-0"
+            className="min-w-0 flex-1 text-[14px] font-semibold text-foreground"
             numberOfLines={1}
             ellipsizeMode="tail"
           >
@@ -108,7 +108,7 @@ function ServiceCard({
       {detail ? (
         <Pressable onPress={onPress}>
           <Text
-            className="text-[12px] text-muted-foreground mt-1.5 ml-[26px] font-mono leading-snug"
+            className="ml-[26px] font-mono text-[11px] leading-tight text-muted-foreground"
             numberOfLines={2}
             ellipsizeMode="tail"
           >
@@ -141,21 +141,21 @@ function WorktreeSection({
   const accent = bucket.isMainCheckout ? "bg-emerald-500" : "bg-sky-500";
 
   return (
-    <Card className="p-0 mb-6 overflow-hidden">
+    <Card className="mb-3 overflow-hidden p-0">
       {/* Worktree header */}
       <View className="flex-row items-stretch border-b border-border bg-card">
         <View className={cn("w-1.5", accent)} />
-        <View className="flex-1 min-w-0 px-5 py-4">
+        <View className="min-w-0 flex-1 px-3 py-1.5">
           <Text
-            className="text-[18px] font-bold text-foreground"
+            className="text-[16px] font-bold text-foreground"
             numberOfLines={1}
             ellipsizeMode="tail"
           >
             {bucket.name}
           </Text>
           {bucket.branch ? (
-            <View className="flex-row items-center mt-2">
-              <View className="flex-row items-center px-2 py-1 rounded bg-background border border-border max-w-full">
+            <View className="mt-0.5 flex-row items-center">
+              <View className="max-w-full flex-row items-center rounded border border-border bg-background px-2 py-0">
                 <GitBranch size={11} color="#a1a1aa" />
                 <Text
                   className="text-[11px] font-mono text-muted-foreground ml-1.5"
@@ -169,7 +169,7 @@ function WorktreeSection({
           ) : null}
           {bucket.path ? (
             <Text
-              className="text-[11px] text-muted-foreground/70 mt-2"
+              className="mt-0.5 text-[10px] text-muted-foreground/70"
               numberOfLines={1}
               ellipsizeMode="middle"
             >
@@ -180,16 +180,16 @@ function WorktreeSection({
       </View>
 
       {/* Body */}
-      <View className="px-4 pt-4 pb-3">
+      <View className="px-2.5 pb-2 pt-2.5">
         {isEmpty ? (
-          <Text className="text-[12px] text-muted-foreground italic py-2">
+          <Text className="py-1 text-[11px] italic text-muted-foreground">
             no agents · no services
           </Text>
         ) : (
           <>
             {hasAgents ? (
-              <View className={cn(hasServices && "mb-5")}>
-                <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-2.5">
+              <View className={cn(hasServices && "mb-2.5")}>
+                <Text className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                   Agents · {bucket.sessions.length}
                 </Text>
                 {bucket.sessions.map((session) => (
@@ -204,7 +204,7 @@ function WorktreeSection({
 
             {hasServices ? (
               <View>
-                <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-2.5">
+                <Text className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                   Services · {bucket.services.length}
                 </Text>
                 {bucket.services.map((service) => (
