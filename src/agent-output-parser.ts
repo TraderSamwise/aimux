@@ -67,7 +67,9 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /^[A-Za-z0-9._-]+@[^ ]+\s+(~\/|\/)/.test(trimmed) ||
       (/^([›>]|▶)\s/.test(trimmed) && /(permissions|cycle|cwd|context)/i.test(trimmed)) ||
       /^⏵⏵\s/.test(trimmed) ||
-      /gpt-|claude|context\)|bypass permissions|shift\+tab|to cycle/i.test(trimmed)
+      /^gpt-[\w.-]+\b.*(?:~\/|\/|context\)|permissions)/i.test(trimmed) ||
+      /^claude\b.*(?:~\/|\/|context\)|permissions)/i.test(trimmed) ||
+      /bypass permissions|shift\+tab|to cycle/i.test(trimmed)
     );
   };
   const isCodexUiLine = (line: string) => {
@@ -76,8 +78,10 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   };
   const statusLeadWords = new Set([
     "Baked",
+    "Brewed",
     "Building",
     "Checking",
+    "Churned",
     "Compacting",
     "Cooking",
     "Crunched",
@@ -240,20 +244,35 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
         const trimmed = line.trim();
         return (
           (/^([A-Za-z0-9._-]+@[^ ]+|~\/|\/)/.test(trimmed) && /(context\)|%\s|[$#]\s)/.test(trimmed)) ||
-          /gpt-|claude|context\)|bypass permissions|shift\+tab|to cycle/i.test(trimmed)
+          /^gpt-[\w.-]+\b.*(?:~\/|\/|context\)|permissions)/i.test(trimmed) ||
+          /^claude\b.*(?:~\/|\/|context\)|permissions)/i.test(trimmed) ||
+          /bypass permissions|shift\+tab|to cycle/i.test(trimmed)
         );
       });
   };
-  const looksLikeInProgressStatus = (text: string) =>
+  const looksLikeActiveWorkStatus = (text: string) =>
     String(text || "")
       .split("\n")
-      .some((line) => /\bWorking \(\d+s\b.*\besc to interrupt\b/i.test(line.trim()));
-  const isCodexSuggestedPrompt = (text: string) => {
-    const normalized = String(text || "")
+      .some((line) => {
+        const trimmed = line.trim();
+        return (
+          /\bWorking \(\d+s\b.*\besc to interrupt\b/i.test(trimmed) ||
+          /^Starting MCP servers\b/i.test(trimmed) ||
+          (/^[A-Z][A-Za-z-]+/.test(trimmed) && (/\bfor \d+(?:ms|s)\b/.test(trimmed) || /\.{3}|…/.test(trimmed)))
+        );
+      });
+  const normalizedPromptText = (text: string) =>
+    String(text || "")
       .trim()
       .replace(/\s+/g, " ");
-    return normalized === "Explain this codebase" || normalized === "Find and fix a bug in @filename";
-  };
+  const promptCounts = new Map<string, number>();
+  for (const block of next) {
+    if (block.type !== "prompt") continue;
+    const normalized = normalizedPromptText(block.text);
+    if (!normalized) continue;
+    promptCounts.set(normalized, (promptCounts.get(normalized) ?? 0) + 1);
+  }
+  const isTemplatePrompt = (text: string) => /\{[A-Za-z][A-Za-z0-9_-]*\}/.test(text);
 
   const looksLikeAssistantText = (text: string) => {
     const trimmed = String(text || "").trim();
@@ -316,11 +335,24 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
 
     const previous = next[i - 1] || null;
     const following = next[i + 1] || null;
+    const normalized = normalizedPromptText(current.text);
+    const nextConversationIndex = next.findIndex(
+      (block, index) => index > i && (block.type === "prompt" || block.type === "response"),
+    );
+    const intervening = next.slice(i + 1, nextConversationIndex === -1 ? undefined : nextConversationIndex);
+    const hasActiveWorkBeforeNextTurn = intervening.some(
+      (block) => block.type === "status" && looksLikeActiveWorkStatus(block.text),
+    );
+
     if (
+      tool === "codex" &&
       following?.type === "status" &&
       looksLikeFooterStatus(following.text) &&
-      ((previous?.type === "status" && looksLikeInProgressStatus(previous.text)) ||
-        (tool === "codex" && isCodexSuggestedPrompt(current.text)))
+      !hasActiveWorkBeforeNextTurn &&
+      ((promptCounts.get(normalized) ?? 0) > 1 ||
+        isTemplatePrompt(current.text) ||
+        previous?.type === "response" ||
+        (previous?.type === "status" && looksLikeActiveWorkStatus(previous.text)))
     ) {
       current.type = "status";
     }
