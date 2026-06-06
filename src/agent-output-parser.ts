@@ -335,14 +335,16 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
     const hasActiveWorkBeforeNextTurn = intervening.some(
       (block) => block.type === "status" && looksLikeActiveWorkStatus(block.text),
     );
+    const repeatedPrompt = (promptCounts.get(normalized) ?? 0) > 1;
+    const templatePrompt = isTemplatePrompt(current.text);
 
     if (
       tool === "codex" &&
       following?.type === "status" &&
       looksLikeFooterStatus(following.text) &&
-      !hasActiveWorkBeforeNextTurn &&
-      ((promptCounts.get(normalized) ?? 0) > 1 ||
-        isTemplatePrompt(current.text) ||
+      (!hasActiveWorkBeforeNextTurn || repeatedPrompt || templatePrompt) &&
+      (repeatedPrompt ||
+        templatePrompt ||
         previous?.type === "response" ||
         (previous?.type === "status" && looksLikeActiveWorkStatus(previous.text)))
     ) {
