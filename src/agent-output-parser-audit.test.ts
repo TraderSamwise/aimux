@@ -349,4 +349,51 @@ describe("auditAgentOutputParserCorpus", () => {
     expect(summary.countsByFlag["prompt-from-response-record"]).toBe(0);
     expect(summary.findings).toEqual([]);
   });
+
+  it("does not flag prompts followed by interruption status", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: [
+          "› Open a PR. run review-coderabbit until green. then merge and cut new branch.",
+          "■ Conversation interrupted - tell the model what to do differently.",
+          "",
+          "› Explain this codebase",
+          "",
+          "  gpt-5.5 high · ~/workspace/project",
+        ].join("\n"),
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["prompt-from-response-record"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["prompt-from-response-record"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
+
+  it("does not flag very short active input text", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: ["› fa", "", "  gpt-5.5 high · ~/workspace/project"].join("\n"),
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["prompt-from-response-record"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["prompt-from-response-record"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
 });
