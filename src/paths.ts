@@ -13,9 +13,9 @@
 
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { join, basename, resolve, dirname, sep } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 // ── Cached state (populated by initPaths) ──────────────────────────
 
@@ -353,14 +353,51 @@ interface ProjectsRegistry {
   projects: ProjectEntry[];
 }
 
+const MAX_PROJECT_REGISTRY_ENTRIES = 500;
+const OS_TMP_DIR = tmpdir();
+const REAL_OS_TMP_DIR = (() => {
+  try {
+    return realpathSync(OS_TMP_DIR);
+  } catch {
+    return OS_TMP_DIR;
+  }
+})();
+
+function isEphemeralTempProjectRoot(repoRoot: string): boolean {
+  const resolved = resolve(repoRoot);
+  const inTmp = resolved.startsWith(`${OS_TMP_DIR}${sep}`) || resolved.startsWith(`${REAL_OS_TMP_DIR}${sep}`);
+  return inTmp && basename(resolved).startsWith("aimux-");
+}
+
+function assertRegistryWithinCap(projects: ProjectEntry[]): void {
+  if (projects.length <= MAX_PROJECT_REGISTRY_ENTRIES) return;
+  throw new Error(
+    `aimux project registry has ${projects.length} entries; cap is ${MAX_PROJECT_REGISTRY_ENTRIES}. ` +
+      `Refusing to continue because the registry is likely polluted. Remove stale entries from ${getProjectsRegistryPath()}.`,
+  );
+}
+
+function normalizeRegistry(registry: ProjectsRegistry): ProjectsRegistry {
+  const projectsById = new Map<string, ProjectEntry>();
+  for (const project of registry.projects) {
+    if (isEphemeralTempProjectRoot(project.repoRoot)) continue;
+    projectsById.set(project.id, project);
+  }
+  const projects = [...projectsById.values()];
+  assertRegistryWithinCap(projects);
+  return { version: 1, projects };
+}
+
 function loadRegistry(): ProjectsRegistry {
   const path = getProjectsRegistryPath();
   if (!existsSync(path)) return { version: 1, projects: [] };
+  let registry: ProjectsRegistry;
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
+    registry = JSON.parse(readFileSync(path, "utf-8"));
   } catch {
     return { version: 1, projects: [] };
   }
+  return normalizeRegistry(registry);
 }
 
 function saveRegistry(registry: ProjectsRegistry): void {
@@ -371,6 +408,7 @@ function saveRegistry(registry: ProjectsRegistry): void {
 
 function registerProject(): void {
   assertInitialized();
+  if (isEphemeralTempProjectRoot(_repoRoot!)) return;
   const registry = loadRegistry();
   const idx = registry.projects.findIndex((p) => p.id === _projectId);
   const entry: ProjectEntry = {
@@ -384,6 +422,7 @@ function registerProject(): void {
   } else {
     registry.projects.push(entry);
   }
+  assertRegistryWithinCap(registry.projects);
   saveRegistry(registry);
 }
 
