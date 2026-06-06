@@ -576,4 +576,34 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
       noPromptIncludes: ["Find and fix a bug in @filename"],
     },
   },
+  {
+    name: "claude-wrapped-bash-action-status",
+    tool: "claude",
+    raw: [
+      "⏺ Running verification.",
+      "",
+      "⏺ Bash(cd /Users/sam/cs/aimux/.aimux/worktrees/polish",
+      '      export PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH"…)',
+      "  ⎿  === relay typecheck ===",
+      "     warning ../../../../../package.json: No license field",
+      "     $ tsc --noEmit",
+      "     … +9 lines (ctrl+o to expand)",
+      "",
+      "⏺ Green. Committing on polish-next, pushing, and opening the PR:",
+    ].join("\n"),
+    expected: [
+      {
+        type: "response",
+        includes: ["Running verification."],
+      },
+      {
+        type: "status",
+        includes: ["Bash(cd /Users/sam/cs/aimux/.aimux/worktrees/polish", "relay typecheck"],
+      },
+      {
+        type: "response",
+        includes: ["Green. Committing on polish-next"],
+      },
+    ],
+  },
 ];

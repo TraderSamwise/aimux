@@ -145,6 +145,7 @@ describe("agent output parser harness", () => {
 
   it("parses compact Claude runtime noise through the runtime read path", async () => {
     await expectHarnessReadMatchesFixture("claude-compact-terminal-notifier-status");
+    await expectHarnessReadMatchesFixture("claude-wrapped-bash-action-status");
   });
 
   it("parses generic activity status rows through the runtime read path", async () => {
