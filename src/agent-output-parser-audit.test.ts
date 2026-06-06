@@ -26,7 +26,7 @@ describe("auditAgentOutputParserCorpus", () => {
       join(dir, "claude-test.jsonl"),
       `${JSON.stringify({
         type: "response",
-        content: "Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose",
+        content: "• Leaked runtime row:\n  Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose",
       })}\n`,
     );
 
@@ -100,13 +100,13 @@ describe("auditAgentOutputParserCorpus", () => {
     expect(summary.findings).toEqual([]);
   });
 
-  it("flags standalone tool rows that leak as assistant response text", () => {
+  it("does not flag standalone ran-command rows that now parse as status text", () => {
     const dir = makeTempDir();
     writeFileSync(
-      join(dir, "claude-test.jsonl"),
+      join(dir, "codex-test.jsonl"),
       [
-        JSON.stringify({ type: "response", content: "Bash(cd /tmp && git status)" }),
-        JSON.stringify({ type: "response", content: "Read 2 files (ctrl+o to expand)" }),
+        JSON.stringify({ type: "response", content: "Ran git status --short" }),
+        JSON.stringify({ type: "response", content: "Ran yarn test" }),
         "",
       ].join("\n"),
     );
@@ -114,8 +114,60 @@ describe("auditAgentOutputParserCorpus", () => {
     const summary = auditAgentOutputParserCorpus({ historyDirs: [dir] });
 
     expect(summary.scanned).toBe(2);
-    expect(summary.countsByFlag["status-leak-response"]).toBe(2);
+    expect(summary.countsByFlag["status-leak-response"]).toBe(0);
+    expect(summary.countsByFlag["action-status-leak"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
+
+  it("flags action rows with the dedicated action status leak flag", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      [
+        JSON.stringify({ type: "response", content: "• Leaked action row:\n  Ran yarn test." }),
+        JSON.stringify({ type: "response", content: "• Leaked command row:\n  Ran git worktree list --porcelain." }),
+        "",
+      ].join("\n"),
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["action-status-leak"],
+    });
+
+    expect(summary.scanned).toBe(2);
+    expect(summary.countsByFlag["action-status-leak"]).toBe(2);
     expect(summary.findings).toHaveLength(2);
+    for (const finding of summary.findings) {
+      expect(finding.flags).toEqual(["action-status-leak"]);
+      expect(finding.blockType).toBe("response");
+    }
+  });
+
+  it("does not flag normal prose that mentions action or activity wording", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: [
+          "I ran yarn test earlier, and it passed.",
+          "Bash(cd /tmp) is only a prose example here.",
+          "Ran aimux ... is now a status/action row.",
+          "The chef cooked for 1m 2s in an illustrative sentence.",
+          "Added tests (2 files).",
+        ].join("\n"),
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["action-status-leak"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["action-status-leak"]).toBe(0);
+    expect(summary.findings).toEqual([]);
   });
 
   it("ignores non-response history records", () => {
@@ -140,8 +192,8 @@ describe("auditAgentOutputParserCorpus", () => {
     writeFileSync(
       join(dir, "claude-test.jsonl"),
       [
-        JSON.stringify({ type: "response", content: "Bash(terminal-notifier -title ClaudeCode) leak one" }),
-        JSON.stringify({ type: "response", content: "Bash(terminal-notifier -title ClaudeCode) leak two" }),
+        JSON.stringify({ type: "response", content: "• Leak one:\n  Bash(terminal-notifier -title ClaudeCode) leak one" }),
+        JSON.stringify({ type: "response", content: "• Leak two:\n  Bash(terminal-notifier -title ClaudeCode) leak two" }),
         "",
       ].join("\n"),
     );
@@ -250,7 +302,7 @@ describe("auditAgentOutputParserCorpus", () => {
         }),
         JSON.stringify({
           type: "response",
-          content: "Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose",
+          content: "• Leaked runtime row:\n  Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose",
         }),
         "",
       ].join("\n"),

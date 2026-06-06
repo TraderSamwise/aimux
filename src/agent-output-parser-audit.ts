@@ -2,7 +2,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseAgentOutput, type AgentOutputBlock } from "./agent-output-parser.js";
 
-export type ParserAuditFindingFlag = "prompt-from-response-record" | "raw-block" | "status-leak-response";
+export type ParserAuditFindingFlag =
+  | "prompt-from-response-record"
+  | "raw-block"
+  | "status-leak-response"
+  | "action-status-leak";
 
 export interface ParserAuditFinding {
   source: string;
@@ -47,10 +51,20 @@ const STATUS_LEAK_RESPONSE_PATTERNS = [
   /^\s*(?:⏺\s*)?Read\s+\d+\s+files?(?:\s*\([^)\n]*ctrl\+o to expand[^)\n]*\))?\s*$/i,
 ] as const;
 
+const ACTION_STATUS_LEAK_PATTERNS = [
+  /(?:^|\n)\s*(?:[-*✻✽✶]\s+)?[\p{Lu}][\p{L}-]*(?:ed|ing)\b[^\n]*(?:\bfor\s+\d+(?:ms|s|m|h)|\.{3}|…|\([^)]*\b\d+(?:ms|s|m|h)\b[^)]*\))\s*(?=$|\n)/iu,
+  /(?:^|\n)\s*(?:•\s*)?Working\s*\(\d+(?:ms|s|m|h)\b[^\n]*\)\s*(?=$|\n)/i,
+  /(?:^|\n)\s*(?:•\s*)?Starting MCP servers\b[^\n]*(?=$|\n)/i,
+  /(?:^|\n)\s*(?:•\s*)?Ran\s+(?:aimux|bash|bun|cat|cd|curl|docker|find|gh|git|grep|ls|mkdir|mv|node|npm|pnpm|python3?|rg|rm|sed|sh|tsc|tsx|vitest|yarn)\b(?![^\n]*(?:\.{3}|…|\b(?:was|is|now|earlier)\b))[^\n!?]*(?=$|\n)/i,
+  /(?:^|\n)\s*(?:•|⏺)?\s*(?:Bash|BashOutput|Edit|Explore|Glob|Grep|KillBash|LS|MultiEdit|NotebookEdit|Read|Task|TodoWrite|Update|WebFetch|WebSearch|Write)\s*(?:\([^)\n]*\)|\d+[^\n]*(?:ctrl\+o|to expand)|[^\n]*(?:Running in the background|exit code))\s*(?=$|\n)/i,
+  /(?:^|\n)\s*└\s+[^\n]*(?=$|\n)/,
+] as const;
+
 const emptyCounts = (): Record<ParserAuditFindingFlag, number> => ({
   "prompt-from-response-record": 0,
   "raw-block": 0,
   "status-leak-response": 0,
+  "action-status-leak": 0,
 });
 
 const sampleText = (text: string) => String(text || "").replace(/\s+/g, " ").trim().slice(0, 320);
@@ -163,6 +177,9 @@ export function auditAgentOutputParserCorpus(options: ParserAuditOptions): Parse
       }
       if (block.type === "response" && STATUS_LEAK_RESPONSE_PATTERNS.some((pattern) => pattern.test(block.text))) {
         flags.push("status-leak-response");
+      }
+      if (block.type === "response" && ACTION_STATUS_LEAK_PATTERNS.some((pattern) => pattern.test(block.text))) {
+        flags.push("action-status-leak");
       }
       if (
         candidate.recordType === "response" &&
