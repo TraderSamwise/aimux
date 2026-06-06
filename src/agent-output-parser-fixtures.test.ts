@@ -18,6 +18,7 @@ describe("agent output parser contract", () => {
       "A prompt block must represent user text that was submitted to the agent, not text merely visible in the terminal input row.",
       "Assistant text stays response text even when it contains prompt-looking markers, quotes, bullets, fences, or paths.",
       "Startup banners, footer/status lines, progress rows, and permission hints must not become response blocks.",
+      "Activity/progress rows must remain status text with their exact activity wording preserved.",
       "Parsing the same complete transcript repeatedly should produce the same block sequence.",
     ]);
   });

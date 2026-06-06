@@ -153,9 +153,7 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
   {
     name: "claude-real-prompt-that-matches-codex-suggestion",
     tool: "claude",
-    raw: ["⏺ Ready when you are.", "", "❯ Explain this codebase", "", "  claude · ~/workspace/project"].join(
-      "\n",
-    ),
+    raw: ["⏺ Ready when you are.", "", "❯ Explain this codebase", "", "  claude · ~/workspace/project"].join("\n"),
     expected: [
       {
         type: "response",
@@ -170,5 +168,90 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
         includes: ["claude", "~/workspace/project"],
       },
     ],
+  },
+  {
+    name: "claude-multi-unit-activity-status",
+    tool: "claude",
+    raw: [
+      "⏺ Good question — and I can actually check it, rather than take it on faith.",
+      "",
+      "* Cooked for 1m 2s · 1 shell still running",
+      "",
+      "  user@host ~/workspace/project master ██░░░░5% Opus 4.8",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+    ].join("\n"),
+    expected: [
+      {
+        type: "response",
+        includes: ["Good question"],
+      },
+      {
+        type: "status",
+        includes: ["Cooked for 1m 2s · 1 shell still running", "bypass permissions on"],
+      },
+    ],
+  },
+  {
+    name: "codex-unknown-activity-verb-status",
+    tool: "codex",
+    raw: ["› run the thing", "", "* Carbonated for 42s", "", "  gpt-5.5 medium · ~/workspace/project"].join("\n"),
+    expected: [
+      {
+        type: "prompt",
+        includes: ["run the thing"],
+      },
+      {
+        type: "status",
+        includes: ["Carbonated for 42s", "gpt-5.5 medium"],
+      },
+    ],
+  },
+  {
+    name: "codex-ellipsis-activity-status",
+    tool: "codex",
+    raw: [
+      "› continue",
+      "",
+      "* Indexing… (running stop hook · 11s · ↓ 16 tokens)",
+      "",
+      "  gpt-5.5 medium · ~/workspace/project",
+    ].join("\n"),
+    expected: [
+      {
+        type: "prompt",
+        includes: ["continue"],
+      },
+      {
+        type: "status",
+        includes: ["Indexing… (running stop hook · 11s · ↓ 16 tokens)", "gpt-5.5 medium"],
+      },
+    ],
+  },
+  {
+    name: "codex-dash-activity-status",
+    tool: "codex",
+    raw: [
+      "• PR #5914 is merged.",
+      "",
+      "- Worked for 20m 16s",
+      "",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "› Find and fix a bug in @filename",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "  gpt-5.5 medium · ~/workspace/project · Main [default]",
+    ].join("\n"),
+    expected: [
+      {
+        type: "response",
+        includes: ["PR #5914 is merged."],
+      },
+      {
+        type: "status",
+        includes: ["Worked for 20m 16s", "Find and fix a bug in @filename", "gpt-5.5 medium"],
+      },
+    ],
+    invariants: {
+      noPromptIncludes: ["Find and fix a bug in @filename"],
+    },
   },
 ];
