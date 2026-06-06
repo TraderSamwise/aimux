@@ -4,6 +4,7 @@ import { loadConfig, type NotificationConfig } from "./config.js";
 import { debug } from "./debug.js";
 import type { AlertEvent } from "./project-events.js";
 import { shouldSuppressNotification } from "./notification-context.js";
+import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
 
 let cachedConfig: NotificationConfig | null = null;
 
@@ -91,6 +92,7 @@ export function notifyAlert(event: AlertEvent): boolean {
   if ((event.kind === "task_failed" || event.kind === "blocked") && !config.onError) return false;
 
   send(event.title || "aimux", event.message || event.sessionId || event.kind);
+  forwardAlertToMobilePush(event);
   return true;
 }
 

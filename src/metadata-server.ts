@@ -20,7 +20,6 @@ import {
   type SessionAlertDisplayContext,
 } from "./alert-display.js";
 import { notifyAlert } from "./notify.js";
-import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
 import {
   clearNotifications,
   listNotifications,
@@ -678,7 +677,7 @@ export class MetadataServer {
     this.eventBus = options.events?.bus ?? new ProjectEventBus();
     this.unsubscribeAlertSink = this.eventBus.subscribe((event) => {
       if (event.type !== "alert") return;
-      if (notifyAlert(event)) forwardAlertToMobilePush(event);
+      notifyAlert(event);
     });
   }
 
