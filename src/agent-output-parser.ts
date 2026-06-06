@@ -39,7 +39,7 @@ const looksLikeToolActionText = (text: string) => {
       trimmed,
     ) ||
     /^Background command\s+".+"\s+completed\s+\(exit code\s+\d+\)/i.test(trimmed) ||
-    /^Ran\s+(?:bash|bun|cat|cd|curl|docker|find|gh|git|grep|ls|mkdir|mv|node|npm|pnpm|python3?|rg|rm|sed|sh|tsc|tsx|vitest|yarn)\b/i.test(
+    /^Ran\s+(?:aimux|bash|bun|cat|cd|curl|docker|find|gh|git|grep|ls|mkdir|mv|node|npm|pnpm|python3?|rg|rm|sed|sh|tsc|tsx|vitest|yarn)\b/i.test(
       trimmed,
     ) ||
     /^Searched\s*for\s*\d+\s*patterns?/i.test(trimmed) ||
@@ -139,6 +139,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /^■\s?/.test(trimmed) ||
       /^⏺\s*$/.test(trimmed) ||
       /^⏺\s*[\u2500-\u257f\-_=\s]+Bash command\b/i.test(trimmed) ||
+      /^└\s+/.test(trimmed) ||
       looksLikeActivityProgressText(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
       /^•\s?Starting MCP servers\b/.test(trimmed) ||
@@ -371,10 +372,15 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
     const leadingAssistantCarryover =
       !prev && (following?.type === "prompt" || following?.type === "response" || following?.type === "status");
     const leadingAssistantPrelude = !prev && nextConversationIndex !== -1;
+    const leadingAssistantAfterMetaPrelude = prev?.type === "meta" && nextConversationIndex !== -1;
     const responseContinuation = prev?.type === "response";
 
     if (
-      (betweenConversationTurns || leadingAssistantCarryover || leadingAssistantPrelude || responseContinuation) &&
+      (betweenConversationTurns ||
+        leadingAssistantCarryover ||
+        leadingAssistantPrelude ||
+        leadingAssistantAfterMetaPrelude ||
+        responseContinuation) &&
       looksLikeAssistantText(current.text)
     ) {
       current.type = "response";
