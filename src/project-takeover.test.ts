@@ -5,8 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requestJson } from "./http-client.js";
 import { getProjectIdFor } from "./paths.js";
 
+const { execFileSyncMock } = vi.hoisted(() => ({
+  execFileSyncMock: vi.fn(),
+}));
+
 vi.mock("./http-client.js", () => ({
   requestJson: vi.fn(async () => ({ status: 200, json: { ok: true } })),
+}));
+
+vi.mock("node:child_process", () => ({
+  execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
 }));
 
 let tmpHome = "";
@@ -23,6 +31,8 @@ describe("project takeover", () => {
     vi.stubEnv("AIMUX_HOME", join(tmpHome, ".aimux"));
     livePids = new Set([1001, 2001, 2002]);
     vi.mocked(requestJson).mockClear();
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockReturnValue("node /opt/aimux/dist/main.js __project-service-internal");
     vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
       const numericPid = Number(pid);
       if (!livePids.has(numericPid)) throw new Error(`pid ${numericPid} not alive`);
@@ -62,6 +72,7 @@ describe("project takeover", () => {
 
     await takeOverProjectFromOtherOwners(projectRoot);
 
+    expect(requestJson).toHaveBeenCalledTimes(1);
     expect(requestJson).toHaveBeenCalledWith("http://127.0.0.1:43191/projects/stop", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -76,5 +87,32 @@ describe("project takeover", () => {
     expect(existsSync(join(projectStateDir, "metadata-api.json"))).toBe(false);
     expect(existsSync(join(projectStateDir, "metadata-api.txt"))).toBe(false);
     expect(livePids.has(2002)).toBe(true);
+  });
+
+  it("does not signal a stale pid that is not an aimux project service", async () => {
+    const { takeOverProjectFromOtherOwners } = await import("./project-takeover.js");
+    const projectRoot = join(tmpHome, "repo-a");
+    const projectId = getProjectIdFor(projectRoot);
+    const devHome = join(tmpHome, ".aimux-dev");
+
+    vi.mocked(requestJson).mockRejectedValueOnce(new Error("other daemon unavailable"));
+    execFileSyncMock.mockReturnValue("sleep 999");
+    mkdirSync(join(devHome, "daemon"), { recursive: true });
+    writeJson(join(devHome, "daemon", "daemon.json"), { pid: 1001, port: 43191 });
+    writeJson(join(devHome, "daemon", "state.json"), {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      projects: {
+        [projectId]: { pid: 2001, projectRoot },
+      },
+    });
+
+    await takeOverProjectFromOtherOwners(projectRoot);
+
+    expect(livePids.has(2001)).toBe(true);
+    const state = JSON.parse(readFileSync(join(devHome, "daemon", "state.json"), "utf-8")) as {
+      projects: Record<string, unknown>;
+    };
+    expect(state.projects[projectId]).toBeUndefined();
   });
 });

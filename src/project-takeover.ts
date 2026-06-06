@@ -1,8 +1,10 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { getGlobalAimuxDir, getProjectIdFor } from "./paths.js";
 import { requestJson } from "./http-client.js";
+import { log } from "./debug.js";
 
 interface OtherOwner {
   home: string;
@@ -15,7 +17,7 @@ interface DaemonInfo {
 }
 
 interface DaemonState {
-  projects?: Record<string, { pid?: number }>;
+  projects?: Record<string, { pid?: number; projectRoot?: string }>;
 }
 
 function isPidAlive(pid: number): boolean {
@@ -47,6 +49,18 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function isAimuxProjectServiceProcess(pid: number): boolean {
+  try {
+    const args = execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return args.includes("__project-service-internal");
+  } catch {
+    return false;
+  }
+}
+
 async function requestOtherOwnerStop(owner: OtherOwner, projectRoot: string): Promise<boolean> {
   const info = readJson<DaemonInfo>(join(owner.home, "daemon", "daemon.json"));
   const port = info?.port ?? owner.port;
@@ -69,9 +83,18 @@ function cleanOtherOwnerProjectState(owner: OtherOwner, projectId: string): void
   const state = readJson<DaemonState>(statePath);
   const entry = state?.projects?.[projectId];
   if (entry?.pid && isPidAlive(entry.pid)) {
-    try {
-      process.kill(entry.pid, "SIGTERM");
-    } catch {}
+    if (isAimuxProjectServiceProcess(entry.pid)) {
+      try {
+        process.kill(entry.pid, "SIGTERM");
+      } catch {}
+    } else {
+      log.warn("skipping stale takeover pid with unverified identity", "daemon", {
+        ownerHome: owner.home,
+        projectId,
+        projectRoot: entry.projectRoot,
+        pid: entry.pid,
+      });
+    }
   }
   if (state?.projects?.[projectId]) {
     delete state.projects[projectId];
@@ -90,7 +113,15 @@ export async function takeOverProjectFromOtherOwners(projectRoot: string): Promi
   const projectId = getProjectIdFor(projectRoot);
   for (const owner of knownOwners()) {
     if (resolve(owner.home) === currentHome) continue;
-    await requestOtherOwnerStop(owner, projectRoot);
-    cleanOtherOwnerProjectState(owner, projectId);
+    try {
+      await requestOtherOwnerStop(owner, projectRoot);
+      cleanOtherOwnerProjectState(owner, projectId);
+    } catch (error) {
+      log.warn("project takeover cleanup failed for alternate owner", "daemon", {
+        ownerHome: owner.home,
+        projectRoot,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
