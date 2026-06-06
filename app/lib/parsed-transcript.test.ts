@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { messagesFromParsedAgentOutput } from "@/lib/parsed-transcript";
+import type { ParsedAgentOutput } from "./events";
+import { messagesFromParsedAgentOutput } from "./parsed-transcript";
+import { parseAgentOutput } from "../../src/agent-output-parser.js";
+import { getParserFixture } from "../../src/agent-output-parser-test-utils.js";
 
 describe("parsed transcript conversion", () => {
   it("turns parsed prompt and response blocks into ordered chat messages", () => {
@@ -191,4 +194,61 @@ describe("parsed transcript conversion", () => {
       ],
     ]);
   });
+
+  it("does not render mined Codex startup suggestions as chat messages", () => {
+    const messages = messagesFromFixture("codex-live-startup-suggestion-loop");
+
+    expect(messages).toEqual([]);
+  });
+
+  it("does not render mined Codex running-state suggestions as chat messages", () => {
+    const messages = messagesFromFixture("codex-active-image-input-followed-by-suggestion");
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.role).toBe("user");
+    expect(messages[0]?.parts).toEqual([
+      { type: "text", text: "can you see this?" },
+      {
+        type: "image_reference",
+        label: "[image #1]",
+        attachmentId: "att_example",
+        filename: "Screenshot.png",
+        mimeType: "image/png",
+        contentUrl: "/attachments/att_example/content",
+      },
+    ]);
+    expect(JSON.stringify(messages)).not.toContain("Explain this codebase");
+  });
+
+  it("does not render mined Claude tool action rows as chat messages", () => {
+    const messages = messagesFromFixture("claude-live-tool-action-rows");
+
+    expect(messages.map((message) => messageTextForTest(message))).toEqual([
+      "Good question. Let me check the relay status.",
+      "All checks are green. I can merge now.",
+    ]);
+    expect(JSON.stringify(messages)).not.toContain("Bash(cd");
+    expect(JSON.stringify(messages)).not.toContain("Read 2 files");
+    expect(JSON.stringify(messages)).not.toContain("Update(src/relay.ts)");
+  });
 });
+
+function messagesFromFixture(name: string) {
+  const fixture = getParserFixture(name);
+  return messagesFromParsedAgentOutput(
+    parseAgentOutput(fixture.raw, { tool: fixture.tool }) as unknown as ParsedAgentOutput,
+  );
+}
+
+function messageTextForTest(
+  message: ReturnType<typeof messagesFromParsedAgentOutput>[number],
+): string {
+  return (message.parts ?? [])
+    .filter(
+      (part): part is Extract<NonNullable<typeof message.parts>[number], { type: "text" }> =>
+        part.type === "text",
+    )
+    .map((part) => part.text)
+    .join("\n")
+    .trim();
+}
