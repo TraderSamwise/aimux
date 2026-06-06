@@ -31,17 +31,24 @@ const looksLikeActivityProgressText = (text: string) => {
   );
 };
 
+const looksLikeRanCommandText = (text: string) => {
+  const trimmed = text.trim();
+  return (
+    /^Ran\s+(?:aimux|bash|bun|cat|cd|curl|docker|find|gh|git|grep|ls|mkdir|mv|node|npm|pnpm|python3?|rg|rm|sed|sh|tsc|tsx|vitest|yarn)\b/i.test(
+      trimmed,
+    ) && !/[.!?]$/.test(trimmed)
+  );
+};
+
 const looksLikeToolActionText = (text: string) => {
   const trimmed = text.trim();
   if (!trimmed) return false;
   return (
-    /^(?:Bash|BashOutput|Edit|Explore|Glob|Grep|KillBash|LS|MultiEdit|NotebookEdit|Read|Task|TodoWrite|Update|WebFetch|WebSearch|Write)\s*(?:\(|\d|\b.*\b(?:ctrl\+o|to expand|Running in the background|exit code))/i.test(
+    /^(?:Bash|BashOutput|Edit|Explore|Glob|Grep|KillBash|LS|MultiEdit|NotebookEdit|Read|Task|TodoWrite|Update|WebFetch|WebSearch|Write)\s*(?:\([^)\n]*\)|\d+[^\n]*(?:ctrl\+o|to expand)|[^\n]*(?:Running in the background|exit code))\s*$/i.test(
       trimmed,
     ) ||
     /^Background command\s+".+"\s+completed\s+\(exit code\s+\d+\)/i.test(trimmed) ||
-    /^Ran\s+(?:aimux|bash|bun|cat|cd|curl|docker|find|gh|git|grep|ls|mkdir|mv|node|npm|pnpm|python3?|rg|rm|sed|sh|tsc|tsx|vitest|yarn)\b/i.test(
-      trimmed,
-    ) ||
+    looksLikeRanCommandText(trimmed) ||
     /^Searched\s*for\s*\d+\s*patterns?/i.test(trimmed) ||
     /^Read\s*\d+\s*files?/i.test(trimmed)
   );
@@ -139,11 +146,13 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /^■\s?/.test(trimmed) ||
       /^⏺\s*$/.test(trimmed) ||
       /^⏺\s*[\u2500-\u257f\-_=\s]+Bash command\b/i.test(trimmed) ||
+      /^⏺\s*Bash\([^)\n]*terminal-notifier/i.test(trimmed) ||
       /^└\s+/.test(trimmed) ||
       looksLikeActivityProgressText(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
       /^•\s?Starting MCP servers\b/.test(trimmed) ||
       /^•\s?How is Claude doing this session\?\s*\(optional\)/i.test(trimmed) ||
+      looksLikeRanCommandText(trimmed) ||
       (/^(?:•|⏺)\s?/.test(trimmed) && looksLikeToolActionText(conversationBulletText)) ||
       (/^•\s?/.test(trimmed) && looksLikeActivityProgressText(dotBulletText)) ||
       /^⏵⏵\s/.test(trimmed) ||

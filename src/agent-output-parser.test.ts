@@ -317,6 +317,23 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[2]?.text).toBe("All checks are green.");
   });
 
+  it("parses plain Codex command rows as status without swallowing prose examples", () => {
+    const raw = [
+      "• Checking the branch.",
+      "",
+      "Ran git worktree list --porcelain",
+      "",
+      "• Bash(cd /tmp) is only a prose example here.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status", "response"]);
+    expect(parsed.blocks[0]?.text).toBe("Checking the branch.");
+    expect(parsed.blocks[1]?.text).toBe("Ran git worktree list --porcelain");
+    expect(parsed.blocks[2]?.text).toBe("Bash(cd /tmp) is only a prose example here.");
+  });
+
   it("keeps malformed Claude animation fragments out of assistant chat", () => {
     const raw = [
       "────────────────────────────────────────────────────────────────────────────────────────────────",
@@ -340,6 +357,23 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks.map((block) => block.type)).toEqual(["meta", "status"]);
     expect(parsed.blocks[1]?.text).toContain("Brewing… (thinking)");
     expect(parsed.blocks[1]?.text).toContain("terminal-notifier");
+  });
+
+  it("keeps compact Claude terminal notifier rows out of assistant chat", () => {
+    const raw = [
+      "⏺Read1file(ctrl+otoexpand)",
+      "⏺I'vereadyour~/CLAUDE.md.Ihaveallyourinstructionsloaded.",
+      '⏺Bash(terminal-notifier-title"ClaudeCode"-message"Readyfortasks-whatwouldyouliketoworkon?"-sound',
+      "default)",
+      "⎿ (Nooutput)",
+      "⏺Whatwouldyouliketoworkon?",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["status", "response", "status", "response"]);
+    expect(parsed.blocks[2]?.text).toContain("terminal-notifier");
+    expect(parsed.blocks[3]?.text).toBe("Whatwouldyouliketoworkon?");
   });
 
   it("keeps collapsed Claude approval prompts out of assistant chat", () => {
