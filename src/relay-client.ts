@@ -22,6 +22,16 @@ interface RelayControl {
   };
 }
 
+export interface RelayNotificationPush {
+  title: string;
+  body: string;
+  kind?: string;
+  sessionId?: string;
+  projectId?: string;
+  projectRoot?: string;
+  dedupeKey?: string;
+}
+
 type RelayMessage = RelayRequest | RelayControl;
 
 const INITIAL_RETRY_MS = 1_000;
@@ -138,6 +148,11 @@ export class RelayClient {
         this.ws?.close();
       } catch {}
     });
+  }
+
+  pushNotification(notification: RelayNotificationPush): void {
+    if (!notification.title) return;
+    this.sendRaw(JSON.stringify({ type: "notification_push", notification }));
   }
 
   disconnect(): void {

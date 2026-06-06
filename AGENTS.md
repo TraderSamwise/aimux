@@ -100,25 +100,37 @@ If a requested shortcut is described as behaving like an existing live-pane pref
 
 Do not re-implement similar logic in `src/hotkeys.ts` or `src/multiplexer/session-launch.ts` unless the feature is explicitly meant to be owned by the in-process Node runtime. For live-pane, latency-sensitive navigation, prefer tmux-local metadata and tmux bindings over Node-side session lists.
 
-### Building The Native Bundle
+### Releasing The App
 
-For distribution, EAS produces native bundles via the shared `@tradersamwise/eas-release` pipeline:
+Releases go through the shared `@tradersamwise/eas-release` CLI. There are two
+paths, chosen by what changed. Always bump the version first, then ship.
 
-```bash
-cd app
-yarn build:testflight   # TestFlight, iOS default channel
-yarn build --android    # Play/internal Android build
-yarn build --all        # iOS + Android
-yarn build:production   # production, App Store / Play
-```
-
-OTA-only updates skip the native rebuild:
+OTA update — JavaScript / asset changes only, delivered over the existing native
+build's Expo runtime:
 
 ```bash
 cd app
-yarn update
-yarn update:production
+yarn version:bump-ota && yarn update              # testflight
+yarn version:bump-ota && yarn update:production   # production
 ```
+
+Native build — required whenever the native binary or its Expo runtime fingerprint
+changes (native dependencies, Expo plugins, permissions/entitlements, icons, splash
+screen, build profiles, or any native `app.config.js` change):
+
+```bash
+yarn version:bump-build && yarn build:testflight   # testflight
+yarn version:bump-build && yarn build:production    # production
+yarn build --android      # Play/internal Android (pair with version:bump-build)
+yarn build --all          # iOS + Android
+```
+
+Decision rule: OTA covers JS and assets; a native rebuild is required for native
+deps, Expo plugins, permissions, icons, splash, build profiles, or native config.
+`bump-ota` enforces this — it aborts if the Expo runtime version changed since the
+last native build, because an OTA can only target the runtime already installed on
+the device. `bump-build` increments the build number, resets the OTA counter to 0,
+and updates native version files. Both commit the version file.
 
 ### GUI CLI Commands
 
