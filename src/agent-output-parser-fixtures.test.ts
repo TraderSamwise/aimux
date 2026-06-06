@@ -12,12 +12,14 @@ describe("agent output parser contract", () => {
       "meta",
       "raw",
     ]);
-    expect(AGENT_OUTPUT_PARSER_CONTRACT.invariants).toContain(
+    expect(AGENT_OUTPUT_PARSER_CONTRACT.invariants).toEqual([
       "Suggested prompts and active input placeholders must not become prompt blocks.",
-    );
-    expect(AGENT_OUTPUT_PARSER_CONTRACT.invariants).toContain(
       "Feedback/rating prompts must not become prompt blocks.",
-    );
+      "A prompt block must represent user text that was submitted to the agent, not text merely visible in the terminal input row.",
+      "Assistant text stays response text even when it contains prompt-looking markers, quotes, bullets, fences, or paths.",
+      "Startup banners, footer/status lines, progress rows, and permission hints must not become response blocks.",
+      "Parsing the same complete transcript repeatedly should produce the same block sequence.",
+    ]);
   });
 });
 
