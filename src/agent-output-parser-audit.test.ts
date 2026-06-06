@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { auditAgentOutputParserCorpus } from "./agent-output-parser-audit.js";
+import { PARSER_AUDIT_FINDING_FLAGS, auditAgentOutputParserCorpus } from "./agent-output-parser-audit.js";
 
 const tempDirs: string[] = [];
 
@@ -20,6 +20,12 @@ afterEach(() => {
 });
 
 describe("auditAgentOutputParserCorpus", () => {
+  it("initializes counts for every supported audit flag", () => {
+    const summary = auditAgentOutputParserCorpus({});
+
+    expect(Object.keys(summary.countsByFlag)).toEqual([...PARSER_AUDIT_FINDING_FLAGS]);
+  });
+
   it("reports suspicious status text that still parses as an assistant response", () => {
     const dir = makeTempDir();
     writeFileSync(

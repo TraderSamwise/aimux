@@ -2,12 +2,15 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseAgentOutput, type AgentOutputBlock } from "./agent-output-parser.js";
 
-export type ParserAuditFindingFlag =
-  | "prompt-from-response-record"
-  | "raw-block"
-  | "status-leak-response"
-  | "activity-status-leak"
-  | "action-status-leak";
+export const PARSER_AUDIT_FINDING_FLAGS = [
+  "prompt-from-response-record",
+  "raw-block",
+  "status-leak-response",
+  "activity-status-leak",
+  "action-status-leak",
+] as const;
+
+export type ParserAuditFindingFlag = (typeof PARSER_AUDIT_FINDING_FLAGS)[number];
 
 export interface ParserAuditFinding {
   source: string;
@@ -64,13 +67,8 @@ const ACTION_STATUS_LEAK_PATTERNS = [
   /(?:^|\n)\s*└\s+[^\n]*(?=$|\n)/,
 ] as const;
 
-const emptyCounts = (): Record<ParserAuditFindingFlag, number> => ({
-  "prompt-from-response-record": 0,
-  "raw-block": 0,
-  "status-leak-response": 0,
-  "activity-status-leak": 0,
-  "action-status-leak": 0,
-});
+const emptyCounts = (): Record<ParserAuditFindingFlag, number> =>
+  Object.fromEntries(PARSER_AUDIT_FINDING_FLAGS.map((flag) => [flag, 0])) as Record<ParserAuditFindingFlag, number>;
 
 const sampleText = (text: string) => String(text || "").replace(/\s+/g, " ").trim().slice(0, 320);
 
