@@ -83,6 +83,41 @@ describe("auditAgentOutputParserCorpus", () => {
     expect(summary.findings).toEqual([]);
   });
 
+  it("does not flag prose that mentions tool-row examples", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "claude-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: "Bash(cd /tmp) is a common shell shape, and Read 2 files is only an example here.",
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({ historyDirs: [dir] });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["status-leak-response"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
+
+  it("flags standalone tool rows that leak as assistant response text", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "claude-test.jsonl"),
+      [
+        JSON.stringify({ type: "response", content: "Bash(cd /tmp && git status)" }),
+        JSON.stringify({ type: "response", content: "Read 2 files (ctrl+o to expand)" }),
+        "",
+      ].join("\n"),
+    );
+
+    const summary = auditAgentOutputParserCorpus({ historyDirs: [dir] });
+
+    expect(summary.scanned).toBe(2);
+    expect(summary.countsByFlag["status-leak-response"]).toBe(2);
+    expect(summary.findings).toHaveLength(2);
+  });
+
   it("ignores non-response history records", () => {
     const dir = makeTempDir();
     writeFileSync(

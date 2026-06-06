@@ -43,8 +43,8 @@ const STATUS_LEAK_RESPONSE_PATTERNS = [
   /(?:^|\n)\s*(?:⏺\s*)?Bash\([^)]*terminal-notifier/i,
   /(?:^|\n)\s*(?:Thiscommandrequiresapproval|Doyouwanttoproceed)/i,
   /(?:^|\n)\s*(?:│\s*)?>_\s*OpenAI Codex\b/i,
-  /(?:^|\n)\s*Bash\(/i,
-  /(?:^|\n)\s*Read\d/i,
+  /^\s*(?:⏺\s*)?Bash\([^)\n]+\)\s*$/i,
+  /^\s*(?:⏺\s*)?Read\s+\d+\s+files?(?:\s*\([^)\n]*ctrl\+o to expand[^)\n]*\))?\s*$/i,
 ] as const;
 
 const emptyCounts = (): Record<ParserAuditFindingFlag, number> => ({
