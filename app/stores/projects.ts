@@ -50,8 +50,7 @@ export const selectedSessionAtom = atom<DesktopSession | null>((get) => {
 // Reconcile a fresh project snapshot from the daemon. Sorts by name. Honors a
 // persisted selectedProjectPath if it's still present in the incoming list.
 // Otherwise falls back to the first sorted project and clears stale session
-// selection. Mirrors desktop-ui/src/stores/state.svelte.js:1353-1411 behavior
-// with the new persisted-path safeguard.
+// selection.
 export const reconcileProjectsAtom = atom(null, (get, set, incoming: DaemonProject[]) => {
   const sorted = [...incoming].sort((a, b) => a.name.localeCompare(b.name));
   let nextPath = get(selectedProjectPathAtom);
