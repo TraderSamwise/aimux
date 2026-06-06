@@ -50,15 +50,15 @@ const looksLikeToolActionText = (text: string) => {
 const inferAgentOutputTool = (raw: string): string | null => {
   const text = String(raw || "");
   const hasCodexChrome =
-    /\bOpenAI Codex\b/i.test(text) ||
+    /(?:^|\n)\s*(?:│\s*)?>_\s*OpenAI Codex\b/im.test(text) ||
     /(?:^|\n)\s*gpt-[\w.-]+\b.*(?:~\/|\/|permissions|context\))/im.test(text);
   const hasClaudeChrome =
-    /\bClaude Code\b/i.test(text) ||
+    /(?:^|\n)\s*(?:│\s*)?Claude Code\b/im.test(text) ||
     /(?:^|\n)\s*claude\b.*(?:~\/|\/|permissions|context\))/im.test(text);
-  if (hasCodexChrome) {
+  if (hasCodexChrome && !hasClaudeChrome) {
     return "codex";
   }
-  if (hasClaudeChrome) {
+  if (hasClaudeChrome && !hasCodexChrome) {
     return "claude";
   }
   return null;
