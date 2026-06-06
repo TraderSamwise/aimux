@@ -253,6 +253,62 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
     },
   },
   {
+    name: "codex-command-output-tree-summary",
+    tool: "codex",
+    raw: [
+      "• Ran aimux daemon project-ensure --project /Users/sam/cs/hyperprop --json",
+      "  └ {",
+      '      "project": {',
+      "    … +5 lines (ctrl + t to view transcript)",
+      "      }",
+      "    }",
+      "",
+      "• The prod ensure completed.",
+    ].join("\n"),
+    expected: [
+      {
+        type: "status",
+        includes: ["Ran aimux daemon project-ensure", "└ {", "ctrl + t to view transcript"],
+      },
+      {
+        type: "response",
+        includes: ["The prod ensure completed"],
+      },
+    ],
+  },
+  {
+    name: "codex-result-summary-after-metadata-path",
+    tool: "codex",
+    raw: [
+      "~/.aimux/projects.json.backup-2026-06-06T06-44-29-597Z",
+      "  Result:",
+      "  - Registry: 23087 -> 6",
+      "  - Live /projects: now ~0.24-0.51s",
+      "  - Remaining projects: aimux, hyperprop, premys",
+      "",
+      "› Open a PR. run review-coderabbit until green. then merge and cut new branch.",
+      "■ Conversation interrupted - tell the model what to do differently.",
+    ].join("\n"),
+    expected: [
+      {
+        type: "meta",
+        includes: ["projects.json.backup"],
+      },
+      {
+        type: "response",
+        includes: ["Result:", "Registry: 23087 -> 6", "Remaining projects"],
+      },
+      {
+        type: "prompt",
+        includes: ["Open a PR"],
+      },
+      {
+        type: "status",
+        includes: ["Conversation interrupted"],
+      },
+    ],
+  },
+  {
     name: "codex-completed-state-suggestion",
     tool: "codex",
     raw: [

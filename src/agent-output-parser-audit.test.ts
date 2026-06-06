@@ -152,6 +152,93 @@ describe("auditAgentOutputParserCorpus", () => {
     expect(summary.findings).toHaveLength(1);
   });
 
+  it("does not flag structural raw fragments", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: "• Ran curl -sS http://127.0.0.1:43190/projects\n\n}\n}",
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["raw-block"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["raw-block"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
+
+  it("does not flag code-close raw fragments", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: "169 +      },\n    170 +    ],\n    171 +  },\n    172 +];\n• Phase 1 implementation is in.",
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["raw-block"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["raw-block"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
+
+  it("does not flag numbered structural raw snippets", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: [
+          "171 },",
+          "⋮ 51 : {",
+          '308 + "────────────────────────────────────────────────────────────────────────────────────────────────",',
+          "• Verification passed.",
+        ].join("\n"),
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["raw-block"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["raw-block"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
+
+  it("does not flag raw file listing rows", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content:
+          "• Ran ls -la ~/.aimux/native\n\n" +
+          "drwxr-xr-x@ 11 sam staff 352 May 30 12:00 0.1.16-local.fff4f4d",
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["raw-block"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["raw-block"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
+
   it("filters findings and counts to requested flags", () => {
     const dir = makeTempDir();
     writeFileSync(
