@@ -14,6 +14,23 @@ export interface ParsedAgentOutput {
   };
 }
 
+const activityDurationPattern = String.raw`\d+(?:ms|s|m|h)(?:\s+\d+(?:ms|s|m|h))*`;
+const activityForDurationRegex = new RegExp(String.raw`\bfor\s+${activityDurationPattern}(?:$|(?=\s*[·•.)]))`, "i");
+const activityParentheticalDurationRegex = new RegExp(String.raw`\([^)]*\b${activityDurationPattern}\b[^)]*\)`, "i");
+const activityEllipsisRegex = /\.{3}|…/;
+const activityLeadRegex = /^[\p{Lu}][\p{L}-]{2,}\b/u;
+
+const looksLikeActivityProgressText = (text: string) => {
+  const trimmed = text.trim();
+  const lead = trimmed.match(activityLeadRegex)?.[0] ?? "";
+  if (!lead || !/(ed|ing)$/i.test(lead)) return false;
+  return (
+    activityForDurationRegex.test(trimmed) ||
+    activityParentheticalDurationRegex.test(trimmed) ||
+    activityEllipsisRegex.test(trimmed)
+  );
+};
+
 export function parseAgentOutput(raw: string, options: { tool?: string } = {}): ParsedAgentOutput {
   const tool = (options.tool || "unknown").trim() || "unknown";
   const lines = String(raw || "")
@@ -76,48 +93,23 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const trimmed = line.trim();
     return /^│/.test(trimmed) || /^╰/.test(trimmed) || /^╭/.test(trimmed);
   };
-  const statusLeadWords = new Set([
-    "Baked",
-    "Brewed",
-    "Building",
-    "Checking",
-    "Churned",
-    "Compacting",
-    "Cooking",
-    "Crunched",
-    "Loading",
-    "Reading",
-    "Restarting",
-    "Running",
-    "Searching",
-    "Starting",
-    "Stopped",
-    "Sublimating",
-    "Sautéed",
-    "Thinking",
-    "Updating",
-    "Warping",
-    "Working",
-    "Writing",
-  ]);
-  const startsWithStatusLead = (text: string) => statusLeadWords.has((text.trim().match(/^[\p{L}-]+/u) || [""])[0]);
-  const hasStatusProgressSuffix = (text: string) =>
-    /\bfor \d+(?:ms|s)\b/.test(text) || /\.{3}|…/.test(text) || /\([^)]*\b\d+(?:ms|s)\b[^)]*\)/.test(text);
   const isStatusLine = (line: string) => {
     const trimmed = line.trim();
     if (!trimmed) return false;
     const dotBulletText = trimmed.replace(/^•\s?/, "");
     const starBulletText = trimmed.replace(/^\*\s+/, "");
+    const dashBulletText = trimmed.replace(/^-\s+/, "");
+    const spinnerText = trimmed.replace(/^[✻✽✶]\s+/, "");
     return (
       /^■\s?/.test(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
       /^•\s?Starting MCP servers\b/.test(trimmed) ||
       /^•\s?How is Claude doing this session\?\s*\(optional\)/i.test(trimmed) ||
-      (/^•\s?/.test(trimmed) && startsWithStatusLead(dotBulletText) && hasStatusProgressSuffix(dotBulletText)) ||
+      (/^•\s?/.test(trimmed) && looksLikeActivityProgressText(dotBulletText)) ||
       /^⏵⏵\s/.test(trimmed) ||
-      /^\*\s+[A-Z][A-Za-z-]+(?:\.\.\.|…)?$/.test(trimmed) ||
-      /^[✻✽✶]\s+\S.*(?:\bfor \d+(?:ms|s)\b|\.\.\.|…|\([^)]*\b\d+(?:ms|s)\b[^)]*\))$/.test(trimmed) ||
-      (/^\*\s+/.test(trimmed) && startsWithStatusLead(starBulletText) && hasStatusProgressSuffix(starBulletText)) ||
+      (/^\*\s+/.test(trimmed) && looksLikeActivityProgressText(starBulletText)) ||
+      (/^-\s+/.test(trimmed) && looksLikeActivityProgressText(dashBulletText)) ||
+      (/^[✻✽✶]\s+/.test(trimmed) && looksLikeActivityProgressText(spinnerText)) ||
       /^[╰└]\s*Tip:/i.test(trimmed) ||
       /^Tip:\s/i.test(trimmed) ||
       /(Plan Mode|default permission mode)/i.test(trimmed) ||
@@ -133,7 +125,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   const isClaudeFeedbackSurvey = (line: string) => /\bHow is Claude doing this session\?\s*\(optional\)/i.test(line);
   const stripPromptMarker = (line: string) => line.trimStart().replace(/^(›|>|❯)\s?/, "");
   const stripResponseMarker = (line: string) => line.trimStart().replace(/^(•|⏺)\s?/, "");
-  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[*✻✽✶]\s+)\s?/, "");
+  const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[-*✻✽✶]\s+)\s?/, "");
 
   for (const line of lines) {
     const trimmed = line.trimEnd();
@@ -258,7 +250,7 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
         return (
           /\bWorking \(\d+s\b.*\besc to interrupt\b/i.test(trimmed) ||
           /^Starting MCP servers\b/i.test(trimmed) ||
-          (/^[A-Z][A-Za-z-]+/.test(trimmed) && (/\bfor \d+(?:ms|s)\b/.test(trimmed) || /\.{3}|…/.test(trimmed)))
+          looksLikeActivityProgressText(trimmed)
         );
       });
   const normalizedPromptText = (text: string) =>
