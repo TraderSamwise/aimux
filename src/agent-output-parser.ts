@@ -47,8 +47,26 @@ const looksLikeToolActionText = (text: string) => {
   );
 };
 
+const inferAgentOutputTool = (raw: string): string | null => {
+  const text = String(raw || "");
+  const hasCodexChrome =
+    /\bOpenAI Codex\b/i.test(text) ||
+    /(?:^|\n)\s*gpt-[\w.-]+\b.*(?:~\/|\/|permissions|context\))/im.test(text);
+  const hasClaudeChrome =
+    /\bClaude Code\b/i.test(text) ||
+    /(?:^|\n)\s*claude\b.*(?:~\/|\/|permissions|context\))/im.test(text);
+  if (hasCodexChrome) {
+    return "codex";
+  }
+  if (hasClaudeChrome) {
+    return "claude";
+  }
+  return null;
+};
+
 export function parseAgentOutput(raw: string, options: { tool?: string } = {}): ParsedAgentOutput {
-  const tool = (options.tool || "unknown").trim() || "unknown";
+  const requestedTool = (options.tool || "").trim();
+  const tool = requestedTool && requestedTool !== "unknown" ? requestedTool : (inferAgentOutputTool(raw) ?? "unknown");
   const lines = String(raw || "")
     .replace(/\r/g, "")
     .split("\n");
