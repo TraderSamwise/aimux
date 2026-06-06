@@ -1,7 +1,7 @@
 import React from "react";
-import { Image, View } from "react-native";
+import { View } from "react-native";
 import { Text } from "@/components/ui/text";
-import type { ChatMessage, HistoryImagePart } from "@/lib/events";
+import type { ChatMessage, HistoryImagePart, HistoryImageReferencePart } from "@/lib/events";
 import { getRelayServiceUrl, getServiceUrl, type ServiceEndpoint } from "@/lib/daemon-url";
 import { env } from "@/lib/env";
 
@@ -25,7 +25,34 @@ export function messageSpeakerLabel(message: Pick<ChatMessage, "actor">): string
   return name || null;
 }
 
-export function MessageBlock({ message, serviceEndpoint }: Props) {
+function imagePartLabel(part: HistoryImagePart | HistoryImageReferencePart): string {
+  if ("label" in part && part.label.trim()) return part.label;
+  return "[image]";
+}
+
+function ImageReferenceToken({ label, isUser }: { label: string; isUser: boolean }) {
+  return (
+    <View
+      className={
+        isUser
+          ? "mt-1 self-start rounded border border-primary-foreground/35 bg-primary-foreground/15 px-2 py-1"
+          : "mt-1 self-start rounded border border-border bg-background px-2 py-1"
+      }
+    >
+      <Text
+        className={
+          isUser
+            ? "font-mono text-xs font-semibold text-primary-foreground"
+            : "font-mono text-xs font-semibold text-muted-foreground"
+        }
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+export function MessageBlock({ message }: Props) {
   const role = message.role ?? "assistant";
   const isUser = role === "user";
   const speakerLabel = isUser ? messageSpeakerLabel(message) : null;
@@ -61,22 +88,7 @@ export function MessageBlock({ message, serviceEndpoint }: Props) {
               </Text>
             );
           }
-          const url = resolveImageUrl(part, serviceEndpoint);
-          if (!url) {
-            return (
-              <Text key={idx} className="text-xs text-muted-foreground">
-                [image]
-              </Text>
-            );
-          }
-          return (
-            <Image
-              key={idx}
-              source={{ uri: url }}
-              style={{ width: 200, height: 200, borderRadius: 6, marginTop: 4 }}
-              resizeMode="cover"
-            />
-          );
+          return <ImageReferenceToken key={idx} label={imagePartLabel(part)} isUser={isUser} />;
         })
       ) : (
         <Text className={isUser ? "text-primary-foreground" : "text-secondary-foreground"}>

@@ -218,7 +218,10 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   flush();
 
   return {
-    blocks: normalizeTranscriptBlocks(blocks.filter((block) => block.text.trim().length > 0)),
+    blocks: normalizeTranscriptBlocks(
+      blocks.filter((block) => block.text.trim().length > 0),
+      tool,
+    ),
     parser: {
       tool,
       version: 1,
@@ -227,8 +230,30 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   };
 }
 
-function normalizeTranscriptBlocks(blocks: AgentOutputBlock[]): AgentOutputBlock[] {
+function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): AgentOutputBlock[] {
   const next = blocks.map((block) => ({ ...block }));
+
+  const looksLikeFooterStatus = (text: string) => {
+    return String(text || "")
+      .split("\n")
+      .some((line) => {
+        const trimmed = line.trim();
+        return (
+          (/^([A-Za-z0-9._-]+@[^ ]+|~\/|\/)/.test(trimmed) && /(context\)|%\s|[$#]\s)/.test(trimmed)) ||
+          /gpt-|claude|context\)|bypass permissions|shift\+tab|to cycle/i.test(trimmed)
+        );
+      });
+  };
+  const looksLikeInProgressStatus = (text: string) =>
+    String(text || "")
+      .split("\n")
+      .some((line) => /\bWorking \(\d+s\b.*\besc to interrupt\b/i.test(line.trim()));
+  const isCodexSuggestedPrompt = (text: string) => {
+    const normalized = String(text || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    return normalized === "Explain this codebase" || normalized === "Find and fix a bug in @filename";
+  };
 
   const looksLikeAssistantText = (text: string) => {
     const trimmed = String(text || "").trim();
@@ -282,6 +307,22 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[]): AgentOutputBlock
     }
     if (block.type === "raw" && sawConversationTurn && looksLikeAssistantText(block.text)) {
       block.type = "response";
+    }
+  }
+
+  for (let i = 0; i < next.length; i += 1) {
+    const current = next[i];
+    if (!current || current.type !== "prompt") continue;
+
+    const previous = next[i - 1] || null;
+    const following = next[i + 1] || null;
+    if (
+      following?.type === "status" &&
+      looksLikeFooterStatus(following.text) &&
+      ((previous?.type === "status" && looksLikeInProgressStatus(previous.text)) ||
+        (tool === "codex" && isCodexSuggestedPrompt(current.text)))
+    ) {
+      current.type = "status";
     }
   }
 
