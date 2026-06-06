@@ -100,13 +100,13 @@ describe("auditAgentOutputParserCorpus", () => {
     expect(summary.findings).toEqual([]);
   });
 
-  it("does not flag standalone tool rows that now parse as status text", () => {
+  it("does not flag standalone ran-command rows that now parse as status text", () => {
     const dir = makeTempDir();
     writeFileSync(
-      join(dir, "claude-test.jsonl"),
+      join(dir, "codex-test.jsonl"),
       [
-        JSON.stringify({ type: "response", content: "Bash(cd /tmp && git status)" }),
-        JSON.stringify({ type: "response", content: "Read 2 files (ctrl+o to expand)" }),
+        JSON.stringify({ type: "response", content: "Ran git status --short" }),
+        JSON.stringify({ type: "response", content: "Ran yarn test" }),
         "",
       ].join("\n"),
     );
