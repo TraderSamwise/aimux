@@ -1,6 +1,7 @@
 import React from "react";
-import { Platform, Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useAtom } from "jotai";
+import { Page, PageHeader } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -76,110 +77,104 @@ export default function SettingsScreen() {
   }
 
   return (
-    <View className="flex-1 bg-background">
-      <View className="border-b border-border px-4 py-3">
-        <Text className="text-base font-semibold text-foreground">Settings</Text>
-      </View>
-      <ScrollView className="flex-1 p-4">
-        <Text className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
-          Appearance
-        </Text>
-        <SegmentedControl<ThemePreference>
-          options={THEME_OPTIONS}
-          value={themePreference}
-          onChange={setThemePreference}
-          fullWidth
-        />
-        <Text className="text-xs uppercase tracking-wider text-muted-foreground mt-6 mb-2">
-          Chat
-        </Text>
-        <SegmentedControl<"off" | "on">
-          options={[...CHAT_TERMINAL_OPTIONS]}
-          value={chatTerminalSplit ? "on" : "off"}
-          onChange={(value) => setChatTerminalSplit(value === "on")}
-          fullWidth
-        />
-        <Text className="text-xs uppercase tracking-wider text-muted-foreground mt-6 mb-2">
-          Notifications
-        </Text>
-        <SegmentedControl<"off" | "on">
-          options={[...ENABLED_OPTIONS]}
-          value={notificationSettings.enabled ? "on" : "off"}
-          onChange={(value) =>
-            updateNotifications({
-              ...notificationSettings,
-              enabled: value === "on",
-            })
-          }
-          fullWidth
-        />
-        {Platform.OS === "web" ? (
-          <View className="mt-3 flex-row items-center justify-between gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-3">
-            <View className="min-w-0 flex-1">
-              <Text className="text-sm font-medium text-foreground">Browser</Text>
-              <Text className="mt-1 text-xs text-muted-foreground">
-                {browserPermission === "granted" ? "Allowed" : "Permission required"}
-              </Text>
-            </View>
-            <SegmentedControl<"off" | "on">
-              options={[...ENABLED_OPTIONS]}
-              value={notificationSettings.channels.browser ? "on" : "off"}
-              onChange={(value) => setBrowserChannel(value === "on")}
+    <Page width="narrow">
+      <PageHeader title="Settings" subtitle="Preferences for the app and agent alerts." />
+      <Text className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
+        Appearance
+      </Text>
+      <SegmentedControl<ThemePreference>
+        options={THEME_OPTIONS}
+        value={themePreference}
+        onChange={setThemePreference}
+        fullWidth
+      />
+      <Text className="mb-2 mt-6 text-xs uppercase tracking-wider text-muted-foreground">Chat</Text>
+      <SegmentedControl<"off" | "on">
+        options={[...CHAT_TERMINAL_OPTIONS]}
+        value={chatTerminalSplit ? "on" : "off"}
+        onChange={(value) => setChatTerminalSplit(value === "on")}
+        fullWidth
+      />
+      <Text className="mb-2 mt-6 text-xs uppercase tracking-wider text-muted-foreground">
+        Notifications
+      </Text>
+      <SegmentedControl<"off" | "on">
+        options={[...ENABLED_OPTIONS]}
+        value={notificationSettings.enabled ? "on" : "off"}
+        onChange={(value) =>
+          updateNotifications({
+            ...notificationSettings,
+            enabled: value === "on",
+          })
+        }
+        fullWidth
+      />
+      {Platform.OS === "web" ? (
+        <View className="mt-3 flex-row items-center justify-between gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-3">
+          <View className="min-w-0 flex-1">
+            <Text className="text-sm font-medium text-foreground">Browser</Text>
+            <Text className="mt-1 text-xs text-muted-foreground">
+              {browserPermission === "granted" ? "Allowed" : "Permission required"}
+            </Text>
+          </View>
+          <SegmentedControl<"off" | "on">
+            options={[...ENABLED_OPTIONS]}
+            value={notificationSettings.channels.browser ? "on" : "off"}
+            onChange={(value) => setBrowserChannel(value === "on")}
+          />
+          {browserPermission !== "granted" && (
+            <Button
+              size="sm"
+              variant="outline"
+              label="Allow"
+              onPress={() => void requestBrowserPermission()}
+              disabled={browserPermission === "unsupported"}
             />
-            {browserPermission !== "granted" && (
-              <Button
-                size="sm"
-                variant="outline"
-                label="Allow"
-                onPress={() => void requestBrowserPermission()}
-                disabled={browserPermission === "unsupported"}
-              />
-            )}
-          </View>
-        ) : (
-          <View className="mt-3 rounded-lg border border-border bg-secondary/40 px-3 py-3">
-            <Text className="text-sm font-medium text-foreground">Push</Text>
-            <Text className="mt-1 text-xs text-muted-foreground">Native delivery pending</Text>
-          </View>
-        )}
-
-        <Text className="text-xs uppercase tracking-wider text-muted-foreground mt-6 mb-2">
-          Agent Alerts
-        </Text>
-        <View className="overflow-hidden rounded-lg border border-border">
-          <SettingToggle
-            label="Agent alerts"
-            value={notificationSettings.categories.agent.enabled}
-            onChange={(value) => setAgentNotification("enabled", value)}
-          />
-          <SettingToggle
-            label="On you"
-            value={notificationSettings.categories.agent.needsInput}
-            onChange={(value) => setAgentNotification("needsInput", value)}
-          />
-          <SettingToggle
-            label="Blocked"
-            value={notificationSettings.categories.agent.blocked}
-            onChange={(value) => setAgentNotification("blocked", value)}
-          />
-          <SettingToggle
-            label="Errors"
-            value={notificationSettings.categories.agent.errors}
-            onChange={(value) => setAgentNotification("errors", value)}
-          />
-          <SettingToggle
-            label="Completed"
-            value={notificationSettings.categories.agent.completed}
-            onChange={(value) => setAgentNotification("completed", value)}
-          />
-          <SettingToggle
-            label="New activity"
-            value={notificationSettings.categories.agent.activity}
-            onChange={(value) => setAgentNotification("activity", value)}
-          />
+          )}
         </View>
-      </ScrollView>
-    </View>
+      ) : (
+        <View className="mt-3 rounded-lg border border-border bg-secondary/40 px-3 py-3">
+          <Text className="text-sm font-medium text-foreground">Push</Text>
+          <Text className="mt-1 text-xs text-muted-foreground">Native delivery pending</Text>
+        </View>
+      )}
+
+      <Text className="mb-2 mt-6 text-xs uppercase tracking-wider text-muted-foreground">
+        Agent Alerts
+      </Text>
+      <View className="overflow-hidden rounded-lg border border-border">
+        <SettingToggle
+          label="Agent alerts"
+          value={notificationSettings.categories.agent.enabled}
+          onChange={(value) => setAgentNotification("enabled", value)}
+        />
+        <SettingToggle
+          label="On you"
+          value={notificationSettings.categories.agent.needsInput}
+          onChange={(value) => setAgentNotification("needsInput", value)}
+        />
+        <SettingToggle
+          label="Blocked"
+          value={notificationSettings.categories.agent.blocked}
+          onChange={(value) => setAgentNotification("blocked", value)}
+        />
+        <SettingToggle
+          label="Errors"
+          value={notificationSettings.categories.agent.errors}
+          onChange={(value) => setAgentNotification("errors", value)}
+        />
+        <SettingToggle
+          label="Completed"
+          value={notificationSettings.categories.agent.completed}
+          onChange={(value) => setAgentNotification("completed", value)}
+        />
+        <SettingToggle
+          label="New activity"
+          value={notificationSettings.categories.agent.activity}
+          onChange={(value) => setAgentNotification("activity", value)}
+        />
+      </View>
+    </Page>
   );
 }
 
