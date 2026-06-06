@@ -165,7 +165,7 @@ function ProjectHeader({
     <Pressable
       onPress={onSwitchProject}
       accessibilityLabel="Switch project"
-      className="flex-row items-center px-4 py-3.5 border-b border-border bg-card active:bg-accent"
+      className="flex-row items-center border-b border-border bg-card px-4 py-2.5 active:bg-accent"
     >
       <View className="mr-2 -ml-1">
         <ChevronLeft size={16} color="#a1a1aa" />
@@ -175,14 +175,14 @@ function ProjectHeader({
           All projects
         </Text>
         <Text
-          className="text-[16px] font-bold text-foreground"
+          className="text-[15px] font-bold text-foreground"
           numberOfLines={1}
           ellipsizeMode="tail"
         >
           {project.name}
         </Text>
         <Text
-          className="text-[11px] text-muted-foreground mt-1"
+          className="mt-0.5 text-[10px] text-muted-foreground"
           numberOfLines={1}
           ellipsizeMode="middle"
         >
@@ -197,7 +197,7 @@ function ProjectHeader({
 
 function BranchChip({ branch }: { branch: string }) {
   return (
-    <View className="flex-row items-center self-start px-2 py-0.5 rounded bg-background border border-border max-w-full">
+    <View className="max-w-full flex-row items-center self-start rounded border border-border bg-background px-2 py-0">
       <GitBranch size={10} color="#a1a1aa" />
       <Text
         className="text-[10px] font-mono text-muted-foreground ml-1.5"
@@ -226,7 +226,7 @@ function AgentRow({
     <Pressable
       onPress={onPress}
       className={cn(
-        "flex-row items-center px-3 py-2",
+        "flex-row items-center px-3 py-1",
         isSelected ? "bg-accent" : "active:bg-accent/60",
       )}
     >
@@ -235,14 +235,15 @@ function AgentRow({
       </View>
       <View className="flex-1 min-w-0">
         <Text
-          className="text-[13px] font-medium text-foreground"
+          className="min-w-0 flex-1 text-[11px] text-muted-foreground"
           numberOfLines={1}
           ellipsizeMode="tail"
         >
-          {session.label || session.id}
-        </Text>
-        <Text className="text-[11px] text-muted-foreground mt-0.5" numberOfLines={1}>
-          {tool ? `${tool} · ${session.status}` : session.status}
+          <Text className="text-[12px] font-medium text-foreground">
+            {session.label || session.id}
+          </Text>
+          {tool ? ` · ${tool}` : ""}
+          {` · ${session.status}`}
         </Text>
       </View>
     </Pressable>
@@ -265,7 +266,7 @@ function ServiceRow({
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
 
   return (
-    <View className="flex-row items-center px-3 py-2">
+    <View className="flex-row items-center px-3 py-1">
       <Pressable
         onPress={onPress}
         className="flex-1 flex-row items-center min-w-0 active:opacity-70"
@@ -275,14 +276,14 @@ function ServiceRow({
         </View>
         <View className="flex-1 min-w-0">
           <Text
-            className="text-[13px] font-medium text-foreground"
+            className="text-[12px] font-medium text-foreground"
             numberOfLines={1}
             ellipsizeMode="tail"
           >
             {service.label || service.id}
           </Text>
           <Text
-            className="text-[11px] text-muted-foreground mt-0.5"
+            className="text-[10px] text-muted-foreground"
             numberOfLines={1}
             ellipsizeMode="tail"
           >
@@ -319,20 +320,20 @@ function WorktreeGroup({
   const railColor = bucket.isMainCheckout ? "bg-emerald-500" : "bg-sky-500";
 
   return (
-    <Card className="mx-3 mb-3 p-0 overflow-hidden">
+    <Card className="mx-3 mb-2 overflow-hidden p-0">
       {/* Worktree header */}
       <View className="flex-row items-stretch border-b border-border bg-secondary">
         <View className={cn("w-1", railColor)} />
-        <View className="flex-1 min-w-0 px-3.5 py-3">
+        <View className="min-w-0 flex-1 px-3 py-1.5">
           <Text
-            className="text-[15px] font-bold text-foreground"
+            className="text-[14px] font-bold text-foreground"
             numberOfLines={1}
             ellipsizeMode="tail"
           >
             {bucket.name}
           </Text>
           {bucket.branch ? (
-            <View className="mt-2">
+            <View className="mt-0.5">
               <BranchChip branch={bucket.branch} />
             </View>
           ) : null}
@@ -341,9 +342,9 @@ function WorktreeGroup({
 
       {/* Body */}
       {hasAgents ? (
-        <View className="pb-1">
-          <View className="px-3.5 pt-3 pb-1.5">
-            <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        <View>
+          <View className="px-3 pb-0.5 pt-2">
+            <Text className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Agents · {bucket.sessions.length}
             </Text>
           </View>
@@ -359,9 +360,9 @@ function WorktreeGroup({
       ) : null}
 
       {hasServices ? (
-        <View className={cn("pb-2", hasAgents && "border-t border-border")}>
-          <View className="px-3.5 pt-3 pb-1.5">
-            <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        <View className={cn("pb-1", hasAgents && "border-t border-border")}>
+          <View className="px-3 pb-0.5 pt-2">
+            <Text className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Services · {bucket.services.length}
             </Text>
           </View>
@@ -378,8 +379,8 @@ function WorktreeGroup({
       ) : null}
 
       {!hasAgents && !hasServices ? (
-        <View className="px-3.5 py-3">
-          <Text className="text-[11px] text-muted-foreground italic">empty worktree</Text>
+        <View className="px-3 py-2">
+          <Text className="text-[10px] italic text-muted-foreground">empty worktree</Text>
         </View>
       ) : (
         <View className="h-0.5" />
@@ -453,7 +454,7 @@ function WorktreeTree({
   }
 
   return (
-    <View className="pt-3 pb-3">
+    <View className="pb-2 pt-2">
       {groups.map((bucket) => (
         <WorktreeGroup
           key={bucket.key}
