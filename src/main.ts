@@ -78,6 +78,7 @@ import {
 import { sendDirectMessage, sendThreadMessage } from "./orchestration.js";
 import { runLoginFlow } from "./login-flow.js";
 import { clearCredentials, loadCredentials, setRemoteEnabled } from "./credentials.js";
+import { takeOverProjectFromOtherOwners } from "./project-takeover.js";
 import {
   acceptHandoff,
   approveReview,
@@ -726,6 +727,8 @@ program
         const tmux = new TmuxRuntimeManager();
         ensureTmuxAvailable(tmux);
         if (!tool && !opts.resume && !opts.restore) {
+          await takeOverProjectFromOtherOwners(projectRoot);
+          await ensureDaemonProjectReady(projectRoot);
           const liveDashboard = findLiveDashboardTarget(projectRoot, tmux);
           if (liveDashboard) {
             tmux.openTarget(liveDashboard.dashboardTarget, {
