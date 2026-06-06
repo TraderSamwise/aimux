@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useGlobalSearchParams, useRouter } from "expo-router";
 import { useAtomValue } from "jotai";
@@ -62,6 +62,15 @@ export default function LibraryScreen() {
   const [documents, setDocuments] = useState<LibraryDocument[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
+  const endpointRef = useRef(endpoint);
+  const getTokenRef = useRef(getToken);
+  const refreshSeqRef = useRef(0);
+
+  useEffect(() => {
+    endpointRef.current = endpoint;
+    getTokenRef.current = getToken;
+  }, [endpoint, getToken]);
 
   const selectedDocument = useMemo(
     () => documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null,
@@ -69,31 +78,35 @@ export default function LibraryScreen() {
   );
 
   const refresh = useCallback(async () => {
-    if (!endpoint) {
+    const seq = ++refreshSeqRef.current;
+    const currentEndpoint = endpointRef.current;
+    if (!currentEndpoint) {
       setDocuments([]);
       setError(null);
+      setLoading(false);
       return;
     }
     setLoading(true);
-    setDocuments([]);
     try {
-      const token = await getToken();
-      const response = await listProjectLibrary(endpoint, { token });
+      const token = await getTokenRef.current();
+      const response = await listProjectLibrary(currentEndpoint, { token });
+      if (seq !== refreshSeqRef.current) return;
       setDocuments(response.documents);
       setError(null);
     } catch (err) {
+      if (seq !== refreshSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (seq === refreshSeqRef.current) setLoading(false);
     }
-  }, [endpoint, getToken]);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       void refresh();
     }, 0);
     return () => clearTimeout(timer);
-  }, [refresh]);
+  }, [endpointKey, refresh]);
 
   return (
     <ScrollView className="flex-1 bg-background" contentContainerClassName="px-4 py-5 md:px-8">
@@ -143,7 +156,9 @@ export default function LibraryScreen() {
           </Card>
         ) : documents.length === 0 ? (
           <Card className="rounded-lg p-5">
-            <Text className="text-base font-semibold text-foreground">No library documents</Text>
+            <Text className="text-base font-semibold text-foreground">
+              {loading ? "Loading library..." : "No library documents"}
+            </Text>
             <Text className="mt-1 text-sm text-muted-foreground">
               Durable project instruction files will appear here when present.
             </Text>
