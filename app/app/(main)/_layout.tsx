@@ -4,6 +4,7 @@ import { Stack, useGlobalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { AppShell } from "@/components/AppShell";
 import { NotificationProvider } from "@/components/NotificationProvider";
+import { NativeNotificationRouter } from "@/components/NativeNotificationRouter";
 import { getDesktopState, listNotifications, listProjects, setApiRelay } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser-notifications";
@@ -264,6 +265,7 @@ export default function MainLayout() {
   return (
     <>
       <NotificationProvider />
+      <NativeNotificationRouter />
       <AppShell>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />

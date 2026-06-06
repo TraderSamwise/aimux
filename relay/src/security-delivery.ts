@@ -24,6 +24,54 @@ export async function deliverSecurityAlert(input: DeliveryInput): Promise<void> 
   await Promise.allSettled([sendSecurityEmail(input), sendSecurityPush(input)]);
 }
 
+export interface NotificationPushInput {
+  userId: string;
+  pushTokens: SecurityPushTokenRecord[];
+  title: string;
+  body: string;
+  kind?: string;
+  sessionId?: string;
+  projectId?: string;
+  projectRoot?: string;
+  dedupeKey?: string;
+}
+
+export async function deliverNotificationPush(input: NotificationPushInput): Promise<void> {
+  const messages = input.pushTokens
+    .filter((record) => record.userId === input.userId)
+    .filter((record) => record.platform === "ios" || record.platform === "android")
+    .map((record) => ({
+      to: record.token,
+      title: input.title,
+      body: input.body,
+      data: {
+        category: "agent",
+        kind: input.kind,
+        sessionId: input.sessionId,
+        projectId: input.projectId,
+        projectRoot: input.projectRoot,
+        dedupeKey: input.dedupeKey,
+      },
+    }));
+  await sendExpoPush(messages);
+}
+
+async function sendExpoPush(messages: unknown[]): Promise<void> {
+  if (messages.length === 0) return;
+  const response = await fetch("https://exp.host/--/api/v2/push/send", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(messages),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Expo push failed (${response.status}): ${detail.slice(0, 300)}`);
+  }
+}
+
 async function sendSecurityEmail(input: DeliveryInput): Promise<void> {
   if (!input.env.RESEND_API_KEY || !input.env.SECURITY_EMAIL_FROM || !input.env.CLERK_SECRET_KEY) return;
   const email = await fetchPrimaryEmail(input.env, input.userId);
@@ -73,15 +121,7 @@ async function sendSecurityPush(input: DeliveryInput): Promise<void> {
         emergencyUrl: input.emergencyUrl,
       },
     }));
-  if (messages.length === 0) return;
-  await fetch("https://exp.host/--/api/v2/push/send", {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(messages),
-  });
+  await sendExpoPush(messages);
 }
 
 function renderSecurityEmail(
