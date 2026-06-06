@@ -115,6 +115,27 @@ const activityRow = (tool: Tool, seed: number, rng: () => number): Fragment => {
   };
 };
 
+const toolActionRow = (tool: Tool, seed: number, rng: () => number): Fragment => {
+  const status = `ACTION_SENTINEL_${tool}_${seed}`;
+  const variants =
+    tool === "claude"
+      ? [
+          `⏺ Bash(echo ${status})`,
+          `⏺ Read 2 files (ctrl+o to expand) ${status}`,
+          `⏺ Update(src/${status}.ts)`,
+          `⏺ Background command "Wait for ${status}" completed (exit code 0)`,
+        ]
+      : [
+          `• Ran git status --short ${status}`,
+          `• Ran yarn test ${status}`,
+          `• Bash(git diff --stat ${status})`,
+        ];
+  return {
+    lines: [pick(rng, variants)],
+    statuses: [status],
+  };
+};
+
 const feedbackSurvey = (tool: Tool, seed: number): Fragment => {
   const status = `SURVEY_SENTINEL_${tool}_${seed}`;
   return {
@@ -156,8 +177,8 @@ const mcpStartup = (tool: Tool, seed: number): Fragment => {
 
 const fragmentMakersForTool = (tool: Tool) =>
   tool === "claude"
-    ? ([activeInput, activityRow, feedbackSurvey, assistantMarkdown, mcpStartup] as const)
-    : ([activeInput, activityRow, assistantMarkdown, mcpStartup] as const);
+    ? ([activeInput, activityRow, toolActionRow, feedbackSurvey, assistantMarkdown, mcpStartup] as const)
+    : ([activeInput, activityRow, toolActionRow, assistantMarkdown, mcpStartup] as const);
 
 const collectByType = (raw: string, tool: Tool) => {
   const parsed = parseAgentOutput(raw, { tool });

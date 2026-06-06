@@ -100,6 +100,48 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
     },
   },
   {
+    name: "codex-live-startup-suggestion-loop",
+    tool: "codex",
+    raw: [
+      "│ >_ OpenAI Codex (v0.136.0)                      │",
+      "│                                                 │",
+      "│ model:       loading   /model to change         │",
+      "│ directory:   ~/workspace/project/.aimux/worktrees/polish │",
+      "│ permissions: YOLO mode                          │",
+      "› Explain this codebase",
+      "  gpt-5.5 default · ~/workspace/project/.aimux/worktrees/polish",
+      "│ >_ OpenAI Codex (v0.136.0)                      │",
+      "│                                                 │",
+      "│ model:       loading   /model to change         │",
+      "│ directory:   ~/workspace/project/.aimux/worktrees/polish │",
+      "│ permissions: YOLO mode                          │",
+      "• Starting MCP servers (0/4): chrome-devtools, codex_apps, node_repl, … (0s • esc to interrupt)",
+      "› Explain this codebase",
+      "  gpt-5.5 default · ~/workspace/project/.aimux/worktrees/polish",
+      "│ >_ OpenAI Codex (v0.136.0)                      │",
+      "│                                                 │",
+      "│ model:       gpt-5.5 high   /model to change    │",
+      "│ directory:   ~/workspace/project/.aimux/worktrees/polish │",
+      "│ permissions: YOLO mode                          │",
+      "  Tip: Press Tab to queue a message when a task is running; otherwise it sends immediately (except !).",
+      "› Explain this codebase",
+      "  gpt-5.5 high · ~/workspace/project/.aimux/worktrees/polish",
+    ].join("\n"),
+    expected: [
+      {
+        type: "meta",
+        includes: ["OpenAI Codex"],
+      },
+      {
+        type: "status",
+        includes: ["Explain this codebase", "Starting MCP servers", "Press Tab to queue a message"],
+      },
+    ],
+    invariants: {
+      noPromptIncludes: ["Explain this codebase"],
+    },
+  },
+  {
     name: "codex-active-image-input-followed-by-suggestion",
     tool: "codex",
     raw: [
@@ -188,6 +230,37 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
       {
         type: "status",
         includes: ["Cooked for 1m 2s · 1 shell still running", "bypass permissions on"],
+      },
+    ],
+  },
+  {
+    name: "claude-live-tool-action-rows",
+    tool: "claude",
+    raw: [
+      "⏺ Good question. Let me check the relay status.",
+      "",
+      "⏺ Bash(cd /workspace/project; gh pr checks 5968)",
+      "  ⎿  Running in the background (down arrow to manage)",
+      "",
+      "⏺ Read 2 files (ctrl+o to expand)",
+      "",
+      "⏺ Update(src/relay.ts)",
+      "",
+      "⏺ All checks are green. I can merge now.",
+    ].join("\n"),
+    expected: [
+      {
+        type: "response",
+        includes: ["Good question"],
+        excludes: ["Bash(cd", "Read 2 files", "Update(src/relay.ts)"],
+      },
+      {
+        type: "status",
+        includes: ["Bash(cd", "Running in the background", "Read 2 files", "Update(src/relay.ts)"],
+      },
+      {
+        type: "response",
+        includes: ["All checks are green"],
       },
     ],
   },
