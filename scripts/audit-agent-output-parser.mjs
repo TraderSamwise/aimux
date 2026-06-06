@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { auditAgentOutputParserCorpus } from "../dist/agent-output-parser-audit.js";
+import {
+  PARSER_AUDIT_FINDING_FLAGS,
+  auditAgentOutputParserCorpus,
+} from "../dist/agent-output-parser-audit.js";
 
 const usage = `Usage:
   yarn build
@@ -12,13 +15,7 @@ Defaults:
   --context .aimux/context
 `;
 
-const validFlags = new Set([
-  "prompt-from-response-record",
-  "raw-block",
-  "status-leak-response",
-  "activity-status-leak",
-  "action-status-leak",
-]);
+const validFlags = new Set(PARSER_AUDIT_FINDING_FLAGS);
 const args = process.argv.slice(2);
 const historyDirs = [];
 const contextDirs = [];
