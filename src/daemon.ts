@@ -14,7 +14,7 @@ import { listDesktopProjects } from "./project-scanner.js";
 import { loadMetadataEndpoint } from "./metadata-store.js";
 import { requestJson } from "./http-client.js";
 import { getLoggingConfig, log } from "./debug.js";
-import { RelayClient, type RelayStatusSnapshot } from "./relay-client.js";
+import { RelayClient, type RelayNotificationPush, type RelayStatusSnapshot } from "./relay-client.js";
 import { loadCredentials, setRemoteEnabled } from "./credentials.js";
 import { assertRemoteAccessAllowed, parseRemoteActor } from "./remote-access.js";
 
@@ -720,6 +720,14 @@ export class AimuxDaemon {
 
     if (method === "POST" && pathname === "/relay/disable") {
       return { status: 200, body: { ok: true, relay: this.disableRelay() } };
+    }
+
+    if (method === "POST" && pathname === "/internal/push") {
+      if (actor) return { status: 403, body: { ok: false, error: "internal route is loopback-only" } };
+      const payload = body as RelayNotificationPush | undefined;
+      if (!payload?.title) return { status: 400, body: { ok: false, error: "title is required" } };
+      this.relayClient?.pushNotification(payload);
+      return { status: 200, body: { ok: true } };
     }
 
     if (method === "GET" && pathname === "/projects") {

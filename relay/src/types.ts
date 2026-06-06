@@ -50,4 +50,22 @@ export interface RelaySecurityEventControl {
   event: SecurityEventRecord;
 }
 
-export type RelayMessage = RelayRequest | RelayResponse | RelayControl | RelaySecurityEventControl;
+export interface RelayNotificationPushControl {
+  type: "notification_push";
+  notification: {
+    title: string;
+    body: string;
+    kind?: string;
+    sessionId?: string;
+    projectId?: string;
+    projectRoot?: string;
+    dedupeKey?: string;
+  };
+}
+
+export type RelayMessage =
+  | RelayRequest
+  | RelayResponse
+  | RelayControl
+  | RelaySecurityEventControl
+  | RelayNotificationPushControl;
