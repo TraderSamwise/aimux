@@ -313,6 +313,26 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
     if (/^[\u2500-\u257f\-_=\s]+$/.test(trimmed)) return false;
     return /[A-Za-z]/.test(trimmed);
   };
+  const looksLikeRuntimeNoiseText = (text: string) => {
+    const lines = String(text || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const runtimeLineCount = lines.filter((line) => {
+      return (
+        /^[✢✳✶✻✽·]/.test(line) ||
+        /^\(thinking\)$/i.test(line) ||
+        /^Bash\([^)]*terminal-notifier/i.test(line)
+      );
+    }).length;
+    return runtimeLineCount >= 2 || /terminal-notifier.*Running/i.test(lines.join("\n"));
+  };
+
+  for (const block of next) {
+    if (block.type === "raw" && looksLikeRuntimeNoiseText(block.text)) {
+      block.type = "status";
+    }
+  }
 
   for (let i = 0; i < next.length; i += 1) {
     const current = next[i];
