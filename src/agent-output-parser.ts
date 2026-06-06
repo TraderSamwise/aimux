@@ -31,6 +31,22 @@ const looksLikeActivityProgressText = (text: string) => {
   );
 };
 
+const looksLikeToolActionText = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return (
+    /^(?:Bash|BashOutput|Edit|Explore|Glob|Grep|KillBash|LS|MultiEdit|NotebookEdit|Read|Task|TodoWrite|Update|WebFetch|WebSearch|Write)\s*(?:\(|\d|\b.*\b(?:ctrl\+o|to expand|Running in the background|exit code))/i.test(
+      trimmed,
+    ) ||
+    /^Background command\s+".+"\s+completed\s+\(exit code\s+\d+\)/i.test(trimmed) ||
+    /^Ran\s+(?:bash|bun|cat|cd|curl|docker|find|gh|git|grep|ls|mkdir|mv|node|npm|pnpm|python3?|rg|rm|sed|sh|tsc|tsx|vitest|yarn)\b/i.test(
+      trimmed,
+    ) ||
+    /^Searched\s*for\s*\d+\s*patterns?/i.test(trimmed) ||
+    /^Read\s*\d+\s*files?/i.test(trimmed)
+  );
+};
+
 export function parseAgentOutput(raw: string, options: { tool?: string } = {}): ParsedAgentOutput {
   const tool = (options.tool || "unknown").trim() || "unknown";
   const lines = String(raw || "")
@@ -100,11 +116,13 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const starBulletText = trimmed.replace(/^\*\s+/, "");
     const dashBulletText = trimmed.replace(/^-\s+/, "");
     const spinnerText = trimmed.replace(/^[✻✽✶]\s+/, "");
+    const conversationBulletText = trimmed.replace(/^(?:•|⏺)\s?/, "");
     return (
       /^■\s?/.test(trimmed) ||
       /^•\s?Working\b/.test(trimmed) ||
       /^•\s?Starting MCP servers\b/.test(trimmed) ||
       /^•\s?How is Claude doing this session\?\s*\(optional\)/i.test(trimmed) ||
+      (/^(?:•|⏺)\s?/.test(trimmed) && looksLikeToolActionText(conversationBulletText)) ||
       (/^•\s?/.test(trimmed) && looksLikeActivityProgressText(dotBulletText)) ||
       /^⏵⏵\s/.test(trimmed) ||
       (/^\*\s+/.test(trimmed) && looksLikeActivityProgressText(starBulletText)) ||

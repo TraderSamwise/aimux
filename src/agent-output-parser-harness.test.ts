@@ -40,6 +40,35 @@ describe("agent output parser harness", () => {
     expect(codexRead?.parsed.blocks.find((block) => block.type === "status")?.text).toContain("Implement {feature}");
   });
 
+  it("parses mined live-pane edge cases through the runtime read path", async () => {
+    const claude = fixture("claude-live-tool-action-rows");
+    const codex = fixture("codex-live-startup-suggestion-loop");
+    const harness = createAgentOutputParserHarness([
+      {
+        id: "claude-actions",
+        tool: claude.tool,
+        output: claude.raw,
+      },
+      {
+        id: "codex-startup-loop",
+        tool: codex.tool,
+        output: codex.raw,
+      },
+    ]);
+
+    const [claudeRead, codexRead] = await harness.readAll(-200);
+
+    expect(claudeRead?.parsed.blocks.map((block) => block.type)).toEqual(["response", "status", "response"]);
+    expect(claudeRead?.parsed.blocks[1]?.text).toContain("Bash(cd");
+    expect(claudeRead?.parsed.blocks[1]?.text).toContain("Read 2 files");
+    expect(claudeRead?.parsed.blocks[2]?.text).toContain("All checks are green");
+
+    expect(codexRead?.parsed.blocks.map((block) => block.type)).toEqual(["meta", "status"]);
+    expect(codexRead?.parsed.blocks.some((block) => block.type === "prompt")).toBe(false);
+    expect(codexRead?.parsed.blocks[1]?.text).toContain("Explain this codebase");
+    expect(codexRead?.parsed.blocks[1]?.text).toContain("Starting MCP servers");
+  });
+
   it("updates a dummy pane snapshot without recreating the harness", async () => {
     const harness = createAgentOutputParserHarness([
       {
