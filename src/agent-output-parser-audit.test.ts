@@ -26,7 +26,7 @@ describe("auditAgentOutputParserCorpus", () => {
       join(dir, "claude-test.jsonl"),
       `${JSON.stringify({
         type: "response",
-        content: "⏺ terminal-notifier appeared as visible assistant prose",
+        content: "Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose",
       })}\n`,
     );
 
@@ -43,6 +43,44 @@ describe("auditAgentOutputParserCorpus", () => {
         flags: ["status-leak-response"],
       }),
     ]);
+  });
+
+  it("does not flag prose or code samples that only mention agent chrome terms", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: [
+          "This regression fixture compares OpenAI Codex and Claude Code in normal assistant prose.",
+          "",
+          'const sample = "OpenAI Codex appears in parser test data";',
+        ].join("\n"),
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({ historyDirs: [dir] });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["status-leak-response"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
+
+  it("does not flag Codex chrome that the parser already classifies as metadata", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: "Here is the leaked pane header:\n│ >_ OpenAI Codex (v0.136.0) │",
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({ historyDirs: [dir] });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["status-leak-response"]).toBe(0);
+    expect(summary.findings).toEqual([]);
   });
 
   it("ignores non-response history records", () => {
@@ -67,8 +105,8 @@ describe("auditAgentOutputParserCorpus", () => {
     writeFileSync(
       join(dir, "claude-test.jsonl"),
       [
-        JSON.stringify({ type: "response", content: "⏺ terminal-notifier leak one" }),
-        JSON.stringify({ type: "response", content: "⏺ terminal-notifier leak two" }),
+        JSON.stringify({ type: "response", content: "Bash(terminal-notifier -title ClaudeCode) leak one" }),
+        JSON.stringify({ type: "response", content: "Bash(terminal-notifier -title ClaudeCode) leak two" }),
         "",
       ].join("\n"),
     );
@@ -77,5 +115,38 @@ describe("auditAgentOutputParserCorpus", () => {
 
     expect(summary.countsByFlag["status-leak-response"]).toBe(2);
     expect(summary.findings).toHaveLength(1);
+  });
+
+  it("filters findings and counts to requested flags", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      [
+        JSON.stringify({
+          type: "response",
+          content: "› Explain this codebase\n\n  gpt-5.5 medium · ~/workspace/project",
+        }),
+        JSON.stringify({
+          type: "response",
+          content: "Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose",
+        }),
+        "",
+      ].join("\n"),
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["status-leak-response"],
+    });
+
+    expect(summary.scanned).toBe(2);
+    expect(summary.countsByFlag["prompt-from-response-record"]).toBe(0);
+    expect(summary.countsByFlag["status-leak-response"]).toBe(1);
+    expect(summary.findings).toEqual([
+      expect.objectContaining({
+        blockType: "response",
+        flags: ["status-leak-response"],
+      }),
+    ]);
   });
 });

@@ -18,6 +18,7 @@ export interface ParserAuditOptions {
   historyDirs?: string[];
   contextDirs?: string[];
   maxFindings?: number;
+  flags?: ParserAuditFindingFlag[];
 }
 
 export interface ParserAuditSummary {
@@ -34,8 +35,17 @@ interface AuditCandidate {
   content: string;
 }
 
-const STATUS_LEAK_RESPONSE_PATTERN =
-  /(?:How is Claude doing this session|Starting MCP servers|bypass permissions|shift\+tab|Running in the background|ctrl\+o to expand|terminal-notifier|Thiscommandrequiresapproval|Doyouwanttoproceed|OpenAI Codex|^Bash\(|^Read\d)/i;
+const STATUS_LEAK_RESPONSE_PATTERNS = [
+  /(?:^|\n)\s*How is Claude doing this session/i,
+  /(?:^|\n)\s*Starting MCP servers/i,
+  /(?:^|\n)\s*(?:⏵⏵\s*)?bypass permissions/i,
+  /(?:^|\n)\s*(?:⎿\s*)?Running in the background/i,
+  /(?:^|\n)\s*(?:⏺\s*)?Bash\([^)]*terminal-notifier/i,
+  /(?:^|\n)\s*(?:Thiscommandrequiresapproval|Doyouwanttoproceed)/i,
+  /(?:^|\n)\s*(?:│\s*)?>_\s*OpenAI Codex\b/i,
+  /(?:^|\n)\s*Bash\(/i,
+  /(?:^|\n)\s*Read\d/i,
+] as const;
 
 const emptyCounts = (): Record<ParserAuditFindingFlag, number> => ({
   "prompt-from-response-record": 0,
@@ -126,7 +136,7 @@ export function auditAgentOutputParserCorpus(options: ParserAuditOptions): Parse
       if (block.type === "raw") {
         flags.push("raw-block");
       }
-      if (block.type === "response" && STATUS_LEAK_RESPONSE_PATTERN.test(block.text)) {
+      if (block.type === "response" && STATUS_LEAK_RESPONSE_PATTERNS.some((pattern) => pattern.test(block.text))) {
         flags.push("status-leak-response");
       }
       if (
@@ -135,6 +145,13 @@ export function auditAgentOutputParserCorpus(options: ParserAuditOptions): Parse
         livePromptLeakLooksActionable(candidate.content)
       ) {
         flags.push("prompt-from-response-record");
+      }
+      if (options.flags && options.flags.length > 0) {
+        for (let index = flags.length - 1; index >= 0; index -= 1) {
+          if (!options.flags.includes(flags[index] as ParserAuditFindingFlag)) {
+            flags.splice(index, 1);
+          }
+        }
       }
       if (flags.length === 0) return;
       for (const flag of flags) {
