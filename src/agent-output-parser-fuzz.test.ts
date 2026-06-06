@@ -9,6 +9,7 @@ interface Fragment {
   prompts?: string[];
   responses?: string[];
   statuses?: string[];
+  metas?: string[];
   forbiddenPrompts?: string[];
 }
 
@@ -189,6 +190,110 @@ const mcpStartup = (tool: Tool, seed: number): Fragment => {
   };
 };
 
+const codexResumePickerSelection = (seed: number): Fragment => {
+  const response = `PICKER_RESPONSE_SENTINEL_codex_${seed}`;
+  const status = `PICKER_STATUS_SENTINEL_codex_${seed}`;
+  return {
+    lines: [
+      `Resume a previous session ${response}`,
+      " Type to search                                                       Filter:  Cwd [All]   Sort: [Updated] Created",
+      `  ❯ now         Saved as ~/cs/hyperprop/HANDOFF.md. ${status} Here it is:  ---  What: Decentralized eval prop firm on...`,
+      "    1m ago      previous agent was in a compact loop.TL;DR: we were trying to fix the iOS chat composer bein...",
+      "    15h ago     reply exactly CODEX_PROTOCOL_OK",
+    ],
+    responses: [response],
+    statuses: [status],
+    forbiddenPrompts: [status, "previous agent was in a compact loop", "CODEX_PROTOCOL_OK"],
+  };
+};
+
+const codexWorkingDirectoryPicker = (seed: number): Fragment => {
+  const response = `CWD_PICKER_RESPONSE_SENTINEL_codex_${seed}`;
+  const status = `CWD_PICKER_STATUS_SENTINEL_codex_${seed}`;
+  const meta = `CWD_PICKER_META_SENTINEL_codex_${seed}`;
+  return {
+    lines: [
+      `Choose working directory to resume this session ${response}`,
+      "  Session = latest cwd recorded in the resumed session",
+      "  Current = your current working directory",
+      "  1. Use session directory (/Users/sam/cs/aimux)",
+      `› 2. Use current directory (/Users/sam/cs/aimux/.aimux/worktrees/chat-parser) ${status}`,
+      "  Press enter to continue",
+      "│ >_ OpenAI Codex (v0.136.0)                           │",
+      "│                                                      │",
+      `│ model:       gpt-5.5 high   /model to change         │ ${meta}`,
+      "│ directory:   ~/cs/aimux/.aimux/worktrees/chat-parser │",
+      "│ permissions: YOLO mode                               │",
+    ],
+    responses: [response],
+    statuses: [status],
+    metas: [meta],
+    forbiddenPrompts: [status],
+  };
+};
+
+const codexCommandOutputTree = (seed: number): Fragment => {
+  const status = `TREE_STATUS_SENTINEL_codex_${seed}`;
+  const response = `TREE_RESPONSE_SENTINEL_codex_${seed}`;
+  return {
+    lines: [
+      `• Ran aimux daemon project-ensure --project /Users/sam/cs/hyperprop --json ${status}`,
+      "  └ {",
+      '      "project": {',
+      "    … +5 lines (ctrl + t to view transcript)",
+      "      }",
+      "    }",
+      "",
+      `• ${response} prod ensure completed.`,
+    ],
+    responses: [response],
+    statuses: [status],
+  };
+};
+
+const codexTrailingSuggestionAfterStatus = (seed: number): Fragment => {
+  const response = `TRAILING_RESPONSE_SENTINEL_codex_${seed}`;
+  const status = `TRAILING_STATUS_SENTINEL_codex_${seed}`;
+  return {
+    lines: [
+      `• ${response} worktree looks clean and usable.`,
+      "",
+      `• Ran git branch -vv && git rev-parse --abbrev-ref --symbolic-full-name @{u} ${status}`,
+      "  └ ## chat-parser",
+      "",
+      "› Explain this codebase",
+      "",
+      "  gpt-5.5 high · ~/workspace/project",
+    ],
+    responses: [response],
+    statuses: [status, "Explain this codebase"],
+    forbiddenPrompts: ["Explain this codebase"],
+  };
+};
+
+const codexResultSummaryAfterMetadata = (seed: number): Fragment => {
+  const meta = `RESULT_META_SENTINEL_codex_${seed}`;
+  const response = `RESULT_RESPONSE_SENTINEL_codex_${seed}`;
+  const prompt = `RESULT_PROMPT_SENTINEL_codex_${seed}`;
+  const status = `RESULT_STATUS_SENTINEL_codex_${seed}`;
+  return {
+    lines: [
+      `~/.aimux/projects.json.backup-2026-06-06T06-44-29-597Z ${meta}`,
+      "  Result:",
+      `  - Registry: 23087 -> 6 ${response}`,
+      "  - Live /projects: now ~0.24-0.51s",
+      "  - Remaining projects: aimux, hyperprop, premys",
+      "",
+      `› ${prompt} Open a PR. run review-coderabbit until green. then merge and cut new branch.`,
+      `■ Conversation interrupted - tell the model what to do differently. ${status}`,
+    ],
+    metas: [meta],
+    responses: [response],
+    prompts: [prompt],
+    statuses: [status],
+  };
+};
+
 const fragmentMakersForTool = (tool: Tool) =>
   tool === "claude"
     ? ([
@@ -218,6 +323,28 @@ const collectByType = (raw: string, tool: Tool) => {
   return { parsed, grouped };
 };
 
+const assertFragmentSentinels = (
+  fragments: Fragment[],
+  grouped: Map<AgentOutputBlockType, string>,
+  context: string,
+) => {
+  for (const prompt of fragments.flatMap((fragment) => fragment.prompts ?? [])) {
+    expect(grouped.get("prompt") ?? "", `${context} prompt ${prompt}`).toContain(prompt);
+  }
+  for (const response of fragments.flatMap((fragment) => fragment.responses ?? [])) {
+    expect(grouped.get("response") ?? "", `${context} response ${response}`).toContain(response);
+  }
+  for (const status of fragments.flatMap((fragment) => fragment.statuses ?? [])) {
+    expect(grouped.get("status") ?? "", `${context} status ${status}`).toContain(status);
+  }
+  for (const meta of fragments.flatMap((fragment) => fragment.metas ?? [])) {
+    expect(grouped.get("meta") ?? "", `${context} meta ${meta}`).toContain(meta);
+  }
+  for (const forbidden of fragments.flatMap((fragment) => fragment.forbiddenPrompts ?? [])) {
+    expect(grouped.get("prompt") ?? "", `${context} forbidden prompt ${forbidden}`).not.toContain(forbidden);
+  }
+};
+
 describe("parseAgentOutput deterministic fuzz", () => {
   for (const tool of ["claude", "codex"] as const) {
     for (let seed = 1; seed <= 80; seed += 1) {
@@ -245,22 +372,32 @@ describe("parseAgentOutput deterministic fuzz", () => {
         expect(inferred.blocks, `${tool} seed ${seed} inferred blocks`).toEqual(parsed.blocks);
         expect(parsed.blocks.map((block) => block.type)).not.toContain("raw");
 
-        for (const prompt of fragments.flatMap((fragment) => fragment.prompts ?? [])) {
-          expect(grouped.get("prompt") ?? "", `${tool} seed ${seed} prompt ${prompt}`).toContain(prompt);
-        }
-        for (const response of fragments.flatMap((fragment) => fragment.responses ?? [])) {
-          expect(grouped.get("response") ?? "", `${tool} seed ${seed} response ${response}`).toContain(response);
-        }
-        for (const status of fragments.flatMap((fragment) => fragment.statuses ?? [])) {
-          expect(grouped.get("status") ?? "", `${tool} seed ${seed} status ${status}`).toContain(status);
-        }
-        for (const forbidden of fragments.flatMap((fragment) => fragment.forbiddenPrompts ?? [])) {
-          expect(grouped.get("prompt") ?? "", `${tool} seed ${seed} forbidden prompt ${forbidden}`).not.toContain(
-            forbidden,
-          );
-        }
+        assertFragmentSentinels(fragments, grouped, `${tool} seed ${seed}`);
       });
     }
+  }
+
+  const minedCodexFragments = [
+    codexResumePickerSelection,
+    codexWorkingDirectoryPicker,
+    codexCommandOutputTree,
+    codexTrailingSuggestionAfterStatus,
+    codexResultSummaryAfterMetadata,
+  ];
+
+  for (let seed = 1; seed <= 50; seed += 1) {
+    it(`keeps mined Codex live edge case ${seed} stable`, () => {
+      const rng = rngForSeed(seed * 67);
+      const mined = pick(rng, minedCodexFragments)(seed);
+      const fragments: Fragment[] = [{ lines: maybeBlank(rng) }, mined, { lines: maybeBlank(rng) }];
+
+      const raw = fragments.flatMap((fragment) => fragment.lines).join("\n");
+      const { parsed, grouped } = collectByType(raw, "codex");
+
+      expect(parseAgentOutput(raw, { tool: "codex" }).blocks).toEqual(parsed.blocks);
+      expect(parsed.blocks.map((block) => block.type), `mined Codex seed ${seed} no raw`).not.toContain("raw");
+      assertFragmentSentinels(fragments, grouped, `mined Codex seed ${seed}`);
+    });
   }
 
   for (let seed = 1; seed <= 40; seed += 1) {
