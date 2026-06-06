@@ -71,10 +71,10 @@ export function notifyComplete(sessionId: string): void {
   send("aimux", `${sessionId} finished`);
 }
 
-export function notifyAlert(event: AlertEvent): void {
+export function notifyAlert(event: AlertEvent): boolean {
   const config = getNotifyConfig();
-  if (!config.enabled) return;
-  if (shouldSuppressNotification(event)) return;
+  if (!config.enabled) return false;
+  if (shouldSuppressNotification(event)) return false;
 
   if (
     (event.kind === "notification" ||
@@ -85,12 +85,13 @@ export function notifyAlert(event: AlertEvent): void {
       event.kind === "review_waiting") &&
     !config.onPrompt
   ) {
-    return;
+    return false;
   }
-  if (event.kind === "task_done" && !config.onComplete) return;
-  if ((event.kind === "task_failed" || event.kind === "blocked") && !config.onError) return;
+  if (event.kind === "task_done" && !config.onComplete) return false;
+  if ((event.kind === "task_failed" || event.kind === "blocked") && !config.onError) return false;
 
   send(event.title || "aimux", event.message || event.sessionId || event.kind);
+  return true;
 }
 
 export function notifyRemoteClientConnected(input: { title?: unknown; body?: unknown }): void {

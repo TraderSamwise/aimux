@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env, RelayMessage } from "./types.js";
-import { deliverSecurityAlert } from "./security-delivery.js";
+import { deliverNotificationPush, deliverSecurityAlert } from "./security-delivery.js";
 import { deliverShareInvite } from "./sharing-delivery.js";
 import {
   activateSecurityLockdown,
@@ -125,9 +125,14 @@ export class RelayObject extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
+    const daemonOwnerUserId = role === "daemon" ? request.headers.get("X-Aimux-User-Id")?.trim() : undefined;
     this.ctx.acceptWebSocket(
       server,
-      clientDevice ? [role, `device:${clientDevice.deviceId}`, ...sharedClientTags] : [role],
+      clientDevice
+        ? [role, `device:${clientDevice.deviceId}`, ...sharedClientTags]
+        : daemonOwnerUserId
+          ? [role, `user:${daemonOwnerUserId}`]
+          : [role],
     );
 
     if (role === "daemon") {
@@ -179,6 +184,11 @@ export class RelayObject extends DurableObject<Env> {
 
     const tags = this.ctx.getTags(ws);
     const isDaemon = tags.includes("daemon");
+
+    if (isDaemon && parsed.type === "notification_push") {
+      await this.handleDaemonNotificationPush(tags, parsed);
+      return;
+    }
 
     if (isDaemon && parsed.type === "response") {
       this.sweepExpiredPending();
@@ -239,6 +249,27 @@ export class RelayObject extends DurableObject<Env> {
         });
       }
     }
+  }
+
+  private async handleDaemonNotificationPush(
+    tags: string[],
+    message: Extract<RelayMessage, { type: "notification_push" }>,
+  ): Promise<void> {
+    const ownerUserId = tags.find((tag) => tag.startsWith("user:"))?.slice("user:".length);
+    const notification = message.notification;
+    if (!ownerUserId || !notification?.title) return;
+    const state = await loadSecurityState(this.ctx.storage);
+    await deliverNotificationPush({
+      userId: ownerUserId,
+      pushTokens: Object.values(state.pushTokens),
+      title: notification.title,
+      body: notification.body,
+      kind: notification.kind,
+      sessionId: notification.sessionId,
+      projectId: notification.projectId,
+      projectRoot: notification.projectRoot,
+      dedupeKey: notification.dedupeKey,
+    });
   }
 
   private async handleSecurityAction(request: Request, url: URL): Promise<Response> {

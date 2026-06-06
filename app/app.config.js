@@ -59,6 +59,13 @@ module.exports = {
           resizeMode: "contain",
         },
       ],
+      [
+        "expo-notifications",
+        {
+          icon: "./assets/images/icon.png",
+          color: "#0a0a0c",
+        },
+      ],
       ...(HAS_REAL_EAS_PROJECT ? ["expo-updates"] : []),
     ],
     experiments: {
