@@ -25,10 +25,6 @@ export function AuthMenu() {
   const { user } = useUser();
   const [open, setOpen] = useState(false);
 
-  if (LOCAL_MODE) {
-    return <Badge variant="secondary" label="Local" />;
-  }
-
   if (!isSignedIn) {
     return (
       <Button variant="outline" size="sm" label="Sign in" onPress={() => router.push("/auth")} />
@@ -51,15 +47,17 @@ export function AuthMenu() {
       >
         <Text className="text-sm text-foreground">Settings</Text>
       </Pressable>
-      <Pressable
-        className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
-        onPress={() => {
-          close();
-          void signOut().then(() => router.replace("/auth"));
-        }}
-      >
-        <Text className="text-sm text-destructive">Sign out</Text>
-      </Pressable>
+      {!LOCAL_MODE ? (
+        <Pressable
+          className="flex-row items-center rounded-md px-3 py-2 active:bg-accent"
+          onPress={() => {
+            close();
+            void signOut().then(() => router.replace("/auth"));
+          }}
+        >
+          <Text className="text-sm text-destructive">Sign out</Text>
+        </Pressable>
+      ) : null}
       <View className="mt-1 border-t border-border px-3 py-2">
         <Text className="text-xs text-muted-foreground">{versionLabel}</Text>
         <Text className="mt-0.5 text-xs text-muted-foreground">{buildLabel}</Text>
@@ -69,14 +67,20 @@ export function AuthMenu() {
 
   return (
     <View className="relative">
-      <Pressable
-        className="h-8 w-8 items-center justify-center rounded-full bg-secondary"
-        onPress={() => setOpen((v) => !v)}
-      >
-        <Text className="text-xs font-semibold text-secondary-foreground">
-          {initialsFromUser(user)}
-        </Text>
-      </Pressable>
+      {LOCAL_MODE ? (
+        <Pressable onPress={() => setOpen((v) => !v)} className="active:opacity-80">
+          <Badge variant="secondary" label="Local" />
+        </Pressable>
+      ) : (
+        <Pressable
+          className="h-8 w-8 items-center justify-center rounded-full bg-secondary"
+          onPress={() => setOpen((v) => !v)}
+        >
+          <Text className="text-xs font-semibold text-secondary-foreground">
+            {initialsFromUser(user)}
+          </Text>
+        </Pressable>
+      )}
 
       {open ? (
         Platform.OS === "web" ? (

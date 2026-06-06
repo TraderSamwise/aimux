@@ -1,17 +1,15 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Bell,
   BookOpen,
   ChevronLeft,
   FolderKanban,
   GitBranch,
-  Home,
   MessageSquare,
   Network,
-  Settings,
 } from "lucide-react-native";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
@@ -54,9 +52,7 @@ import {
   selectedSessionIdAtom,
   selectProjectAtom,
 } from "@/stores/projects";
-import { notificationUnreadCountFamily } from "@/stores/notifications";
-import { securityUnreadCountAtom } from "@/stores/security";
-import { sidebarShowProjectPickerAtom } from "@/stores/ui";
+import { sidebarModeAtom, sidebarShowProjectPickerAtom } from "@/stores/ui";
 import { getProjectServiceEndpoint, projectStateErrorCopy } from "@/lib/project-connection-display";
 
 // Type ladder used throughout the sidebar:
@@ -69,6 +65,17 @@ import { getProjectServiceEndpoint, projectStateErrorCopy } from "@/lib/project-
 const SIDEBAR_WIDTH = 320;
 const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
+type SidebarMode = "dashboard" | "views";
+
+function routePrefersViews(tab: MainTabId): boolean {
+  return (
+    tab === "project" ||
+    tab === "topology" ||
+    tab === "library" ||
+    tab === "inbox" ||
+    tab === "threads"
+  );
+}
 
 // ─── Project picker ───────────────────────────────────────────────────────
 
@@ -462,52 +469,77 @@ function WorktreeTree({
   );
 }
 
-// ─── Bottom nav (tablet/desktop) ──────────────────────────────────────────
+// ─── Desktop primary nav ─────────────────────────────────────────────────
 
-const BOTTOM_NAV = [
-  { id: "dashboard", label: "Dashboard", Icon: Home },
-  { id: "topology", label: "Topology", Icon: Network },
+const PRIMARY_NAV = [
   { id: "project", label: "Project", Icon: FolderKanban },
+  { id: "topology", label: "Topology", Icon: Network },
   { id: "library", label: "Library", Icon: BookOpen },
   { id: "inbox", label: "Inbox", Icon: Bell },
   { id: "threads", label: "Threads", Icon: MessageSquare },
-  { id: "settings", label: "Settings", Icon: Settings },
 ];
 
-function SidebarBottomNav() {
+function SidebarModeTabs({
+  mode,
+  onChange,
+}: {
+  mode: SidebarMode;
+  onChange: (mode: SidebarMode) => void;
+}) {
+  return (
+    <View className="border-b border-border px-3 py-3">
+      <View className="flex-row overflow-hidden rounded-lg border border-border">
+        {(["dashboard", "views"] as const).map((tab) => {
+          const active = mode === tab;
+          const label = tab === "dashboard" ? "Dashboard" : "Views";
+          return (
+            <Pressable
+              key={tab}
+              onPress={() => onChange(tab)}
+              className={cn(
+                "flex-1 items-center px-3 py-2 active:bg-accent/70",
+                active ? "bg-accent" : "bg-background",
+              )}
+            >
+              <Text
+                className={cn(
+                  "text-[12px] font-semibold",
+                  active ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function SidebarPrimaryNav() {
   const pathname = usePathname();
   const navigateTab = useMainTabNavigation();
   const activeTab = mainTabForPath(pathname);
-  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
-  const unreadCount = useAtomValue(
-    notificationUnreadCountFamily(selectedProjectPath ?? EMPTY_PROJECT_PATH),
-  );
-  const securityUnreadCount = useAtomValue(securityUnreadCountAtom);
-  const inboxUnreadCount = unreadCount + securityUnreadCount;
+
   return (
-    <View className="flex-row border-t border-border">
-      {BOTTOM_NAV.map(({ id, label, Icon }) => {
+    <View className="px-3 py-3">
+      {PRIMARY_NAV.map(({ id, label, Icon }) => {
         const tabId = id as MainTabId;
         const active = activeTab === tabId;
         return (
           <Pressable
             key={id}
             onPress={() => navigateTab(tabId)}
-            className="flex-1 items-center py-2.5 active:bg-accent/50"
+            className={cn(
+              "mb-0.5 flex-row items-center rounded-md px-2 py-2 active:bg-accent/60",
+              active && "bg-accent",
+            )}
           >
-            <View>
-              <Icon size={15} color="#a1a1aa" />
-              {id === "inbox" && inboxUnreadCount > 0 ? (
-                <View className="absolute -right-2 -top-1 min-w-[16px] rounded-full bg-emerald-500 px-1">
-                  <Text className="text-center text-[8px] font-bold leading-none text-black">
-                    {inboxUnreadCount > 99 ? "99+" : inboxUnreadCount}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
+            <Icon size={15} color={active ? "#fafafa" : "#a1a1aa"} />
             <Text
               className={cn(
-                "mt-0.5 text-[10px]",
+                "ml-2 text-[13px] font-medium",
                 active ? "text-foreground" : "text-muted-foreground",
               )}
             >
@@ -522,7 +554,7 @@ function SidebarBottomNav() {
 
 // ─── Top-level component ──────────────────────────────────────────────────
 
-export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boolean }) {
+export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boolean }) {
   const projects = useAtomValue(projectsAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
@@ -534,6 +566,8 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
   const setShowPicker = useSetAtom(sidebarShowProjectPickerAtom);
   const router = useRouter();
   const pathname = usePathname();
+  const routeTab = mainTabForPath(pathname);
+  const [sidebarMode, setSidebarMode] = useAtom(sidebarModeAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
   const effectiveProjectPath =
     projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
@@ -579,6 +613,13 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
     }
   }, [effectiveProjectPath, selectedProjectPath, setShowPicker, showPicker]);
 
+  usePrePaintEffect(() => {
+    if (!showPrimaryNav) return;
+    if (routePrefersViews(routeTab)) {
+      setSidebarMode("views");
+    }
+  }, [routeTab, setSidebarMode, showPrimaryNav]);
+
   const desktopState = useAtomValue(desktopStateFamily(effectiveProjectPath ?? EMPTY_PROJECT_PATH));
   const desktopStateError = useAtomValue(
     desktopStateErrorFamily(effectiveProjectPath ?? EMPTY_PROJECT_PATH),
@@ -621,20 +662,39 @@ export function ProjectSidebar({ showBottomNav = true }: { showBottomNav?: boole
               project={effectiveProject!}
               onSwitchProject={() => setShowPicker(true)}
             />
-            <WorktreeTree
-              projectPath={effectiveProject!.path}
-              endpoint={endpoint}
-              token={token}
-              desktopState={desktopState}
-              desktopStateError={desktopStateError}
-              selectedSessionId={selectedSessionId}
-              onPickSession={handlePickSession}
-              onPickService={handlePickService}
-            />
+            {showPrimaryNav ? (
+              <>
+                <SidebarModeTabs mode={sidebarMode} onChange={setSidebarMode} />
+                {sidebarMode === "views" ? (
+                  <SidebarPrimaryNav />
+                ) : (
+                  <WorktreeTree
+                    projectPath={effectiveProject!.path}
+                    endpoint={endpoint}
+                    token={token}
+                    desktopState={desktopState}
+                    desktopStateError={desktopStateError}
+                    selectedSessionId={selectedSessionId}
+                    onPickSession={handlePickSession}
+                    onPickService={handlePickService}
+                  />
+                )}
+              </>
+            ) : (
+              <WorktreeTree
+                projectPath={effectiveProject!.path}
+                endpoint={endpoint}
+                token={token}
+                desktopState={desktopState}
+                desktopStateError={desktopStateError}
+                selectedSessionId={selectedSessionId}
+                onPickSession={handlePickSession}
+                onPickService={handlePickService}
+              />
+            )}
           </>
         )}
       </ScrollView>
-      {showBottomNav ? <SidebarBottomNav /> : null}
     </View>
   );
 }
