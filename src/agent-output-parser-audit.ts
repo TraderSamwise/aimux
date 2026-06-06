@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { parseAgentOutput } from "./agent-output-parser.js";
+import { parseAgentOutput, type AgentOutputBlock } from "./agent-output-parser.js";
 
 export type ParserAuditFindingFlag = "prompt-from-response-record" | "raw-block" | "status-leak-response";
 
@@ -62,8 +62,16 @@ const toolForSource = (source: string) => {
   return "unknown";
 };
 
-const livePromptLeakLooksActionable = (content: string) => {
-  return /(?:OpenAI Codex|Claude Code|gpt-[\w.-]+|bypass permissions|shift\+tab|context\)|permissions:)/i.test(content);
+const looksLikePromptLeakFooter = (block: AgentOutputBlock | null | undefined) => {
+  if (!block || block.type !== "status") return false;
+  if (/(?:^|\n)\s*(?:•\s*)?(?:Working \(\d+(?:ms|s|m|h)|Starting MCP servers)/i.test(block.text)) return false;
+  return /(?:^|\n)\s*(?:gpt-[\w.-]+\b|claude\b|⏵⏵\s*bypass permissions|bypass permissions|.*context\)|.*permissions:)/i.test(
+    block.text,
+  );
+};
+
+const promptLeakLooksActionable = (blocks: AgentOutputBlock[], blockIndex: number) => {
+  return looksLikePromptLeakFooter(blocks[blockIndex + 1]);
 };
 
 function* historyCandidates(historyDir: string): Generator<AuditCandidate> {
@@ -142,7 +150,7 @@ export function auditAgentOutputParserCorpus(options: ParserAuditOptions): Parse
       if (
         candidate.recordType === "response" &&
         block.type === "prompt" &&
-        livePromptLeakLooksActionable(candidate.content)
+        promptLeakLooksActionable(parsed.blocks, blockIndex)
       ) {
         flags.push("prompt-from-response-record");
       }

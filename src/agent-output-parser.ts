@@ -164,6 +164,14 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   const stripPromptMarker = (line: string) => line.trimStart().replace(/^(›|>|❯)\s?/, "");
   const stripResponseMarker = (line: string) => line.trimStart().replace(/^(•|⏺)\s?/, "");
   const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[-*✻✽✶]\s+)\s?/, "");
+  const isCodexPickerSelectionPrompt = (promptText: string) => {
+    if (tool !== "codex" || sawPrompt || (current?.type !== "response" && current?.type !== "raw")) return false;
+    const activeText = current.lines.join("\n");
+    if (!/(?:Resume a previous session|Choose working directory to resume this session)/i.test(activeText)) {
+      return false;
+    }
+    return /^(?:now|\d+[smhd]\s+ago|\d+\.\s)/i.test(promptText.trim());
+  };
 
   for (const line of lines) {
     const trimmed = line.trimEnd();
@@ -186,6 +194,11 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
         continue;
       }
       lastLineWasDivider = false;
+      if (isCodexPickerSelectionPrompt(promptText)) {
+        if (promptText.trim()) pushLine("status", promptText);
+        expectingResponse = false;
+        continue;
+      }
       if (!promptText.trim()) {
         flush();
         expectingResponse = false;
@@ -404,6 +417,10 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
     );
     const repeatedPrompt = (promptCounts.get(normalized) ?? 0) > 1;
     const templatePrompt = isTemplatePrompt(current.text);
+    const hasPriorConversationTurn = next
+      .slice(0, i)
+      .some((block) => block.type === "prompt" || block.type === "response");
+    const trailingFooterInput = nextConversationIndex === -1 && hasPriorConversationTurn;
 
     if (
       tool === "codex" &&
@@ -412,6 +429,7 @@ function normalizeTranscriptBlocks(blocks: AgentOutputBlock[], tool: string): Ag
       (!hasActiveWorkBeforeNextTurn || repeatedPrompt || templatePrompt) &&
       (repeatedPrompt ||
         templatePrompt ||
+        trailingFooterInput ||
         previous?.type === "response" ||
         (previous?.type === "status" && looksLikeActiveWorkStatus(previous.text)))
     ) {
