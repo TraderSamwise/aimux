@@ -141,18 +141,27 @@ Server-side, the relay needs `CLERK_SECRET_KEY` (verifies the user's
 Clerk session during `aimux login`) and `RELAY_TOKEN_SECRET` (signs the
 HS256 daemon tokens it mints).
 
-## 5. Native App (iOS/Android)
+## 5. Mobile App (iOS/Android)
+
+Releases use the shared `@tradersamwise/eas-release` CLI. Pick the path by what
+changed, and always bump the version first.
 
 ```bash
 cd app
-# TestFlight
-yarn build:testflight
+# OTA update — JavaScript / asset changes only
+yarn version:bump-ota && yarn update              # testflight
+yarn version:bump-ota && yarn update:production   # production
 
-# Production
-yarn build:production
+# Native build — native deps, Expo plugins, permissions, icons, splash, native config
+yarn version:bump-build && yarn build:testflight   # testflight
+yarn version:bump-build && yarn build:production    # production
 ```
 
-Environment variables are baked into the native bundle at build time via `app.config.js`.
+OTA covers JS and assets; a native rebuild is required for anything that changes the
+native binary or its Expo runtime fingerprint. `bump-ota` aborts if the runtime
+changed since the last native build, because an OTA can only target the runtime
+already installed on the device. Environment variables are baked into the native
+bundle at build time via `app.config.js`.
 
 ## Architecture
 
