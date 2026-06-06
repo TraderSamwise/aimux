@@ -49,7 +49,7 @@ const startupChrome = (tool: Tool, seed: number): Fragment =>
           `│ directory:   ~/workspace/project/fuzz-${seed} │`,
           "│ permissions: YOLO mode                  │",
           "╰─────────────────────────────────────────╯",
-          "",
+          ...(seed % 2 === 0 ? [""] : []),
         ],
       }
     : {
