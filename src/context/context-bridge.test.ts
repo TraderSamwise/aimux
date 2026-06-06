@@ -6,6 +6,7 @@ import { ContextWatcher } from "./context-bridge.js";
 import { readHistory } from "./history.js";
 import { initPaths, getContextDir, getProjectStateDir } from "../paths.js";
 import { type TmuxTarget } from "../tmux-runtime-manager.js";
+import { getParserFixture } from "../agent-output-parser-test-utils.js";
 
 function target(windowId = "@3"): TmuxTarget {
   return {
@@ -144,5 +145,39 @@ describe("ContextWatcher tmux continuity", () => {
     (watcher as any).capturePaneSnapshot(session);
 
     expect(readHistory("codex-progress")).toEqual([]);
+  });
+
+  it("does not capture mined Codex startup suggestion loops as response turns", () => {
+    const fixture = getParserFixture("codex-live-startup-suggestion-loop");
+    const watcher = new ContextWatcher(() => fixture.raw);
+    const session = {
+      id: "codex-startup-loop",
+      command: "codex",
+      tmuxTarget: target("@9"),
+    };
+
+    (watcher as any).capturePaneSnapshot(session);
+
+    expect(readHistory("codex-startup-loop")).toEqual([]);
+  });
+
+  it("captures Claude responses without capturing mined tool action rows", () => {
+    const fixture = getParserFixture("claude-live-tool-action-rows");
+    const watcher = new ContextWatcher(() => [fixture.raw, "", "❯ "].join("\n"));
+    const session = {
+      id: "claude-tool-actions",
+      command: "claude",
+      tmuxTarget: target("@10"),
+    };
+
+    (watcher as any).capturePaneSnapshot(session);
+
+    const turns = readHistory("claude-tool-actions");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.type).toBe("response");
+    expect(turns[0]?.content).toContain("All checks are green");
+    expect(turns[0]?.content).not.toContain("Bash(cd");
+    expect(turns[0]?.content).not.toContain("Read 2 files");
+    expect(turns[0]?.content).not.toContain("Update(src/relay.ts)");
   });
 });
