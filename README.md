@@ -374,14 +374,23 @@ For simulator-local development, the helper scripts use `http://127.0.0.1:43191`
 for iOS and `http://10.0.2.2:43191` for Android. For mobile use against a remote
 machine, set `EXPO_PUBLIC_AIMUX_DAEMON_URL=http://<machine>:43190` in `app/.env`.
 
-Release pipeline (uses EAS):
+Release pipeline (uses the shared `@tradersamwise/eas-release` CLI). Two paths,
+chosen by what changed — always bump the version first, then ship:
 
 ```bash
 cd app
-yarn version:bump-build   # new native build
-yarn build:testflight     # EAS build → TestFlight
-yarn update               # OTA JS-only update (testflight channel)
+# OTA update — JavaScript / asset changes only
+yarn version:bump-ota && yarn update              # testflight
+yarn version:bump-ota && yarn update:production   # production
+
+# Native build — native deps, Expo plugins, permissions, icons, splash, native config
+yarn version:bump-build && yarn build:testflight   # testflight
+yarn version:bump-build && yarn build:production    # production
 ```
+
+OTA covers JS and assets; a native rebuild is required for anything that changes
+the native binary or its Expo runtime fingerprint. `bump-ota` aborts if the runtime
+changed since the last native build (an OTA can only target the installed runtime).
 
 ## Tmux Compatibility
 
