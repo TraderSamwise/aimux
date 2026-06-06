@@ -5,6 +5,7 @@ import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Box, GitBranch, Network, Rows3, Table2 } from "lucide-react-native";
 import { Card, PressableCard } from "@/components/ui/card";
+import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Text } from "@/components/ui/text";
@@ -476,123 +477,98 @@ export default function TopologyScreen() {
   }
 
   return (
-    <View className="flex-1 bg-background">
-      <ScrollView className="flex-1" contentContainerClassName="px-4 py-5 md:px-8 md:py-7">
-        {!project || !topology ? (
-          <Text className="text-sm text-muted-foreground">
-            Select a project from the sidebar to view topology.
-          </Text>
-        ) : endpoint && desktopState === null ? (
-          <Text className="text-sm text-muted-foreground">Loading topology...</Text>
-        ) : (
-          <View className="w-full max-w-[1100px]">
-            <View className="mb-5">
-              <Text className="mb-1.5 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-                Topology
-              </Text>
-              <Text
-                className="text-[28px] font-bold leading-tight text-foreground"
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {project.name}
-              </Text>
-              <View className="mt-2 flex-row items-center">
-                <Network size={14} color="#a1a1aa" />
-                <Text
-                  className="ml-2 min-w-0 flex-1 text-[12px] text-muted-foreground"
-                  numberOfLines={1}
-                  ellipsizeMode="middle"
-                >
-                  {project.path}
-                </Text>
-              </View>
-            </View>
+    <Page contentClassName="px-4 py-5 md:px-8 md:py-7">
+      {!project || !topology ? (
+        <PageStateCard
+          title="No project selected"
+          body="Pick a project from the sidebar to view topology."
+        />
+      ) : endpoint && desktopState === null ? (
+        <PageStateCard title="Loading topology..." body="Fetching project runtime state." />
+      ) : (
+        <>
+          <PageHeader eyebrow="Topology" title={project.name} subtitle={project.path} />
 
-            {!endpoint && desktopState === null ? (
-              <Card className="mb-5 rounded-xl p-5">
-                <Text className="text-[14px] font-medium text-foreground">
-                  Project host not running.
-                </Text>
-                <Text className="mt-1.5 text-[12px] text-muted-foreground">
-                  Start the host to see worktree and agent topology.
-                </Text>
-              </Card>
-            ) : null}
+          {!endpoint && desktopState === null ? (
+            <PageStateCard
+              title="Project host not running"
+              body="Start the host to see worktree and agent topology."
+              className="mb-5"
+            />
+          ) : null}
 
-            <View className="mb-5 flex-row flex-wrap">
-              <SummaryTile label="Worktrees" value={topology.summary.worktrees} />
-              <SummaryTile label="Agents" value={topology.summary.agents} />
-              <SummaryTile label="Services" value={topology.summary.services} />
-              <SummaryTile label="Active" value={topology.summary.active} tone="active" />
-              <SummaryTile label="Attention" value={topology.summary.attention} tone="attention" />
-              <SummaryTile label="Offline" value={topology.summary.offline} tone="offline" />
-            </View>
-
-            <View className="mb-4 flex-row items-center justify-between">
-              <View className="flex-row items-center">
-                {mode === "map" ? <Network size={16} color="#a1a1aa" /> : null}
-                {mode === "tree" ? <Rows3 size={16} color="#a1a1aa" /> : null}
-                {mode === "table" ? <Table2 size={16} color="#a1a1aa" /> : null}
-                <Text className="ml-2 text-[13px] font-semibold text-foreground">
-                  {mode === "map"
-                    ? "Relationship Map"
-                    : mode === "tree"
-                      ? "Worktree Tree"
-                      : "Node Table"}
-                </Text>
-              </View>
-              <SegmentedControl
-                options={VIEW_OPTIONS}
-                value={mode}
-                onChange={(nextMode) =>
-                  router.replace(
-                    buildViewHref("/topology", { project: project.path, mode: nextMode }),
-                  )
-                }
-                className="ml-3"
-              />
-            </View>
-
-            {mode === "map" ? (
-              <TopologyMap
-                topology={topology}
-                width={width}
-                onPickAgent={handlePickAgent}
-                onPickService={handlePickService}
-              />
-            ) : null}
-
-            {mode === "tree" ? (
-              <View>
-                {topology.worktrees.map((worktree) => (
-                  <WorktreeTreeSection
-                    key={worktree.id}
-                    worktree={worktree}
-                    onPickAgent={handlePickAgent}
-                    onPickService={handlePickService}
-                  />
-                ))}
-              </View>
-            ) : null}
-
-            {mode === "table" ? (
-              <TopologyTable
-                topology={topology}
-                onPickAgent={handlePickAgent}
-                onPickService={handlePickService}
-              />
-            ) : null}
-
-            {topology.worktrees.length === 0 ? (
-              <Card className="mt-4 items-center rounded-xl p-6">
-                <Box size={22} color="#a1a1aa" />
-                <Text className="mt-2 text-sm text-muted-foreground">No worktrees yet</Text>
-              </Card>
-            ) : null}
+          <View className="mb-5 flex-row flex-wrap">
+            <SummaryTile label="Worktrees" value={topology.summary.worktrees} />
+            <SummaryTile label="Agents" value={topology.summary.agents} />
+            <SummaryTile label="Services" value={topology.summary.services} />
+            <SummaryTile label="Active" value={topology.summary.active} tone="active" />
+            <SummaryTile label="Attention" value={topology.summary.attention} tone="attention" />
+            <SummaryTile label="Offline" value={topology.summary.offline} tone="offline" />
           </View>
-        )}
-      </ScrollView>
-    </View>
+
+          <View className="mb-4 flex-row items-center justify-between">
+            <View className="flex-row items-center">
+              {mode === "map" ? <Network size={16} color="#a1a1aa" /> : null}
+              {mode === "tree" ? <Rows3 size={16} color="#a1a1aa" /> : null}
+              {mode === "table" ? <Table2 size={16} color="#a1a1aa" /> : null}
+              <Text className="ml-2 text-[13px] font-semibold text-foreground">
+                {mode === "map"
+                  ? "Relationship Map"
+                  : mode === "tree"
+                    ? "Worktree Tree"
+                    : "Node Table"}
+              </Text>
+            </View>
+            <SegmentedControl
+              options={VIEW_OPTIONS}
+              value={mode}
+              onChange={(nextMode) =>
+                router.replace(
+                  buildViewHref("/topology", { project: project.path, mode: nextMode }),
+                )
+              }
+              className="ml-3"
+            />
+          </View>
+
+          {mode === "map" ? (
+            <TopologyMap
+              topology={topology}
+              width={width}
+              onPickAgent={handlePickAgent}
+              onPickService={handlePickService}
+            />
+          ) : null}
+
+          {mode === "tree" ? (
+            <View>
+              {topology.worktrees.map((worktree) => (
+                <WorktreeTreeSection
+                  key={worktree.id}
+                  worktree={worktree}
+                  onPickAgent={handlePickAgent}
+                  onPickService={handlePickService}
+                />
+              ))}
+            </View>
+          ) : null}
+
+          {mode === "table" ? (
+            <TopologyTable
+              topology={topology}
+              onPickAgent={handlePickAgent}
+              onPickService={handlePickService}
+            />
+          ) : null}
+
+          {topology.worktrees.length === 0 ? (
+            <Card className="mt-4 items-center rounded-xl p-6">
+              <Box size={22} color="#a1a1aa" />
+              <Text className="mt-2 text-sm text-muted-foreground">No worktrees yet</Text>
+            </Card>
+          ) : null}
+        </>
+      )}
+    </Page>
   );
 }

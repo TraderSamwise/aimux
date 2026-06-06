@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { GitBranch } from "lucide-react-native";
+import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
 import { Card, PressableCard } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
@@ -266,95 +267,62 @@ export default function DashboardIndex() {
   const endpointLabel = formatProjectEndpointLabel(endpoint, env.AIMUX_CONNECTION_MODE);
 
   return (
-    <View className="flex-1 bg-background">
-      <ScrollView className="flex-1" contentContainerClassName="px-8 py-7 max-w-[900px] w-full">
-        {!project ? (
-          <Text className="text-sm text-muted-foreground">
-            Select a project from the sidebar to begin.
-          </Text>
-        ) : (
-          <>
-            <View className="mb-8">
-              <Text className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-1.5">
-                Project
-              </Text>
-              <Text
-                className="text-[28px] font-bold text-foreground leading-tight"
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {project.name}
-              </Text>
-              <View className="flex-row items-center mt-2.5">
-                <Text
-                  className="text-[12px] text-muted-foreground flex-1 min-w-0"
-                  numberOfLines={1}
-                  ellipsizeMode="middle"
-                >
-                  {project.path}
-                </Text>
-                <View className="ml-3">
-                  {endpoint ? (
-                    <View className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30">
-                      <Text className="text-[10px] font-mono text-emerald-400">
-                        {endpointLabel}
-                      </Text>
-                    </View>
-                  ) : (
-                    <View className="px-2 py-0.5 rounded bg-zinc-500/15 border border-zinc-500/30">
-                      <Text className="text-[10px] font-medium text-zinc-400 uppercase tracking-wide">
-                        host offline
-                      </Text>
-                    </View>
-                  )}
+    <Page width="narrow" contentClassName="px-4 py-5 md:px-8 md:py-7">
+      {!project ? (
+        <PageStateCard
+          title="No project selected"
+          body="Select a project from the sidebar to begin."
+        />
+      ) : (
+        <>
+          <PageHeader
+            eyebrow="Project"
+            title={project.name}
+            subtitle={project.path}
+            className="mb-8"
+            actions={
+              endpoint ? (
+                <View className="rounded border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5">
+                  <Text className="font-mono text-[10px] text-emerald-400">{endpointLabel}</Text>
                 </View>
-              </View>
-            </View>
+              ) : (
+                <View className="rounded border border-zinc-500/30 bg-zinc-500/15 px-2 py-0.5">
+                  <Text className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+                    host offline
+                  </Text>
+                </View>
+              )
+            }
+          />
 
-            {!endpoint && desktopState === null ? (
-              <Card className="p-5">
-                <Text className="text-[14px] font-medium text-foreground leading-snug">
-                  Project host not running.
-                </Text>
-                <Text className="text-[12px] text-muted-foreground mt-1.5 leading-snug">
-                  Start the host to see worktrees, agents, and services for this project.
-                </Text>
-              </Card>
-            ) : endpoint && desktopState === null && desktopStateError ? (
-              <Card className="p-5 border-amber-500/30 bg-amber-500/10">
-                {(() => {
-                  const copy = projectStateErrorCopy(desktopStateError);
-                  return (
-                    <>
-                      <Text className="text-[14px] font-medium text-foreground leading-snug">
-                        {copy.title}
-                      </Text>
-                      <Text className="text-[12px] text-muted-foreground mt-1.5 leading-snug">
-                        {copy.detail}
-                      </Text>
-                    </>
-                  );
-                })()}
-              </Card>
-            ) : endpoint && desktopState === null ? (
-              <Text className="text-sm text-muted-foreground">Loading project state...</Text>
-            ) : groups.length === 0 ? (
-              <Text className="text-sm text-muted-foreground">No worktrees yet</Text>
-            ) : (
-              groups.map((bucket) => (
-                <WorktreeSection
-                  key={bucket.key}
-                  bucket={bucket}
-                  endpoint={endpoint}
-                  token={token}
-                  onPickSession={handlePickSession}
-                  onPickService={handlePickService}
-                />
-              ))
-            )}
-          </>
-        )}
-      </ScrollView>
-    </View>
+          {!endpoint && desktopState === null ? (
+            <PageStateCard
+              title="Project host not running"
+              body="Start the host to see worktrees, agents, and services for this project."
+            />
+          ) : endpoint && desktopState === null && desktopStateError ? (
+            (() => {
+              const copy = projectStateErrorCopy(desktopStateError);
+              return <PageStateCard title={copy.title} body={copy.detail} tone="warning" />;
+            })()
+          ) : endpoint && desktopState === null ? (
+            <PageStateCard title="Loading project state..." />
+          ) : groups.length === 0 ? (
+            <PageStateCard title="No worktrees yet" body="Worktrees will appear here." />
+          ) : (
+            groups.map((bucket) => (
+              <WorktreeSection
+                key={bucket.key}
+                bucket={bucket}
+                endpoint={endpoint}
+                token={token}
+                onPickSession={handlePickSession}
+                onPickService={handlePickService}
+              />
+            ))
+          )}
+        </>
+      )}
+    </Page>
   );
 }
