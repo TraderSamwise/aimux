@@ -58,7 +58,7 @@ export async function deliverNotificationPush(input: NotificationPushInput): Pro
 
 async function sendExpoPush(messages: unknown[]): Promise<void> {
   if (messages.length === 0) return;
-  await fetch("https://exp.host/--/api/v2/push/send", {
+  const response = await fetch("https://exp.host/--/api/v2/push/send", {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -66,6 +66,10 @@ async function sendExpoPush(messages: unknown[]): Promise<void> {
     },
     body: JSON.stringify(messages),
   });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Expo push failed (${response.status}): ${detail.slice(0, 300)}`);
+  }
 }
 
 async function sendSecurityEmail(input: DeliveryInput): Promise<void> {
