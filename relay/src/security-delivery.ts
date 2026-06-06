@@ -44,6 +44,9 @@ export async function deliverNotificationPush(input: NotificationPushInput): Pro
       to: record.token,
       title: input.title,
       body: input.body,
+      sound: "default",
+      priority: "high",
+      interruptionLevel: "time-sensitive",
       data: {
         category: "agent",
         kind: input.kind,
