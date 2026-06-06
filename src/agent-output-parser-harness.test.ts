@@ -138,8 +138,13 @@ describe("agent output parser harness", () => {
     await expectHarnessReadMatchesFixture("codex-resume-session-picker-selection");
     await expectHarnessReadMatchesFixture("codex-working-directory-picker-selection");
     await expectHarnessReadMatchesFixture("codex-command-output-tree-summary");
+    await expectHarnessReadMatchesFixture("codex-bare-ran-command-status");
     await expectHarnessReadMatchesFixture("codex-trailing-suggestion-after-status-output");
     await expectHarnessReadMatchesFixture("codex-result-summary-after-metadata-path");
+  });
+
+  it("parses compact Claude runtime noise through the runtime read path", async () => {
+    await expectHarnessReadMatchesFixture("claude-compact-terminal-notifier-status");
   });
 
   it("fails loudly when a test tries to update an unknown dummy session", () => {
