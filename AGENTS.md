@@ -68,7 +68,7 @@ What triggers what:
 
 - Not a daemon owner. The app is a client; it cannot start, restart, or repair the daemon. The daemon is a separate service the user runs.
 - Not a tmux replacement. Users still interact with their actual tmux session for terminal-mode work. The app provides chat-style, terminal-view, and plan-editor surfaces.
-- Not a Tauri/desktop bundle anymore. The previous `desktop-ui/` Svelte app and `src-tauri/` Rust/Tauri implementation have been replaced.
+- Not a Tauri/desktop bundle anymore. The previous Svelte desktop app and Rust/Tauri implementation have been removed and replaced by `app/`.
 
 ### Runtime Verification Rule
 
