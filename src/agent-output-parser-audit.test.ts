@@ -184,4 +184,82 @@ describe("auditAgentOutputParserCorpus", () => {
       }),
     ]);
   });
+
+  it("does not flag embedded historical prompts without footer context", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: [
+          "Earlier transcript:",
+          "› Open a PR. run review-coderabbit until green. then merge and cut new branch.",
+          "• I opened the PR and checks are running.",
+          "  gpt-5.5 high appeared elsewhere in this transcript summary.",
+        ].join("\n"),
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["prompt-from-response-record"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["prompt-from-response-record"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
+
+  it("flags response-record prompts that are backed by a footer status row", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: ["› Explain this codebase", "", "  gpt-5.5 high · ~/workspace/project"].join("\n"),
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["prompt-from-response-record"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["prompt-from-response-record"]).toBe(1);
+    expect(summary.findings).toEqual([
+      expect.objectContaining({
+        blockType: "prompt",
+        flags: ["prompt-from-response-record"],
+      }),
+    ]);
+  });
+
+  it("does not flag prompts followed by active work status", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: [
+          "› i moved us to a worktree. take a look",
+          "",
+          "• Working (0s • esc to interrupt)",
+          "",
+          "› Explain this codebase",
+          "",
+          "  gpt-5.5 high · ~/workspace/project",
+        ].join("\n"),
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["prompt-from-response-record"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["prompt-from-response-record"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
 });

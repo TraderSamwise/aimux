@@ -100,6 +100,64 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
     },
   },
   {
+    name: "codex-resume-session-picker-selection",
+    tool: "codex",
+    raw: [
+      "Resume a previous session",
+      " Type to search                                                       Filter:  Cwd [All]   Sort: [Updated] Created",
+      "  ❯ now         Saved as ~/cs/hyperprop/HANDOFF.md. Here it is:  ---  What: Decentralized eval prop firm on...",
+      "    1m ago      previous agent was in a compact loop.TL;DR: we were trying to fix the iOS chat composer bein...",
+      "    15h ago     reply exactly CODEX_PROTOCOL_OK",
+    ].join("\n"),
+    expected: [
+      {
+        type: "response",
+        includes: ["Resume a previous session", "Type to search"],
+      },
+      {
+        type: "status",
+        includes: ["now", "previous agent was in a compact loop", "CODEX_PROTOCOL_OK"],
+      },
+    ],
+    invariants: {
+      noPromptIncludes: ["Saved as ~/cs/hyperprop/HANDOFF.md", "previous agent was in a compact loop"],
+    },
+  },
+  {
+    name: "codex-working-directory-picker-selection",
+    tool: "codex",
+    raw: [
+      "Choose working directory to resume this session",
+      "  Session = latest cwd recorded in the resumed session",
+      "  Current = your current working directory",
+      "  1. Use session directory (/Users/sam/cs/aimux)",
+      "› 2. Use current directory (/Users/sam/cs/aimux/.aimux/worktrees/chat-parser)",
+      "  Press enter to continue",
+      "│ >_ OpenAI Codex (v0.136.0)                           │",
+      "│                                                      │",
+      "│ model:       gpt-5.5 high   /model to change         │",
+      "│ directory:   ~/cs/aimux/.aimux/worktrees/chat-parser │",
+      "│ permissions: YOLO mode                               │",
+    ].join("\n"),
+    expected: [
+      {
+        type: "response",
+        includes: ["Choose working directory", "Use session directory"],
+      },
+      {
+        type: "status",
+        includes: ["2. Use current directory", "Press enter to continue"],
+      },
+      {
+        type: "meta",
+        includes: ["OpenAI Codex", "permissions: YOLO mode"],
+      },
+    ],
+    invariants: {
+      noPromptIncludes: ["2. Use current directory"],
+    },
+  },
+  {
     name: "codex-live-startup-suggestion-loop",
     tool: "codex",
     raw: [
@@ -161,6 +219,33 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
       {
         type: "status",
         includes: ["Working", "Explain this codebase", "gpt-5.5 medium"],
+      },
+    ],
+    invariants: {
+      noPromptIncludes: ["Explain this codebase"],
+    },
+  },
+  {
+    name: "codex-trailing-suggestion-after-status-output",
+    tool: "codex",
+    raw: [
+      "• This worktree looks clean and usable.",
+      "",
+      "• Ran git branch -vv && git rev-parse --abbrev-ref --symbolic-full-name @{u}",
+      "  └ ## chat-parser",
+      "",
+      "› Explain this codebase",
+      "",
+      "  gpt-5.5 high · ~/workspace/project",
+    ].join("\n"),
+    expected: [
+      {
+        type: "response",
+        includes: ["This worktree looks clean"],
+      },
+      {
+        type: "status",
+        includes: ["Ran git branch", "Explain this codebase", "gpt-5.5 high"],
       },
     ],
     invariants: {
