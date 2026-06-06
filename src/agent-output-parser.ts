@@ -122,7 +122,6 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const trimmed = line.trimStart();
     return /^›\s?/.test(trimmed) || /^>\s?/.test(trimmed) || /^❯\s?/.test(trimmed);
   };
-  const isClaudeFeedbackSurvey = (line: string) => /\bHow is Claude doing this session\?\s*\(optional\)/i.test(line);
   const stripPromptMarker = (line: string) => line.trimStart().replace(/^(›|>|❯)\s?/, "");
   const stripResponseMarker = (line: string) => line.trimStart().replace(/^(•|⏺)\s?/, "");
   const stripStatusMarker = (line: string) => line.trimStart().replace(/^(■|[-*✻✽✶]\s+)\s?/, "");
@@ -130,19 +129,18 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
   for (const line of lines) {
     const trimmed = line.trimEnd();
 
-    if (isDivider(trimmed)) {
-      lastLineWasDivider = true;
-      continue;
-    }
     if (isCodexUiLine(trimmed)) {
       lastLineWasDivider = false;
       pushLine(sawPrompt ? "status" : "meta", trimmed);
       continue;
     }
+    if (isDivider(trimmed)) {
+      lastLineWasDivider = true;
+      continue;
+    }
     if (isPromptLine(trimmed)) {
       const promptText = stripPromptMarker(trimmed);
-      const active = current as ActiveBlock | null;
-      if (lastLineWasDivider || (active?.type === "status" && active.lines.some(isClaudeFeedbackSurvey))) {
+      if (lastLineWasDivider) {
         if (promptText.trim()) pushLine("status", promptText);
         lastLineWasDivider = false;
         expectingResponse = false;
@@ -193,6 +191,11 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
     const promptBlock = current as ActiveBlock | null;
     if (promptBlock?.type === "prompt" && !expectingResponse) {
       promptBlock.lines.push(trimmed);
+      continue;
+    }
+    if (promptBlock?.type === "prompt" && expectingResponse && /^\s+\S/.test(trimmed)) {
+      promptBlock.lines.push(trimmed);
+      expectingResponse = false;
       continue;
     }
     if (expectingResponse || (current as ActiveBlock | null)?.type === "response") {

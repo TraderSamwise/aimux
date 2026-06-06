@@ -46,6 +46,27 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[2]?.text).toContain("gpt-5.5 medium");
   });
 
+  it("parses a real Codex prompt immediately after startup chrome without requiring a blank", () => {
+    const raw = [
+      "╭─────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.136.0)              │",
+      "│                                         │",
+      "│ model:       loading   /model to change │",
+      "│ directory:   ~/workspace/project        │",
+      "│ permissions: YOLO mode                  │",
+      "╰─────────────────────────────────────────╯",
+      "› reply exactly CODEX_STARTUP_PROMPT_OK",
+      "",
+      "• CODEX_STARTUP_PROMPT_OK",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["meta", "prompt", "response"]);
+    expect(parsed.blocks[1]?.text).toBe("reply exactly CODEX_STARTUP_PROMPT_OK");
+    expect(parsed.blocks[2]?.text).toBe("CODEX_STARTUP_PROMPT_OK");
+  });
+
   it("parses Codex startup progress as status instead of a response", () => {
     const raw = [
       "› Run /review on my current changes",
@@ -275,6 +296,32 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[1]?.text).toContain("no that's fine, what's next?");
   });
 
+  it("parses a real Claude prompt after feedback survey status returns to the footer", () => {
+    const raw = [
+      "⏺ Anything else?",
+      "",
+      "• How is Claude doing this session? (optional)",
+      "  1: Bad     2: Fine    3: Good    0: Dismiss",
+      "",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "❯ 0",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "  user@host ~/workspace/project main ██░░░░5% Opus 4.8",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+      "❯ actual follow up after survey",
+      "",
+      "⏺ Follow-up received.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status", "prompt", "response"]);
+    expect(parsed.blocks[1]?.text).toContain("How is Claude doing this session?");
+    expect(parsed.blocks[1]?.text).toContain("0");
+    expect(parsed.blocks[2]?.text).toBe("actual follow up after survey");
+    expect(parsed.blocks[3]?.text).toBe("Follow-up received.");
+  });
+
   it("keeps Codex active input suggestions out of chat prompts", () => {
     const raw = [
       "• PR #5914 is merged.",
@@ -396,5 +443,26 @@ describe("parseAgentOutput", () => {
 
     expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "prompt", "status"]);
     expect(parsed.blocks[1]?.text).toBe("Explain this codebase");
+  });
+
+  it("keeps Claude multiline triple-quoted input together as one prompt", () => {
+    const raw = [
+      "* Cooked for 1m 2s · 1 shell still running",
+      "",
+      '❯ """',
+      "  MESSAGE CONTENT INTENT is enabled + saved",
+      '  """',
+      "",
+      "  i mean i set it when i made the bot. do we have any reason to believe i did it wrong?",
+      "",
+      "⏺ Good question — and I can actually check it.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["status", "prompt", "response"]);
+    expect(parsed.blocks[1]?.text).toContain("MESSAGE CONTENT INTENT is enabled + saved");
+    expect(parsed.blocks[1]?.text).toContain("i mean i set it when i made the bot");
+    expect(parsed.blocks[2]?.text).toContain("Good question");
   });
 });
