@@ -4,7 +4,7 @@ import { Tabs } from "expo-router";
 import { MobileTabBar } from "@/components/MobileTabBar";
 
 export const unstable_settings = {
-  initialRouteName: "(dashboard)",
+  initialRouteName: "project",
 };
 
 export default function MainTabsLayout() {

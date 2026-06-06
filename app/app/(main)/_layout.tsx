@@ -267,6 +267,8 @@ export default function MainLayout() {
       <AppShell>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="global-notifications" />
+          <Stack.Screen name="global-threads" />
         </Stack>
       </AppShell>
     </>
