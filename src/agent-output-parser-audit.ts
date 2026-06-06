@@ -64,6 +64,7 @@ const toolForSource = (source: string) => {
 
 const looksLikePromptLeakFooter = (block: AgentOutputBlock | null | undefined) => {
   if (!block || block.type !== "status") return false;
+  if (/Conversation interrupted/i.test(block.text)) return false;
   if (/(?:^|\n)\s*(?:•\s*)?(?:Working \(\d+(?:ms|s|m|h)|Starting MCP servers)/i.test(block.text)) return false;
   return /(?:^|\n)\s*(?:gpt-[\w.-]+\b|claude\b|⏵⏵\s*bypass permissions|bypass permissions|.*context\)|.*permissions:)/i.test(
     block.text,
@@ -71,6 +72,8 @@ const looksLikePromptLeakFooter = (block: AgentOutputBlock | null | undefined) =
 };
 
 const promptLeakLooksActionable = (blocks: AgentOutputBlock[], blockIndex: number) => {
+  const prompt = blocks[blockIndex];
+  if (!prompt || prompt.text.trim().length < 3) return false;
   return looksLikePromptLeakFooter(blocks[blockIndex + 1]);
 };
 
