@@ -263,6 +263,60 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[2]?.text).toContain("bypass permissions on");
   });
 
+  it("preserves activity spinner wording as status text", () => {
+    const raw = [
+      "⏺ Working on it.",
+      "",
+      "* Cooked for 1m 2s · 1 shell still running",
+      "",
+      "* Brewed for 16s",
+      "",
+      "- Worked for 20m 16s",
+      "",
+      "✽ Stirring… (running stop hook · 11s · ↓ 16 tokens)",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status"]);
+    expect(parsed.blocks[0]?.text).toBe("Working on it.");
+    expect(parsed.blocks[1]?.text).toBe(
+      [
+        "Cooked for 1m 2s · 1 shell still running",
+        "Brewed for 16s",
+        "Worked for 20m 16s",
+        "Stirring… (running stop hook · 11s · ↓ 16 tokens)",
+      ].join("\n\n"),
+    );
+  });
+
+  it("preserves Claude tool action labels as status text", () => {
+    const raw = [
+      "⏺ Checking the branch.",
+      "",
+      "⏺ Bash(cd /workspace/project; gh pr checks 5968)",
+      "  ⎿  Running in the background (down arrow to manage)",
+      "",
+      "⏺ Read 2 files (ctrl+o to expand)",
+      "",
+      "⏺ Update(src/relay.ts)",
+      "",
+      "⏺ All checks are green.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status", "response"]);
+    expect(parsed.blocks[0]?.text).toBe("Checking the branch.");
+    expect(parsed.blocks[1]?.text).toBe(
+      "⏺ Bash(cd /workspace/project; gh pr checks 5968)\n" +
+        "  ⎿  Running in the background (down arrow to manage)\n\n" +
+        "⏺ Read 2 files (ctrl+o to expand)\n\n" +
+        "⏺ Update(src/relay.ts)",
+    );
+    expect(parsed.blocks[2]?.text).toBe("All checks are green.");
+  });
+
   it("keeps Claude feedback survey input out of chat prompts", () => {
     const raw = [
       "⏺ There's our 2 at the top, then ~30 sequential Pine-related PRs (#584-616) — looks like autonomous-agent churn on",
