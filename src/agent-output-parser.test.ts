@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseAgentOutput } from "./agent-output-parser.js";
 
 describe("parseAgentOutput", () => {
-  it("keeps a trailing submitted Codex prompt without a response yet", () => {
+  it("keeps footer-only trailing Codex input out of chat prompts", () => {
     const raw = [
       "› write me a poem",
       "",
@@ -16,11 +16,11 @@ describe("parseAgentOutput", () => {
 
     const parsed = parseAgentOutput(raw, { tool: "codex" });
 
-    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "response", "prompt", "status"]);
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["prompt", "response", "status"]);
     expect(parsed.blocks[0]?.text).toBe("write me a poem");
     expect(parsed.blocks[1]?.text).toContain("Small lights wait");
-    expect(parsed.blocks[2]?.text).toBe("Summarize recent commits");
-    expect(parsed.blocks[3]?.text).toContain("gpt-5.4 medium");
+    expect(parsed.blocks[2]?.text).toContain("Summarize recent commits");
+    expect(parsed.blocks[2]?.text).toContain("gpt-5.4 medium");
   });
 
   it("keeps Codex startup chrome out of chat responses", () => {
@@ -189,6 +189,27 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[1]?.text).toBe("I'll wait for 5s before retrying.\n  Then I will check the result.");
   });
 
+  it("keeps Claude connector names in wrapped assistant responses", () => {
+    const raw = [
+      "⏺ Right — that's expected, and it's an important distinction. Your Notion tools are prefixed",
+      "  mcp__claude_ai_Notion__ — they're claude.ai connectors, federated in from your claude.ai account. /mcp in",
+      "Claude",
+      "  Code only lists locally-configured MCP servers (linear, telegram, mail, apple, chrome-devtools). So Notion will",
+      "  never show under /mcp — it's managed somewhere else.",
+      "",
+      "  Where Notion actually lives",
+      "",
+      "  claude.ai → Settings → Connectors (web or desktop app), not Claude Code.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response"]);
+    expect(parsed.blocks[0]?.text).toContain("mcp__claude_ai_Notion__");
+    expect(parsed.blocks[0]?.text).toContain("Claude\n  Code only lists");
+    expect(parsed.blocks[0]?.text).toContain("claude.ai → Settings");
+  });
+
   it("keeps assistant star bullets with parentheticals as response text", () => {
     const raw = ["› summarize changes", "", "* Added tests (2 files)"].join("\n");
 
@@ -278,6 +299,57 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status"]);
     expect(parsed.blocks[0]?.text).toContain("PR #5914 is merged.");
     expect(parsed.blocks[1]?.text).toContain("Find and fix a bug in @filename");
+  });
+
+  it("keeps repeated Codex active input snapshots out of chat prompts", () => {
+    const raw = [
+      "╭─────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.136.0)              │",
+      "│                                         │",
+      "│ model:       loading   /model to change │",
+      "│ directory:   ~/cs/tealstreet-next       │",
+      "│ permissions: YOLO mode                  │",
+      "╰─────────────────────────────────────────╯",
+      "",
+      "› Implement {feature}",
+      "",
+      "  gpt-5.5 default · ~/cs/tealstreet-next/.aimux/worktrees/chat-sync",
+      "",
+      "╭─────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.136.0)              │",
+      "│                                         │",
+      "│ model:       loading   /model to change │",
+      "│ directory:   ~/cs/tealstreet-next       │",
+      "│ permissions: YOLO mode                  │",
+      "╰─────────────────────────────────────────╯",
+      "",
+      "• Starting MCP servers (1/4): chrome-devtools, codex_apps, openaiDeveloperDocs (0s • esc to interrupt)",
+      "",
+      "› Implement {feature}",
+      "",
+      "  gpt-5.5 default · ~/cs/tealstreet-next/.aimux/worktrees/chat-sync",
+      "",
+      "╭─────────────────────────────────────────╮",
+      "│ >_ OpenAI Codex (v0.136.0)              │",
+      "│                                         │",
+      "│ model:       gpt-5.5 medium   /model to change │",
+      "│ directory:   ~/cs/tealstreet-next       │",
+      "│ permissions: YOLO mode                  │",
+      "╰─────────────────────────────────────────╯",
+      "",
+      "Tip: Try the Codex App. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+      "",
+      "› Implement {feature}",
+      "",
+      "  gpt-5.5 medium · ~/cs/tealstreet-next/.aimux/worktrees/chat-sync",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "codex" });
+
+    expect(parsed.blocks.map((block) => block.type)).not.toContain("prompt");
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["meta", "status"]);
+    expect(parsed.blocks[1]?.text).toContain("Implement {feature}");
+    expect(parsed.blocks[1]?.text).toContain("Starting MCP servers");
   });
 
   it("keeps Codex active input followed by the footer out of chat prompts", () => {
