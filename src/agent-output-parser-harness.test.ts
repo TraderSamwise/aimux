@@ -3,6 +3,42 @@ import { createAgentOutputParserHarness } from "./agent-output-parser-harness.js
 import { getParserFixture } from "./agent-output-parser-test-utils.js";
 
 describe("agent output parser harness", () => {
+  const expectHarnessReadMatchesFixture = async (fixtureName: string) => {
+    const fixture = getParserFixture(fixtureName);
+    const harness = createAgentOutputParserHarness([
+      {
+        id: fixtureName,
+        tool: fixture.tool,
+        output: fixture.raw,
+      },
+    ]);
+
+    const read = await harness.read(fixtureName, -240);
+
+    expect(read.sessionId).toBe(fixtureName);
+    expect(read.startLine).toBe(-240);
+    expect(read.parsed.parser.tool).toBe(fixture.tool);
+    expect(read.parsed.blocks.map((block) => block.type)).toEqual(fixture.expected.map((block) => block.type));
+
+    fixture.expected.forEach((expected, index) => {
+      const actual = read.parsed.blocks[index];
+      expect(actual?.type).toBe(expected.type);
+      for (const text of expected.includes) {
+        expect(actual?.text).toContain(text);
+      }
+      for (const text of expected.excludes ?? []) {
+        expect(actual?.text).not.toContain(text);
+      }
+    });
+
+    for (const text of fixture.invariants?.noPromptIncludes ?? []) {
+      expect(
+        read.parsed.blocks.some((block) => block.type === "prompt" && block.text.includes(text)),
+        `${fixture.name}: prompt block must not contain ${JSON.stringify(text)}`,
+      ).toBe(false);
+    }
+  };
+
   it("parses dummy Claude and Codex live panes through the runtime read path", async () => {
     const claude = getParserFixture("claude-multi-unit-activity-status");
     const codex = getParserFixture("codex-repeated-template-suggestion");
@@ -96,6 +132,14 @@ describe("agent output parser harness", () => {
       "RESPONSE_SENTINEL_live",
     );
     expect(updatedRead.parsed.blocks.find((block) => block.type === "status")?.text).toContain("STATUS_SENTINEL_live");
+  });
+
+  it("parses mined Codex picker and command-output edge cases through the runtime read path", async () => {
+    await expectHarnessReadMatchesFixture("codex-resume-session-picker-selection");
+    await expectHarnessReadMatchesFixture("codex-working-directory-picker-selection");
+    await expectHarnessReadMatchesFixture("codex-command-output-tree-summary");
+    await expectHarnessReadMatchesFixture("codex-trailing-suggestion-after-status-output");
+    await expectHarnessReadMatchesFixture("codex-result-summary-after-metadata-path");
   });
 
   it("fails loudly when a test tries to update an unknown dummy session", () => {
