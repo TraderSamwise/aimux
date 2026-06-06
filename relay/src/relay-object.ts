@@ -259,17 +259,21 @@ export class RelayObject extends DurableObject<Env> {
     const notification = message.notification;
     if (!ownerUserId || !notification?.title) return;
     const state = await loadSecurityState(this.ctx.storage);
-    await deliverNotificationPush({
-      userId: ownerUserId,
-      pushTokens: Object.values(state.pushTokens),
-      title: notification.title,
-      body: notification.body,
-      kind: notification.kind,
-      sessionId: notification.sessionId,
-      projectId: notification.projectId,
-      projectRoot: notification.projectRoot,
-      dedupeKey: notification.dedupeKey,
-    });
+    try {
+      await deliverNotificationPush({
+        userId: ownerUserId,
+        pushTokens: Object.values(state.pushTokens),
+        title: notification.title,
+        body: notification.body,
+        kind: notification.kind,
+        sessionId: notification.sessionId,
+        projectId: notification.projectId,
+        projectRoot: notification.projectRoot,
+        dedupeKey: notification.dedupeKey,
+      });
+    } catch (error) {
+      console.error("notification push delivery failed", error);
+    }
   }
 
   private async handleSecurityAction(request: Request, url: URL): Promise<Response> {

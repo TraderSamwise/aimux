@@ -64,4 +64,18 @@ describe("deliverNotificationPush", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("throws when Expo returns a non-2xx response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("rate limited", { status: 429 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      deliverNotificationPush({
+        userId: "user_owner",
+        title: "Agent needs input",
+        body: "waiting",
+        pushTokens: [token({ platform: "ios", token: "ExponentPushToken[owner-ios]" })],
+      }),
+    ).rejects.toThrow(/Expo push failed \(429\)/);
+  });
 });

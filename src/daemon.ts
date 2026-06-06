@@ -728,8 +728,11 @@ export class AimuxDaemon {
       if (actor) return { status: 403, body: { ok: false, error: "internal route is loopback-only" } };
       const payload = body as RelayNotificationPush | undefined;
       if (!payload?.title) return { status: 400, body: { ok: false, error: "title is required" } };
+      if (this.relayClient?.getStatus().status !== "connected") {
+        return { status: 200, body: { ok: true, suppressed: true, reason: "relay_unavailable" } };
+      }
       if (!this.pushThrottle.allow(payload)) return { status: 200, body: { ok: true, suppressed: true } };
-      this.relayClient?.pushNotification(payload);
+      this.relayClient.pushNotification(payload);
       return { status: 200, body: { ok: true } };
     }
 
