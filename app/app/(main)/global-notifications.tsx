@@ -47,6 +47,7 @@ export default function GlobalNotificationsScreen() {
   const [rows, setRows] = useState<GlobalNotificationRow[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const getTokenRef = useRef(getToken);
 
   const onlineProjects = useMemo(
     () => projects.filter((project) => getProjectServiceEndpoint(project)),
@@ -63,18 +64,23 @@ export default function GlobalNotificationsScreen() {
     [onlineProjects],
   );
   const onlineProjectsRef = useRef(onlineProjects);
+  const refreshSeqRef = useRef(0);
   const unreadCount = rows.filter((row) => row.notification.unread).length;
 
   useEffect(() => {
     onlineProjectsRef.current = onlineProjects;
-  }, [onlineProjects]);
+    getTokenRef.current = getToken;
+  }, [getToken, onlineProjects]);
+
+  const hasFetchError = errors.length > 0;
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshSeqRef.current;
     const projectSnapshot = onlineProjectsRef.current;
     setLoading(true);
     setErrors([]);
     try {
-      const token = await getToken();
+      const token = await getTokenRef.current();
       const results = await Promise.allSettled(
         projectSnapshot.map(async (project) => {
           const endpoint = getProjectServiceEndpoint(project);
@@ -98,12 +104,19 @@ export default function GlobalNotificationsScreen() {
           nextErrors.push(`${projectSnapshot[index]?.name ?? "Project"}: ${String(result.reason)}`);
         }
       });
-      setRows(nextRows.sort(sortNotificationRows));
+      if (refreshSeqRef.current !== requestId) return;
+      nextRows.sort(sortNotificationRows);
+      setRows(nextRows);
       setErrors(nextErrors);
+    } catch (error) {
+      if (refreshSeqRef.current !== requestId) return;
+      setErrors([
+        `Unable to refresh inbox: ${error instanceof Error ? error.message : String(error)}`,
+      ]);
     } finally {
-      setLoading(false);
+      if (refreshSeqRef.current === requestId) setLoading(false);
     }
-  }, [getToken]);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -148,14 +161,21 @@ export default function GlobalNotificationsScreen() {
           </Button>
         </View>
 
-        {errors.length > 0 ? (
+        {hasFetchError ? (
           <Card className="mb-4 rounded-lg border-amber-500/40 bg-amber-500/10">
             <Text className="text-sm font-semibold text-foreground">Some projects failed</Text>
             <Text className="mt-1 text-xs text-muted-foreground">{errors.join("\n")}</Text>
           </Card>
         ) : null}
 
-        {rows.length === 0 ? (
+        {rows.length === 0 && hasFetchError && !loading ? (
+          <Card className="rounded-lg border-amber-500/40 bg-amber-500/10 p-5">
+            <Text className="text-base font-semibold text-foreground">Unable to load inbox</Text>
+            <Text className="mt-1 text-sm text-muted-foreground">
+              Fix the failed project connection or refresh to try again.
+            </Text>
+          </Card>
+        ) : rows.length === 0 ? (
           <Card className="rounded-lg p-5">
             <Text className="text-base font-semibold text-foreground">
               {loading ? "Loading inbox..." : "All caught up"}
