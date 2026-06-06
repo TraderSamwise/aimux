@@ -38,7 +38,7 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
       "────────────────────────────────────────────────────────────────────────────────────────────────",
       "❯ no that's fine, what's next?",
       "────────────────────────────────────────────────────────────────────────────────────────────────",
-      "  sam@MacBook-Pro-4 ~/cs/tealstreet-next master ██░░░░38% Opus 4.7",
+      "  user@host ~/workspace/project master ██░░░░38% Opus 4.7",
       "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
     ].join("\n"),
     expected: [
@@ -63,19 +63,19 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
       "│ >_ OpenAI Codex (v0.136.0)              │",
       "│                                         │",
       "│ model:       loading   /model to change │",
-      "│ directory:   ~/cs/tealstreet-next       │",
+      "│ directory:   ~/workspace/project        │",
       "│ permissions: YOLO mode                  │",
       "╰─────────────────────────────────────────╯",
       "",
       "› Implement {feature}",
       "",
-      "  gpt-5.5 default · ~/cs/tealstreet-next/.aimux/worktrees/chat-sync",
+      "  gpt-5.5 default · ~/workspace/project/.aimux/worktrees/chat-sync",
       "",
       "╭─────────────────────────────────────────╮",
       "│ >_ OpenAI Codex (v0.136.0)              │",
       "│                                         │",
       "│ model:       gpt-5.5 medium   /model to change │",
-      "│ directory:   ~/cs/tealstreet-next       │",
+      "│ directory:   ~/workspace/project        │",
       "│ permissions: YOLO mode                  │",
       "╰─────────────────────────────────────────╯",
       "",
@@ -83,7 +83,7 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
       "",
       "› Implement {feature}",
       "",
-      "  gpt-5.5 medium · ~/cs/tealstreet-next/.aimux/worktrees/chat-sync",
+      "  gpt-5.5 medium · ~/workspace/project/.aimux/worktrees/chat-sync",
     ].join("\n"),
     expected: [
       {
@@ -103,13 +103,13 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
     name: "codex-active-image-input-followed-by-suggestion",
     tool: "codex",
     raw: [
-      "› can you see this? Attached image files: - Screenshot.png (image/png, 120484 bytes): /Users/sam/cs/glyde-frontend/.aimux/attachments/att_3cbe0ace620a4e54aec6b885062ad615.png",
+      "› can you see this? Attached image files: - Screenshot.png (image/png, 120484 bytes): /workspace/project/.aimux/attachments/att_example.png",
       "",
       "• Working (4s • esc to interrupt)",
       "",
       "› Explain this codebase",
       "",
-      "  gpt-5.5 medium · ~/cs/glyde-frontend",
+      "  gpt-5.5 medium · ~/workspace/project",
     ].join("\n"),
     expected: [
       {
@@ -134,7 +134,7 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
       "",
       "› Explain this codebase",
       "",
-      "  gpt-5.5 medium · ~/cs/glyde-frontend",
+      "  gpt-5.5 medium · ~/workspace/project",
     ].join("\n"),
     expected: [
       {
@@ -153,7 +153,9 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
   {
     name: "claude-real-prompt-that-matches-codex-suggestion",
     tool: "claude",
-    raw: ["⏺ Ready when you are.", "", "❯ Explain this codebase", "", "  claude · ~/cs/glyde-frontend"].join("\n"),
+    raw: ["⏺ Ready when you are.", "", "❯ Explain this codebase", "", "  claude · ~/workspace/project"].join(
+      "\n",
+    ),
     expected: [
       {
         type: "response",
@@ -165,7 +167,7 @@ export const AGENT_OUTPUT_PARSER_FIXTURES: AgentOutputParserFixture[] = [
       },
       {
         type: "status",
-        includes: ["claude", "~/cs/glyde-frontend"],
+        includes: ["claude", "~/workspace/project"],
       },
     ],
   },
