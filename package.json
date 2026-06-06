@@ -36,6 +36,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/ --max-warnings=0",
+    "audit:parser": "yarn build && node scripts/audit-agent-output-parser.mjs",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "verify": "yarn typecheck && yarn lint && yarn test",
