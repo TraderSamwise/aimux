@@ -317,6 +317,31 @@ describe("parseAgentOutput", () => {
     expect(parsed.blocks[2]?.text).toBe("All checks are green.");
   });
 
+  it("keeps malformed Claude animation fragments out of assistant chat", () => {
+    const raw = [
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+      "sam@MacBook-Pro-4 ~/cs/aimux main Opus4.6(1Mcontext)",
+      "✢n",
+      "g",
+      "·…",
+      "✻Bew",
+      "ri",
+      "✶en",
+      "win…",
+      "(thinking)",
+      "·Brewing… (thinking)",
+      'Bash(terminal-notifier-title"ClaudeCode"-message"Notificationtest-sessionstarted"-sounddefault)\r⎿ Running…',
+      "✢ Brewing… (thinking)",
+      "────────────────────────────────────────────────────────────────────────────────────────────────",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["meta", "status"]);
+    expect(parsed.blocks[1]?.text).toContain("Brewing… (thinking)");
+    expect(parsed.blocks[1]?.text).toContain("terminal-notifier");
+  });
+
   it("keeps Claude feedback survey input out of chat prompts", () => {
     const raw = [
       "⏺ There's our 2 at the top, then ~30 sequential Pine-related PRs (#584-616) — looks like autonomous-agent churn on",
