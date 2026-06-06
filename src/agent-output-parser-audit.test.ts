@@ -144,6 +144,53 @@ describe("auditAgentOutputParserCorpus", () => {
     }
   });
 
+  it("flags activity rows with the dedicated activity status leak flag", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      [
+        JSON.stringify({ type: "response", content: "Worked for 20m 16s - leaked assistant prose" }),
+        JSON.stringify({ type: "response", content: "Baked for 3s - leaked assistant prose" }),
+        "",
+      ].join("\n"),
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["activity-status-leak"],
+    });
+
+    expect(summary.scanned).toBe(2);
+    expect(summary.countsByFlag["activity-status-leak"]).toBe(2);
+    expect(summary.countsByFlag["action-status-leak"]).toBe(0);
+    expect(summary.findings).toHaveLength(2);
+    for (const finding of summary.findings) {
+      expect(finding.flags).toEqual(["activity-status-leak"]);
+      expect(finding.blockType).toBe("response");
+    }
+  });
+
+  it("does not include activity leaks when filtering for action status leaks", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "codex-test.jsonl"),
+      `${JSON.stringify({
+        type: "response",
+        content: "Worked for 20m 16s - leaked assistant prose",
+      })}\n`,
+    );
+
+    const summary = auditAgentOutputParserCorpus({
+      historyDirs: [dir],
+      flags: ["action-status-leak"],
+    });
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["activity-status-leak"]).toBe(0);
+    expect(summary.countsByFlag["action-status-leak"]).toBe(0);
+    expect(summary.findings).toEqual([]);
+  });
+
   it("does not flag normal prose that mentions action or activity wording", () => {
     const dir = makeTempDir();
     writeFileSync(
@@ -166,6 +213,7 @@ describe("auditAgentOutputParserCorpus", () => {
     });
 
     expect(summary.scanned).toBe(1);
+    expect(summary.countsByFlag["activity-status-leak"]).toBe(0);
     expect(summary.countsByFlag["action-status-leak"]).toBe(0);
     expect(summary.findings).toEqual([]);
   });

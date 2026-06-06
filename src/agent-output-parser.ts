@@ -16,6 +16,7 @@ export interface ParsedAgentOutput {
 
 const activityDurationPattern = String.raw`\d+(?:ms|s|m|h)(?:\s+\d+(?:ms|s|m|h))*`;
 const activityForDurationRegex = new RegExp(String.raw`\bfor\s+${activityDurationPattern}(?:$|(?=\s*[·•.)]))`, "i");
+const activityRestForDurationRegex = new RegExp(String.raw`^for\s+${activityDurationPattern}(?:$|(?=\s*[·•.)]))`, "i");
 const activityParentheticalDurationRegex = new RegExp(String.raw`\([^)]*\b${activityDurationPattern}\b[^)]*\)`, "i");
 const activityEllipsisRegex = /\.{3}|…/;
 const activityLeadRegex = /^[\p{Lu}][\p{L}-]{2,}\b/u;
@@ -24,6 +25,16 @@ const looksLikeActivityProgressText = (text: string) => {
   const trimmed = text.trim();
   const lead = trimmed.match(activityLeadRegex)?.[0] ?? "";
   if (!lead || !/(ed|ing)$/i.test(lead)) return false;
+  const rest = trimmed.slice(lead.length).trimStart();
+  if (
+    !(
+      activityRestForDurationRegex.test(rest) ||
+      activityParentheticalDurationRegex.test(rest) ||
+      activityEllipsisRegex.test(rest)
+    )
+  ) {
+    return false;
+  }
   return (
     activityForDurationRegex.test(trimmed) ||
     activityParentheticalDurationRegex.test(trimmed) ||
@@ -44,6 +55,7 @@ const looksLikeToolActionText = (text: string) => {
   const trimmed = text.trim();
   if (!trimmed) return false;
   return (
+    /^Bash\([^)]*$/i.test(trimmed) ||
     /^(?:Bash|BashOutput|Edit|Explore|Glob|Grep|KillBash|LS|MultiEdit|NotebookEdit|Read|Task|TodoWrite|Update|WebFetch|WebSearch|Write)\s*(?:\([^)\n]*\)|\d+[^\n]*(?:ctrl\+o|to expand)|[^\n]*(?:Running in the background|exit code))\s*$/i.test(
       trimmed,
     ) ||
@@ -153,6 +165,7 @@ export function parseAgentOutput(raw: string, options: { tool?: string } = {}): 
       /^•\s?Starting MCP servers\b/.test(trimmed) ||
       /^•\s?How is Claude doing this session\?\s*\(optional\)/i.test(trimmed) ||
       looksLikeRanCommandText(trimmed) ||
+      looksLikeToolActionText(trimmed) ||
       (/^(?:•|⏺)\s?/.test(trimmed) && looksLikeToolActionText(conversationBulletText)) ||
       (/^•\s?/.test(trimmed) && looksLikeActivityProgressText(dotBulletText)) ||
       /^⏵⏵\s/.test(trimmed) ||

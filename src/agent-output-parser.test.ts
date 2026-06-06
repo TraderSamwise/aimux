@@ -290,6 +290,15 @@ describe("parseAgentOutput", () => {
     );
   });
 
+  it("keeps assistant prose that mentions activity durations as response text", () => {
+    const raw = "• Leaked activity row: Carbonated for 42s.";
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response"]);
+    expect(parsed.blocks[0]?.text).toBe("Leaked activity row: Carbonated for 42s.");
+  });
+
   it("preserves Claude tool action labels as status text", () => {
     const raw = [
       "⏺ Checking the branch.",
@@ -315,6 +324,30 @@ describe("parseAgentOutput", () => {
         "⏺ Update(src/relay.ts)",
     );
     expect(parsed.blocks[2]?.text).toBe("All checks are green.");
+  });
+
+  it("parses unmarked wrapped Claude tool actions as status without swallowing prose examples", () => {
+    const raw = [
+      "⏺ Running verification.",
+      "",
+      "Bash(cd /workspace/project",
+      '  export PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH"…)',
+      "  ⎿  Running in the background (down arrow to manage)",
+      "",
+      "⏺ Bash(cd /workspace/project",
+      "  git status…)",
+      "  ⎿  Running in the background (down arrow to manage)",
+      "",
+      "⏺ Bash(cd /tmp) is a common shell shape, not a tool row here.",
+    ].join("\n");
+
+    const parsed = parseAgentOutput(raw, { tool: "claude" });
+
+    expect(parsed.blocks.map((block) => block.type)).toEqual(["response", "status", "response"]);
+    expect(parsed.blocks[1]?.text).toContain("Bash(cd /workspace/project");
+    expect(parsed.blocks[1]?.text).toContain("Running in the background");
+    expect(parsed.blocks[1]?.text).toContain("git status…)");
+    expect(parsed.blocks[2]?.text).toBe("Bash(cd /tmp) is a common shell shape, not a tool row here.");
   });
 
   it("parses plain Codex command rows as status without swallowing prose examples", () => {
