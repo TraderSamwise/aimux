@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image, Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
@@ -56,6 +56,7 @@ const MIN_TERMINAL_DIVIDER_WIDTH = 24;
 const TERMINAL_HORIZONTAL_PADDING = 32;
 const APPROX_TERMINAL_CHAR_WIDTH = 8;
 const MAX_PENDING_ATTACHMENTS = 4;
+const CHAT_SCROLL_LOAD_SETTLE_MS = 700;
 
 type PendingImageAttachment = PickedImageAttachment & {
   uploadedAttachmentId?: string;
@@ -97,6 +98,9 @@ export default function ChatScreen() {
   const sendBusyRef = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const terminalScrollRef = useRef<ScrollView>(null);
+  const activeScrollSessionRef = useRef<string | null>(null);
+  const canAnimateActiveScrollRef = useRef(false);
+  const enableScrollAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyboardInset = useKeyboardInset();
   const chatKeyboardInset = Platform.OS === "ios" ? keyboardInset : 0;
 
@@ -191,13 +195,46 @@ export default function ChatScreen() {
     return parsedMessages;
   }, [parsedMessages]);
 
+  const scheduleScrollAnimationEnable = useCallback((nextSessionKey: string) => {
+    if (enableScrollAnimationTimerRef.current) {
+      clearTimeout(enableScrollAnimationTimerRef.current);
+    }
+    enableScrollAnimationTimerRef.current = setTimeout(() => {
+      if (activeScrollSessionRef.current === nextSessionKey) {
+        canAnimateActiveScrollRef.current = true;
+      }
+      enableScrollAnimationTimerRef.current = null;
+    }, CHAT_SCROLL_LOAD_SETTLE_MS);
+  }, []);
+
   useEffect(() => {
-    scrollRef.current?.scrollToEnd({ animated: true });
-  }, [allMessages.length, output]);
+    return () => {
+      if (enableScrollAnimationTimerRef.current) {
+        clearTimeout(enableScrollAnimationTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    activeScrollSessionRef.current = sessionKey;
+    canAnimateActiveScrollRef.current = false;
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: false }));
+  }, [sessionKey]);
+
+  useEffect(() => {
+    const isSameSession = activeScrollSessionRef.current === sessionKey;
+    const animated = isSameSession && canAnimateActiveScrollRef.current;
+    scrollRef.current?.scrollToEnd({ animated });
+    activeScrollSessionRef.current = sessionKey;
+    if (!animated) {
+      canAnimateActiveScrollRef.current = false;
+      scheduleScrollAnimationEnable(sessionKey);
+    }
+  }, [scheduleScrollAnimationEnable, sessionKey, allMessages.length, output]);
 
   useEffect(() => {
     if (!chatKeyboardInset) return;
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: false }));
   }, [chatKeyboardInset]);
 
   useEffect(() => {
