@@ -8,6 +8,7 @@ export interface AimuxViewParams {
   lens?: string | null;
   section?: string | null;
   document?: string | null;
+  threadId?: string | null;
 }
 
 export type DetailRouteKind = "agent" | "service";
@@ -62,6 +63,7 @@ export function mergeViewParams(
     lens: next.lens !== undefined ? next.lens : cleanSearchValue(current.lens),
     section: next.section !== undefined ? next.section : cleanSearchValue(current.section),
     document: next.document !== undefined ? next.document : cleanSearchValue(current.document),
+    threadId: next.threadId !== undefined ? next.threadId : cleanSearchValue(current.threadId),
   };
 }
 

@@ -65,6 +65,7 @@ export default function LibraryScreen() {
   const endpointKey = endpoint ? `${endpoint.host}:${endpoint.port}` : null;
   const endpointRef = useRef(endpoint);
   const getTokenRef = useRef(getToken);
+  const refreshSeqRef = useRef(0);
 
   useEffect(() => {
     endpointRef.current = endpoint;
@@ -77,22 +78,26 @@ export default function LibraryScreen() {
   );
 
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeqRef.current;
     const currentEndpoint = endpointRef.current;
     if (!currentEndpoint) {
       setDocuments([]);
       setError(null);
+      setLoading(false);
       return;
     }
     setLoading(true);
     try {
       const token = await getTokenRef.current();
       const response = await listProjectLibrary(currentEndpoint, { token });
+      if (seq !== refreshSeqRef.current) return;
       setDocuments(response.documents);
       setError(null);
     } catch (err) {
+      if (seq !== refreshSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (seq === refreshSeqRef.current) setLoading(false);
     }
   }, []);
 

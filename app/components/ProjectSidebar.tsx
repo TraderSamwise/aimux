@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Bell,
   BookOpen,
@@ -52,7 +52,7 @@ import {
   selectedSessionIdAtom,
   selectProjectAtom,
 } from "@/stores/projects";
-import { sidebarShowProjectPickerAtom } from "@/stores/ui";
+import { sidebarModeAtom, sidebarShowProjectPickerAtom } from "@/stores/ui";
 import { getProjectServiceEndpoint, projectStateErrorCopy } from "@/lib/project-connection-display";
 
 // Type ladder used throughout the sidebar:
@@ -66,6 +66,16 @@ const SIDEBAR_WIDTH = 320;
 const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
 const usePrePaintEffect = Platform.OS === "web" ? useLayoutEffect : useEffect;
 type SidebarMode = "dashboard" | "views";
+
+function routePrefersViews(tab: MainTabId): boolean {
+  return (
+    tab === "project" ||
+    tab === "topology" ||
+    tab === "library" ||
+    tab === "inbox" ||
+    tab === "threads"
+  );
+}
 
 // ─── Project picker ───────────────────────────────────────────────────────
 
@@ -557,11 +567,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const router = useRouter();
   const pathname = usePathname();
   const routeTab = mainTabForPath(pathname);
-  const [sidebarMode, setSidebarMode] = useState<SidebarMode>(
-    routeTab === "project" || routeTab === "topology" || routeTab === "library"
-      ? "views"
-      : "dashboard",
-  );
+  const [sidebarMode, setSidebarMode] = useAtom(sidebarModeAtom);
   const searchParams = useGlobalSearchParams() as Record<string, SearchValue>;
   const effectiveProjectPath =
     projectPathFromSearchOrLocation(searchParams.project) ?? selectedProjectPath;
@@ -609,16 +615,10 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
 
   usePrePaintEffect(() => {
     if (!showPrimaryNav) return;
-    if (
-      routeTab === "project" ||
-      routeTab === "topology" ||
-      routeTab === "library" ||
-      routeTab === "inbox" ||
-      routeTab === "threads"
-    ) {
+    if (routePrefersViews(routeTab)) {
       setSidebarMode("views");
     }
-  }, [routeTab, showPrimaryNav]);
+  }, [routeTab, setSidebarMode, showPrimaryNav]);
 
   const desktopState = useAtomValue(desktopStateFamily(effectiveProjectPath ?? EMPTY_PROJECT_PATH));
   const desktopStateError = useAtomValue(
