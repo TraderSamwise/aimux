@@ -39,19 +39,29 @@ describe("deliverNotificationPush", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Array<{ to: string }>;
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Array<{
+      to: string;
+      priority?: string;
+      sound?: string;
+      interruptionLevel?: string;
+    }>;
     expect(body.map((message) => message.to).sort()).toEqual([
       "ExponentPushToken[owner-android]",
       "ExponentPushToken[owner-ios]",
     ]);
-    expect(body[0]).toMatchObject({
+    const ios = body.find((m) => m.to === "ExponentPushToken[owner-ios]");
+    const android = body.find((m) => m.to === "ExponentPushToken[owner-android]");
+    expect(ios).toMatchObject({
       title: "Agent needs input",
       body: "claude-abc is waiting",
       sound: "default",
       priority: "high",
-      interruptionLevel: "time-sensitive",
+      interruptionLevel: "timeSensitive",
       data: { category: "agent", kind: "needs_input", sessionId: "claude-abc", projectRoot: "/repo" },
     });
+    expect(android).toMatchObject({ priority: "high" });
+    expect(android).not.toHaveProperty("interruptionLevel");
+    expect(android).not.toHaveProperty("sound");
   });
 
   it("does not call the push API when no owner mobile tokens exist", async () => {
