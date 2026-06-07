@@ -2,7 +2,7 @@
 
 This inventory is the working map for the runtime-core hard cut. Its job is to identify, for each domain, what currently writes state, what currently reads state, what should become authoritative, and which legacy paths must be removed or demoted to projections.
 
-Use this file together with [runtime-core-hard-cut-roadmap.md](runtime-core-hard-cut-roadmap.md). The roadmap describes the long-haul execution order; this inventory tracks the concrete authority map that makes those phases auditable.
+This inventory tracks the concrete authority map per domain. For the durable-write, corruption, and backend-id capture/recovery invariants (each enforced by a test), see [state-durability-and-recovery.md](state-durability-and-recovery.md).
 
 ## Status Labels
 
