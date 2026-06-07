@@ -5,6 +5,7 @@ import { join } from "node:path";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function claudeProjectsDir(): string {
+  // Mirrors Claude Code's own config location, which honors CLAUDE_CONFIG_DIR.
   const override = process.env.CLAUDE_CONFIG_DIR?.trim();
   return join(override ? override : join(homedir(), ".claude"), "projects");
 }
@@ -21,8 +22,10 @@ function encodeClaudeProjectPath(cwd: string): string {
  * crash that killed the tmux pane before the id was captured). Returns the
  * uuid of the most recently active transcript in the session's worktree, or
  * null when the directory is absent or empty. Scoped to the exact cwd so it
- * cannot bind an unrelated agent; the "latest activity" tie-break picks the
- * transcript that was live when the crash happened.
+ * cannot bind an agent from another worktree. When several transcripts share
+ * one worktree the latest-activity tie-break picks the one live at the crash;
+ * worst case it resumes a sibling session in that same worktree (read-only
+ * history, recoverable), never an unrelated project.
  */
 export function discoverClaudeBackendSessionId(cwd: string, projectsDir = claudeProjectsDir()): string | null {
   const dir = join(projectsDir, encodeClaudeProjectPath(cwd));
