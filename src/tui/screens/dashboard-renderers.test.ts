@@ -205,9 +205,11 @@ describe("renderDashboardFrame worktree progress", () => {
   it("shows a DEV badge in the header only for the dev runtime", () => {
     const prod = renderDashboardFrame(baseDashboardViewModel({ isDevRuntime: false }), 120, 40);
     expect(prod.frame).not.toContain(" DEV ");
+    expect(prod.frame).not.toContain("\x1b[33m───");
 
     const dev = renderDashboardFrame(baseDashboardViewModel({ isDevRuntime: true }), 120, 40);
     expect(dev.frame).toContain("\x1b[1;30;43m DEV \x1b[0m");
+    expect(dev.frame).toContain("\x1b[33m───");
   });
 
   it("renders pending teammate labels even when semantic state is stale", () => {

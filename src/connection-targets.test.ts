@@ -88,6 +88,12 @@ describe("isDevelopmentRuntime lane detection", () => {
     expect(isDevelopmentRuntime()).toBe(true);
   });
 
+  it("detects dev from a tilde-prefixed home path", () => {
+    clearLaneEnv();
+    process.env.AIMUX_HOME = "~/.aimux-dev";
+    expect(isDevelopmentRuntime()).toBe(true);
+  });
+
   it("detects dev from the dev daemon port", () => {
     clearLaneEnv();
     process.env.AIMUX_DAEMON_PORT = "43191";
