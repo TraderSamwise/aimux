@@ -118,6 +118,7 @@ import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/serv
 import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
+import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
 import {
   listTopologyWorktreeGraveyard,
   listTopologyWorktreeGraveyardPaths,
@@ -3179,16 +3180,23 @@ repairCmd
     const tmux = new TmuxRuntimeManager();
     ensureTmuxAvailable(tmux);
     const result = repairTmuxRuntime(tmux, { projectRoot });
+    const backendReconcile = reconcileOfflineBackendSessionIds(projectRoot);
     if (opts.open) {
       const { dashboardTarget } = resolveDashboardTarget(projectRoot, tmux);
       tmux.openTarget(dashboardTarget, { insideTmux: tmux.isInsideTmux(), alreadyResolved: true });
       exitAfterOpen();
     }
     if (opts.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify({ ...result, backendReconcile }, null, 2));
       return;
     }
     console.log(renderTmuxRepairResult(result));
+    if (backendReconcile.reconciled.length > 0) {
+      console.log(`Recovered backend session id for ${backendReconcile.reconciled.length} offline agent(s):`);
+      for (const entry of backendReconcile.reconciled) {
+        console.log(`  ${entry.id} -> ${entry.backendSessionId}`);
+      }
+    }
   });
 
 const metadataCmd = program.command("metadata").description("Push metadata into aimux tmux status integration");
