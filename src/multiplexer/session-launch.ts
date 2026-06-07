@@ -506,7 +506,7 @@ export function createSession(
   debug(`spawn args: ${JSON.stringify(summarizeLaunchArgs(finalArgs))}`, "session");
 
   const sessionStartTime = Date.now();
-  const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(process.cwd());
+  const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(projectRoot);
   const target = host.tmuxRuntimeManager.createWindow(
     tmuxSession.sessionName,
     host.getSessionLabel(sessionId) ?? command,
@@ -531,7 +531,6 @@ export function createSession(
   if (session instanceof TmuxSessionTransport) {
     host.syncTmuxWindowMetadata(sessionId);
   }
-  void projectRoot;
 
   host.activeIndex = host.sessions.length - 1;
   if (host.startedInDashboard && host.mode === "dashboard") {
