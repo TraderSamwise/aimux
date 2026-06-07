@@ -161,7 +161,7 @@ export function createService(
   const command = wrapped.command;
   const args = wrapped.args;
   const label = serviceLabelForCommand(trimmed);
-  const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(process.cwd());
+  const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(projectRoot);
   const shouldRenderPending = host.startedInDashboard && host.mode === "dashboard";
   if (shouldRenderPending) {
     host.setPendingDashboardServiceAction(serviceId, "creating", {
@@ -351,7 +351,7 @@ export function resumeOfflineService(
   const command = wrapped.command;
   const args = wrapped.args;
   const label = service.label ?? serviceLabelForCommand(launchCommandLine);
-  const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(process.cwd());
+  const tmuxSession = host.tmuxRuntimeManager.ensureProjectSession(projectRoot);
   const retainedTarget =
     service.tmuxTarget && host.tmuxRuntimeManager.hasWindow?.(service.tmuxTarget) ? service.tmuxTarget : undefined;
   const target =
