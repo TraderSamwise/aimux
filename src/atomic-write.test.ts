@@ -1,0 +1,53 @@
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { atomicWrite, writeJsonAtomic, writeTextAtomic } from "./atomic-write.js";
+
+describe("atomicWrite", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "aimux-atomic-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("writes content and leaves no temp files behind", () => {
+    const target = join(dir, "nested", "file.txt");
+    atomicWrite(target, "hello");
+    expect(readFileSync(target, "utf8")).toBe("hello");
+    expect(readdirSync(join(dir, "nested")).filter((n) => n.includes(".tmp"))).toEqual([]);
+  });
+
+  it("writeJsonAtomic round-trips with a trailing newline", () => {
+    const target = join(dir, "state.json");
+    writeJsonAtomic(target, { a: 1, b: ["x"] });
+    const raw = readFileSync(target, "utf8");
+    expect(raw.endsWith("\n")).toBe(true);
+    expect(JSON.parse(raw)).toEqual({ a: 1, b: ["x"] });
+  });
+
+  it("writeTextAtomic writes bytes verbatim without appending a newline", () => {
+    const target = join(dir, "endpoint.txt");
+    writeTextAtomic(target, "http://127.0.0.1:43190\n");
+    expect(readFileSync(target, "utf8")).toBe("http://127.0.0.1:43190\n");
+  });
+
+  it("honors an explicit file mode", () => {
+    const target = join(dir, "auth.json");
+    atomicWrite(target, "{}", { mode: 0o600 });
+    expect(statSync(target).mode & 0o777).toBe(0o600);
+  });
+
+  it("overwrites an existing file atomically", () => {
+    const target = join(dir, "f.json");
+    writeJsonAtomic(target, { v: 1 });
+    writeJsonAtomic(target, { v: 2 });
+    expect(JSON.parse(readFileSync(target, "utf8"))).toEqual({ v: 2 });
+    expect(existsSync(target)).toBe(true);
+  });
+});
