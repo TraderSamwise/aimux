@@ -17,14 +17,23 @@ import {
   type ProjectStoryItem,
 } from "@/lib/project-observability";
 import { cn } from "@/lib/utils";
+import { WorktreeDashboard } from "@/components/WorktreeDashboard";
 import { buildViewHref, cleanSearchValue } from "@/lib/view-location";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { notificationFeedFamily } from "@/stores/notifications";
 import { selectedProjectAtom, selectedProjectEndpointAtom } from "@/stores/projects";
 
-type ProjectSection = "story" | "progress" | "artifacts" | "tests" | "queue" | "topology";
+type ProjectSection =
+  | "dashboard"
+  | "story"
+  | "progress"
+  | "artifacts"
+  | "tests"
+  | "queue"
+  | "topology";
 
 const SECTIONS: Array<{ id: ProjectSection; label: string }> = [
+  { id: "dashboard", label: "Dashboard" },
   { id: "story", label: "Story" },
   { id: "progress", label: "Progress" },
   { id: "artifacts", label: "Artifacts" },
@@ -34,7 +43,7 @@ const SECTIONS: Array<{ id: ProjectSection; label: string }> = [
 ];
 
 function resolveProjectSection(value: string | null): ProjectSection {
-  return SECTIONS.some((section) => section.id === value) ? (value as ProjectSection) : "story";
+  return SECTIONS.some((section) => section.id === value) ? (value as ProjectSection) : "dashboard";
 }
 
 function SummaryTile({ label, value }: { label: string; value: number }) {
@@ -274,6 +283,7 @@ export default function ProjectScreen() {
 
       {project && endpoint ? (
         <>
+          {section === "dashboard" ? <WorktreeDashboard padded={false} /> : null}
           {section === "story" ? <StoryList items={model.story} /> : null}
           {section === "progress" ? <ProgressSection model={model} /> : null}
           {section === "artifacts" ? <StoryList items={model.artifactHints} /> : null}
