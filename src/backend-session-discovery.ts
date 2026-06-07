@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -20,12 +20,11 @@ function encodeClaudeProjectPath(cwd: string): string {
  * Best-effort recovery of a claude backend session id from its on-disk
  * transcript store, for a session whose durable backend id was lost (e.g. a
  * crash that killed the tmux pane before the id was captured). Returns the
- * uuid of the most recently active transcript in the session's worktree, or
- * null when the directory is absent or empty. Scoped to the exact cwd so it
- * cannot bind an agent from another worktree. When several transcripts share
- * one worktree the latest-activity tie-break picks the one live at the crash;
- * worst case it resumes a sibling session in that same worktree (read-only
- * history, recoverable), never an unrelated project.
+ * uuid only when the worktree's transcript directory holds exactly one
+ * candidate — an unambiguous match. If the directory is absent, empty, or
+ * holds several transcripts (e.g. the main repo where many agents ran over
+ * time), it refuses and returns null rather than guess the wrong session.
+ * This preserves the "exact id only" safety of the original resume path.
  */
 export function discoverClaudeBackendSessionId(cwd: string, projectsDir = claudeProjectsDir()): string | null {
   const dir = join(projectsDir, encodeClaudeProjectPath(cwd));
@@ -36,19 +35,13 @@ export function discoverClaudeBackendSessionId(cwd: string, projectsDir = claude
   } catch {
     return null;
   }
-  let best: { id: string; mtimeMs: number } | null = null;
+  const ids: string[] = [];
   for (const entry of entries) {
     if (!entry.endsWith(".jsonl")) continue;
     const id = entry.slice(0, -".jsonl".length);
-    if (!UUID_RE.test(id)) continue;
-    try {
-      const mtimeMs = statSync(join(dir, entry)).mtimeMs;
-      if (!best || mtimeMs > best.mtimeMs) best = { id, mtimeMs };
-    } catch {
-      // Unreadable entry; skip.
-    }
+    if (UUID_RE.test(id)) ids.push(id);
   }
-  return best?.id ?? null;
+  return ids.length === 1 ? ids[0] : null;
 }
 
 /**
