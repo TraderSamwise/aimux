@@ -4,22 +4,12 @@ import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 
-type PageWidth = "standard" | "narrow" | "full";
-
-const PAGE_WIDTH_CLASS: Record<PageWidth, string> = {
-  standard: "w-full max-w-[1100px]",
-  narrow: "w-full max-w-[900px]",
-  full: "w-full",
-};
-
 export function Page({
   children,
-  width = "standard",
   className,
   contentClassName,
 }: {
   children: React.ReactNode;
-  width?: PageWidth;
   className?: string;
   contentClassName?: string;
 }) {
@@ -28,7 +18,7 @@ export function Page({
       className={cn("flex-1 bg-background", className)}
       contentContainerClassName={cn("px-4 py-5 md:px-8", contentClassName)}
     >
-      <View className={PAGE_WIDTH_CLASS[width]}>{children}</View>
+      <View className="w-full">{children}</View>
     </ScrollView>
   );
 }
