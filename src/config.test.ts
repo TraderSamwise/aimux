@@ -44,6 +44,17 @@ describe("config", () => {
     expect(loadConfig({ includeGlobal: false }).tools.claude.resumeByBackendSessionId).toBe(true);
   });
 
+  it("ships a default claude config that assigns a backend session id at launch", () => {
+    // Guards the proactive durability guarantee: aimux must launch claude with
+    // its own --session-id so the backend id is known and persisted at spawn,
+    // never discovered after the fact. Dropping this flag would silently
+    // recreate the lost-backend-id failure mode.
+    const claude = loadConfig({ includeGlobal: false }).tools.claude;
+    expect(claude.sessionIdFlag).toEqual(["--session-id", "{sessionId}"]);
+    expect(claude.resumeArgs?.some((a) => a.includes("{sessionId}"))).toBe(true);
+    expect(claude.resumeByBackendSessionId).toBe(true);
+  });
+
   it("defaults logging to disabled structured project logs", () => {
     expect(loadConfig({ includeGlobal: false }).logging).toEqual({
       enabled: false,
