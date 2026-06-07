@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getDashboardClientUiStatePath, getPlansDir, getProjectId, getProjectStateDir } from "./paths.js";
+import { writeJsonAtomic } from "./atomic-write.js";
 import {
   type MetadataTone,
   updateSessionMetadata,
@@ -350,7 +351,7 @@ function persistDashboardClientPreference(
     snapshot = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
   } catch {}
   update(snapshot);
-  writeFileSync(path, JSON.stringify(snapshot, null, 2) + "\n");
+  writeJsonAtomic(path, snapshot);
 }
 
 function persistDashboardReturnSelection(

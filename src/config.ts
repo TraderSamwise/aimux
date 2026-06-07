@@ -7,6 +7,7 @@ import {
   getConfigPath,
   getProjectStateDir,
 } from "./paths.js";
+import { writeJsonAtomic } from "./atomic-write.js";
 
 export interface NotificationConfig {
   enabled: boolean;
@@ -231,7 +232,7 @@ export function saveConfig(config: AimuxConfig): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(getConfigPath(), JSON.stringify(config, null, 2) + "\n");
+  writeJsonAtomic(getConfigPath(), config);
 }
 
 /** Save config to global ~/.aimux/config.json */
@@ -240,7 +241,7 @@ export function saveGlobalConfig(config: Partial<AimuxConfig>): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(getGlobalConfigPath(), JSON.stringify(config, null, 2) + "\n");
+  writeJsonAtomic(getGlobalConfigPath(), config);
 }
 
 const GITIGNORE_CONTENTS = `# Runtime-private service/project state (lives in ~/.aimux/projects/)

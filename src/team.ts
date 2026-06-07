@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { getLocalAimuxDir, getProjectTeamPath, getGlobalTeamPath, getGlobalAimuxDir } from "./paths.js";
+import { writeJsonAtomic } from "./atomic-write.js";
 
 export interface RoleConfig {
   description: string;
@@ -128,7 +129,7 @@ export function saveTeamConfig(config: TeamConfig): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(getProjectTeamPath(), JSON.stringify(config, null, 2) + "\n");
+  writeJsonAtomic(getProjectTeamPath(), config);
 }
 
 /**
@@ -139,7 +140,7 @@ export function saveGlobalTeamConfig(config: TeamConfig): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(getGlobalTeamPath(), JSON.stringify(config, null, 2) + "\n");
+  writeJsonAtomic(getGlobalTeamPath(), config);
 }
 
 /**

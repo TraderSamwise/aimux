@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import { getStatePath } from "../paths.js";
+import { writeJsonAtomic } from "../atomic-write.js";
 import type { TmuxRuntimeManager } from "../tmux/runtime-manager.js";
 import type { SavedState, ServiceState } from "./index.js";
 import { buildServiceStateFromMetadata } from "./services.js";
@@ -82,7 +83,7 @@ export function persistProjectRuntimeSnapshotsBeforeTmuxStop(
   }
 
   const nextState = mergeRuntimeSnapshots(existing, { services }, projectRoot);
-  writeFileSync(statePath, JSON.stringify(nextState, null, 2) + "\n");
+  writeJsonAtomic(statePath, nextState);
   return { sessions: [], services };
 }
 

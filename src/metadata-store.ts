@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { writeJsonAtomic } from "./atomic-write.js";
+import { writeJsonAtomic, writeTextAtomic } from "./atomic-write.js";
 import { getProjectStateDir, getProjectStateDirFor } from "./paths.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent, SessionDerivedState } from "./agent-events.js";
 
@@ -208,7 +208,7 @@ export function saveMetadataEndpoint(endpoint: MetadataApiEndpoint, projectRoot?
   saveJson(endpointPathFor(projectRoot), endpoint);
   const textPath = endpointTextPathFor(projectRoot);
   ensureParent(textPath);
-  writeFileSync(textPath, `http://${endpoint.host}:${endpoint.port}\n`);
+  writeTextAtomic(textPath, `http://${endpoint.host}:${endpoint.port}\n`);
 }
 
 export function removeMetadataEndpoint(projectRoot?: string): void {
