@@ -195,7 +195,7 @@ function AgentRow({
     <Pressable
       onPress={onPress}
       className={cn(
-        "flex-row items-center gap-2.5 rounded-md py-2.5 pl-3 pr-2.5",
+        "min-h-[40px] flex-row items-center gap-2.5 rounded-md pl-3 pr-2.5",
         isSelected ? "bg-[#26272d]" : "active:bg-[#232429]",
       )}
     >
@@ -227,9 +227,8 @@ function ServiceRow({
   token: string | null;
   onPress: () => void;
 }) {
-  const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
   return (
-    <View className="flex-row items-center gap-2.5 rounded-md py-2.5 pl-3 pr-2.5">
+    <View className="min-h-[40px] flex-row items-center gap-2 rounded-md pl-3 pr-2">
       <Pressable
         onPress={onPress}
         className="min-w-0 flex-1 flex-row items-center gap-2.5 active:opacity-70"
@@ -243,11 +242,6 @@ function ServiceRow({
           {service.label || service.id}
         </Text>
         <TypeTag label="service" />
-        {detail ? (
-          <Text className="shrink-0 font-mono text-[12.5px] text-[#787a83]" numberOfLines={1}>
-            {detail}
-          </Text>
-        ) : null}
       </Pressable>
       <ServiceActions service={service} endpoint={endpoint} token={token} compact />
     </View>
@@ -306,7 +300,7 @@ function WorktreeGroup({
       {bucket.branch ? (
         <Text
           className={cn(
-            "ml-auto min-w-0 shrink pl-2 font-mono text-[12px]",
+            "min-w-0 shrink font-mono text-[12px]",
             hasChildren ? "text-[#787a83]" : "text-[#5b5d66]",
           )}
           numberOfLines={1}
