@@ -33,10 +33,10 @@ describe("discoverClaudeBackendSessionId", () => {
     expect(discoverClaudeBackendSessionId(cwd, projectsDir)).toBe(UUID_A);
   });
 
-  it("picks the most recently active transcript when several exist", () => {
+  it("refuses (returns null) when several transcripts make the match ambiguous", () => {
     writeTranscript(`${UUID_A}.jsonl`, 1000);
     writeTranscript(`${UUID_B}.jsonl`, 2000);
-    expect(discoverClaudeBackendSessionId(cwd, projectsDir)).toBe(UUID_B);
+    expect(discoverClaudeBackendSessionId(cwd, projectsDir)).toBeNull();
   });
 
   it("ignores non-uuid and non-jsonl files", () => {
