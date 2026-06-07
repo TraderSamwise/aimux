@@ -29,7 +29,7 @@ import { projectStateErrorCopy } from "@/lib/project-connection-display";
 // (square outline = worktree) with agents (circle) / services (diamond) as
 // guide-lined child rows. Rendered as the Project screen's "Dashboard"
 // section; kept route-agnostic via `padded`. Child guide line #3a3c44.
-const PRESS = "active:bg-[#232429]";
+const PRESS = "hover:bg-[#232429] active:bg-[#26272d]";
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
@@ -95,7 +95,7 @@ function ServiceRow({
 }) {
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
   return (
-    <View className="flex-row items-center rounded-md py-3 pl-4 pr-4">
+    <View className="flex-row items-center rounded-md py-3 pl-4 pr-4 hover:bg-[#232429]">
       <Pressable
         onPress={onPress}
         className="min-w-0 flex-1 flex-row items-center gap-3 active:opacity-70"
