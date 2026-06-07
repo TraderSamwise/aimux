@@ -7,7 +7,7 @@ import {
   getConfigPath,
   getProjectStateDir,
 } from "./paths.js";
-import { writeJsonAtomic } from "./atomic-write.js";
+import { quarantineCorruptFile, writeJsonAtomic } from "./atomic-write.js";
 
 export interface NotificationConfig {
   enabled: boolean;
@@ -211,7 +211,9 @@ export function loadConfig(opts: { includeGlobal?: boolean } = {}): AimuxConfig 
     try {
       const globalRaw = JSON.parse(readFileSync(globalPath, "utf-8"));
       config = deepMerge(config, globalRaw) as AimuxConfig;
-    } catch {}
+    } catch {
+      quarantineCorruptFile(globalPath);
+    }
   }
 
   // Layer 2: project config
@@ -220,7 +222,9 @@ export function loadConfig(opts: { includeGlobal?: boolean } = {}): AimuxConfig 
     try {
       const projectRaw = JSON.parse(readFileSync(projectPath, "utf-8"));
       config = deepMerge(config, projectRaw) as AimuxConfig;
-    } catch {}
+    } catch {
+      quarantineCorruptFile(projectPath);
+    }
   }
 
   return normalizeConfig(config);
