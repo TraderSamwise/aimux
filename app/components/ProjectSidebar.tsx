@@ -14,7 +14,7 @@ import {
 } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
-import { StatusDotMini, TypeTag } from "@/components/status-dot";
+import { BranchChip, StatusDotMini, TypeTag } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type {
@@ -297,18 +297,7 @@ function WorktreeGroup({
       >
         {bucket.name}
       </Text>
-      {bucket.branch ? (
-        <Text
-          className={cn(
-            "min-w-0 shrink font-mono text-[12px]",
-            hasChildren ? "text-[#787a83]" : "text-[#5b5d66]",
-          )}
-          numberOfLines={1}
-          ellipsizeMode="middle"
-        >
-          {bucket.branch}
-        </Text>
-      ) : null}
+      {bucket.branch ? <BranchChip branch={bucket.branch} /> : null}
     </>
   );
 

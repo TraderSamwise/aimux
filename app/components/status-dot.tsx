@@ -1,5 +1,6 @@
 import React from "react";
 import { View } from "react-native";
+import { GitBranch } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 
@@ -87,6 +88,24 @@ export function StatusDotMini({
   const bg =
     status === "running" ? "bg-[#4ade80]" : status === "waiting" ? "bg-amber-400" : "bg-[#5b5d66]";
   return <View className={cn(sizeClass, cornerClass, rotateClass, bg)} />;
+}
+
+// Branch pill (revived from the pre-restyle design): a GitBranch glyph + the
+// branch name in a subtle bordered mono chip. Shared by the sidebar tree and
+// the full-width dashboard so worktree branch suffixes read identically.
+export function BranchChip({ branch }: { branch: string }) {
+  return (
+    <View className="min-w-0 shrink flex-row items-center rounded border border-[#2a2b31] bg-[#1f2025] px-1.5 py-0.5">
+      <GitBranch size={10} color="#787a83" />
+      <Text
+        className="ml-1 min-w-0 shrink font-mono text-[11px] text-[#a6a8b0]"
+        numberOfLines={1}
+        ellipsizeMode="middle"
+      >
+        {branch}
+      </Text>
+    </View>
+  );
 }
 
 // Small monospace type marker, e.g. "service", mirroring the TUI's [service] tag.
