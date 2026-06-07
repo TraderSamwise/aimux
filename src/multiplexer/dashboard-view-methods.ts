@@ -24,6 +24,7 @@ import {
   stopService as stopServiceImpl,
 } from "./services.js";
 import { derivedStatusLabel } from "../dashboard/index.js";
+import { isDevelopmentRuntime } from "../connection-targets.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
 
@@ -155,6 +156,7 @@ export const dashboardViewMethods = {
         selectedServiceId: selectedService,
         selectedTeammates: selectDashboardTeammates(dashTeammates, selectedSessionEntry),
         runtimeLabel: "tmux",
+        isDevRuntime: isDevelopmentRuntime(),
         mainCheckout: mainCheckoutInfo,
         operationFailures: this.dashboardOperationFailuresCache ?? [],
         worktreeRemoval: this.worktreeRemovalJob

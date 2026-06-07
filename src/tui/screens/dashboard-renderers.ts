@@ -479,14 +479,12 @@ export function renderDashboardFrame(
     return lines.slice(0, height);
   };
 
-  const header: string[] = [
-    "",
-    centerInBlock(
-      `\x1b[1maimux\x1b[0m — agent multiplexer${state.runtimeLabel ? `  \x1b[32m● ${state.runtimeLabel}\x1b[0m` : ""}`,
-    ),
-    "─".repeat(Math.max(0, cols)),
-    "",
-  ];
+  const devBadge = state.isDevRuntime ? "\x1b[1;30;43m DEV \x1b[0m " : "";
+  const title = `${devBadge}\x1b[1maimux\x1b[0m — agent multiplexer${state.runtimeLabel ? `  \x1b[32m● ${state.runtimeLabel}\x1b[0m` : ""}`;
+  const divider = state.isDevRuntime
+    ? `\x1b[33m${"─".repeat(Math.max(0, cols))}\x1b[0m`
+    : "─".repeat(Math.max(0, cols));
+  const header: string[] = ["", centerInBlock(title), divider, ""];
   const content: string[] = [];
   const operationFailures = state.operationFailures ?? [];
   if (operationFailures.length > 0) {
