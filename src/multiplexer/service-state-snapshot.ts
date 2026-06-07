@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 
 import { getStatePath } from "../paths.js";
-import { writeJsonAtomic } from "../atomic-write.js";
+import { quarantineCorruptFile, writeJsonAtomic } from "../atomic-write.js";
 import type { TmuxRuntimeManager } from "../tmux/runtime-manager.js";
 import type { SavedState, ServiceState } from "./index.js";
 import { buildServiceStateFromMetadata } from "./services.js";
@@ -78,6 +78,7 @@ export function persistProjectRuntimeSnapshotsBeforeTmuxStop(
     try {
       existing = JSON.parse(readFileSync(statePath, "utf-8")) as SavedState;
     } catch {
+      quarantineCorruptFile(statePath);
       existing = null;
     }
   }
