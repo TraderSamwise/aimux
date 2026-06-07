@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { Page, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
+import { StatusDotMini } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
@@ -35,15 +36,6 @@ const ROW_BORDER = "border-[#2a2b31]";
 const PRESS = "active:bg-[#232429]";
 
 // ─── Status primitives ──────────────────────────────────────────────────────
-
-function StatusDotMini({ status, hollow }: { status?: string; hollow?: boolean }) {
-  if (hollow) {
-    return <View className="h-[7px] w-[7px] rounded-full border-[1.5px] border-[#44464e]" />;
-  }
-  const bg =
-    status === "running" ? "bg-[#4ade80]" : status === "waiting" ? "bg-amber-400" : "bg-[#5b5d66]";
-  return <View className={cn("h-[7px] w-[7px] rounded-full", bg)} />;
-}
 
 function StatusWord({ status }: { status: string }) {
   const tone =
