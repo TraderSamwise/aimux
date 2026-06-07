@@ -16,6 +16,7 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { join, basename, resolve, dirname, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { quarantineCorruptFile, writeJsonAtomic } from "./atomic-write.js";
 
 // ── Cached state (populated by initPaths) ──────────────────────────
 
@@ -403,6 +404,7 @@ function loadRegistry(): ProjectsRegistry {
   try {
     registry = JSON.parse(readFileSync(path, "utf-8"));
   } catch {
+    quarantineCorruptFile(path);
     return { version: 1, projects: [] };
   }
   return normalizeRegistry(registry);
@@ -411,7 +413,7 @@ function loadRegistry(): ProjectsRegistry {
 function saveRegistry(registry: ProjectsRegistry): void {
   const dir = getGlobalAimuxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(getProjectsRegistryPath(), JSON.stringify(registry, null, 2) + "\n");
+  writeJsonAtomic(getProjectsRegistryPath(), registry);
 }
 
 function registerProject(): void {

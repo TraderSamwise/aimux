@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { getGlobalAimuxDir, getProjectIdFor } from "./paths.js";
+import { writeJsonAtomic } from "./atomic-write.js";
 import { requestJson } from "./http-client.js";
 import { log } from "./debug.js";
 
@@ -46,7 +47,7 @@ function readJson<T>(path: string): T | null {
 }
 
 function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  writeJsonAtomic(path, value);
 }
 
 function isAimuxProjectServiceProcess(pid: number): boolean {

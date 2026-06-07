@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import { findMainRepo } from "../worktree.js";
 import { getStatePath } from "../paths.js";
+import { writeJsonAtomic } from "../atomic-write.js";
 import type { ServiceState } from "./index.js";
 import { wrapCommandWithShellIntegration, wrapInteractiveShellWithIntegration } from "../shell-hooks.js";
 import { markLastUsed } from "../last-used.js";
@@ -286,7 +287,7 @@ export function removeOfflineService(host: ServiceHost, serviceId: string): { se
     try {
       const state = JSON.parse(readFileSync(statePath, "utf-8")) as { services?: ServiceState[] };
       state.services = (state.services ?? []).filter((service) => service.id !== serviceId);
-      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+      writeJsonAtomic(statePath, state);
     } catch {}
   }
   host.saveState();

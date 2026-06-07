@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { getProjectStateDirFor } from "./paths.js";
 import { join } from "node:path";
 import { parseRecencyTimestamp } from "./recency.js";
+import { writeJsonAtomic } from "./atomic-write.js";
 
 const LAST_USED_VERSION = 1;
 const MAX_RECENT_IDS = 64;
@@ -101,7 +102,7 @@ export function compareLastUsed(
 function persistLastUsedState(projectRoot: string, state: LastUsedState): void {
   const dir = getProjectStateDirFor(projectRoot);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(getLastUsedPath(projectRoot), JSON.stringify(state, null, 2));
+  writeJsonAtomic(getLastUsedPath(projectRoot), state);
 }
 
 function normalizeLastUsedState(state: Partial<LastUsedState>): LastUsedState {
