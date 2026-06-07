@@ -85,6 +85,19 @@ describe("reconcileOfflineBackendSessionIds", () => {
     expect(result.reconciled).toEqual([]);
   });
 
+  it("refuses to bind when the worktree dir is ambiguous (several transcripts)", () => {
+    const cwd = join(repoRoot, "wt", "shared");
+    seedOfflineClaude("claude-1", cwd);
+    writeTranscript(cwd, UUID);
+    writeTranscript(cwd, "99999999-8888-7777-6666-555555555555");
+
+    const result = reconcileOfflineBackendSessionIds(repoRoot);
+
+    expect(result.reconciled).toEqual([]);
+    const offline = listTopologySessionStates({ statuses: ["offline"] }).find((s) => s.id === "claude-1");
+    expect(offline?.backendSessionId).toBeUndefined();
+  });
+
   it("is idempotent: a second run reconciles nothing", () => {
     const cwd = join(repoRoot, "wt", "feature");
     seedOfflineClaude("claude-1", cwd);
