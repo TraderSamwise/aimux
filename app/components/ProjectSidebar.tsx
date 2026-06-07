@@ -14,7 +14,7 @@ import {
 } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
-import { StatusDotMini } from "@/components/status-dot";
+import { StatusDotMini, TypeTag } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type {
@@ -23,16 +23,10 @@ import type {
   DesktopState,
   WorktreeBucket,
 } from "@/lib/desktop-state";
-import {
-  MAIN_TAB_ROUTES,
-  mainTabForPath,
-  useMainTabNavigation,
-  type MainTabId,
-} from "@/lib/main-tabs";
+import { mainTabForPath, useMainTabNavigation, type MainTabId } from "@/lib/main-tabs";
 import {
   buildViewHref,
   detailHrefForPath,
-  mergeViewParams,
   projectPathFromSearchOrLocation,
   type SearchValue,
 } from "@/lib/view-location";
@@ -108,9 +102,9 @@ function ProjectPicker({
             <Pressable
               key={project.path}
               onPress={() => onSelect(project.path)}
-              className={cn("px-3.5 py-2.5", isSelected ? "bg-[#26272d]" : "active:bg-[#232429]")}
+              className={cn("px-4 py-3", isSelected ? "bg-[#26272d]" : "active:bg-[#232429]")}
             >
-              <View className="flex-row items-center gap-2">
+              <View className="flex-row items-center gap-2.5">
                 <View
                   className={cn(
                     "h-[7px] w-[7px] rounded-full",
@@ -118,7 +112,7 @@ function ProjectPicker({
                   )}
                 />
                 <Text
-                  className="min-w-0 flex-1 text-[13.5px] font-medium text-[#edeef0]"
+                  className="min-w-0 flex-1 text-[14px] font-medium text-[#edeef0]"
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
@@ -126,7 +120,7 @@ function ProjectPicker({
                 </Text>
                 <Text
                   className={cn(
-                    "font-mono text-[10px]",
+                    "font-mono text-[11px]",
                     isOnline ? "text-[#4ade80]" : "text-[#787a83]",
                   )}
                 >
@@ -134,7 +128,7 @@ function ProjectPicker({
                 </Text>
               </View>
               <Text
-                className="ml-4 mt-0.5 font-mono text-[11px] text-[#787a83]"
+                className="ml-4 mt-0.5 font-mono text-[12px] text-[#787a83]"
                 numberOfLines={1}
                 ellipsizeMode="middle"
               >
@@ -161,21 +155,21 @@ function ProjectHeader({
     <Pressable
       onPress={onSwitchProject}
       accessibilityLabel="Switch project"
-      className="border-b border-[#2a2b31] px-3.5 pb-3 pt-3.5 active:bg-[#232429]"
+      className="border-b border-[#2a2b31] px-4 pb-3.5 pt-4 active:bg-[#232429]"
     >
       <View className="flex-row items-center gap-1.5">
-        <ChevronLeft size={13} color="#787a83" />
-        <Text className="text-[11.5px] font-medium text-[#787a83]">All projects</Text>
+        <ChevronLeft size={14} color="#787a83" />
+        <Text className="text-[12.5px] font-medium text-[#787a83]">All projects</Text>
       </View>
       <Text
-        className="mt-2 text-[15px] font-semibold text-[#edeef0]"
+        className="mt-2 text-[16px] font-semibold text-[#edeef0]"
         numberOfLines={1}
         ellipsizeMode="tail"
       >
         {project.name}
       </Text>
       <Text
-        className="mt-0.5 font-mono text-[11px] text-[#787a83]"
+        className="mt-0.5 font-mono text-[12px] text-[#787a83]"
         numberOfLines={1}
         ellipsizeMode="middle"
       >
@@ -201,20 +195,20 @@ function AgentRow({
     <Pressable
       onPress={onPress}
       className={cn(
-        "flex-row items-center gap-[9px] rounded-md py-1.5 pl-[25px] pr-2",
+        "flex-row items-center gap-2.5 rounded-md py-2.5 pl-3 pr-2.5",
         isSelected ? "bg-[#26272d]" : "active:bg-[#232429]",
       )}
     >
       <StatusDotMini status={session.status} />
       <Text
-        className="min-w-0 shrink text-[12.5px] font-medium text-[#edeef0]"
+        className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
         numberOfLines={1}
         ellipsizeMode="tail"
       >
         {session.label || session.id}
       </Text>
       {tool ? (
-        <Text className="shrink-0 font-mono text-[11px] text-[#787a83]" numberOfLines={1}>
+        <Text className="shrink-0 font-mono text-[12.5px] text-[#787a83]" numberOfLines={1}>
           {tool}
         </Text>
       ) : null}
@@ -235,21 +229,22 @@ function ServiceRow({
 }) {
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
   return (
-    <View className="flex-row items-center gap-[9px] rounded-md py-1.5 pl-[25px] pr-2">
+    <View className="flex-row items-center gap-2.5 rounded-md py-2.5 pl-3 pr-2.5">
       <Pressable
         onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-[9px] active:opacity-70"
+        className="min-w-0 flex-1 flex-row items-center gap-2.5 active:opacity-70"
       >
-        <StatusDotMini status={service.status} />
+        <StatusDotMini status={service.status} shape="diamond" />
         <Text
-          className="min-w-0 shrink text-[12.5px] font-medium text-[#edeef0]"
+          className="min-w-0 shrink text-[14px] font-medium text-[#edeef0]"
           numberOfLines={1}
           ellipsizeMode="tail"
         >
           {service.label || service.id}
         </Text>
+        <TypeTag label="service" />
         {detail ? (
-          <Text className="shrink-0 font-mono text-[11px] text-[#787a83]" numberOfLines={1}>
+          <Text className="shrink-0 font-mono text-[12.5px] text-[#787a83]" numberOfLines={1}>
             {detail}
           </Text>
         ) : null}
@@ -285,17 +280,22 @@ function WorktreeGroup({
     <>
       {hasChildren ? (
         collapsed ? (
-          <ChevronRight size={11} color="#5b5d66" />
+          <ChevronRight size={13} color="#5b5d66" />
         ) : (
-          <ChevronDown size={11} color="#5b5d66" />
+          <ChevronDown size={13} color="#5b5d66" />
         )
       ) : (
-        <View className="w-[11px]" />
+        <View className="w-[13px]" />
       )}
-      <StatusDotMini status={anyRunning ? "running" : undefined} hollow={!hasChildren} />
+      <StatusDotMini
+        status={anyRunning ? "running" : undefined}
+        hollow={!hasChildren}
+        shape="square"
+        outline
+      />
       <Text
         className={cn(
-          "shrink-0 text-[13px] font-semibold",
+          "shrink-0 text-[14px] font-semibold",
           bright ? "text-[#edeef0]" : "font-medium text-[#a6a8b0]",
         )}
         numberOfLines={1}
@@ -306,7 +306,7 @@ function WorktreeGroup({
       {bucket.branch ? (
         <Text
           className={cn(
-            "ml-auto min-w-0 shrink pl-2 font-mono text-[10.5px]",
+            "ml-auto min-w-0 shrink pl-2 font-mono text-[12px]",
             hasChildren ? "text-[#787a83]" : "text-[#5b5d66]",
           )}
           numberOfLines={1}
@@ -318,7 +318,7 @@ function WorktreeGroup({
     </>
   );
 
-  const headerClass = "flex-row items-center gap-2 rounded-md px-2 py-1.5";
+  const headerClass = "flex-row items-center gap-2.5 rounded-md px-2.5 py-2.5";
 
   return (
     <View>
@@ -333,7 +333,7 @@ function WorktreeGroup({
         <View className={headerClass}>{header}</View>
       )}
       {hasChildren && !collapsed ? (
-        <View>
+        <View className="ml-[20px] border-l-2 border-[#3a3c44]">
           {bucket.sessions.map((session) => (
             <AgentRow
               key={session.id}
@@ -453,7 +453,7 @@ function WorktreeTree({
   };
 
   return (
-    <View className="p-1.5">
+    <View className="p-2">
       {main ? <WorktreeGroup bucket={main} {...groupProps} /> : null}
       {activeRest.map((bucket) => (
         <WorktreeGroup key={bucket.key} bucket={bucket} {...groupProps} />
@@ -468,14 +468,14 @@ function WorktreeTree({
             accessibilityLabel={`${showEmpty ? "Hide" : "Show"} ${emptyRest.length} empty worktree${
               emptyRest.length > 1 ? "s" : ""
             }`}
-            className="flex-row items-center gap-2 rounded-md px-2 py-1.5 active:bg-[#232429]"
+            className="flex-row items-center gap-2.5 rounded-md px-2.5 py-2.5 active:bg-[#232429]"
           >
             {showEmpty ? (
-              <ChevronDown size={11} color="#5b5d66" />
+              <ChevronDown size={13} color="#5b5d66" />
             ) : (
-              <ChevronRight size={11} color="#5b5d66" />
+              <ChevronRight size={13} color="#5b5d66" />
             )}
-            <Text className="text-[11.5px] text-[#787a83]">
+            <Text className="text-[13px] text-[#787a83]">
               <Text className="font-bold text-[#a6a8b0]">{emptyRest.length}</Text> empty worktree
               {emptyRest.length > 1 ? "s" : ""}
             </Text>
@@ -509,7 +509,7 @@ function SidebarModeTabs({
   onChange: (mode: SidebarMode) => void;
 }) {
   return (
-    <View className="flex-row gap-[18px] border-b border-[#2a2b31] px-3.5">
+    <View className="flex-row gap-5 border-b border-[#2a2b31] px-4">
       {(["dashboard", "views"] as const).map((tab) => {
         const active = mode === tab;
         const label = tab === "dashboard" ? "Dashboard" : "Views";
@@ -518,13 +518,13 @@ function SidebarModeTabs({
             key={tab}
             onPress={() => onChange(tab)}
             className={cn(
-              "border-b-[1.5px] py-2.5",
+              "border-b-[1.5px] py-3",
               active ? "border-[#edeef0]" : "border-transparent",
             )}
           >
             <Text
               className={cn(
-                "text-[12.5px] font-medium",
+                "text-[13.5px] font-medium",
                 active ? "text-[#edeef0]" : "text-[#787a83]",
               )}
             >
@@ -649,10 +649,8 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   function handlePickProject(path: string) {
     selectProject(path);
     setShowPicker(false);
-    const tabId = mainTabForPath(pathname);
-    router.replace(
-      buildViewHref(MAIN_TAB_ROUTES[tabId].href, mergeViewParams(searchParams, { project: path })),
-    );
+    // Selecting a project always lands on the Project screen's Dashboard section.
+    router.replace(buildViewHref("/project", { project: path }));
   }
 
   function handlePickSession(sessionId: string) {
