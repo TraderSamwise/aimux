@@ -5,16 +5,16 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Bell,
   BookOpen,
+  ChevronDown,
   ChevronLeft,
+  ChevronRight,
   FolderKanban,
-  GitBranch,
   MessageSquare,
   Network,
 } from "lucide-react-native";
-import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
-import { StatusDot } from "@/components/status-dot";
+import { StatusDotMini } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type {
@@ -55,12 +55,9 @@ import {
 import { sidebarModeAtom, sidebarShowProjectPickerAtom } from "@/stores/ui";
 import { getProjectServiceEndpoint, projectStateErrorCopy } from "@/lib/project-connection-display";
 
-// Type ladder used throughout the sidebar:
-//   - Project name / worktree name (title)      → text-[15px] font-bold
-//   - Section headings (Agents, Services)       → text-[10px] uppercase tracking-widest
-//   - Row primary (agent/service label)         → text-[13px] font-medium
-//   - Row secondary (tool, status, detail)      → text-[11px] text-muted-foreground
-//   - Path / branch chip                        → text-[11px] muted
+// Restyle palette (Linear-style lifted slate) — mirrors docs/mockups/project-view.html.
+//   sidebar bg #161719 · hairline #2a2b31 · press #232429 · selected #26272d
+//   text fg #edeef0 · muted #a6a8b0 / #787a83 · faint #5b5d66
 
 const SIDEBAR_WIDTH = 320;
 const EMPTY_PROJECT_PATH = "__aimux_no_selected_project__";
@@ -77,6 +74,10 @@ function routePrefersViews(tab: MainTabId): boolean {
   );
 }
 
+function worktreeHasChildren(bucket: WorktreeBucket): boolean {
+  return bucket.sessions.length > 0 || bucket.services.length > 0;
+}
+
 // ─── Project picker ───────────────────────────────────────────────────────
 
 function ProjectPicker({
@@ -89,15 +90,15 @@ function ProjectPicker({
   onSelect: (path: string) => void;
 }) {
   return (
-    <View className="pt-5 pb-2">
-      <View className="px-4 pb-3">
-        <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+    <View className="pt-4 pb-2">
+      <View className="px-3.5 pb-2">
+        <Text className="text-[10px] font-bold uppercase tracking-widest text-[#787a83]">
           Projects
         </Text>
       </View>
       {projects.length === 0 ? (
-        <View className="px-4 py-3">
-          <Text className="text-sm text-muted-foreground">No projects detected</Text>
+        <View className="px-3.5 py-3">
+          <Text className="text-[13px] text-[#787a83]">No projects detected</Text>
         </View>
       ) : (
         projects.map((project) => {
@@ -107,22 +108,17 @@ function ProjectPicker({
             <Pressable
               key={project.path}
               onPress={() => onSelect(project.path)}
-              className={cn(
-                "px-4 py-2.5 border-l-2",
-                isSelected
-                  ? "border-l-emerald-500 bg-accent"
-                  : "border-l-transparent active:bg-accent/60",
-              )}
+              className={cn("px-3.5 py-2.5", isSelected ? "bg-[#26272d]" : "active:bg-[#232429]")}
             >
               <View className="flex-row items-center gap-2">
                 <View
                   className={cn(
-                    "h-2 w-2 rounded-full",
-                    isOnline ? "bg-emerald-400" : "bg-muted-foreground/35",
+                    "h-[7px] w-[7px] rounded-full",
+                    isOnline ? "bg-[#4ade80]" : "bg-[#5b5d66]",
                   )}
                 />
                 <Text
-                  className="text-[14px] font-semibold text-foreground flex-1 min-w-0"
+                  className="min-w-0 flex-1 text-[13.5px] font-medium text-[#edeef0]"
                   numberOfLines={1}
                   ellipsizeMode="tail"
                 >
@@ -130,15 +126,15 @@ function ProjectPicker({
                 </Text>
                 <Text
                   className={cn(
-                    "text-[9px] font-bold uppercase tracking-wide",
-                    isOnline ? "text-emerald-400" : "text-muted-foreground",
+                    "font-mono text-[10px]",
+                    isOnline ? "text-[#4ade80]" : "text-[#787a83]",
                   )}
                 >
                   {isOnline ? "online" : "offline"}
                 </Text>
               </View>
               <Text
-                className="text-[11px] text-muted-foreground mt-0.5 ml-4"
+                className="ml-4 mt-0.5 font-mono text-[11px] text-[#787a83]"
                 numberOfLines={1}
                 ellipsizeMode="middle"
               >
@@ -152,7 +148,7 @@ function ProjectPicker({
   );
 }
 
-// ─── Project header (within tree view) ────────────────────────────────────
+// ─── Project header ────────────────────────────────────────────────────────
 
 function ProjectHeader({
   project,
@@ -165,52 +161,31 @@ function ProjectHeader({
     <Pressable
       onPress={onSwitchProject}
       accessibilityLabel="Switch project"
-      className="flex-row items-center border-b border-border bg-card px-4 py-2.5 active:bg-accent"
+      className="border-b border-[#2a2b31] px-3.5 pb-3 pt-3.5 active:bg-[#232429]"
     >
-      <View className="mr-2 -ml-1">
-        <ChevronLeft size={16} color="#a1a1aa" />
+      <View className="flex-row items-center gap-1.5">
+        <ChevronLeft size={13} color="#787a83" />
+        <Text className="text-[11.5px] font-medium text-[#787a83]">All projects</Text>
       </View>
-      <View className="flex-1 min-w-0">
-        <Text className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
-          All projects
-        </Text>
-        <Text
-          className="text-[15px] font-bold text-foreground"
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {project.name}
-        </Text>
-        <Text
-          className="mt-0.5 text-[10px] text-muted-foreground"
-          numberOfLines={1}
-          ellipsizeMode="middle"
-        >
-          {project.path}
-        </Text>
-      </View>
+      <Text
+        className="mt-2 text-[15px] font-semibold text-[#edeef0]"
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {project.name}
+      </Text>
+      <Text
+        className="mt-0.5 font-mono text-[11px] text-[#787a83]"
+        numberOfLines={1}
+        ellipsizeMode="middle"
+      >
+        {project.path}
+      </Text>
     </Pressable>
   );
 }
 
-// ─── Branch chip ──────────────────────────────────────────────────────────
-
-function BranchChip({ branch }: { branch: string }) {
-  return (
-    <View className="max-w-full flex-row items-center self-start rounded border border-border bg-background px-2 py-0">
-      <GitBranch size={10} color="#a1a1aa" />
-      <Text
-        className="text-[10px] font-mono text-muted-foreground ml-1.5"
-        numberOfLines={1}
-        ellipsizeMode="middle"
-      >
-        {branch}
-      </Text>
-    </View>
-  );
-}
-
-// ─── Agent row ────────────────────────────────────────────────────────────
+// ─── Agent / service child rows ──────────────────────────────────────────────
 
 function AgentRow({
   session,
@@ -226,31 +201,26 @@ function AgentRow({
     <Pressable
       onPress={onPress}
       className={cn(
-        "flex-row items-center px-3 py-1",
-        isSelected ? "bg-accent" : "active:bg-accent/60",
+        "flex-row items-center gap-[9px] rounded-md py-1.5 pl-[25px] pr-2",
+        isSelected ? "bg-[#26272d]" : "active:bg-[#232429]",
       )}
     >
-      <View className="mr-2.5">
-        <StatusDot status={session.status} size="sm" />
-      </View>
-      <View className="flex-1 min-w-0">
-        <Text
-          className="min-w-0 flex-1 text-[11px] text-muted-foreground"
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          <Text className="text-[12px] font-medium text-foreground">
-            {session.label || session.id}
-          </Text>
-          {tool ? ` · ${tool}` : ""}
-          {` · ${session.status}`}
+      <StatusDotMini status={session.status} />
+      <Text
+        className="min-w-0 shrink text-[12.5px] font-medium text-[#edeef0]"
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {session.label || session.id}
+      </Text>
+      {tool ? (
+        <Text className="shrink-0 font-mono text-[11px] text-[#787a83]" numberOfLines={1}>
+          {tool}
         </Text>
-      </View>
+      ) : null}
     </Pressable>
   );
 }
-
-// ─── Service row ──────────────────────────────────────────────────────────
 
 function ServiceRow({
   service,
@@ -264,41 +234,32 @@ function ServiceRow({
   onPress: () => void;
 }) {
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
-
   return (
-    <View className="flex-row items-center px-3 py-1">
+    <View className="flex-row items-center gap-[9px] rounded-md py-1.5 pl-[25px] pr-2">
       <Pressable
         onPress={onPress}
-        className="flex-1 flex-row items-center min-w-0 active:opacity-70"
+        className="min-w-0 flex-1 flex-row items-center gap-[9px] active:opacity-70"
       >
-        <View className="mr-2.5">
-          <StatusDot status={service.status} size="sm" />
-        </View>
-        <View className="flex-1 min-w-0">
-          <Text
-            className="text-[12px] font-medium text-foreground"
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {service.label || service.id}
+        <StatusDotMini status={service.status} />
+        <Text
+          className="min-w-0 shrink text-[12.5px] font-medium text-[#edeef0]"
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {service.label || service.id}
+        </Text>
+        {detail ? (
+          <Text className="shrink-0 font-mono text-[11px] text-[#787a83]" numberOfLines={1}>
+            {detail}
           </Text>
-          <Text
-            className="text-[10px] text-muted-foreground"
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {detail ? `${detail} · ${service.status}` : service.status}
-          </Text>
-        </View>
+        ) : null}
       </Pressable>
-      <View className="ml-2">
-        <ServiceActions service={service} endpoint={endpoint} token={token} compact />
-      </View>
+      <ServiceActions service={service} endpoint={endpoint} token={token} compact />
     </View>
   );
 }
 
-// ─── Worktree group ───────────────────────────────────────────────────────
+// ─── Worktree group (collapsible header + child rows) ─────────────────────────
 
 function WorktreeGroup({
   bucket,
@@ -315,39 +276,64 @@ function WorktreeGroup({
   onPickSession: (sessionId: string) => void;
   onPickService: (serviceId: string) => void;
 }) {
-  const hasAgents = bucket.sessions.length > 0;
-  const hasServices = bucket.services.length > 0;
-  const railColor = bucket.isMainCheckout ? "bg-emerald-500" : "bg-sky-500";
+  const hasChildren = worktreeHasChildren(bucket);
+  const [collapsed, setCollapsed] = useState(false);
+  const anyRunning = [...bucket.sessions, ...bucket.services].some((x) => x.status === "running");
+  const bright = hasChildren || bucket.isMainCheckout;
+
+  const header = (
+    <>
+      {hasChildren ? (
+        collapsed ? (
+          <ChevronRight size={11} color="#5b5d66" />
+        ) : (
+          <ChevronDown size={11} color="#5b5d66" />
+        )
+      ) : (
+        <View className="w-[11px]" />
+      )}
+      <StatusDotMini status={anyRunning ? "running" : undefined} hollow={!hasChildren} />
+      <Text
+        className={cn(
+          "shrink-0 text-[13px] font-semibold",
+          bright ? "text-[#edeef0]" : "font-medium text-[#a6a8b0]",
+        )}
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {bucket.name}
+      </Text>
+      {bucket.branch ? (
+        <Text
+          className={cn(
+            "ml-auto min-w-0 shrink pl-2 font-mono text-[10.5px]",
+            hasChildren ? "text-[#787a83]" : "text-[#5b5d66]",
+          )}
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
+          {bucket.branch}
+        </Text>
+      ) : null}
+    </>
+  );
+
+  const headerClass = "flex-row items-center gap-2 rounded-md px-2 py-1.5";
 
   return (
-    <Card className="mx-3 mb-2 overflow-hidden p-0">
-      {/* Worktree header */}
-      <View className="flex-row items-stretch border-b border-border bg-secondary">
-        <View className={cn("w-1", railColor)} />
-        <View className="min-w-0 flex-1 px-3 py-1.5">
-          <Text
-            className="text-[14px] font-bold text-foreground"
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {bucket.name}
-          </Text>
-          {bucket.branch ? (
-            <View className="mt-0.5">
-              <BranchChip branch={bucket.branch} />
-            </View>
-          ) : null}
-        </View>
-      </View>
-
-      {/* Body */}
-      {hasAgents ? (
+    <View>
+      {hasChildren ? (
+        <Pressable
+          onPress={() => setCollapsed((c) => !c)}
+          className={cn(headerClass, "active:bg-[#232429]")}
+        >
+          {header}
+        </Pressable>
+      ) : (
+        <View className={headerClass}>{header}</View>
+      )}
+      {hasChildren && !collapsed ? (
         <View>
-          <View className="px-3 pb-0.5 pt-2">
-            <Text className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-              Agents · {bucket.sessions.length}
-            </Text>
-          </View>
           {bucket.sessions.map((session) => (
             <AgentRow
               key={session.id}
@@ -356,16 +342,6 @@ function WorktreeGroup({
               onPress={() => onPickSession(session.id)}
             />
           ))}
-        </View>
-      ) : null}
-
-      {hasServices ? (
-        <View className={cn("pb-1", hasAgents && "border-t border-border")}>
-          <View className="px-3 pb-0.5 pt-2">
-            <Text className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-              Services · {bucket.services.length}
-            </Text>
-          </View>
           {bucket.services.map((service) => (
             <ServiceRow
               key={service.id}
@@ -377,19 +353,37 @@ function WorktreeGroup({
           ))}
         </View>
       ) : null}
-
-      {!hasAgents && !hasServices ? (
-        <View className="px-3 py-2">
-          <Text className="text-[10px] italic text-muted-foreground">empty worktree</Text>
-        </View>
-      ) : (
-        <View className="h-0.5" />
-      )}
-    </Card>
+    </View>
   );
 }
 
 // ─── Worktree tree (top-level for the project) ────────────────────────────
+
+function SidebarStateCard({
+  title,
+  detail,
+  tone = "default",
+}: {
+  title: string;
+  detail?: string;
+  tone?: "default" | "warning";
+}) {
+  return (
+    <View
+      className={cn(
+        "mx-2 mt-3 mb-2 rounded-lg border px-3 py-3",
+        tone === "warning"
+          ? "border-amber-500/30 bg-amber-500/10"
+          : "border-[#2a2b31] bg-[#1f2025]",
+      )}
+    >
+      <Text className="text-[12px] font-medium leading-snug text-[#edeef0]">{title}</Text>
+      {detail ? (
+        <Text className="mt-1 text-[11px] leading-snug text-[#787a83]">{detail}</Text>
+      ) : null}
+    </View>
+  );
+}
 
 function WorktreeTree({
   projectPath,
@@ -411,36 +405,26 @@ function WorktreeTree({
   onPickService: (serviceId: string) => void;
 }) {
   const groups = useAtomValue(worktreeGroupsFamily(projectPath));
+  const [showEmpty, setShowEmpty] = useState(false);
 
   if (!endpoint && desktopState === null) {
     return (
-      <View className="mx-3 mt-3 mb-2 rounded-lg border border-border bg-card px-3 py-3">
-        <Text className="text-[12px] font-medium text-foreground/90 leading-snug">
-          Project host not running.
-        </Text>
-        <Text className="text-[11px] text-muted-foreground mt-1 leading-snug">
-          Start the host to see worktrees, agents, and services.
-        </Text>
-      </View>
+      <SidebarStateCard
+        title="Project host not running."
+        detail="Start the host to see worktrees, agents, and services."
+      />
     );
   }
 
   if (endpoint && desktopState === null && desktopStateError) {
     const copy = projectStateErrorCopy(desktopStateError);
-    return (
-      <View className="mx-3 mt-3 mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3">
-        <Text className="text-[12px] font-medium text-foreground/90 leading-snug">
-          {copy.title}
-        </Text>
-        <Text className="text-[11px] text-muted-foreground mt-1 leading-snug">{copy.detail}</Text>
-      </View>
-    );
+    return <SidebarStateCard title={copy.title} detail={copy.detail} tone="warning" />;
   }
 
   if (endpoint && desktopState === null) {
     return (
       <View className="px-4 py-4">
-        <Text className="text-xs text-muted-foreground">Loading project state...</Text>
+        <Text className="text-xs text-[#787a83]">Loading project state...</Text>
       </View>
     );
   }
@@ -448,24 +432,61 @@ function WorktreeTree({
   if (groups.length === 0) {
     return (
       <View className="px-4 py-4">
-        <Text className="text-xs text-muted-foreground">No worktrees yet</Text>
+        <Text className="text-xs text-[#787a83]">No worktrees yet</Text>
       </View>
     );
   }
 
+  // Main checkout stays pinned/visible; remaining worktrees split into active
+  // (have agents/services) and empty (collapsed behind a disclosure).
+  const main = groups.find((g) => g.isMainCheckout);
+  const rest = groups.filter((g) => !g.isMainCheckout);
+  const activeRest = rest.filter(worktreeHasChildren);
+  const emptyRest = rest.filter((g) => !worktreeHasChildren(g));
+
+  const groupProps = {
+    endpoint,
+    token,
+    selectedSessionId,
+    onPickSession,
+    onPickService,
+  };
+
   return (
-    <View className="pb-2 pt-2">
-      {groups.map((bucket) => (
-        <WorktreeGroup
-          key={bucket.key}
-          bucket={bucket}
-          endpoint={endpoint}
-          token={token}
-          selectedSessionId={selectedSessionId}
-          onPickSession={onPickSession}
-          onPickService={onPickService}
-        />
+    <View className="p-1.5">
+      {main ? <WorktreeGroup bucket={main} {...groupProps} /> : null}
+      {activeRest.map((bucket) => (
+        <WorktreeGroup key={bucket.key} bucket={bucket} {...groupProps} />
       ))}
+
+      {emptyRest.length > 0 ? (
+        <View className="mt-0.5">
+          <Pressable
+            onPress={() => setShowEmpty((s) => !s)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: showEmpty }}
+            accessibilityLabel={`${showEmpty ? "Hide" : "Show"} ${emptyRest.length} empty worktree${
+              emptyRest.length > 1 ? "s" : ""
+            }`}
+            className="flex-row items-center gap-2 rounded-md px-2 py-1.5 active:bg-[#232429]"
+          >
+            {showEmpty ? (
+              <ChevronDown size={11} color="#5b5d66" />
+            ) : (
+              <ChevronRight size={11} color="#5b5d66" />
+            )}
+            <Text className="text-[11.5px] text-[#787a83]">
+              <Text className="font-bold text-[#a6a8b0]">{emptyRest.length}</Text> empty worktree
+              {emptyRest.length > 1 ? "s" : ""}
+            </Text>
+          </Pressable>
+          {showEmpty
+            ? emptyRest.map((bucket) => (
+                <WorktreeGroup key={bucket.key} bucket={bucket} {...groupProps} />
+              ))
+            : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -488,32 +509,30 @@ function SidebarModeTabs({
   onChange: (mode: SidebarMode) => void;
 }) {
   return (
-    <View className="border-b border-border px-3 py-3">
-      <View className="flex-row overflow-hidden rounded-lg border border-border">
-        {(["dashboard", "views"] as const).map((tab) => {
-          const active = mode === tab;
-          const label = tab === "dashboard" ? "Dashboard" : "Views";
-          return (
-            <Pressable
-              key={tab}
-              onPress={() => onChange(tab)}
+    <View className="flex-row gap-[18px] border-b border-[#2a2b31] px-3.5">
+      {(["dashboard", "views"] as const).map((tab) => {
+        const active = mode === tab;
+        const label = tab === "dashboard" ? "Dashboard" : "Views";
+        return (
+          <Pressable
+            key={tab}
+            onPress={() => onChange(tab)}
+            className={cn(
+              "border-b-[1.5px] py-2.5",
+              active ? "border-[#edeef0]" : "border-transparent",
+            )}
+          >
+            <Text
               className={cn(
-                "flex-1 items-center px-3 py-2 active:bg-accent/70",
-                active ? "bg-accent" : "bg-background",
+                "text-[12.5px] font-medium",
+                active ? "text-[#edeef0]" : "text-[#787a83]",
               )}
             >
-              <Text
-                className={cn(
-                  "text-[12px] font-semibold",
-                  active ? "text-foreground" : "text-muted-foreground",
-                )}
-              >
-                {label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+              {label}
+            </Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -524,7 +543,7 @@ function SidebarPrimaryNav() {
   const activeTab = mainTabForPath(pathname);
 
   return (
-    <View className="px-3 py-3">
+    <View className="p-1.5">
       {PRIMARY_NAV.map(({ id, label, Icon }) => {
         const tabId = id as MainTabId;
         const active = activeTab === tabId;
@@ -533,15 +552,15 @@ function SidebarPrimaryNav() {
             key={id}
             onPress={() => navigateTab(tabId)}
             className={cn(
-              "mb-0.5 flex-row items-center rounded-md px-2 py-2 active:bg-accent/60",
-              active && "bg-accent",
+              "mb-0.5 flex-row items-center gap-2 rounded-md px-2 py-2",
+              active ? "bg-[#26272d]" : "active:bg-[#232429]",
             )}
           >
-            <Icon size={15} color={active ? "#fafafa" : "#a1a1aa"} />
+            <Icon size={15} color={active ? "#edeef0" : "#787a83"} />
             <Text
               className={cn(
-                "ml-2 text-[13px] font-medium",
-                active ? "text-foreground" : "text-muted-foreground",
+                "text-[13px] font-medium",
+                active ? "text-[#edeef0]" : "text-[#787a83]",
               )}
             >
               {label}
@@ -647,7 +666,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
 
   return (
     <View
-      className="border-r border-border bg-background"
+      className="border-r border-[#2a2b31] bg-[#161719]"
       style={{ width: SIDEBAR_WIDTH, height: "100%" }}
     >
       <ScrollView className="flex-1">

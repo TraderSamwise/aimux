@@ -2,12 +2,11 @@ import React, { useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { GitBranch } from "lucide-react-native";
-import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
-import { Card, PressableCard } from "@/components/ui/card";
+import { ChevronDown, ChevronRight } from "lucide-react-native";
+import { Page, PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
-import { StatusDot, StatusPill } from "@/components/status-dot";
+import { StatusDotMini } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
@@ -30,48 +29,66 @@ import {
   projectStateErrorCopy,
 } from "@/lib/project-connection-display";
 
-// ─── Agent card ───────────────────────────────────────────────────────────
+// Restyle palette — Linear/Cloudflare-style lifted dark slate. Mirrors
+// docs/mockups/project-view.html. Surfaces: page #191a1f, group header #1f2025,
+// row press #232429, hairline border #2a2b31. Status accent is a single green.
+const ROW_BORDER = "border-[#2a2b31]";
+const PRESS = "active:bg-[#232429]";
 
-function AgentCard({ session, onPress }: { session: DesktopSession; onPress: () => void }) {
-  const tool = firstTokenOf(session.command);
-  const metaParts = [tool, session.headline].filter(Boolean) as string[];
-  const meta = metaParts.join(" · ");
+// ─── Status primitives ──────────────────────────────────────────────────────
+
+function StatusWord({ status }: { status: string }) {
+  const tone =
+    status === "running"
+      ? "text-[#4ade80]"
+      : status === "waiting"
+        ? "text-amber-400"
+        : "text-[#787a83]";
   return (
-    <PressableCard
+    <Text className={cn("min-w-[54px] text-right font-mono text-[12px]", tone)} numberOfLines={1}>
+      {status}
+    </Text>
+  );
+}
+
+// ─── Agent row ──────────────────────────────────────────────────────────────
+
+function AgentRow({ session, onPress }: { session: DesktopSession; onPress: () => void }) {
+  const tool = firstTokenOf(session.command);
+  return (
+    <Pressable
       onPress={onPress}
-      className="mb-1 rounded-lg bg-secondary px-2.5 py-1.5 border-border"
+      className={cn("h-[42px] flex-row items-center border-b pl-10 pr-5", ROW_BORDER, PRESS)}
     >
-      <View className="flex-row items-center">
-        <View className="mr-3">
-          <StatusDot status={session.status} size="md" />
-        </View>
+      <View className="min-w-0 flex-1 flex-row items-center gap-[11px]">
+        <StatusDotMini status={session.status} />
         <Text
-          className="min-w-0 flex-1 text-[14px] font-semibold text-foreground"
+          className="min-w-0 shrink text-[13.5px] font-medium text-[#edeef0]"
           numberOfLines={1}
           ellipsizeMode="tail"
         >
           {session.label || session.id}
         </Text>
-        <View className="ml-3">
-          <StatusPill status={session.status} />
-        </View>
+        {tool ? (
+          <Text
+            className="min-w-0 shrink font-mono text-[12px] text-[#787a83]"
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {tool}
+          </Text>
+        ) : null}
       </View>
-      {meta ? (
-        <Text
-          className="ml-[26px] text-[11px] leading-tight text-muted-foreground"
-          numberOfLines={2}
-          ellipsizeMode="tail"
-        >
-          {meta}
-        </Text>
-      ) : null}
-    </PressableCard>
+      <View className="flex-row items-center gap-4 pl-3">
+        <StatusWord status={session.status} />
+      </View>
+    </Pressable>
   );
 }
 
-// ─── Service card ─────────────────────────────────────────────────────────
+// ─── Service row ────────────────────────────────────────────────────────────
 
-function ServiceCard({
+function ServiceRow({
   service,
   endpoint,
   token,
@@ -84,48 +101,40 @@ function ServiceCard({
 }) {
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
   return (
-    <Card className="mb-1 rounded-lg bg-secondary px-2.5 py-1.5 border-border">
-      <View className="flex-row items-center">
-        <Pressable
-          onPress={onPress}
-          className="flex-1 flex-row items-center min-w-0 active:opacity-70"
+    <View className={cn("h-[42px] flex-row items-center border-b pl-10 pr-5", ROW_BORDER)}>
+      <Pressable
+        onPress={onPress}
+        className="min-w-0 flex-1 flex-row items-center gap-[11px] active:opacity-70"
+      >
+        <StatusDotMini status={service.status} />
+        <Text
+          className="min-w-0 shrink text-[13.5px] font-medium text-[#edeef0]"
+          numberOfLines={1}
+          ellipsizeMode="tail"
         >
-          <View className="mr-3">
-            <StatusDot status={service.status} size="md" />
-          </View>
+          {service.label || service.id}
+        </Text>
+        {detail ? (
           <Text
-            className="min-w-0 flex-1 text-[14px] font-semibold text-foreground"
+            className="min-w-0 shrink font-mono text-[12px] text-[#787a83]"
             numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {service.label || service.id}
-          </Text>
-        </Pressable>
-        <View className="ml-3">
-          <StatusPill status={service.status} />
-        </View>
-        <View className="ml-2.5">
-          <ServiceActions service={service} endpoint={endpoint} token={token} />
-        </View>
-      </View>
-      {detail ? (
-        <Pressable onPress={onPress}>
-          <Text
-            className="ml-[26px] font-mono text-[11px] leading-tight text-muted-foreground"
-            numberOfLines={2}
             ellipsizeMode="tail"
           >
             {detail}
           </Text>
-        </Pressable>
-      ) : null}
-    </Card>
+        ) : null}
+      </Pressable>
+      <View className="flex-row items-center gap-4 pl-3">
+        <StatusWord status={service.status} />
+        <ServiceActions service={service} endpoint={endpoint} token={token} compact />
+      </View>
+    </View>
   );
 }
 
-// ─── Worktree section (full card) ─────────────────────────────────────────
+// ─── Worktree group (collapsible header + rows) ───────────────────────────────
 
-function WorktreeSection({
+function WorktreeGroup({
   bucket,
   endpoint,
   token,
@@ -141,90 +150,88 @@ function WorktreeSection({
   const hasAgents = bucket.sessions.length > 0;
   const hasServices = bucket.services.length > 0;
   const isEmpty = !hasAgents && !hasServices;
-  const accent = bucket.isMainCheckout ? "bg-emerald-500" : "bg-sky-500";
+  const [collapsed, setCollapsed] = useState(false);
+
+  const anyRunning = [...bucket.sessions, ...bucket.services].some((x) => x.status === "running");
+  const countParts: string[] = [];
+  if (hasAgents) {
+    countParts.push(`${bucket.sessions.length} agent${bucket.sessions.length > 1 ? "s" : ""}`);
+  }
+  if (hasServices) {
+    countParts.push(`${bucket.services.length} service${bucket.services.length > 1 ? "s" : ""}`);
+  }
+  const countLabel = isEmpty ? "empty" : countParts.join(" · ");
+
+  const headerInner = (
+    <>
+      {isEmpty ? (
+        <ChevronRight size={12} color="#5b5d66" />
+      ) : collapsed ? (
+        <ChevronRight size={12} color="#787a83" />
+      ) : (
+        <ChevronDown size={12} color="#787a83" />
+      )}
+      <StatusDotMini status={anyRunning ? "running" : undefined} hollow={isEmpty} />
+      <Text
+        className={cn(
+          "shrink-0 text-[13.5px]",
+          isEmpty ? "font-semibold text-[#a6a8b0]" : "font-bold text-[#edeef0]",
+        )}
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {bucket.name}
+      </Text>
+      {bucket.branch ? (
+        <Text
+          className="min-w-0 shrink font-mono text-[11.5px] text-[#787a83]"
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
+          {bucket.branch}
+        </Text>
+      ) : null}
+      <Text className="ml-auto pl-3 text-[12px] text-[#787a83]" numberOfLines={1}>
+        {countLabel}
+      </Text>
+    </>
+  );
+
+  const headerClass = cn(
+    "h-[38px] flex-row items-center gap-[10px] border-b bg-[#1f2025] px-5",
+    ROW_BORDER,
+  );
 
   return (
-    <Card className="mb-3 overflow-hidden p-0">
-      {/* Worktree header */}
-      <View className="flex-row items-stretch border-b border-border bg-card">
-        <View className={cn("w-1.5", accent)} />
-        <View className="min-w-0 flex-1 px-3 py-1.5">
-          <Text
-            className="text-[16px] font-bold text-foreground"
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {bucket.name}
-          </Text>
-          {bucket.branch ? (
-            <View className="mt-0.5 flex-row items-center">
-              <View className="max-w-full flex-row items-center rounded border border-border bg-background px-2 py-0">
-                <GitBranch size={11} color="#a1a1aa" />
-                <Text
-                  className="text-[11px] font-mono text-muted-foreground ml-1.5"
-                  numberOfLines={1}
-                  ellipsizeMode="middle"
-                >
-                  {bucket.branch}
-                </Text>
-              </View>
-            </View>
-          ) : null}
-          {bucket.path ? (
-            <Text
-              className="mt-0.5 text-[10px] text-muted-foreground/70"
-              numberOfLines={1}
-              ellipsizeMode="middle"
-            >
-              {bucket.path}
-            </Text>
-          ) : null}
+    <View>
+      {isEmpty ? (
+        <View className={headerClass}>{headerInner}</View>
+      ) : (
+        <Pressable onPress={() => setCollapsed((c) => !c)} className={cn(headerClass, PRESS)}>
+          {headerInner}
+        </Pressable>
+      )}
+      {!isEmpty && !collapsed ? (
+        <View>
+          {bucket.sessions.map((session) => (
+            <AgentRow
+              key={session.id}
+              session={session}
+              onPress={() => onPickSession(session.id)}
+            />
+          ))}
+          {bucket.services.map((service) => (
+            <ServiceRow
+              key={service.id}
+              service={service}
+              endpoint={endpoint}
+              token={token}
+              onPress={() => onPickService(service.id)}
+            />
+          ))}
         </View>
-      </View>
-
-      {/* Body */}
-      <View className="px-2.5 pb-2 pt-2.5">
-        {isEmpty ? (
-          <Text className="py-1 text-[11px] italic text-muted-foreground">
-            no agents · no services
-          </Text>
-        ) : (
-          <>
-            {hasAgents ? (
-              <View className={cn(hasServices && "mb-2.5")}>
-                <Text className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                  Agents · {bucket.sessions.length}
-                </Text>
-                {bucket.sessions.map((session) => (
-                  <AgentCard
-                    key={session.id}
-                    session={session}
-                    onPress={() => onPickSession(session.id)}
-                  />
-                ))}
-              </View>
-            ) : null}
-
-            {hasServices ? (
-              <View>
-                <Text className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                  Services · {bucket.services.length}
-                </Text>
-                {bucket.services.map((service) => (
-                  <ServiceCard
-                    key={service.id}
-                    service={service}
-                    endpoint={endpoint}
-                    token={token}
-                    onPress={() => onPickService(service.id)}
-                  />
-                ))}
-              </View>
-            ) : null}
-          </>
-        )}
-      </View>
-    </Card>
+      ) : null}
+    </View>
   );
 }
 
@@ -270,51 +277,63 @@ export default function DashboardIndex() {
   const endpointLabel = formatProjectEndpointLabel(endpoint, env.AIMUX_CONNECTION_MODE);
 
   return (
-    <Page contentClassName="px-4 py-5 md:px-8 md:py-7">
+    <Page className="bg-[#191a1f]" contentClassName="p-0">
       {!project ? (
-        <PageStateCard
-          title="No project selected"
-          body="Select a project from the sidebar to begin."
-        />
+        <View className="p-5">
+          <PageStateCard
+            title="No project selected"
+            body="Select a project from the sidebar to begin."
+          />
+        </View>
       ) : (
         <>
-          <PageHeader
-            eyebrow="Project"
-            title={project.name}
-            subtitle={project.path}
-            className="mb-8"
-            actions={
-              endpoint ? (
-                <View className="rounded border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5">
-                  <Text className="font-mono text-[10px] text-emerald-400">{endpointLabel}</Text>
-                </View>
-              ) : (
-                <View className="rounded border border-zinc-500/30 bg-zinc-500/15 px-2 py-0.5">
-                  <Text className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-                    host offline
-                  </Text>
-                </View>
-              )
-            }
-          />
+          {/* Page header */}
+          <View className={cn("flex-row items-center gap-3 border-b px-5 py-4", ROW_BORDER)}>
+            <Text
+              className="min-w-0 shrink text-[20px] font-bold text-[#edeef0]"
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {project.name}
+            </Text>
+            {endpoint ? (
+              <View className="ml-auto flex-row items-center gap-[7px]">
+                <StatusDotMini status="running" />
+                <Text className="font-mono text-[11.5px] text-[#a6a8b0]">{endpointLabel}</Text>
+              </View>
+            ) : (
+              <View className="ml-auto flex-row items-center gap-[7px]">
+                <StatusDotMini hollow />
+                <Text className="font-mono text-[11.5px] text-[#787a83]">host offline</Text>
+              </View>
+            )}
+          </View>
 
           {!endpoint && desktopState === null ? (
-            <PageStateCard
-              title="Project host not running"
-              body="Start the host to see worktrees, agents, and services for this project."
-            />
+            <View className="p-5">
+              <PageStateCard
+                title="Project host not running"
+                body="Start the host to see worktrees, agents, and services for this project."
+              />
+            </View>
           ) : endpoint && desktopState === null && desktopStateError ? (
-            (() => {
-              const copy = projectStateErrorCopy(desktopStateError);
-              return <PageStateCard title={copy.title} body={copy.detail} tone="warning" />;
-            })()
+            <View className="p-5">
+              {(() => {
+                const copy = projectStateErrorCopy(desktopStateError);
+                return <PageStateCard title={copy.title} body={copy.detail} tone="warning" />;
+              })()}
+            </View>
           ) : endpoint && desktopState === null ? (
-            <PageStateCard title="Loading project state..." />
+            <View className="p-5">
+              <PageStateCard title="Loading project state..." />
+            </View>
           ) : groups.length === 0 ? (
-            <PageStateCard title="No worktrees yet" body="Worktrees will appear here." />
+            <View className="p-5">
+              <PageStateCard title="No worktrees yet" body="Worktrees will appear here." />
+            </View>
           ) : (
             groups.map((bucket) => (
-              <WorktreeSection
+              <WorktreeGroup
                 key={bucket.key}
                 bucket={bucket}
                 endpoint={endpoint}

@@ -42,6 +42,18 @@ export function StatusDot({ status, size = "sm" }: { status: string; size?: "sm"
   return <View className={cn("rounded-full", SIZE_CLASS[size], bg)} />;
 }
 
+// Restyle (Linear-style) dot used by the project view: green = running,
+// amber = waiting, muted otherwise; `hollow` renders an empty ring for
+// inactive/empty worktrees. Palette mirrors docs/mockups/project-view.html.
+export function StatusDotMini({ status, hollow }: { status?: string; hollow?: boolean }) {
+  if (hollow) {
+    return <View className="h-[7px] w-[7px] rounded-full border-[1.5px] border-[#44464e]" />;
+  }
+  const bg =
+    status === "running" ? "bg-[#4ade80]" : status === "waiting" ? "bg-amber-400" : "bg-[#5b5d66]";
+  return <View className={cn("h-[7px] w-[7px] rounded-full", bg)} />;
+}
+
 export function StatusPill({ status }: { status: string }) {
   const bg = TONE_PILL_BG[status] ?? "bg-zinc-500/10";
   const text = TONE_PILL_TEXT[status] ?? "text-zinc-400";
