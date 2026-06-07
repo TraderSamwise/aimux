@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { discoverBackendSessionId } from "../backend-session-discovery.js";
 import { loadConfig } from "../config.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { isToolInternalWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
@@ -472,7 +473,18 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
 
   const derived = loadMetadataState().sessions[session.id]?.derived;
   const relaunchFresh = derived?.activity === "error" || derived?.attention === "error";
-  const backendSessionId = session.backendSessionId;
+  let backendSessionId = session.backendSessionId;
+  if (!backendSessionId && !relaunchFresh) {
+    // The durable backend id can be lost if a crash killed the tmux pane before
+    // it was captured. Recover it from the tool's on-disk session store so the
+    // agent stays resumable instead of being stranded.
+    const discovered = discoverBackendSessionId(session.toolConfigKey, session.worktreePath);
+    if (discovered) {
+      backendSessionId = discovered;
+      session.backendSessionId = discovered;
+      host.debug?.(`reconciled backend session id for ${session.id} from disk: ${discovered}`, "session");
+    }
+  }
   const useBackendResume =
     !relaunchFresh && host.sessionBootstrap.canResumeWithBackendSessionId(toolCfg, backendSessionId);
 
