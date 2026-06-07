@@ -319,6 +319,10 @@ interface MetadataServerOptions {
           status: "graveyard";
           previousStatus: "running" | "offline";
         };
+    recordBackendSessionId?: (input: {
+      sessionId: string;
+      backendSessionId: string;
+    }) => Promise<{ sessionId: string; backendSessionId: string }> | { sessionId: string; backendSessionId: string };
     sendAgentInput?: (input: {
       sessionId: string;
       text: string;
@@ -2611,6 +2615,18 @@ export class MetadataServer {
           return;
         }
         const result = await this.options.desktop.resumeAgent({ sessionId: body.sessionId });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/record-backend-session") {
+        const body = (await readJson(req)) as { sessionId: string; backendSessionId: string };
+        if (!this.options.lifecycle?.recordBackendSessionId) {
+          send(res, 501, { ok: false, error: "backend session recording not supported by this service" });
+          return;
+        }
+        const result = await this.options.lifecycle.recordBackendSessionId(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
         return;
