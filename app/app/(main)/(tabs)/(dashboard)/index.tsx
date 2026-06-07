@@ -37,7 +37,10 @@ function AgentCard({ session, onPress }: { session: DesktopSession; onPress: () 
   const metaParts = [tool, session.headline].filter(Boolean) as string[];
   const meta = metaParts.join(" · ");
   return (
-    <PressableCard onPress={onPress} className="mb-1 rounded-lg bg-secondary px-2.5 py-1.5 border-border">
+    <PressableCard
+      onPress={onPress}
+      className="mb-1 rounded-lg bg-secondary px-2.5 py-1.5 border-border"
+    >
       <View className="flex-row items-center">
         <View className="mr-3">
           <StatusDot status={session.status} size="md" />
@@ -267,7 +270,7 @@ export default function DashboardIndex() {
   const endpointLabel = formatProjectEndpointLabel(endpoint, env.AIMUX_CONNECTION_MODE);
 
   return (
-    <Page width="narrow" contentClassName="px-4 py-5 md:px-8 md:py-7">
+    <Page contentClassName="px-4 py-5 md:px-8 md:py-7">
       {!project ? (
         <PageStateCard
           title="No project selected"
