@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>aimux mock — linear recipe</title>
+<style>
+  :root{
+    /* lifted dark slate — NOT near-black */
+    --page:#191a1f; --bar:#161719; --side:#161719;
+    --group:#1f2025; --hover:#232429; --sel:#26272d;
+    /* high-contrast text */
+    --fg:#edeef0; --fg2:#a6a8b0; --fg3:#787a83; --fg4:#5b5d66;
+    --bd:#2a2b31; --bd2:#33343b;
+    --em:#4ade80; --blue:#5b8cff;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--page);color:var(--fg);font:13.5px/1.45 -apple-system,"Inter",Segoe UI,sans-serif;-webkit-font-smoothing:antialiased}
+  .app{display:flex;height:100vh;flex-direction:column}
+  .topbar{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;background:var(--bar);border-bottom:1px solid var(--bd)}
+  .logo{display:flex;align-items:center;gap:8px;font-weight:650;font-size:14px}
+  .logo .glyph{font-size:16px}
+  .topicons{display:flex;gap:16px;align-items:center;color:var(--fg3);font-size:14px}
+  .avatar{width:26px;height:26px;border-radius:50%;background:#2a2b31;display:grid;place-items:center;font-size:11px;color:var(--fg2);font-weight:600}
+  .body{display:flex;flex:1;min-height:0}
+
+  /* ── sidebar ── */
+  .side{width:264px;background:var(--side);border-right:1px solid var(--bd);overflow:auto;flex:none}
+  .sidehead{padding:14px 14px 12px;border-bottom:1px solid var(--bd)}
+  .backrow{display:flex;align-items:center;gap:5px;color:var(--fg3);font-size:11.5px;font-weight:550;cursor:pointer}
+  .pname{font-size:15px;font-weight:650;margin-top:8px;letter-spacing:-.2px;color:var(--fg)}
+  .ppath{font-size:11px;color:var(--fg3);margin-top:3px;font-family:var(--mono)}
+  .tabs{display:flex;gap:18px;padding:0 14px;border-bottom:1px solid var(--bd)}
+  .tabs .t{font-size:12.5px;font-weight:550;color:var(--fg3);padding:10px 0;border-bottom:1.5px solid transparent;cursor:pointer}
+  .tabs .t.on{color:var(--fg);border-bottom-color:var(--fg)}
+  .slist{padding:6px}
+  .sgrp{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;cursor:pointer}
+  .sgrp:hover{background:var(--hover)}
+  .sgrp .chev{color:var(--fg4);font-size:9px;width:9px}
+  .sgrp .nm{font-size:13px;font-weight:600;color:var(--fg)}
+  .sgrp .br{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--fg3);max-width:98px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .schild{display:flex;align-items:center;gap:9px;padding:6px 8px 6px 25px;border-radius:6px;cursor:pointer}
+  .schild:hover{background:var(--hover)}
+  .schild.sel{background:var(--sel)}
+  .schild .nm{font-size:12.5px;font-weight:500;color:var(--fg)}
+  .schild .m{font-size:11px;color:var(--fg3);font-family:var(--mono)}
+  .schild .a{margin-left:auto;display:flex;gap:7px;color:var(--fg3);font-size:11px;opacity:0}
+  .schild:hover .a{opacity:1}
+  .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .dot.run{background:var(--em)}
+  .dot.off{background:#5b5d66}
+  .dot.idle{background:transparent;border:1.5px solid #44464e}
+  .semp{display:flex;align-items:center;gap:8px;color:var(--fg3);font-size:11.5px;padding:7px 14px;cursor:pointer}
+  .semp .chev{color:var(--fg4);font-size:9px}
+  .semp b{color:var(--fg2);font-weight:650}
+
+  /* ── main ── */
+  .main{flex:1;overflow:auto}
+  .phead{padding:18px 20px 16px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:13px}
+  .phead h1{font-size:18px;font-weight:650;letter-spacing:-.3px}
+  .phead .br{font-family:var(--mono);font-size:12px;color:var(--fg3)}
+  .ep{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11.5px;color:var(--fg2);margin-left:auto}
+
+  /* worktree = collapsible GROUP header (Linear "Done 19" pattern) */
+  .grp{display:flex;align-items:center;gap:10px;height:38px;padding:0 20px;background:var(--group);border-bottom:1px solid var(--bd);cursor:pointer}
+  .grp .chev{color:var(--fg3);font-size:10px;width:10px}
+  .grp .nm{font-size:13.5px;font-weight:650;color:var(--fg)}
+  .grp .br{font-family:var(--mono);font-size:11.5px;color:var(--fg3)}
+  .grp .count{margin-left:auto;font-size:12px;color:var(--fg3);font-weight:500}
+  .grp.empty .nm{font-weight:550;color:var(--fg2)}
+
+  /* agent / service = full-width row */
+  .row{display:flex;align-items:center;gap:11px;height:42px;padding:0 20px 0 40px;border-bottom:1px solid var(--bd);cursor:pointer}
+  .row:hover{background:var(--hover)}
+  .row .nm{font-size:13.5px;font-weight:550;color:var(--fg)}
+  .row .tool{font-size:12px;color:var(--fg3);font-family:var(--mono)}
+  .row .right{margin-left:auto;display:flex;align-items:center;gap:16px}
+  .row .st{font-size:12px;color:var(--fg3);font-family:var(--mono);min-width:54px;text-align:right}
+  .row .st.run{color:var(--em)}
+  .row .when{font-size:12px;color:var(--fg3);min-width:42px;text-align:right}
+  .acts{display:flex;gap:11px;color:var(--fg3);font-size:13px;width:50px;justify-content:flex-end;opacity:0}
+  .row:hover .acts{opacity:1}
+  .acts span:hover{color:var(--fg)}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="logo"><span class="glyph">🤖</span> aimux</div>
+    <div class="topicons"><span>💬</span><span>🔔</span><span class="avatar">S</span></div>
+  </div>
+  <div class="body">
+    <!-- SIDEBAR -->
+    <aside class="side">
+      <div class="sidehead">
+        <div class="backrow">‹ All projects</div>
+        <div class="pname">tealstreet-next</div>
+        <div class="ppath">~/cs/tealstreet-next</div>
+      </div>
+      <div class="tabs"><div class="t on">Dashboard</div><div class="t">Views</div></div>
+      <div class="slist">
+        <div class="sgrp"><span class="chev">▾</span><span class="dot run"></span><span class="nm">Main Checkout</span><span class="br">master</span></div>
+        <div class="schild sel"><span class="dot run"></span><span class="nm">codex-poymed</span><span class="m">codex</span></div>
+        <div class="sgrp"><span class="chev">▾</span><span class="dot off"></span><span class="nm">cross-trade</span><span class="br">chore/release…</span></div>
+        <div class="schild"><span class="dot off"></span><span class="nm">shell</span><span class="m">yarn dev</span><span class="a">▶&nbsp;&nbsp;🗑</span></div>
+      </div>
+      <div class="semp"><span class="chev">▸</span><b>5</b>&nbsp;empty worktrees</div>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="main">
+      <div class="phead">
+        <h1>tealstreet-next</h1>
+        <span class="ep"><span class="dot run"></span>127.0.0.1:43444</span>
+      </div>
+
+      <!-- Main Checkout group -->
+      <div class="grp"><span class="chev">▾</span><span class="dot run"></span><span class="nm">Main Checkout</span><span class="br">master</span><span class="count">1 agent</span></div>
+      <div class="row"><span class="dot run"></span><span class="nm">codex-poymed</span><span class="tool">codex</span>
+        <span class="right"><span class="st run">running</span><span class="when">2m</span><span class="acts"></span></span></div>
+
+      <!-- cross-trade group -->
+      <div class="grp"><span class="chev">▾</span><span class="dot off"></span><span class="nm">cross-trade</span><span class="br">chore/release-docs-cleanup</span><span class="count">1 service</span></div>
+      <div class="row"><span class="dot off"></span><span class="nm">shell</span><span class="tool">yarn dev</span>
+        <span class="right"><span class="st">offline</span><span class="when">—</span><span class="acts"><span>▶</span><span>🗑</span></span></span></div>
+
+      <!-- empty worktrees = collapsed group headers -->
+      <div class="grp empty"><span class="chev">▸</span><span class="dot idle"></span><span class="nm">chat-sync</span><span class="br">feat/discord-chat-followups-3</span><span class="count">empty</span></div>
+      <div class="grp empty"><span class="chev">▸</span><span class="dot idle"></span><span class="nm">cli-updater</span><span class="br">cli-updater</span><span class="count">empty</span></div>
+      <div class="grp empty"><span class="chev">▸</span><span class="dot idle"></span><span class="nm">devops-poc</span><span class="br">devops-poc</span><span class="count">empty</span></div>
+      <div class="grp empty"><span class="chev">▸</span><span class="dot idle"></span><span class="nm">cdc-patches</span><span class="br">chore/cryptocom-followups</span><span class="count">empty</span></div>
+      <div class="grp empty"><span class="chev">▸</span><span class="dot idle"></span><span class="nm">e2e-test</span><span class="br">chore/e2e-test-cleanup-7</span><span class="count">empty</span></div>
+    </main>
+  </div>
+</div>
+</body>
+</html>

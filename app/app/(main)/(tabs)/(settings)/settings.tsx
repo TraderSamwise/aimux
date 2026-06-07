@@ -77,7 +77,7 @@ export default function SettingsScreen() {
   }
 
   return (
-    <Page width="narrow">
+    <Page>
       <PageHeader title="Settings" subtitle="Preferences for the app and agent alerts." />
       <Text className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
         Appearance
