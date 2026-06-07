@@ -463,6 +463,11 @@ function WorktreeTree({
         <View className="mt-0.5">
           <Pressable
             onPress={() => setShowEmpty((s) => !s)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: showEmpty }}
+            accessibilityLabel={`${showEmpty ? "Hide" : "Show"} ${emptyRest.length} empty worktree${
+              emptyRest.length > 1 ? "s" : ""
+            }`}
             className="flex-row items-center gap-2 rounded-md px-2 py-1.5 active:bg-[#232429]"
           >
             {showEmpty ? (
