@@ -84,4 +84,15 @@ describe("reconcileOfflineBackendSessionIds", () => {
 
     expect(result.reconciled).toEqual([]);
   });
+
+  it("is idempotent: a second run reconciles nothing", () => {
+    const cwd = join(repoRoot, "wt", "feature");
+    seedOfflineClaude("claude-1", cwd);
+    writeTranscript(cwd, UUID);
+
+    expect(reconcileOfflineBackendSessionIds(repoRoot).reconciled).toHaveLength(1);
+    expect(reconcileOfflineBackendSessionIds(repoRoot).reconciled).toEqual([]);
+    const offline = listTopologySessionStates({ statuses: ["offline"] }).find((s) => s.id === "claude-1");
+    expect(offline?.backendSessionId).toBe(UUID);
+  });
 });
