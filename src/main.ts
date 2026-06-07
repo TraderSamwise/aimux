@@ -3361,6 +3361,15 @@ program
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     if (payload.session_id) {
       result.backendSessionId = payload.session_id;
+      // No local fallback: this hook is a short-lived CLI process, not the
+      // runtime that owns the session, so it cannot record into topology
+      // directly. A service-down capture gap is closed by reconcile-on-restart.
+      await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/agents/record-backend-session",
+        { sessionId, backendSessionId: payload.session_id },
+        () => ({ ok: true }),
+      ).catch(() => {});
     }
 
     const setActivity = async (activity: AgentActivityState) =>
