@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { writeJsonAtomic } from "../atomic-write.js";
 import type { DashboardService, DashboardSession, WorktreeGroup } from "./index.js";
 import {
   dashboardOrderKey,
@@ -125,8 +126,8 @@ export class DashboardUiStateStore {
     }
 
     try {
-      writeFileSync(getDashboardUiStatePath(), JSON.stringify(sharedSnapshot, null, 2) + "\n");
-      writeFileSync(getDashboardClientUiStatePath(clientKey), JSON.stringify(clientSnapshot, null, 2) + "\n");
+      writeJsonAtomic(getDashboardUiStatePath(), sharedSnapshot);
+      writeJsonAtomic(getDashboardClientUiStatePath(clientKey), clientSnapshot);
     } catch {}
   }
 

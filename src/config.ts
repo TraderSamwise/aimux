@@ -7,6 +7,7 @@ import {
   getConfigPath,
   getProjectStateDir,
 } from "./paths.js";
+import { quarantineCorruptFile, writeJsonAtomic } from "./atomic-write.js";
 
 export interface NotificationConfig {
   enabled: boolean;
@@ -210,7 +211,9 @@ export function loadConfig(opts: { includeGlobal?: boolean } = {}): AimuxConfig 
     try {
       const globalRaw = JSON.parse(readFileSync(globalPath, "utf-8"));
       config = deepMerge(config, globalRaw) as AimuxConfig;
-    } catch {}
+    } catch {
+      quarantineCorruptFile(globalPath);
+    }
   }
 
   // Layer 2: project config
@@ -219,7 +222,9 @@ export function loadConfig(opts: { includeGlobal?: boolean } = {}): AimuxConfig 
     try {
       const projectRaw = JSON.parse(readFileSync(projectPath, "utf-8"));
       config = deepMerge(config, projectRaw) as AimuxConfig;
-    } catch {}
+    } catch {
+      quarantineCorruptFile(projectPath);
+    }
   }
 
   return normalizeConfig(config);
@@ -231,7 +236,7 @@ export function saveConfig(config: AimuxConfig): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(getConfigPath(), JSON.stringify(config, null, 2) + "\n");
+  writeJsonAtomic(getConfigPath(), config);
 }
 
 /** Save config to global ~/.aimux/config.json */
@@ -240,7 +245,7 @@ export function saveGlobalConfig(config: Partial<AimuxConfig>): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(getGlobalConfigPath(), JSON.stringify(config, null, 2) + "\n");
+  writeJsonAtomic(getGlobalConfigPath(), config);
 }
 
 const GITIGNORE_CONTENTS = `# Runtime-private service/project state (lives in ~/.aimux/projects/)

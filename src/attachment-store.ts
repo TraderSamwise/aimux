@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { getAttachmentsDir } from "./paths.js";
+import { atomicWrite, writeJsonAtomic } from "./atomic-write.js";
 
 export interface AttachmentRecord {
   id: string;
@@ -75,8 +76,8 @@ export function createUploadedAttachment(input: CreateUploadedAttachmentInput): 
     contentPath,
   };
 
-  writeFileSync(contentPath, buffer);
-  writeFileSync(join(attachmentsDir, `${id}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  atomicWrite(contentPath, buffer);
+  writeJsonAtomic(join(attachmentsDir, `${id}.json`), record);
 
   return toPublicAttachment(record);
 }
