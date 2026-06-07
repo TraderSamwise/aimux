@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
+import { atomicWrite } from "../atomic-write.js";
 import { getRuntimeExchangePath } from "../paths.js";
 
 export const RUNTIME_EXCHANGE_VERSION = 1;
@@ -556,17 +557,8 @@ export class RuntimeExchangeStore {
   }
 
   write(exchange: RuntimeExchange): RuntimeExchange {
-    mkdirSync(dirname(this.path), { recursive: true });
     const normalized = coerceRuntimeExchange(exchange);
-    const tmpPath = `${this.path}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
-    writeFileSync(
-      tmpPath,
-      stringify(normalized, {
-        lineWidth: 120,
-        sortMapEntries: false,
-      }),
-    );
-    renameSync(tmpPath, this.path);
+    atomicWrite(this.path, stringify(normalized, { lineWidth: 120, sortMapEntries: false }));
     return normalized;
   }
 

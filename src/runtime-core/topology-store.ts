@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
+import { atomicWrite } from "../atomic-write.js";
 import { getRuntimeTopologyPath } from "../paths.js";
 
 export const RUNTIME_TOPOLOGY_VERSION = 1;
@@ -594,17 +595,8 @@ export class RuntimeTopologyStore {
   }
 
   write(topology: RuntimeTopology): RuntimeTopology {
-    mkdirSync(dirname(this.path), { recursive: true });
     const normalized = coerceRuntimeTopology(topology);
-    const tmpPath = `${this.path}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
-    writeFileSync(
-      tmpPath,
-      stringify(normalized, {
-        lineWidth: 120,
-        sortMapEntries: false,
-      }),
-    );
-    renameSync(tmpPath, this.path);
+    atomicWrite(this.path, stringify(normalized, { lineWidth: 120, sortMapEntries: false }));
     return normalized;
   }
 

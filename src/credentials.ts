@@ -4,8 +4,8 @@
 // to the relay. The token is a long-lived relay-signed JWT — not a Clerk
 // session token — so it survives daemon restarts and runs for ~90 days.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, chmodSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { atomicWrite } from "./atomic-write.js";
 import { getAuthPath } from "./paths.js";
 
 export interface AimuxCredentials {
@@ -32,10 +32,7 @@ export function loadCredentials(): AimuxCredentials | null {
 }
 
 export function saveCredentials(creds: AimuxCredentials): void {
-  const path = getAuthPath();
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(creds, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  atomicWrite(getAuthPath(), `${JSON.stringify(creds, null, 2)}\n`, { mode: 0o600 });
 }
 
 export function clearCredentials(): "cleared" | "none" | "failed" {

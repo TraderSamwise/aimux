@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { closeDebug, debug } from "../debug.js";
 import { loadConfig } from "../config.js";
 import { getStatePath } from "../paths.js";
+import { writeJsonAtomic } from "../atomic-write.js";
 import { buildAimuxAgentInstructions } from "../session-bootstrap.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
@@ -363,7 +364,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
       services: mergedServices,
     };
 
-    writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    writeJsonAtomic(statePath, state);
     this.invalidateDesktopStateSnapshot();
   },
   teardown(this: Multiplexer) {

@@ -13,6 +13,7 @@ import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon.js";
 import { type DashboardService, type DashboardSession } from "../dashboard/index.js";
 import { getProjectStateDir, getStatePath } from "../paths.js";
+import { writeJsonAtomic } from "../atomic-write.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
@@ -1094,7 +1095,7 @@ function removePersistedServicesForWorktree(path: string): void {
     const state = JSON.parse(readFileSync(statePath, "utf-8")) as { services?: Array<{ worktreePath?: string }> };
     const nextServices = (state.services ?? []).filter((service) => service.worktreePath !== path);
     if (nextServices.length === (state.services ?? []).length) return;
-    writeFileSync(statePath, JSON.stringify({ ...state, services: nextServices }, null, 2) + "\n");
+    writeJsonAtomic(statePath, { ...state, services: nextServices });
   } catch {}
 }
 
