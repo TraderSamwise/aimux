@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { atomicWrite, writeJsonAtomic, writeTextAtomic } from "./atomic-write.js";
+import { writeFileSync } from "node:fs";
+
+import { atomicWrite, quarantineCorruptFile, writeJsonAtomic, writeTextAtomic } from "./atomic-write.js";
 
 describe("atomicWrite", () => {
   let dir: string;
@@ -49,5 +51,19 @@ describe("atomicWrite", () => {
     writeJsonAtomic(target, { v: 2 });
     expect(JSON.parse(readFileSync(target, "utf8"))).toEqual({ v: 2 });
     expect(existsSync(target)).toBe(true);
+  });
+
+  it("quarantines a corrupt file aside instead of dropping it", () => {
+    const target = join(dir, "state.json");
+    writeFileSync(target, "{ not valid json");
+    const dest = quarantineCorruptFile(target);
+    expect(dest).toBeTruthy();
+    expect(existsSync(target)).toBe(false);
+    expect(readFileSync(dest!, "utf8")).toBe("{ not valid json");
+    expect(readdirSync(dir).some((n) => n.includes(".corrupt-"))).toBe(true);
+  });
+
+  it("quarantine is a no-op for a missing file", () => {
+    expect(quarantineCorruptFile(join(dir, "nope.json"))).toBeNull();
   });
 });

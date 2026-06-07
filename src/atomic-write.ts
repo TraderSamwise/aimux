@@ -1,4 +1,4 @@
-import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 function fsyncDir(dir: string): void {
@@ -50,4 +50,21 @@ export function writeJsonAtomic(path: string, value: unknown): void {
 
 export function writeTextAtomic(path: string, text: string): void {
   atomicWrite(path, text);
+}
+
+/**
+ * Move a corrupt/unparseable state file aside (preserving it for diagnosis)
+ * instead of silently letting a reader reset to empty and a later write
+ * overwrite the evidence. Best-effort; returns the quarantine path or null.
+ */
+export function quarantineCorruptFile(path: string): string | null {
+  try {
+    if (!existsSync(path)) return null;
+    const dest = `${path}.corrupt-${Date.now()}`;
+    renameSync(path, dest);
+    console.error(`aimux: quarantined corrupt state file ${path} -> ${dest}`);
+    return dest;
+  } catch {
+    return null;
+  }
 }

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { closeDebug, debug } from "../debug.js";
 import { loadConfig } from "../config.js";
 import { getStatePath } from "../paths.js";
-import { writeJsonAtomic } from "../atomic-write.js";
+import { quarantineCorruptFile, writeJsonAtomic } from "../atomic-write.js";
 import { buildAimuxAgentInstructions } from "../session-bootstrap.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import type { Multiplexer, SavedState, ServiceState, SessionState } from "./index.js";
@@ -182,6 +182,7 @@ export function loadStateStatic(): SavedState | null {
       services: Array.isArray(state.services) ? (state.services as ServiceState[]) : undefined,
     };
   } catch {
+    quarantineCorruptFile(statePath);
     return null;
   }
 }

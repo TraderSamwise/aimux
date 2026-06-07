@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { writeJsonAtomic, writeTextAtomic } from "./atomic-write.js";
+import { quarantineCorruptFile, writeJsonAtomic, writeTextAtomic } from "./atomic-write.js";
 import { getProjectStateDir, getProjectStateDirFor } from "./paths.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent, SessionDerivedState } from "./agent-events.js";
 
@@ -120,6 +120,7 @@ function loadJson<T>(path: string, fallback: T): T {
   try {
     return JSON.parse(readFileSync(path, "utf-8")) as T;
   } catch {
+    quarantineCorruptFile(path);
     return fallback;
   }
 }
