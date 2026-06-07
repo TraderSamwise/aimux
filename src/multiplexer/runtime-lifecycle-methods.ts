@@ -353,7 +353,9 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
           return true;
         });
         mergedServices = [...otherServices, ...myServices];
-      } catch {}
+      } catch {
+        quarantineCorruptFile(statePath);
+      }
     }
 
     saveRuntimeTopologySessions({ sessions: mergedSessions });
