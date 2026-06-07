@@ -293,6 +293,51 @@ describe("resumeOfflineSession", () => {
     expect(host.offlineSessions).toEqual([{ id: "codex-1" }]);
   });
 
+  it("reconciles a missing claude backend id from the on-disk transcript instead of refusing", () => {
+    const claudeHome = mkdtempSync(join(tmpdir(), "aimux-claude-home-"));
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = claudeHome;
+    try {
+      const cwd = join(repoRoot, "wt", "feature");
+      const encoded = cwd.replace(/[/.]/g, "-");
+      const dir = join(claudeHome, "projects", encoded);
+      mkdirSync(dir, { recursive: true });
+      const uuid = "0710a963-a473-430f-9f9a-e27dd4546328";
+      writeFileSync(join(dir, `${uuid}.jsonl`), "{}\n");
+
+      const createSession = vi.fn();
+      const host: any = {
+        sessions: [],
+        offlineSessions: [{ id: "claude-1" }],
+        sessionLabels: new Map(),
+        sessionBootstrap: { canResumeWithBackendSessionId: vi.fn((_cfg: any, id: any) => Boolean(id)) },
+        getSessionLabel: vi.fn(),
+        invalidateDesktopStateSnapshot: vi.fn(),
+        saveState: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        debug: vi.fn(),
+        createSession,
+      };
+
+      resumeOfflineSession(host, {
+        id: "claude-1",
+        command: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        worktreePath: cwd,
+      });
+
+      expect(createSession).toHaveBeenCalledTimes(1);
+      const call = createSession.mock.calls[0];
+      expect(call[7]).toBe(uuid); // backendSessionId passed to createSession
+      expect(call[10]).toBe(true); // useBackendResume
+    } finally {
+      rmSync(claudeHome, { recursive: true, force: true });
+      if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = prev;
+    }
+  });
+
   it("records backend session ids on live and offline sessions", () => {
     const runtime = {
       id: "claude-1",
