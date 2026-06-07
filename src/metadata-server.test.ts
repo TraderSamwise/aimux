@@ -252,6 +252,34 @@ describe("MetadataServer threads API", () => {
     expect(body).toEqual({ ok: true, sessionId: "claude-1" });
   });
 
+  it("records backend session ids over HTTP so crashed panes stay resumable", async () => {
+    server?.stop();
+    const calls: Array<{ sessionId: string; backendSessionId: string }> = [];
+    server = new MetadataServer({
+      lifecycle: {
+        recordBackendSessionId: (input) => {
+          calls.push(input);
+          return input;
+        },
+      },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/agents/record-backend-session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "claude-1", backendSessionId: "0710a963" }),
+    });
+    const body = (await res.json()) as { ok: boolean; sessionId: string; backendSessionId: string };
+    expect(res.ok).toBe(true);
+    expect(body).toEqual({ ok: true, sessionId: "claude-1", backendSessionId: "0710a963" });
+    expect(calls).toEqual([{ sessionId: "claude-1", backendSessionId: "0710a963" }]);
+  });
+
   it("lists direct teammates from runtime topology instead of desktop pending overlays", async () => {
     server?.stop();
     seedAgentTopology([
@@ -2180,7 +2208,9 @@ describe("MetadataServer threads API", () => {
     const text = await readSseUntil(res.body!, (value) => value.includes("All checks are green"));
     controller.abort();
 
-    expect(text).toContain('"parsed":{"blocks":[{"type":"response","text":"Good question. Let me check the relay status."}');
+    expect(text).toContain(
+      '"parsed":{"blocks":[{"type":"response","text":"Good question. Let me check the relay status."}',
+    );
     expect(text).toContain('{"type":"status","text":"⏺ Bash(cd /workspace/project; gh pr checks 5968)');
     expect(text).toContain('{"type":"response","text":"All checks are green. I can merge now."}');
   });

@@ -3361,6 +3361,12 @@ program
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     if (payload.session_id) {
       result.backendSessionId = payload.session_id;
+      await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/agents/record-backend-session",
+        { sessionId, backendSessionId: payload.session_id },
+        () => ({ ok: true }),
+      ).catch(() => {});
     }
 
     const setActivity = async (activity: AgentActivityState) =>

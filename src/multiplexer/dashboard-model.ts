@@ -1165,6 +1165,8 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
           () => host.sendAgentToGraveyard(input.sessionId),
           findDashboardSessionSeed(host, input.sessionId),
         ),
+      recordBackendSessionId: (input: any) =>
+        host.recordSessionBackendSessionId(input.sessionId, input.backendSessionId),
       sendAgentInput: (input: any) => host.sendAgentInput(input.sessionId, input.text),
       readAgentOutput: (input: any) => host.readAgentOutput(input.sessionId, input.startLine),
     },
