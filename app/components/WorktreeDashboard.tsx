@@ -27,8 +27,8 @@ import { projectStateErrorCopy } from "@/lib/project-connection-display";
 
 // Linear-style worktree dashboard: worktrees as collapsible group headers
 // (square outline = worktree) with agents (circle) / services (diamond) as
-// guide-lined child rows. Rendered both at the dashboard route and inside the
-// Project screen's "Dashboard" section. Child guide line #3a3c44.
+// guide-lined child rows. Rendered as the Project screen's "Dashboard"
+// section; kept route-agnostic via `padded`. Child guide line #3a3c44.
 const PRESS = "active:bg-[#232429]";
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
@@ -295,8 +295,8 @@ function WorktreeList({
 }
 
 // Self-contained worktree dashboard (state handling + list). `padded` adds the
-// horizontal page padding when rendered full-bleed (dashboard route); embedded
-// callers (Project screen) pass false to align with their own page padding.
+// horizontal page padding for full-bleed callers; embedded callers (the Project
+// screen) pass false to align with their own page padding.
 export function WorktreeDashboard({ padded = true }: { padded?: boolean }) {
   const project = useAtomValue(selectedProjectAtom);
   const endpoint = useAtomValue(selectedProjectEndpointAtom);
