@@ -155,6 +155,60 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("assigns, passes, and persists a backend session id for a fresh claude launch", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-fresh-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "claude" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "claude" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    // The spawn path passes toolConfig.sessionIdFlag (session-launch.ts ~144);
+    // mirror that here so the test exercises the real proactive-capture chain.
+    const session: any = createSession(
+      host,
+      "claude",
+      [],
+      undefined,
+      "claude",
+      undefined,
+      ["--session-id", "{sessionId}"],
+      repoRoot,
+    );
+
+    // A backend id is generated and bound at spawn, never left to be discovered.
+    expect(session.backendSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    // It is passed to claude as --session-id so claude adopts that exact id.
+    const cmd: string[] = host.tmuxRuntimeManager.createWindow.mock.calls[0][4];
+    const flagIdx = cmd.indexOf("--session-id");
+    expect(flagIdx).toBeGreaterThanOrEqual(0);
+    expect(cmd[flagIdx + 1]).toBe(session.backendSessionId);
+    // And persisted durably as part of the spawn (saveState -> topology).
+    expect(host.saveState).toHaveBeenCalled();
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("stores explicit Claude resume backend ids without adding a competing session id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-resume-"));
     gitInit(repoRoot);
