@@ -331,8 +331,8 @@ describe("resumeOfflineSession", () => {
       const call = createSession.mock.calls[0];
       expect(call[7]).toBe(uuid); // backendSessionId passed to createSession
       expect(call[10]).toBe(true); // useBackendResume
-      rmSync(claudeHome, { recursive: true, force: true });
     } finally {
+      rmSync(claudeHome, { recursive: true, force: true });
       if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR;
       else process.env.CLAUDE_CONFIG_DIR = prev;
     }

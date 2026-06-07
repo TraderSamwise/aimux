@@ -30,8 +30,14 @@ function encodeClaudeProjectPath(cwd: string): string {
 export function discoverClaudeBackendSessionId(cwd: string, projectsDir = claudeProjectsDir()): string | null {
   const dir = join(projectsDir, encodeClaudeProjectPath(cwd));
   if (!existsSync(dir)) return null;
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return null;
+  }
   let best: { id: string; mtimeMs: number } | null = null;
-  for (const entry of readdirSync(dir)) {
+  for (const entry of entries) {
     if (!entry.endsWith(".jsonl")) continue;
     const id = entry.slice(0, -".jsonl".length);
     if (!UUID_RE.test(id)) continue;
