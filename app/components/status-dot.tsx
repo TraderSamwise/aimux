@@ -45,13 +45,57 @@ export function StatusDot({ status, size = "sm" }: { status: string; size?: "sm"
 // Restyle (Linear-style) dot used by the project view: green = running,
 // amber = waiting, muted otherwise; `hollow` renders an empty ring for
 // inactive/empty worktrees. Palette mirrors docs/mockups/project-view.html.
-export function StatusDotMini({ status, hollow }: { status?: string; hollow?: boolean }) {
+// Shape encodes entity type (mirrors the TUI): circle = agent, square =
+// worktree, diamond = service. Fill encodes status (green = running, muted
+// otherwise); `hollow` is the empty/inactive ring.
+export function StatusDotMini({
+  status,
+  hollow,
+  shape = "circle",
+  outline,
+}: {
+  status?: string;
+  hollow?: boolean;
+  shape?: "circle" | "square" | "diamond";
+  outline?: boolean;
+}) {
+  const cornerClass = shape === "circle" ? "rounded-full" : "rounded-[1.5px]";
+  const rotateClass = shape === "diamond" ? "rotate-45" : "";
+
+  // Outline = thick unfilled ring (used for worktrees); border color still
+  // encodes status: green = running, muted = idle, faint = empty.
+  if (outline) {
+    const size = shape === "diamond" ? "h-[7px] w-[7px]" : "h-2 w-2";
+    const borderColor = hollow
+      ? "border-[#44464e]"
+      : status === "running"
+        ? "border-[#4ade80]"
+        : status === "waiting"
+          ? "border-amber-400"
+          : "border-[#6b6d75]";
+    return <View className={cn(size, cornerClass, rotateClass, "border-2", borderColor)} />;
+  }
+
+  const sizeClass = shape === "diamond" ? "h-[6px] w-[6px]" : "h-[7px] w-[7px]";
   if (hollow) {
-    return <View className="h-[7px] w-[7px] rounded-full border-[1.5px] border-[#44464e]" />;
+    return (
+      <View
+        className={cn(sizeClass, cornerClass, rotateClass, "border-[1.5px] border-[#44464e]")}
+      />
+    );
   }
   const bg =
     status === "running" ? "bg-[#4ade80]" : status === "waiting" ? "bg-amber-400" : "bg-[#5b5d66]";
-  return <View className={cn("h-[7px] w-[7px] rounded-full", bg)} />;
+  return <View className={cn(sizeClass, cornerClass, rotateClass, bg)} />;
+}
+
+// Small monospace type marker, e.g. "service", mirroring the TUI's [service] tag.
+export function TypeTag({ label }: { label: string }) {
+  return (
+    <Text className="shrink-0 rounded border border-[#2a2b31] bg-[#1f2025] px-1 py-px font-mono text-[9px] uppercase tracking-wide text-[#787a83]">
+      {label}
+    </Text>
+  );
 }
 
 export function StatusPill({ status }: { status: string }) {
