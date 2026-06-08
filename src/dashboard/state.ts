@@ -14,6 +14,7 @@ export type DashboardOverlayKind =
   | "none"
   | "tool-picker"
   | "tool-options"
+  | "tool-advanced"
   | "worktree-input"
   | "service-input"
   | "label-input"
