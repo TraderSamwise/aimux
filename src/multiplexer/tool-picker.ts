@@ -1,6 +1,6 @@
 import { loadConfig, type ToolConfig } from "../config.js";
 import { parseKeys } from "../key-parser.js";
-import { parseEnvAssignments, parseShellArgs, type LaunchOverride } from "../shell-args.js";
+import { parseEnvAssignments, parseLaunchCommandLine, parseShellArgs, type LaunchOverride } from "../shell-args.js";
 import { applyLineEdit, createLineState, renderLineWindow, type LineState } from "../line-editor.js";
 import { stripAnsi, truncateAnsi } from "../tui/render/text.js";
 import { forkDashboardAgentWithFeedback, spawnDashboardAgentWithFeedback } from "./dashboard-ops.js";
@@ -26,6 +26,18 @@ function initStructuredOptions(toolKey: string): LaunchOptionsState {
     args: createLineState(""),
     env: createLineState(""),
     command: createLineState(""),
+    activeField: "args",
+    error: null,
+  };
+}
+
+function initAdvancedOptions(toolKey: string, tool: ToolConfig): LaunchOptionsState {
+  return {
+    mode: "advanced",
+    toolKey,
+    args: createLineState(""),
+    env: createLineState(""),
+    command: createLineState(commandPreview(tool.command, tool.args)),
     activeField: "args",
     error: null,
   };
@@ -300,6 +312,18 @@ export function handleToolPickerKey(host: ToolPickerHost, data: Buffer): void {
     return;
   }
 
+  if (key === "O") {
+    const picked = tools[selectedIndex];
+    if (!picked) {
+      renderToolPicker(host);
+      return;
+    }
+    host.launchOptionsState = initAdvancedOptions(picked[0], picked[1]);
+    host.openDashboardOverlay("tool-advanced");
+    redrawOverlay(host, buildToolAdvancedOverlayOutput);
+    return;
+  }
+
   if (key === "enter" || key === "return") {
     const picked = tools[selectedIndex];
     if (!picked) {
@@ -381,5 +405,104 @@ export function handleToolOptionsKey(host: ToolPickerHost, data: Buffer): void {
   if (applyLineEdit(field, event)) {
     state.error = null;
     redrawOverlay(host, buildToolOptionsOverlayOutput);
+  }
+}
+
+export function buildToolAdvancedOverlayOutput(host: ToolPickerHost): string {
+  const tools = enabledTools();
+  const state: LaunchOptionsState | null = host.launchOptionsState;
+  const selected = state ? tools.find(([key]) => key === state.toolKey) : undefined;
+  if (!state || !selected) {
+    return renderBox(["No enabled tools", "", "  [Esc] back"], "41;97");
+  }
+
+  const [toolKey, tool] = selected;
+  const width = Math.max(12, (process.stdout.columns ?? 80) - 16);
+
+  let override: LaunchOverride | undefined;
+  let parseError = state.error;
+  if (!parseError) {
+    try {
+      override = parseLaunchCommandLine(state.command.text);
+    } catch (error) {
+      parseError = errorMessage(error);
+    }
+  }
+
+  const lines = [
+    host.pickerMode === "fork" && host.forkSourceSessionId
+      ? `Fork ${toolKey}: full command`
+      : `${toolKey}: full command`,
+    "",
+    `  ${renderLineWindow(state.command, width)}`,
+  ];
+  if (override) {
+    lines.push("");
+    if (override.env) {
+      const envStr = Object.entries(override.env)
+        .map(([key, value]) => `${key}=${quoteShellArg(value)}`)
+        .join(" ");
+      lines.push(`  Env:    ${envStr}`);
+    }
+    lines.push(`  Launch: ${commandPreview(override.command, override.args)}`);
+    lines.push("");
+    lines.push(
+      override.command === tool.command
+        ? "  aimux hooks + session tracking applied"
+        : "  custom binary — launched without aimux hooks",
+    );
+  }
+  if (parseError) {
+    lines.push("");
+    lines.push(`  Error: ${parseError}`);
+  }
+  lines.push("");
+  lines.push("  [Enter] start   [Esc] back");
+
+  return renderBox(lines, parseError ? "41;97" : "44;97");
+}
+
+export function handleToolAdvancedKey(host: ToolPickerHost, data: Buffer): void {
+  const events = parseKeys(data);
+  if (events.length === 0) return;
+
+  const event = events[0];
+  const key = event.name || event.char;
+  const state: LaunchOptionsState | null = host.launchOptionsState;
+
+  const backToPicker = () => {
+    host.launchOptionsState = null;
+    host.openDashboardOverlay("tool-picker");
+    renderToolPicker(host);
+  };
+
+  if (!state || key === "escape") {
+    backToPicker();
+    return;
+  }
+
+  if (key === "enter" || key === "return") {
+    const selected = enabledTools().find(([toolKey]) => toolKey === state.toolKey);
+    if (!selected) {
+      backToPicker();
+      return;
+    }
+    const [toolKey, tool] = selected;
+    let override: LaunchOverride;
+    try {
+      override = parseLaunchCommandLine(state.command.text);
+    } catch (error) {
+      state.error = errorMessage(error);
+      redrawOverlay(host, buildToolAdvancedOverlayOutput);
+      return;
+    }
+    host.clearDashboardOverlay();
+    runSelectedTool(host, toolKey, tool, { override });
+    return;
+  }
+
+  if (applyLineEdit(state.command, event)) {
+    state.error = null;
+    redrawOverlay(host, buildToolAdvancedOverlayOutput);
   }
 }
