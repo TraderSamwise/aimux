@@ -28,11 +28,7 @@ import {
   buildWorktreeRemoveConfirmOverlayOutput,
 } from "../tui/screens/overlay-renderers.js";
 import { buildWorktreeInputOverlayOutput } from "./worktrees.js";
-import {
-  buildToolAdvancedOverlayOutput,
-  buildToolOptionsOverlayOutput,
-  buildToolPickerOverlayOutput,
-} from "./tool-picker.js";
+import { buildToolOptionsOverlayOutput, buildToolPickerOverlayOutput } from "./tool-picker.js";
 import { buildThreadReplyOverlayOutput } from "./subscreens.js";
 
 type DashboardControlHost = any;
@@ -148,9 +144,6 @@ export function handleActiveDashboardOverlayKey(host: DashboardControlHost, data
     case "tool-options":
       host.handleToolOptionsKey(data);
       return true;
-    case "tool-advanced":
-      host.handleToolAdvancedKey(data);
-      return true;
     case "notification-panel":
       host.handleNotificationPanelKey(data);
       return true;
@@ -243,9 +236,6 @@ export function buildActiveDashboardOverlayOutput(host: DashboardControlHost): s
   }
   if (host.dashboardOverlayState.kind === "tool-options") {
     return buildToolOptionsOverlayOutput(host);
-  }
-  if (host.dashboardOverlayState.kind === "tool-advanced") {
-    return buildToolAdvancedOverlayOutput(host);
   }
   if (host.dashboardOverlayState.kind === "orchestration-route-picker") {
     return buildOrchestrationRoutePickerOverlayOutput(host);

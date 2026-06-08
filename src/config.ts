@@ -76,6 +76,10 @@ export interface ToolConfig {
   command: string;
   args: string[];
   enabled: boolean;
+  /** User default extra args, appended after `args` and prefilled (editable) in the "o" options dialog. */
+  defaultArgs?: string[];
+  /** User default env vars, applied at launch and prefilled (editable) in the "o" options dialog. */
+  defaultEnv?: Record<string, string>;
   /** Whether aimux should inject an automatic Claude hook wrapper/config for this tool. */
   wrapperEnabled?: boolean;
   /** Flag/args to inject system prompt preamble, e.g. ["--append-system-prompt"] */
