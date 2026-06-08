@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseLaunchCommandLine, parseShellArgs } from "./shell-args.js";
+import { parseEnvAssignments, parseLaunchCommandLine, parseShellArgs } from "./shell-args.js";
 
 describe("parseShellArgs", () => {
   it("splits whitespace separated args", () => {
@@ -72,5 +72,23 @@ describe("parseLaunchCommandLine", () => {
 
   it("throws on empty input", () => {
     expect(() => parseLaunchCommandLine("   ")).toThrow("no command to launch");
+  });
+});
+
+describe("parseEnvAssignments", () => {
+  it("parses space-separated NAME=VALUE tokens", () => {
+    expect(parseEnvAssignments("CLAUDE_YOLO=1 FOO=bar")).toEqual({ CLAUDE_YOLO: "1", FOO: "bar" });
+  });
+
+  it("returns an empty object for blank input", () => {
+    expect(parseEnvAssignments("   ")).toEqual({});
+  });
+
+  it("supports quoted values with spaces", () => {
+    expect(parseEnvAssignments('MSG="hello world"')).toEqual({ MSG: "hello world" });
+  });
+
+  it("throws on a token that is not an assignment", () => {
+    expect(() => parseEnvAssignments("FOO=bar --flag")).toThrow('invalid env var "--flag"');
   });
 });
