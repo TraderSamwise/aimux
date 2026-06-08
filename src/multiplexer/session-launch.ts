@@ -407,6 +407,8 @@ export function createSession(
   }
   const config = loadConfig();
   const toolCfg = toolConfigKey ? config.tools[toolConfigKey] : undefined;
+  // A launch override may swap the binary; aimux flags/preamble only apply to the tool's own command.
+  const isConfiguredToolCommand = Boolean(toolCfg && toolCfg.command === command);
   const isClaudeResumeStyleLaunch =
     Boolean(toolCfg && toolConfigKey === "claude" && toolCfg.command === command) &&
     shouldSkipClaudeSessionIdInjection(args);
@@ -419,7 +421,8 @@ export function createSession(
       ? extractCodexBackendSessionIdFromArgs(args)
       : undefined;
   const effectiveSuppressStartupPreamble = suppressStartupPreamble;
-  const effectiveSessionIdFlag = isClaudeResumeStyleLaunch ? undefined : sessionIdFlag;
+  const effectiveSessionIdFlag =
+    isConfiguredToolCommand && !isClaudeResumeStyleLaunch ? sessionIdFlag : undefined;
   const backendSessionId =
     backendSessionIdOverride ??
     explicitClaudeBackendSessionId ??
@@ -437,7 +440,9 @@ export function createSession(
         includeAimuxPreamble: automaticPreambleEnabled,
         team,
       });
-  const shouldInjectLaunchPreamble = Boolean(!effectiveSuppressStartupPreamble && preambleFlag && preamble.trim());
+  const shouldInjectLaunchPreamble = Boolean(
+    isConfiguredToolCommand && !effectiveSuppressStartupPreamble && preambleFlag && preamble.trim(),
+  );
   const shouldInjectCodexDeveloperInstructions = Boolean(
     !effectiveSuppressStartupPreamble &&
     toolCfg?.command === command &&
@@ -479,9 +484,9 @@ export function createSession(
       command: launchCommand,
       args: finalArgs,
       extraEnv: {
+        ...(launchEnv ?? {}),
         AIMUX_SESSION_ID: sessionId,
         AIMUX_TOOL: toolConfigKey ?? command,
-        ...(launchEnv ?? {}),
       },
     });
     launchCommand = wrapped.command;
