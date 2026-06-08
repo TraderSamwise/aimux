@@ -491,7 +491,7 @@ export function createSession(
     });
     launchCommand = wrapped.command;
     finalArgs = wrapped.args;
-  } else if (toolCfg && toolCfg.command === command) {
+  } else if (isConfiguredToolCommand) {
     const wrapped = wrapCommandWithShellIntegration({
       projectRoot,
       sessionId,
