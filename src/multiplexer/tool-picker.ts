@@ -1,6 +1,7 @@
 import { loadConfig, type ToolConfig } from "../config.js";
 import { parseKeys } from "../key-parser.js";
 import { parseLaunchCommandLine, type LaunchOverride } from "../shell-args.js";
+import { stripAnsi, truncateAnsi } from "../tui/render/text.js";
 import { forkDashboardAgentWithFeedback, spawnDashboardAgentWithFeedback } from "./dashboard-ops.js";
 
 type ToolPickerHost = any;
@@ -31,7 +32,7 @@ function commandPreview(command: string, args: string[]): string {
 function renderBox(lines: string[], color = "44;97"): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
-  const width = Math.min(cols - 4, Math.max(...lines.map((l) => l.length)) + 4);
+  const width = Math.max(1, Math.min(cols - 4, Math.max(...lines.map((l) => stripAnsi(l).length)) + 4));
   const startRow = Math.max(1, Math.floor((rows - lines.length - 2) / 2));
   const startCol = Math.max(1, Math.floor((cols - width) / 2));
 
@@ -42,8 +43,9 @@ function renderBox(lines: string[], color = "44;97"): string {
     if (i === 0 || i === lines.length + 1) {
       output += `\x1b[${color}m${"─".repeat(width)}\x1b[0m`;
     } else {
-      const line = lines[i - 1].slice(0, width - 4);
-      output += `\x1b[${color}m  ${line.padEnd(width - 2)}\x1b[0m`;
+      const line = truncateAnsi(lines[i - 1], width - 4);
+      const pad = " ".repeat(Math.max(0, width - 2 - stripAnsi(line).length));
+      output += `\x1b[${color}m  ${line}${pad}\x1b[0m`;
     }
   }
   output += "\x1b8";
