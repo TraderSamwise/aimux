@@ -4,6 +4,7 @@ import { DashboardOverlayState, DashboardState } from "../dashboard/state.js";
 import { ContextWatcher } from "../context/context-bridge.js";
 import { loadConfig } from "../config.js";
 import type { LaunchOverride } from "../shell-args.js";
+import type { LaunchOptionsState } from "./tool-picker.js";
 import { findMainRepo } from "../worktree.js";
 import { TerminalHost } from "../terminal-host.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "../session-runtime.js";
@@ -162,9 +163,7 @@ export class Multiplexer {
   private pickerMode: "create" | "fork" = "create";
   private forkSourceSessionId: string | null = null;
   private toolPickerIndex = 0;
-  private toolOptionsToolKey: string | null = null;
-  private toolOptionsBuffer = "";
-  private toolOptionsError: string | null = null;
+  private launchOptionsState: LaunchOptionsState | null = null;
   private worktreeInputBuffer = "";
   private serviceInputBuffer = "";
   private labelInputBuffer = "";
