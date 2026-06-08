@@ -25,30 +25,6 @@ export function parseEnvAssignments(input: string): Record<string, string> {
   return env;
 }
 
-/**
- * Parse a full command line where leading NAME=VALUE tokens are environment
- * assignments, the next token is the command, and the rest are its args.
- */
-export function parseLaunchCommandLine(input: string): LaunchOverride {
-  const tokens = parseShellArgs(input);
-  const env: Record<string, string> = {};
-  let i = 0;
-  for (; i < tokens.length; i++) {
-    const match = ENV_ASSIGNMENT.exec(tokens[i]);
-    if (!match) break;
-    env[match[1]] = match[2];
-  }
-  const command = tokens[i];
-  if (!command) {
-    throw new Error("no command to launch");
-  }
-  return {
-    command,
-    args: tokens.slice(i + 1),
-    env: Object.keys(env).length ? env : undefined,
-  };
-}
-
 export function parseShellArgs(input: string): string[] {
   const args: string[] = [];
   let current = "";
