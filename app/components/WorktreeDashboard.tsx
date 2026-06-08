@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { PageStateCard } from "@/components/PageLayout";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
-import { StatusDotMini, TypeTag } from "@/components/status-dot";
+import { BranchChip, StatusDotMini, TypeTag } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
@@ -29,7 +29,7 @@ import { projectStateErrorCopy } from "@/lib/project-connection-display";
 // (square outline = worktree) with agents (circle) / services (diamond) as
 // guide-lined child rows. Rendered as the Project screen's "Dashboard"
 // section; kept route-agnostic via `padded`. Child guide line #3a3c44.
-const PRESS = "active:bg-[#232429]";
+const PRESS = "hover:bg-[#232429] active:bg-[#26272d]";
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
@@ -95,7 +95,7 @@ function ServiceRow({
 }) {
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
   return (
-    <View className="flex-row items-center rounded-md py-3 pl-4 pr-4">
+    <View className="flex-row items-center rounded-md py-3 pl-4 pr-4 hover:bg-[#232429]">
       <Pressable
         onPress={onPress}
         className="min-w-0 flex-1 flex-row items-center gap-3 active:opacity-70"
@@ -181,15 +181,7 @@ function WorktreeGroup({
       >
         {bucket.name}
       </Text>
-      {bucket.branch ? (
-        <Text
-          className="min-w-0 shrink font-mono text-[13px] text-[#787a83]"
-          numberOfLines={1}
-          ellipsizeMode="middle"
-        >
-          {bucket.branch}
-        </Text>
-      ) : null}
+      {bucket.branch ? <BranchChip branch={bucket.branch} /> : null}
       <Text className="ml-auto pl-4 text-[13px] text-[#787a83]" numberOfLines={1}>
         {countLabel}
       </Text>

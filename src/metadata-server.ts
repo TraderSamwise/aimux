@@ -58,6 +58,7 @@ import {
 import { readAllTasks, readTask } from "./tasks.js";
 import { buildWorkflowEntries } from "./workflow.js";
 import { markLastUsed } from "./last-used.js";
+import type { LaunchOverride } from "./shell-args.js";
 import { formatRelativeRecency } from "./recency.js";
 import type { ParsedAgentOutput } from "./agent-output-parser.js";
 import {
@@ -257,7 +258,7 @@ interface MetadataServerOptions {
       sessionId?: string;
       worktreePath?: string;
       open?: boolean;
-      extraArgs?: string[];
+      launchOverride?: LaunchOverride;
     }) => Promise<{ sessionId: string }> | { sessionId: string };
     createTeammateAgent?: (input: {
       parentSessionId: string;
@@ -286,7 +287,7 @@ interface MetadataServerOptions {
       instruction?: string;
       worktreePath?: string;
       open?: boolean;
-      extraArgs?: string[];
+      launchOverride?: LaunchOverride;
     }) => Promise<{ sessionId: string; threadId: string }> | { sessionId: string; threadId: string };
     stopAgent?: (input: { sessionId: string }) =>
       | Promise<{ sessionId: string; status: "offline" }>
@@ -2323,7 +2324,7 @@ export class MetadataServer {
           sessionId?: string;
           worktreePath?: string;
           open?: boolean;
-          extraArgs?: string[];
+          launchOverride?: LaunchOverride;
         };
         if (!this.options.lifecycle?.spawnAgent) {
           send(res, 501, { ok: false, error: "agent spawn not supported by this service" });
@@ -2585,7 +2586,7 @@ export class MetadataServer {
           instruction?: string;
           worktreePath?: string;
           open?: boolean;
-          extraArgs?: string[];
+          launchOverride?: LaunchOverride;
         };
         if (!this.options.lifecycle?.forkAgent) {
           send(res, 501, { ok: false, error: "agent fork not supported by this service" });
