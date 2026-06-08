@@ -398,6 +398,7 @@ export function createSession(
   detachedInTmux = false,
   suppressStartupPreamble = false,
   team?: SessionTeamMetadata,
+  launchEnv?: Record<string, string>,
 ): any {
   const cols = process.stdout.columns ?? 80;
   const sessionId = sessionIdOverride ?? `${command}-${Math.random().toString(36).slice(2, 8)}`;
@@ -480,6 +481,7 @@ export function createSession(
       extraEnv: {
         AIMUX_SESSION_ID: sessionId,
         AIMUX_TOOL: toolConfigKey ?? command,
+        ...(launchEnv ?? {}),
       },
     });
     launchCommand = wrapped.command;
@@ -491,6 +493,15 @@ export function createSession(
       tool: toolConfigKey ?? command,
       command: launchCommand,
       args: finalArgs,
+      extraEnv: launchEnv,
+    });
+    launchCommand = wrapped.command;
+    finalArgs = wrapped.args;
+  } else if (launchEnv && Object.keys(launchEnv).length > 0) {
+    const wrapped = wrapCommandWithManagedLaunchEnv({
+      command: launchCommand,
+      args: finalArgs,
+      extraEnv: launchEnv,
     });
     launchCommand = wrapped.command;
     finalArgs = wrapped.args;

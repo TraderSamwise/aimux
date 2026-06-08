@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseShellArgs } from "./shell-args.js";
+import { parseLaunchCommandLine, parseShellArgs } from "./shell-args.js";
 
 describe("parseShellArgs", () => {
   it("splits whitespace separated args", () => {
@@ -31,5 +31,46 @@ describe("parseShellArgs", () => {
 
   it("rejects unterminated quotes", () => {
     expect(() => parseShellArgs('--message "hello')).toThrow("unterminated double quote");
+  });
+});
+
+describe("parseLaunchCommandLine", () => {
+  it("parses a plain command with args", () => {
+    expect(parseLaunchCommandLine("claude --resume")).toEqual({
+      command: "claude",
+      args: ["--resume"],
+      env: undefined,
+    });
+  });
+
+  it("routes leading NAME=VALUE tokens into env", () => {
+    expect(parseLaunchCommandLine("CLAUDE_YOLO=1 FOO=bar claude --resume")).toEqual({
+      command: "claude",
+      args: ["--resume"],
+      env: { CLAUDE_YOLO: "1", FOO: "bar" },
+    });
+  });
+
+  it("stops collecting env at the first non-assignment token", () => {
+    const result = parseLaunchCommandLine("A=1 claude B=2 --flag");
+    expect(result.command).toBe("claude");
+    expect(result.args).toEqual(["B=2", "--flag"]);
+    expect(result.env).toEqual({ A: "1" });
+  });
+
+  it("supports quoted env values", () => {
+    expect(parseLaunchCommandLine("MSG=\"hello world\" claude")).toEqual({
+      command: "claude",
+      args: [],
+      env: { MSG: "hello world" },
+    });
+  });
+
+  it("throws when only env assignments are given", () => {
+    expect(() => parseLaunchCommandLine("FOO=bar")).toThrow("no command to launch");
+  });
+
+  it("throws on empty input", () => {
+    expect(() => parseLaunchCommandLine("   ")).toThrow("no command to launch");
   });
 });
