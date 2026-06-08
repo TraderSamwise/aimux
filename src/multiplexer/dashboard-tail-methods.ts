@@ -61,6 +61,7 @@ import { findMainRepo, listWorktrees as listAllWorktrees } from "../worktree.js"
 import { orderDashboardSessionsByVisualWorktree } from "../dashboard/session-registry.js";
 import type { SessionRuntime } from "../session-runtime.js";
 import { loadConfig } from "../config.js";
+import type { LaunchOverride } from "../shell-args.js";
 import type { SessionTeamMetadata } from "../team.js";
 import {
   listTopologySessionStates,
@@ -139,7 +140,7 @@ export type DashboardTailMethods = {
       instruction?: string;
       targetWorktreePath?: string;
       open?: boolean;
-      extraArgs?: string[];
+      launchOverride?: LaunchOverride;
     },
   ): Promise<{ sessionId: string; threadId: string }>;
   spawnAgent(
@@ -149,7 +150,7 @@ export type DashboardTailMethods = {
       targetSessionId?: string;
       targetWorktreePath?: string;
       open?: boolean;
-      extraArgs?: string[];
+      launchOverride?: LaunchOverride;
     },
   ): Promise<{ sessionId: string }>;
   createTeammateAgent(
@@ -279,7 +280,7 @@ export const dashboardTailMethods: DashboardTailMethods = {
       opts.targetSessionId,
       opts.instruction,
       opts.targetWorktreePath,
-      opts.extraArgs ?? [],
+      opts.launchOverride,
     );
     if (!result) {
       throw new Error(`Unable to fork agent "${opts.sourceSessionId}"`);
@@ -297,8 +298,8 @@ export const dashboardTailMethods: DashboardTailMethods = {
     }
     const sessionId = opts.targetSessionId ?? (this as any).generateDashboardSessionId?.(tool.command);
     const transport = this.createSession(
-      tool.command,
-      [...tool.args, ...(opts.extraArgs ?? [])],
+      opts.launchOverride?.command ?? tool.command,
+      opts.launchOverride?.args ?? tool.args,
       tool.preambleFlag,
       opts.toolConfigKey,
       undefined,
@@ -307,6 +308,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
       undefined,
       sessionId,
       !opts.open,
+      false,
+      undefined,
+      opts.launchOverride?.env,
     );
     if (opts.open) {
       this.openLiveTmuxWindowForEntry({ id: transport.id });

@@ -57,7 +57,11 @@ describe("dashboard lifecycle adapter", () => {
         toolConfigKey: "codex",
         targetWorktreePath: "/repo/wt",
         open: true,
-        extraArgs: ["--profile", "test"],
+        launchOverride: {
+          command: "codex",
+          args: ["--dangerously-bypass-approvals-and-sandbox", "--profile", "test"],
+          env: { CODEX_FLAG: "1" },
+        },
       }),
     ).resolves.toEqual({ sessionId: "codex-new" });
 
@@ -73,6 +77,9 @@ describe("dashboard lifecycle adapter", () => {
       undefined,
       "codex-planned",
       false,
+      false,
+      undefined,
+      { CODEX_FLAG: "1" },
     );
     expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({ id: "codex-new" });
   });
@@ -139,7 +146,7 @@ describe("dashboard lifecycle adapter", () => {
         instruction: "continue",
         targetWorktreePath: "/repo/wt",
         open: true,
-        extraArgs: ["--fast"],
+        launchOverride: { command: "codex", args: ["--fast"] },
       }),
     ).resolves.toEqual({ sessionId: "codex-fork", threadId: "thread-1" });
 
@@ -149,7 +156,7 @@ describe("dashboard lifecycle adapter", () => {
       "codex-child",
       "continue",
       "/repo/wt",
-      ["--fast"],
+      { command: "codex", args: ["--fast"] },
     );
     expect(host.openLiveTmuxWindowForEntry).toHaveBeenCalledWith({ id: "codex-fork" });
   });

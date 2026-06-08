@@ -194,6 +194,7 @@ export function wrapCommandWithShellIntegration(opts: {
   args: string[];
   shellPath?: string;
   env?: NodeJS.ProcessEnv;
+  extraEnv?: Record<string, string>;
 }): { command: string; args: string[] } {
   const prepared = prepareShellIntegration(opts.projectRoot, opts.shellPath);
   const envArgs = [
@@ -201,6 +202,7 @@ export function wrapCommandWithShellIntegration(opts: {
     `AIMUX_TOOL=${opts.tool}`,
     `AIMUX_METADATA_ENDPOINT_FILE=${join(getProjectStateDirFor(opts.projectRoot), "metadata-api.txt")}`,
     `AIMUX_SHELL_INTEGRATION_SCRIPT=${prepared.integrationScriptPath}`,
+    ...Object.entries(opts.extraEnv ?? {}).map(([key, value]) => `${key}=${value}`),
   ];
   const commandString = [opts.command, ...opts.args].map(shellQuote).join(" ");
   const shellArgs =

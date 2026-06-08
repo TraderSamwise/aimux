@@ -15,6 +15,7 @@ import {
   isLiveDashboardServiceRuntimeEntry,
 } from "../dashboard/runtime-evidence.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
+import type { LaunchOverride } from "../shell-args.js";
 import { generateServiceId, serviceLabelForCommand } from "./services.js";
 
 type DashboardOpsHost = any;
@@ -369,7 +370,7 @@ export async function spawnDashboardAgentWithFeedback(
     sessionId: string;
     tool: string;
     worktreePath?: string;
-    extraArgs?: string[];
+    launchOverride?: LaunchOverride;
   },
 ): Promise<void> {
   const sessionSeed = buildPendingSessionSeed({
@@ -392,7 +393,7 @@ export async function spawnDashboardAgentWithFeedback(
           tool: input.tool,
           sessionId: input.sessionId,
           worktreePath: input.worktreePath,
-          extraArgs: input.extraArgs,
+          launchOverride: input.launchOverride,
           open: false,
         },
         { timeoutMs: 10_000 },
@@ -412,7 +413,7 @@ export async function forkDashboardAgentWithFeedback(
     tool: string;
     instruction?: string;
     worktreePath?: string;
-    extraArgs?: string[];
+    launchOverride?: LaunchOverride;
   },
 ): Promise<void> {
   const sessionSeed = buildPendingSessionSeed({
@@ -437,7 +438,7 @@ export async function forkDashboardAgentWithFeedback(
           tool: input.tool,
           instruction: input.instruction,
           worktreePath: input.worktreePath,
-          extraArgs: input.extraArgs,
+          launchOverride: input.launchOverride,
           open: false,
         },
         { timeoutMs: 10_000 },

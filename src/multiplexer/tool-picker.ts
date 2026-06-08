@@ -1,6 +1,6 @@
 import { loadConfig, type ToolConfig } from "../config.js";
 import { parseKeys } from "../key-parser.js";
-import { parseShellArgs } from "../shell-args.js";
+import { parseLaunchCommandLine, type LaunchOverride } from "../shell-args.js";
 import { forkDashboardAgentWithFeedback, spawnDashboardAgentWithFeedback } from "./dashboard-ops.js";
 
 type ToolPickerHost = any;
@@ -78,28 +78,39 @@ export function buildToolOptionsOverlayOutput(host: ToolPickerHost): string {
 
   const [toolKey, tool] = selected;
   const buffer = host.toolOptionsBuffer ?? "";
-  let parsedExtraArgs: string[] = [];
+  let override: LaunchOverride | undefined;
   let parseError = host.toolOptionsError;
   if (!parseError) {
     try {
-      parsedExtraArgs = parseShellArgs(buffer);
+      override = parseLaunchCommandLine(buffer);
     } catch (error) {
       parseError = error instanceof Error ? error.message : String(error);
     }
   }
 
-  const defaultArgs = tool.args.length ? tool.args.map(quoteShellArg).join(" ") : "(none)";
-  const preview = commandPreview(tool.command, [...tool.args, ...parsedExtraArgs]);
   const lines = [
     host.pickerMode === "fork" && host.forkSourceSessionId
-      ? `Fork ${toolKey}: launch options`
-      : `${toolKey}: launch options`,
+      ? `Fork ${toolKey}: launch command`
+      : `${toolKey}: launch command`,
     "",
-    `  Default args: ${defaultArgs}`,
-    `  Extra args:   ${buffer}_`,
-    "",
-    `  Command: ${preview}`,
+    `  ${buffer}_`,
   ];
+  if (override) {
+    lines.push("");
+    if (override.env) {
+      const envStr = Object.entries(override.env)
+        .map(([key, value]) => `${key}=${quoteShellArg(value)}`)
+        .join(" ");
+      lines.push(`  Env:    ${envStr}`);
+    }
+    lines.push(`  Launch: ${commandPreview(override.command, override.args)}`);
+    lines.push("");
+    lines.push(
+      override.command === tool.command
+        ? "  aimux hooks + session tracking applied"
+        : "  custom binary — launched without aimux hooks",
+    );
+  }
   if (parseError) {
     lines.push("");
     lines.push(`  Error: ${parseError}`);
@@ -122,11 +133,10 @@ export function runSelectedTool(
   host: ToolPickerHost,
   toolKey: string,
   tool: ToolConfig,
-  opts: { extraArgs?: string[] } = {},
+  opts: { override?: LaunchOverride } = {},
 ): void {
   const wtPath = host.mode === "dashboard" ? host.dashboardState.focusedWorktreePath : undefined;
-  const extraArgs = opts.extraArgs ?? [];
-  const launchArgs = [...tool.args, ...extraArgs];
+  const override = opts.override;
 
   if (host.pickerMode === "fork") {
     const sourceSessionId = host.forkSourceSessionId;
@@ -147,7 +157,7 @@ export function runSelectedTool(
         targetSessionId,
         tool: toolKey,
         worktreePath: wtPath,
-        extraArgs,
+        launchOverride: override,
       });
       return;
     }
@@ -157,7 +167,7 @@ export function runSelectedTool(
       targetSessionId,
       targetWorktreePath: wtPath,
       open: false,
-      extraArgs,
+      launchOverride: override,
     });
     return;
   }
@@ -174,13 +184,13 @@ export function runSelectedTool(
       sessionId,
       tool: toolKey,
       worktreePath: wtPath,
-      extraArgs,
+      launchOverride: override,
     });
     return;
   }
   host.createSession(
-    tool.command,
-    launchArgs,
+    override?.command ?? tool.command,
+    override?.args ?? tool.args,
     tool.preambleFlag,
     toolKey,
     undefined,
@@ -188,6 +198,10 @@ export function runSelectedTool(
     wtPath,
     undefined,
     sessionId,
+    false,
+    false,
+    undefined,
+    override?.env,
   );
 }
 
@@ -242,7 +256,7 @@ export function handleToolPickerKey(host: ToolPickerHost, data: Buffer): void {
       return;
     }
     host.toolOptionsToolKey = picked[0];
-    host.toolOptionsBuffer = "";
+    host.toolOptionsBuffer = commandPreview(picked[1].command, picked[1].args);
     host.toolOptionsError = null;
     host.openDashboardOverlay("tool-options");
     if (typeof host.redrawDashboardWithOverlay === "function") {
@@ -314,9 +328,9 @@ export function handleToolOptionsKey(host: ToolPickerHost, data: Buffer): void {
       return;
     }
     const [toolKey, tool] = selected;
-    let extraArgs: string[];
+    let override: LaunchOverride;
     try {
-      extraArgs = parseShellArgs(host.toolOptionsBuffer ?? "");
+      override = parseLaunchCommandLine(host.toolOptionsBuffer ?? "");
     } catch (error) {
       host.toolOptionsError = error instanceof Error ? error.message : String(error);
       if (typeof host.redrawDashboardWithOverlay === "function") {
@@ -327,7 +341,7 @@ export function handleToolOptionsKey(host: ToolPickerHost, data: Buffer): void {
       return;
     }
     host.clearDashboardOverlay();
-    runSelectedTool(host, toolKey, tool, { extraArgs });
+    runSelectedTool(host, toolKey, tool, { override });
     return;
   }
 
