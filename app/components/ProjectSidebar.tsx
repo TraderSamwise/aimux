@@ -14,7 +14,7 @@ import {
 } from "lucide-react-native";
 import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
-import { StatusDotMini, TypeTag } from "@/components/status-dot";
+import { BranchChip, StatusDotMini, TypeTag } from "@/components/status-dot";
 import { useAuth } from "@/lib/auth";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type {
@@ -102,7 +102,10 @@ function ProjectPicker({
             <Pressable
               key={project.path}
               onPress={() => onSelect(project.path)}
-              className={cn("px-4 py-3", isSelected ? "bg-[#26272d]" : "active:bg-[#232429]")}
+              className={cn(
+                "px-4 py-3",
+                isSelected ? "bg-[#26272d]" : "hover:bg-[#232429] active:bg-[#26272d]",
+              )}
             >
               <View className="flex-row items-center gap-2.5">
                 <View
@@ -155,7 +158,7 @@ function ProjectHeader({
     <Pressable
       onPress={onSwitchProject}
       accessibilityLabel="Switch project"
-      className="border-b border-[#2a2b31] px-4 pb-3.5 pt-4 active:bg-[#232429]"
+      className="border-b border-[#2a2b31] px-4 pb-3.5 pt-4 hover:bg-[#232429] active:bg-[#26272d]"
     >
       <View className="flex-row items-center gap-1.5">
         <ChevronLeft size={14} color="#787a83" />
@@ -195,8 +198,8 @@ function AgentRow({
     <Pressable
       onPress={onPress}
       className={cn(
-        "flex-row items-center gap-2.5 rounded-md py-2.5 pl-3 pr-2.5",
-        isSelected ? "bg-[#26272d]" : "active:bg-[#232429]",
+        "min-h-[40px] flex-row items-center gap-2.5 rounded-md pl-3 pr-2.5",
+        isSelected ? "bg-[#26272d]" : "hover:bg-[#232429] active:bg-[#26272d]",
       )}
     >
       <StatusDotMini status={session.status} />
@@ -227,9 +230,8 @@ function ServiceRow({
   token: string | null;
   onPress: () => void;
 }) {
-  const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
   return (
-    <View className="flex-row items-center gap-2.5 rounded-md py-2.5 pl-3 pr-2.5">
+    <View className="min-h-[40px] flex-row items-center gap-2 rounded-md pl-3 pr-2 hover:bg-[#232429]">
       <Pressable
         onPress={onPress}
         className="min-w-0 flex-1 flex-row items-center gap-2.5 active:opacity-70"
@@ -243,11 +245,6 @@ function ServiceRow({
           {service.label || service.id}
         </Text>
         <TypeTag label="service" />
-        {detail ? (
-          <Text className="shrink-0 font-mono text-[12.5px] text-[#787a83]" numberOfLines={1}>
-            {detail}
-          </Text>
-        ) : null}
       </Pressable>
       <ServiceActions service={service} endpoint={endpoint} token={token} compact />
     </View>
@@ -303,18 +300,7 @@ function WorktreeGroup({
       >
         {bucket.name}
       </Text>
-      {bucket.branch ? (
-        <Text
-          className={cn(
-            "ml-auto min-w-0 shrink pl-2 font-mono text-[12px]",
-            hasChildren ? "text-[#787a83]" : "text-[#5b5d66]",
-          )}
-          numberOfLines={1}
-          ellipsizeMode="middle"
-        >
-          {bucket.branch}
-        </Text>
-      ) : null}
+      {bucket.branch ? <BranchChip branch={bucket.branch} /> : null}
     </>
   );
 
@@ -325,7 +311,7 @@ function WorktreeGroup({
       {hasChildren ? (
         <Pressable
           onPress={() => setCollapsed((c) => !c)}
-          className={cn(headerClass, "active:bg-[#232429]")}
+          className={cn(headerClass, "hover:bg-[#232429] active:bg-[#26272d]")}
         >
           {header}
         </Pressable>
@@ -468,7 +454,7 @@ function WorktreeTree({
             accessibilityLabel={`${showEmpty ? "Hide" : "Show"} ${emptyRest.length} empty worktree${
               emptyRest.length > 1 ? "s" : ""
             }`}
-            className="flex-row items-center gap-2.5 rounded-md px-2.5 py-2.5 active:bg-[#232429]"
+            className="flex-row items-center gap-2.5 rounded-md px-2.5 py-2.5 hover:bg-[#232429] active:bg-[#26272d]"
           >
             {showEmpty ? (
               <ChevronDown size={13} color="#5b5d66" />
@@ -553,7 +539,7 @@ function SidebarPrimaryNav() {
             onPress={() => navigateTab(tabId)}
             className={cn(
               "mb-0.5 flex-row items-center gap-2 rounded-md px-2 py-2",
-              active ? "bg-[#26272d]" : "active:bg-[#232429]",
+              active ? "bg-[#26272d]" : "hover:bg-[#232429] active:bg-[#26272d]",
             )}
           >
             <Icon size={15} color={active ? "#edeef0" : "#787a83"} />

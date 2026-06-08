@@ -3,6 +3,7 @@ import { Dashboard, type DashboardService, type DashboardSession, type WorktreeG
 import { DashboardOverlayState, DashboardState } from "../dashboard/state.js";
 import { ContextWatcher } from "../context/context-bridge.js";
 import { loadConfig } from "../config.js";
+import type { LaunchOverride } from "../shell-args.js";
 import { findMainRepo } from "../worktree.js";
 import { TerminalHost } from "../terminal-host.js";
 import { SessionRuntime, type SessionRuntimeEvent, type SessionTransport } from "../session-runtime.js";
@@ -475,6 +476,7 @@ export class Multiplexer {
     detachedInTmux = false,
     suppressStartupPreamble = false,
     team?: SessionTeamMetadata,
+    launchEnv?: Record<string, string>,
   ): SessionTransport {
     return createSessionImpl(
       this,
@@ -490,6 +492,7 @@ export class Multiplexer {
       detachedInTmux,
       suppressStartupPreamble,
       team,
+      launchEnv,
     );
   }
 
@@ -537,7 +540,7 @@ export class Multiplexer {
     requestedTargetSessionId?: string,
     instruction?: string,
     targetWorktreePath?: string,
-    extraArgs: string[] = [],
+    launchOverride?: LaunchOverride,
   ): Promise<{ sessionId: string; threadId: string; target?: TmuxTarget } | undefined> {
     const sourceSession = this.sessions.find((session) => session.id === sourceSessionId);
     if (!sourceSession) {
@@ -599,8 +602,8 @@ export class Multiplexer {
       .filter(Boolean)
       .join("\n\n");
     const transport = this.createSession(
-      toolCfg.command,
-      [...toolCfg.args, ...extraArgs],
+      launchOverride?.command ?? toolCfg.command,
+      launchOverride?.args ?? toolCfg.args,
       toolCfg.preambleFlag,
       targetToolConfigKey,
       extraPreamble,
@@ -609,6 +612,9 @@ export class Multiplexer {
       undefined,
       targetSessionId,
       !toolCfg.preambleFlag,
+      false,
+      undefined,
+      launchOverride?.env,
     );
     this.agentTracker.emit(sourceSessionId, {
       kind: "status",
