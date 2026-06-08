@@ -209,6 +209,68 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("applies launchEnv but skips session-id/preamble flags when the binary is overridden", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-override-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => "PREAMBLE"),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "bash" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "bash" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    // toolConfigKey "claude" but command "bash" — a user-overridden binary.
+    const session: any = createSession(
+      host,
+      "bash",
+      ["--login"],
+      ["--append-system-prompt"],
+      "claude",
+      undefined,
+      ["--session-id", "{sessionId}"],
+      repoRoot,
+      undefined,
+      undefined,
+      false,
+      false,
+      undefined,
+      { CLAUDE_YOLO: "1" },
+    );
+
+    const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
+    const cmd: string[] = createWindowArgs[4];
+    expect(createWindowArgs[3]).toBe("env");
+    expect(cmd[0]).toBe("-i");
+    // Env override is applied even for an arbitrary binary.
+    expect(cmd.join(" ")).toContain("CLAUDE_YOLO=1");
+    expect(cmd).toContain("bash");
+    // But no aimux hooks: no session-id flag, no injected preamble, no tracking env, no backend id.
+    expect(cmd).not.toContain("--session-id");
+    expect(cmd).not.toContain("--append-system-prompt");
+    expect(cmd.join(" ")).not.toContain("AIMUX_SESSION_ID=");
+    expect(session.backendSessionId).toBeUndefined();
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("stores explicit Claude resume backend ids without adding a competing session id", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-resume-"));
     gitInit(repoRoot);

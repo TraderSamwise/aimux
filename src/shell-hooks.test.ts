@@ -34,6 +34,28 @@ describe("shell hooks", () => {
     expect(wrapped.args.at(-1)).toContain("'codex'");
   });
 
+  it("lets extraEnv through but never lets it override aimux control vars", () => {
+    const wrapped = wrapCommandWithShellIntegration({
+      projectRoot: "/repo/project",
+      sessionId: "codex-123",
+      tool: "codex",
+      command: "codex",
+      args: [],
+      shellPath: "/bin/zsh",
+      extraEnv: { CLAUDE_YOLO: "1", AIMUX_SESSION_ID: "spoofed", AIMUX_TOOL: "spoofed" },
+    });
+
+    const envAssignments = wrapped.args.filter((a) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(a));
+    expect(envAssignments).toContain("CLAUDE_YOLO=1");
+    // env takes the last occurrence, so the real values must come after any spoofed ones.
+    expect(envAssignments.lastIndexOf("AIMUX_SESSION_ID=codex-123")).toBeGreaterThan(
+      envAssignments.indexOf("AIMUX_SESSION_ID=spoofed"),
+    );
+    expect(envAssignments.lastIndexOf("AIMUX_TOOL=codex")).toBeGreaterThan(
+      envAssignments.indexOf("AIMUX_TOOL=spoofed"),
+    );
+  });
+
   it("wraps interactive shell services through env + shell integration", () => {
     const endpointFile = `${getProjectStateDirFor("/repo/project")}/metadata-api.txt`;
     const wrapped = wrapInteractiveShellWithIntegration({
