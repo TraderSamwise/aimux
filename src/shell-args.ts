@@ -10,6 +10,22 @@ export interface LaunchOverride {
 const ENV_ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
 
 /**
+ * Parse a whitespace-separated list of NAME=VALUE environment assignments.
+ * Throws if any token is not a valid assignment.
+ */
+export function parseEnvAssignments(input: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const token of parseShellArgs(input)) {
+    const match = ENV_ASSIGNMENT.exec(token);
+    if (!match) {
+      throw new Error(`invalid env var "${token}" (expected NAME=VALUE)`);
+    }
+    env[match[1]] = match[2];
+  }
+  return env;
+}
+
+/**
  * Parse a full command line where leading NAME=VALUE tokens are environment
  * assignments, the next token is the command, and the rest are its args.
  */
