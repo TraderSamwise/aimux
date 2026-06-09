@@ -3506,11 +3506,6 @@ program
     const payload = parseCodexHookPayload(rawInput);
     const sessionId = opts.session.trim();
 
-    if (action === "permission-request") {
-      console.log(JSON.stringify(await resolvePermissionRequestOutput(projectRoot, sessionId, payload)));
-      return;
-    }
-
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     const setActivity = async (activity: AgentActivityState) =>
       postLiveProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
@@ -3558,6 +3553,16 @@ program
       case "stop":
         await emitEvent("task_done", payload.message?.trim() || "Codex completed its turn.", "success");
         break;
+      case "permission-request": {
+        // Telemetry only — never block. Codex's native TUI prompt stays the
+        // primary decision surface (mirrors cmux's codex behavior); we only
+        // surface that it needs attention. Falls through to `console.log({})`,
+        // which defers to the native prompt.
+        const { summary } = summarizeClaudePermissionRequest(payload);
+        await setAttention("needs_input");
+        await emitEvent("needs_input", summary, "warn");
+        break;
+      }
       default:
         throw new Error(`Unsupported codex hook action: ${action}`);
     }
