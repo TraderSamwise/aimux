@@ -84,6 +84,7 @@ export class ProjectEventBus {
       worktreePath: alert.worktreePath,
       dedupeKey,
       forceNotify: alert.forceNotify,
+      interaction: alert.interaction,
     } satisfies AlertEvent;
 
     upsertNotification({
