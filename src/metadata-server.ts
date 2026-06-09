@@ -31,7 +31,12 @@ import { updateNotificationContext } from "./notification-context.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import { InteractionRegistry } from "./interaction-requests.js";
-import type { InteractionResponse, InteractionType } from "./interaction-requests.js";
+import type {
+  InteractionPayload,
+  InteractionRequest,
+  InteractionResponse,
+  InteractionType,
+} from "./interaction-requests.js";
 import {
   createThread,
   listThreadSummaries,
@@ -679,6 +684,7 @@ export class MetadataServer {
   private port = 0;
   private tracker = new AgentTracker();
   private readonly interactions = new InteractionRegistry();
+  private interactionWatchers = 0;
   private readonly eventBus: ProjectEventBus;
   private unsubscribeAlertSink: (() => void) | null = null;
 
@@ -846,6 +852,34 @@ export class MetadataServer {
   }): void {
     const displayContext = this.resolveSessionAlertDisplayContext(input.sessionId, input.worktreePath);
     this.eventBus.publishAlert(contextualizeAlertInput(input, displayContext));
+  }
+
+  private beginInteraction(input: {
+    sessionId: string;
+    type: InteractionType;
+    payload: InteractionPayload;
+    summary?: string;
+    id?: string;
+  }): InteractionRequest {
+    const request = this.interactions.register({
+      sessionId: input.sessionId,
+      type: input.type,
+      payload: input.payload,
+      projectRoot: process.cwd(),
+      id: input.id,
+    });
+    this.tracker.setAttention(input.sessionId, "needs_response");
+    this.emitAlert({
+      kind: "interaction_request",
+      sessionId: input.sessionId,
+      title: `${input.sessionId} needs a response`,
+      message: input.summary ?? `Agent is waiting on a ${input.type} response.`,
+      interaction: { id: request.id, type: input.type, summary: input.summary },
+      dedupeKey: `interaction:${request.id}`,
+      forceNotify: true,
+    });
+    this.options.onChange?.();
+    return request;
   }
 
   private resolveSessionAlertDisplayContext(
@@ -1939,25 +1973,58 @@ export class MetadataServer {
           return;
         }
         const summary = body.summary?.trim() || undefined;
-        const request = this.interactions.register({
-          sessionId,
-          type,
-          payload: payload ?? {},
-          projectRoot: process.cwd(),
-          id: body.id,
-        });
-        this.tracker.setAttention(sessionId, "needs_response");
-        this.emitAlert({
-          kind: "interaction_request",
-          sessionId,
-          title: `${sessionId} needs a response`,
-          message: summary ?? `Agent is waiting on a ${type} response.`,
-          interaction: { id: request.id, type, summary },
-          dedupeKey: `interaction:${request.id}`,
-          forceNotify: true,
-        });
-        this.options.onChange?.();
+        const request = this.beginInteraction({ sessionId, type, payload: payload ?? {}, summary, id: body.id });
         send(res, 200, { ok: true, request });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/interaction/request") {
+        const body = (await readJson(req)) as {
+          session?: string;
+          type?: InteractionType;
+          payload?: Record<string, unknown>;
+          summary?: string;
+          id?: string;
+          timeoutMs?: number;
+        };
+        const sessionId = body.session?.trim();
+        const type = body.type;
+        const validTypes: InteractionType[] = ["permission", "exit_plan", "question", "input"];
+        if (!sessionId || !type || !validTypes.includes(type)) {
+          send(res, 400, { ok: false, error: "session and a valid type are required" });
+          return;
+        }
+        const payload = body.payload;
+        if (payload !== undefined && (typeof payload !== "object" || payload === null || Array.isArray(payload))) {
+          send(res, 400, { ok: false, error: "payload must be an object" });
+          return;
+        }
+        if (this.interactionWatchers <= 0) {
+          send(res, 200, { ok: true, watching: false });
+          return;
+        }
+        const summary = body.summary?.trim() || undefined;
+        const request = this.beginInteraction({ sessionId, type, payload: payload ?? {}, summary, id: body.id });
+        const timeoutMs =
+          typeof body.timeoutMs === "number" && !Number.isNaN(body.timeoutMs)
+            ? Math.min(Math.max(body.timeoutMs, 1_000), 600_000)
+            : 110_000;
+        const controller = new AbortController();
+        let closed = false;
+        const onClose = () => {
+          closed = true;
+          controller.abort();
+        };
+        req.on("close", onClose);
+        req.on("aborted", onClose);
+        res.on("close", onClose);
+        const settled = await this.interactions.wait(request.id, { timeoutMs, signal: controller.signal });
+        if (closed) return;
+        if (settled.status !== "resolved" && this.interactions.listPending(sessionId).length === 0) {
+          this.tracker.setAttention(sessionId, "normal");
+          this.options.onChange?.();
+        }
+        send(res, 200, { ok: true, request: settled });
         return;
       }
 
@@ -2016,6 +2083,44 @@ export class MetadataServer {
       if (req.method === "GET" && url.pathname === "/agents/interaction/pending") {
         const sessionId = url.searchParams.get("sessionId")?.trim() || undefined;
         send(res, 200, { ok: true, requests: this.interactions.listPending(sessionId) });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/agents/interaction/stream") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/event-stream");
+        res.setHeader("cache-control", "no-cache, no-transform");
+        res.setHeader("connection", "keep-alive");
+        res.setHeader("x-accel-buffering", "no");
+        res.flushHeaders?.();
+
+        this.interactionWatchers += 1;
+        let closed = false;
+        let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+        const unsubscribe = this.eventBus.subscribe((event) => {
+          if (closed) return;
+          if (event.type === "alert" && event.kind === "interaction_request") {
+            sendSseEvent(res, "interaction", event);
+          }
+        });
+        const cleanup = () => {
+          if (closed) return;
+          closed = true;
+          this.interactionWatchers -= 1;
+          unsubscribe();
+          if (keepaliveTimer) clearInterval(keepaliveTimer);
+          keepaliveTimer = null;
+          res.end();
+        };
+        req.on("close", cleanup);
+        req.on("aborted", cleanup);
+        res.on("close", cleanup);
+        sendSseEvent(res, "ready", { pending: this.interactions.listPending() });
+        keepaliveTimer = setInterval(() => {
+          if (closed) return;
+          res.write(": keepalive\n\n");
+        }, 15_000);
+        keepaliveTimer.unref?.();
         return;
       }
 

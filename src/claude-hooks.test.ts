@@ -3,7 +3,9 @@ import {
   buildClaudeHookSettings,
   extractClaudeBackendSessionIdFromArgs,
   injectClaudeHookArgs,
+  permissionRequestHookOutput,
   shouldSkipClaudeSessionIdInjection,
+  summarizeClaudePermissionRequest,
 } from "./claude-hooks.js";
 
 describe("claude-hooks", () => {
@@ -16,6 +18,7 @@ describe("claude-hooks", () => {
     );
     expect(Object.keys(settings.hooks).sort()).toEqual([
       "Notification",
+      "PermissionRequest",
       "PreToolUse",
       "SessionEnd",
       "SessionStart",
@@ -24,6 +27,32 @@ describe("claude-hooks", () => {
     ]);
     expect(settings.hooks.PreToolUse[0].hooks[0].async).toBe(true);
     expect(settings.hooks.SessionEnd[0].hooks[0].timeout).toBeLessThanOrEqual(1);
+    expect(settings.hooks.PermissionRequest[0].hooks[0].timeout).toBe(120);
+    expect(settings.hooks.PermissionRequest[0].hooks[0].command).toContain("permission-request");
+  });
+
+  it("maps registry decisions to PermissionRequest hook output", () => {
+    expect(permissionRequestHookOutput("allow_once")).toEqual({
+      hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } },
+    });
+    expect(permissionRequestHookOutput("allow_always")).toEqual({
+      hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } },
+    });
+    expect(permissionRequestHookOutput("deny")).toEqual({
+      hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny" } },
+    });
+    expect(permissionRequestHookOutput(undefined)).toEqual({});
+    expect(permissionRequestHookOutput("weird")).toEqual({});
+  });
+
+  it("summarizes a permission request payload", () => {
+    expect(
+      summarizeClaudePermissionRequest({ tool_name: "Bash", tool_input: { command: "rm -rf build" } }),
+    ).toEqual({ toolName: "Bash", input: { command: "rm -rf build" }, summary: "Bash: rm -rf build" });
+    expect(summarizeClaudePermissionRequest({ tool_name: "Read", tool_input: { file_path: "/a/b.ts" } }).summary).toBe(
+      "Read: /a/b.ts",
+    );
+    expect(summarizeClaudePermissionRequest({}).summary).toBe("tool");
   });
 
   it("injects settings and backend session id when allowed", () => {
