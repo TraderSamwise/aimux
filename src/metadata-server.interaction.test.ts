@@ -16,6 +16,24 @@ async function postJson(url: string, body: unknown): Promise<{ status: number; j
   return { status: res.status, json: await res.json() };
 }
 
+async function openWatcher(base: string): Promise<() => void> {
+  const ac = new AbortController();
+  const resp = await fetch(`${base}/agents/interaction/stream`, { signal: ac.signal });
+  void (async () => {
+    try {
+      const reader = resp.body?.getReader();
+      if (!reader) return;
+      for (;;) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch {
+      /* connection aborted on cleanup */
+    }
+  })();
+  return () => ac.abort();
+}
+
 describe("interaction endpoints", () => {
   let server: MetadataServer;
   let base: string;
@@ -90,6 +108,51 @@ describe("interaction endpoints", () => {
       await fetch(`${base}/agents/interaction/wait?id=${reg.json.request.id}&timeoutMs=1000`)
     ).json();
     expect(waited.request.status).toBe("timed_out");
+  });
+
+  it("request without a watcher returns watching:false immediately", async () => {
+    const settled = await (
+      await fetch(`${base}/agents/interaction/request`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session: "s7", type: "permission", payload: { toolName: "Bash" }, timeoutMs: 5000 }),
+      })
+    ).json();
+    expect(settled).toEqual({ ok: true, watching: false });
+    expect(settled.request).toBeUndefined();
+  });
+
+  it("request (register+wait) resolves in one call when a watcher responds", async () => {
+    const stop = await openWatcher(base);
+    const waiting = fetch(`${base}/agents/interaction/request`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: "s5", type: "permission", payload: { toolName: "Bash" }, timeoutMs: 5000 }),
+    }).then((r) => r.json());
+
+    await new Promise((r) => setTimeout(r, 50));
+    const pending = await (await fetch(`${base}/agents/interaction/pending?sessionId=s5`)).json();
+    expect(pending.requests).toHaveLength(1);
+    const id = pending.requests[0].id;
+
+    await postJson(`${base}/agents/interaction/respond`, { id, response: { decision: "allow_once" } });
+    const settled = await waiting;
+    expect(settled.request.status).toBe("resolved");
+    expect(settled.request.response.decision).toBe("allow_once");
+    stop();
+  });
+
+  it("request times out and returns timed_out when a watcher never responds", async () => {
+    const stop = await openWatcher(base);
+    const settled = await (
+      await fetch(`${base}/agents/interaction/request`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session: "s6", type: "permission", payload: {}, timeoutMs: 1000 }),
+      })
+    ).json();
+    expect(settled.request.status).toBe("timed_out");
+    stop();
   });
 
   it("rejects a non-object payload or response with 400", async () => {

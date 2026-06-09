@@ -100,7 +100,13 @@ import {
   unreadNotificationCount,
 } from "./notifications.js";
 import { notifyAlert } from "./notify.js";
-import { parseClaudeHookPayload, summarizeClaudeNotification, summarizeClaudeStop } from "./claude-hooks.js";
+import {
+  parseClaudeHookPayload,
+  permissionRequestHookOutput,
+  summarizeClaudeNotification,
+  summarizeClaudePermissionRequest,
+  summarizeClaudeStop,
+} from "./claude-hooks.js";
 import { requestJson } from "./http-client.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
 import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
@@ -3444,6 +3450,25 @@ program
         const summary = summarizeClaudeStop(payload);
         await emitEvent("task_done", summary.body, "success");
         break;
+      }
+      case "permission-request": {
+        let output: Record<string, unknown> = {};
+        try {
+          const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
+          const result = await postLiveProjectServiceJsonOrLocal(
+            projectRoot,
+            "/agents/interaction/request",
+            { session: sessionId, type: "permission", payload: { toolName, input }, summary, timeoutMs: 115_000 },
+            () => ({}),
+          );
+          if (result?.request?.status === "resolved") {
+            output = permissionRequestHookOutput(result.request.response?.decision);
+          }
+        } catch {
+          output = {};
+        }
+        console.log(JSON.stringify(output));
+        return;
       }
       case "session-end":
         break;
