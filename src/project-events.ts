@@ -1,6 +1,7 @@
 import { getProjectId } from "./paths.js";
 import { upsertNotification } from "./notifications.js";
 import { isSessionNotificationFocused } from "./notification-context.js";
+import type { InteractionType } from "./interaction-requests.js";
 
 export type AlertKind =
   | "notification"
@@ -11,7 +12,8 @@ export type AlertKind =
   | "message_waiting"
   | "handoff_waiting"
   | "task_assigned"
-  | "review_waiting";
+  | "review_waiting"
+  | "interaction_request";
 
 export interface AlertEvent {
   type: "alert";
@@ -26,6 +28,8 @@ export interface AlertEvent {
   worktreePath?: string;
   dedupeKey?: string;
   forceNotify?: boolean;
+  /** Present on actionable interaction_request alerts so clients can resolve them. */
+  interaction?: { id: string; type: InteractionType; summary?: string };
 }
 
 export type ProjectStreamEvent = AlertEvent;
