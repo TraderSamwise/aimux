@@ -55,6 +55,13 @@ describe("claude-hooks", () => {
     expect(summarizeClaudePermissionRequest({}).summary).toBe("tool");
   });
 
+  it("truncates an overlong permission detail", () => {
+    const long = "x".repeat(500);
+    const { summary } = summarizeClaudePermissionRequest({ tool_name: "Bash", tool_input: { command: long } });
+    expect(summary.length).toBeLessThan(260);
+    expect(summary.endsWith("…")).toBe(true);
+  });
+
   it("injects settings and backend session id when allowed", () => {
     const args = injectClaudeHookArgs(["hello"], {
       sessionId: "claude-abc123",

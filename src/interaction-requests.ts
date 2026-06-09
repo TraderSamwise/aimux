@@ -75,8 +75,14 @@ type Waiter = (request: InteractionRequest) => void;
 export class InteractionRegistry {
   private readonly requests = new Map<string, InteractionRequest>();
   private readonly waiters = new Map<string, Set<Waiter>>();
+  private readonly settledTtlMs: number;
+
+  constructor(options: { settledTtlMs?: number } = {}) {
+    this.settledTtlMs = options.settledTtlMs ?? 5 * 60_000;
+  }
 
   register(input: RegisterInteractionInput): InteractionRequest {
+    this.pruneSettled();
     const id = input.id?.trim() || randomUUID();
     const request: InteractionRequest = {
       id,
@@ -195,6 +201,16 @@ export class InteractionRegistry {
     if (!set) return;
     for (const waiter of [...set]) {
       waiter(request);
+    }
+  }
+
+  /** Drop settled requests past the TTL so the registry can't grow unbounded. */
+  private pruneSettled(): void {
+    const cutoff = Date.now() - this.settledTtlMs;
+    for (const [id, request] of this.requests) {
+      if (request.status !== "pending" && request.resolvedAt && Date.parse(request.resolvedAt) <= cutoff) {
+        this.requests.delete(id);
+      }
     }
   }
 }

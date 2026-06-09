@@ -2019,11 +2019,11 @@ export class MetadataServer {
         req.on("aborted", onClose);
         res.on("close", onClose);
         const settled = await this.interactions.wait(request.id, { timeoutMs, signal: controller.signal });
-        if (closed) return;
         if (settled.status !== "resolved" && this.interactions.listPending(sessionId).length === 0) {
           this.tracker.setAttention(sessionId, "normal");
           this.options.onChange?.();
         }
+        if (closed) return;
         send(res, 200, { ok: true, request: settled });
         return;
       }
@@ -2069,10 +2069,7 @@ export class MetadataServer {
           send(res, 409, { ok: false, error: "no pending interaction for id" });
           return;
         }
-        if (
-          request.sessionId &&
-          loadMetadataState().sessions[request.sessionId]?.derived?.attention === "needs_response"
-        ) {
+        if (request.sessionId && this.interactions.listPending(request.sessionId).length === 0) {
           this.tracker.setAttention(request.sessionId, "normal");
         }
         this.options.onChange?.();
@@ -2115,12 +2112,16 @@ export class MetadataServer {
         req.on("close", cleanup);
         req.on("aborted", cleanup);
         res.on("close", cleanup);
-        sendSseEvent(res, "ready", { pending: this.interactions.listPending() });
-        keepaliveTimer = setInterval(() => {
-          if (closed) return;
-          res.write(": keepalive\n\n");
-        }, 15_000);
-        keepaliveTimer.unref?.();
+        try {
+          sendSseEvent(res, "ready", { pending: this.interactions.listPending() });
+          keepaliveTimer = setInterval(() => {
+            if (closed) return;
+            res.write(": keepalive\n\n");
+          }, 15_000);
+          keepaliveTimer.unref?.();
+        } catch {
+          cleanup();
+        }
         return;
       }
 
