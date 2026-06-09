@@ -23,6 +23,10 @@ const DEFAULT_DAEMON_PORT = 43190;
 const DEFAULT_DAEMON_HOST = "127.0.0.1";
 const DAEMON_STARTUP_TIMEOUT_MS = 10_000;
 const PROJECT_SERVICE_STARTUP_GRACE_MS = 15_000;
+const PROJECT_SERVICE_HEALTH_TIMEOUT_MS = 2_500;
+// A busy event loop can miss a health ping; only restart after this many
+// consecutive failures so transient stalls don't churn the service.
+const PROJECT_SERVICE_HEALTH_FAILURE_THRESHOLD = 3;
 const PROJECT_SERVICE_TERM_GRACE_MS = 2_000;
 const PROJECT_SERVICE_KILL_GRACE_MS = 3_000;
 const PROJECT_SERVICE_EXIT_POLL_MS = 50;
@@ -367,6 +371,9 @@ export class AimuxDaemon {
   private readonly pushThrottle = new MobilePushThrottle();
   private readonly children = new Map<string, ChildProcess>();
   private readonly projectEnsurePromises = new Map<string, Promise<ProjectServiceState>>();
+  // Consecutive failed health checks per project; a single transient stall
+  // (event loop briefly busy) must not trigger a restart.
+  private readonly projectHealthFailures = new Map<string, number>();
   private state: DaemonState = loadDaemonState();
 
   async start(): Promise<void> {
@@ -575,7 +582,7 @@ export class AimuxDaemon {
       }
       try {
         const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}/health`, {
-          timeoutMs: 1000,
+          timeoutMs: PROJECT_SERVICE_HEALTH_TIMEOUT_MS,
         });
         if (status < 200 || status >= 300 || json?.ok === false) {
           throw new Error(json?.error || `health request failed: ${status}`);
@@ -584,14 +591,24 @@ export class AimuxDaemon {
         if (withinStartupGrace) {
           return refreshExisting();
         }
+        const failures = (this.projectHealthFailures.get(projectId) ?? 0) + 1;
+        this.projectHealthFailures.set(projectId, failures);
         log.warn("project service health check failed", "daemon", {
           projectId,
           projectRoot: resolvedRoot,
           pid: existing.pid,
           error: error instanceof Error ? error.message : String(error),
+          consecutiveFailures: failures,
+          threshold: PROJECT_SERVICE_HEALTH_FAILURE_THRESHOLD,
         });
+        // Tolerate transient stalls; only restart after sustained failures.
+        if (failures < PROJECT_SERVICE_HEALTH_FAILURE_THRESHOLD) {
+          return refreshExisting();
+        }
+        this.projectHealthFailures.delete(projectId);
         return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
       }
+      this.projectHealthFailures.delete(projectId);
       return refreshExisting();
     }
     return this.spawnProjectService(resolvedRoot, projectId);
