@@ -94,6 +94,22 @@ describe("InteractionRegistry", () => {
     expect(reg.get(c.id)?.status).toBe("pending");
   });
 
+  it("prunes settled entries past the TTL on the next register", () => {
+    const reg = new InteractionRegistry({ settledTtlMs: 0 });
+    const a = reg.register({ sessionId: "s1", type: "input", payload: {} });
+    reg.resolve(a.id, { decision: "deny" });
+    expect(reg.get(a.id)?.status).toBe("resolved");
+    reg.register({ sessionId: "s1", type: "input", payload: {} });
+    expect(reg.get(a.id)).toBeUndefined();
+  });
+
+  it("keeps pending entries regardless of TTL", () => {
+    const reg = new InteractionRegistry({ settledTtlMs: 0 });
+    const a = reg.register({ sessionId: "s1", type: "input", payload: {} });
+    reg.register({ sessionId: "s1", type: "input", payload: {} });
+    expect(reg.get(a.id)?.status).toBe("pending");
+  });
+
   it("wait aborts via signal", async () => {
     const reg = new InteractionRegistry();
     const req = reg.register({ sessionId: "s1", type: "input", payload: {} });

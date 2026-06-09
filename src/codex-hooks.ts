@@ -60,7 +60,8 @@ export function isAimuxOwnedCodexHookCommand(command: unknown): boolean {
   return typeof command === "string" && command.includes(AIMUX_CODEX_HOOK_MARKER);
 }
 
-/** The per-launch flags that enable + trust hooks without any config.toml mutation. */
+/** Per-launch flags that enable + trust hooks without any config.toml mutation.
+ * The trust bypass applies to the per-user hooks.json aimux owns and writes. */
 export function codexLaunchHookArgs(): string[] {
   return ["-c", "features.hooks=true", "--dangerously-bypass-hook-trust"];
 }

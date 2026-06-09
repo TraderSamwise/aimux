@@ -167,11 +167,10 @@ export function summarizeClaudeStop(payload: ClaudeHookPayload): { subtitle: str
 }
 
 function summarizePermissionInput(toolName: string, input: Record<string, unknown> | undefined): string {
-  if (input) {
-    const detail = pickString(input["command"], input["file_path"], input["path"], input["url"]);
-    if (detail) return `${toolName}: ${detail}`;
-  }
-  return toolName;
+  const detail = input ? pickString(input["command"], input["file_path"], input["path"], input["url"]) : undefined;
+  if (!detail) return toolName;
+  const trimmed = detail.length > 200 ? `${detail.slice(0, 200)}…` : detail;
+  return `${toolName}: ${trimmed}`;
 }
 
 export function summarizeClaudePermissionRequest(payload: ClaudeHookPayload): {
