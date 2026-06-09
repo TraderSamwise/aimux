@@ -403,14 +403,17 @@ function exitAfterOpen(): never {
 async function resolvePermissionRequestOutput(
   projectRoot: string,
   sessionId: string,
-  payload: { tool_name?: string; tool_input?: Record<string, unknown> },
+  payload: { tool_name?: string; tool_input?: Record<string, unknown>; cwd?: string },
 ): Promise<Record<string, unknown>> {
   try {
     const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
+    // The hook runs in the agent's working dir, which is the worktree (or the
+    // project root if no worktree). Carry it so clients can show project/worktree.
+    const cwd = (typeof payload.cwd === "string" && payload.cwd) || process.cwd();
     const result = await postLiveProjectServiceJsonOrLocal(
       projectRoot,
       "/agents/interaction/request",
-      { session: sessionId, type: "permission", payload: { toolName, input }, summary, timeoutMs: 115_000 },
+      { session: sessionId, type: "permission", payload: { toolName, input, cwd }, summary, timeoutMs: 115_000 },
       () => ({}),
     );
     if (result?.request?.status === "resolved") {
