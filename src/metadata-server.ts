@@ -30,6 +30,8 @@ import {
 import { updateNotificationContext } from "./notification-context.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
+import { InteractionRegistry } from "./interaction-requests.js";
+import type { InteractionResponse, InteractionType } from "./interaction-requests.js";
 import {
   createThread,
   listThreadSummaries,
@@ -676,6 +678,7 @@ export class MetadataServer {
   private server: Server | null = null;
   private port = 0;
   private tracker = new AgentTracker();
+  private readonly interactions = new InteractionRegistry();
   private readonly eventBus: ProjectEventBus;
   private unsubscribeAlertSink: (() => void) | null = null;
 
@@ -839,6 +842,7 @@ export class MetadataServer {
     dedupeKey?: string;
     cooldownMs?: number;
     forceNotify?: boolean;
+    interaction?: { id: string; type: InteractionType; summary?: string };
   }): void {
     const displayContext = this.resolveSessionAlertDisplayContext(input.sessionId, input.worktreePath);
     this.eventBus.publishAlert(contextualizeAlertInput(input, displayContext));
@@ -1123,6 +1127,7 @@ export class MetadataServer {
       send(res, 200, {
         ok: true,
         serviceInfo: getProjectServiceManifest(),
+        pendingInteractions: this.interactions.listPending(),
         ...this.options.desktop.getState(),
       });
       return;
@@ -1910,6 +1915,107 @@ export class MetadataServer {
         }
         this.options.onChange?.();
         send(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/interaction/register") {
+        const body = (await readJson(req)) as {
+          session?: string;
+          type?: InteractionType;
+          payload?: Record<string, unknown>;
+          summary?: string;
+          id?: string;
+        };
+        const sessionId = body.session?.trim();
+        const type = body.type;
+        const validTypes: InteractionType[] = ["permission", "exit_plan", "question", "input"];
+        if (!sessionId || !type || !validTypes.includes(type)) {
+          send(res, 400, { ok: false, error: "session and a valid type are required" });
+          return;
+        }
+        const payload = body.payload;
+        if (payload !== undefined && (typeof payload !== "object" || payload === null || Array.isArray(payload))) {
+          send(res, 400, { ok: false, error: "payload must be an object" });
+          return;
+        }
+        const summary = body.summary?.trim() || undefined;
+        const request = this.interactions.register({
+          sessionId,
+          type,
+          payload: payload ?? {},
+          projectRoot: process.cwd(),
+          id: body.id,
+        });
+        this.tracker.setAttention(sessionId, "needs_response");
+        this.emitAlert({
+          kind: "interaction_request",
+          sessionId,
+          title: `${sessionId} needs a response`,
+          message: summary ?? `Agent is waiting on a ${type} response.`,
+          interaction: { id: request.id, type, summary },
+          dedupeKey: `interaction:${request.id}`,
+          forceNotify: true,
+        });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, request });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/agents/interaction/wait") {
+        const id = url.searchParams.get("id")?.trim();
+        if (!id) {
+          send(res, 400, { ok: false, error: "id is required" });
+          return;
+        }
+        const timeoutRaw = url.searchParams.get("timeoutMs");
+        const parsed = timeoutRaw ? Number.parseInt(timeoutRaw, 10) : Number.NaN;
+        const timeoutMs = Number.isNaN(parsed) ? 110_000 : Math.min(Math.max(parsed, 1_000), 600_000);
+        const controller = new AbortController();
+        let closed = false;
+        const onClose = () => {
+          closed = true;
+          controller.abort();
+        };
+        req.on("close", onClose);
+        req.on("aborted", onClose);
+        res.on("close", onClose);
+        const request = await this.interactions.wait(id, { timeoutMs, signal: controller.signal });
+        if (closed) return;
+        send(res, 200, { ok: true, request });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/interaction/respond") {
+        const body = (await readJson(req)) as { id?: string; response?: InteractionResponse };
+        const id = body.id?.trim();
+        if (!id) {
+          send(res, 400, { ok: false, error: "id is required" });
+          return;
+        }
+        const response = body.response;
+        if (response !== undefined && (typeof response !== "object" || response === null || Array.isArray(response))) {
+          send(res, 400, { ok: false, error: "response must be an object" });
+          return;
+        }
+        const request = this.interactions.resolve(id, response ?? {});
+        if (!request) {
+          send(res, 409, { ok: false, error: "no pending interaction for id" });
+          return;
+        }
+        if (
+          request.sessionId &&
+          loadMetadataState().sessions[request.sessionId]?.derived?.attention === "needs_response"
+        ) {
+          this.tracker.setAttention(request.sessionId, "normal");
+        }
+        this.options.onChange?.();
+        send(res, 200, { ok: true, request });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/agents/interaction/pending") {
+        const sessionId = url.searchParams.get("sessionId")?.trim() || undefined;
+        send(res, 200, { ok: true, requests: this.interactions.listPending(sessionId) });
         return;
       }
 
