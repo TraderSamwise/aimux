@@ -8,6 +8,8 @@ export interface ClaudeHookPayload {
   message?: string;
   stop_reason?: string;
   object?: Record<string, unknown>;
+  tool_name?: string;
+  tool_input?: Record<string, unknown>;
 }
 
 function shellQuote(value: string): string {
@@ -108,6 +110,12 @@ export function buildClaudeHookSettings(opts: { sessionId: string; projectRoot: 
           hooks: [{ type: "command", command: command("pre-tool-use"), timeout: 5, async: true }],
         },
       ],
+      PermissionRequest: [
+        {
+          matcher: "",
+          hooks: [{ type: "command", command: command("permission-request"), timeout: 120 }],
+        },
+      ],
     },
   });
 }
@@ -156,4 +164,33 @@ export function summarizeClaudeStop(payload: ClaudeHookPayload): { subtitle: str
   const subtitle = pickString(payload.stop_reason, object["stop_reason"]) ?? "Session complete";
   const body = pickString(payload.message, object["summary"], object["message"]) ?? "Claude completed its turn.";
   return { subtitle, body };
+}
+
+function summarizePermissionInput(toolName: string, input: Record<string, unknown> | undefined): string {
+  const detail = input ? pickString(input["command"], input["file_path"], input["path"], input["url"]) : undefined;
+  if (!detail) return toolName;
+  const trimmed = detail.length > 200 ? `${detail.slice(0, 200)}…` : detail;
+  return `${toolName}: ${trimmed}`;
+}
+
+export function summarizeClaudePermissionRequest(payload: ClaudeHookPayload): {
+  toolName: string;
+  input: Record<string, unknown> | undefined;
+  summary: string;
+} {
+  const toolName = pickString(payload.tool_name) ?? "tool";
+  const input = payload.tool_input;
+  return { toolName, input, summary: summarizePermissionInput(toolName, input) };
+}
+
+/** Map a registry decision to the Claude PermissionRequest stdout JSON; `{}` defers to the native prompt. */
+export function permissionRequestHookOutput(decision: string | undefined): Record<string, unknown> {
+  const behavior = decision === "deny" ? "deny" : decision?.startsWith("allow") ? "allow" : undefined;
+  if (!behavior) return {};
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PermissionRequest",
+      decision: { behavior },
+    },
+  };
 }

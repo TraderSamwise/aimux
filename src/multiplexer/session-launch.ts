@@ -10,6 +10,7 @@ import {
   injectClaudeHookArgs,
   shouldSkipClaudeSessionIdInjection,
 } from "../claude-hooks.js";
+import { codexLaunchHookArgs, installCodexHooks } from "../codex-hooks.js";
 import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
@@ -486,6 +487,26 @@ export function createSession(
       extraEnv: {
         ...(launchEnv ?? {}),
         AIMUX_SESSION_ID: sessionId,
+        AIMUX_TOOL: toolConfigKey ?? command,
+      },
+    });
+    launchCommand = wrapped.command;
+    finalArgs = wrapped.args;
+  } else if (toolCfg && toolConfigKey === "codex" && toolCfg.command === command && toolCfg.wrapperEnabled !== false) {
+    try {
+      installCodexHooks();
+    } catch (error) {
+      debug(`codex hook install failed: ${error instanceof Error ? error.message : String(error)}`, "session");
+    }
+    finalArgs = [...codexLaunchHookArgs(), ...finalArgs];
+    launchCommand = toolCfg.command;
+    const wrapped = wrapCommandWithManagedLaunchEnv({
+      command: launchCommand,
+      args: finalArgs,
+      extraEnv: {
+        ...(launchEnv ?? {}),
+        AIMUX_SESSION_ID: sessionId,
+        AIMUX_PROJECT_ROOT: projectRoot,
         AIMUX_TOOL: toolConfigKey ?? command,
       },
     });

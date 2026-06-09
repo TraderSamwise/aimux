@@ -2,7 +2,7 @@ import type { MetadataTone } from "./metadata-store.js";
 
 export type AgentActivityState = "idle" | "running" | "done" | "error" | "waiting" | "interrupted";
 
-export type AgentAttentionState = "normal" | "needs_input" | "blocked" | "error";
+export type AgentAttentionState = "normal" | "needs_input" | "blocked" | "error" | "needs_response";
 
 export type AgentEventKind =
   | "prompt"
