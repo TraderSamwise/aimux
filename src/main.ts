@@ -107,6 +107,7 @@ import {
   summarizeClaudePermissionRequest,
   summarizeClaudeStop,
 } from "./claude-hooks.js";
+import { parseCodexHookPayload } from "./codex-hooks.js";
 import { requestJson } from "./http-client.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
 import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
@@ -395,6 +396,30 @@ async function getProjectServiceJsonOrLocal(path: string, fallback: () => any): 
 
 function exitAfterOpen(): never {
   process.exit(0);
+}
+
+/** Shared by the claude + codex permission hooks: register a permission interaction
+ * and long-poll for a decision, returning the hook stdout ({} defers to the native prompt). */
+async function resolvePermissionRequestOutput(
+  projectRoot: string,
+  sessionId: string,
+  payload: { tool_name?: string; tool_input?: Record<string, unknown> },
+): Promise<Record<string, unknown>> {
+  try {
+    const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
+    const result = await postLiveProjectServiceJsonOrLocal(
+      projectRoot,
+      "/agents/interaction/request",
+      { session: sessionId, type: "permission", payload: { toolName, input }, summary, timeoutMs: 115_000 },
+      () => ({}),
+    );
+    if (result?.request?.status === "resolved") {
+      return permissionRequestHookOutput(result.request.response?.decision);
+    }
+  } catch {
+    /* fall through to the native prompt */
+  }
+  return {};
 }
 
 async function postLiveProjectServiceJsonOrLocal(
@@ -3452,22 +3477,7 @@ program
         break;
       }
       case "permission-request": {
-        let output: Record<string, unknown> = {};
-        try {
-          const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
-          const result = await postLiveProjectServiceJsonOrLocal(
-            projectRoot,
-            "/agents/interaction/request",
-            { session: sessionId, type: "permission", payload: { toolName, input }, summary, timeoutMs: 115_000 },
-            () => ({}),
-          );
-          if (result?.request?.status === "resolved") {
-            output = permissionRequestHookOutput(result.request.response?.decision);
-          }
-        } catch {
-          output = {};
-        }
-        console.log(JSON.stringify(output));
+        console.log(JSON.stringify(await resolvePermissionRequestOutput(projectRoot, sessionId, payload)));
         return;
       }
       case "session-end":
@@ -3481,6 +3491,78 @@ program
       return;
     }
     console.log("OK");
+  });
+
+program
+  .command("codex-hook <action>")
+  .description("Internal Codex hook adapter (mirrors claude-hook)")
+  .requiredOption("--session <sessionId>", "Aimux session id")
+  .requiredOption("--project <path>", "Project path")
+  .option("--json", "Emit JSON output")
+  .action(async (action: string, opts: { session: string; project: string; json?: boolean }) => {
+    const projectRoot = resolveProjectRoot(pathResolve(opts.project));
+    await initPaths(projectRoot);
+    const rawInput = await readAllStdin();
+    const payload = parseCodexHookPayload(rawInput);
+    const sessionId = opts.session.trim();
+
+    if (action === "permission-request") {
+      console.log(JSON.stringify(await resolvePermissionRequestOutput(projectRoot, sessionId, payload)));
+      return;
+    }
+
+    const result: Record<string, unknown> = { ok: true, action, sessionId };
+    const setActivity = async (activity: AgentActivityState) =>
+      postLiveProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+        metadataTracker.setActivity(sessionId, activity, projectRoot),
+      );
+    const setAttention = async (attention: AgentAttentionState) =>
+      postLiveProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+        metadataTracker.setAttention(sessionId, attention, projectRoot),
+      );
+    const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
+      postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/event",
+        { session: sessionId, event: { kind, message, tone } },
+        () => metadataTracker.emit(sessionId, { kind, message, tone }, projectRoot),
+      );
+    const clearSessionNotifications = async () =>
+      postLiveProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
+        ok: true,
+        cleared: clearNotifications({ sessionId }),
+      }));
+
+    const backendSessionId = typeof payload.session_id === "string" ? payload.session_id.trim() : "";
+    if (backendSessionId) {
+      result.backendSessionId = backendSessionId;
+      await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/agents/record-backend-session",
+        { sessionId, backendSessionId },
+        () => ({ ok: true }),
+      ).catch(() => {});
+    }
+
+    switch (action) {
+      case "session-start":
+        break;
+      case "prompt-submit":
+        await clearSessionNotifications();
+        await setActivity("running");
+        await setAttention("normal");
+        await postLiveProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+          metadataTracker.markSeen(sessionId, projectRoot),
+        );
+        break;
+      case "stop":
+        await emitEvent("task_done", payload.message?.trim() || "Codex completed its turn.", "success");
+        break;
+      default:
+        throw new Error(`Unsupported codex hook action: ${action}`);
+    }
+
+    console.log(JSON.stringify(opts.json ? result : {}));
   });
 
 program
