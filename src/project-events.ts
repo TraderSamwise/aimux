@@ -28,8 +28,17 @@ export interface AlertEvent {
   worktreePath?: string;
   dedupeKey?: string;
   forceNotify?: boolean;
-  /** Present on actionable interaction_request alerts so clients can resolve them. */
-  interaction?: { id: string; type: InteractionType; summary?: string };
+  /** Present on actionable interaction_request alerts so clients can resolve them.
+   * `telemetry: true` marks a read-only notice (e.g. Codex, whose native TUI owns
+   * the decision) — clients render it as a non-actionable Feed row. */
+  interaction?: {
+    id: string;
+    type: InteractionType;
+    summary?: string;
+    telemetry?: boolean;
+    toolName?: string;
+    toolInputJSON?: string;
+  };
 }
 
 export type ProjectStreamEvent = AlertEvent;
