@@ -1989,18 +1989,19 @@ export class MetadataServer {
         // Read-only telemetry (e.g. Codex, whose native TUI owns the decision):
         // emit a non-actionable interaction alert and flag attention, but never
         // register a blocking interaction. Returns immediately.
-        const body = (await readJson(req)) as {
+        const body = (await readJson(req).catch(() => null)) as {
           session?: string;
           summary?: string;
           payload?: { toolName?: string; input?: Record<string, unknown>; cwd?: string };
-        };
-        const sessionId = body.session?.trim();
-        if (!sessionId) {
+        } | null;
+        const sessionId = body?.session?.trim();
+        if (!body || !sessionId) {
           send(res, 400, { ok: false, error: "session is required" });
           return;
         }
         const toolName = body.payload?.toolName;
-        const input = body.payload?.input ?? {};
+        const rawInput = body.payload?.input;
+        const input = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput) ? rawInput : {};
         const cwd = typeof body.payload?.cwd === "string" ? body.payload.cwd : undefined;
         const summary = body.summary?.trim() || undefined;
         this.tracker.setAttention(sessionId, "needs_input");

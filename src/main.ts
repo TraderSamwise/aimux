@@ -3561,12 +3561,14 @@ program
         // primary decision surface; we post a non-actionable Feed notice (which
         // also flags attention). Falls through to `console.log({})` → native prompt.
         const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
+        // Best-effort: a telemetry transport failure must never break the hook —
+        // it always falls through to `console.log({})` and the native prompt.
         await postLiveProjectServiceJsonOrLocal(
           projectRoot,
           "/agents/interaction/notify",
           { session: sessionId, summary, payload: { toolName, input, cwd: process.cwd() } },
           () => ({}),
-        );
+        ).catch(() => undefined);
         break;
       }
       default:

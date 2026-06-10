@@ -489,6 +489,9 @@ export class AimuxDaemon {
   }
 
   private spawnProjectService(projectRoot: string, projectId: string): ProjectServiceState {
+    // A fresh service instance starts with a clean health-failure slate, so a
+    // new pid never inherits the previous instance's accumulated failure debt.
+    this.projectHealthFailures.delete(projectId);
     const stdio = loggingChildStdio(getProjectServiceStdioLogPathFor(projectRoot));
     let child: ChildProcess;
     try {
@@ -605,7 +608,8 @@ export class AimuxDaemon {
         if (failures < PROJECT_SERVICE_HEALTH_FAILURE_THRESHOLD) {
           return refreshExisting();
         }
-        this.projectHealthFailures.delete(projectId);
+        // The counter is reset by spawnProjectService once a replacement
+        // actually starts; if termination fails we keep the debt and retry.
         return this.replaceProjectServiceAfterExit(resolvedRoot, projectId, existing, refreshExisting);
       }
       this.projectHealthFailures.delete(projectId);
@@ -703,6 +707,7 @@ export class AimuxDaemon {
       process.kill(existing.pid, "SIGTERM");
     } catch {}
     delete this.state.projects[projectId];
+    this.projectHealthFailures.delete(projectId);
     if (this.children.get(projectId)?.pid === existing.pid) {
       this.children.delete(projectId);
     }
