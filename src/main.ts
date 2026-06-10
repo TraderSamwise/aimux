@@ -3557,13 +3557,16 @@ program
         await emitEvent("task_done", payload.message?.trim() || "Codex completed its turn.", "success");
         break;
       case "permission-request": {
-        // Telemetry only — never block. Codex's native TUI prompt stays the
-        // primary decision surface (mirrors cmux's codex behavior); we only
-        // surface that it needs attention. Falls through to `console.log({})`,
-        // which defers to the native prompt.
-        const { summary } = summarizeClaudePermissionRequest(payload);
-        await setAttention("needs_input");
-        await emitEvent("needs_input", summary, "warn");
+        // Read-only telemetry — never block. Codex's native TUI prompt stays the
+        // primary decision surface; we post a non-actionable Feed notice (which
+        // also flags attention). Falls through to `console.log({})` → native prompt.
+        const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
+        await postLiveProjectServiceJsonOrLocal(
+          projectRoot,
+          "/agents/interaction/notify",
+          { session: sessionId, summary, payload: { toolName, input, cwd: process.cwd() } },
+          () => ({}),
+        );
         break;
       }
       default:
