@@ -142,8 +142,8 @@ describe("daemon supervision", () => {
     expect(livePids.has(first.pid)).toBe(true);
   });
 
-  it("waits for an unhealthy project service to exit before spawning a replacement", async () => {
-    vi.mocked(requestJson).mockRejectedValueOnce(new Error("health failed"));
+  it("waits for a repeatedly-unhealthy project service to exit before spawning a replacement", async () => {
+    vi.mocked(requestJson).mockRejectedValue(new Error("health failed"));
     const { AimuxDaemon } = await import("./daemon.js");
 
     const daemon = new AimuxDaemon();
@@ -164,6 +164,12 @@ describe("daemon supervision", () => {
       return true;
     }) as typeof process.kill);
 
+    // Transient misses below the threshold are tolerated: the same service stays.
+    expect((await (daemon as any).ensureProject(projectRoot)).pid).toBe(first.pid);
+    expect((await (daemon as any).ensureProject(projectRoot)).pid).toBe(first.pid);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+
+    // The threshold-crossing third failure replaces it, waiting for the old exit.
     const replacementPromise = (daemon as any).ensureProject(projectRoot);
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(spawnMock).toHaveBeenCalledTimes(1);
@@ -174,9 +180,7 @@ describe("daemon supervision", () => {
   });
 
   it("serializes concurrent unhealthy project ensures into one replacement spawn", async () => {
-    vi.mocked(requestJson)
-      .mockRejectedValueOnce(new Error("health failed"))
-      .mockRejectedValueOnce(new Error("health failed"));
+    vi.mocked(requestJson).mockRejectedValue(new Error("health failed"));
     const { AimuxDaemon } = await import("./daemon.js");
 
     const daemon = new AimuxDaemon();
@@ -185,6 +189,12 @@ describe("daemon supervision", () => {
     writeMetadataEndpointFor(first.pid);
     (daemon as any).state.projects[first.projectId].startedAt = new Date(Date.now() - 60_000).toISOString();
 
+    // Two consecutive misses keep the failure counter just below the threshold.
+    expect((await (daemon as any).ensureProject(projectRoot)).pid).toBe(first.pid);
+    expect((await (daemon as any).ensureProject(projectRoot)).pid).toBe(first.pid);
+
+    // Two concurrent ensures dedupe into one threshold-crossing health check,
+    // producing a single replacement spawn shared by both callers.
     const [second, third] = await Promise.all([
       (daemon as any).ensureProject(projectRoot),
       (daemon as any).ensureProject(projectRoot),
