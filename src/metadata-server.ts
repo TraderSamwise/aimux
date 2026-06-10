@@ -848,7 +848,14 @@ export class MetadataServer {
     dedupeKey?: string;
     cooldownMs?: number;
     forceNotify?: boolean;
-    interaction?: { id: string; type: InteractionType; summary?: string };
+    interaction?: {
+      id: string;
+      type: InteractionType;
+      summary?: string;
+      telemetry?: boolean;
+      toolName?: string;
+      toolInputJSON?: string;
+    };
   }): void {
     const displayContext = this.resolveSessionAlertDisplayContext(input.sessionId, input.worktreePath);
     this.eventBus.publishAlert(contextualizeAlertInput(input, displayContext));
@@ -1975,6 +1982,45 @@ export class MetadataServer {
         const summary = body.summary?.trim() || undefined;
         const request = this.beginInteraction({ sessionId, type, payload: payload ?? {}, summary, id: body.id });
         send(res, 200, { ok: true, request });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/interaction/notify") {
+        // Read-only telemetry (e.g. Codex, whose native TUI owns the decision):
+        // emit a non-actionable interaction alert and flag attention, but never
+        // register a blocking interaction. Returns immediately.
+        const body = (await readJson(req)) as {
+          session?: string;
+          summary?: string;
+          payload?: { toolName?: string; input?: Record<string, unknown>; cwd?: string };
+        };
+        const sessionId = body.session?.trim();
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "session is required" });
+          return;
+        }
+        const toolName = body.payload?.toolName;
+        const input = body.payload?.input ?? {};
+        const cwd = typeof body.payload?.cwd === "string" ? body.payload.cwd : undefined;
+        const summary = body.summary?.trim() || undefined;
+        this.tracker.setAttention(sessionId, "needs_input");
+        this.emitAlert({
+          kind: "interaction_request",
+          sessionId,
+          title: `${sessionId} needs a response`,
+          message: summary ?? "Agent is waiting on a permission response.",
+          worktreePath: cwd,
+          interaction: {
+            id: randomUUID(),
+            type: "permission",
+            summary,
+            telemetry: true,
+            toolName,
+            toolInputJSON: JSON.stringify(input),
+          },
+        });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, telemetry: true });
         return;
       }
 
