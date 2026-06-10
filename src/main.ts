@@ -403,14 +403,17 @@ function exitAfterOpen(): never {
 async function resolvePermissionRequestOutput(
   projectRoot: string,
   sessionId: string,
-  payload: { tool_name?: string; tool_input?: Record<string, unknown> },
+  payload: { tool_name?: string; tool_input?: Record<string, unknown>; cwd?: string },
 ): Promise<Record<string, unknown>> {
   try {
     const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
+    // The hook runs in the agent's working dir, which is the worktree (or the
+    // project root if no worktree). Carry it so clients can show project/worktree.
+    const cwd = (typeof payload.cwd === "string" && payload.cwd) || process.cwd();
     const result = await postLiveProjectServiceJsonOrLocal(
       projectRoot,
       "/agents/interaction/request",
-      { session: sessionId, type: "permission", payload: { toolName, input }, summary, timeoutMs: 115_000 },
+      { session: sessionId, type: "permission", payload: { toolName, input, cwd }, summary, timeoutMs: 115_000 },
       () => ({}),
     );
     if (result?.request?.status === "resolved") {
@@ -3506,11 +3509,6 @@ program
     const payload = parseCodexHookPayload(rawInput);
     const sessionId = opts.session.trim();
 
-    if (action === "permission-request") {
-      console.log(JSON.stringify(await resolvePermissionRequestOutput(projectRoot, sessionId, payload)));
-      return;
-    }
-
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     const setActivity = async (activity: AgentActivityState) =>
       postLiveProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
@@ -3558,6 +3556,21 @@ program
       case "stop":
         await emitEvent("task_done", payload.message?.trim() || "Codex completed its turn.", "success");
         break;
+      case "permission-request": {
+        // Read-only telemetry — never block. Codex's native TUI prompt stays the
+        // primary decision surface; we post a non-actionable Feed notice (which
+        // also flags attention). Falls through to `console.log({})` → native prompt.
+        const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
+        // Best-effort: a telemetry transport failure must never break the hook —
+        // it always falls through to `console.log({})` and the native prompt.
+        await postLiveProjectServiceJsonOrLocal(
+          projectRoot,
+          "/agents/interaction/notify",
+          { session: sessionId, summary, payload: { toolName, input, cwd: process.cwd() } },
+          () => ({}),
+        ).catch(() => undefined);
+        break;
+      }
       default:
         throw new Error(`Unsupported codex hook action: ${action}`);
     }
