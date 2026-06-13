@@ -70,6 +70,25 @@ describe("SessionBootstrapService", () => {
     expect(preamble).not.toContain("Team lifecycle uses the local metadata teammate API");
   });
 
+  it("injects the overseer preamble for overseer-role sessions only", () => {
+    const service = new SessionBootstrapService(deps);
+    const overseer = service.buildSessionPreamble({
+      sessionId: "claude-boss",
+      command: "claude",
+      includeAimuxPreamble: true,
+      team: { teamId: "overseer", parentSessionId: "", role: "overseer" },
+    });
+    expect(overseer).toContain("You are the OVERSEER for this aimux project");
+    expect(overseer).toContain("[aimux loop check]");
+
+    const plain = service.buildSessionPreamble({
+      sessionId: "claude-123",
+      command: "claude",
+      includeAimuxPreamble: true,
+    });
+    expect(plain).not.toContain("You are the OVERSEER");
+  });
+
   it("requires an explicit session placeholder for backend-id resume", () => {
     const bootstrap = new SessionBootstrapService(deps);
 

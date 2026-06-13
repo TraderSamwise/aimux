@@ -1068,6 +1068,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
               targetWorktreePath: input.worktreePath,
               open: input.open ?? false,
               launchOverride: input.launchOverride,
+              overseer: input.overseer ?? false,
             }),
           input.sessionId
             ? buildMetadataPendingSessionSeed({

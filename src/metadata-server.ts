@@ -12,6 +12,7 @@ import {
   loadMetadataState,
   setSessionLoop,
   clearSessionLoop,
+  setSessionOverseer,
   type SessionLogEntry,
   type SessionContextMetadata,
   type SessionServiceMetadata,
@@ -268,6 +269,7 @@ interface MetadataServerOptions {
       worktreePath?: string;
       open?: boolean;
       launchOverride?: LaunchOverride;
+      overseer?: boolean;
     }) => Promise<{ sessionId: string }> | { sessionId: string };
     createTeammateAgent?: (input: {
       parentSessionId: string;
@@ -2617,6 +2619,7 @@ export class MetadataServer {
           worktreePath?: string;
           open?: boolean;
           launchOverride?: LaunchOverride;
+          overseer?: boolean;
         };
         if (!this.options.lifecycle?.spawnAgent) {
           send(res, 501, { ok: false, error: "agent spawn not supported by this service" });
@@ -3030,6 +3033,19 @@ export class MetadataServer {
           this.options.onChange?.();
           send(res, 200, { ok: true, sessionId, loop: null });
         }
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/overseer") {
+        const body = (await readJson(req)) as { sessionId?: string; active?: boolean };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        setSessionOverseer(sessionId, Boolean(body.active));
+        this.options.onChange?.();
+        send(res, 200, { ok: true, sessionId, overseer: Boolean(body.active) });
         return;
       }
 
