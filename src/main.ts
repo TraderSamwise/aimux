@@ -2015,6 +2015,87 @@ threadCmd
     }
   });
 
+program
+  .command("input")
+  .description("Send text into a running agent session as a new turn")
+  .argument("<sessionId>", "Target agent session id")
+  .argument("<text...>", "Text to deliver (submitted as a prompt)")
+  .action(async (sessionId: string, text: string[]) => {
+    await initPaths();
+    const body = text.join(" ");
+    if (!body.trim()) {
+      console.error("aimux: input requires non-empty text");
+      process.exit(1);
+    }
+    await postProjectServiceJson("/agents/input", { sessionId, text: body });
+    console.log(`delivered to ${sessionId}`);
+  });
+
+program
+  .command("ps")
+  .description("Show all agents in this project (across worktrees) with activity and loop state")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    await initPaths();
+    const result = await getProjectServiceJson("/agents");
+    const agents: Array<{
+      id: string;
+      tool?: string;
+      role?: string;
+      status?: string;
+      worktreePath?: string;
+      activity?: string;
+      attention?: string;
+      loop?: { active: boolean; goal?: string };
+      overseer?: boolean;
+      task?: { description: string; status: string };
+    }> = result.agents ?? [];
+    if (opts.json) {
+      console.log(JSON.stringify(agents, null, 2));
+      return;
+    }
+    if (agents.length === 0) {
+      console.log("no agents");
+      return;
+    }
+    for (const agent of agents) {
+      const tags = [
+        agent.overseer ? "overseer" : null,
+        agent.loop?.active ? `loop${agent.loop.goal ? `:${agent.loop.goal}` : ""}` : null,
+      ].filter(Boolean);
+      const state = [agent.activity, agent.attention].filter(Boolean).join("/");
+      console.log(
+        `${agent.id}  [${agent.tool ?? "?"}${agent.role ? `:${agent.role}` : ""}]  ${agent.status ?? "?"}` +
+          `${state ? `  ${state}` : ""}${tags.length ? `  {${tags.join(" ")}}` : ""}`,
+      );
+      if (agent.worktreePath) console.log(`    worktree: ${agent.worktreePath}`);
+      if (agent.task) console.log(`    task: ${agent.task.description} (${agent.task.status})`);
+    }
+  });
+
+const loopCmd = program.command("loop").description("Manage agents in an overseer-managed loop");
+
+loopCmd
+  .command("add")
+  .description("Mark an agent as in a managed loop (keep it working until done/blocked)")
+  .argument("<sessionId>", "Target agent session id")
+  .option("--goal <goal>", "What the agent should keep working toward")
+  .action(async (sessionId: string, opts: { goal?: string }) => {
+    await initPaths();
+    const result = await postProjectServiceJson("/agents/loop", { sessionId, active: true, goal: opts.goal });
+    console.log(`loop on ${sessionId}${result.loop?.goal ? ` — ${result.loop.goal}` : ""}`);
+  });
+
+loopCmd
+  .command("remove")
+  .description("Remove an agent from the managed loop")
+  .argument("<sessionId>", "Target agent session id")
+  .action(async (sessionId: string) => {
+    await initPaths();
+    await postProjectServiceJson("/agents/loop", { sessionId, active: false });
+    console.log(`loop off ${sessionId}`);
+  });
+
 const messageCmd = program.command("message").description("Send directed orchestration messages");
 
 messageCmd

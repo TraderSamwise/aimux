@@ -10,6 +10,8 @@ import {
   clearSessionLogs,
   saveMetadataEndpoint,
   loadMetadataState,
+  setSessionLoop,
+  clearSessionLoop,
   type SessionLogEntry,
   type SessionContextMetadata,
   type SessionServiceMetadata,
@@ -1204,6 +1206,31 @@ export class MetadataServer {
         entries: this.options.desktop.listGraveyard(),
         worktrees: this.options.desktop.listWorktreeGraveyard?.() ?? [],
       });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/agents") {
+      const metadataState = loadMetadataState();
+      const tasks = readAllTasks();
+      const activeTaskFor = (sessionId: string) =>
+        tasks.find((task) => task.assignedTo === sessionId && task.status !== "done" && task.status !== "failed");
+      const agents = topologyDesktopSessionList(["running", "idle", "offline"]).map((session) => {
+        const meta = metadataState.sessions[session.id];
+        const task = activeTaskFor(session.id);
+        return {
+          id: session.id,
+          tool: session.tool,
+          role: session.team?.role,
+          status: session.status,
+          worktreePath: session.worktreePath,
+          label: session.label,
+          activity: meta?.derived?.activity,
+          attention: meta?.derived?.attention,
+          loop: meta?.loop,
+          overseer: meta?.overseer ?? false,
+          task: task ? { id: task.id, description: task.description, status: task.status } : undefined,
+        };
+      });
+      send(res, 200, { ok: true, agents });
       return;
     }
     if (req.method === "GET" && url.pathname === "/threads") {
@@ -2976,6 +3003,27 @@ export class MetadataServer {
         const result = await this.options.lifecycle.sendAgentInput({ sessionId, text: formattedText });
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/agents/loop") {
+        const body = (await readJson(req)) as { sessionId?: string; active?: boolean; goal?: string };
+        const sessionId = body.sessionId?.trim() ?? "";
+        if (!sessionId) {
+          send(res, 400, { ok: false, error: "sessionId is required" });
+          return;
+        }
+        if (body.active) {
+          const goal = typeof body.goal === "string" ? body.goal.trim() : "";
+          const loop = { active: true, goal: goal || undefined, since: new Date().toISOString() };
+          setSessionLoop(sessionId, loop);
+          this.options.onChange?.();
+          send(res, 200, { ok: true, sessionId, loop });
+        } else {
+          clearSessionLoop(sessionId);
+          this.options.onChange?.();
+          send(res, 200, { ok: true, sessionId, loop: null });
+        }
         return;
       }
 
