@@ -168,6 +168,8 @@ export function buildOverseerPreamble(): string {
     'specific next instruction with `aimux input <id> "…"`. If it has genuinely completed',
     "its goal or is blocked beyond repair, run `aimux loop remove <id>` and report to the",
     "human. Never push an agent that is waiting on a human decision (needs input / blocked).",
+    "Agents can also self-exit a loop with `aimux loop done` / `aimux loop block`; when they",
+    "do, they drop off your loop checks on their own.",
     "",
     "Otherwise you are a normal conversational agent: answer the human's questions about",
     "project progress and carry out their orchestration requests.",

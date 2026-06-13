@@ -71,8 +71,10 @@ export function buildCannedNudge(candidate: LoopCandidate): string {
   const goal = candidate.goal ? ` with this goal: ${candidate.goal}` : "";
   return [
     `[aimux loop] You stopped, but you're in a managed loop${goal}.`,
-    "Keep working toward it now. If you have genuinely completed it or are blocked beyond repair, " +
-      "state that explicitly and ask to be removed from the loop; otherwise continue.",
+    "Keep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:",
+    '- finished  → run `aimux loop done --reason "…"`',
+    '- hard-blocked → run `aimux loop block --reason "…"`',
+    "Otherwise, continue.",
   ].join("\n");
 }
 
