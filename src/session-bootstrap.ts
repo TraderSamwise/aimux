@@ -7,7 +7,7 @@ import { readHistory } from "./context/history.js";
 import { debug, debugPreamble } from "./debug.js";
 import { listWorktrees as listAllWorktrees } from "./worktree.js";
 import { type TmuxRuntimeManager, type TmuxTarget } from "./tmux/runtime-manager.js";
-import { type SessionTeamMetadata } from "./team.js";
+import { type SessionTeamMetadata, buildOverseerPreamble } from "./team.js";
 
 export interface ForkSourceSnapshot {
   historyText?: string;
@@ -122,6 +122,10 @@ export class SessionBootstrapService {
       } catch {
         preamble += `\n\nYou are working in a git worktree at ${worktreePath}. Stay in this directory.`;
       }
+    }
+
+    if (team?.role === "overseer") {
+      preamble += (preamble ? "\n\n" : "") + buildOverseerPreamble();
     }
 
     if (extraPreamble) {

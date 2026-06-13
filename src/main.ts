@@ -2015,6 +2015,141 @@ threadCmd
     }
   });
 
+program
+  .command("input")
+  .description("Send text into a running agent session as a new turn")
+  .argument("<sessionId>", "Target agent session id")
+  .argument("<text...>", "Text to deliver (submitted as a prompt)")
+  .action(async (sessionId: string, text: string[]) => {
+    await initPaths();
+    const body = text.join(" ");
+    if (!body.trim()) {
+      console.error("aimux: input requires non-empty text");
+      process.exit(1);
+    }
+    await postProjectServiceJson("/agents/input", { sessionId, text: body });
+    console.log(`delivered to ${sessionId}`);
+  });
+
+program
+  .command("ps")
+  .description("Show all agents in this project (across worktrees) with activity and loop state")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    await initPaths();
+    const result = await getProjectServiceJson("/agents");
+    const agents: Array<{
+      id: string;
+      tool?: string;
+      role?: string;
+      status?: string;
+      worktreePath?: string;
+      activity?: string;
+      attention?: string;
+      loop?: { active: boolean; goal?: string };
+      overseer?: boolean;
+      task?: { description: string; status: string };
+    }> = result.agents ?? [];
+    if (opts.json) {
+      console.log(JSON.stringify(agents, null, 2));
+      return;
+    }
+    if (agents.length === 0) {
+      console.log("no agents");
+      return;
+    }
+    for (const agent of agents) {
+      const tags = [
+        agent.overseer ? "overseer" : null,
+        agent.loop?.active ? `loop${agent.loop.goal ? `:${agent.loop.goal}` : ""}` : null,
+      ].filter(Boolean);
+      const state = [agent.activity, agent.attention].filter(Boolean).join("/");
+      console.log(
+        `${agent.id}  [${agent.tool ?? "?"}${agent.role ? `:${agent.role}` : ""}]  ${agent.status ?? "?"}` +
+          `${state ? `  ${state}` : ""}${tags.length ? `  {${tags.join(" ")}}` : ""}`,
+      );
+      if (agent.worktreePath) console.log(`    worktree: ${agent.worktreePath}`);
+      if (agent.task) console.log(`    task: ${agent.task.description} (${agent.task.status})`);
+    }
+  });
+
+const loopCmd = program.command("loop").description("Manage agents in an overseer-managed loop");
+
+loopCmd
+  .command("add")
+  .description("Mark an agent as in a managed loop (keep it working until done/blocked)")
+  .argument("<sessionId>", "Target agent session id")
+  .option("--goal <goal>", "What the agent should keep working toward")
+  .action(async (sessionId: string, opts: { goal?: string }) => {
+    await initPaths();
+    const result = await postProjectServiceJson("/agents/loop", { sessionId, active: true, goal: opts.goal });
+    console.log(`loop on ${sessionId}${result.loop?.goal ? ` — ${result.loop.goal}` : ""}`);
+  });
+
+loopCmd
+  .command("remove")
+  .description("Remove an agent from the managed loop")
+  .argument("<sessionId>", "Target agent session id")
+  .action(async (sessionId: string) => {
+    await initPaths();
+    await postProjectServiceJson("/agents/loop", { sessionId, active: false });
+    console.log(`loop off ${sessionId}`);
+  });
+
+function resolveOwnSessionId(explicit?: string): string {
+  const sessionId = (explicit ?? process.env.AIMUX_SESSION_ID ?? "").trim();
+  if (!sessionId) {
+    console.error("aimux: pass --session or run inside an aimux agent (AIMUX_SESSION_ID is unset)");
+    process.exit(1);
+  }
+  return sessionId;
+}
+
+/** Exit a loop: clear the flag first (so the watcher stops nudging even if the
+ * notification fails), then emit the status event best-effort. */
+async function exitLoop(sessionId: string, event: Record<string, unknown>): Promise<void> {
+  await postProjectServiceJson("/agents/loop", { sessionId, active: false });
+  try {
+    await postProjectServiceJson("/event", { session: sessionId, event });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`aimux: loop exited, but the status event could not be recorded: ${msg}`);
+  }
+}
+
+loopCmd
+  .command("done")
+  .description("(run by an agent) Report the loop goal complete and exit the loop")
+  .option("--session <id>", "Session id (defaults to $AIMUX_SESSION_ID)")
+  .option("--reason <text>", "What was completed")
+  .action(async (opts: { session?: string; reason?: string }) => {
+    await initPaths();
+    const sessionId = resolveOwnSessionId(opts.session);
+    await exitLoop(sessionId, {
+      kind: "task_done",
+      message: opts.reason ?? "Loop goal completed.",
+      tone: "success",
+      source: "loop",
+    });
+    console.log(`loop done ${sessionId}`);
+  });
+
+loopCmd
+  .command("block")
+  .description("(run by an agent) Report you are blocked beyond repair and exit the loop")
+  .option("--session <id>", "Session id (defaults to $AIMUX_SESSION_ID)")
+  .option("--reason <text>", "Why you are blocked")
+  .action(async (opts: { session?: string; reason?: string }) => {
+    await initPaths();
+    const sessionId = resolveOwnSessionId(opts.session);
+    await exitLoop(sessionId, {
+      kind: "blocked",
+      message: opts.reason ?? "Blocked beyond repair.",
+      source: "loop",
+    });
+    console.log(`loop blocked ${sessionId}`);
+  });
+
 const messageCmd = program.command("message").description("Send directed orchestration messages");
 
 messageCmd
@@ -2734,6 +2869,54 @@ program
       console.error(`Error: ${msg}`);
       process.exit(1);
     }
+  });
+
+const overseerCmd = program.command("overseer").description("Manage the project overseer (top-down orchestrator)");
+
+overseerCmd
+  .command("start")
+  .description("Spawn an overseer agent that monitors and directs the project's agents")
+  .option("--tool <toolKey>", "Configured tool key (defaults to the project default)")
+  .option("--project <path>", "Project path")
+  .option("--worktree <path>", "Target worktree path")
+  .option("--no-open", "Do not switch into the overseer window")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { tool?: string; project?: string; worktree?: string; open?: boolean; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      await ensureDaemonProjectReady(projectRoot);
+      initProject();
+      const mux = new Multiplexer();
+      const tool = opts.tool ?? loadConfig().defaultTool;
+      const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
+      const result = await mux.spawnAgent({
+        toolConfigKey: tool,
+        targetWorktreePath,
+        open: opts.open,
+        overseer: true,
+      });
+      if (opts.json) {
+        console.log(
+          JSON.stringify({ ok: true, projectRoot, sessionId: result.sessionId, tool, overseer: true }, null, 2),
+        );
+        return;
+      }
+      console.log(`overseer ${result.sessionId}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+overseerCmd
+  .command("clear")
+  .description("Demote a session from overseer (does not stop the agent)")
+  .argument("<sessionId>", "Overseer session id")
+  .action(async (sessionId: string) => {
+    await initPaths();
+    await postProjectServiceJson("/agents/overseer", { sessionId, active: false });
+    console.log(`overseer cleared ${sessionId}`);
   });
 
 program

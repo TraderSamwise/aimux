@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { getReadOnlyProjectPathsFor, initPaths } from "./paths.js";
-import { loadMetadataState, saveMetadataState } from "./metadata-store.js";
+import {
+  loadMetadataState,
+  saveMetadataState,
+  setSessionLoop,
+  clearSessionLoop,
+  setSessionOverseer,
+  findOverseerSessionId,
+} from "./metadata-store.js";
 
 function gitInit(cwd: string): void {
   const env = { ...process.env };
@@ -71,6 +78,34 @@ describe("metadata store", () => {
 
     expect(state.sessions.malformed).toBeNull();
     expect(state.sessions.valid).toEqual({ updatedAt: "2026-01-01T00:00:00.000Z" });
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("round-trips loop and overseer flags and finds the overseer", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-metadata-store-loop-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+
+    setSessionLoop("worker-1", { active: true, goal: "ship the feature", since: "2026-06-13T00:00:00.000Z" }, repoRoot);
+    setSessionOverseer("boss", true, repoRoot);
+
+    let state = loadMetadataState(repoRoot);
+    expect(state.sessions["worker-1"].loop).toEqual({
+      active: true,
+      goal: "ship the feature",
+      since: "2026-06-13T00:00:00.000Z",
+    });
+    expect(state.sessions.boss.overseer).toBe(true);
+    expect(findOverseerSessionId(state)).toBe("boss");
+
+    clearSessionLoop("worker-1", repoRoot);
+    setSessionOverseer("boss", false, repoRoot);
+
+    state = loadMetadataState(repoRoot);
+    expect(state.sessions["worker-1"].loop).toBeUndefined();
+    expect(state.sessions.boss.overseer).toBeUndefined();
+    expect(findOverseerSessionId(state)).toBeUndefined();
 
     rmSync(repoRoot, { recursive: true, force: true });
   });
