@@ -1195,7 +1195,7 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
     await host.pluginRuntime.start();
     host.loopWatcher = new LoopWatcher({
       config: loadConfig().loop,
-      loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle"] }),
+      loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
       loadMetadata: () => loadMetadataState(),
       hasPendingInteraction: (sessionId: string) =>
         (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,

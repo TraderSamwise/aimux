@@ -174,6 +174,14 @@ describe("MetadataServer threads API", () => {
       body: JSON.stringify({ active: true }),
     });
     expect(missingRes.status).toBe(400);
+
+    // active must be an explicit boolean — omitting it must not silently clear the loop
+    const noActiveRes = await fetch(`${base}/agents/loop`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1" }),
+    });
+    expect(noActiveRes.status).toBe(400);
   });
 
   it("returns 400 for malformed encoded thread and task ids", async () => {

@@ -2105,6 +2105,18 @@ function resolveOwnSessionId(explicit?: string): string {
   return sessionId;
 }
 
+/** Exit a loop: clear the flag first (so the watcher stops nudging even if the
+ * notification fails), then emit the status event best-effort. */
+async function exitLoop(sessionId: string, event: Record<string, unknown>): Promise<void> {
+  await postProjectServiceJson("/agents/loop", { sessionId, active: false });
+  try {
+    await postProjectServiceJson("/event", { session: sessionId, event });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`aimux: loop exited, but the status event could not be recorded: ${msg}`);
+  }
+}
+
 loopCmd
   .command("done")
   .description("(run by an agent) Report the loop goal complete and exit the loop")
@@ -2113,10 +2125,11 @@ loopCmd
   .action(async (opts: { session?: string; reason?: string }) => {
     await initPaths();
     const sessionId = resolveOwnSessionId(opts.session);
-    await postProjectServiceJson("/agents/loop", { sessionId, active: false });
-    await postProjectServiceJson("/event", {
-      session: sessionId,
-      event: { kind: "task_done", message: opts.reason ?? "Loop goal completed.", tone: "success", source: "loop" },
+    await exitLoop(sessionId, {
+      kind: "task_done",
+      message: opts.reason ?? "Loop goal completed.",
+      tone: "success",
+      source: "loop",
     });
     console.log(`loop done ${sessionId}`);
   });
@@ -2129,10 +2142,10 @@ loopCmd
   .action(async (opts: { session?: string; reason?: string }) => {
     await initPaths();
     const sessionId = resolveOwnSessionId(opts.session);
-    await postProjectServiceJson("/agents/loop", { sessionId, active: false });
-    await postProjectServiceJson("/event", {
-      session: sessionId,
-      event: { kind: "blocked", message: opts.reason ?? "Blocked beyond repair.", source: "loop" },
+    await exitLoop(sessionId, {
+      kind: "blocked",
+      message: opts.reason ?? "Blocked beyond repair.",
+      source: "loop",
     });
     console.log(`loop blocked ${sessionId}`);
   });

@@ -132,27 +132,33 @@ export class LoopWatcher {
 
       if (overseerId && overseerRunning) {
         if (now - this.lastOverseerWakeAt < cooldown) return;
-        this.lastOverseerWakeAt = now;
-        await this.deliver(overseerId, buildOverseerBriefing(candidates));
+        // Only start the cooldown once the briefing actually lands; a failed
+        // send must not silence the overseer for a whole cooldown window.
+        if (await this.deliver(overseerId, buildOverseerBriefing(candidates))) {
+          this.lastOverseerWakeAt = now;
+        }
         return;
       }
 
       if (!this.deps.config.autoNudgeWithoutOverseer) return;
       for (const candidate of candidates) {
         if (now - (this.lastNudgeAt.get(candidate.id) ?? 0) < cooldown) continue;
-        this.lastNudgeAt.set(candidate.id, now);
-        await this.deliver(candidate.id, buildCannedNudge(candidate));
+        if (await this.deliver(candidate.id, buildCannedNudge(candidate))) {
+          this.lastNudgeAt.set(candidate.id, now);
+        }
       }
     } finally {
       this.scanning = false;
     }
   }
 
-  private async deliver(sessionId: string, text: string): Promise<void> {
+  private async deliver(sessionId: string, text: string): Promise<boolean> {
     try {
       await this.deps.sendAgentInput(sessionId, text);
+      return true;
     } catch (error) {
       debug(`loop nudge failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`, "loop");
+      return false;
     }
   }
 }

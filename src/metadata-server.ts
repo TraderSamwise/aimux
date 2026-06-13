@@ -3022,6 +3022,10 @@ export class MetadataServer {
           send(res, 400, { ok: false, error: "sessionId is required" });
           return;
         }
+        if (typeof body.active !== "boolean") {
+          send(res, 400, { ok: false, error: "active (boolean) is required" });
+          return;
+        }
         if (body.active) {
           const goal = typeof body.goal === "string" ? body.goal.trim() : "";
           const loop = { active: true, goal: goal || undefined, since: new Date().toISOString() };
