@@ -159,4 +159,22 @@ describe("LoopWatcher.scan", () => {
     await watcher.scan();
     expect(sendAgentInput).toHaveBeenCalledTimes(2);
   });
+
+  it("does not consume the cooldown when a nudge fails to send", async () => {
+    const sendAgentInput = vi.fn(async () => {
+      throw new Error("session not running");
+    });
+    const watcher = new LoopWatcher({
+      config: { ...config, autoNudgeWithoutOverseer: true },
+      loadSessions: () => sessions,
+      loadMetadata: () => state({ a: derived("idle") }),
+      hasPendingInteraction: noPending,
+      sendAgentInput,
+      now: () => 1_000_000,
+    });
+
+    await watcher.scan();
+    await watcher.scan(); // failure must not have started a cooldown, so it retries immediately
+    expect(sendAgentInput).toHaveBeenCalledTimes(2);
+  });
 });
