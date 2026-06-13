@@ -2817,6 +2817,54 @@ program
     }
   });
 
+const overseerCmd = program.command("overseer").description("Manage the project overseer (top-down orchestrator)");
+
+overseerCmd
+  .command("start")
+  .description("Spawn an overseer agent that monitors and directs the project's agents")
+  .option("--tool <toolKey>", "Configured tool key (defaults to the project default)")
+  .option("--project <path>", "Project path")
+  .option("--worktree <path>", "Target worktree path")
+  .option("--no-open", "Do not switch into the overseer window")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { tool?: string; project?: string; worktree?: string; open?: boolean; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      await ensureDaemonProjectReady(projectRoot);
+      initProject();
+      const mux = new Multiplexer();
+      const tool = opts.tool ?? loadConfig().defaultTool;
+      const targetWorktreePath = opts.worktree ? pathResolve(opts.worktree) : undefined;
+      const result = await mux.spawnAgent({
+        toolConfigKey: tool,
+        targetWorktreePath,
+        open: opts.open,
+        overseer: true,
+      });
+      if (opts.json) {
+        console.log(
+          JSON.stringify({ ok: true, projectRoot, sessionId: result.sessionId, tool, overseer: true }, null, 2),
+        );
+        return;
+      }
+      console.log(`overseer ${result.sessionId}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+overseerCmd
+  .command("clear")
+  .description("Demote a session from overseer (does not stop the agent)")
+  .argument("<sessionId>", "Overseer session id")
+  .action(async (sessionId: string) => {
+    await initPaths();
+    await postProjectServiceJson("/agents/overseer", { sessionId, active: false });
+    console.log(`overseer cleared ${sessionId}`);
+  });
+
 program
   .command("fork")
   .description("Fork an existing agent into a new agent with handed-off context")
