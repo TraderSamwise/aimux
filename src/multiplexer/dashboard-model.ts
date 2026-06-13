@@ -9,6 +9,8 @@ import {
 } from "../metadata-store.js";
 import { MetadataServer } from "../metadata-server.js";
 import { PluginRuntime } from "../plugin-runtime.js";
+import { LoopWatcher } from "../loop-watcher.js";
+import { loadConfig } from "../config.js";
 import { findMainRepo } from "../worktree.js";
 import { listThreadSummaries, readMessages } from "../threads.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
@@ -1190,6 +1192,15 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
       },
     );
     await host.pluginRuntime.start();
+    host.loopWatcher = new LoopWatcher({
+      config: loadConfig().loop,
+      loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle"] }),
+      loadMetadata: () => loadMetadataState(),
+      hasPendingInteraction: (sessionId: string) =>
+        (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
+      sendAgentInput: (sessionId: string, text: string) => host.sendAgentInput(sessionId, text),
+    });
+    host.loopWatcher.start();
   }
   host.projectServiceStartupMetadataSettling = false;
   if (host.projectServiceUiRefreshPending) {
@@ -1212,6 +1223,8 @@ export async function stopProjectServices(host: DashboardModelHost): Promise<voi
   if (ownedMetadataServer && endpoint?.pid === process.pid) {
     removeMetadataEndpoint();
   }
+  host.loopWatcher?.stop?.();
+  host.loopWatcher = null;
   await host.pluginRuntime?.stop?.();
   host.pluginRuntime = null;
 }

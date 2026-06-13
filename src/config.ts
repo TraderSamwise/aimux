@@ -46,6 +46,15 @@ export interface RuntimeConfig {
   tmux: TmuxRuntimeConfig;
 }
 
+export interface LoopConfig {
+  /** How often the daemon scans for in-loop agents that stopped early. */
+  scanIntervalMs: number;
+  /** Minimum gap between nudges/briefings for the same target. */
+  nudgeCooldownMs: number;
+  /** When no overseer exists, send a canned continue-nudge directly. */
+  autoNudgeWithoutOverseer: boolean;
+}
+
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
 
 export interface LoggingConfig {
@@ -69,6 +78,7 @@ export interface AimuxConfig {
   statusline: StatuslineConfig;
   runtime: RuntimeConfig;
   worktrees: WorktreeConfig;
+  loop: LoopConfig;
   tools: Record<string, ToolConfig>;
 }
 
@@ -141,6 +151,11 @@ const DEFAULT_CONFIG: AimuxConfig = {
   },
   worktrees: {
     baseDir: ".aimux/worktrees",
+  },
+  loop: {
+    scanIntervalMs: 15000,
+    nudgeCooldownMs: 60000,
+    autoNudgeWithoutOverseer: false,
   },
   tools: {
     claude: {
