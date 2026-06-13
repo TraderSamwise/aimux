@@ -2096,6 +2096,47 @@ loopCmd
     console.log(`loop off ${sessionId}`);
   });
 
+function resolveOwnSessionId(explicit?: string): string {
+  const sessionId = (explicit ?? process.env.AIMUX_SESSION_ID ?? "").trim();
+  if (!sessionId) {
+    console.error("aimux: pass --session or run inside an aimux agent (AIMUX_SESSION_ID is unset)");
+    process.exit(1);
+  }
+  return sessionId;
+}
+
+loopCmd
+  .command("done")
+  .description("(run by an agent) Report the loop goal complete and exit the loop")
+  .option("--session <id>", "Session id (defaults to $AIMUX_SESSION_ID)")
+  .option("--reason <text>", "What was completed")
+  .action(async (opts: { session?: string; reason?: string }) => {
+    await initPaths();
+    const sessionId = resolveOwnSessionId(opts.session);
+    await postProjectServiceJson("/agents/loop", { sessionId, active: false });
+    await postProjectServiceJson("/event", {
+      session: sessionId,
+      event: { kind: "task_done", message: opts.reason ?? "Loop goal completed.", tone: "success", source: "loop" },
+    });
+    console.log(`loop done ${sessionId}`);
+  });
+
+loopCmd
+  .command("block")
+  .description("(run by an agent) Report you are blocked beyond repair and exit the loop")
+  .option("--session <id>", "Session id (defaults to $AIMUX_SESSION_ID)")
+  .option("--reason <text>", "Why you are blocked")
+  .action(async (opts: { session?: string; reason?: string }) => {
+    await initPaths();
+    const sessionId = resolveOwnSessionId(opts.session);
+    await postProjectServiceJson("/agents/loop", { sessionId, active: false });
+    await postProjectServiceJson("/event", {
+      session: sessionId,
+      event: { kind: "blocked", message: opts.reason ?? "Blocked beyond repair.", source: "loop" },
+    });
+    console.log(`loop blocked ${sessionId}`);
+  });
+
 const messageCmd = program.command("message").description("Send directed orchestration messages");
 
 messageCmd

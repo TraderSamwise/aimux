@@ -149,6 +149,8 @@ describe("LoopWatcher.scan", () => {
     expect(sendAgentInput).toHaveBeenCalledTimes(1);
     expect(sendAgentInput.mock.calls[0][0]).toBe("a");
     expect(sendAgentInput.mock.calls[0][1]).toContain("[aimux loop]");
+    expect(sendAgentInput.mock.calls[0][1]).toContain("aimux loop done");
+    expect(sendAgentInput.mock.calls[0][1]).toContain("aimux loop block");
 
     await watcher.scan(); // within cooldown
     expect(sendAgentInput).toHaveBeenCalledTimes(1);
