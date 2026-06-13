@@ -730,6 +730,12 @@ export class MetadataServer {
     return this.eventBus;
   }
 
+  /** Pending interaction requests (permission/input prompts) the loop watcher
+   * uses to avoid nudging an agent that is actually waiting on a human. */
+  listPendingInteractions(sessionId?: string) {
+    return this.interactions.listPending(sessionId);
+  }
+
   notifyChange(): void {
     this.options.onChange?.();
   }
