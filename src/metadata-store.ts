@@ -77,6 +77,12 @@ export interface SessionDerivedMetadata extends SessionDerivedState {
   shellCommandState?: "running" | "prompt";
 }
 
+export interface SessionLoopMetadata {
+  active: boolean;
+  goal?: string;
+  since: string;
+}
+
 export interface SessionMetadata {
   status?: SessionStatusMetadata;
   progress?: SessionProgressMetadata;
@@ -84,6 +90,10 @@ export interface SessionMetadata {
   context?: SessionContextMetadata;
   statusline?: SessionStatuslineMetadata;
   derived?: SessionDerivedMetadata;
+  /** This session is the project overseer (top-down orchestrator). */
+  overseer?: boolean;
+  /** This session is in a managed loop the overseer keeps running. */
+  loop?: SessionLoopMetadata;
   updatedAt: string;
 }
 
@@ -190,6 +200,42 @@ export function clearSessionTranscriptPath(sessionId: string, projectRoot?: stri
   };
   saveMetadataState(state, projectRoot);
   return state;
+}
+
+export function setSessionLoop(sessionId: string, loop: SessionLoopMetadata, projectRoot?: string): MetadataState {
+  return updateSessionMetadata(sessionId, (current) => ({ ...current, loop }), projectRoot);
+}
+
+export function clearSessionLoop(sessionId: string, projectRoot?: string): MetadataState {
+  return updateSessionMetadata(
+    sessionId,
+    (current) => {
+      const next = { ...current };
+      delete next.loop;
+      return next;
+    },
+    projectRoot,
+  );
+}
+
+export function setSessionOverseer(sessionId: string, value: boolean, projectRoot?: string): MetadataState {
+  return updateSessionMetadata(
+    sessionId,
+    (current) => {
+      const next = { ...current };
+      if (value) next.overseer = true;
+      else delete next.overseer;
+      return next;
+    },
+    projectRoot,
+  );
+}
+
+export function findOverseerSessionId(state: MetadataState): string | undefined {
+  for (const [sessionId, session] of Object.entries(state.sessions)) {
+    if (session.overseer) return sessionId;
+  }
+  return undefined;
 }
 
 export function loadMetadataEndpoint(projectRoot?: string): MetadataApiEndpoint | null {

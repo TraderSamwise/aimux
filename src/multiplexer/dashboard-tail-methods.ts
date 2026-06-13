@@ -63,6 +63,7 @@ import type { SessionRuntime } from "../session-runtime.js";
 import { loadConfig } from "../config.js";
 import type { LaunchOverride } from "../shell-args.js";
 import type { SessionTeamMetadata } from "../team.js";
+import { setSessionOverseer } from "../metadata-store.js";
 import {
   listTopologySessionStates,
   moveTopologySessionToGraveyard,
@@ -151,6 +152,7 @@ export type DashboardTailMethods = {
       targetWorktreePath?: string;
       open?: boolean;
       launchOverride?: LaunchOverride;
+      overseer?: boolean;
     },
   ): Promise<{ sessionId: string }>;
   createTeammateAgent(
@@ -297,6 +299,9 @@ export const dashboardTailMethods: DashboardTailMethods = {
       throw new Error(`Unknown tool config: ${opts.toolConfigKey}`);
     }
     const sessionId = opts.targetSessionId ?? (this as any).generateDashboardSessionId?.(tool.command);
+    const team: SessionTeamMetadata | undefined = opts.overseer
+      ? { teamId: "overseer", parentSessionId: "", role: "overseer" }
+      : undefined;
     const transport = this.createSession(
       opts.launchOverride?.command ?? tool.command,
       opts.launchOverride?.args ?? tool.args,
@@ -309,9 +314,12 @@ export const dashboardTailMethods: DashboardTailMethods = {
       sessionId,
       !opts.open,
       false,
-      undefined,
+      team,
       opts.launchOverride?.env,
     );
+    if (opts.overseer) {
+      setSessionOverseer(transport.id, true);
+    }
     if (opts.open) {
       this.openLiveTmuxWindowForEntry({ id: transport.id });
     }
