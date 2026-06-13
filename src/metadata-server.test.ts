@@ -127,6 +127,55 @@ describe("MetadataServer threads API", () => {
     expect(detail.messages.at(-1)?.body).toContain("parser error path");
   });
 
+  it("lists agents with loop state and toggles the loop flag over HTTP", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    seedAgentTopology([{ id: "codex-1", status: "running", team: { role: "coder" } }]);
+
+    const beforeRes = await fetch(`${base}/agents`);
+    const before = (await beforeRes.json()) as {
+      ok: boolean;
+      agents: Array<{ id: string; loop?: unknown; overseer?: boolean }>;
+    };
+    expect(beforeRes.ok).toBe(true);
+    const seeded = before.agents.find((agent) => agent.id === "codex-1");
+    expect(seeded).toBeTruthy();
+    expect(seeded?.loop).toBeUndefined();
+    expect(seeded?.overseer).toBe(false);
+
+    const onRes = await fetch(`${base}/agents/loop`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", active: true, goal: "finish the parser" }),
+    });
+    const on = (await onRes.json()) as { ok: boolean; loop: { active: boolean; goal?: string } };
+    expect(onRes.ok).toBe(true);
+    expect(on.loop.active).toBe(true);
+    expect(on.loop.goal).toBe("finish the parser");
+    expect(loadMetadataState(repoRoot).sessions["codex-1"].loop?.goal).toBe("finish the parser");
+
+    const afterRes = await fetch(`${base}/agents`);
+    const after = (await afterRes.json()) as { agents: Array<{ id: string; loop?: { active: boolean } }> };
+    expect(after.agents.find((agent) => agent.id === "codex-1")?.loop?.active).toBe(true);
+
+    const offRes = await fetch(`${base}/agents/loop`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "codex-1", active: false }),
+    });
+    expect(offRes.ok).toBe(true);
+    expect(loadMetadataState(repoRoot).sessions["codex-1"].loop).toBeUndefined();
+
+    const missingRes = await fetch(`${base}/agents/loop`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ active: true }),
+    });
+    expect(missingRes.status).toBe(400);
+  });
+
   it("returns 400 for malformed encoded thread and task ids", async () => {
     const endpoint = server?.getAddress();
     expect(endpoint).toBeTruthy();
