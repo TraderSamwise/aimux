@@ -20,6 +20,7 @@ interface NodeNotifierLike {
 
 export interface DesktopNotifierDeps {
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
   env?: NodeJS.ProcessEnv;
   moduleDir?: string;
   execFile?: ExecFile;
@@ -56,14 +57,17 @@ function packageRoot(moduleDir: string): string {
   return dirname(moduleDir);
 }
 
-export function macNotifierCandidates(deps: Pick<DesktopNotifierDeps, "env" | "moduleDir"> = {}): string[] {
+export function macNotifierCandidates(deps: Pick<DesktopNotifierDeps, "arch" | "env" | "moduleDir"> = {}): string[] {
   const env = deps.env ?? process.env;
   const override = env.AIMUX_NOTIFIER_HELPER?.trim();
   const root = packageRoot(deps.moduleDir ?? MODULE_DIR);
+  const arch = deps.arch ?? process.arch;
   const candidates = [
     override,
     join(root, "native", "darwin", "aimux-notifier.app", "Contents", "MacOS", "aimux-notifier"),
+    join(root, "native", `darwin-${arch}`, "aimux-notifier.app", "Contents", "MacOS", "aimux-notifier"),
     join(root, "native", "darwin", "aimux-notifier"),
+    join(root, "native", `darwin-${arch}`, "aimux-notifier"),
   ];
 
   return candidates

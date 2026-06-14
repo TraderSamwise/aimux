@@ -11,6 +11,8 @@
     "bin",
     "dist",
     "dist-ui",
+    "native/darwin-arm64",
+    "native/darwin-x64",
     "README.md"
   ],
   "scripts": {
