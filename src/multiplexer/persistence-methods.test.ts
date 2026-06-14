@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -62,7 +62,15 @@ vi.mock("../metadata-store.js", async (importOriginal) => {
 });
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
-import { getStatePath, initPaths } from "../paths.js";
+import {
+  getContextDir,
+  getHistoryDir,
+  getPlansDir,
+  getRecordingsDir,
+  getStatePath,
+  getStatusDir,
+  initPaths,
+} from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import {
@@ -880,6 +888,42 @@ describe("persistenceMethods", () => {
     expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toEqual([]);
     expect(host.offlineSessions).toEqual([]);
     expect(host.offlineServices).toEqual([]);
+  });
+
+  it("deletes dependent agent assets when deleting a graveyarded worktree", async () => {
+    const worktreePath = join(pathsRoot, "worktrees", "with-agent-assets");
+    upsertTopologyWorktree({ path: worktreePath, name: "with-agent-assets", branch: "with-agent-assets" }, "active");
+    upsertTopologySession({ id: "codex-assets", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    moveTopologyWorktreeToGraveyard(worktreePath);
+    const contextDir = join(getContextDir(), "codex-assets");
+    mkdirSync(contextDir, { recursive: true });
+    mkdirSync(getRecordingsDir(), { recursive: true });
+    writeFileSync(join(contextDir, "live.md"), "live\n");
+    writeFileSync(join(getRecordingsDir(), "codex-assets.log"), "raw\n");
+    writeFileSync(join(getRecordingsDir(), "codex-assets.txt"), "text\n");
+    writeFileSync(join(getHistoryDir(), "codex-assets.jsonl"), "{}\n");
+    writeFileSync(join(getPlansDir(), "codex-assets.md"), "# plan\n");
+    writeFileSync(join(getStatusDir(), "codex-assets.md"), "status\n");
+    const host = {
+      offlineSessions: [{ id: "codex-assets", worktreePath }],
+      offlineServices: [],
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    await expect(persistenceMethods.deleteGraveyardWorktree.call(host, worktreePath)).resolves.toEqual({
+      path: worktreePath,
+      status: "removed",
+    });
+
+    expect(existsSync(contextDir)).toBe(false);
+    expect(existsSync(join(getRecordingsDir(), "codex-assets.log"))).toBe(false);
+    expect(existsSync(join(getRecordingsDir(), "codex-assets.txt"))).toBe(false);
+    expect(existsSync(join(getHistoryDir(), "codex-assets.jsonl"))).toBe(false);
+    expect(existsSync(join(getPlansDir(), "codex-assets.md"))).toBe(false);
+    expect(existsSync(join(getStatusDir(), "codex-assets.md"))).toBe(false);
+    expect(listTopologySessionStates().filter((session) => session.worktreePath === worktreePath)).toEqual([]);
   });
 
   it("does not detach worktree services when graveyarding is blocked by a live agent", async () => {

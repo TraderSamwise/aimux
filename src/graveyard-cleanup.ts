@@ -79,7 +79,7 @@ export interface GraveyardCleanupOperations {
 }
 
 function normalizeCleanupConfig(config: Partial<GraveyardConfig> | undefined): GraveyardCleanupConfig {
-  const retentionDays = Number(config?.retentionDays);
+  const retentionDays = typeof config?.retentionDays === "number" ? config.retentionDays : Number.NaN;
   return {
     cleanupEnabled: config?.cleanupEnabled !== false,
     retentionDays: Number.isFinite(retentionDays) && retentionDays >= 0 ? retentionDays : DEFAULT_RETENTION_DAYS,
@@ -174,12 +174,7 @@ function removeAgentMetadata(sessionId: string): void {
   saveMetadataState(metadata);
 }
 
-export function deleteGraveyardAgent(sessionId: string): GraveyardCleanupDeletedAgent {
-  const existing = listTopologySessionStates({ statuses: ["graveyard"] }).find((session) => session.id === sessionId);
-  if (!existing) {
-    throw new Error(`Graveyard session "${sessionId}" not found`);
-  }
-
+export function deleteAgentAssets(sessionId: string): GraveyardCleanupDeletedAgent {
   const removedAssets: string[] = [];
   removeIfExists(join(getRecordingsDir(), `${sessionId}.log`), removedAssets);
   removeIfExists(join(getRecordingsDir(), `${sessionId}.txt`), removedAssets);
@@ -188,8 +183,18 @@ export function deleteGraveyardAgent(sessionId: string): GraveyardCleanupDeleted
   removeIfExists(join(getPlansDir(), `${sessionId}.md`), removedAssets);
   removeIfExists(join(getStatusDir(), `${sessionId}.md`), removedAssets);
   removeAgentMetadata(sessionId);
-  removeTopologySession(sessionId);
   return { sessionId, removedAssets };
+}
+
+export function deleteGraveyardAgent(sessionId: string): GraveyardCleanupDeletedAgent {
+  const existing = listTopologySessionStates({ statuses: ["graveyard"] }).find((session) => session.id === sessionId);
+  if (!existing) {
+    throw new Error(`Graveyard session "${sessionId}" not found`);
+  }
+
+  const deleted = deleteAgentAssets(sessionId);
+  removeTopologySession(sessionId);
+  return deleted;
 }
 
 export async function runGraveyardCleanup(

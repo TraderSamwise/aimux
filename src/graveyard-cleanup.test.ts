@@ -105,6 +105,28 @@ describe("graveyard cleanup", () => {
     expect(plan.worktrees).toEqual([]);
   });
 
+  it("falls back to the default retention when config retention is not numeric", () => {
+    const plan = buildGraveyardCleanupPlan({
+      now: "2026-06-14T00:00:00.000Z",
+      config: { cleanupEnabled: true, retentionDays: null as unknown as number },
+      sessions: [
+        {
+          id: "recent-agent",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          status: "graveyard",
+          updatedAt: "2026-06-10T00:00:00.000Z",
+        },
+      ],
+      worktrees: [],
+    });
+
+    expect(plan.retentionDays).toBe(14);
+    expect(plan.agents).toEqual([]);
+  });
+
   it("does not run standalone agent cleanup for agents under an expired worktree", async () => {
     const deleteAgent = vi.fn();
     const deleteWorktree = vi.fn();
