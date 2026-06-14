@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SRC_DIR="$ROOT_DIR/native/darwin/aimux-notifier-src"
 OUT_DIR="${AIMUX_NOTIFIER_BUILD_DIR:-"$ROOT_DIR/native/darwin"}"
+ARCH="${AIMUX_NOTIFIER_ARCH:-$(uname -m)}"
 APP_DIR="$OUT_DIR/aimux-notifier.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -25,12 +26,22 @@ command -v swiftc >/dev/null 2>&1 || {
   exit 1
 }
 
+case "$ARCH" in
+  x64 | x86_64 | amd64) SWIFT_TARGET="x86_64-apple-macos11" ;;
+  arm64 | aarch64) SWIFT_TARGET="arm64-apple-macos11" ;;
+  *)
+    echo "unsupported aimux-notifier architecture: $ARCH" >&2
+    exit 1
+    ;;
+esac
+
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$SRC_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
 swiftc \
   -suppress-warnings \
+  -target "$SWIFT_TARGET" \
   "$SRC_DIR/main.swift" \
   -framework AppKit \
   -o "$MACOS_DIR/aimux-notifier"
