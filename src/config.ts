@@ -46,6 +46,11 @@ export interface RuntimeConfig {
   tmux: TmuxRuntimeConfig;
 }
 
+export interface ExposeConfig {
+  /** When true, the Exposé popup always shows agents across all worktrees, ignoring the current-worktree scope. */
+  forceGlobalScope: boolean;
+}
+
 export interface LoopConfig {
   /** How often the daemon scans for in-loop agents that stopped early. */
   scanIntervalMs: number;
@@ -79,6 +84,7 @@ export interface AimuxConfig {
   runtime: RuntimeConfig;
   worktrees: WorktreeConfig;
   loop: LoopConfig;
+  expose: ExposeConfig;
   tools: Record<string, ToolConfig>;
 }
 
@@ -156,6 +162,9 @@ const DEFAULT_CONFIG: AimuxConfig = {
     scanIntervalMs: 15000,
     nudgeCooldownMs: 60000,
     autoNudgeWithoutOverseer: false,
+  },
+  expose: {
+    forceGlobalScope: false,
   },
   tools: {
     claude: {
