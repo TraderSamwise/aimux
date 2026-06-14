@@ -520,7 +520,7 @@ export function composeDashboardWorktreeGroups(
   return sortWorktreeGroups(
     worktreeGroups.map((group) => {
       const groupSessions = sortDashboardEntriesByCreatedAt(
-        dashSessions.filter((session) => session.worktreePath === group.path),
+        dashSessions.filter((session) => !isOverseerSession(session) && session.worktreePath === group.path),
       );
       const groupServices = sortDashboardEntriesByCreatedAt(
         dashServices.filter((service) => service.worktreePath === group.path),

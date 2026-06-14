@@ -787,10 +787,12 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
         !!overseerId &&
         listTopologySessionStates({ statuses: ["running", "idle"] }).some((session) => session.id === overseerId);
       if (liveOverseer && typeof host.openLiveTmuxWindowForEntry === "function") {
-        host.openLiveTmuxWindowForEntry({ id: overseerId });
-      } else {
-        host.showToolPicker(undefined, { overseer: true });
+        // "opened" → entered; "error" → already surfaced. Only a stale ("missing")
+        // session should fall through to creating a fresh overseer.
+        const result = host.openLiveTmuxWindowForEntry({ id: overseerId });
+        if (result !== "missing") break;
       }
+      host.showToolPicker(undefined, { overseer: true });
       break;
     }
     case "kill":
