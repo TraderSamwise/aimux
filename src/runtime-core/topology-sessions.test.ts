@@ -436,7 +436,7 @@ describe("topology session lifecycle", () => {
       rigs: [{ id: "rig-a", name: "repo", projectRoot: repoRoot, createdAt: now, updatedAt: now }],
       nodes: [
         { id: "agent:keep", rigId: "rig-a", logicalId: "keep", createdAt: now },
-        { id: "agent:drop", rigId: "rig-a", logicalId: "drop", worktreePath, createdAt: now },
+        { id: "agent:drop", rigId: "rig-a", logicalId: "drop", cwd: worktreePath, createdAt: now },
       ],
       edges: [
         {
@@ -455,7 +455,6 @@ describe("topology session lifecycle", () => {
           id: "drop",
           nodeId: "agent:drop",
           status: "graveyard",
-          worktreePath,
           createdAt: now,
           updatedAt: now,
         },

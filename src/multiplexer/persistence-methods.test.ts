@@ -875,6 +875,11 @@ describe("persistenceMethods", () => {
     upsertTopologySession({ id: "codex-gone", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
     upsertTopologyService({ id: "service-gone", command: "zsh", worktreePath }, "stopped");
     moveTopologyWorktreeToGraveyard(worktreePath);
+    spawnMock.mockImplementation(() => {
+      const child = createSpawnChild();
+      queueMicrotask(() => child.emit("close", 0));
+      return child;
+    });
     const host = {
       offlineSessions: [{ id: "codex-gone", worktreePath }],
       offlineServices: [{ id: "service-gone", worktreePath }],
@@ -896,6 +901,11 @@ describe("persistenceMethods", () => {
     expect(listTopologyServiceStates().filter((service) => service.worktreePath === worktreePath)).toEqual([]);
     expect(host.offlineSessions).toEqual([]);
     expect(host.offlineServices).toEqual([]);
+    expect(spawnMock).toHaveBeenCalledWith("git", ["worktree", "prune"], {
+      cwd: "/repo",
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
   });
 
   it("deletes dependent agent assets when deleting a graveyarded worktree", async () => {

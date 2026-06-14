@@ -299,7 +299,10 @@ export function removeTopologySessionsForWorktree(
   const now = input?.now ?? new Date().toISOString();
   let removed: RuntimeTopologySessionState[] = [];
   store.update((topology) => {
-    const removing = topology.sessions.filter((session) => session.worktreePath === worktreePath);
+    const nodeById = new Map(topology.nodes.map((node) => [node.id, node]));
+    const removing = topology.sessions.filter(
+      (session) => (session.worktreePath ?? nodeById.get(session.nodeId)?.cwd) === worktreePath,
+    );
     if (removing.length === 0) return topology;
     const removingSessionIds = new Set(removing.map((session) => session.id));
     const removingNodeIds = new Set(removing.map((session) => session.nodeId));
