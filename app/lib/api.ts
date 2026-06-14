@@ -448,6 +448,13 @@ export interface NotificationRecord {
   targetKey?: string;
   targetKind?: "session" | "generic";
   kind?: string;
+  projectName?: string;
+  projectRoot?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
   unread: boolean;
   cleared: boolean;
   createdAt: string;

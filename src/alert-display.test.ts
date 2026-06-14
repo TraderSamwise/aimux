@@ -19,12 +19,20 @@ describe("alert display context", () => {
           sessionId: "service-123",
           title: "service",
           message: "Shell returned to a prompt.",
+          projectName: "aimux",
+          projectRoot: "/repo",
         },
         { label: "shell", worktreeName: "Main Checkout", worktreePath: "/repo" },
       ),
     ).toMatchObject({
-      title: "shell @ Main Checkout finished",
+      title: "[Done] aimux / Main Checkout",
+      message: "Agent or service finished: shell @ Main Checkout finished - Shell returned to a prompt.",
+      projectName: "aimux",
+      projectRoot: "/repo",
       worktreePath: "/repo",
+      worktreeName: "Main Checkout",
+      categoryLabel: "Done",
+      reasonLabel: "Agent or service finished",
     });
   });
 

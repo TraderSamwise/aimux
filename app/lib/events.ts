@@ -41,9 +41,15 @@ export interface AlertEvent {
   message: string;
   ts: string;
   notificationId?: string;
+  projectName?: string;
+  projectRoot?: string;
   threadId?: string;
   taskId?: string;
   worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
   dedupeKey?: string;
   forceNotify?: boolean;
   interaction?: AlertInteraction;

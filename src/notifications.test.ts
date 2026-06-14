@@ -86,6 +86,13 @@ describe("notifications store", () => {
         sessionId: "codex-1",
         title: "codex needs input",
         message: "ready",
+        projectName: "aimux",
+        projectRoot: repoRoot,
+        worktreeName: "notifications",
+        worktreePath: join(repoRoot, ".aimux/worktrees/notifications"),
+        branch: "notifications",
+        categoryLabel: "Needs input",
+        reasonLabel: "Agent is waiting for input",
       }),
     ).toBe(true);
 
@@ -104,6 +111,13 @@ describe("notifications store", () => {
         sessionId: "codex-1",
         title: "codex needs input",
         message: "ready",
+        projectName: "aimux",
+        projectRoot: repoRoot,
+        worktreeName: "notifications",
+        worktreePath: join(repoRoot, ".aimux/worktrees/notifications"),
+        branch: "notifications",
+        categoryLabel: "Needs input",
+        reasonLabel: "Agent is waiting for input",
       }),
     ).toBe(true);
     unsubscribe();
@@ -113,6 +127,16 @@ describe("notifications store", () => {
       type: "alert",
       notificationId: record?.id,
       kind: "needs_input",
+      projectName: "aimux",
+      worktreeName: "notifications",
+    });
+    expect(record).toMatchObject({
+      projectName: "aimux",
+      projectRoot: repoRoot,
+      worktreeName: "notifications",
+      branch: "notifications",
+      categoryLabel: "Needs input",
+      reasonLabel: "Agent is waiting for input",
     });
   });
 

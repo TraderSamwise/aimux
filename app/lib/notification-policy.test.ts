@@ -139,6 +139,31 @@ describe("notification policy", () => {
     });
   });
 
+  it("does not add a duplicate client project prefix to server-labeled records", () => {
+    const event = evaluateNotificationRecord(
+      {
+        id: "notice-1",
+        title: "[Needs input] aimux / notifications",
+        body: "Agent is waiting for input.",
+        sessionId: "claude-a1",
+        kind: "needs_input",
+        projectName: "aimux",
+        worktreeName: "notifications",
+        unread: true,
+        cleared: false,
+        createdAt: "2026-05-23T00:00:00.000Z",
+        updatedAt: "2026-05-23T00:00:00.000Z",
+      },
+      enabledSettings,
+      { projectName: "aimux", projectPath: "/Users/sam/cs/aimux" },
+    );
+
+    expect(event).toMatchObject({
+      title: "[Needs input] aimux / notifications",
+      dedupeKey: "notification:notice-1",
+    });
+  });
+
   it("maps live alert events without waiting for notification polling", () => {
     const event = evaluateAlertEvent(
       {

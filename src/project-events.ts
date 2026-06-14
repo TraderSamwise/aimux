@@ -24,9 +24,15 @@ export interface AlertEvent {
   message: string;
   ts: string;
   notificationId?: string;
+  projectName?: string;
+  projectRoot?: string;
   threadId?: string;
   taskId?: string;
   worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
   dedupeKey?: string;
   forceNotify?: boolean;
   /** Present on actionable interaction_request alerts so clients can resolve them.
@@ -87,6 +93,13 @@ export class ProjectEventBus {
       body: alert.message,
       sessionId: alert.sessionId,
       kind: alert.kind,
+      projectName: alert.projectName,
+      projectRoot: alert.projectRoot,
+      worktreePath: alert.worktreePath,
+      worktreeName: alert.worktreeName,
+      branch: alert.branch,
+      categoryLabel: alert.categoryLabel,
+      reasonLabel: alert.reasonLabel,
       dedupeKey,
       createdAt: ts,
       unread: !alert.sessionId || alert.forceNotify ? true : !isSessionNotificationFocused(alert.sessionId),
@@ -102,9 +115,15 @@ export class ProjectEventBus {
       title: alert.title,
       message: alert.message,
       notificationId: notification.id,
+      projectName: alert.projectName,
+      projectRoot: alert.projectRoot,
       threadId: alert.threadId,
       taskId: alert.taskId,
       worktreePath: alert.worktreePath,
+      worktreeName: alert.worktreeName,
+      branch: alert.branch,
+      categoryLabel: alert.categoryLabel,
+      reasonLabel: alert.reasonLabel,
       dedupeKey,
       forceNotify: alert.forceNotify,
       interaction: alert.interaction,
