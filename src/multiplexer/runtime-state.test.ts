@@ -12,6 +12,7 @@ import {
   loadOfflineServices,
   loadOfflineTopologySessions,
   recordSessionBackendSessionId,
+  reconcileOrphanedTopologySessions,
   restoreTmuxSessionsFromTopology,
   resumeOfflineSession,
   stopSessionToOffline,
@@ -1044,5 +1045,135 @@ describe("resumeOfflineSession", () => {
     expect(changed).toBe(true);
     expect(host.offlineServices).toEqual([saved]);
     expect(buildLiveServiceStates(host)).toEqual([]);
+  });
+});
+
+describe("reconcileOrphanedTopologySessions", () => {
+  let repoRoot = "";
+
+  function seedTopologySessions(sessions: any[]): void {
+    saveRuntimeTopologySessions({ sessions, projectRoot: repoRoot });
+  }
+
+  function noWindowsHost(overrides: any = {}): any {
+    return {
+      sessions: [],
+      tmuxRuntimeManager: { listProjectManagedWindows: vi.fn(() => []) },
+      debug: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  beforeEach(async () => {
+    repoRoot = mkdtempSync(join(tmpdir(), "aimux-reconcile-"));
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    await initPaths(repoRoot);
+  });
+
+  afterEach(() => {
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("demotes a crash-orphaned running session to offline so it stays recoverable", () => {
+    seedTopologySessions([
+      {
+        id: "codex-1",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "live",
+        backendSessionId: "native-1",
+        worktreePath: repoRoot,
+      },
+    ]);
+
+    const host = noWindowsHost();
+    const changed = reconcileOrphanedTopologySessions(host);
+
+    expect(changed).toBe(true);
+    expect(listTopologySessionStates({ statuses: ["running", "idle"] })).toEqual([]);
+    const offline = listTopologySessionStates({ statuses: ["offline"] });
+    expect(offline.map((s) => s.id)).toEqual(["codex-1"]);
+    expect(offline[0].backendSessionId).toBe("native-1");
+  });
+
+  it("graveyards an orphaned session whose worktree is gone, documenting why", () => {
+    const missingWorktree = join(repoRoot, "deleted-worktree");
+    seedTopologySessions([
+      {
+        id: "codex-gone",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "live",
+        backendSessionId: "native-gone",
+        worktreePath: missingWorktree,
+      },
+    ]);
+
+    const host = noWindowsHost();
+    const changed = reconcileOrphanedTopologySessions(host);
+
+    expect(changed).toBe(true);
+    expect(listTopologySessionStates({ statuses: ["running", "idle", "offline"] })).toEqual([]);
+    const graveyard = listTopologySessionStates({ statuses: ["graveyard"] });
+    expect(graveyard.map((s) => s.id)).toEqual(["codex-gone"]);
+    expect(graveyard[0].graveyardReason).toContain(missingWorktree);
+    expect(graveyard[0].backendSessionId).toBe("native-gone");
+  });
+
+  it("leaves a live agent untouched when its tmux window is still managed", () => {
+    seedTopologySessions([
+      {
+        id: "codex-live",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "live",
+        worktreePath: repoRoot,
+      },
+    ]);
+
+    const host = noWindowsHost({
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: { sessionName: "aimux", windowId: "@1", windowIndex: 1, windowName: "codex" },
+            metadata: { kind: "agent", sessionId: "codex-live", command: "codex", worktreePath: repoRoot },
+          },
+        ]),
+        isWindowAlive: vi.fn(() => true),
+      },
+    });
+
+    const changed = reconcileOrphanedTopologySessions(host);
+
+    expect(changed).toBe(false);
+    expect(listTopologySessionStates({ statuses: ["running", "idle"] }).map((s) => s.id)).toEqual(["codex-live"]);
+  });
+
+  it("does not demote a session that is mid-launch", () => {
+    const pending = new DashboardPendingActions(() => {});
+    pending.setSessionAction("codex-starting", "starting");
+    seedTopologySessions([
+      {
+        id: "codex-starting",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "live",
+        worktreePath: repoRoot,
+      },
+    ]);
+
+    const host = noWindowsHost({ dashboardPendingActions: pending });
+    const changed = reconcileOrphanedTopologySessions(host);
+
+    expect(changed).toBe(false);
+    expect(listTopologySessionStates({ statuses: ["running", "idle"] }).map((s) => s.id)).toEqual(["codex-starting"]);
   });
 });
