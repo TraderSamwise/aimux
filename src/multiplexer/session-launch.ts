@@ -261,6 +261,18 @@ export async function runProjectService(host: SessionLaunchHost): Promise<number
   host.writeInstructionFiles();
   await host.startProjectServices();
   host.startStatusRefresh();
+  host.startGraveyardCleanup?.();
+  if (host.cleanupGraveyard && !host.graveyardCleanupRunning) {
+    host.graveyardCleanupRunning = true;
+    void host
+      .cleanupGraveyard()
+      .catch((error: unknown) => {
+        debug(`graveyard cleanup failed: ${error instanceof Error ? error.message : String(error)}`, "graveyard");
+      })
+      .finally(() => {
+        host.graveyardCleanupRunning = false;
+      });
+  }
   host.refreshDesktopStateSnapshot();
   host.writeStatuslineFile();
 
