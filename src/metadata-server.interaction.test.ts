@@ -91,10 +91,47 @@ describe("interaction endpoints", () => {
     expect(after.requests).toHaveLength(0);
   });
 
+  it("formats AskUserQuestion payloads instead of storing raw JSON as the notification body", async () => {
+    const payload = {
+      questions: [
+        {
+          multiSelect: false,
+          header: "New branch",
+          question: "What should the new branch be named / for what work?",
+          options: [
+            { label: "Tell me the name", description: "You provide the branch name." },
+            { label: "Neutral scratch branch", description: "Create a placeholder branch." },
+          ],
+        },
+      ],
+    };
+    const rawSummary = JSON.stringify(payload);
+
+    const reg = await postJson(`${base}/agents/interaction/register`, {
+      session: "codex-ask",
+      type: "question",
+      payload,
+      summary: rawSummary,
+    });
+    expect(reg.json.ok).toBe(true);
+
+    const listed = await (await fetch(`${base}/notifications?sessionId=codex-ask`)).json();
+    expect(listed.notifications).toHaveLength(1);
+    const notification = listed.notifications[0];
+    expect(notification.title).toContain("AskUserQuestion");
+    expect(notification.body).toContain("What should the new branch be named / for what work?");
+    expect(notification.body).toContain("Options: Tell me the name; Neutral scratch branch");
+    expect(notification.body).not.toContain('"questions"');
+  });
+
   it("returns 409 for unknown respond and 400 for invalid register", async () => {
     const unknown = await postJson(`${base}/agents/interaction/respond`, { id: "nope", response: {} });
     expect(unknown.status).toBe(409);
-    const invalid = await postJson(`${base}/agents/interaction/register`, { session: "", type: "permission", payload: {} });
+    const invalid = await postJson(`${base}/agents/interaction/register`, {
+      session: "",
+      type: "permission",
+      payload: {},
+    });
     expect(invalid.status).toBe(400);
   });
 
