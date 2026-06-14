@@ -204,11 +204,17 @@ export function runSelectedTool(
   // The overseer is project-wide: it ignores the focused worktree and roots at the main repo.
   const overseer = host.toolPickerOverseer === true;
   host.toolPickerOverseer = false;
-  const wtPath = overseer
-    ? findMainRepo()
-    : host.mode === "dashboard"
-      ? host.dashboardState.focusedWorktreePath
-      : undefined;
+  let wtPath: string | undefined;
+  if (overseer) {
+    // findMainRepo shells out to git; never let a discovery failure abort agent creation.
+    try {
+      wtPath = findMainRepo();
+    } catch {
+      wtPath = undefined;
+    }
+  } else {
+    wtPath = host.mode === "dashboard" ? host.dashboardState.focusedWorktreePath : undefined;
+  }
   // A plain launch (no explicit override) still applies the tool's configured defaults.
   const override = opts.override ?? defaultsLaunchOverride(tool);
   host.launchOptionsState = null;
@@ -302,6 +308,7 @@ export function handleToolPickerKey(host: ToolPickerHost, data: Buffer): void {
     host.clearDashboardOverlay();
     host.pickerMode = "create";
     host.forkSourceSessionId = null;
+    host.toolPickerOverseer = false;
     host.launchOptionsState = null;
     host.restoreDashboardAfterOverlayDismiss();
     return;

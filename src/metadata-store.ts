@@ -219,16 +219,31 @@ export function clearSessionLoop(sessionId: string, projectRoot?: string): Metad
 }
 
 export function setSessionOverseer(sessionId: string, value: boolean, projectRoot?: string): MetadataState {
-  return updateSessionMetadata(
-    sessionId,
-    (current) => {
-      const next = { ...current };
-      if (value) next.overseer = true;
-      else delete next.overseer;
-      return next;
-    },
-    projectRoot,
-  );
+  if (!value) {
+    return updateSessionMetadata(
+      sessionId,
+      (current) => {
+        const next = { ...current };
+        delete next.overseer;
+        return next;
+      },
+      projectRoot,
+    );
+  }
+  // Enforce a single overseer per project: clear any stale flags before setting this one,
+  // otherwise a dead overseer's flag lingers and "create or enter" keeps spawning new ones.
+  const state = loadMetadataState(projectRoot);
+  const now = new Date().toISOString();
+  for (const [id, session] of Object.entries(state.sessions)) {
+    if (session?.overseer && id !== sessionId) {
+      delete session.overseer;
+      session.updatedAt = now;
+    }
+  }
+  const current = state.sessions[sessionId] ?? { updatedAt: now };
+  state.sessions[sessionId] = { ...current, overseer: true, updatedAt: now };
+  saveMetadataState(state, projectRoot);
+  return state;
 }
 
 export function findOverseerSessionId(state: MetadataState): string | undefined {
