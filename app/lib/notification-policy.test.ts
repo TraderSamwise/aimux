@@ -126,6 +126,33 @@ describe("notification policy", () => {
     });
   });
 
+  it("maps prompt-like daemon records to needs-input browser notifications", () => {
+    for (const kind of [
+      "interaction_request",
+      "message_waiting",
+      "handoff_waiting",
+      "task_assigned",
+      "review_waiting",
+    ]) {
+      expect(
+        evaluateNotificationRecord(
+          {
+            id: `notice-${kind}`,
+            title: "Needs attention",
+            body: "Respond in aimux",
+            sessionId: "claude-a1",
+            kind,
+            unread: true,
+            cleared: false,
+            createdAt: "2026-05-23T00:00:00.000Z",
+            updatedAt: "2026-05-23T00:00:00.000Z",
+          },
+          enabledSettings,
+        ),
+      ).toMatchObject({ kind: "needs_input" });
+    }
+  });
+
   it("does not emit read, cleared, or disabled daemon records", () => {
     const baseRecord = {
       id: "notice-1",

@@ -453,6 +453,14 @@ export interface NotificationRecord {
   createdAt: string;
   updatedAt: string;
   dedupeKey?: string;
+  interaction?: {
+    id: string;
+    type: "permission" | "exit_plan" | "question" | "input";
+    summary?: string;
+    telemetry?: boolean;
+    toolName?: string;
+    toolInputJSON?: string;
+  };
 }
 
 export interface NotificationsResponse {

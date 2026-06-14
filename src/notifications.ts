@@ -7,6 +7,16 @@ import {
   type RuntimeExchangeMessage,
   type RuntimeExchangeThread,
 } from "./runtime-core/exchange-store.js";
+import type { InteractionType } from "./interaction-requests.js";
+
+export interface NotificationInteractionRecord {
+  id: string;
+  type: InteractionType;
+  summary?: string;
+  telemetry?: boolean;
+  toolName?: string;
+  toolInputJSON?: string;
+}
 
 export interface NotificationRecord {
   id: string;
@@ -22,6 +32,7 @@ export interface NotificationRecord {
   createdAt: string;
   updatedAt: string;
   dedupeKey?: string;
+  interaction?: NotificationInteractionRecord;
 }
 
 const PROJECT_NOTIFICATION_PARTICIPANT = "project";
@@ -49,6 +60,22 @@ function metadataString(message: RuntimeExchangeMessage | undefined, key: string
 
 function metadataBoolean(message: RuntimeExchangeMessage | undefined, key: string): boolean {
   return message?.metadata?.[key] === true;
+}
+
+function notificationInteraction(
+  message: RuntimeExchangeMessage | undefined,
+): NotificationInteractionRecord | undefined {
+  const id = metadataString(message, "notificationInteractionId");
+  const type = metadataString(message, "notificationInteractionType") as InteractionType | undefined;
+  if (!id || !type) return undefined;
+  return {
+    id,
+    type,
+    summary: metadataString(message, "notificationInteractionSummary"),
+    telemetry: metadataBoolean(message, "notificationInteractionTelemetry"),
+    toolName: metadataString(message, "notificationInteractionToolName"),
+    toolInputJSON: metadataString(message, "notificationInteractionToolInputJSON"),
+  };
 }
 
 function notificationThreadId(targetKey?: string): string {
@@ -92,6 +119,7 @@ function notificationRecord(
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     dedupeKey: metadataString(message, "notificationDedupeKey"),
+    interaction: notificationInteraction(message),
   };
 }
 
@@ -118,6 +146,7 @@ function writeNotification(input: {
   createdAt?: string;
   unread?: boolean;
   replaceTarget?: boolean;
+  interaction?: NotificationInteractionRecord;
 }): NotificationRecord {
   const now = input.createdAt ?? new Date().toISOString();
   const sessionId = input.sessionId?.trim() || undefined;
@@ -155,6 +184,12 @@ function writeNotification(input: {
       notificationKind: input.kind?.trim() || null,
       notificationDedupeKey: input.dedupeKey?.trim() || null,
       notificationCleared: false,
+      notificationInteractionId: input.interaction?.id.trim() || null,
+      notificationInteractionType: input.interaction?.type ?? null,
+      notificationInteractionSummary: input.interaction?.summary?.trim() || null,
+      notificationInteractionTelemetry: input.interaction?.telemetry === true,
+      notificationInteractionToolName: input.interaction?.toolName?.trim() || null,
+      notificationInteractionToolInputJSON: input.interaction?.toolInputJSON?.trim() || null,
     },
   };
   let record: NotificationRecord | undefined;
@@ -192,6 +227,7 @@ export function addNotification(input: {
   dedupeKey?: string;
   createdAt?: string;
   unread?: boolean;
+  interaction?: NotificationInteractionRecord;
 }): NotificationRecord {
   return writeNotification(input);
 }
@@ -207,6 +243,7 @@ export function upsertNotification(input: {
   dedupeKey?: string;
   createdAt?: string;
   unread?: boolean;
+  interaction?: NotificationInteractionRecord;
 }): NotificationRecord {
   return writeNotification({ ...input, replaceTarget: Boolean(normalizeTargetKey(input)) });
 }

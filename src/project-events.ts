@@ -104,6 +104,7 @@ export class ProjectEventBus {
       dedupeKey: event.dedupeKey,
       createdAt: event.ts,
       unread: !event.sessionId || event.forceNotify ? true : !isSessionNotificationFocused(event.sessionId),
+      interaction: event.interaction,
     });
 
     this.publish(event);

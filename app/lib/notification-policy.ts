@@ -40,6 +40,14 @@ const ACTIVE_ATTENTIONS = new Set(["needs_input", "blocked", "error"]);
 const ERROR_KINDS = new Set(["error", "task_failed"]);
 const COMPLETED_KINDS = new Set(["completed", "task_done"]);
 const ACTIVITY_KINDS = new Set(["activity", "notification", "notify"]);
+const NEEDS_INPUT_KINDS = new Set([
+  "needs_input",
+  "interaction_request",
+  "message_waiting",
+  "handoff_waiting",
+  "task_assigned",
+  "review_waiting",
+]);
 
 export function snapshotSessionForNotifications(
   session: DesktopSession,
@@ -169,7 +177,7 @@ function normalizeState(value: string | undefined): string {
 
 function mapNotificationRecordKind(kind: string | undefined): AgentNotificationKind | null {
   const normalized = kind?.trim();
-  if (normalized === "needs_input") return "needs_input";
+  if (normalized && NEEDS_INPUT_KINDS.has(normalized)) return "needs_input";
   if (normalized === "blocked") return "blocked";
   if (normalized && ERROR_KINDS.has(normalized)) return "error";
   if (normalized && COMPLETED_KINDS.has(normalized)) return "completed";

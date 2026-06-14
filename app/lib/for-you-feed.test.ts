@@ -28,6 +28,66 @@ describe("For You feed classifier", () => {
     expect(classifyNotification(notification({ kind: "watchdog" }))).toBe("observation");
   });
 
+  it("separates actionable interaction requests from telemetry", () => {
+    expect(
+      classifyNotification(
+        notification({
+          kind: "interaction_request",
+          interaction: { id: "i1", type: "question" },
+          unread: true,
+        }),
+      ),
+    ).toBe("action-required");
+    expect(
+      classifyNotification(
+        notification({
+          kind: "interaction_request",
+          interaction: { id: "i2", type: "permission" },
+          unread: true,
+        }),
+      ),
+    ).toBe("approval");
+    expect(
+      classifyNotification(
+        notification({
+          kind: "interaction_request",
+          interaction: { id: "i3", type: "permission", telemetry: true },
+          unread: true,
+        }),
+      ),
+    ).toBe("observation");
+  });
+
+  it("marks interaction cards actionable only when the interaction is resolvable", () => {
+    const feed = buildForYouFeed({
+      securityEvents: [],
+      desktopState: null,
+      notifications: [
+        notification({
+          id: "action",
+          kind: "interaction_request",
+          interaction: { id: "i1", type: "question" },
+          unread: true,
+        }),
+        notification({
+          id: "telemetry",
+          kind: "interaction_request",
+          interaction: { id: "i2", type: "permission", telemetry: true },
+          unread: true,
+        }),
+      ],
+    });
+
+    expect(feed.cards.find((card) => card.notificationId === "action")).toMatchObject({
+      actionable: true,
+      kind: "action-required",
+    });
+    expect(feed.cards.find((card) => card.notificationId === "telemetry")).toMatchObject({
+      actionable: false,
+      kind: "observation",
+    });
+  });
+
   it("merges security alerts, notifications, and pending lifecycle state", () => {
     const security: SecurityInboxEvent = {
       id: "sec-1",

@@ -166,4 +166,37 @@ describe("notifications store", () => {
       targetKey: "session:claude-1",
     });
   });
+
+  it("preserves interaction metadata from alert events", () => {
+    const bus = new ProjectEventBus();
+
+    expect(
+      bus.publishAlert({
+        kind: "interaction_request",
+        sessionId: "claude-1",
+        title: "claude-1 needs a response",
+        message: "Approve command",
+        interaction: {
+          id: "interaction-1",
+          type: "permission",
+          summary: "Bash: yarn test",
+          telemetry: true,
+          toolName: "Bash",
+          toolInputJSON: '{"command":"yarn test"}',
+        },
+      }),
+    ).toBe(true);
+
+    expect(listNotifications({ sessionId: "claude-1" })[0]).toMatchObject({
+      kind: "interaction_request",
+      interaction: {
+        id: "interaction-1",
+        type: "permission",
+        summary: "Bash: yarn test",
+        telemetry: true,
+        toolName: "Bash",
+        toolInputJSON: '{"command":"yarn test"}',
+      },
+    });
+  });
 });
