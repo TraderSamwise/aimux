@@ -234,6 +234,7 @@ export function buildHelpOverlayOutput(_ctx: any): string {
     "Dashboard mode",
     "  Ctrl+A ?  show help",
     "  Ctrl+A c  new agent",
+    "  Ctrl+A o  create / open overseer",
     "  Ctrl+A x  stop agent",
     "  Ctrl+A w  create worktree",
     "  Ctrl+A W  worktree list",

@@ -371,6 +371,7 @@ export async function spawnDashboardAgentWithFeedback(
     tool: string;
     worktreePath?: string;
     launchOverride?: LaunchOverride;
+    overseer?: boolean;
   },
 ): Promise<void> {
   const sessionSeed = buildPendingSessionSeed({
@@ -394,6 +395,7 @@ export async function spawnDashboardAgentWithFeedback(
           sessionId: input.sessionId,
           worktreePath: input.worktreePath,
           launchOverride: input.launchOverride,
+          overseer: input.overseer,
           open: false,
         },
         { timeoutMs: 10_000 },
