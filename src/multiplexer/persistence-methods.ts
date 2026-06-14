@@ -609,9 +609,11 @@ export const persistenceMethods = {
     if (existsSync(path)) {
       await removeGraveyardedDesktopWorktree(this, mainRepo, path);
     } else {
+      await pruneGitWorktrees(mainRepo);
       removeWorktreeDependents(this, path);
       removeTopologyWorktree(path);
       this.saveState?.();
+      await pruneGitWorktrees(mainRepo);
     }
     deleteTopologyWorktreeGraveyardEntry(path);
     this.invalidateDesktopStateSnapshot?.();
