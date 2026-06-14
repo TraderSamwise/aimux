@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesktopSession } from "@/lib/desktop-state";
 import { defaultNotificationSettings } from "@/lib/notification-settings";
 import {
   evaluateAgentNotification,
+  evaluateAlertEvent,
   evaluateNotificationRecord,
+  isRecentNotificationRecord,
   snapshotSessionForNotifications,
 } from "@/lib/notification-policy";
 
@@ -26,6 +28,17 @@ function session(overrides: Partial<DesktopSession>): DesktopSession {
 }
 
 describe("notification policy", () => {
+  const now = new Date("2026-05-23T00:00:10.000Z");
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("does not emit from the initial snapshot", () => {
     expect(
       evaluateAgentNotification(session({ attention: "needs_input" }), undefined, enabledSettings),
@@ -124,6 +137,71 @@ describe("notification policy", () => {
         sessionId: "claude-a1",
       },
     });
+  });
+
+  it("maps live alert events without waiting for notification polling", () => {
+    const event = evaluateAlertEvent(
+      {
+        type: "alert",
+        projectId: "glyde-frontend-123",
+        kind: "needs_input",
+        sessionId: "claude-a1",
+        title: "claude needs input",
+        message: "Agent is waiting for input.",
+        ts: now.toISOString(),
+        notificationId: "notice-1",
+      },
+      enabledSettings,
+      { projectName: "glyde-frontend", projectPath: "/Users/sam/cs/glyde-frontend" },
+    );
+
+    expect(event).toMatchObject({
+      id: "notice-1",
+      category: "agent",
+      kind: "needs_input",
+      title: "glyde-frontend: claude needs input",
+      body: "Agent is waiting for input.",
+      dedupeKey: "notification:notice-1",
+      target: {
+        projectPath: "/Users/sam/cs/glyde-frontend",
+        sessionId: "claude-a1",
+      },
+    });
+  });
+
+  it("does not notify stale records discovered by delayed polling", () => {
+    vi.setSystemTime(new Date("2026-05-23T00:01:00.000Z"));
+    expect(
+      isRecentNotificationRecord(
+        {
+          id: "notice-old",
+          title: "Old alert",
+          body: "Already happened",
+          kind: "needs_input",
+          unread: true,
+          cleared: false,
+          createdAt: "2026-05-23T00:00:00.000Z",
+          updatedAt: "2026-05-23T00:00:00.000Z",
+        },
+        Date.parse("2026-05-23T00:01:00.000Z"),
+      ),
+    ).toBe(false);
+    expect(
+      evaluateNotificationRecord(
+        {
+          id: "notice-old",
+          title: "Old alert",
+          body: "Already happened",
+          sessionId: "claude-a1",
+          kind: "needs_input",
+          unread: true,
+          cleared: false,
+          createdAt: "2026-05-23T00:00:00.000Z",
+          updatedAt: "2026-05-23T00:00:00.000Z",
+        },
+        enabledSettings,
+      ),
+    ).toBeNull();
   });
 
   it("maps prompt-like daemon records to needs-input browser notifications", () => {

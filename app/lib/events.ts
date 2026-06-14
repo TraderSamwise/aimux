@@ -40,6 +40,7 @@ export interface AlertEvent {
   title: string;
   message: string;
   ts: string;
+  notificationId?: string;
   threadId?: string;
   taskId?: string;
   worktreePath?: string;

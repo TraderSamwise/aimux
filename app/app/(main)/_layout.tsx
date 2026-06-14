@@ -9,6 +9,8 @@ import { getDesktopState, listNotifications, listProjects, setApiRelay } from "@
 import { useAuth } from "@/lib/auth";
 import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser-notifications";
 import { env } from "@/lib/env";
+import { startHeartbeat } from "@/lib/heartbeat";
+import { evaluateAlertEvent } from "@/lib/notification-policy";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { registerSecurityPushToken } from "@/lib/push-registration";
 import { RelayTransport } from "@/lib/relay-transport";
@@ -21,6 +23,7 @@ import {
 import {
   notificationFeedErrorFamily,
   notificationFeedFamily,
+  kickNotificationFeedRefreshAtom,
   notificationFeedRefreshNonceAtom,
 } from "@/stores/notifications";
 import {
@@ -31,7 +34,11 @@ import {
   selectedSessionIdAtom,
 } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
-import { activeSharedSessionAtom, type ActiveSharedSession } from "@/stores/settings";
+import {
+  activeSharedSessionAtom,
+  notificationSettingsAtom,
+  type ActiveSharedSession,
+} from "@/stores/settings";
 import { addSecurityEventAtom } from "@/stores/security";
 
 const POLL_INTERVAL_MS = 2000;
@@ -45,7 +52,9 @@ export default function MainLayout() {
   const selectedProjectEndpoint = useAtomValue(selectedProjectEndpointAtom);
   const refreshNonce = useAtomValue(desktopStateRefreshNonceAtom);
   const notificationRefreshNonce = useAtomValue(notificationFeedRefreshNonceAtom);
+  const notificationSettings = useAtomValue(notificationSettingsAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
+  const kickNotificationFeedRefresh = useSetAtom(kickNotificationFeedRefreshAtom);
   const store = useStore();
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
@@ -260,6 +269,67 @@ export default function MainLayout() {
     notificationRefreshNonce,
     relayReadyForRequests,
     store,
+  ]);
+
+  // Realtime alert delivery. The durable notification poll above keeps the inbox
+  // current, but browser notifications must be driven by live events so a delayed
+  // poll cannot dump a stale backlog into Notification Center.
+  useEffect(() => {
+    if (activeShare) return;
+    if (!effectiveProjectPath) return;
+    if (!relayReadyForRequests) return;
+    if (!endpoint) return;
+    const projectPath = effectiveProjectPath;
+    let cancelled = false;
+    let handle: { stop: () => void } | null = null;
+
+    async function connect() {
+      try {
+        const token = await getTokenRef.current();
+        if (cancelled) return;
+        handle = startHeartbeat({
+          serviceEndpoint: endpoint!,
+          sessionId: null,
+          token,
+          onEvent: (event) => {
+            if (event.type !== "alert") return;
+            kickNotificationFeedRefresh();
+            const notification = evaluateAlertEvent(event, notificationSettings, {
+              projectName: effectiveProject?.name,
+              projectPath,
+            });
+            if (
+              notification &&
+              notificationSettings.channels.browser &&
+              !isBrowserDocumentVisible()
+            ) {
+              showBrowserNotification(notification);
+            }
+          },
+          onError: (err) => {
+            if (!cancelled) console.warn("notification heartbeat failed:", err);
+          },
+        });
+      } catch (err) {
+        if (!cancelled) console.warn("notification heartbeat setup failed:", err);
+      }
+    }
+
+    void connect();
+    return () => {
+      cancelled = true;
+      handle?.stop();
+    };
+    // endpoint is included as a value but we depend on endpointKey for stable identity
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeShare,
+    effectiveProject?.name,
+    effectiveProjectPath,
+    endpointKey,
+    kickNotificationFeedRefresh,
+    notificationSettings,
+    relayReadyForRequests,
   ]);
 
   return (

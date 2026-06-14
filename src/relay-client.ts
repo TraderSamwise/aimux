@@ -28,6 +28,7 @@ export interface RelayNotificationPush {
   kind?: string;
   sessionId?: string;
   projectId?: string;
+  notificationId?: string;
   projectRoot?: string;
   dedupeKey?: string;
 }

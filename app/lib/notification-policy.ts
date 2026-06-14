@@ -1,5 +1,6 @@
 import type { DesktopSession } from "@/lib/desktop-state";
 import type { NotificationRecord } from "@/lib/api";
+import type { AlertEvent } from "@/lib/events";
 import {
   isAgentNotificationEnabled,
   type AgentNotificationKind,
@@ -48,6 +49,7 @@ const NEEDS_INPUT_KINDS = new Set([
   "task_assigned",
   "review_waiting",
 ]);
+const RECORD_CATCHUP_NOTIFICATION_WINDOW_MS = 30_000;
 
 export function snapshotSessionForNotifications(
   session: DesktopSession,
@@ -106,6 +108,7 @@ export function evaluateNotificationRecord(
   context: SessionNotificationContext = {},
 ): ClientNotificationEvent | null {
   if (!record.unread || record.cleared) return null;
+  if (!isRecentNotificationRecord(record, Date.now())) return null;
   const kind = mapNotificationRecordKind(record.kind);
   if (!kind || !isAgentNotificationEnabled(settings, kind)) return null;
 
@@ -120,6 +123,34 @@ export function evaluateNotificationRecord(
     target: {
       projectPath: context.projectPath,
       sessionId: record.sessionId,
+    },
+  };
+}
+
+export function evaluateAlertEvent(
+  event: AlertEvent,
+  settings: NotificationSettings,
+  context: SessionNotificationContext = {},
+): ClientNotificationEvent | null {
+  if (event.interaction?.telemetry) return null;
+  const kind = mapNotificationRecordKind(event.kind);
+  if (!kind || !isAgentNotificationEnabled(settings, kind)) return null;
+
+  const projectPrefix = context.projectName ? `${context.projectName}: ` : "";
+  const id =
+    event.notificationId ||
+    `alert:${event.projectId}:${event.kind}:${event.sessionId ?? "project"}:${event.ts}`;
+  return {
+    id,
+    dedupeKey:
+      event.dedupeKey || (event.notificationId ? `notification:${event.notificationId}` : id),
+    category: "agent",
+    kind,
+    title: `${projectPrefix}${event.title || "aimux"}`,
+    body: event.message || event.sessionId || event.kind,
+    target: {
+      projectPath: context.projectPath,
+      sessionId: event.sessionId,
     },
   };
 }
@@ -173,6 +204,12 @@ function buildAgentEvent(
 
 function normalizeState(value: string | undefined): string {
   return value?.trim() || "none";
+}
+
+export function isRecentNotificationRecord(record: NotificationRecord, nowMs: number): boolean {
+  const createdAtMs = Date.parse(record.createdAt);
+  if (!Number.isFinite(createdAtMs)) return false;
+  return nowMs - createdAtMs <= RECORD_CATCHUP_NOTIFICATION_WINDOW_MS;
 }
 
 function mapNotificationRecordKind(kind: string | undefined): AgentNotificationKind | null {
