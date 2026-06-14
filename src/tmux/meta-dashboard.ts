@@ -2,6 +2,7 @@ import { buildMetaDashboardModel, type MetaDashboardModel, type MetaRow } from "
 import { parseKeys } from "../key-parser.js";
 import { TerminalHost } from "../terminal-host.js";
 import { truncatePlain } from "../tui/render/text.js";
+import { TmuxRuntimeManager, type TmuxTarget } from "./runtime-manager.js";
 
 export interface TmuxMetaDashboardOptions {
   projectRoot: string;
@@ -38,6 +39,24 @@ export function flattenSelectableRows(model: MetaDashboardModel): SelectableRow[
   return out;
 }
 
+/**
+ * Resolve the jump target for the Nth selectable row. The session is overridden
+ * to the target project's HOST session so openTarget resolves THIS client's
+ * session for that project (not some other terminal's client session).
+ */
+export function resolveJumpTarget(
+  model: MetaDashboardModel,
+  index: number,
+  hostSessionFor: (projectRoot: string) => string,
+): { target: TmuxTarget; projectRoot: string } | null {
+  const sel = flattenSelectableRows(model)[index];
+  if (!sel) return null;
+  return {
+    projectRoot: sel.projectRoot,
+    target: { ...sel.row.target, sessionName: hostSessionFor(sel.projectRoot) },
+  };
+}
+
 function rowGlyph(row: MetaRow): string {
   if (row.attention === "error") return "\x1b[31m●\x1b[0m";
   if (row.attention === "needs_input" || row.activity === "waiting") return "\x1b[33m◍\x1b[0m";
@@ -54,7 +73,7 @@ export function renderMetaDashboard(
 ): string {
   const width = Math.max(20, cols);
   const title = `\x1b[1maimux · all projects${RESET}`;
-  const help = `\x1b[2m↑↓/jk move · Enter open · q/Esc close${RESET}`;
+  const help = `\x1b[2m↑↓/jk move · Enter/1-9 open · q/Esc close${RESET}`;
 
   // Build content lines, tracking which terminal line holds each selectable row.
   const lines: string[] = [];
@@ -128,7 +147,8 @@ export async function runTmuxMetaDashboard(options: TmuxMetaDashboardOptions): P
   process.once("SIGINT", onFatalSignal);
   process.once("SIGTERM", onFatalSignal);
 
-  let model = buildMetaDashboardModel();
+  const tmux = new TmuxRuntimeManager();
+  let model = buildMetaDashboardModel({ tmux });
   let selectedIndex = 0;
 
   const render = () => {
@@ -147,6 +167,17 @@ export async function runTmuxMetaDashboard(options: TmuxMetaDashboardOptions): P
       resolve(exit(code));
     };
 
+    const performJump = (i: number) => {
+      const jump = resolveJumpTarget(model, i, (root) => tmux.getProjectSession(root).sessionName);
+      if (!jump) return;
+      try {
+        tmux.openTarget(jump.target, { insideTmux: true });
+      } catch {
+        /* target vanished mid-jump; close the meta dashboard regardless */
+      }
+      finish(0);
+    };
+
     function onData(data: Buffer) {
       try {
         const event = parseKeys(data)[0];
@@ -156,6 +187,14 @@ export async function runTmuxMetaDashboard(options: TmuxMetaDashboardOptions): P
 
         if (key === "q" || key === "escape" || (event.ctrl && key === "c")) {
           finish(0);
+          return;
+        }
+        if (key === "enter" || key === "return") {
+          performJump(selectedIndex);
+          return;
+        }
+        if (key >= "1" && key <= "9") {
+          performJump(Number.parseInt(key, 10) - 1);
           return;
         }
         if (count === 0) return;
@@ -176,7 +215,7 @@ export async function runTmuxMetaDashboard(options: TmuxMetaDashboardOptions): P
 
     interval = setInterval(() => {
       try {
-        model = buildMetaDashboardModel();
+        model = buildMetaDashboardModel({ tmux });
         render();
       } catch {
         finish(1);
