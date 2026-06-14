@@ -31,6 +31,7 @@ import type {
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { setPendingDashboardServiceAction, setPendingDashboardSessionAction } from "./dashboard-ops.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { assertSessionRestorable } from "../session-restorability.js";
 
 type DashboardModelHost = any;
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
@@ -97,6 +98,8 @@ function toDashboardSessionSeed(seed: any): DashboardSession | undefined {
     worktreePath: seed.worktreePath,
     createdAt: seed.createdAt,
     backendSessionId: seed.backendSessionId,
+    restoreState: seed.restoreState,
+    restoreBlockedReason: seed.restoreBlockedReason,
     headline: seed.headline,
     team: seed.team,
   };
@@ -355,6 +358,7 @@ async function resumeOfflineAgentWithPending(
       if (!offline) {
         throw new Error(`Agent "${sessionId}" not found`);
       }
+      assertSessionRestorable(offline, loadConfig().tools);
       host.resumeOfflineSession(offline);
       return { sessionId, status: "running" as const };
     },

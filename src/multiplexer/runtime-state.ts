@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { discoverBackendSessionId } from "../backend-session-discovery.js";
 import { loadConfig } from "../config.js";
 import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
+import { getRepoRoot } from "../paths.js";
 import { isToolInternalWorktree, listWorktrees as listAllWorktrees } from "../worktree.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
@@ -14,6 +14,8 @@ import {
   upsertTopologySession,
 } from "../runtime-core/topology-sessions.js";
 import { listTopologyServiceStates } from "../runtime-core/topology-services.js";
+import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
+import { recordTopologyBackendSessionId } from "../runtime-core/backend-session-ids.js";
 
 type RuntimeStateHost = any;
 
@@ -546,10 +548,20 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     // The durable backend id can be lost if a crash killed the tmux pane before
     // it was captured. Recover it from the tool's on-disk session store so the
     // agent stays resumable instead of being stranded.
-    const discovered = discoverBackendSessionId(session.toolConfigKey, session.worktreePath);
+    let discovered: string | null = null;
+    try {
+      discovered = reconcileBackendSessionIdForSession(session, getRepoRoot());
+    } catch (error) {
+      host.debug?.(
+        `backend session id recovery failed for ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
+        "session",
+      );
+    }
     if (discovered) {
       backendSessionId = discovered;
       session.backendSessionId = discovered;
+      const offline = host.offlineSessions.find((entry: any) => entry.id === session.id);
+      if (offline) offline.backendSessionId = discovered;
       host.debug?.(`reconciled backend session id for ${session.id} from disk: ${discovered}`, "session");
     }
   }
@@ -615,39 +627,25 @@ export function recordSessionBackendSessionId(
   sessionId: string,
   backendSessionId: string,
 ): { sessionId: string; backendSessionId: string } {
-  const normalizedBackendSessionId = backendSessionId.trim();
-  if (!sessionId.trim()) {
-    throw new Error("sessionId is required");
-  }
-  if (!normalizedBackendSessionId) {
-    throw new Error("backendSessionId is required");
-  }
-
+  const recorded = recordTopologyBackendSessionId({
+    projectRoot: getRepoRoot(),
+    sessionId,
+    backendSessionId,
+  });
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   const offline = host.offlineSessions.find((session: any) => session.id === sessionId);
-  if (!runtime && !offline) {
-    throw new Error(`Agent "${sessionId}" is not managed by this runtime`);
-  }
-
-  const existing = runtime?.backendSessionId ?? offline?.backendSessionId;
-  if (existing && existing !== normalizedBackendSessionId) {
-    throw new Error(
-      `Agent "${sessionId}" already has backend session "${existing}", cannot replace with "${normalizedBackendSessionId}"`,
-    );
-  }
-  const selectedBackendSessionId = existing ?? normalizedBackendSessionId;
   if (runtime) {
-    runtime.backendSessionId = selectedBackendSessionId;
+    runtime.backendSessionId = recorded.backendSessionId;
     host.syncTmuxWindowMetadata?.(sessionId);
   }
   if (offline) {
-    offline.backendSessionId = selectedBackendSessionId;
+    offline.backendSessionId = recorded.backendSessionId;
   }
 
   host.saveState?.();
   host.invalidateDesktopStateSnapshot?.();
   host.writeStatuslineFile?.();
-  return { sessionId, backendSessionId: selectedBackendSessionId };
+  return recorded;
 }
 
 export function startHeartbeat(host: RuntimeStateHost): void {

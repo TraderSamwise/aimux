@@ -254,7 +254,7 @@ describe("dashboard-ops", () => {
   });
 
   it("resumes an offline agent through the project service in dashboard mode and waits for the rendered row", async () => {
-    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
     const sessions = [[], [{ ...session, status: "waiting", tmuxWindowId: "@21" }]];
     let sessionIndex = 0;
     const host = {
@@ -289,6 +289,34 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
+  it("blocks dashboard restore when an offline row lacks an exact backend id", async () => {
+    const session = {
+      id: "sess-1",
+      command: "claude",
+      label: "claude",
+      restoreState: "blocked",
+      restoreBlockedReason: "missing exact resumable backend session id",
+    };
+    const host = {
+      mode: "dashboard",
+      dashboardPendingActions: makePendingActionsFake(),
+      setPendingDashboardSessionAction: vi.fn(),
+      renderDashboard: vi.fn(),
+      postToProjectService: vi.fn(),
+      refreshDashboardModelFromService: vi.fn(),
+      waitForSessionStart: vi.fn(),
+      getDashboardSessions: vi.fn(() => [session]),
+      showDashboardError: vi.fn(),
+    };
+
+    await resumeOfflineSessionWithFeedback(host, session);
+
+    expect(host.postToProjectService).not.toHaveBeenCalled();
+    expect(host.showDashboardError).toHaveBeenCalledWith("Cannot restore \"claude\"", [
+      "missing exact resumable backend session id",
+    ]);
+  });
+
   it("serializes concurrent dashboard agent restores", async () => {
     const first = deferred();
     const liveIds = new Set<string>();
@@ -318,9 +346,19 @@ describe("dashboard-ops", () => {
       showDashboardError: vi.fn(),
     };
 
-    const restoreOne = resumeOfflineSessionWithFeedback(host, { id: "sess-1", command: "claude", args: [] });
+    const restoreOne = resumeOfflineSessionWithFeedback(host, {
+      id: "sess-1",
+      command: "claude",
+      args: [],
+      backendSessionId: "backend-1",
+    });
     await nextTick();
-    const restoreTwo = resumeOfflineSessionWithFeedback(host, { id: "sess-2", command: "claude", args: [] });
+    const restoreTwo = resumeOfflineSessionWithFeedback(host, {
+      id: "sess-2",
+      command: "claude",
+      args: [],
+      backendSessionId: "backend-2",
+    });
     await nextTick();
 
     expect(postOrder).toEqual(["sess-1"]);
@@ -335,7 +373,7 @@ describe("dashboard-ops", () => {
   });
 
   it("surfaces partial teammate restore failures after restoring the parent agent", async () => {
-    const session = { id: "parent-1", command: "claude", label: "claude" };
+    const session = { id: "parent-1", command: "claude", label: "claude", backendSessionId: "backend-parent" };
     const sessions = [[], [{ ...session, status: "waiting", tmuxWindowId: "@21" }]];
     let sessionIndex = 0;
     const host = {
@@ -376,7 +414,7 @@ describe("dashboard-ops", () => {
   });
 
   it("surfaces structured teammate restore failures without a warning string", async () => {
-    const session = { id: "parent-1", command: "claude", label: "claude" };
+    const session = { id: "parent-1", command: "claude", label: "claude", backendSessionId: "backend-parent" };
     const host = {
       mode: "dashboard",
       dashboardPendingActions: makePendingActionsFake(),
@@ -405,7 +443,7 @@ describe("dashboard-ops", () => {
   });
 
   it("does not surface bare teammate ids when partial restore failures are unstructured", async () => {
-    const session = { id: "parent-1", command: "claude", label: "claude" };
+    const session = { id: "parent-1", command: "claude", label: "claude", backendSessionId: "backend-parent" };
     const host = {
       mode: "dashboard",
       dashboardPendingActions: makePendingActionsFake(),
@@ -437,7 +475,7 @@ describe("dashboard-ops", () => {
   });
 
   it("treats a live runtime as successful resume even if the rendered row stays stale", async () => {
-    const session = { id: "sess-1", command: "codex", label: "codex" };
+    const session = { id: "sess-1", command: "codex", label: "codex", backendSessionId: "backend-codex" };
     const sessions = [
       [
         {
@@ -483,6 +521,7 @@ describe("dashboard-ops", () => {
       command: "codex",
       label: "reviewer",
       worktreePath: "/repo",
+      backendSessionId: "backend-teammate",
       team: { teamId: "team-parent", parentSessionId: "parent-1", role: "reviewer" },
     };
     const sessions = [[], [{ ...session, status: "running", tmuxWindowId: "@1" }]];
@@ -521,7 +560,7 @@ describe("dashboard-ops", () => {
   });
 
   it("treats a live tmux agent window as successful resume when the dashboard model lags", async () => {
-    const session = { id: "sess-1", command: "claude", label: "claude" };
+    const session = { id: "sess-1", command: "claude", label: "claude", backendSessionId: "backend-claude" };
     const sessions = [[{ ...session, status: "offline", pendingAction: "starting" }]];
     const host = {
       mode: "dashboard",

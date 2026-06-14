@@ -123,6 +123,7 @@ import { configureLogging, debug, log, resolveLoggingRuntimeConfig, type Logging
 import { writeTextAtomic } from "./atomic-write.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
+import { recordTopologyBackendSessionId } from "./runtime-core/backend-session-ids.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
 import {
   listTopologyWorktreeGraveyard,
@@ -447,11 +448,17 @@ async function postLiveProjectServiceJsonOrLocal(
   if (!endpoint) {
     return fallback();
   }
-  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body,
-  });
+  let status: number;
+  let json: any;
+  try {
+    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    }));
+  } catch {
+    return fallback();
+  }
   if (status === 404 || status === 405 || status === 501) {
     return fallback();
   }
@@ -493,6 +500,37 @@ async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSess
   if (!payloadSessionId) return explicitSessionId;
   const match = listTopologySessionStates().find((session) => session.backendSessionId === payloadSessionId);
   return match?.id ?? explicitSessionId;
+}
+
+function recordBackendSessionIdInTopology(
+  projectRoot: string,
+  sessionId: string,
+  backendSessionId: string,
+): { ok: true; sessionId: string; backendSessionId: string } {
+  return {
+    ok: true,
+    ...recordTopologyBackendSessionId({ projectRoot, sessionId, backendSessionId }),
+  };
+}
+
+async function recordBackendSessionIdForHook(
+  projectRoot: string,
+  sessionId: string,
+  backendSessionId: string,
+): Promise<{ ok: boolean; sessionId: string; backendSessionId?: string; error?: string }> {
+  try {
+    const result = await postLiveProjectServiceJsonOrLocal(
+      projectRoot,
+      "/agents/record-backend-session",
+      { sessionId, backendSessionId },
+      () => recordBackendSessionIdInTopology(projectRoot, sessionId, backendSessionId),
+    );
+    return { ok: true, sessionId: result.sessionId ?? sessionId, backendSessionId: result.backendSessionId };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    debug(`backend session id capture failed for ${sessionId}: ${message}`, "session");
+    return { ok: false, sessionId, backendSessionId, error: message };
+  }
 }
 
 async function resolveProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
@@ -3733,15 +3771,10 @@ program
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     if (payload.session_id) {
       result.backendSessionId = payload.session_id;
-      // No local fallback: this hook is a short-lived CLI process, not the
-      // runtime that owns the session, so it cannot record into topology
-      // directly. A service-down capture gap is closed by reconcile-on-restart.
-      await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/agents/record-backend-session",
-        { sessionId, backendSessionId: payload.session_id },
-        () => ({ ok: true }),
-      ).catch(() => {});
+      // Prefer the live runtime so in-memory state updates immediately; fall
+      // back to a strict topology latch only when the live service is absent.
+      const recorded = await recordBackendSessionIdForHook(projectRoot, sessionId, payload.session_id);
+      if (!recorded.ok) result.backendSessionRecordError = recorded.error;
     }
 
     const setActivity = async (activity: AgentActivityState) =>
@@ -3864,12 +3897,8 @@ program
     const backendSessionId = typeof payload.session_id === "string" ? payload.session_id.trim() : "";
     if (backendSessionId) {
       result.backendSessionId = backendSessionId;
-      await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/agents/record-backend-session",
-        { sessionId, backendSessionId },
-        () => ({ ok: true }),
-      ).catch(() => {});
+      const recorded = await recordBackendSessionIdForHook(projectRoot, sessionId, backendSessionId);
+      if (!recorded.ok) result.backendSessionRecordError = recorded.error;
     }
 
     switch (action) {

@@ -20,6 +20,7 @@ import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } 
 import type { SessionTeamMetadata } from "../team.js";
 import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-reconcile.js";
 
 type SessionLaunchHost = any;
 
@@ -30,6 +31,11 @@ function listLaunchableTopologySessions(toolFilter?: string): any[] {
 
 function reconcileLaunchableTopology(host: SessionLaunchHost): void {
   host.syncSessionsFromTopology?.();
+  const backendReconcile = reconcileOfflineBackendSessionIds();
+  if (backendReconcile.reconciled.length > 0) {
+    debug(`reconciled backend session id for ${backendReconcile.reconciled.length} offline agent(s)`, "session");
+    host.syncSessionsFromTopology?.();
+  }
   host.saveState?.();
 }
 
@@ -257,7 +263,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
 export async function runProjectService(host: SessionLaunchHost): Promise<number> {
   initProject();
   host.mode = "project-service";
-  host.syncSessionsFromTopology();
+  reconcileLaunchableTopology(host);
   host.writeInstructionFiles();
   await host.startProjectServices();
   host.startStatusRefresh();

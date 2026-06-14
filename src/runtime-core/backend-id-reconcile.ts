@@ -1,6 +1,7 @@
 import { discoverBackendSessionId } from "../backend-session-discovery.js";
 import { getRepoRoot } from "../paths.js";
-import { listTopologySessionStates, upsertTopologySession } from "./topology-sessions.js";
+import { recordTopologyBackendSessionId } from "./backend-session-ids.js";
+import { listTopologySessionStates, type RuntimeTopologySessionState } from "./topology-sessions.js";
 
 export interface BackendIdReconcileResult {
   reconciled: Array<{ id: string; backendSessionId: string }>;
@@ -15,12 +16,23 @@ export interface BackendIdReconcileResult {
 export function reconcileOfflineBackendSessionIds(projectRoot = getRepoRoot()): BackendIdReconcileResult {
   const reconciled: Array<{ id: string; backendSessionId: string }> = [];
   for (const session of listTopologySessionStates({ statuses: ["offline"] })) {
-    if (session.backendSessionId) continue;
-    const cwd = session.worktreePath ?? projectRoot;
-    const discovered = discoverBackendSessionId(session.toolConfigKey, cwd);
-    if (!discovered) continue;
-    upsertTopologySession({ ...session, backendSessionId: discovered }, "offline", { projectRoot });
-    reconciled.push({ id: session.id, backendSessionId: discovered });
+    const backendSessionId = reconcileBackendSessionIdForSession(session, projectRoot);
+    if (backendSessionId) reconciled.push({ id: session.id, backendSessionId });
   }
   return { reconciled };
+}
+
+export function reconcileBackendSessionIdForSession(
+  session: RuntimeTopologySessionState,
+  projectRoot = getRepoRoot(),
+): string | null {
+  if (session.backendSessionId) return null;
+  const cwd = session.worktreePath ?? projectRoot;
+  const discovered = discoverBackendSessionId(session.toolConfigKey, cwd);
+  if (!discovered) return null;
+  return recordTopologyBackendSessionId({
+    projectRoot,
+    sessionId: session.id,
+    backendSessionId: discovered,
+  }).backendSessionId;
 }

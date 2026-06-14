@@ -4,6 +4,8 @@ import type { SessionState } from "../multiplexer/index.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { compareTeammateSessions, isTeammateSession } from "../team.js";
 import { listWorktrees as listAllWorktrees } from "../worktree.js";
+import { loadConfig } from "../config.js";
+import { DEFAULT_EXACT_BACKEND_RESUME_TOOLS, describeSessionRestorability } from "../session-restorability.js";
 
 export interface DashboardLocalSession {
   id: string;
@@ -47,11 +49,20 @@ export interface DashboardSessionRegistryOptions {
     | undefined;
 }
 
+function loadRestoreToolConfig() {
+  try {
+    return loadConfig().tools;
+  } catch {
+    return DEFAULT_EXACT_BACKEND_RESUME_TOOLS;
+  }
+}
+
 export function buildDashboardSessions(options: DashboardSessionRegistryOptions): DashboardSession[] {
   const normalizeWtPath = normalizeWorktreePathFactory(options.mainRepoPath);
   const hiddenWorktreePaths = options.hiddenWorktreePaths ?? new Set<string>();
   const seenLocalSessionKeys = new Set<string>();
   const includeTeammates = options.includeTeammates ?? false;
+  const tools = loadRestoreToolConfig();
 
   const dashSessions: DashboardSession[] = [];
   for (const [index, session] of options.sessions.entries()) {
@@ -106,11 +117,14 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
     const worktreePath = normalizeWtPath(offline.worktreePath);
     if (worktreePath && hiddenWorktreePaths.has(worktreePath)) continue;
     const worktreeInfo = resolveWorktreeInfo(worktreePath);
+    const restorability = describeSessionRestorability({ ...offline, status: "offline" }, tools);
     dashSessions.push({
       index: dashSessions.length,
       id: offline.id,
       command: offline.command,
       backendSessionId: offline.backendSessionId,
+      restoreState: restorability?.restoreState,
+      restoreBlockedReason: restorability?.restoreBlockedReason,
       team: offline.team,
       createdAt: offline.createdAt,
       status: "offline",
