@@ -1,14 +1,5 @@
 import { Command } from "commander";
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  readdirSync,
-  copyFileSync,
-  mkdirSync,
-  chmodSync,
-  renameSync,
-} from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, copyFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join as pathJoin, resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -122,7 +113,8 @@ import {
 import { invalidateTmuxStatuslineArtifacts } from "./tmux/statusline-cache.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "./tmux/statusline.js";
 import { persistProjectRuntimeSnapshotsBeforeTmuxStop } from "./multiplexer/service-state-snapshot.js";
-import { configureLogging, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
+import { configureLogging, debug, log, resolveLoggingRuntimeConfig, type LoggingCliOptions } from "./debug.js";
+import { writeTextAtomic } from "./atomic-write.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
@@ -300,10 +292,18 @@ function rewriteLocalStatuslineArtifacts(
   mkdirSync(statusDir, { recursive: true });
 
   const writeStatusFile = (name: string, content: string): void => {
-    const filePath = pathJoin(statusDir, name);
-    const tmpPath = `${filePath}.tmp`;
-    writeFileSync(tmpPath, `${content}\n`);
-    renameSync(tmpPath, filePath);
+    // Statusline files are cosmetic tmux chrome and can be written concurrently by
+    // multiple clients/refreshes. Use the unique-temp atomic writer (never a shared
+    // ".tmp" that racing writers rename out from under each other), and never let a
+    // write failure abort dashboard startup.
+    try {
+      writeTextAtomic(pathJoin(statusDir, name), `${content}\n`);
+    } catch (error) {
+      debug(
+        `statusline write failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,
+        "statusline",
+      );
+    }
   };
 
   const dashboardTop = renderTmuxStatuslineFromData(data, projectRoot, "top", {
@@ -836,7 +836,7 @@ program
           process.exit(1);
         }
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`aimux: failed to spawn "${tool}": ${msg}`);
+        console.error(tool ? `aimux: failed to spawn "${tool}": ${msg}` : `aimux: dashboard failed to start: ${msg}`);
         process.exit(1);
       }
     },

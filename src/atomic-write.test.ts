@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -51,6 +51,21 @@ describe("atomicWrite", () => {
     writeJsonAtomic(target, { v: 2 });
     expect(JSON.parse(readFileSync(target, "utf8"))).toEqual({ v: 2 });
     expect(existsSync(target)).toBe(true);
+  });
+
+  it("uses a unique temp path, not a shared <file>.tmp (race-safe)", () => {
+    const statusDir = join(dir, "statusline");
+    mkdirSync(statusDir, { recursive: true });
+    const target = join(statusDir, "bottom-dashboard.txt");
+    // Occupy the shared "<file>.tmp" path a racy writer would reuse. A fixed-".tmp"
+    // implementation would fail here (EISDIR / collision); the unique-temp writer
+    // must not, and must leave a valid result with no leftover temp files.
+    mkdirSync(`${target}.tmp`, { recursive: true });
+    expect(() => writeTextAtomic(target, "ok\n")).not.toThrow();
+    expect(readFileSync(target, "utf8")).toBe("ok\n");
+    expect(readdirSync(statusDir).filter((n) => n.endsWith(".tmp") && statSync(join(statusDir, n)).isFile())).toEqual(
+      [],
+    );
   });
 
   it("quarantines a corrupt file aside instead of dropping it", () => {
