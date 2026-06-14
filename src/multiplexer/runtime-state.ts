@@ -176,9 +176,8 @@ export function syncSessionsFromTopology(host: RuntimeStateHost): void {
 // A persisted session whose working directory is gone for good (deleted on disk,
 // not merely graveyarded as a worktree we could resurrect) can never be relaunched.
 function isOrphanWorktreeUnrecoverable(worktreePath: string | undefined, graveyardPaths: Set<string>): boolean {
-  if (!worktreePath) return false;
-  if (graveyardPaths.has(worktreePath)) return false;
-  return !existsSync(worktreePath);
+  if (!worktreePath || graveyardPaths.has(worktreePath)) return false;
+  return !isAvailableWorktreePath(worktreePath, graveyardPaths);
 }
 
 // After a crash or hard restart the tmux server is gone, so sessions persisted as

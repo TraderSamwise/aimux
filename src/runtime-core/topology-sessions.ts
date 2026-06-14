@@ -326,6 +326,7 @@ export function resurrectTopologySession(sessionId: string, input?: { store?: Ru
     if (!session) return topology;
     session.status = "offline";
     session.updatedAt = now;
+    session.graveyardReason = undefined;
     topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== session.nodeId);
     restored = topologySessionToSessionState(session, topology);
     return topology;
