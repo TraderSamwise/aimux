@@ -271,11 +271,13 @@ export default function MainLayout() {
     store,
   ]);
 
-  // Realtime alert delivery. The durable notification poll above keeps the inbox
-  // current, but browser notifications must be driven by live events so a delayed
-  // poll cannot dump a stale backlog into Notification Center.
+  // Realtime alert delivery for local projects. The durable notification poll
+  // above keeps the inbox current, but browser notifications should use live
+  // events when the browser can reach the project service directly. Relay mode
+  // cannot open this EventSource, so it stays on the relay-aware polling path.
   useEffect(() => {
     if (activeShare) return;
+    if (relayUrl) return;
     if (!effectiveProjectPath) return;
     if (!relayReadyForRequests) return;
     if (!endpoint) return;
@@ -329,6 +331,7 @@ export default function MainLayout() {
     endpointKey,
     kickNotificationFeedRefresh,
     notificationSettings,
+    relayUrl,
     relayReadyForRequests,
   ]);
 

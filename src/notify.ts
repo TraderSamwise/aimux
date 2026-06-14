@@ -54,6 +54,7 @@ export function notifyAlert(event: AlertEvent): boolean {
   const config = getNotifyConfig();
   if (!config.enabled) return false;
   if (shouldSuppressNotification(event)) return false;
+  if (event.kind === "interaction_request" && event.interaction?.telemetry) return false;
 
   if (
     (event.kind === "notification" ||

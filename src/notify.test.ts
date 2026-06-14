@@ -83,6 +83,22 @@ describe("notifyAlert mobile choke point", () => {
     expect(forward).not.toHaveBeenCalled();
   });
 
+  it("does not forward telemetry-only interaction requests", () => {
+    expect(
+      notifyAlert(
+        alert({
+          kind: "interaction_request",
+          interaction: {
+            id: "interaction-1",
+            type: "permission",
+            telemetry: true,
+          },
+        }),
+      ),
+    ).toBe(false);
+    expect(forward).not.toHaveBeenCalled();
+  });
+
   it("forwards completion alerts gated by onComplete", () => {
     expect(notifyAlert(alert({ kind: "task_done" }))).toBe(true);
     expect(forward).toHaveBeenCalledTimes(1);
