@@ -11,19 +11,23 @@ permissions:
 jobs:
   release-assets:
     name: Build release assets
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: linux
             arch: x64
+            runner: ubuntu-latest
           - platform: linux
             arch: arm64
+            runner: ubuntu-latest
           - platform: darwin
             arch: x64
+            runner: macos-latest
           - platform: darwin
             arch: arm64
+            runner: macos-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +60,27 @@ jobs:
           ASSET="release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
           if tar -tzf "$ASSET" | grep -E '(^|/)[^/]+\.map$'; then
             echo "Release asset contains source maps." >&2
+            exit 1
+          fi
+
+      - name: Verify Darwin notifier helper
+        if: matrix.platform == 'darwin'
+        run: |
+          set -euo pipefail
+          ASSET="release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          tar -xzf "$ASSET" -C "$TMP_DIR" aimux/native/darwin/aimux-notifier.app
+          HELPER="$TMP_DIR/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier"
+          test -x "$HELPER"
+          case "${{ matrix.arch }}" in
+            x64) EXPECTED_ARCH="x86_64" ;;
+            arm64) EXPECTED_ARCH="arm64" ;;
+            *) echo "Unsupported Darwin arch: ${{ matrix.arch }}" >&2; exit 1 ;;
+          esac
+          ACTUAL_ARCHES="$(lipo -archs "$HELPER")"
+          if [ "$ACTUAL_ARCHES" != "$EXPECTED_ARCH" ]; then
+            echo "Expected notifier arch $EXPECTED_ARCH, got $ACTUAL_ARCHES" >&2
             exit 1
           fi
 
@@ -105,6 +130,27 @@ jobs:
             echo "package.json version ($PKG_VERSION) does not match tag ($EXPECTED)" >&2
             exit 1
           fi
+
+      - name: Stage macOS notifier helpers for npm package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          OWNER_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          for arch in arm64 x64; do
+            gh release download "$TAG" --repo "$OWNER_REPO" \
+              --pattern "aimux-darwin-${arch}.tar.gz" --dir "$TMP_DIR" --clobber
+            EXTRACT_DIR="$TMP_DIR/extract-${arch}"
+            mkdir -p "$EXTRACT_DIR"
+            tar -xzf "$TMP_DIR/aimux-darwin-${arch}.tar.gz" -C "$EXTRACT_DIR" \
+              aimux/native/darwin/aimux-notifier.app
+            rm -rf "native/darwin-${arch}"
+            mkdir -p "native/darwin-${arch}"
+            mv "$EXTRACT_DIR/aimux/native/darwin/aimux-notifier.app" "native/darwin-${arch}/"
+          done
 
       - run: yarn build:release
 

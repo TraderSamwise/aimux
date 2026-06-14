@@ -1,10 +1,9 @@
-import notifier from "node-notifier";
-import { execFile } from "node:child_process";
 import { loadConfig, type NotificationConfig } from "./config.js";
 import { debug } from "./debug.js";
 import type { AlertEvent } from "./project-events.js";
 import { shouldSuppressNotification } from "./notification-context.js";
 import { forwardAlertToMobilePush } from "./mobile-push-bridge.js";
+import { sendDesktopNotification } from "./desktop-notifier.js";
 
 let cachedConfig: NotificationConfig | null = null;
 
@@ -20,37 +19,16 @@ export function resetNotifyConfig(): void {
   cachedConfig = null;
 }
 
-function escapeAppleScriptString(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function sendMacNotification(title: string, message: string): void {
-  const script = `display notification "${escapeAppleScriptString(message)}" with title "${escapeAppleScriptString(title)}"`;
-  execFile("/usr/bin/osascript", ["-e", script], (error) => {
-    if (!error) return;
-    debug(`mac notification fallback: ${error.message}`, "notify");
-    notifier.notify({ title, message, sound: true });
-  });
-}
-
 function send(title: string, message: string): void {
   const config = getNotifyConfig();
   if (!config.enabled) return;
 
-  if (process.platform === "darwin") {
-    sendMacNotification(title, message);
-  } else {
-    notifier.notify({ title, message, sound: true });
-  }
+  sendDesktopNotification({ title, message, sound: true });
   debug(`notification: ${message}`, "notify");
 }
 
 function sendSecurity(title: string, message: string): void {
-  if (process.platform === "darwin") {
-    sendMacNotification(title, message);
-  } else {
-    notifier.notify({ title, message, sound: true });
-  }
+  sendDesktopNotification({ title, message, sound: true });
   debug(`security notification: ${message}`, "notify");
 }
 
