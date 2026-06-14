@@ -1266,6 +1266,8 @@ describe("tmux-control.sh", () => {
       "@claude",
       "--current-path",
       "/repo/project/worktree",
+      "--aimux-home",
+      "/home/user/.aimux-dev",
     ]);
 
     const log = readLog(envRoot);
@@ -1274,6 +1276,7 @@ describe("tmux-control.sh", () => {
       log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé -x C -y C -w 90% -h 90% -E exec")),
     ).toBe(true);
     expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(true);
+    expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-dev"))).toBe(true);
     expect(curlLog).toEqual([]);
   });
 

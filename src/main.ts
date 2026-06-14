@@ -3246,6 +3246,7 @@ program
   .option("--current-window-id <id>", "Current window id")
   .option("--current-path <path>", "Current path")
   .option("--pane-id <id>", "Current pane id")
+  .option("--aimux-home <path>", "AIMUX_HOME to scope cross-project Exposé")
   .action(
     async (opts: {
       projectRoot: string;
@@ -3256,6 +3257,7 @@ program
       currentWindowId?: string;
       currentPath?: string;
       paneId?: string;
+      aimuxHome?: string;
     }) => {
       const code = await runTmuxExpose({
         projectRoot: pathResolve(opts.projectRoot),
@@ -3266,6 +3268,7 @@ program
         currentWindowId: opts.currentWindowId,
         currentPath: opts.currentPath,
         paneId: opts.paneId,
+        aimuxHome: opts.aimuxHome,
       });
       process.exit(code);
     },

@@ -48,6 +48,14 @@ export interface TmuxClientInfo {
 export interface OpenTargetOptions {
   insideTmux?: boolean;
   alreadyResolved?: boolean;
+  /** Switch this specific client (by tty) instead of the ambient one — needed
+   * when opening from a display-popup whose own client is ephemeral. */
+  clientTty?: string;
+  /** Client suffix to resolve the per-client session, when the ambient client
+   * can't be trusted (popup). Usually the `-client-XXXXXXXX` suffix. */
+  clientSuffix?: string;
+  /** Return-session to record on the target (defaults to the ambient client session). */
+  returnSessionName?: string;
 }
 
 export interface CaptureTargetOptions {
@@ -775,8 +783,11 @@ export class TmuxRuntimeManager {
     this.detachClient();
   }
 
-  switchClient(sessionName: string, windowIndex = 0): void {
-    this.interactiveExec(["switch-client", "-t", `${sessionName}:${windowIndex}`]);
+  switchClient(sessionName: string, windowIndex = 0, clientTty?: string): void {
+    const args = ["switch-client"];
+    if (clientTty) args.push("-c", clientTty);
+    args.push("-t", `${sessionName}:${windowIndex}`);
+    this.interactiveExec(args);
   }
 
   isInsideTmux(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -788,10 +799,10 @@ export class TmuxRuntimeManager {
     const shouldResolveManagedClient =
       insideTmux && this.isManagedSessionName(target.sessionName) && !this.isClientSessionName(target.sessionName);
     const sessionName = shouldResolveManagedClient
-      ? this.resolveOpenSessionName(target.sessionName, true)
+      ? this.resolveOpenSessionName(target.sessionName, true, options.clientSuffix)
       : options.alreadyResolved
         ? target.sessionName
-        : this.resolveOpenSessionName(target.sessionName, insideTmux);
+        : this.resolveOpenSessionName(target.sessionName, insideTmux, options.clientSuffix);
     const effectiveTarget =
       sessionName !== target.sessionName && !isDashboardWindowName(target.windowName)
         ? this.ensureLinkedWindow(sessionName, target)
@@ -812,11 +823,11 @@ export class TmuxRuntimeManager {
       this.cancelCopyMode(effectiveTarget);
     }
     if (insideTmux) {
-      const current = this.currentClientSession();
+      const current = options.returnSessionName ?? this.currentClientSession();
       if (current && current !== sessionName) {
         this.setReturnSession(sessionName, current);
       }
-      this.switchClient(sessionName, effectiveTarget.windowIndex);
+      this.switchClient(sessionName, effectiveTarget.windowIndex, options.clientTty);
       return;
     }
     this.attachSession(sessionName, effectiveTarget.windowIndex);
@@ -956,6 +967,7 @@ export class TmuxRuntimeManager {
       "-b",
       `${controlScript} attention --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
     ]);
+    const metaHomeArg = process.env.AIMUX_HOME ? ` --aimux-home ${shellQuote(process.env.AIMUX_HOME)}` : "";
     this.exec([
       "bind-key",
       "-T",
@@ -963,9 +975,8 @@ export class TmuxRuntimeManager {
       "g",
       "run-shell",
       "-b",
-      `${controlScript} expose --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
+      `${controlScript} expose --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}'${metaHomeArg} >/dev/null 2>&1`,
     ]);
-    const metaHomeArg = process.env.AIMUX_HOME ? ` --aimux-home ${shellQuote(process.env.AIMUX_HOME)}` : "";
     this.exec([
       "bind-key",
       "-T",
@@ -1076,9 +1087,9 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-as", "-t", sessionName, "terminal-features", `,${feature}`]);
   }
 
-  private resolveOpenSessionName(sessionName: string, insideTmux: boolean): string {
+  private resolveOpenSessionName(sessionName: string, insideTmux: boolean, suffixOverride?: string): string {
     if (!this.isManagedSessionName(sessionName) || this.isClientSessionName(sessionName)) return sessionName;
-    const clientSuffix = this.resolveClientSuffix(insideTmux);
+    const clientSuffix = suffixOverride ?? this.resolveClientSuffix(insideTmux);
     if (!clientSuffix) return sessionName;
     const clientSessionName = this.getProjectClientSessionName(sessionName, clientSuffix);
     const projectRoot = this.getSessionOption(sessionName, "@aimux-project-root");
