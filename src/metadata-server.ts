@@ -163,6 +163,7 @@ interface MetadataServerOptions {
     deleteGraveyardWorktree?: (input: {
       path: string;
     }) => Promise<{ path: string; status: "removed" }> | { path: string; status: "removed" };
+    cleanupGraveyard?: (input: { dryRun?: boolean }) => Promise<unknown> | unknown;
     createService?: (input: {
       command?: string;
       worktreePath?: string;
@@ -3299,6 +3300,18 @@ export class MetadataServer {
         const result = await this.options.desktop.deleteGraveyardWorktree(body);
         this.options.onChange?.();
         send(res, 200, { ok: true, ...result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/graveyard/cleanup") {
+        const body = (await readJson(req).catch(() => ({}))) as { dryRun?: boolean };
+        if (!this.options.desktop?.cleanupGraveyard) {
+          send(res, 501, { ok: false, error: "graveyard cleanup not supported by this service" });
+          return;
+        }
+        const result = await this.options.desktop.cleanupGraveyard({ dryRun: body.dryRun === true });
+        this.options.onChange?.();
+        send(res, 200, { ok: true, ...(typeof result === "object" && result ? result : { result }) });
         return;
       }
 

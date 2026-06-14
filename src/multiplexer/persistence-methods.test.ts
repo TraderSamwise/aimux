@@ -65,7 +65,11 @@ import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { getStatePath, initPaths } from "../paths.js";
 import { persistenceMethods } from "./persistence-methods.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
-import { listTopologySessionStates, upsertTopologySession } from "../runtime-core/topology-sessions.js";
+import {
+  listTopologySessionStates,
+  moveTopologySessionToGraveyard,
+  upsertTopologySession,
+} from "../runtime-core/topology-sessions.js";
 import { listTopologyServiceStates, upsertTopologyService } from "../runtime-core/topology-services.js";
 import {
   listTopologyWorktreeGraveyard,
@@ -141,6 +145,52 @@ describe("persistenceMethods", () => {
       }),
     ]);
     expect(host.refreshDesktopStateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("cleans up expired standalone graveyard agents and refreshes projections", async () => {
+    upsertTopologySession(
+      {
+        id: "codex-old",
+        tool: "codex",
+        toolConfigKey: "codex",
+        command: "codex",
+        args: [],
+        createdAt: "2026-05-01T00:00:00.000Z",
+      },
+      "offline",
+      { now: "2026-05-01T00:00:00.000Z", projectRoot: pathsRoot },
+    );
+    moveTopologySessionToGraveyard("codex-old", { now: "2026-05-30T00:00:00.000Z" });
+
+    const host = {
+      mode: "project-service",
+      offlineSessions: [{ id: "codex-old" }],
+      deleteGraveyardWorktree: vi.fn(),
+      loadOfflineTopologySessions: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      refreshLocalDashboardModel: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      metadataServer: { notifyChange: vi.fn() },
+    };
+
+    const result = await persistenceMethods.cleanupGraveyard.call(host, {
+      now: "2026-06-14T00:00:00.000Z",
+    });
+
+    expect(result.results).toEqual([
+      {
+        kind: "agent",
+        id: "codex-old",
+        status: "removed",
+        removedAssets: [],
+      },
+    ]);
+    expect(listTopologySessionStates({ statuses: ["graveyard"] })).toEqual([]);
+    expect(host.offlineSessions).toEqual([]);
+    expect(host.deleteGraveyardWorktree).not.toHaveBeenCalled();
+    expect(host.loadOfflineTopologySessions).toHaveBeenCalledOnce();
+    expect(host.writeStatuslineFile).toHaveBeenCalledWith({ force: true });
+    expect(host.metadataServer.notifyChange).toHaveBeenCalledOnce();
   });
 
   it("projects in-flight worktree creates into desktop-state snapshots", () => {

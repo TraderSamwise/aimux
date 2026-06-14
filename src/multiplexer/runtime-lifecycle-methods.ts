@@ -376,6 +376,7 @@ export const runtimeLifecycleMethods: RuntimeLifecycleMethods = {
     this.clearDashboardBusy();
     this.stopHeartbeat();
     this.stopProjectServiceRefresh();
+    (this as any).stopGraveyardCleanup?.();
     this.saveState();
     this.stopStatusRefresh();
     mux.contextWatcher.stop();

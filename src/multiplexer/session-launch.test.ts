@@ -1310,6 +1310,8 @@ describe("runProjectService", () => {
       writeInstructionFiles: vi.fn(),
       startProjectServices: vi.fn(),
       startStatusRefresh: vi.fn(() => resolveRun(0)),
+      startGraveyardCleanup: vi.fn(),
+      cleanupGraveyard: vi.fn(() => Promise.resolve({ dryRun: false, plan: {}, results: [] })),
       refreshDesktopStateSnapshot: vi.fn(),
       writeStatuslineFile: vi.fn(),
       teardown: vi.fn(),
@@ -1323,6 +1325,8 @@ describe("runProjectService", () => {
 
     expect(host.mode).toBe("project-service");
     expect(host.startStatusRefresh).toHaveBeenCalledOnce();
+    expect(host.startGraveyardCleanup).toHaveBeenCalledOnce();
+    expect(host.cleanupGraveyard).toHaveBeenCalledOnce();
   });
 });
 
