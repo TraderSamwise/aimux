@@ -61,7 +61,8 @@ export function notifyAlert(event: AlertEvent): boolean {
       event.kind === "message_waiting" ||
       event.kind === "handoff_waiting" ||
       event.kind === "task_assigned" ||
-      event.kind === "review_waiting") &&
+      event.kind === "review_waiting" ||
+      event.kind === "interaction_request") &&
     !config.onPrompt
   ) {
     return false;

@@ -76,6 +76,13 @@ describe("notifyAlert mobile choke point", () => {
     expect(forward).not.toHaveBeenCalled();
   });
 
+  it("gates interaction requests as prompt notifications", () => {
+    notificationsConfig.onPrompt = false;
+    resetNotifyConfig();
+    expect(notifyAlert(alert({ kind: "interaction_request" }))).toBe(false);
+    expect(forward).not.toHaveBeenCalled();
+  });
+
   it("forwards completion alerts gated by onComplete", () => {
     expect(notifyAlert(alert({ kind: "task_done" }))).toBe(true);
     expect(forward).toHaveBeenCalledTimes(1);

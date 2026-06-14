@@ -9,6 +9,7 @@ export interface ForYouCard {
   id: string;
   kind: ForYouKind;
   source: ForYouSource;
+  actionable?: boolean;
   title: string;
   body?: string;
   subtitle?: string;
@@ -44,6 +45,11 @@ function normalize(value?: string): string {
 }
 
 export function classifyNotification(record: NotificationRecord): ForYouKind {
+  if (record.interaction?.telemetry) return "observation";
+  if (record.kind === "interaction_request") {
+    return record.interaction?.type === "permission" ? "approval" : "action-required";
+  }
+
   const haystack = [record.kind, record.targetKind, record.title, record.subtitle, record.body]
     .map(normalize)
     .join(" ");
@@ -114,6 +120,7 @@ function notificationCard(record: NotificationRecord): ForYouCard {
     id: `notification:${record.id}`,
     kind: classifyNotification(record),
     source: "notification",
+    actionable: Boolean(record.interaction && !record.interaction.telemetry),
     title: record.title || record.subtitle || "aimux",
     body: record.body,
     subtitle: [record.subtitle, record.kind?.replace(/[_-]+/g, " "), record.sessionId]
