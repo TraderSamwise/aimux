@@ -49,6 +49,11 @@ cp package.json yarn.lock README.md "$PKG_DIR/"
 cp -R bin dist dist-ui scripts "$PKG_DIR/"
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 
+if [ "$PLATFORM" = "darwin" ]; then
+  AIMUX_NOTIFIER_ARCH="$ARCH" AIMUX_NOTIFIER_BUILD_DIR="$PKG_DIR/native/darwin" \
+    bash "$ROOT_DIR/native/darwin/build-aimux-notifier.sh"
+fi
+
 (
   cd "$PKG_DIR"
   yarn install --production --frozen-lockfile --ignore-scripts --ignore-engines
