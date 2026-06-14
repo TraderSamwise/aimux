@@ -805,7 +805,13 @@ describe("persistenceMethods", () => {
     const worktreePath = join(pathsRoot, "worktrees", "demo");
     mkdirSync(worktreePath, { recursive: true });
     upsertTopologyWorktree({ path: worktreePath, name: "demo", branch: "demo" }, "active");
+    upsertTopologySession({ id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
     moveTopologyWorktreeToGraveyard(worktreePath);
+    const contextDir = join(getContextDir(), "codex-demo");
+    mkdirSync(contextDir, { recursive: true });
+    mkdirSync(getRecordingsDir(), { recursive: true });
+    writeFileSync(join(contextDir, "live.md"), "live\n");
+    writeFileSync(join(getRecordingsDir(), "codex-demo.log"), "raw\n");
     const child = createSpawnChild();
     spawnMock.mockReturnValueOnce(child);
     const host = {
@@ -821,6 +827,8 @@ describe("persistenceMethods", () => {
     await expect(result).rejects.toThrow("remove failed");
 
     expect(listTopologyWorktreeGraveyard()).toMatchObject([{ path: worktreePath }]);
+    expect(existsSync(contextDir)).toBe(true);
+    expect(existsSync(join(getRecordingsDir(), "codex-demo.log"))).toBe(true);
     expect(host.invalidateDesktopStateSnapshot).not.toHaveBeenCalled();
   });
 

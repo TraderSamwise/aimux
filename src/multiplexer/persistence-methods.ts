@@ -1075,7 +1075,6 @@ async function removeOrphanedDesktopWorktree(host: any, mainRepo: string, path: 
 }
 
 async function removeGraveyardedDesktopWorktree(host: any, mainRepo: string, path: string): Promise<void> {
-  cleanupAgentAssetsForWorktree(path);
   await removeGitWorktreeCheckout(mainRepo, path);
   removeWorktreeDependents(host, path);
   removeTopologyWorktree(path);

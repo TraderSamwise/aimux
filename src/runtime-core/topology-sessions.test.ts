@@ -426,4 +426,97 @@ describe("topology session lifecycle", () => {
     expect(store.read().lifecycleOperations).toEqual([]);
     expect(store.read().exchangeRefs).toEqual([]);
   });
+
+  it("removes worktree sessions and their topology references", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const now = "2026-05-25T00:00:00.000Z";
+    const worktreePath = join(repoRoot, ".aimux", "worktrees", "drop");
+    store.write({
+      ...emptyRuntimeTopology(now),
+      rigs: [{ id: "rig-a", name: "repo", projectRoot: repoRoot, createdAt: now, updatedAt: now }],
+      nodes: [
+        { id: "agent:keep", rigId: "rig-a", logicalId: "keep", createdAt: now },
+        { id: "agent:drop", rigId: "rig-a", logicalId: "drop", worktreePath, createdAt: now },
+      ],
+      edges: [
+        {
+          id: "edge-drop",
+          rigId: "rig-a",
+          sourceNodeId: "agent:keep",
+          targetNodeId: "agent:drop",
+          kind: "team",
+          createdAt: now,
+        },
+      ],
+      bindings: [{ id: "tmux:drop", nodeId: "agent:drop", updatedAt: now }],
+      sessions: [
+        { id: "keep", nodeId: "agent:keep", status: "offline", createdAt: now, updatedAt: now },
+        {
+          id: "drop",
+          nodeId: "agent:drop",
+          status: "graveyard",
+          worktreePath,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      teamRoles: [
+        { id: "role-keep", rigId: "rig-a", nodeId: "agent:keep", role: "coder", createdAt: now, updatedAt: now },
+        {
+          id: "role-drop",
+          rigId: "rig-a",
+          nodeId: "agent:drop",
+          parentNodeId: "agent:keep",
+          role: "reviewer",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      remoteClients: [
+        {
+          id: "client-1",
+          rigId: "rig-a",
+          status: "online",
+          lastSeenAt: now,
+          ownsSessionIds: ["keep", "drop"],
+        },
+      ],
+      lifecycleOperations: [
+        {
+          id: "op-drop",
+          rigId: "rig-a",
+          kind: "agent.stop",
+          status: "pending",
+          targetKind: "session",
+          targetId: "drop",
+          startedAt: now,
+          updatedAt: now,
+        },
+      ],
+      exchangeRefs: [
+        {
+          id: "exchange-drop",
+          rigId: "rig-a",
+          kind: "task",
+          exchangeId: "task-drop",
+          sessionId: "drop",
+          nodeId: "agent:drop",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    const removed = removeTopologySessionsForWorktree(worktreePath, { store });
+
+    expect(removed.map((session) => session.id)).toEqual(["drop"]);
+    expect(store.read().sessions.map((session) => session.id)).toEqual(["keep"]);
+    expect(store.read().nodes.map((node) => node.id)).toEqual(["agent:keep"]);
+    expect(store.read().edges).toEqual([]);
+    expect(store.read().bindings).toEqual([]);
+    expect(store.read().teamRoles.map((role) => role.id)).toEqual(["role-keep"]);
+    expect(store.read().remoteClients).toMatchObject([{ id: "client-1", ownsSessionIds: ["keep"] }]);
+    expect(store.read().lifecycleOperations).toEqual([]);
+    expect(store.read().exchangeRefs).toEqual([]);
+  });
 });

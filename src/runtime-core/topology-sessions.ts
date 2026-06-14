@@ -308,6 +308,16 @@ export function removeTopologySessionsForWorktree(
     topology.sessions = topology.sessions.filter((session) => !removingSessionIds.has(session.id));
     topology.bindings = topology.bindings.filter((binding) => !removingNodeIds.has(binding.nodeId));
     topology.nodes = topology.nodes.filter((node) => !removingNodeIds.has(node.id));
+    topology.edges = topology.edges.filter(
+      (edge) => !removingNodeIds.has(edge.sourceNodeId) && !removingNodeIds.has(edge.targetNodeId),
+    );
+    topology.teamRoles = topology.teamRoles.filter(
+      (role) => !removingNodeIds.has(role.nodeId ?? "") && !removingNodeIds.has(role.parentNodeId ?? ""),
+    );
+    topology.remoteClients = topology.remoteClients.map((client) => ({
+      ...client,
+      ownsSessionIds: client.ownsSessionIds?.filter((id) => !removingSessionIds.has(id)),
+    }));
     topology.lifecycleOperations = topology.lifecycleOperations.filter(
       (operation) => !(operation.targetKind === "session" && removingSessionIds.has(operation.targetId)),
     );
