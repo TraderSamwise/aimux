@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { basename, resolve as pathResolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
-import { initPaths } from "../paths.js";
 import type { FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { TerminalHost } from "../terminal-host.js";
@@ -146,8 +145,10 @@ function drawTile(
 }
 
 export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number> {
-  await initPaths(options.projectRoot);
-  const config = loadConfig();
+  // Resolve config for the explicit project root without write side effects — a
+  // popup must never register the project or rewrite state, which would refresh
+  // the dashboard and move its selection cursor.
+  const config = loadConfig({ projectRoot: options.projectRoot });
   const tmux = new TmuxRuntimeManager();
   const { scope, items } = listExposeAgentItems(
     {
