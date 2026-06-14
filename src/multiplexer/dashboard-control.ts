@@ -1,5 +1,6 @@
 import { loadConfig } from "../config.js";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { writeTextAtomic } from "../atomic-write.js";
+import { debug } from "../debug.js";
 import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
 import type { DashboardScreen } from "../dashboard/state.js";
@@ -42,12 +43,16 @@ type DashboardOrchestrationTarget = {
 };
 
 function writeStatuslineTextFile(name: string, content: string): void {
-  const dir = join(getProjectStateDir(), "tmux-statusline");
-  mkdirSync(dir, { recursive: true });
-  const filePath = join(dir, name);
-  const tmpPath = `${filePath}.tmp`;
-  writeFileSync(tmpPath, `${content}\n`);
-  renameSync(tmpPath, filePath);
+  // Cosmetic tmux chrome written concurrently by multiple clients/refreshes:
+  // unique-temp atomic write (never a shared ".tmp"), and never fatal.
+  try {
+    writeTextAtomic(join(getProjectStateDir(), "tmux-statusline", name), `${content}\n`);
+  } catch (error) {
+    debug(
+      `statusline write failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,
+      "statusline",
+    );
+  }
 }
 
 function primeLiveTmuxFooter(host: DashboardControlHost, target: { windowId: string; windowName: string }): void {
