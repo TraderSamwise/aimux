@@ -15,7 +15,7 @@ item_index=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    next|prev|attention|dashboard|inbox|menu|window|active|team)
+    next|prev|attention|dashboard|inbox|menu|expose|window|active|team)
       action="$1"
       shift
       ;;
@@ -370,6 +370,23 @@ show_local_switcher() {
     tmux display-popup -c "$popup_client_tty" -T "aimux" -x P -y P -w 56 -h 10 -E "$switcher_cmd" >/dev/null 2>&1 || return 1
   else
     tmux display-popup -T "aimux" -x P -y P -w 56 -h 10 -E "$switcher_cmd" >/dev/null 2>&1 || return 1
+  fi
+  exit 0
+}
+
+show_local_expose() {
+  if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
+    resolve_live_client || return 1
+  fi
+  popup_client_tty="${live_client_tty-}"
+  [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
+  popup_session="${live_client_session-}"
+  [ -n "$popup_session" ] || popup_session="$current_client_session"
+  expose_cmd="exec $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id")"
+  if [ -n "$popup_client_tty" ]; then
+    tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 90% -h 90% -E "$expose_cmd" >/dev/null 2>&1 || return 1
+  else
+    tmux display-popup -T "aimux exposé" -x C -y C -w 90% -h 90% -E "$expose_cmd" >/dev/null 2>&1 || return 1
   fi
   exit 0
 }
@@ -757,6 +774,9 @@ fallback_local_control() {
     menu)
       show_local_switcher
       ;;
+    expose)
+      show_local_expose
+      ;;
     active)
       return 0
       ;;
@@ -807,11 +827,12 @@ case "$action" in
   active) path="/control/active-window" ;;
   team) path="" ;;
   menu) path="" ;;
+  expose) path="" ;;
   *) exit 1 ;;
 esac
 
 case "$action" in
-  next|prev|attention|dashboard|inbox|menu|window|active|team)
+  next|prev|attention|dashboard|inbox|menu|expose|window|active|team)
     fallback_local_control && exit 0
     ;;
 esac
