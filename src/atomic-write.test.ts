@@ -53,6 +53,17 @@ describe("atomicWrite", () => {
     expect(existsSync(target)).toBe(true);
   });
 
+  it("survives many concurrent writers to the same path (unique temp names)", async () => {
+    const target = join(dir, "statusline", "bottom-dashboard.txt");
+    // Racing writers must not ENOENT on rename (the failure mode of a shared ".tmp"),
+    // must leave a valid final value, and must not litter temp files.
+    await Promise.all(
+      Array.from({ length: 50 }, (_, i) => Promise.resolve().then(() => writeTextAtomic(target, `line-${i}\n`))),
+    );
+    expect(/^line-\d+\n$/.test(readFileSync(target, "utf8"))).toBe(true);
+    expect(readdirSync(join(dir, "statusline")).filter((n) => n.includes(".tmp"))).toEqual([]);
+  });
+
   it("quarantines a corrupt file aside instead of dropping it", () => {
     const target = join(dir, "state.json");
     writeFileSync(target, "{ not valid json");
