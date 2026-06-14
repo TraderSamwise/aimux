@@ -52,7 +52,18 @@ describe("desktop notifier", () => {
   it("derives bundled macOS helper candidates from the package root", () => {
     expect(macNotifierCandidates(deps())).toEqual([
       "/tmp/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+      `/tmp/aimux/native/darwin-${process.arch}/aimux-notifier.app/Contents/MacOS/aimux-notifier`,
       "/tmp/aimux/native/darwin/aimux-notifier",
+      `/tmp/aimux/native/darwin-${process.arch}/aimux-notifier`,
+    ]);
+  });
+
+  it("derives npm-packaged macOS helper candidates for the current architecture", () => {
+    expect(macNotifierCandidates(deps({ arch: "x64" }))).toEqual([
+      "/tmp/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+      "/tmp/aimux/native/darwin-x64/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+      "/tmp/aimux/native/darwin/aimux-notifier",
+      "/tmp/aimux/native/darwin-x64/aimux-notifier",
     ]);
   });
 

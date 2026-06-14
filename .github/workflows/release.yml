@@ -63,6 +63,27 @@ jobs:
             exit 1
           fi
 
+      - name: Verify Darwin notifier helper
+        if: matrix.platform == 'darwin'
+        run: |
+          set -euo pipefail
+          ASSET="release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          tar -xzf "$ASSET" -C "$TMP_DIR" aimux/native/darwin/aimux-notifier.app
+          HELPER="$TMP_DIR/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier"
+          test -x "$HELPER"
+          case "${{ matrix.arch }}" in
+            x64) EXPECTED_ARCH="x86_64" ;;
+            arm64) EXPECTED_ARCH="arm64" ;;
+            *) echo "Unsupported Darwin arch: ${{ matrix.arch }}" >&2; exit 1 ;;
+          esac
+          ACTUAL_ARCHES="$(lipo -archs "$HELPER")"
+          if [ "$ACTUAL_ARCHES" != "$EXPECTED_ARCH" ]; then
+            echo "Expected notifier arch $EXPECTED_ARCH, got $ACTUAL_ARCHES" >&2
+            exit 1
+          fi
+
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
@@ -109,6 +130,27 @@ jobs:
             echo "package.json version ($PKG_VERSION) does not match tag ($EXPECTED)" >&2
             exit 1
           fi
+
+      - name: Stage macOS notifier helpers for npm package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          OWNER_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          for arch in arm64 x64; do
+            gh release download "$TAG" --repo "$OWNER_REPO" \
+              --pattern "aimux-darwin-${arch}.tar.gz" --dir "$TMP_DIR" --clobber
+            EXTRACT_DIR="$TMP_DIR/extract-${arch}"
+            mkdir -p "$EXTRACT_DIR"
+            tar -xzf "$TMP_DIR/aimux-darwin-${arch}.tar.gz" -C "$EXTRACT_DIR" \
+              aimux/native/darwin/aimux-notifier.app
+            rm -rf "native/darwin-${arch}"
+            mkdir -p "native/darwin-${arch}"
+            mv "$EXTRACT_DIR/aimux/native/darwin/aimux-notifier.app" "native/darwin-${arch}/"
+          done
 
       - run: yarn build:release
 
