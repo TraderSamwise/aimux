@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { atomicWrite } from "../atomic-write.js";
@@ -7,6 +7,11 @@ import { getRuntimeTopologyPath } from "../paths.js";
 export const RUNTIME_TOPOLOGY_VERSION = 1;
 const UPDATE_LOCK_TIMEOUT_MS = 5_000;
 const UPDATE_LOCK_RETRY_MS = 25;
+// Reclaim a lock whose owner process is gone after a short grace (covers the
+// window between mkdir and the owner file being written), or one held far
+// longer than any real update could take (a hung process or a reused PID).
+const LOCK_STALE_GRACE_MS = 1_000;
+const LOCK_STALE_MAX_MS = 60_000;
 
 export type RuntimeTopologySessionStatus =
   | "planned"
@@ -81,10 +86,12 @@ export interface RuntimeTopologySession {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  graveyardReason?: string;
   team?: unknown;
   createdAt: string;
   updatedAt: string;
   lastSeenAt?: string;
+  graveyardedAt?: string;
 }
 
 export interface RuntimeTopologyService {
@@ -373,10 +380,12 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
         worktreePath: asOptionalString(row.worktreePath),
         label: asOptionalString(row.label),
         headline: asOptionalString(row.headline),
+        graveyardReason: asOptionalString(row.graveyardReason),
         team: row.team,
         createdAt: asString(row.createdAt, `sessions[${index}].createdAt`),
         updatedAt: asString(row.updatedAt, `sessions[${index}].updatedAt`),
         lastSeenAt: asOptionalString(row.lastSeenAt),
+        graveyardedAt: asOptionalString(row.graveyardedAt),
       };
     }),
     services: asArray(record.services).map((entry, index) => {
@@ -585,6 +594,56 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but is owned by someone else.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function readLockOwnerPid(lockPath: string): number | undefined {
+  try {
+    const pid = Number.parseInt(readFileSync(join(lockPath, "owner"), "utf-8").trim(), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function lockAgeMs(lockPath: string): number | undefined {
+  try {
+    return Date.now() - statSync(lockPath).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+function isLockStale(lockPath: string): boolean {
+  const age = lockAgeMs(lockPath);
+  if (age === undefined) return false; // lock vanished; let mkdir race decide
+  const pid = readLockOwnerPid(lockPath);
+  if (pid !== undefined && pidAlive(pid)) return age >= LOCK_STALE_MAX_MS;
+  // Owner is dead, or not written yet: a tiny grace avoids racing a lock that
+  // was just created but whose owner file is not on disk yet.
+  return age >= LOCK_STALE_GRACE_MS;
+}
+
+/** Reclaim a stale lock via atomic rename so concurrent reclaimers can't delete a fresh lock. */
+function reclaimIfStale(lockPath: string): boolean {
+  if (!isLockStale(lockPath)) return false;
+  const tomb = `${lockPath}.stale-${process.pid}-${Date.now()}`;
+  try {
+    renameSync(lockPath, tomb);
+  } catch {
+    return true; // another process already reclaimed it; just retry the mkdir
+  }
+  rmSync(tomb, { recursive: true, force: true });
+  return true;
+}
+
 export class RuntimeTopologyStore {
   constructor(readonly path = getRuntimeTopologyPath()) {}
 
@@ -615,10 +674,13 @@ export class RuntimeTopologyStore {
         }
         return () => rmSync(lockPath, { recursive: true, force: true });
       } catch (error) {
+        // Reclaiming a stale lock lets us retry immediately; the deadline is
+        // still checked every iteration so a churn of stale locks can't spin.
+        const reclaimed = (error as NodeJS.ErrnoException).code === "EEXIST" && reclaimIfStale(lockPath);
         if (Date.now() >= deadline) {
           throw new Error(`Timed out acquiring runtime topology update lock at ${lockPath}`, { cause: error });
         }
-        sleepSync(UPDATE_LOCK_RETRY_MS);
+        if (!reclaimed) sleepSync(UPDATE_LOCK_RETRY_MS);
       }
     }
   }

@@ -101,7 +101,10 @@ function renderBox(lines: string[], color = "44;97"): string {
     } else {
       const line = truncateAnsi(lines[i - 1], width - 4);
       const pad = " ".repeat(Math.max(0, width - 2 - stripAnsi(line).length));
-      output += `\x1b[${color}m  ${line}${pad}\x1b[0m`;
+      // truncateAnsi may append \x1b[0m when the line contains ANSI (e.g. the
+      // active field's reverse-video cursor); re-assert color so the reset
+      // can't bleed the terminal's default background into the padding.
+      output += `\x1b[${color}m  ${line}\x1b[${color}m${pad}\x1b[0m`;
     }
   }
   output += "\x1b8";

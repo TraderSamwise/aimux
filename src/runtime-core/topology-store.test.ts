@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -305,6 +305,29 @@ describe("RuntimeTopologyStore", () => {
 
       expect(existsSync(`${path}.lock`)).toBe(false);
       expect(store.read().sessions.map((session) => session.id)).toEqual(["codex-1"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reclaims a stale lock left behind by a dead owner instead of timing out", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aimux-runtime-topology-"));
+    try {
+      const path = join(dir, "runtime-topology.yaml");
+      const lockPath = `${path}.lock`;
+      // Simulate a crashed process: a lock dir whose owner PID is not running,
+      // aged past the grace period. This used to wedge every update forever.
+      // PID is above every platform's pid_max so it is reliably dead.
+      mkdirSync(lockPath);
+      writeFileSync(join(lockPath, "owner"), "2147483647\n");
+      const past = new Date(Date.now() - 10_000);
+      utimesSync(lockPath, past, past);
+
+      const store = new RuntimeTopologyStore(path);
+      const updated = store.update((topology) => topology);
+
+      expect(updated.version).toBe(1);
+      expect(existsSync(lockPath)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

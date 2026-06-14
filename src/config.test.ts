@@ -4,12 +4,17 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "./config.js";
-import { initPaths } from "./paths.js";
+import { getGlobalConfigPath, initPaths } from "./paths.js";
 
 describe("config", () => {
   let repoRoot = "";
+  let aimuxHome = "";
+  let previousAimuxHome: string | undefined;
 
   beforeEach(async () => {
+    previousAimuxHome = process.env.AIMUX_HOME;
+    aimuxHome = mkdtempSync(join(tmpdir(), "aimux-config-home-"));
+    process.env.AIMUX_HOME = aimuxHome;
     repoRoot = mkdtempSync(join(tmpdir(), "aimux-config-"));
     mkdirSync(join(repoRoot, ".git"), { recursive: true });
     await initPaths(repoRoot);
@@ -17,6 +22,12 @@ describe("config", () => {
 
   afterEach(() => {
     rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(aimuxHome, { recursive: true, force: true });
+    if (previousAimuxHome === undefined) {
+      delete process.env.AIMUX_HOME;
+    } else {
+      process.env.AIMUX_HOME = previousAimuxHome;
+    }
   });
 
   it("normalizes exact Claude resume as backend-session resumable", () => {
@@ -77,6 +88,49 @@ describe("config", () => {
     );
 
     expect(loadConfig({ includeGlobal: false }).expose.forceGlobalScope).toBe(true);
+  });
+
+  it("defaults graveyard cleanup to a 14 day retention window", () => {
+    expect(loadConfig({ includeGlobal: false }).graveyard).toEqual({
+      cleanupEnabled: true,
+      retentionDays: 14,
+      cleanupIntervalMs: 86_400_000,
+    });
+  });
+
+  it("allows project graveyard config to override global graveyard config", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      getGlobalConfigPath(),
+      JSON.stringify(
+        {
+          graveyard: {
+            cleanupEnabled: false,
+            retentionDays: 30,
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          graveyard: {
+            retentionDays: 7,
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    expect(loadConfig().graveyard).toEqual({
+      cleanupEnabled: false,
+      retentionDays: 7,
+      cleanupIntervalMs: 86_400_000,
+    });
   });
 
   it("deep merges logging config overrides", () => {

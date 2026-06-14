@@ -92,6 +92,11 @@ import {
 } from "./notifications.js";
 import { notifyAlert } from "./notify.js";
 import {
+  buildDesktopNotifierDoctorReport,
+  renderDesktopNotifierDoctorReport,
+  sendDesktopNotification,
+} from "./desktop-notifier.js";
+import {
   parseClaudeHookPayload,
   permissionRequestHookOutput,
   summarizeClaudeNotification,
@@ -123,6 +128,7 @@ import {
   listTopologyWorktreeGraveyard,
   listTopologyWorktreeGraveyardPaths,
 } from "./runtime-core/topology-worktrees.js";
+import { buildGraveyardCleanupPlan, runGraveyardCleanup, type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
 import {
   buildRuntimeMigrationReport,
   importRuntimeMigration,
@@ -1778,6 +1784,24 @@ function printGraveyard(input: { entries?: any[]; worktrees?: any[] }): void {
   }
 }
 
+function printGraveyardCleanup(result: GraveyardCleanupRunResult): void {
+  if (!result.plan.enabled) {
+    console.log("Graveyard cleanup is disabled.");
+    return;
+  }
+  const removed = result.results.filter((item) => item.status === "removed").length;
+  const dryRun = result.results.filter((item) => item.status === "dry-run").length;
+  const failed = result.results.filter((item) => item.status === "failed").length;
+  const action = result.dryRun ? "would remove" : "removed";
+  console.log(
+    `Graveyard cleanup ${action} ${result.dryRun ? dryRun : removed} item(s); ${failed} failed. Retention: ${result.plan.retentionDays} day(s).`,
+  );
+  for (const item of result.results) {
+    const status = item.status === "failed" ? `failed: ${item.error}` : item.status;
+    console.log(`${item.kind} ${item.id}: ${status}`);
+  }
+}
+
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
 async function ensureDaemonProjectReadyForFallback(projectRoot: string): Promise<void> {
@@ -3094,6 +3118,44 @@ graveyardCmd
     }
   });
 
+graveyardCmd
+  .command("cleanup")
+  .description("Remove expired graveyard agents, worktrees, and their stored assets")
+  .option("--project <path>", "Project path")
+  .option("--dry-run", "Show what would be removed without deleting anything")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; dryRun?: boolean; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      await ensureDaemonProjectReadyForFallback(projectRoot);
+      const result = await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/graveyard/cleanup",
+        { dryRun: opts.dryRun === true },
+        async () => {
+          const mux = new Multiplexer();
+          return runGraveyardCleanup(
+            buildGraveyardCleanupPlan(),
+            {
+              deleteWorktree: (path) => mux.deleteGraveyardWorktree(path),
+            },
+            { dryRun: opts.dryRun === true },
+          );
+        },
+      );
+      const cleanupResult = (result.result ?? result) as GraveyardCleanupRunResult;
+      if (opts.json) {
+        console.log(JSON.stringify({ ok: true, projectRoot, ...cleanupResult }, null, 2));
+        return;
+      }
+      printGraveyardCleanup(cleanupResult);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
 program
   .command("rename <sessionId>")
   .description("Rename an agent label in running or offline state")
@@ -3321,6 +3383,7 @@ program
 const statuslineCmd = program.command("statusline").description("Manage Claude Code statusline integration");
 
 const doctorCmd = program.command("doctor").description("Inspect aimux runtime state");
+const notificationsCmd = program.command("notifications").description("Manage desktop notification delivery");
 const repairCmd = program.command("repair").description("Repair the current project runtime in place");
 
 program
@@ -3402,6 +3465,19 @@ logsCmd
   });
 
 doctorCmd
+  .command("notifications")
+  .description("Inspect desktop notification delivery")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const report = await buildDesktopNotifierDoctorReport();
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(renderDesktopNotifierDoctorReport(report));
+  });
+
+doctorCmd
   .command("tmux")
   .description("Inspect managed tmux runtime state")
   .option("--project-root <path>", "Project root", process.cwd())
@@ -3421,6 +3497,25 @@ doctorCmd
       return;
     }
     console.log(renderTmuxDoctorReport(report));
+  });
+
+notificationsCmd
+  .command("test")
+  .description("Send a desktop notification test")
+  .option("--title <title>", "Notification title", "Aimux notification test")
+  .option("--body <body>", "Notification body", "Desktop notification delivery is working.")
+  .option("--json", "Emit JSON")
+  .action((opts: { title: string; body: string; json?: boolean }) => {
+    const attempt = sendDesktopNotification({
+      title: opts.title.trim() || "Aimux notification test",
+      message: opts.body.trim() || "Desktop notification delivery is working.",
+      sound: true,
+    });
+    if (opts.json) {
+      console.log(JSON.stringify({ ok: true, attempt }, null, 2));
+      return;
+    }
+    console.log(`Sent notification via ${attempt.transport}${attempt.helperPath ? ` (${attempt.helperPath})` : ""}.`);
   });
 
 repairCmd

@@ -73,12 +73,22 @@ export interface LoggingConfig {
   maxFiles: number;
 }
 
+export interface GraveyardConfig {
+  /** Whether automatic graveyard cleanup is enabled for this project. */
+  cleanupEnabled: boolean;
+  /** How long graveyarded agents and worktrees remain recoverable before cleanup. */
+  retentionDays: number;
+  /** How often the project service checks for expired graveyard entries. */
+  cleanupIntervalMs: number;
+}
+
 export interface AimuxConfig {
   defaultTool: string;
   contextMaxEntries: number;
   liveWindowSize: number;
   compactEveryNTurns: number;
   logging: LoggingConfig;
+  graveyard: GraveyardConfig;
   notifications: NotificationConfig;
   statusline: StatuslineConfig;
   runtime: RuntimeConfig;
@@ -134,6 +144,11 @@ const DEFAULT_CONFIG: AimuxConfig = {
     categories: ["*"],
     maxBytes: 10_000_000,
     maxFiles: 5,
+  },
+  graveyard: {
+    cleanupEnabled: true,
+    retentionDays: 14,
+    cleanupIntervalMs: 86_400_000,
   },
   notifications: {
     enabled: true,
