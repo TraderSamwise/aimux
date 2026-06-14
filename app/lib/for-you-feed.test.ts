@@ -28,6 +28,91 @@ describe("For You feed classifier", () => {
     expect(classifyNotification(notification({ kind: "watchdog" }))).toBe("observation");
   });
 
+  it("separates actionable interaction requests from telemetry", () => {
+    expect(
+      classifyNotification(
+        notification({
+          kind: "interaction_request",
+          interaction: { id: "i1", type: "question" },
+          unread: true,
+        }),
+      ),
+    ).toBe("action-required");
+    expect(
+      classifyNotification(
+        notification({
+          kind: "interaction_request",
+          interaction: { id: "i2", type: "permission" },
+          unread: true,
+        }),
+      ),
+    ).toBe("approval");
+    expect(
+      classifyNotification(
+        notification({
+          kind: "interaction_request",
+          interaction: { id: "i3", type: "permission", telemetry: true },
+          unread: true,
+        }),
+      ),
+    ).toBe("observation");
+  });
+
+  it("marks interaction cards actionable only when the interaction is resolvable", () => {
+    const feed = buildForYouFeed({
+      securityEvents: [],
+      desktopState: null,
+      notifications: [
+        notification({
+          id: "action",
+          kind: "interaction_request",
+          interaction: { id: "i1", type: "question" },
+          unread: true,
+        }),
+        notification({
+          id: "telemetry",
+          kind: "interaction_request",
+          interaction: { id: "i2", type: "permission", telemetry: true },
+          unread: true,
+        }),
+      ],
+    });
+
+    expect(feed.cards.find((card) => card.notificationId === "action")).toMatchObject({
+      actionable: true,
+      kind: "action-required",
+    });
+    expect(feed.cards.find((card) => card.notificationId === "telemetry")).toMatchObject({
+      actionable: false,
+      kind: "observation",
+    });
+  });
+
+  it("shows structured category and project/worktree metadata on notification cards", () => {
+    const feed = buildForYouFeed({
+      securityEvents: [],
+      desktopState: null,
+      notifications: [
+        notification({
+          id: "n-meta",
+          title: "[Needs input] aimux / notifications",
+          body: "Agent is waiting for input.",
+          kind: "needs_input",
+          categoryLabel: "Needs input",
+          projectName: "aimux",
+          worktreeName: "notifications",
+          sessionId: "codex-1",
+          unread: true,
+        }),
+      ],
+    });
+
+    expect(feed.cards[0]).toMatchObject({
+      title: "[Needs input] aimux / notifications",
+      subtitle: "Needs input · aimux / notifications · codex-1",
+    });
+  });
+
   it("merges security alerts, notifications, and pending lifecycle state", () => {
     const security: SecurityInboxEvent = {
       id: "sec-1",

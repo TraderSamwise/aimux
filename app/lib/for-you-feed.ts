@@ -9,6 +9,7 @@ export interface ForYouCard {
   id: string;
   kind: ForYouKind;
   source: ForYouSource;
+  actionable?: boolean;
   title: string;
   body?: string;
   subtitle?: string;
@@ -43,7 +44,27 @@ function normalize(value?: string): string {
   return value?.trim().toLowerCase().replace(/[_-]+/g, " ") ?? "";
 }
 
+function basenamePath(path?: string): string | undefined {
+  const trimmed = path?.trim();
+  if (!trimmed) return undefined;
+  return trimmed
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .pop();
+}
+
+function notificationLocation(record: NotificationRecord): string | undefined {
+  const worktree = record.worktreeName || basenamePath(record.worktreePath);
+  if (record.projectName && worktree) return `${record.projectName} / ${worktree}`;
+  return record.projectName || worktree;
+}
+
 export function classifyNotification(record: NotificationRecord): ForYouKind {
+  if (record.interaction?.telemetry) return "observation";
+  if (record.kind === "interaction_request") {
+    return record.interaction?.type === "permission" ? "approval" : "action-required";
+  }
+
   const haystack = [record.kind, record.targetKind, record.title, record.subtitle, record.body]
     .map(normalize)
     .join(" ");
@@ -114,9 +135,15 @@ function notificationCard(record: NotificationRecord): ForYouCard {
     id: `notification:${record.id}`,
     kind: classifyNotification(record),
     source: "notification",
+    actionable: Boolean(record.interaction && !record.interaction.telemetry),
     title: record.title || record.subtitle || "aimux",
     body: record.body,
-    subtitle: [record.subtitle, record.kind?.replace(/[_-]+/g, " "), record.sessionId]
+    subtitle: [
+      record.subtitle,
+      record.categoryLabel || record.kind?.replace(/[_-]+/g, " "),
+      notificationLocation(record),
+      record.sessionId,
+    ]
       .filter(Boolean)
       .join(" · "),
     createdAt: record.createdAt,

@@ -124,7 +124,8 @@ describe("interaction endpoints", () => {
     const listed = await (await fetch(`${base}/notifications?sessionId=codex-ask`)).json();
     expect(listed.notifications).toHaveLength(1);
     const notification = listed.notifications[0];
-    expect(notification.title).toContain("AskUserQuestion");
+    expect(notification.title).toContain("[Question]");
+    expect(notification.body).toContain("AskUserQuestion");
     expect(notification.body).toContain("1. What should the new branch be named / for what work?");
     expect(notification.body).toContain("Options: Tell me the name; Neutral scratch branch");
     expect(notification.body).toContain("2. Which base branch should this come from?");

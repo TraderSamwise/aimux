@@ -86,11 +86,58 @@ describe("notifications store", () => {
         sessionId: "codex-1",
         title: "codex needs input",
         message: "ready",
+        projectName: "aimux",
+        projectRoot: repoRoot,
+        worktreeName: "notifications",
+        worktreePath: join(repoRoot, ".aimux/worktrees/notifications"),
+        branch: "notifications",
+        categoryLabel: "Needs input",
+        reasonLabel: "Agent is waiting for input",
       }),
     ).toBe(true);
 
     expect(listNotifications({ includeCleared: true, sessionId: "codex-1" })).toHaveLength(1);
     expect(unreadNotificationCount({ sessionId: "codex-1" })).toBe(0);
+  });
+
+  it("includes the durable notification id on live alert events", () => {
+    const bus = new ProjectEventBus();
+    const events: unknown[] = [];
+    const unsubscribe = bus.subscribe((event) => events.push(event));
+
+    expect(
+      bus.publishAlert({
+        kind: "needs_input",
+        sessionId: "codex-1",
+        title: "codex needs input",
+        message: "ready",
+        projectName: "aimux",
+        projectRoot: repoRoot,
+        worktreeName: "notifications",
+        worktreePath: join(repoRoot, ".aimux/worktrees/notifications"),
+        branch: "notifications",
+        categoryLabel: "Needs input",
+        reasonLabel: "Agent is waiting for input",
+      }),
+    ).toBe(true);
+    unsubscribe();
+
+    const record = listNotifications({ includeCleared: true, sessionId: "codex-1" })[0];
+    expect(events[0]).toMatchObject({
+      type: "alert",
+      notificationId: record?.id,
+      kind: "needs_input",
+      projectName: "aimux",
+      worktreeName: "notifications",
+    });
+    expect(record).toMatchObject({
+      projectName: "aimux",
+      projectRoot: repoRoot,
+      worktreeName: "notifications",
+      branch: "notifications",
+      categoryLabel: "Needs input",
+      reasonLabel: "Agent is waiting for input",
+    });
   });
 
   it("does not treat dashboard row selection as direct session focus", () => {
@@ -164,6 +211,39 @@ describe("notifications store", () => {
       title: "Claude Code",
       body: "from terminal notification",
       targetKey: "session:claude-1",
+    });
+  });
+
+  it("preserves interaction metadata from alert events", () => {
+    const bus = new ProjectEventBus();
+
+    expect(
+      bus.publishAlert({
+        kind: "interaction_request",
+        sessionId: "claude-1",
+        title: "claude-1 needs a response",
+        message: "Approve command",
+        interaction: {
+          id: "interaction-1",
+          type: "permission",
+          summary: "Bash: yarn test",
+          telemetry: true,
+          toolName: "Bash",
+          toolInputJSON: '{"command":"yarn test"}',
+        },
+      }),
+    ).toBe(true);
+
+    expect(listNotifications({ sessionId: "claude-1" })[0]).toMatchObject({
+      kind: "interaction_request",
+      interaction: {
+        id: "interaction-1",
+        type: "permission",
+        summary: "Bash: yarn test",
+        telemetry: true,
+        toolName: "Bash",
+        toolInputJSON: '{"command":"yarn test"}',
+      },
     });
   });
 });
