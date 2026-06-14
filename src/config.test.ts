@@ -65,6 +65,20 @@ describe("config", () => {
     });
   });
 
+  it("defaults exposé scope to per-worktree (forceGlobalScope disabled)", () => {
+    expect(loadConfig({ includeGlobal: false }).expose).toEqual({ forceGlobalScope: false });
+  });
+
+  it("merges an exposé forceGlobalScope override", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify({ expose: { forceGlobalScope: true } }, null, 2) + "\n",
+    );
+
+    expect(loadConfig({ includeGlobal: false }).expose.forceGlobalScope).toBe(true);
+  });
+
   it("deep merges logging config overrides", () => {
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(

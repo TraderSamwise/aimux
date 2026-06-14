@@ -134,10 +134,14 @@ function urgencyFor(projectRoot: string, sessionId?: string): number {
   }).presentation.attentionScore;
 }
 
+export type AgentListScope = "all" | "worktree";
+
 export function listSwitchableAgentItems(
   context: FastControlContext,
   tmux = new TmuxRuntimeManager(),
+  opts: { scope?: AgentListScope } = {},
 ): FastControlItem[] {
+  const scope = opts.scope ?? "worktree";
   const tmuxSession = tmux.getProjectSession(context.projectRoot);
   const recentRankMap = getRecentRankMap(context.projectRoot, context.currentClientSession);
   const managedWindows = tmux.listManagedWindows(tmuxSession.sessionName);
@@ -150,8 +154,10 @@ export function listSwitchableAgentItems(
       if (teammateParentSessionId) {
         return metadata.kind !== "service" && metadata.team?.parentSessionId === teammateParentSessionId;
       }
+      if (metadata.team) return false;
+      if (scope === "all") return true;
       const worktreePath = metadata.worktreePath || context.projectRoot;
-      return !metadata.team && pathResolve(worktreePath) === scopedWorktreePath;
+      return pathResolve(worktreePath) === scopedWorktreePath;
     })
     .sort((a, b) => compareSwitchableWindows(a, b, teammateParentSessionId))
     .map((entry) => ({
