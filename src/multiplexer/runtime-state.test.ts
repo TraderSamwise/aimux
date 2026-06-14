@@ -380,6 +380,17 @@ describe("resumeOfflineSession", () => {
       mkdirSync(dir, { recursive: true });
       const uuid = "0710a963-a473-430f-9f9a-e27dd4546328";
       writeFileSync(join(dir, `${uuid}.jsonl`), "{}\n");
+      seedTopologySessions([
+        {
+          id: "claude-1",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: cwd,
+        },
+      ]);
 
       const createSession = vi.fn();
       const host: any = {
@@ -415,6 +426,24 @@ describe("resumeOfflineSession", () => {
   });
 
   it("records backend session ids on live and offline sessions", () => {
+    seedTopologySessions([
+      {
+        id: "claude-1",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "live",
+      },
+      {
+        id: "claude-2",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "offline",
+      },
+    ]);
     const runtime = {
       id: "claude-1",
       command: "claude",
@@ -449,7 +478,7 @@ describe("resumeOfflineSession", () => {
     expect(host.saveState).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects hook-discovered backend ids when the runtime row is not loaded", () => {
+  it("records hook-discovered backend ids when topology exists but the host row is not loaded", () => {
     saveRuntimeTopologySessions({
       sessions: [
         {
@@ -468,16 +497,77 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [],
     };
 
-    expect(() => recordSessionBackendSessionId(host, "claude-racy", "backend-racy")).toThrow(
-      'Agent "claude-racy" is not managed by this runtime',
-    );
+    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-racy")).toEqual({
+      sessionId: "claude-racy",
+      backendSessionId: "backend-racy",
+    });
 
     expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
-      undefined,
+      "backend-racy",
     );
   });
 
-  it("does not accept hook fallback backend ids without a loaded row", () => {
+  it("recovers a missing backend id from the project root before restoring a main-checkout session", () => {
+    const claudeHome = mkdtempSync(join(tmpdir(), "aimux-runtime-state-claude-"));
+    const previousClaudeDir = process.env.CLAUDE_CONFIG_DIR;
+    try {
+      process.env.CLAUDE_CONFIG_DIR = claudeHome;
+      const backendSessionId = "0710a963-a473-430f-9f9a-e27dd4546328";
+      const transcriptDir = join(claudeHome, "projects", repoRoot.replace(/[/.]/g, "-"));
+      mkdirSync(transcriptDir, { recursive: true });
+      writeFileSync(join(transcriptDir, `${backendSessionId}.jsonl`), "{}\n");
+      seedTopologySessions([
+        {
+          id: "claude-main",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "offline",
+        },
+      ]);
+      const createSession = vi.fn();
+      const host: any = {
+        sessions: [],
+        offlineSessions: [{ id: "claude-main" }],
+        sessionLabels: new Map(),
+        sessionBootstrap: {
+          canResumeWithBackendSessionId: vi.fn((_toolCfg, id) => id === backendSessionId),
+        },
+        getSessionLabel: vi.fn(),
+        invalidateDesktopStateSnapshot: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        debug: vi.fn(),
+        createSession,
+      };
+
+      resumeOfflineSession(host, {
+        id: "claude-main",
+        command: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        createdAt: new Date().toISOString(),
+      });
+
+      expect(createSession).toHaveBeenCalledTimes(1);
+      const call = createSession.mock.calls[0];
+      expect(call[0]).toBe("claude");
+      expect(call[1]).toEqual(expect.arrayContaining(["--resume", backendSessionId]));
+      expect(call[3]).toBe("claude");
+      expect(call[6]).toBeUndefined();
+      expect(call[7]).toBe(backendSessionId);
+      expect(call[8]).toBe("claude-main");
+      expect(listTopologySessionStates().find((session) => session.id === "claude-main")?.backendSessionId).toBe(
+        backendSessionId,
+      );
+    } finally {
+      if (previousClaudeDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousClaudeDir;
+      rmSync(claudeHome, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept conflicting hook fallback backend ids without a loaded row", () => {
     saveRuntimeTopologySessions({
       sessions: [
         {
@@ -498,7 +588,7 @@ describe("resumeOfflineSession", () => {
     };
 
     expect(() => recordSessionBackendSessionId(host, "claude-racy", "backend-new")).toThrow(
-      'Agent "claude-racy" is not managed by this runtime',
+      'Agent "claude-racy" already has backend session "backend-saved"',
     );
 
     expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
@@ -506,7 +596,7 @@ describe("resumeOfflineSession", () => {
     );
   });
 
-  it("does not let metadata create hook fallback authority without a loaded row", () => {
+  it("accepts matching hook fallback backend ids from topology without a loaded row", () => {
     saveRuntimeTopologySessions({
       sessions: [
         {
@@ -526,9 +616,10 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [],
     };
 
-    expect(() => recordSessionBackendSessionId(host, "claude-racy", "backend-saved")).toThrow(
-      'Agent "claude-racy" is not managed by this runtime',
-    );
+    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-saved")).toEqual({
+      sessionId: "claude-racy",
+      backendSessionId: "backend-saved",
+    });
 
     expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
       "backend-saved",
@@ -536,6 +627,17 @@ describe("resumeOfflineSession", () => {
   });
 
   it("does not replace an existing backend session id", () => {
+    seedTopologySessions([
+      {
+        id: "claude-1",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        backendSessionId: "backend-original",
+        lifecycle: "live",
+      },
+    ]);
     const host: any = {
       sessions: [{ id: "claude-1", command: "claude", backendSessionId: "backend-original" }],
       offlineSessions: [],
@@ -547,6 +649,16 @@ describe("resumeOfflineSession", () => {
   });
 
   it("does not let stale metadata override a known runtime backend id", () => {
+    seedTopologySessions([
+      {
+        id: "claude-1",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "live",
+      },
+    ]);
     const runtime = { id: "claude-1", command: "claude", backendSessionId: "backend-current" };
     const host: any = {
       sessions: [runtime],

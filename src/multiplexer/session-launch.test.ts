@@ -1328,6 +1328,68 @@ describe("runProjectService", () => {
     expect(host.startGraveyardCleanup).toHaveBeenCalledOnce();
     expect(host.cleanupGraveyard).toHaveBeenCalledOnce();
   });
+
+  it("reconciles missing offline backend ids during startup", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-project-service-reconcile-"));
+    const claudeHome = mkdtempSync(join(tmpdir(), "aimux-project-service-claude-"));
+    const previousCwd = process.cwd();
+    const previousClaudeDir = process.env.CLAUDE_CONFIG_DIR;
+    try {
+      gitInit(repoRoot);
+      process.chdir(repoRoot);
+      process.env.CLAUDE_CONFIG_DIR = claudeHome;
+      await initPaths(repoRoot);
+      saveRuntimeTopologySessions({
+        projectRoot: repoRoot,
+        sessions: [
+          {
+            id: "claude-1",
+            tool: "claude",
+            toolConfigKey: "claude",
+            command: "claude",
+            args: [],
+            lifecycle: "offline",
+            worktreePath: repoRoot,
+          },
+        ],
+      });
+      const backendSessionId = "0710a963-a473-430f-9f9a-e27dd4546328";
+      const transcriptDir = join(claudeHome, "projects", repoRoot.replace(/[/.]/g, "-"));
+      mkdirSync(transcriptDir, { recursive: true });
+      writeFileSync(join(transcriptDir, `${backendSessionId}.jsonl`), "{}\n");
+
+      const host: any = {
+        mode: "dashboard",
+        syncSessionsFromTopology: vi.fn(),
+        saveState: vi.fn(),
+        writeInstructionFiles: vi.fn(),
+        startProjectServices: vi.fn(),
+        startStatusRefresh: vi.fn(),
+        startGraveyardCleanup: vi.fn(),
+        refreshDesktopStateSnapshot: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        teardown: vi.fn(),
+        resolveRun: undefined,
+      };
+
+      const runPromise = runProjectService(host);
+      await vi.waitFor(() => expect(host.resolveRun).toBeTypeOf("function"));
+      host.resolveRun(0);
+      await expect(runPromise).resolves.toBe(0);
+
+      expect(host.syncSessionsFromTopology).toHaveBeenCalledTimes(2);
+      const { listTopologySessionStates } = await import("../runtime-core/topology-sessions.js");
+      expect(listTopologySessionStates().find((session) => session.id === "claude-1")?.backendSessionId).toBe(
+        backendSessionId,
+      );
+    } finally {
+      process.chdir(previousCwd);
+      if (previousClaudeDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousClaudeDir;
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(claudeHome, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("runDashboard", () => {

@@ -89,6 +89,36 @@ describe("project takeover", () => {
     expect(livePids.has(2002)).toBe(true);
   });
 
+  it("preserves the other owner topology so agents return when switching lanes back", async () => {
+    const { takeOverProjectFromOtherOwners } = await import("./project-takeover.js");
+    const projectRoot = join(tmpHome, "repo-a");
+    const projectId = getProjectIdFor(projectRoot);
+    const devHome = join(tmpHome, ".aimux-dev");
+    const projectStateDir = join(devHome, "projects", projectId);
+    const topologyPath = join(projectStateDir, "runtime-topology.yaml");
+    const topology = "version: 1\nsessions:\n  - id: codex-dev\n    status: offline\n";
+
+    mkdirSync(join(devHome, "daemon"), { recursive: true });
+    mkdirSync(projectStateDir, { recursive: true });
+    writeJson(join(devHome, "daemon", "daemon.json"), { pid: 1001, port: 43191 });
+    writeJson(join(devHome, "daemon", "state.json"), {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      projects: {
+        [projectId]: { pid: 2001, projectRoot },
+      },
+    });
+    writeFileSync(topologyPath, topology);
+    writeJson(join(projectStateDir, "metadata-api.json"), { host: "127.0.0.1", port: 43191 });
+    writeFileSync(join(projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43191\n");
+
+    await takeOverProjectFromOtherOwners(projectRoot);
+
+    expect(readFileSync(topologyPath, "utf-8")).toBe(topology);
+    expect(existsSync(join(projectStateDir, "metadata-api.json"))).toBe(false);
+    expect(existsSync(join(projectStateDir, "metadata-api.txt"))).toBe(false);
+  });
+
   it("does not signal a stale pid that is not an aimux project service", async () => {
     const { takeOverProjectFromOtherOwners } = await import("./project-takeover.js");
     const projectRoot = join(tmpHome, "repo-a");

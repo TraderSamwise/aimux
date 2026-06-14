@@ -15,6 +15,8 @@ export interface DesktopSession {
   worktreeBranch?: string;
   label?: string;
   headline?: string;
+  restoreState?: "ready" | "blocked";
+  restoreBlockedReason?: string;
   role?: string;
   activity?: string;
   attention?: string;

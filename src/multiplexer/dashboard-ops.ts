@@ -17,6 +17,8 @@ import {
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
 import type { LaunchOverride } from "../shell-args.js";
 import { generateServiceId, serviceLabelForCommand } from "./services.js";
+import { loadConfig } from "../config.js";
+import { DEFAULT_EXACT_BACKEND_RESUME_TOOLS, describeSessionRestorability } from "../session-restorability.js";
 
 type DashboardOpsHost = any;
 type PendingSessionCreateAction = Extract<PendingSessionActionKind, "creating" | "forking">;
@@ -24,6 +26,14 @@ type DashboardSessionMutationPendingAction = Exclude<PendingSessionActionKind, "
 
 const dashboardAgentRestoreQueues = new WeakMap<object, Promise<void>>();
 const dashboardQueuedAgentRestores = new WeakMap<object, Set<string>>();
+
+function loadRestoreToolConfig() {
+  try {
+    return loadConfig().tools;
+  } catch {
+    return DEFAULT_EXACT_BACKEND_RESUME_TOOLS;
+  }
+}
 
 function queuedAgentRestoresFor(host: object): Set<string> {
   let queued = dashboardQueuedAgentRestores.get(host);
@@ -689,6 +699,14 @@ export async function graveyardSessionWithFeedback(
 export async function resumeOfflineSessionWithFeedback(host: DashboardOpsHost, session: any): Promise<void> {
   if (host.mode === "dashboard") {
     const label = session.label ?? session.command;
+    const restorability = describeSessionRestorability(
+      host.getDashboardSessions?.().find((entry: any) => entry.id === session.id) ?? session,
+      loadRestoreToolConfig(),
+    );
+    if (restorability?.restoreState === "blocked") {
+      host.showDashboardError?.(`Cannot restore "${label}"`, [restorability.restoreBlockedReason ?? "not restorable"]);
+      return;
+    }
     if (
       host.dashboardPendingActions.getSessionAction(session.id) === "starting" ||
       queuedAgentRestoresFor(host).has(session.id)

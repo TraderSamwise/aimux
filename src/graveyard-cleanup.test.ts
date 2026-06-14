@@ -162,6 +162,51 @@ describe("graveyard cleanup", () => {
     expect(result.results).toEqual([{ kind: "worktree", id: "/repo/.aimux/worktrees/old", status: "removed" }]);
   });
 
+  it("continues dependent agent cleanup when expired worktree cleanup fails", async () => {
+    const deleteAgent = vi.fn(() => ({ sessionId: "codex-old", removedAssets: [] }));
+    const deleteWorktree = vi.fn(() => {
+      throw new Error("worktree remove failed");
+    });
+    const plan = buildGraveyardCleanupPlan({
+      now: "2026-06-14T00:00:00.000Z",
+      config: { cleanupEnabled: true, retentionDays: 14 },
+      sessions: [
+        {
+          id: "codex-old",
+          tool: "codex",
+          toolConfigKey: "codex",
+          command: "codex",
+          args: [],
+          status: "graveyard",
+          worktreePath: "/repo/.aimux/worktrees/old",
+          updatedAt: "2026-05-30T00:00:00.000Z",
+        },
+      ],
+      worktrees: [
+        {
+          id: "old-worktree",
+          path: "/repo/.aimux/worktrees/old",
+          name: "old",
+          graveyardedAt: "2026-05-31T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const result = await runGraveyardCleanup(plan, { deleteAgent, deleteWorktree });
+
+    expect(deleteWorktree).toHaveBeenCalledWith("/repo/.aimux/worktrees/old");
+    expect(deleteAgent).toHaveBeenCalledWith("codex-old");
+    expect(result.results).toEqual([
+      {
+        kind: "worktree",
+        id: "/repo/.aimux/worktrees/old",
+        status: "failed",
+        error: "worktree remove failed",
+      },
+      { kind: "agent", id: "codex-old", status: "removed", removedAssets: [] },
+    ]);
+  });
+
   it("dry-run reports worktree and standalone agent targets without deleting them", async () => {
     const deleteAgent = vi.fn();
     const deleteWorktree = vi.fn();

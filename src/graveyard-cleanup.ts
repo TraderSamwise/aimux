@@ -204,6 +204,7 @@ export async function runGraveyardCleanup(
 ): Promise<GraveyardCleanupRunResult> {
   const dryRun = input?.dryRun === true;
   const results: GraveyardCleanupItemResult[] = [];
+  const removedWorktreePaths = new Set<string>();
   if (!plan.enabled) return { dryRun, plan, results };
 
   for (const worktree of plan.worktrees) {
@@ -215,6 +216,7 @@ export async function runGraveyardCleanup(
       const deleteWorktree = operations.deleteWorktree;
       if (!deleteWorktree) throw new Error("worktree cleanup operation is not configured");
       await deleteWorktree(worktree.path);
+      removedWorktreePaths.add(worktree.path);
       results.push({ kind: "worktree", id: worktree.path, status: "removed" });
     } catch (error) {
       results.push({
@@ -226,8 +228,11 @@ export async function runGraveyardCleanup(
     }
   }
 
+  const worktreePathsWithHandledAgents = dryRun
+    ? new Set(plan.worktrees.map((worktree) => worktree.path))
+    : removedWorktreePaths;
   for (const agent of plan.agents) {
-    if (plan.worktrees.some((worktree) => worktree.path === agent.worktreePath)) {
+    if (agent.worktreePath && worktreePathsWithHandledAgents.has(agent.worktreePath)) {
       continue;
     }
     if (dryRun) {
