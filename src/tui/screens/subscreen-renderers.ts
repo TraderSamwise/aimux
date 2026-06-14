@@ -409,10 +409,11 @@ export function renderGraveyardScreen(ctx: any): void {
         const bsid = s.backendSessionId ? ` (${s.backendSessionId.slice(0, 8)}…)` : "";
         const identity = s.label ? ` — ${s.label}` : "";
         const headline = s.headline ? ` · ${s.headline}` : "";
+        const unrecoverable = s.graveyardReason ? ` \x1b[31m· unrecoverable\x1b[0m` : "";
         const recency = row.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(row.lastUsedAt)}\x1b[0m` : "";
         const marker = row.actionIndex === ctx.graveyardIndex ? "\x1b[33m▸\x1b[0m " : "  ";
         listLines.push(
-          `    ${marker}[${row.actionNumber}] ${s.command}:${s.id}${bsid}${identity}${headline}${recency}`,
+          `    ${marker}[${row.actionNumber}] ${s.command}:${s.id}${bsid}${identity}${headline}${unrecoverable}${recency}`,
         );
         lineByItemIndex.set(row.actionIndex, listLines.length - 1);
       }
@@ -492,6 +493,8 @@ export function renderGraveyardDetails(ctx: any, width: number, height: number):
   if (selected.entry.backendSessionId)
     lines.push(...ctx.wrapKeyValue("Backend", selected.entry.backendSessionId, width));
   if (selected.entry.headline) lines.push(...ctx.wrapKeyValue("Headline", selected.entry.headline, width));
+  if (selected.entry.graveyardReason)
+    lines.push(...ctx.wrapKeyValue("Unrecoverable", selected.entry.graveyardReason, width));
   if (selected.entry.command) lines.push(...ctx.wrapKeyValue("Command", selected.entry.command, width));
   if (selected.entry.args?.length) lines.push(...ctx.wrapKeyValue("Args", selected.entry.args.join(" "), width));
   while (lines.length < height) lines.push("");

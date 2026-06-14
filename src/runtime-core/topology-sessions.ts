@@ -26,6 +26,7 @@ export type RuntimeTopologySessionState = {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  graveyardReason?: string;
   tmuxTarget?: {
     sessionName: string;
     windowId: string;
@@ -122,6 +123,7 @@ function sessionToTopologySession(
     worktreePath: session.worktreePath,
     label: session.label,
     headline: session.headline,
+    graveyardReason: session.graveyardReason,
     team: session.team,
     createdAt: session.createdAt ?? now,
     updatedAt: now,
@@ -175,6 +177,7 @@ export function topologySessionToSessionState(
     label: session.label ?? node?.label,
     headline: session.headline,
     graveyardedAt: session.graveyardedAt,
+    graveyardReason: session.graveyardReason,
     tmuxTarget:
       binding?.tmuxSession && binding.tmuxWindowId && typeof binding.tmuxWindowIndex === "number"
         ? {
@@ -258,7 +261,10 @@ export function upsertTopologySession(
     const rigId = ensureRig(topology, projectRoot, now);
     const node = upsertNode(topology, session, rigId, now);
     const nextSession = { ...sessionToTopologySession(session, node.id, now), status };
-    if (status !== "graveyard") delete nextSession.graveyardedAt;
+    if (status !== "graveyard") {
+      delete nextSession.graveyardedAt;
+      delete nextSession.graveyardReason;
+    }
     topology.sessions = [...topology.sessions.filter((entry) => entry.id !== session.id), nextSession];
     const shouldBind = status === "running" || status === "idle" || status === "starting";
     const binding = shouldBind ? sessionToBinding({ ...session, lifecycle: "live" }, node.id, now) : undefined;
@@ -271,7 +277,7 @@ export function upsertTopologySession(
 
 export function moveTopologySessionToGraveyard(
   sessionId: string,
-  input?: { store?: RuntimeTopologyStore; now?: string },
+  input?: { store?: RuntimeTopologyStore; now?: string; reason?: string },
 ): RuntimeTopologySessionState | undefined {
   const store = input?.store ?? createRuntimeTopologyStore();
   const now = input?.now ?? new Date().toISOString();
@@ -282,6 +288,7 @@ export function moveTopologySessionToGraveyard(
       existing.status = "graveyard";
       existing.updatedAt = now;
       existing.graveyardedAt ??= now;
+      if (input?.reason) existing.graveyardReason = input.reason;
       topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
       moved = topologySessionToSessionState(existing, topology);
       return topology;
@@ -379,6 +386,7 @@ export function resurrectTopologySession(sessionId: string, input?: { store?: Ru
     session.status = "offline";
     session.updatedAt = now;
     delete session.graveyardedAt;
+    delete session.graveyardReason;
     topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== session.nodeId);
     restored = topologySessionToSessionState(session, topology);
     return topology;
