@@ -31,6 +31,7 @@ export type RuntimeTopologySessionState = {
     windowIndex: number;
     windowName: string;
   };
+  graveyardedAt?: string;
 };
 
 type SaveRuntimeTopologySessionsInput = {
@@ -124,6 +125,7 @@ function sessionToTopologySession(
     createdAt: session.createdAt ?? now,
     updatedAt: now,
     lastSeenAt: session.lifecycle === "offline" ? undefined : now,
+    graveyardedAt: session.graveyardedAt,
   };
 }
 
@@ -170,6 +172,7 @@ export function topologySessionToSessionState(
     worktreePath: session.worktreePath ?? node?.cwd,
     label: session.label ?? node?.label,
     headline: session.headline,
+    graveyardedAt: session.graveyardedAt,
     tmuxTarget:
       binding?.tmuxSession && binding.tmuxWindowId && typeof binding.tmuxWindowIndex === "number"
         ? {
@@ -253,6 +256,7 @@ export function upsertTopologySession(
     const rigId = ensureRig(topology, projectRoot, now);
     const node = upsertNode(topology, session, rigId, now);
     const nextSession = { ...sessionToTopologySession(session, node.id, now), status };
+    if (status !== "graveyard") delete nextSession.graveyardedAt;
     topology.sessions = [...topology.sessions.filter((entry) => entry.id !== session.id), nextSession];
     const shouldBind = status === "running" || status === "idle" || status === "starting";
     const binding = shouldBind ? sessionToBinding({ ...session, lifecycle: "live" }, node.id, now) : undefined;
@@ -275,6 +279,7 @@ export function moveTopologySessionToGraveyard(
     if (existing) {
       existing.status = "graveyard";
       existing.updatedAt = now;
+      existing.graveyardedAt ??= now;
       topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
       moved = topologySessionToSessionState(existing, topology);
       return topology;
@@ -322,6 +327,7 @@ export function resurrectTopologySession(sessionId: string, input?: { store?: Ru
     if (!session) return topology;
     session.status = "offline";
     session.updatedAt = now;
+    delete session.graveyardedAt;
     topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== session.nodeId);
     restored = topologySessionToSessionState(session, topology);
     return topology;

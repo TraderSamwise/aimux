@@ -84,6 +84,91 @@ describe("topology session lifecycle", () => {
     expect(store.read().sessions).toEqual([]);
   });
 
+  it("records graveyardedAt when a session moves to graveyard", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      {
+        id: "codex-1",
+        tool: "codex",
+        toolConfigKey: "codex",
+        command: "codex",
+        args: [],
+      },
+      "offline",
+      { store, projectRoot: repoRoot, now: "2026-05-25T00:00:00.000Z" },
+    );
+
+    const moved = moveTopologySessionToGraveyard("codex-1", {
+      store,
+      now: "2026-05-26T00:00:00.000Z",
+    });
+
+    expect(moved).toMatchObject({
+      id: "codex-1",
+      status: "graveyard",
+      graveyardedAt: "2026-05-26T00:00:00.000Z",
+    });
+    expect(store.read().sessions[0]?.graveyardedAt).toBe("2026-05-26T00:00:00.000Z");
+  });
+
+  it("keeps the original graveyardedAt while a session remains in graveyard", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      {
+        id: "codex-1",
+        tool: "codex",
+        toolConfigKey: "codex",
+        command: "codex",
+        args: [],
+      },
+      "offline",
+      { store, projectRoot: repoRoot },
+    );
+
+    moveTopologySessionToGraveyard("codex-1", {
+      store,
+      now: "2026-05-26T00:00:00.000Z",
+    });
+    moveTopologySessionToGraveyard("codex-1", {
+      store,
+      now: "2026-05-27T00:00:00.000Z",
+    });
+
+    expect(store.read().sessions[0]).toMatchObject({
+      status: "graveyard",
+      updatedAt: "2026-05-27T00:00:00.000Z",
+      graveyardedAt: "2026-05-26T00:00:00.000Z",
+    });
+  });
+
+  it("clears graveyardedAt when a session is resurrected", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      {
+        id: "codex-1",
+        tool: "codex",
+        toolConfigKey: "codex",
+        command: "codex",
+        args: [],
+      },
+      "offline",
+      { store, projectRoot: repoRoot },
+    );
+    moveTopologySessionToGraveyard("codex-1", {
+      store,
+      now: "2026-05-26T00:00:00.000Z",
+    });
+
+    const restored = resurrectTopologySession("codex-1", {
+      store,
+      now: "2026-05-27T00:00:00.000Z",
+    });
+
+    expect(restored).toMatchObject({ id: "codex-1", status: "offline" });
+    expect(restored?.graveyardedAt).toBeUndefined();
+    expect(store.read().sessions[0]?.graveyardedAt).toBeUndefined();
+  });
+
   it("prunes topology references to missing nodes and sessions on store writes", () => {
     const store = createRuntimeTopologyStore(topologyPath);
     const now = "2026-05-25T00:00:00.000Z";
