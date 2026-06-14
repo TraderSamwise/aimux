@@ -20,6 +20,12 @@ type RuntimeStateHost = any;
 type ManagedAgentWindow = { target: any; metadata: any };
 
 const DASHBOARD_BACKGROUND_REFRESH_MS = 2000;
+const IDLE_NOTIFICATION_SETTLE_MS = 10_000;
+
+const idleNotificationCandidates = new WeakMap<
+  RuntimeStateHost,
+  Map<string, { idleSince: number; notified: boolean }>
+>();
 
 function isAvailableWorktreePath(worktreePath?: string, graveyardPaths = listWorktreeGraveyardPaths()): boolean {
   if (!worktreePath) return true;
@@ -119,6 +125,9 @@ export function renderCurrentDashboardView(host: RuntimeStateHost): void {
 export function startStatusRefresh(host: RuntimeStateHost): void {
   if (host.statusInterval) return;
   host.statusInterval = setInterval(() => {
+    const idleCandidates =
+      idleNotificationCandidates.get(host) ?? new Map<string, { idleSince: number; notified: boolean }>();
+    idleNotificationCandidates.set(host, idleCandidates);
     let dashboardNeedsRender = false;
 
     if (host.dashboardFeedback.tickFlashVisibilityChanged()) {
@@ -128,7 +137,12 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
     for (const session of host.sessions) {
       const prev = host.prevStatuses.get(session.id);
       const curr = session.status;
-      if (prev && prev !== curr && curr === "idle" && prev === "running") {
+      const candidate = idleCandidates.get(session.id);
+      if (curr !== "idle") {
+        idleCandidates.delete(session.id);
+      } else if (prev && prev !== curr && prev === "running") {
+        idleCandidates.set(session.id, { idleSince: Date.now(), notified: false });
+      } else if (candidate && !candidate.notified && Date.now() - candidate.idleSince >= IDLE_NOTIFICATION_SETTLE_MS) {
         host.publishAlert({
           kind: "needs_input",
           sessionId: session.id,
@@ -137,6 +151,7 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
           dedupeKey: `idle-needs-input:${session.id}`,
           cooldownMs: 15_000,
         });
+        candidate.notified = true;
       }
       host.prevStatuses.set(session.id, curr);
     }
@@ -162,6 +177,7 @@ export function stopStatusRefresh(host: RuntimeStateHost): void {
     clearInterval(host.statusInterval);
     host.statusInterval = null;
   }
+  idleNotificationCandidates.delete(host);
 }
 
 export function syncSessionsFromTopology(host: RuntimeStateHost): void {
