@@ -103,6 +103,12 @@ describe("interaction endpoints", () => {
             { label: "Neutral scratch branch", description: "Create a placeholder branch." },
           ],
         },
+        {
+          multiSelect: false,
+          header: "Base branch",
+          question: "Which base branch should this come from?",
+          options: ["origin/master", "current HEAD"],
+        },
       ],
     };
     const rawSummary = JSON.stringify(payload);
@@ -119,8 +125,10 @@ describe("interaction endpoints", () => {
     expect(listed.notifications).toHaveLength(1);
     const notification = listed.notifications[0];
     expect(notification.title).toContain("AskUserQuestion");
-    expect(notification.body).toContain("What should the new branch be named / for what work?");
+    expect(notification.body).toContain("1. What should the new branch be named / for what work?");
     expect(notification.body).toContain("Options: Tell me the name; Neutral scratch branch");
+    expect(notification.body).toContain("2. Which base branch should this come from?");
+    expect(notification.body).toContain("Options: origin/master; current HEAD");
     expect(notification.body).not.toContain('"questions"');
   });
 
