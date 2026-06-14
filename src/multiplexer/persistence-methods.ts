@@ -913,6 +913,16 @@ export const persistenceMethods = {
   },
 
   async resurrectGraveyardSession(this: any, sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
+    const graveyarded = listTopologySessionStates({ statuses: ["graveyard"] }).find((s: any) => s.id === sessionId);
+    if (!graveyarded) {
+      throw new Error(`Graveyard session "${sessionId}" not found`);
+    }
+    const worktreePath = graveyarded.worktreePath;
+    if (worktreePath && !listWorktreeGraveyardPaths().has(worktreePath) && !existsSync(worktreePath)) {
+      throw new Error(
+        `Cannot resurrect agent "${sessionId}" because its worktree "${worktreePath}" is missing; restore the worktree first`,
+      );
+    }
     const restored = resurrectTopologySession(sessionId);
     if (!restored) {
       throw new Error(`Graveyard session "${sessionId}" not found`);

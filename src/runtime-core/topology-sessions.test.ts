@@ -56,6 +56,24 @@ describe("topology session lifecycle", () => {
     expect(store.read().bindings).toEqual([]);
   });
 
+  it("records a graveyard reason and clears it on resurrection", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      { id: "codex-1", tool: "codex", toolConfigKey: "codex", command: "codex", args: [] },
+      "running",
+      { store, projectRoot: repoRoot },
+    );
+
+    const moved = moveTopologySessionToGraveyard("codex-1", { store, reason: "worktree missing" });
+    expect(moved?.graveyardReason).toBe("worktree missing");
+    expect(store.read().sessions[0]!.graveyardReason).toBe("worktree missing");
+
+    const restored = resurrectTopologySession("codex-1", { store });
+    expect(restored?.status).toBe("offline");
+    expect(restored?.graveyardReason).toBeUndefined();
+    expect(store.read().sessions[0]!.graveyardReason).toBeUndefined();
+  });
+
   it("removes tmux bindings when an explicit status makes a session non-live", () => {
     const store = createRuntimeTopologyStore(topologyPath);
     const session = {
