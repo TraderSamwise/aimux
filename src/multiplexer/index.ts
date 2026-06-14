@@ -82,6 +82,7 @@ export interface SessionState {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  graveyardReason?: string;
   tmuxTarget?: TmuxTarget;
 }
 

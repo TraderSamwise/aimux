@@ -167,9 +167,62 @@ export function stopStatusRefresh(host: RuntimeStateHost): void {
 export function syncSessionsFromTopology(host: RuntimeStateHost): void {
   const state = host.constructor.loadState();
   const liveAgentWindows = restoreTmuxSessionsFromTopology(host);
+  reconcileOrphanedTopologySessions(host, liveAgentWindows);
   loadOfflineTopologySessions(host, liveAgentWindows);
   loadOfflineServices(host, state);
   host.invalidateDesktopStateSnapshot();
+}
+
+// A persisted session whose working directory is gone for good (deleted on disk,
+// not merely graveyarded as a worktree we could resurrect) can never be relaunched.
+function isOrphanWorktreeUnrecoverable(worktreePath: string | undefined, graveyardPaths: Set<string>): boolean {
+  if (!worktreePath) return false;
+  if (graveyardPaths.has(worktreePath)) return false;
+  return !existsSync(worktreePath);
+}
+
+// After a crash or hard restart the tmux server is gone, so sessions persisted as
+// running/idle have no live window and are surfaced by neither the live-restore nor
+// the offline-load path — they silently vanish. Reconcile them so no agent is lost:
+// demote recoverable orphans to offline (resumable), and document unrecoverable ones
+// in the graveyard with a reason instead of dropping them.
+export function reconcileOrphanedTopologySessions(
+  host: RuntimeStateHost,
+  liveAgentWindows = listLiveAgentWindows(host),
+): boolean {
+  const candidates = listTopologySessionStates({ statuses: ["running", "idle", "offline"] });
+  if (candidates.length === 0) return false;
+
+  const liveIds = new Set(liveAgentWindows.map(({ metadata }) => metadata.sessionId));
+  const ownedIds = new Set<string>(host.sessions.map((session: any) => session.id));
+  const ownedBackendIds = new Set(
+    host.sessions
+      .map((session: any) => session.backendSessionId)
+      .filter((value: any): value is string => Boolean(value)),
+  );
+  const graveyardPaths = listWorktreeGraveyardPaths();
+
+  let changed = false;
+  for (const session of candidates) {
+    if (liveIds.has(session.id)) continue;
+    if (ownedIds.has(session.id)) continue;
+    if (session.backendSessionId && ownedBackendIds.has(session.backendSessionId)) continue;
+    if (host.dashboardPendingActions?.getSessionAction?.(session.id) === "starting") continue;
+
+    if (isOrphanWorktreeUnrecoverable(session.worktreePath, graveyardPaths)) {
+      const reason = `worktree missing after restart: ${session.worktreePath}`;
+      moveTopologySessionToGraveyard(session.id, { reason });
+      host.debug?.(`graveyarded unrecoverable orphaned session ${session.id}: ${reason}`, "session");
+      changed = true;
+      continue;
+    }
+
+    if (session.status === "offline") continue;
+    upsertTopologySession({ ...session, lifecycle: "offline", tmuxTarget: undefined }, "offline");
+    host.debug?.(`reconciled orphaned session ${session.id} → offline (no live tmux window)`, "session");
+    changed = true;
+  }
+  return changed;
 }
 
 export function loadOfflineTopologySessions(
