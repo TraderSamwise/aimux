@@ -16,6 +16,7 @@ export function forwardAlertToMobilePush(event: AlertEvent): void {
       kind: event.kind,
       sessionId: event.sessionId,
       projectId: event.projectId,
+      notificationId: event.notificationId,
       projectRoot: process.cwd(),
       dedupeKey: event.dedupeKey,
     }),

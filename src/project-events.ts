@@ -23,6 +23,7 @@ export interface AlertEvent {
   title: string;
   message: string;
   ts: string;
+  notificationId?: string;
   threadId?: string;
   taskId?: string;
   worktreePath?: string;
@@ -80,14 +81,27 @@ export class ProjectEventBus {
       this.alertCooldowns.set(dedupeKey, now + cooldownMs);
     }
 
+    const ts = new Date().toISOString();
+    const notification = upsertNotification({
+      title: alert.title,
+      body: alert.message,
+      sessionId: alert.sessionId,
+      kind: alert.kind,
+      dedupeKey,
+      createdAt: ts,
+      unread: !alert.sessionId || alert.forceNotify ? true : !isSessionNotificationFocused(alert.sessionId),
+      interaction: alert.interaction,
+    });
+
     const event = {
       type: "alert",
       projectId: getProjectId(),
-      ts: new Date().toISOString(),
+      ts,
       kind: alert.kind,
       sessionId: alert.sessionId,
       title: alert.title,
       message: alert.message,
+      notificationId: notification.id,
       threadId: alert.threadId,
       taskId: alert.taskId,
       worktreePath: alert.worktreePath,
@@ -95,17 +109,6 @@ export class ProjectEventBus {
       forceNotify: alert.forceNotify,
       interaction: alert.interaction,
     } satisfies AlertEvent;
-
-    upsertNotification({
-      title: event.title,
-      body: event.message,
-      sessionId: event.sessionId,
-      kind: event.kind,
-      dedupeKey: event.dedupeKey,
-      createdAt: event.ts,
-      unread: !event.sessionId || event.forceNotify ? true : !isSessionNotificationFocused(event.sessionId),
-      interaction: event.interaction,
-    });
 
     this.publish(event);
     return true;

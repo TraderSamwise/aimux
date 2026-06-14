@@ -93,6 +93,29 @@ describe("notifications store", () => {
     expect(unreadNotificationCount({ sessionId: "codex-1" })).toBe(0);
   });
 
+  it("includes the durable notification id on live alert events", () => {
+    const bus = new ProjectEventBus();
+    const events: unknown[] = [];
+    const unsubscribe = bus.subscribe((event) => events.push(event));
+
+    expect(
+      bus.publishAlert({
+        kind: "needs_input",
+        sessionId: "codex-1",
+        title: "codex needs input",
+        message: "ready",
+      }),
+    ).toBe(true);
+    unsubscribe();
+
+    const record = listNotifications({ includeCleared: true, sessionId: "codex-1" })[0];
+    expect(events[0]).toMatchObject({
+      type: "alert",
+      notificationId: record?.id,
+      kind: "needs_input",
+    });
+  });
+
   it("does not treat dashboard row selection as direct session focus", () => {
     updateNotificationContext("tui", {
       focused: true,
