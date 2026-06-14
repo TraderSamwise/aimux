@@ -18,6 +18,7 @@ import { writeJsonAtomic, writeTextAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
 import {
   buildGraveyardCleanupPlan,
+  deleteAgentAssets,
   deleteGraveyardAgent,
   runGraveyardCleanup,
   type GraveyardCleanupRunResult,
@@ -1074,6 +1075,7 @@ async function removeOrphanedDesktopWorktree(host: any, mainRepo: string, path: 
 }
 
 async function removeGraveyardedDesktopWorktree(host: any, mainRepo: string, path: string): Promise<void> {
+  cleanupAgentAssetsForWorktree(path);
   await removeGitWorktreeCheckout(mainRepo, path);
   removeWorktreeDependents(host, path);
   removeTopologyWorktree(path);
@@ -1157,11 +1159,19 @@ function stopWorktreeServicesForGraveyard(host: any, path: string): void {
 }
 
 function removeWorktreeDependents(host: any, path: string): void {
+  cleanupAgentAssetsForWorktree(path);
   host.offlineSessions = (host.offlineSessions ?? []).filter((session: any) => session.worktreePath !== path);
   host.offlineServices = (host.offlineServices ?? []).filter((service: any) => service.worktreePath !== path);
   removeTopologySessionsForWorktree(path);
   removeTopologyServicesForWorktree(path);
   removePersistedServicesForWorktree(path);
+}
+
+function cleanupAgentAssetsForWorktree(path: string): void {
+  for (const session of listTopologySessionStates()) {
+    if (session.worktreePath !== path) continue;
+    deleteAgentAssets(session.id);
+  }
 }
 
 function removePersistedServicesForWorktree(path: string): void {
