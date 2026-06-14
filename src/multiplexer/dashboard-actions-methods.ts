@@ -254,8 +254,8 @@ export const dashboardActionMethods = {
   runSelectedTool(this: any, toolKey: string, tool: any): void {
     runSelectedToolImpl(this, toolKey, tool);
   },
-  showToolPicker(this: any, sourceSessionId?: string): void {
-    showToolPickerImpl(this, sourceSessionId);
+  showToolPicker(this: any, sourceSessionId?: string, opts?: { overseer?: boolean }): void {
+    showToolPickerImpl(this, sourceSessionId, opts);
   },
   handleToolPickerKey(this: any, data: Buffer): void {
     handleToolPickerKeyImpl(this, data);

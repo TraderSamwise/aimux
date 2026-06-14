@@ -6,6 +6,7 @@ import { renderDashboardFrame } from "./dashboard-renderers.js";
 function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): DashboardViewModel {
   return {
     sessions: [],
+    overseerSessions: [],
     services: [],
     worktreeGroups: [],
     hasWorktrees: true,
@@ -200,6 +201,40 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(frame).toContain("review(reviewer)");
     expect(frame).toContain("working");
     expect(frame).toContain("scan(explorer)");
+  });
+
+  it("renders a dedicated Overseer line above the worktrees when an overseer exists", () => {
+    const overseerSession = {
+      index: 0,
+      id: "claude-boss",
+      command: "claude",
+      status: "running" as const,
+      active: false,
+      role: "overseer",
+      team: { teamId: "overseer", parentSessionId: "", role: "overseer" },
+      semantic: deriveSessionSemantics({ status: "running", activity: "idle" }),
+    };
+
+    const withOverseer = renderDashboardFrame(
+      baseDashboardViewModel({
+        overseerSessions: [overseerSession],
+        worktreeGroups: [{ name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] }],
+      }),
+      120,
+      40,
+    );
+    expect(withOverseer.frame).toContain("\x1b[1;35mOverseer\x1b[0m");
+    expect(withOverseer.frame).toContain("(overseer)");
+
+    const withoutOverseer = renderDashboardFrame(
+      baseDashboardViewModel({
+        overseerSessions: [],
+        worktreeGroups: [{ name: "Main Checkout", branch: "master", status: "active", sessions: [], services: [] }],
+      }),
+      120,
+      40,
+    );
+    expect(withoutOverseer.frame).not.toContain("Overseer");
   });
 
   it("shows a DEV badge in the header only for the dev runtime", () => {

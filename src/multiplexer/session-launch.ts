@@ -16,7 +16,7 @@ import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
 import { markNotificationsRead } from "../notifications.js";
-import { clearSessionTranscriptPath } from "../metadata-store.js";
+import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } from "../metadata-store.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
@@ -422,8 +422,7 @@ export function createSession(
       ? extractCodexBackendSessionIdFromArgs(args)
       : undefined;
   const effectiveSuppressStartupPreamble = suppressStartupPreamble;
-  const effectiveSessionIdFlag =
-    isConfiguredToolCommand && !isClaudeResumeStyleLaunch ? sessionIdFlag : undefined;
+  const effectiveSessionIdFlag = isConfiguredToolCommand && !isClaudeResumeStyleLaunch ? sessionIdFlag : undefined;
   const backendSessionId =
     backendSessionIdOverride ??
     explicitClaudeBackendSessionId ??
@@ -782,6 +781,18 @@ export function handleAction(host: SessionLaunchHost, action: any): void {
     case "create":
       host.showToolPicker();
       break;
+    case "create-overseer": {
+      const overseerId = findOverseerSessionId(loadMetadataState());
+      const liveOverseer =
+        !!overseerId &&
+        listTopologySessionStates({ statuses: ["running", "idle"] }).some((session) => session.id === overseerId);
+      if (liveOverseer && typeof host.openLiveTmuxWindowForEntry === "function") {
+        host.openLiveTmuxWindowForEntry({ id: overseerId });
+      } else {
+        host.showToolPicker(undefined, { overseer: true });
+      }
+      break;
+    }
     case "kill":
       if (host.sessions.length > 0) {
         host.sessions[host.activeIndex].kill();

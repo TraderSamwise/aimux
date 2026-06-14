@@ -10,7 +10,7 @@ import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoin
 import { parseKeys } from "../key-parser.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { getProjectStateDir } from "../paths.js";
-import { loadTeamConfig } from "../team.js";
+import { loadTeamConfig, isOverseerSession } from "../team.js";
 import { loadStatusline, renderTmuxStatuslineFromData } from "../tmux/statusline.js";
 import { openManagedServiceWindow, openManagedSessionWindow } from "../tmux/window-open.js";
 import { resolveOrchestrationRecipients } from "../orchestration-routing.js";
@@ -76,6 +76,7 @@ export function updateWorktreeSessions(host: DashboardControlHost): void {
   host.dashboardState.worktreeSessions = host.dashboardUiStateStore.orderSessionsForWorktree(
     sortDashboardEntriesByCreatedAt(
       allDash.filter((s: DashboardSession) => {
+        if (isOverseerSession(s)) return false;
         return (s.worktreePath ?? undefined) === host.dashboardState.focusedWorktreePath;
       }),
     ),

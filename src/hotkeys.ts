@@ -11,6 +11,7 @@ export type HotkeyAction =
   | { type: "next" }
   | { type: "prev" }
   | { type: "create" }
+  | { type: "create-overseer" }
   | { type: "kill" }
   | { type: "switcher" }
   | { type: "worktree-create" }
@@ -90,6 +91,9 @@ export class HotkeyHandler {
         return null;
       case "c":
         this.onAction({ type: "create" });
+        return null;
+      case "o":
+        this.onAction({ type: "create-overseer" });
         return null;
       case "x":
         this.onAction({ type: "kill" });

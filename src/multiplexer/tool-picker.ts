@@ -4,6 +4,8 @@ import { parseEnvAssignments, parseShellArgs, type LaunchOverride } from "../she
 import { applyLineEdit, createLineState, renderLineWindow, type LineState } from "../line-editor.js";
 import { stripAnsi, truncateAnsi } from "../tui/render/text.js";
 import { forkDashboardAgentWithFeedback, spawnDashboardAgentWithFeedback } from "./dashboard-ops.js";
+import { findMainRepo } from "../worktree.js";
+import { setSessionOverseer } from "../metadata-store.js";
 
 type ToolPickerHost = any;
 type ToolEntry = [string, ToolConfig];
@@ -199,7 +201,14 @@ export function runSelectedTool(
   tool: ToolConfig,
   opts: { override?: LaunchOverride } = {},
 ): void {
-  const wtPath = host.mode === "dashboard" ? host.dashboardState.focusedWorktreePath : undefined;
+  // The overseer is project-wide: it ignores the focused worktree and roots at the main repo.
+  const overseer = host.toolPickerOverseer === true;
+  host.toolPickerOverseer = false;
+  const wtPath = overseer
+    ? findMainRepo()
+    : host.mode === "dashboard"
+      ? host.dashboardState.focusedWorktreePath
+      : undefined;
   // A plain launch (no explicit override) still applies the tool's configured defaults.
   const override = opts.override ?? defaultsLaunchOverride(tool);
   host.launchOptionsState = null;
@@ -245,10 +254,11 @@ export function runSelectedTool(
       tool: toolKey,
       worktreePath: wtPath,
       launchOverride: override,
+      overseer,
     });
     return;
   }
-  host.createSession(
+  const transport = host.createSession(
     override?.command ?? tool.command,
     override?.args ?? tool.args,
     tool.preambleFlag,
@@ -260,14 +270,18 @@ export function runSelectedTool(
     sessionId,
     false,
     false,
-    undefined,
+    overseer ? { teamId: "overseer", parentSessionId: "", role: "overseer" } : undefined,
     override?.env,
   );
+  if (overseer && transport?.id) {
+    setSessionOverseer(transport.id, true);
+  }
 }
 
-export function showToolPicker(host: ToolPickerHost, sourceSessionId?: string): void {
+export function showToolPicker(host: ToolPickerHost, sourceSessionId?: string, opts?: { overseer?: boolean }): void {
   host.pickerMode = sourceSessionId ? "fork" : "create";
   host.forkSourceSessionId = sourceSessionId ?? null;
+  host.toolPickerOverseer = opts?.overseer === true;
   host.toolPickerIndex = 0;
   host.launchOptionsState = null;
 

@@ -17,7 +17,7 @@ import { deriveSessionSemantics } from "../session-semantics.js";
 import { summarizeUnreadNotificationsBySession } from "../notifications.js";
 import { requestJson } from "../http-client.js";
 import type { SessionTeamMetadata } from "../team.js";
-import { isTeammateSession, selectDirectTeammates } from "../team.js";
+import { isTeammateSession, isOverseerSession, selectDirectTeammates } from "../team.js";
 import { buildWorkflowEntries, describeWorkflowNextAction } from "../workflow.js";
 import { ensureDaemonRunning, ensureProjectService } from "../daemon.js";
 import { isDashboardWindowName } from "../tmux/runtime-manager.js";
@@ -467,7 +467,9 @@ export function buildDashboardWorktreeGroups(
   }>,
   mainRepoPath?: string,
 ): WorktreeGroup[] {
-  const mainSessions = sortDashboardEntriesByCreatedAt(dashSessions.filter((s) => !s.worktreePath));
+  // Overseer sessions render on their own line above the worktrees, never inside a group.
+  const groupable = dashSessions.filter((s) => !isOverseerSession(s));
+  const mainSessions = sortDashboardEntriesByCreatedAt(groupable.filter((s) => !s.worktreePath));
   const mainServices = sortDashboardEntriesByCreatedAt(dashServices.filter((s) => !s.worktreePath));
   const mainWorktree = mainRepoPath ? worktrees.find((wt) => !wt.isBare && wt.path === mainRepoPath) : undefined;
 
@@ -485,7 +487,7 @@ export function buildDashboardWorktreeGroups(
     worktrees
       .filter((wt) => !wt.isBare && wt.path !== mainRepoPath)
       .map((wt) => {
-        const wtSessions = sortDashboardEntriesByCreatedAt(dashSessions.filter((s) => s.worktreePath === wt.path));
+        const wtSessions = sortDashboardEntriesByCreatedAt(groupable.filter((s) => s.worktreePath === wt.path));
         const wtServices = sortDashboardEntriesByCreatedAt(dashServices.filter((s) => s.worktreePath === wt.path));
         return {
           name: wt.name,

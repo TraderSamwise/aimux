@@ -123,6 +123,8 @@ export interface MainCheckoutInfo {
 
 export interface DashboardViewModel {
   sessions: DashboardSession[];
+  /** Overseer sessions, rendered on a dedicated line above the worktree groups. */
+  overseerSessions: DashboardSession[];
   services: DashboardService[];
   worktreeGroups: WorktreeGroup[];
   hasWorktrees: boolean;
@@ -148,6 +150,7 @@ export function derivedStatusLabel(session: DashboardSession): string {
 export class Dashboard {
   private viewModel: DashboardViewModel = {
     sessions: [],
+    overseerSessions: [],
     services: [],
     worktreeGroups: [],
     hasWorktrees: false,

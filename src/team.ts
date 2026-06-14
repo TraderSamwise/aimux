@@ -27,6 +27,10 @@ export function isTeammateSession(session: { team?: SessionTeamMetadata } | unde
   return Boolean(session?.team?.parentSessionId);
 }
 
+export function isOverseerSession(session: { team?: SessionTeamMetadata } | undefined): boolean {
+  return session?.team?.role === "overseer";
+}
+
 export function compareTeammateSessions(
   left: { id: string; createdAt?: string; team?: SessionTeamMetadata },
   right: { id: string; createdAt?: string; team?: SessionTeamMetadata },
