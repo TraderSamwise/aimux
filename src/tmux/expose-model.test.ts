@@ -83,4 +83,48 @@ describe("listExposeAgentItems", () => {
     expect(result.scope).toBe("all");
     expect(result.items.map((item) => item.id).sort()).toEqual(["main-agent", "wt-agent"]);
   });
+
+  it("force-global ignores teammate-window narrowing", () => {
+    const tmux = {
+      getProjectSession: vi.fn(() => ({ sessionName: "aimux-repo-abc" })),
+      listManagedWindows: vi.fn(() => [
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@1", windowIndex: 1, windowName: "claude" },
+          metadata: { sessionId: "main-agent", label: "Main", command: "claude", worktreePath: "/repo" },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@2", windowIndex: 2, windowName: "codex" },
+          metadata: {
+            sessionId: "wt-agent",
+            label: "Worktree",
+            command: "codex",
+            worktreePath: "/repo/.aimux/worktrees/feat-x",
+          },
+        },
+        {
+          target: { sessionName: "aimux-repo-abc", windowId: "@3", windowIndex: 3, windowName: "claude" },
+          metadata: {
+            sessionId: "teammate",
+            label: "Teammate",
+            command: "claude",
+            worktreePath: "/repo",
+            team: { parentSessionId: "main-agent" },
+          },
+        },
+      ]),
+      listWindows: vi.fn(() => [
+        { id: "@1", index: 1, name: "claude", active: false },
+        { id: "@2", index: 2, name: "codex", active: false },
+        { id: "@3", index: 3, name: "claude", active: true },
+      ]),
+    } as unknown as TmuxRuntimeManager;
+
+    const result = listExposeAgentItems(
+      { projectRoot: "/repo", currentWindow: "claude", currentWindowId: "@3" },
+      config(true),
+      tmux,
+    );
+    expect(result.scope).toBe("all");
+    expect(result.items.map((item) => item.id).sort()).toEqual(["main-agent", "wt-agent"]);
+  });
 });

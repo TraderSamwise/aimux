@@ -1268,9 +1268,11 @@ describe("tmux-control.sh", () => {
     ]);
 
     const log = readLog(envRoot);
+    const curlLog = readCurlLog(envRoot);
     expect(
       log.some((entry) => entry.includes("display-popup -c /dev/live -T aimux exposé -x C -y C -w 90% -h 90% -E exec")),
     ).toBe(true);
     expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(true);
+    expect(curlLog).toEqual([]);
   });
 });

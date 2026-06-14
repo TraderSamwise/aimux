@@ -151,7 +151,7 @@ export function listSwitchableAgentItems(
   let managed = managedWindows
     .filter(({ target, metadata }) => {
       if (isDashboardWindowName(target.windowName)) return false;
-      if (teammateParentSessionId) {
+      if (teammateParentSessionId && scope !== "all") {
         return metadata.kind !== "service" && metadata.team?.parentSessionId === teammateParentSessionId;
       }
       if (metadata.team) return false;
