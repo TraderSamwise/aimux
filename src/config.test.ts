@@ -90,6 +90,24 @@ describe("config", () => {
     expect(loadConfig({ includeGlobal: false }).expose.forceGlobalScope).toBe(true);
   });
 
+  it("reads an explicit projectRoot config without touching global path state", () => {
+    // Exposé relies on this to load config without initPaths' write side effects.
+    const otherRepo = mkdtempSync(join(tmpdir(), "aimux-config-other-"));
+    try {
+      mkdirSync(join(otherRepo, ".git"), { recursive: true });
+      mkdirSync(join(otherRepo, ".aimux"), { recursive: true });
+      writeFileSync(
+        join(otherRepo, ".aimux/config.json"),
+        JSON.stringify({ expose: { forceGlobalScope: true } }, null, 2) + "\n",
+      );
+      expect(loadConfig({ includeGlobal: false, projectRoot: otherRepo }).expose.forceGlobalScope).toBe(true);
+      // The default-init repo (repoRoot) has no such override.
+      expect(loadConfig({ includeGlobal: false }).expose.forceGlobalScope).toBe(false);
+    } finally {
+      rmSync(otherRepo, { recursive: true, force: true });
+    }
+  });
+
   it("defaults graveyard cleanup to a 14 day retention window", () => {
     expect(loadConfig({ includeGlobal: false }).graveyard).toEqual({
       cleanupEnabled: true,
