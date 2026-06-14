@@ -11,19 +11,23 @@ permissions:
 jobs:
   release-assets:
     name: Build release assets
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: linux
             arch: x64
+            runner: ubuntu-latest
           - platform: linux
             arch: arm64
+            runner: ubuntu-latest
           - platform: darwin
             arch: x64
+            runner: macos-latest
           - platform: darwin
             arch: arm64
+            runner: macos-latest
 
     steps:
       - uses: actions/checkout@v4
