@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import type { SessionMetadata } from "./metadata-store.js";
 import type { AlertEvent, AlertKind } from "./project-events.js";
+import { getRepoRoot } from "./paths.js";
 
 export interface SessionAlertDisplayContext {
   label?: string;
@@ -49,6 +50,77 @@ export function displayWorktreeLabel(context: SessionAlertDisplayContext): strin
   if (branch) return branch;
   const path = context.worktreePath?.trim();
   return path ? basename(path) : undefined;
+}
+
+function projectDisplayContext(input: AlertPublishInput): { projectName?: string; projectRoot?: string } {
+  if (input.projectName?.trim() || input.projectRoot?.trim()) {
+    return {
+      projectName: input.projectName?.trim() || undefined,
+      projectRoot: input.projectRoot?.trim() || undefined,
+    };
+  }
+  try {
+    const projectRoot = getRepoRoot();
+    return { projectName: basename(projectRoot), projectRoot };
+  } catch {
+    return {};
+  }
+}
+
+export function alertCategoryLabel(input: Pick<AlertPublishInput, "kind" | "interaction">): string {
+  if (input.kind === "interaction_request") {
+    if (input.interaction?.type === "permission") return "Permission";
+    if (input.interaction?.type === "exit_plan") return "Plan review";
+    if (input.interaction?.type === "question") return "Question";
+    if (input.interaction?.type === "input") return "Input";
+    return "Interaction";
+  }
+  if (input.kind === "needs_input") return "Needs input";
+  if (input.kind === "task_done") return "Done";
+  if (input.kind === "task_failed") return "Error";
+  if (input.kind === "blocked") return "Blocked";
+  if (input.kind === "message_waiting") return "Message";
+  if (input.kind === "handoff_waiting") return "Handoff";
+  if (input.kind === "task_assigned") return "Task";
+  if (input.kind === "review_waiting") return "Review";
+  return "Activity";
+}
+
+export function alertReasonLabel(input: Pick<AlertPublishInput, "kind" | "dedupeKey" | "interaction">): string {
+  if (input.kind === "interaction_request") {
+    if (input.interaction?.telemetry) return "Tool prompt observed";
+    if (input.interaction?.type === "permission") return "Agent requested permission";
+    if (input.interaction?.type === "exit_plan") return "Agent requested plan review";
+    if (input.interaction?.type === "question") return "Agent asked a question";
+    return "Agent requested input";
+  }
+  if (input.kind === "needs_input") {
+    if (input.dedupeKey?.startsWith("idle-needs-input:")) return "Agent stopped after a turn";
+    return "Agent is waiting for input";
+  }
+  if (input.kind === "task_done") return "Agent or service finished";
+  if (input.kind === "task_failed") return "Agent or service errored";
+  if (input.kind === "blocked") return "Agent is blocked";
+  if (input.kind === "message_waiting") return "Message is waiting";
+  if (input.kind === "handoff_waiting") return "Handoff is waiting";
+  if (input.kind === "task_assigned") return "Task was assigned";
+  if (input.kind === "review_waiting") return "Review is waiting";
+  return "Notification";
+}
+
+function alertLocationTitle(input: AlertPublishInput, context?: SessionAlertDisplayContext): string {
+  const project = projectDisplayContext(input);
+  const projectName = project.projectName ?? "aimux";
+  const worktree = input.worktreeName?.trim() || (context ? displayWorktreeLabel(context) : undefined);
+  return worktree ? `${projectName} / ${worktree}` : projectName;
+}
+
+function alertMessageBody(reason: string, subjectTitle: string, message: string): string {
+  const detail = message.trim();
+  const subject = subjectTitle.trim();
+  const parts = [reason, subject].filter(Boolean).join(": ");
+  if (!detail || detail === subject || detail === parts) return parts || detail || "aimux";
+  return `${parts} - ${detail}`;
 }
 
 export function sessionAlertSubject(
@@ -103,9 +175,21 @@ export function contextualizeAlertInput(
   input: AlertPublishInput,
   context?: SessionAlertDisplayContext,
 ): AlertPublishInput {
+  const project = projectDisplayContext(input);
+  const categoryLabel = input.categoryLabel?.trim() || alertCategoryLabel(input);
+  const reasonLabel = input.reasonLabel?.trim() || alertReasonLabel(input);
+  const subjectTitle = sessionAlertTitle(input.kind, input.sessionId, input.title, context);
+  const worktreeName = input.worktreeName?.trim() || (context ? displayWorktreeLabel(context) : undefined);
   return {
     ...input,
-    title: sessionAlertTitle(input.kind, input.sessionId, input.title, context),
+    title: `[${categoryLabel}] ${alertLocationTitle(input, context)}`,
+    message: alertMessageBody(reasonLabel, subjectTitle, input.message),
+    projectName: project.projectName,
+    projectRoot: project.projectRoot,
     worktreePath: input.worktreePath ?? context?.worktreePath,
+    worktreeName,
+    branch: input.branch ?? context?.branch,
+    categoryLabel,
+    reasonLabel,
   };
 }

@@ -1891,7 +1891,8 @@ describe("MetadataServer threads API", () => {
     const text = await streamRead;
     expect(text).toContain("event: alert");
     expect(text).toContain('"kind":"task_done"');
-    expect(text).toContain('"message":"Finished parser audit."');
+    expect(text).toContain('"categoryLabel":"Done"');
+    expect(text).toContain("Finished parser audit.");
   });
 
   it("emits message waiting alerts for thread sends", async () => {
@@ -2059,7 +2060,7 @@ describe("MetadataServer threads API", () => {
     expect(streamRes.ok).toBe(true);
     expect(streamRes.body).toBeTruthy();
 
-    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"Review approved:'));
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("Review approved:"));
 
     const approveRes = await fetch(`${base}/reviews/approve`, {
       method: "POST",
@@ -2099,7 +2100,7 @@ describe("MetadataServer threads API", () => {
     expect(streamRes.ok).toBe(true);
     expect(streamRes.body).toBeTruthy();
 
-    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes('"Changes requested:'));
+    const streamRead = readSseUntil(streamRes.body!, (text) => text.includes("Changes requested:"));
 
     const changesRes = await fetch(`${base}/reviews/request-changes`, {
       method: "POST",
@@ -2331,15 +2332,23 @@ describe("MetadataServer threads API", () => {
     const listed = (await listRes.json()) as {
       ok: boolean;
       unreadCount: number;
-      notifications: Array<{ sessionId?: string; title: string; body: string }>;
+      notifications: Array<{
+        sessionId?: string;
+        title: string;
+        body: string;
+        categoryLabel?: string;
+        reasonLabel?: string;
+      }>;
     };
     expect(listRes.ok).toBe(true);
     expect(listed.ok).toBe(true);
     expect(listed.unreadCount).toBe(1);
     expect(listed.notifications[0]).toMatchObject({
       sessionId: "claude-1",
-      title: "claude-1 needs input",
-      body: "Waiting — Agent needs input",
+      title: expect.stringContaining("[Needs input]"),
+      body: "Agent is waiting for input: claude-1 needs input - Waiting — Agent needs input",
+      categoryLabel: "Needs input",
+      reasonLabel: "Agent is waiting for input",
     });
 
     const clearRes = await fetch(`${base}/notifications/clear`, {
@@ -2392,13 +2401,23 @@ describe("MetadataServer threads API", () => {
     const listRes = await fetch(`${base}/notifications`);
     const listed = (await listRes.json()) as {
       ok: boolean;
-      notifications: Array<{ sessionId?: string; title: string; body: string }>;
+      notifications: Array<{
+        sessionId?: string;
+        title: string;
+        body: string;
+        worktreeName?: string;
+        categoryLabel?: string;
+        reasonLabel?: string;
+      }>;
     };
     expect(listRes.ok).toBe(true);
     expect(listed.notifications[0]).toMatchObject({
       sessionId: "claude-hb01nv",
-      title: "bugs @ Main Checkout needs input",
-      body: "Claude is waiting for your input",
+      title: expect.stringContaining("[Needs input]"),
+      body: "Agent is waiting for input: bugs @ Main Checkout needs input - Claude is waiting for your input",
+      worktreeName: "Main Checkout",
+      categoryLabel: "Needs input",
+      reasonLabel: "Agent is waiting for input",
     });
   });
 
@@ -2439,13 +2458,23 @@ describe("MetadataServer threads API", () => {
     const listRes = await fetch(`${base}/notifications`);
     const listed = (await listRes.json()) as {
       ok: boolean;
-      notifications: Array<{ sessionId?: string; title: string; body: string }>;
+      notifications: Array<{
+        sessionId?: string;
+        title: string;
+        body: string;
+        worktreeName?: string;
+        categoryLabel?: string;
+        reasonLabel?: string;
+      }>;
     };
     expect(listRes.ok).toBe(true);
     expect(listed.notifications[0]).toMatchObject({
       sessionId: "service-1",
-      title: "shell @ Main Checkout finished",
-      body: "Shell returned to a prompt.",
+      title: expect.stringContaining("[Done]"),
+      body: "Agent or service finished: shell @ Main Checkout finished - Shell returned to a prompt.",
+      worktreeName: "Main Checkout",
+      categoryLabel: "Done",
+      reasonLabel: "Agent or service finished",
     });
   });
 

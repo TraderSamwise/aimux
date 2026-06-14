@@ -88,6 +88,31 @@ describe("For You feed classifier", () => {
     });
   });
 
+  it("shows structured category and project/worktree metadata on notification cards", () => {
+    const feed = buildForYouFeed({
+      securityEvents: [],
+      desktopState: null,
+      notifications: [
+        notification({
+          id: "n-meta",
+          title: "[Needs input] aimux / notifications",
+          body: "Agent is waiting for input.",
+          kind: "needs_input",
+          categoryLabel: "Needs input",
+          projectName: "aimux",
+          worktreeName: "notifications",
+          sessionId: "codex-1",
+          unread: true,
+        }),
+      ],
+    });
+
+    expect(feed.cards[0]).toMatchObject({
+      title: "[Needs input] aimux / notifications",
+      subtitle: "Needs input · aimux / notifications · codex-1",
+    });
+  });
+
   it("merges security alerts, notifications, and pending lifecycle state", () => {
     const security: SecurityInboxEvent = {
       id: "sec-1",

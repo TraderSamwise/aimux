@@ -112,13 +112,13 @@ export function evaluateNotificationRecord(
   const kind = mapNotificationRecordKind(record.kind);
   if (!kind || !isAgentNotificationEnabled(settings, kind)) return null;
 
-  const projectPrefix = context.projectName ? `${context.projectName}: ` : "";
+  const title = titleWithProject(record.title, context, record.projectName);
   return {
     id: record.id,
     dedupeKey: record.dedupeKey || `notification:${record.id}`,
     category: "agent",
     kind,
-    title: `${projectPrefix}${record.title}`,
+    title,
     body: record.body || record.subtitle || record.title,
     target: {
       projectPath: context.projectPath,
@@ -136,7 +136,7 @@ export function evaluateAlertEvent(
   const kind = mapNotificationRecordKind(event.kind);
   if (!kind || !isAgentNotificationEnabled(settings, kind)) return null;
 
-  const projectPrefix = context.projectName ? `${context.projectName}: ` : "";
+  const title = titleWithProject(event.title || "aimux", context, event.projectName);
   const id =
     event.notificationId ||
     `alert:${event.projectId}:${event.kind}:${event.sessionId ?? "project"}:${event.ts}`;
@@ -146,7 +146,7 @@ export function evaluateAlertEvent(
       event.dedupeKey || (event.notificationId ? `notification:${event.notificationId}` : id),
     category: "agent",
     kind,
-    title: `${projectPrefix}${event.title || "aimux"}`,
+    title,
     body: event.message || event.sessionId || event.kind,
     target: {
       projectPath: context.projectPath,
@@ -204,6 +204,21 @@ function buildAgentEvent(
 
 function normalizeState(value: string | undefined): string {
   return value?.trim() || "none";
+}
+
+function titleWithProject(
+  title: string,
+  context: SessionNotificationContext,
+  serverProjectName?: string,
+): string {
+  const trimmed = title.trim() || "aimux";
+  const projectName = serverProjectName?.trim() || context.projectName?.trim();
+  if (!projectName) return trimmed;
+  if (serverProjectName?.trim()) return trimmed;
+  if (trimmed.startsWith(`${projectName}: `) || trimmed.includes(`${projectName} /`)) {
+    return trimmed;
+  }
+  return `${projectName}: ${trimmed}`;
 }
 
 export function isRecentNotificationRecord(record: NotificationRecord, nowMs: number): boolean {

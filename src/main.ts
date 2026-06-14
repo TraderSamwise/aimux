@@ -3640,9 +3640,16 @@ program
           const notification = upsertNotification({
             title: alert.title,
             subtitle: opts.subtitle?.trim() || undefined,
-            body,
+            body: alert.message,
             sessionId,
             kind,
+            projectName: alert.projectName,
+            projectRoot: alert.projectRoot,
+            worktreePath: alert.worktreePath,
+            worktreeName: alert.worktreeName,
+            branch: alert.branch,
+            categoryLabel: alert.categoryLabel,
+            reasonLabel: alert.reasonLabel,
           });
           notifyAlert({
             type: "alert",
@@ -3651,6 +3658,14 @@ program
             sessionId,
             title: alert.title,
             message: alert.message,
+            notificationId: notification.id,
+            projectName: alert.projectName,
+            projectRoot: alert.projectRoot,
+            worktreePath: alert.worktreePath,
+            worktreeName: alert.worktreeName,
+            branch: alert.branch,
+            categoryLabel: alert.categoryLabel,
+            reasonLabel: alert.reasonLabel,
             ts: notification.createdAt,
             forceNotify: true,
           });

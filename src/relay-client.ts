@@ -29,7 +29,13 @@ export interface RelayNotificationPush {
   sessionId?: string;
   projectId?: string;
   notificationId?: string;
+  projectName?: string;
   projectRoot?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
   dedupeKey?: string;
 }
 
