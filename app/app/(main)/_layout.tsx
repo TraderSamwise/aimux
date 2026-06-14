@@ -284,6 +284,17 @@ export default function MainLayout() {
     const projectPath = effectiveProjectPath;
     let cancelled = false;
     let handle: { stop: () => void } | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function scheduleReconnect() {
+      if (cancelled || reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        handle?.stop();
+        handle = null;
+        void connect();
+      }, 3000);
+    }
 
     async function connect() {
       try {
@@ -309,17 +320,24 @@ export default function MainLayout() {
             }
           },
           onError: (err) => {
-            if (!cancelled) console.warn("notification heartbeat failed:", err);
+            if (!cancelled) {
+              console.warn("notification heartbeat failed:", err);
+              scheduleReconnect();
+            }
           },
         });
       } catch (err) {
-        if (!cancelled) console.warn("notification heartbeat setup failed:", err);
+        if (!cancelled) {
+          console.warn("notification heartbeat setup failed:", err);
+          scheduleReconnect();
+        }
       }
     }
 
     void connect();
     return () => {
       cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       handle?.stop();
     };
     // endpoint is included as a value but we depend on endpointKey for stable identity
