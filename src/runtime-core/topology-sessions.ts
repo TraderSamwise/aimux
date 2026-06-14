@@ -25,6 +25,7 @@ export type RuntimeTopologySessionState = {
   worktreePath?: string;
   label?: string;
   headline?: string;
+  graveyardReason?: string;
   tmuxTarget?: {
     sessionName: string;
     windowId: string;
@@ -120,6 +121,7 @@ function sessionToTopologySession(
     worktreePath: session.worktreePath,
     label: session.label,
     headline: session.headline,
+    graveyardReason: session.graveyardReason,
     team: session.team,
     createdAt: session.createdAt ?? now,
     updatedAt: now,
@@ -170,6 +172,7 @@ export function topologySessionToSessionState(
     worktreePath: session.worktreePath ?? node?.cwd,
     label: session.label ?? node?.label,
     headline: session.headline,
+    graveyardReason: session.graveyardReason,
     tmuxTarget:
       binding?.tmuxSession && binding.tmuxWindowId && typeof binding.tmuxWindowIndex === "number"
         ? {
@@ -265,7 +268,7 @@ export function upsertTopologySession(
 
 export function moveTopologySessionToGraveyard(
   sessionId: string,
-  input?: { store?: RuntimeTopologyStore; now?: string },
+  input?: { store?: RuntimeTopologyStore; now?: string; reason?: string },
 ): RuntimeTopologySessionState | undefined {
   const store = input?.store ?? createRuntimeTopologyStore();
   const now = input?.now ?? new Date().toISOString();
@@ -275,6 +278,7 @@ export function moveTopologySessionToGraveyard(
     if (existing) {
       existing.status = "graveyard";
       existing.updatedAt = now;
+      if (input?.reason) existing.graveyardReason = input.reason;
       topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
       moved = topologySessionToSessionState(existing, topology);
       return topology;
@@ -322,6 +326,7 @@ export function resurrectTopologySession(sessionId: string, input?: { store?: Ru
     if (!session) return topology;
     session.status = "offline";
     session.updatedAt = now;
+    session.graveyardReason = undefined;
     topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== session.nodeId);
     restored = topologySessionToSessionState(session, topology);
     return topology;
