@@ -34,6 +34,22 @@ export interface DesktopNotificationAttempt {
   helperPath?: string;
 }
 
+export interface MacNotifierHelperCheck {
+  ok: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  error?: string;
+}
+
+export interface DesktopNotifierDoctorReport {
+  platform: NodeJS.Platform;
+  transport: DesktopNotificationTransport;
+  helperPath: string | null;
+  helperCandidates: string[];
+  helperCheck?: MacNotifierHelperCheck;
+}
+
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 
 function packageRoot(moduleDir: string): string {
@@ -105,4 +121,69 @@ export function sendDesktopNotification(
   const helperPath = findMacNotifierHelper(deps);
   if (!helperPath) return sendViaNodeNotifier(payload, deps);
   return sendViaMacHelper(helperPath, payload, deps);
+}
+
+function exitCodeFromError(error: Error | null): number | null {
+  if (!error) return 0;
+  const code = (error as NodeJS.ErrnoException).code;
+  return typeof code === "number" ? code : null;
+}
+
+export function checkMacNotifierHelper(
+  helperPath: string,
+  deps: Pick<DesktopNotifierDeps, "execFile"> = {},
+): Promise<MacNotifierHelperCheck> {
+  const execFile = deps.execFile ?? nodeExecFile;
+
+  return new Promise((resolveCheck) => {
+    execFile(helperPath, ["--check"], { timeout: 5000 }, (error, stdout, stderr) => {
+      resolveCheck({
+        ok: !error,
+        exitCode: exitCodeFromError(error),
+        stdout: typeof stdout === "string" ? stdout.trim() : "",
+        stderr: typeof stderr === "string" ? stderr.trim() : "",
+        error: error?.message,
+      });
+    });
+  });
+}
+
+export async function buildDesktopNotifierDoctorReport(
+  deps: Pick<DesktopNotifierDeps, "platform" | "env" | "moduleDir" | "existsSync" | "execFile"> = {},
+): Promise<DesktopNotifierDoctorReport> {
+  const platform = deps.platform ?? process.platform;
+  const helperCandidates = platform === "darwin" ? macNotifierCandidates(deps) : [];
+  const helperPath = platform === "darwin" ? findMacNotifierHelper(deps) : null;
+  const helperCheck = helperPath ? await checkMacNotifierHelper(helperPath, deps) : undefined;
+
+  return {
+    platform,
+    transport: platform === "darwin" && helperPath ? "mac-helper" : "node-notifier",
+    helperPath,
+    helperCandidates,
+    helperCheck,
+  };
+}
+
+export function renderDesktopNotifierDoctorReport(report: DesktopNotifierDoctorReport): string {
+  const lines = ["Desktop notifications", `Platform: ${report.platform}`, `Transport: ${report.transport}`];
+
+  if (report.platform !== "darwin") {
+    lines.push("macOS helper: not used on this platform");
+    return lines.join("\n");
+  }
+
+  lines.push(`Helper: ${report.helperPath ?? "not found"}`);
+  if (report.helperCheck) {
+    lines.push(`Helper check: ${report.helperCheck.ok ? "ok" : "failed"}`);
+    if (report.helperCheck.stdout) lines.push(`Helper stdout: ${report.helperCheck.stdout}`);
+    if (report.helperCheck.stderr) lines.push(`Helper stderr: ${report.helperCheck.stderr}`);
+    if (report.helperCheck.error) lines.push(`Helper error: ${report.helperCheck.error}`);
+  }
+  if (!report.helperPath && report.helperCandidates.length > 0) {
+    lines.push("Checked:");
+    for (const candidate of report.helperCandidates) lines.push(`  ${candidate}`);
+  }
+
+  return lines.join("\n");
 }
