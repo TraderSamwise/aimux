@@ -7,6 +7,7 @@ import { initPaths } from "../paths.js";
 import { createRuntimeTopologyStore, emptyRuntimeTopology } from "./topology-store.js";
 import {
   moveTopologySessionToGraveyard,
+  removeTopologySession,
   removeTopologySessionsForWorktree,
   resurrectTopologySession,
   saveRuntimeTopologySessions,
@@ -56,6 +57,24 @@ describe("topology session lifecycle", () => {
     expect(store.read().bindings).toEqual([]);
   });
 
+  it("records a graveyard reason and clears it on resurrection", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      { id: "codex-1", tool: "codex", toolConfigKey: "codex", command: "codex", args: [] },
+      "running",
+      { store, projectRoot: repoRoot },
+    );
+
+    const moved = moveTopologySessionToGraveyard("codex-1", { store, reason: "worktree missing" });
+    expect(moved?.graveyardReason).toBe("worktree missing");
+    expect(store.read().sessions[0]!.graveyardReason).toBe("worktree missing");
+
+    const restored = resurrectTopologySession("codex-1", { store });
+    expect(restored?.status).toBe("offline");
+    expect(restored?.graveyardReason).toBeUndefined();
+    expect(store.read().sessions[0]!.graveyardReason).toBeUndefined();
+  });
+
   it("removes tmux bindings when an explicit status makes a session non-live", () => {
     const store = createRuntimeTopologyStore(topologyPath);
     const session = {
@@ -82,6 +101,91 @@ describe("topology session lifecycle", () => {
 
     expect(moved).toBeUndefined();
     expect(store.read().sessions).toEqual([]);
+  });
+
+  it("records graveyardedAt when a session moves to graveyard", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      {
+        id: "codex-1",
+        tool: "codex",
+        toolConfigKey: "codex",
+        command: "codex",
+        args: [],
+      },
+      "offline",
+      { store, projectRoot: repoRoot, now: "2026-05-25T00:00:00.000Z" },
+    );
+
+    const moved = moveTopologySessionToGraveyard("codex-1", {
+      store,
+      now: "2026-05-26T00:00:00.000Z",
+    });
+
+    expect(moved).toMatchObject({
+      id: "codex-1",
+      status: "graveyard",
+      graveyardedAt: "2026-05-26T00:00:00.000Z",
+    });
+    expect(store.read().sessions[0]?.graveyardedAt).toBe("2026-05-26T00:00:00.000Z");
+  });
+
+  it("keeps the original graveyardedAt while a session remains in graveyard", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      {
+        id: "codex-1",
+        tool: "codex",
+        toolConfigKey: "codex",
+        command: "codex",
+        args: [],
+      },
+      "offline",
+      { store, projectRoot: repoRoot },
+    );
+
+    moveTopologySessionToGraveyard("codex-1", {
+      store,
+      now: "2026-05-26T00:00:00.000Z",
+    });
+    moveTopologySessionToGraveyard("codex-1", {
+      store,
+      now: "2026-05-27T00:00:00.000Z",
+    });
+
+    expect(store.read().sessions[0]).toMatchObject({
+      status: "graveyard",
+      updatedAt: "2026-05-27T00:00:00.000Z",
+      graveyardedAt: "2026-05-26T00:00:00.000Z",
+    });
+  });
+
+  it("clears graveyardedAt when a session is resurrected", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    upsertTopologySession(
+      {
+        id: "codex-1",
+        tool: "codex",
+        toolConfigKey: "codex",
+        command: "codex",
+        args: [],
+      },
+      "offline",
+      { store, projectRoot: repoRoot },
+    );
+    moveTopologySessionToGraveyard("codex-1", {
+      store,
+      now: "2026-05-26T00:00:00.000Z",
+    });
+
+    const restored = resurrectTopologySession("codex-1", {
+      store,
+      now: "2026-05-27T00:00:00.000Z",
+    });
+
+    expect(restored).toMatchObject({ id: "codex-1", status: "offline" });
+    expect(restored?.graveyardedAt).toBeUndefined();
+    expect(store.read().sessions[0]?.graveyardedAt).toBeUndefined();
   });
 
   it("prunes topology references to missing nodes and sessions on store writes", () => {
@@ -262,5 +366,174 @@ describe("topology session lifecycle", () => {
     expect(removed.map((session) => session.id)).toEqual(["codex-a"]);
     expect(store.read().sessions.map((session) => session.id)).toEqual(["codex-b"]);
     expect(store.read().nodes.map((node) => node.id)).toEqual(["agent:codex-b"]);
+  });
+
+  it("removes a single session and its topology references", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const now = "2026-05-25T00:00:00.000Z";
+    store.write({
+      ...emptyRuntimeTopology(now),
+      rigs: [{ id: "rig-a", name: "repo", projectRoot: repoRoot, createdAt: now, updatedAt: now }],
+      nodes: [
+        { id: "agent:keep", rigId: "rig-a", logicalId: "keep", createdAt: now },
+        { id: "agent:drop", rigId: "rig-a", logicalId: "drop", createdAt: now },
+      ],
+      edges: [
+        {
+          id: "edge-drop",
+          rigId: "rig-a",
+          sourceNodeId: "agent:keep",
+          targetNodeId: "agent:drop",
+          kind: "team",
+          createdAt: now,
+        },
+      ],
+      bindings: [{ id: "tmux:drop", nodeId: "agent:drop", updatedAt: now }],
+      sessions: [
+        { id: "keep", nodeId: "agent:keep", status: "offline", createdAt: now, updatedAt: now },
+        { id: "drop", nodeId: "agent:drop", status: "graveyard", createdAt: now, updatedAt: now },
+      ],
+      teamRoles: [
+        { id: "role-keep", rigId: "rig-a", nodeId: "agent:keep", role: "coder", createdAt: now, updatedAt: now },
+        { id: "role-drop", rigId: "rig-a", nodeId: "agent:drop", role: "coder", createdAt: now, updatedAt: now },
+      ],
+      remoteClients: [
+        {
+          id: "client-1",
+          rigId: "rig-a",
+          status: "online",
+          lastSeenAt: now,
+          ownsSessionIds: ["keep", "drop"],
+        },
+      ],
+      lifecycleOperations: [
+        {
+          id: "op-drop",
+          rigId: "rig-a",
+          kind: "agent.stop",
+          status: "pending",
+          targetKind: "session",
+          targetId: "drop",
+          startedAt: now,
+          updatedAt: now,
+        },
+      ],
+      exchangeRefs: [
+        {
+          id: "exchange-drop",
+          rigId: "rig-a",
+          kind: "task",
+          exchangeId: "task-drop",
+          sessionId: "drop",
+          nodeId: "agent:drop",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    const removed = removeTopologySession("drop", { store });
+
+    expect(removed?.id).toBe("drop");
+    expect(store.read().sessions.map((session) => session.id)).toEqual(["keep"]);
+    expect(store.read().nodes.map((node) => node.id)).toEqual(["agent:keep"]);
+    expect(store.read().edges).toEqual([]);
+    expect(store.read().bindings).toEqual([]);
+    expect(store.read().teamRoles.map((role) => role.id)).toEqual(["role-keep"]);
+    expect(store.read().remoteClients).toMatchObject([{ id: "client-1", ownsSessionIds: ["keep"] }]);
+    expect(store.read().lifecycleOperations).toEqual([]);
+    expect(store.read().exchangeRefs).toEqual([]);
+  });
+
+  it("removes worktree sessions and their topology references", () => {
+    const store = createRuntimeTopologyStore(topologyPath);
+    const now = "2026-05-25T00:00:00.000Z";
+    const worktreePath = join(repoRoot, ".aimux", "worktrees", "drop");
+    store.write({
+      ...emptyRuntimeTopology(now),
+      rigs: [{ id: "rig-a", name: "repo", projectRoot: repoRoot, createdAt: now, updatedAt: now }],
+      nodes: [
+        { id: "agent:keep", rigId: "rig-a", logicalId: "keep", createdAt: now },
+        { id: "agent:drop", rigId: "rig-a", logicalId: "drop", cwd: worktreePath, createdAt: now },
+      ],
+      edges: [
+        {
+          id: "edge-drop",
+          rigId: "rig-a",
+          sourceNodeId: "agent:keep",
+          targetNodeId: "agent:drop",
+          kind: "team",
+          createdAt: now,
+        },
+      ],
+      bindings: [{ id: "tmux:drop", nodeId: "agent:drop", updatedAt: now }],
+      sessions: [
+        { id: "keep", nodeId: "agent:keep", status: "offline", createdAt: now, updatedAt: now },
+        {
+          id: "drop",
+          nodeId: "agent:drop",
+          status: "graveyard",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      teamRoles: [
+        { id: "role-keep", rigId: "rig-a", nodeId: "agent:keep", role: "coder", createdAt: now, updatedAt: now },
+        {
+          id: "role-drop",
+          rigId: "rig-a",
+          nodeId: "agent:drop",
+          parentNodeId: "agent:keep",
+          role: "reviewer",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      remoteClients: [
+        {
+          id: "client-1",
+          rigId: "rig-a",
+          status: "online",
+          lastSeenAt: now,
+          ownsSessionIds: ["keep", "drop"],
+        },
+      ],
+      lifecycleOperations: [
+        {
+          id: "op-drop",
+          rigId: "rig-a",
+          kind: "agent.stop",
+          status: "pending",
+          targetKind: "session",
+          targetId: "drop",
+          startedAt: now,
+          updatedAt: now,
+        },
+      ],
+      exchangeRefs: [
+        {
+          id: "exchange-drop",
+          rigId: "rig-a",
+          kind: "task",
+          exchangeId: "task-drop",
+          sessionId: "drop",
+          nodeId: "agent:drop",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    const removed = removeTopologySessionsForWorktree(worktreePath, { store });
+
+    expect(removed.map((session) => session.id)).toEqual(["drop"]);
+    expect(store.read().sessions.map((session) => session.id)).toEqual(["keep"]);
+    expect(store.read().nodes.map((node) => node.id)).toEqual(["agent:keep"]);
+    expect(store.read().edges).toEqual([]);
+    expect(store.read().bindings).toEqual([]);
+    expect(store.read().teamRoles.map((role) => role.id)).toEqual(["role-keep"]);
+    expect(store.read().remoteClients).toMatchObject([{ id: "client-1", ownsSessionIds: ["keep"] }]);
+    expect(store.read().lifecycleOperations).toEqual([]);
+    expect(store.read().exchangeRefs).toEqual([]);
   });
 });

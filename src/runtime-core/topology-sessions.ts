@@ -20,17 +20,20 @@ export type RuntimeTopologySessionState = {
   status?: RuntimeTopologySessionStatus;
   lifecycle?: "live" | "offline";
   createdAt?: string;
+  updatedAt?: string;
   backendSessionId?: string;
   team?: unknown;
   worktreePath?: string;
   label?: string;
   headline?: string;
+  graveyardReason?: string;
   tmuxTarget?: {
     sessionName: string;
     windowId: string;
     windowIndex: number;
     windowName: string;
   };
+  graveyardedAt?: string;
 };
 
 type SaveRuntimeTopologySessionsInput = {
@@ -120,10 +123,12 @@ function sessionToTopologySession(
     worktreePath: session.worktreePath,
     label: session.label,
     headline: session.headline,
+    graveyardReason: session.graveyardReason,
     team: session.team,
     createdAt: session.createdAt ?? now,
     updatedAt: now,
     lastSeenAt: session.lifecycle === "offline" ? undefined : now,
+    graveyardedAt: session.graveyardedAt,
   };
 }
 
@@ -165,11 +170,14 @@ export function topologySessionToSessionState(
     status: session.status,
     lifecycle: lifecycleFromStatus(session.status),
     createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
     backendSessionId: session.backendSessionId,
     team: session.team,
     worktreePath: session.worktreePath ?? node?.cwd,
     label: session.label ?? node?.label,
     headline: session.headline,
+    graveyardedAt: session.graveyardedAt,
+    graveyardReason: session.graveyardReason,
     tmuxTarget:
       binding?.tmuxSession && binding.tmuxWindowId && typeof binding.tmuxWindowIndex === "number"
         ? {
@@ -253,6 +261,10 @@ export function upsertTopologySession(
     const rigId = ensureRig(topology, projectRoot, now);
     const node = upsertNode(topology, session, rigId, now);
     const nextSession = { ...sessionToTopologySession(session, node.id, now), status };
+    if (status !== "graveyard") {
+      delete nextSession.graveyardedAt;
+      delete nextSession.graveyardReason;
+    }
     topology.sessions = [...topology.sessions.filter((entry) => entry.id !== session.id), nextSession];
     const shouldBind = status === "running" || status === "idle" || status === "starting";
     const binding = shouldBind ? sessionToBinding({ ...session, lifecycle: "live" }, node.id, now) : undefined;
@@ -265,7 +277,7 @@ export function upsertTopologySession(
 
 export function moveTopologySessionToGraveyard(
   sessionId: string,
-  input?: { store?: RuntimeTopologyStore; now?: string },
+  input?: { store?: RuntimeTopologyStore; now?: string; reason?: string },
 ): RuntimeTopologySessionState | undefined {
   const store = input?.store ?? createRuntimeTopologyStore();
   const now = input?.now ?? new Date().toISOString();
@@ -275,6 +287,8 @@ export function moveTopologySessionToGraveyard(
     if (existing) {
       existing.status = "graveyard";
       existing.updatedAt = now;
+      existing.graveyardedAt ??= now;
+      if (input?.reason) existing.graveyardReason = input.reason;
       topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
       moved = topologySessionToSessionState(existing, topology);
       return topology;
@@ -292,7 +306,10 @@ export function removeTopologySessionsForWorktree(
   const now = input?.now ?? new Date().toISOString();
   let removed: RuntimeTopologySessionState[] = [];
   store.update((topology) => {
-    const removing = topology.sessions.filter((session) => session.worktreePath === worktreePath);
+    const nodeById = new Map(topology.nodes.map((node) => [node.id, node]));
+    const removing = topology.sessions.filter(
+      (session) => (session.worktreePath ?? nodeById.get(session.nodeId)?.cwd) === worktreePath,
+    );
     if (removing.length === 0) return topology;
     const removingSessionIds = new Set(removing.map((session) => session.id));
     const removingNodeIds = new Set(removing.map((session) => session.nodeId));
@@ -301,12 +318,58 @@ export function removeTopologySessionsForWorktree(
     topology.sessions = topology.sessions.filter((session) => !removingSessionIds.has(session.id));
     topology.bindings = topology.bindings.filter((binding) => !removingNodeIds.has(binding.nodeId));
     topology.nodes = topology.nodes.filter((node) => !removingNodeIds.has(node.id));
+    topology.edges = topology.edges.filter(
+      (edge) => !removingNodeIds.has(edge.sourceNodeId) && !removingNodeIds.has(edge.targetNodeId),
+    );
+    topology.teamRoles = topology.teamRoles.filter(
+      (role) => !removingNodeIds.has(role.nodeId ?? "") && !removingNodeIds.has(role.parentNodeId ?? ""),
+    );
+    topology.remoteClients = topology.remoteClients.map((client) => ({
+      ...client,
+      ownsSessionIds: client.ownsSessionIds?.filter((id) => !removingSessionIds.has(id)),
+    }));
     topology.lifecycleOperations = topology.lifecycleOperations.filter(
       (operation) => !(operation.targetKind === "session" && removingSessionIds.has(operation.targetId)),
     );
     topology.exchangeRefs = topology.exchangeRefs.filter(
       (ref) =>
         (!ref.sessionId || !removingSessionIds.has(ref.sessionId)) && (!ref.nodeId || !removingNodeIds.has(ref.nodeId)),
+    );
+    return topology;
+  });
+  return removed;
+}
+
+export function removeTopologySession(
+  sessionId: string,
+  input?: { store?: RuntimeTopologyStore; now?: string },
+): RuntimeTopologySessionState | undefined {
+  const store = input?.store ?? createRuntimeTopologyStore();
+  const now = input?.now ?? new Date().toISOString();
+  let removed: RuntimeTopologySessionState | undefined;
+  store.update((topology) => {
+    const existing = topology.sessions.find((session) => session.id === sessionId);
+    if (!existing) return topology;
+    removed = topologySessionToSessionState(existing, topology);
+    topology.generatedAt = now;
+    topology.sessions = topology.sessions.filter((session) => session.id !== sessionId);
+    topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
+    topology.nodes = topology.nodes.filter((node) => node.id !== existing.nodeId);
+    topology.edges = topology.edges.filter(
+      (edge) => edge.sourceNodeId !== existing.nodeId && edge.targetNodeId !== existing.nodeId,
+    );
+    topology.teamRoles = topology.teamRoles.filter(
+      (role) => role.nodeId !== existing.nodeId && role.parentNodeId !== existing.nodeId,
+    );
+    topology.remoteClients = topology.remoteClients.map((client) => ({
+      ...client,
+      ownsSessionIds: client.ownsSessionIds?.filter((id) => id !== sessionId),
+    }));
+    topology.lifecycleOperations = topology.lifecycleOperations.filter(
+      (operation) => !(operation.targetKind === "session" && operation.targetId === sessionId),
+    );
+    topology.exchangeRefs = topology.exchangeRefs.filter(
+      (ref) => ref.sessionId !== sessionId && ref.nodeId !== existing.nodeId,
     );
     return topology;
   });
@@ -322,6 +385,8 @@ export function resurrectTopologySession(sessionId: string, input?: { store?: Ru
     if (!session) return topology;
     session.status = "offline";
     session.updatedAt = now;
+    delete session.graveyardedAt;
+    delete session.graveyardReason;
     topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== session.nodeId);
     restored = topologySessionToSessionState(session, topology);
     return topology;

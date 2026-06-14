@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
+import { loadConfig } from "../config.js";
 import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import {
   addDashboardOperationFailure,
@@ -15,6 +16,13 @@ import { type DashboardService, type DashboardSession } from "../dashboard/index
 import { getProjectStateDir, getStatePath } from "../paths.js";
 import { writeJsonAtomic, writeTextAtomic } from "../atomic-write.js";
 import { debug } from "../debug.js";
+import {
+  buildGraveyardCleanupPlan,
+  deleteAgentAssets,
+  deleteGraveyardAgent,
+  runGraveyardCleanup,
+  type GraveyardCleanupRunResult,
+} from "../graveyard-cleanup.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
@@ -48,6 +56,26 @@ import {
   isToolInternalWorktree,
   listWorktrees as listAllWorktrees,
 } from "../worktree.js";
+
+const DEFAULT_GRAVEYARD_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const MIN_GRAVEYARD_CLEANUP_INTERVAL_MS = 60_000;
+
+function normalizeGraveyardCleanupIntervalMs(value: unknown): number {
+  const intervalMs = Number(value);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return DEFAULT_GRAVEYARD_CLEANUP_INTERVAL_MS;
+  return Math.max(MIN_GRAVEYARD_CLEANUP_INTERVAL_MS, intervalMs);
+}
+
+function refreshAfterGraveyardCleanup(host: any): void {
+  host.loadOfflineTopologySessions?.();
+  host.invalidateDesktopStateSnapshot?.();
+  host.refreshLocalDashboardModel?.();
+  host.writeStatuslineFile?.({ force: true });
+  host.metadataServer?.notifyChange?.();
+  if (host.mode === "dashboard") {
+    host.renderCurrentDashboardView?.();
+  }
+}
 
 function recordDashboardFailure(
   host: any,
@@ -110,6 +138,51 @@ function exchangeTaskCounts(): { pending: number; assigned: number } {
 }
 
 export const persistenceMethods = {
+  async cleanupGraveyard(
+    this: any,
+    input?: { dryRun?: boolean; now?: Date | string },
+  ): Promise<GraveyardCleanupRunResult> {
+    const plan = buildGraveyardCleanupPlan({ now: input?.now });
+    const result = await runGraveyardCleanup(
+      plan,
+      {
+        deleteAgent: (sessionId) => {
+          const deleted = deleteGraveyardAgent(sessionId);
+          this.offlineSessions = (this.offlineSessions ?? []).filter((session: any) => session.id !== sessionId);
+          return deleted;
+        },
+        deleteWorktree: (path) => this.deleteGraveyardWorktree(path),
+      },
+      { dryRun: input?.dryRun === true },
+    );
+    const changed = result.results.some((item) => item.status === "removed");
+    if (changed && input?.dryRun !== true) {
+      refreshAfterGraveyardCleanup(this);
+    }
+    return result;
+  },
+  startGraveyardCleanup(this: any): void {
+    if (this.graveyardCleanupInterval) return;
+    const graveyardConfig = loadConfig().graveyard;
+    if (graveyardConfig.cleanupEnabled === false) return;
+    const intervalMs = normalizeGraveyardCleanupIntervalMs(graveyardConfig.cleanupIntervalMs);
+    this.graveyardCleanupInterval = setInterval(() => {
+      if (this.graveyardCleanupRunning) return;
+      this.graveyardCleanupRunning = true;
+      void this.cleanupGraveyard()
+        .catch((error: unknown) => {
+          debug(`graveyard cleanup failed: ${error instanceof Error ? error.message : String(error)}`, "graveyard");
+        })
+        .finally(() => {
+          this.graveyardCleanupRunning = false;
+        });
+    }, intervalMs);
+  },
+  stopGraveyardCleanup(this: any): void {
+    if (!this.graveyardCleanupInterval) return;
+    clearInterval(this.graveyardCleanupInterval);
+    this.graveyardCleanupInterval = null;
+  },
   writeStatuslineFile(this: any, input?: { force?: boolean }): void {
     try {
       if (this.mode !== "project-service") return;
@@ -536,9 +609,11 @@ export const persistenceMethods = {
     if (existsSync(path)) {
       await removeGraveyardedDesktopWorktree(this, mainRepo, path);
     } else {
+      await pruneGitWorktrees(mainRepo);
       removeWorktreeDependents(this, path);
       removeTopologyWorktree(path);
       this.saveState?.();
+      await pruneGitWorktrees(mainRepo);
     }
     deleteTopologyWorktreeGraveyardEntry(path);
     this.invalidateDesktopStateSnapshot?.();
@@ -913,6 +988,16 @@ export const persistenceMethods = {
   },
 
   async resurrectGraveyardSession(this: any, sessionId: string): Promise<{ sessionId: string; status: "offline" }> {
+    const graveyarded = listTopologySessionStates({ statuses: ["graveyard"] }).find((s: any) => s.id === sessionId);
+    if (!graveyarded) {
+      throw new Error(`Graveyard session "${sessionId}" not found`);
+    }
+    const worktreePath = graveyarded.worktreePath;
+    if (worktreePath && !listWorktreeGraveyardPaths().has(worktreePath) && !existsSync(worktreePath)) {
+      throw new Error(
+        `Cannot resurrect agent "${sessionId}" because its worktree "${worktreePath}" is missing; restore the worktree first`,
+      );
+    }
     const restored = resurrectTopologySession(sessionId);
     if (!restored) {
       throw new Error(`Graveyard session "${sessionId}" not found`);
@@ -1085,11 +1170,19 @@ function stopWorktreeServicesForGraveyard(host: any, path: string): void {
 }
 
 function removeWorktreeDependents(host: any, path: string): void {
+  cleanupAgentAssetsForWorktree(path);
   host.offlineSessions = (host.offlineSessions ?? []).filter((session: any) => session.worktreePath !== path);
   host.offlineServices = (host.offlineServices ?? []).filter((service: any) => service.worktreePath !== path);
   removeTopologySessionsForWorktree(path);
   removeTopologyServicesForWorktree(path);
   removePersistedServicesForWorktree(path);
+}
+
+function cleanupAgentAssetsForWorktree(path: string): void {
+  for (const session of listTopologySessionStates()) {
+    if (session.worktreePath !== path) continue;
+    deleteAgentAssets(session.id);
+  }
 }
 
 function removePersistedServicesForWorktree(path: string): void {

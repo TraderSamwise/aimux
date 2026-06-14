@@ -966,6 +966,43 @@ describe("MetadataServer threads API", () => {
     expect(deleteGraveyardWorktree).toHaveBeenCalledWith({ path: "/tmp/feature-a" });
   });
 
+  it("passes graveyard cleanup over HTTP", async () => {
+    server?.stop();
+    const cleanupGraveyard = vi.fn(({ dryRun }) => ({
+      dryRun,
+      plan: {
+        enabled: true,
+        now: "2026-06-14T00:00:00.000Z",
+        cutoff: "2026-05-31T00:00:00.000Z",
+        retentionDays: 14,
+        agents: [],
+        worktrees: [],
+      },
+      results: [{ kind: "agent", id: "codex-old", status: "dry-run" }],
+    }));
+    server = new MetadataServer({
+      desktop: { cleanupGraveyard },
+    });
+    await server.start();
+
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    const res = await fetch(`${base}/graveyard/cleanup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dryRun: true }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      ok: true,
+      dryRun: true,
+      results: [{ kind: "agent", id: "codex-old", status: "dry-run" }],
+    });
+    expect(cleanupGraveyard).toHaveBeenCalledWith({ dryRun: true });
+  });
+
   it("passes reused teammate creation responses over HTTP", async () => {
     server?.stop();
     const calls: unknown[] = [];
