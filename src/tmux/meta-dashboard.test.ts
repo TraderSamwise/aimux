@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MetaDashboardModel } from "../meta-dashboard-model.js";
-import { flattenSelectableRows, renderMetaDashboard } from "./meta-dashboard.js";
+import { flattenSelectableRows, renderMetaDashboard, resolveJumpTarget } from "./meta-dashboard.js";
 import { stripAnsi } from "../tui/render/text.js";
 
 function target(sessionName: string, windowId: string) {
@@ -64,6 +64,22 @@ const model: MetaDashboardModel = {
 describe("flattenSelectableRows", () => {
   it("flattens only running projects' rows in render order", () => {
     expect(flattenSelectableRows(model).map((s) => s.row.sessionId)).toEqual(["a1", "a2", "a3"]);
+  });
+});
+
+describe("resolveJumpTarget", () => {
+  const hostFor = (root: string) => `host:${root}`;
+
+  it("maps an index to that row's target with the project host session", () => {
+    const jump = resolveJumpTarget(model, 2, hostFor); // third selectable row = a3 (feat)
+    expect(jump).not.toBeNull();
+    expect(jump!.projectRoot).toBe("/repos/alpha");
+    expect(jump!.target.windowId).toBe("@3");
+    expect(jump!.target.sessionName).toBe("host:/repos/alpha");
+  });
+
+  it("returns null for an out-of-range index", () => {
+    expect(resolveJumpTarget(model, 99, hostFor)).toBeNull();
   });
 });
 
