@@ -317,8 +317,9 @@ describe("RuntimeTopologyStore", () => {
       const lockPath = `${path}.lock`;
       // Simulate a crashed process: a lock dir whose owner PID is not running,
       // aged past the grace period. This used to wedge every update forever.
+      // PID is above every platform's pid_max so it is reliably dead.
       mkdirSync(lockPath);
-      writeFileSync(join(lockPath, "owner"), "999999\n");
+      writeFileSync(join(lockPath, "owner"), "2147483647\n");
       const past = new Date(Date.now() - 10_000);
       utimesSync(lockPath, past, past);
 

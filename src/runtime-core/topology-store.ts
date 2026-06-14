@@ -674,13 +674,13 @@ export class RuntimeTopologyStore {
         }
         return () => rmSync(lockPath, { recursive: true, force: true });
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "EEXIST" && reclaimIfStale(lockPath)) {
-          continue; // reclaimed a stale lock (or another process did) — retry immediately
-        }
+        // Reclaiming a stale lock lets us retry immediately; the deadline is
+        // still checked every iteration so a churn of stale locks can't spin.
+        const reclaimed = (error as NodeJS.ErrnoException).code === "EEXIST" && reclaimIfStale(lockPath);
         if (Date.now() >= deadline) {
           throw new Error(`Timed out acquiring runtime topology update lock at ${lockPath}`, { cause: error });
         }
-        sleepSync(UPDATE_LOCK_RETRY_MS);
+        if (!reclaimed) sleepSync(UPDATE_LOCK_RETRY_MS);
       }
     }
   }
