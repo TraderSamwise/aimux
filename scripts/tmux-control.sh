@@ -12,12 +12,17 @@ current_path=""
 window_id=""
 pane_id=""
 item_index=""
+aimux_home=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    next|prev|attention|dashboard|inbox|menu|expose|window|active|team)
+    next|prev|attention|dashboard|inbox|menu|expose|meta|window|active|team)
       action="$1"
       shift
+      ;;
+    --aimux-home)
+      aimux_home="${2-}"
+      shift 2
       ;;
     --project-state-dir)
       project_state_dir="${2-}"
@@ -388,6 +393,33 @@ show_local_expose() {
   else
     tmux display-popup -T "aimux exposé" -x C -y C -w 90% -h 90% -E "$expose_cmd" >/dev/null 2>&1 || return 1
   fi
+  exit 0
+}
+
+show_local_meta() {
+  if [ -z "${live_client_session-}" ] && [ -z "${live_client_tty-}" ]; then
+    resolve_live_client || return 1
+  fi
+  popup_session="${live_client_session-}"
+  [ -n "$popup_session" ] || popup_session="$current_client_session"
+  popup_client_tty="${live_client_tty-}"
+  [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
+  [ -n "$popup_session" ] || return 1
+
+  existing_index=$(tmux list-windows -t "$popup_session" -F '#{window_index}|#{window_name}' 2>/dev/null | awk -F '|' '$2 == "meta-dashboard" { print $1; exit }')
+  if [ -n "$existing_index" ]; then
+    if [ -n "$popup_client_tty" ]; then
+      tmux switch-client -c "$popup_client_tty" -t "${popup_session}:${existing_index}" >/dev/null 2>&1 || return 1
+    else
+      tmux switch-client -t "${popup_session}:${existing_index}" >/dev/null 2>&1 || return 1
+    fi
+    exit 0
+  fi
+
+  home_arg=""
+  [ -n "$aimux_home" ] && home_arg="--aimux-home $(shell_quote "$aimux_home")"
+  meta_cmd="exec $(shell_quote "$aimux_bin") meta-dashboard --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg"
+  tmux new-window -t "$popup_session" -n meta-dashboard "$meta_cmd" >/dev/null 2>&1 || return 1
   exit 0
 }
 
@@ -777,6 +809,9 @@ fallback_local_control() {
     expose)
       show_local_expose
       ;;
+    meta)
+      show_local_meta
+      ;;
     active)
       return 0
       ;;
@@ -828,11 +863,12 @@ case "$action" in
   team) path="" ;;
   menu) path="" ;;
   expose) path="" ;;
+  meta) path="" ;;
   *) exit 1 ;;
 esac
 
 case "$action" in
-  next|prev|attention|dashboard|inbox|menu|expose|window|active|team)
+  next|prev|attention|dashboard|inbox|menu|expose|meta|window|active|team)
     fallback_local_control && exit 0
     ;;
 esac
