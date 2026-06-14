@@ -146,6 +146,7 @@ switch (args[0]) {
   case "capture-pane": capturePane(); break;
   case "display-menu": break;
   case "display-popup": break;
+  case "new-window": break;
   case "show-options": showOptions(); break;
   case "show-window-options": showWindowOptions(); break;
   case "link-window": linkWindow(); break;
@@ -1274,5 +1275,47 @@ describe("tmux-control.sh", () => {
     ).toBe(true);
     expect(log.some((entry) => entry.includes("expose --project-root"))).toBe(true);
     expect(curlLog).toEqual([]);
+  });
+
+  it("opens a meta-dashboard window locally", () => {
+    const envRoot = createFakeEnvironment({
+      clients: [{ tty: "/dev/live", sessionName: "aimux-proj-client-live", windowId: "@claude" }],
+      windows: {
+        "aimux-proj-client-live": [
+          { id: "@dash", index: 0, name: "dashboard-live" },
+          { id: "@claude", index: 1, name: "claude" },
+        ],
+      },
+      sessionOptions: {
+        "aimux-proj-client-live": { "@aimux-project-root": "/repo/project" },
+      },
+      panes: {},
+    });
+    tempRoots.push(envRoot.root);
+    writeFileSync(join(envRoot.projectStateDir, "metadata-api.txt"), "http://127.0.0.1:43444");
+    writeFileSync(join(envRoot.projectStateDir, "project-root.txt"), "/repo/project\n");
+
+    runControl(envRoot, [
+      "meta",
+      "--project-state-dir",
+      envRoot.projectStateDir,
+      "--current-client-session",
+      "aimux-proj-client-stale",
+      "--client-tty",
+      "/dev/live",
+      "--current-window",
+      "claude",
+      "--current-window-id",
+      "@claude",
+      "--current-path",
+      "/repo/project/worktree",
+      "--aimux-home",
+      "/home/user/.aimux-dev",
+    ]);
+
+    const log = readLog(envRoot);
+    expect(log.some((entry) => entry.includes("new-window -t aimux-proj-client-live -n meta-dashboard"))).toBe(true);
+    expect(log.some((entry) => entry.includes("meta-dashboard --project-root"))).toBe(true);
+    expect(log.some((entry) => entry.includes("--aimux-home") && entry.includes("/home/user/.aimux-dev"))).toBe(true);
   });
 });

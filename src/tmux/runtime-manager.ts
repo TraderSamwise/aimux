@@ -86,6 +86,10 @@ export function isDashboardWindowName(name: string): boolean {
   return name === "dashboard" || name.startsWith("dashboard-");
 }
 
+export function isMetaDashboardWindowName(name: string): boolean {
+  return name === "meta-dashboard" || name.startsWith("meta-dashboard-");
+}
+
 export const MANAGED_TMUX_SESSION_OPTIONS = Object.freeze({
   prefix: "C-a",
   prefix2: "C-b",
@@ -895,6 +899,7 @@ export class TmuxRuntimeManager {
     this.exec(["unbind-key", "-T", "prefix", "u"]);
     this.exec(["unbind-key", "-T", "prefix", "e"]);
     this.exec(["unbind-key", "-T", "prefix", "g"]);
+    this.exec(["unbind-key", "-T", "prefix", "m"]);
     this.exec(["unbind-key", "-T", "prefix", "K"]);
     for (const digit of ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]) {
       this.exec(["unbind-key", "-T", "prefix", digit]);
@@ -959,6 +964,16 @@ export class TmuxRuntimeManager {
       "run-shell",
       "-b",
       `${controlScript} expose --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}' >/dev/null 2>&1`,
+    ]);
+    const metaHomeArg = process.env.AIMUX_HOME ? ` --aimux-home ${shellQuote(process.env.AIMUX_HOME)}` : "";
+    this.exec([
+      "bind-key",
+      "-T",
+      "prefix",
+      "m",
+      "run-shell",
+      "-b",
+      `${controlScript} meta --project-root ${shellQuote(projectRoot)} --project-state-dir ${shellQuote(projectStateDir)} --current-client-session '#{client_session}' --client-tty '#{client_tty}' --current-window '#{window_name}' --current-window-id '#{window_id}' --current-path '#{pane_current_path}' --pane-id '#{pane_id}'${metaHomeArg} >/dev/null 2>&1`,
     ]);
     this.exec([
       "bind-key",

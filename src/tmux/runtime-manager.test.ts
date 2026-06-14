@@ -166,6 +166,16 @@ describe("TmuxRuntimeManager", () => {
           call.args.join(" ").includes("scripts/tmux-control.sh' expose"),
       ),
     ).toBe(true);
+    expect(exec.calls.some((call) => call.args[0] === "unbind-key" && call.args[3] === "m")).toBe(true);
+    expect(
+      exec.calls.some(
+        (call) =>
+          call.args[0] === "bind-key" &&
+          call.args[2] === "prefix" &&
+          call.args[3] === "m" &&
+          call.args.join(" ").includes("scripts/tmux-control.sh' meta"),
+      ),
+    ).toBe(true);
     expect(
       exec.calls.some(
         (call) =>
