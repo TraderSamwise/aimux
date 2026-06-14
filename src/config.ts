@@ -6,6 +6,7 @@ import {
   getLocalAimuxDir,
   getConfigPath,
   getProjectStateDir,
+  getReadOnlyProjectPathsFor,
 } from "./paths.js";
 import { quarantineCorruptFile, writeJsonAtomic } from "./atomic-write.js";
 
@@ -244,8 +245,12 @@ function normalizeConfig(config: AimuxConfig): AimuxConfig {
 /**
  * Load config with hierarchy: defaults → global (~/.aimux/config.json) → project (.aimux/config.json)
  * Project settings override global, global overrides defaults.
+ *
+ * Pass `projectRoot` to resolve the project config for an explicit repo without
+ * initializing global path state — use this in short-lived popups so reading
+ * config has no write side effects (no project registration, no dir creation).
  */
-export function loadConfig(opts: { includeGlobal?: boolean } = {}): AimuxConfig {
+export function loadConfig(opts: { includeGlobal?: boolean; projectRoot?: string } = {}): AimuxConfig {
   let config = cloneJson(DEFAULT_CONFIG);
 
   // Layer 1: global config
@@ -260,7 +265,9 @@ export function loadConfig(opts: { includeGlobal?: boolean } = {}): AimuxConfig 
   }
 
   // Layer 2: project config
-  const projectPath = getConfigPath();
+  const projectPath = opts.projectRoot
+    ? join(getReadOnlyProjectPathsFor(opts.projectRoot).localAimuxDir, "config.json")
+    : getConfigPath();
   if (existsSync(projectPath)) {
     try {
       const projectRaw = JSON.parse(readFileSync(projectPath, "utf-8"));
