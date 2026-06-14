@@ -37,8 +37,14 @@ function shortWorktree(item: FastControlItem, projectRoot: string): string {
   return basename(wt);
 }
 
+// Strip escape sequences and stray control bytes from captured agent output so a
+// rogue pane can't inject escapes into the host terminal or misalign tile borders.
+function sanitizeLine(line: string): string {
+  return line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f]/g, " ");
+}
+
 function tilePreview(raw: string, count: number): string[] {
-  const lines = raw.replace(/\r/g, "").split("\n");
+  const lines = raw.replace(/\r/g, "").split("\n").map(sanitizeLine);
   while (lines.length && lines[lines.length - 1]!.trim() === "") lines.pop();
   const tail = lines.slice(-count);
   while (tail.length < count) tail.push("");
@@ -85,7 +91,7 @@ interface GridLayout {
 function computeLayout(itemCount: number, cols: number, rows: number): GridLayout {
   const gridTopRow = 3;
   const footerRow = rows;
-  const gridHeight = Math.max(MIN_TILE_HEIGHT, footerRow - gridTopRow);
+  const gridHeight = Math.max(1, footerRow - gridTopRow);
   const tileCols = Math.max(1, Math.min(MAX_TILE_COLS, itemCount, Math.floor((cols + GAP) / (MIN_TILE_WIDTH + GAP))));
   const neededRows = Math.ceil(itemCount / tileCols);
   const maxTileRows = Math.max(1, Math.floor(gridHeight / MIN_TILE_HEIGHT));
@@ -168,6 +174,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     return code;
   };
 
+  // Restore the terminal if tmux (or anything) kills the popup with a signal.
+  const onFatalSignal = () => process.exit(exit(0));
+  process.once("SIGINT", onFatalSignal);
+  process.once("SIGTERM", onFatalSignal);
+
   const scopeLabel = scope === "all" ? "all worktrees" : "this worktree";
 
   if (items.length === 0) {
@@ -179,11 +190,16 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     );
     return await new Promise<number>((resolve) => {
       const onData = (data: Buffer) => {
-        const event = parseKeys(data)[0];
-        const key = event?.name || event?.char || "";
-        if (key === "q" || key === "escape" || (event?.ctrl && key === "c")) {
+        try {
+          const event = parseKeys(data)[0];
+          const key = event?.name || event?.char || "";
+          if (key === "q" || key === "escape" || (event?.ctrl && key === "c")) {
+            process.stdin.off("data", onData);
+            resolve(exit(0));
+          }
+        } catch {
           process.stdin.off("data", onData);
-          resolve(exit(0));
+          resolve(exit(1));
         }
       };
       process.stdin.on("data", onData);
@@ -234,61 +250,65 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
 
   refreshCaptures();
   render();
-  interval = setInterval(() => {
-    refreshCaptures();
-    render();
-  }, REFRESH_MS);
 
   return await new Promise<number>((resolve) => {
-    const onData = (data: Buffer) => {
-      const event = parseKeys(data)[0];
-      if (!event) return;
-      const key = event.name || event.char || "";
-
-      if (key === "q" || key === "escape" || (event.ctrl && key === "c")) {
-        process.stdin.off("data", onData);
-        resolve(exit(0));
-        return;
-      }
-
-      if (key >= "1" && key <= "9") {
-        const target = Number.parseInt(key, 10) - 1;
-        if (target < visibleCount) {
-          const code = runWindowSwitch(options, items[target]!.target.windowId);
-          process.stdin.off("data", onData);
-          resolve(exit(code));
-        }
-        return;
-      }
-
-      if (key === "enter" || key === "return") {
-        const code = runWindowSwitch(options, items[index]!.target.windowId);
-        process.stdin.off("data", onData);
-        resolve(exit(code));
-        return;
-      }
-
-      if (key === "right" || key === "l" || key === "n" || key === "tab") {
-        index = (index + 1) % visibleCount;
-        render();
-        return;
-      }
-      if (key === "left" || key === "h" || key === "p") {
-        index = (index - 1 + visibleCount) % visibleCount;
-        render();
-        return;
-      }
-      if (key === "down" || key === "j") {
-        if (index + tileCols < visibleCount) index += tileCols;
-        render();
-        return;
-      }
-      if (key === "up" || key === "k") {
-        if (index - tileCols >= 0) index -= tileCols;
-        render();
-        return;
-      }
+    const finish = (code: number) => {
+      process.stdin.off("data", onData);
+      resolve(exit(code));
     };
+
+    function onData(data: Buffer) {
+      try {
+        const event = parseKeys(data)[0];
+        if (!event) return;
+        const key = event.name || event.char || "";
+
+        if (key === "q" || key === "escape" || (event.ctrl && key === "c")) {
+          finish(0);
+          return;
+        }
+        if (key >= "1" && key <= "9") {
+          const target = Number.parseInt(key, 10) - 1;
+          if (target < visibleCount) finish(runWindowSwitch(options, items[target]!.target.windowId));
+          return;
+        }
+        if (key === "enter" || key === "return") {
+          finish(runWindowSwitch(options, items[index]!.target.windowId));
+          return;
+        }
+        if (key === "right" || key === "l" || key === "n" || key === "tab") {
+          index = (index + 1) % visibleCount;
+          render();
+          return;
+        }
+        if (key === "left" || key === "h" || key === "p") {
+          index = (index - 1 + visibleCount) % visibleCount;
+          render();
+          return;
+        }
+        if (key === "down" || key === "j") {
+          if (index + tileCols < visibleCount) index += tileCols;
+          render();
+          return;
+        }
+        if (key === "up" || key === "k") {
+          if (index - tileCols >= 0) index -= tileCols;
+          render();
+          return;
+        }
+      } catch {
+        finish(1);
+      }
+    }
+
+    interval = setInterval(() => {
+      try {
+        refreshCaptures();
+        render();
+      } catch {
+        finish(1);
+      }
+    }, REFRESH_MS);
 
     process.stdin.on("data", onData);
   });
