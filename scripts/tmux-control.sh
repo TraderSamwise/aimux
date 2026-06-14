@@ -387,7 +387,9 @@ show_local_expose() {
   [ -n "$popup_client_tty" ] || popup_client_tty="$client_tty"
   popup_session="${live_client_session-}"
   [ -n "$popup_session" ] || popup_session="$current_client_session"
-  expose_cmd="exec $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id")"
+  home_arg=""
+  [ -n "$aimux_home" ] && home_arg="--aimux-home $(shell_quote "$aimux_home")"
+  expose_cmd="exec $(shell_quote "$aimux_bin") expose --project-root $(shell_quote "$project_root") --project-state-dir $(shell_quote "$project_state_dir") --current-client-session $(shell_quote "$popup_session") --client-tty $(shell_quote "$popup_client_tty") --current-window $(shell_quote "$current_window") --current-window-id $(shell_quote "$current_window_id") --current-path $(shell_quote "$current_path") --pane-id $(shell_quote "$pane_id") $home_arg"
   if [ -n "$popup_client_tty" ]; then
     tmux display-popup -c "$popup_client_tty" -T "aimux exposé" -x C -y C -w 90% -h 90% -E "$expose_cmd" >/dev/null 2>&1 || return 1
   else

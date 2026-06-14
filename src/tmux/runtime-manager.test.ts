@@ -280,6 +280,24 @@ describe("TmuxRuntimeManager", () => {
     ).toBe(true);
   });
 
+  it("bakes AIMUX_HOME into the expose/meta bindings when set", () => {
+    const prev = process.env.AIMUX_HOME;
+    process.env.AIMUX_HOME = "/home/user/.aimux-dev";
+    try {
+      const exec = createExecMock();
+      const manager = new TmuxRuntimeManager(exec);
+      manager.ensureProjectSession("/repo/mobile");
+      const bindings = exec.calls.filter((c) => c.args[0] === "bind-key" && c.args[2] === "prefix");
+      const g = bindings.find((c) => c.args[3] === "g")?.args.join(" ") ?? "";
+      const m = bindings.find((c) => c.args[3] === "m")?.args.join(" ") ?? "";
+      expect(g.includes("--aimux-home") && g.includes("/home/user/.aimux-dev")).toBe(true);
+      expect(m.includes("--aimux-home") && m.includes("/home/user/.aimux-dev")).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.AIMUX_HOME;
+      else process.env.AIMUX_HOME = prev;
+    }
+  });
+
   it("routes wheel-up to tmux copy-mode for managed agent windows", () => {
     const config = buildDefaultRootMouseBindingsConfig({
       openPaneLinkCommand: "open-pane-link",
@@ -442,6 +460,39 @@ describe("TmuxRuntimeManager", () => {
     );
     expect(interactiveCalls.at(-2)?.args).toEqual(["switch-client", "-t", `${clientSessionName}:3`]);
     expect(interactiveCalls.at(-1)?.args).toEqual(["attach-session", "-t", `${clientSessionName}:3`]);
+  });
+
+  it("switches an explicit client tty + suffix for cross-project openTarget", () => {
+    const exec = createExecMock();
+    const interactiveCalls: Array<{ args: string[]; cwd?: string }> = [];
+    const interactiveExec: TmuxInteractiveExec = (args, options) => {
+      interactiveCalls.push({ args, cwd: options?.cwd });
+    };
+    const manager = new TmuxRuntimeManager(exec, interactiveExec);
+    const clientSessionName = manager.getProjectClientSessionName("aimux-mobile-abc", "268eff9c");
+
+    manager.openTarget(
+      { sessionName: "aimux-mobile-abc", windowId: "@3", windowIndex: 3, windowName: "codex" },
+      { insideTmux: true, clientTty: "/dev/ttys999", clientSuffix: "268eff9c", returnSessionName: "other-client" },
+    );
+
+    // resolved B's per-this-client session from the explicit suffix (no ambient client lookup)
+    expect(exec.calls.some((call) => call.args[0] === "new-session" && call.args.includes(clientSessionName))).toBe(
+      true,
+    );
+    // recorded the explicit return session, and switched the explicit client tty
+    expect(
+      exec.calls.some(
+        (call) => call.args.join(" ") === `set-option -t ${clientSessionName} @aimux-return-session other-client`,
+      ),
+    ).toBe(true);
+    expect(interactiveCalls.at(-1)?.args).toEqual([
+      "switch-client",
+      "-c",
+      "/dev/ttys999",
+      "-t",
+      `${clientSessionName}:3`,
+    ]);
   });
 
   it("still resolves the client session for already-resolved managed targets inside tmux", () => {
