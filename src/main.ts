@@ -101,6 +101,7 @@ import {
 import { parseCodexHookPayload } from "./codex-hooks.js";
 import { requestJson } from "./http-client.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
+import { runTmuxExpose } from "./tmux/expose.js";
 import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
 import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
@@ -3158,6 +3159,42 @@ program
       paneId?: string;
     }) => {
       const code = await runTmuxSwitcher({
+        projectRoot: pathResolve(opts.projectRoot),
+        projectStateDir: pathResolve(opts.projectStateDir),
+        currentClientSession: opts.currentClientSession,
+        clientTty: opts.clientTty,
+        currentWindow: opts.currentWindow,
+        currentWindowId: opts.currentWindowId,
+        currentPath: opts.currentPath,
+        paneId: opts.paneId,
+      });
+      process.exit(code);
+    },
+  );
+
+program
+  .command("expose")
+  .description("Internal tmux popup exposé")
+  .requiredOption("--project-root <path>", "Project root")
+  .requiredOption("--project-state-dir <path>", "Project state dir")
+  .option("--current-client-session <name>", "Current client session")
+  .option("--client-tty <tty>", "Client tty")
+  .option("--current-window <name>", "Current window name")
+  .option("--current-window-id <id>", "Current window id")
+  .option("--current-path <path>", "Current path")
+  .option("--pane-id <id>", "Current pane id")
+  .action(
+    async (opts: {
+      projectRoot: string;
+      projectStateDir: string;
+      currentClientSession?: string;
+      clientTty?: string;
+      currentWindow?: string;
+      currentWindowId?: string;
+      currentPath?: string;
+      paneId?: string;
+    }) => {
+      const code = await runTmuxExpose({
         projectRoot: pathResolve(opts.projectRoot),
         projectStateDir: pathResolve(opts.projectStateDir),
         currentClientSession: opts.currentClientSession,
