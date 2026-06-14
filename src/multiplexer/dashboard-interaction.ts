@@ -10,7 +10,7 @@ import { clearDashboardOperationFailures } from "../dashboard/operation-failures
 import { parseKeys } from "../key-parser.js";
 import { isBlockingPendingDashboardActionKind } from "../pending-actions.js";
 import { requestReview } from "../task-workflow.js";
-import { isTeammateSession } from "../team.js";
+import { isTeammateSession, isOverseerSession } from "../team.js";
 
 function hasBlockingPendingDashboardAction(entry: { pendingAction?: string } | null | undefined): boolean {
   return isBlockingPendingDashboardActionKind(entry?.pendingAction);
@@ -221,7 +221,7 @@ export const dashboardInteractionMethods = {
     if (!buffered) return false;
     const target = resolveDashboardQuickJumpTarget(
       buildDashboardQuickJumpWorktrees({
-        sessions: this.dashboardSessionsCache,
+        sessions: this.dashboardSessionsCache.filter((s: DashboardSession) => !isOverseerSession(s)),
         services: this.dashboardServicesCache,
         worktreeGroups: this.dashboardWorktreeGroupsCache,
         mainCheckout: this.dashboardMainCheckoutInfoCache,
@@ -245,7 +245,7 @@ export const dashboardInteractionMethods = {
     if (nextDigits.length === 1) {
       const target = resolveDashboardQuickJumpTarget(
         buildDashboardQuickJumpWorktrees({
-          sessions: this.dashboardSessionsCache,
+          sessions: this.dashboardSessionsCache.filter((s: DashboardSession) => !isOverseerSession(s)),
           services: this.dashboardServicesCache,
           worktreeGroups: this.dashboardWorktreeGroupsCache,
           mainCheckout: this.dashboardMainCheckoutInfoCache,

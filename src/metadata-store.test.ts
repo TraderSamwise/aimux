@@ -109,4 +109,20 @@ describe("metadata store", () => {
 
     rmSync(repoRoot, { recursive: true, force: true });
   });
+
+  it("enforces a single overseer: setting a new one clears the previous flag", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-metadata-store-overseer1-"));
+    gitInit(repoRoot);
+    await initPaths(repoRoot);
+
+    setSessionOverseer("boss-1", true, repoRoot);
+    setSessionOverseer("boss-2", true, repoRoot);
+
+    const state = loadMetadataState(repoRoot);
+    expect(state.sessions["boss-1"].overseer).toBeUndefined();
+    expect(state.sessions["boss-2"].overseer).toBe(true);
+    expect(findOverseerSessionId(state)).toBe("boss-2");
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
 });

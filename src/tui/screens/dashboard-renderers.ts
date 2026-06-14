@@ -500,6 +500,12 @@ export function renderDashboardFrame(
     }
     content.push("");
   }
+  const overseerSessions = state.overseerSessions ?? [];
+  if (overseerSessions.length > 0) {
+    content.push("  \x1b[1;35mOverseer\x1b[0m");
+    for (const session of overseerSessions) content.push(renderSession(session, "    "));
+    content.push("");
+  }
   if (state.sessions.length === 0 && state.worktreeGroups.length === 0) {
     content.push(centerInBlock("No sessions. Press [c] to create one."));
   } else if (state.hasWorktrees) {

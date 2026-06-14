@@ -162,6 +162,7 @@ export class Multiplexer {
   private dashboardOverlayState = new DashboardOverlayState();
   private pickerMode: "create" | "fork" = "create";
   private forkSourceSessionId: string | null = null;
+  private toolPickerOverseer = false;
   private toolPickerIndex = 0;
   private launchOptionsState: LaunchOptionsState | null = null;
   private worktreeInputBuffer = "";

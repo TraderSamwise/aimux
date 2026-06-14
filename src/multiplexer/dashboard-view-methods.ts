@@ -24,6 +24,7 @@ import {
   stopService as stopServiceImpl,
 } from "./services.js";
 import { derivedStatusLabel } from "../dashboard/index.js";
+import { isOverseerSession } from "../team.js";
 import { isDevelopmentRuntime } from "../connection-targets.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
@@ -123,7 +124,9 @@ export const dashboardViewMethods = {
             rows: process.stdout.rows ?? 24,
           }
         : this.getViewportSize();
-      const dashSessions = this.dashboardSessionsCache;
+      const allDashSessions = this.dashboardSessionsCache;
+      const overseerSessions = allDashSessions.filter((session: any) => isOverseerSession(session));
+      const dashSessions = allDashSessions.filter((session: any) => !isOverseerSession(session));
       const dashTeammates = this.dashboardTeammatesCache ?? [];
       const dashServices = this.dashboardServicesCache;
       const worktreeGroups = this.dashboardWorktreeGroupsCache;
@@ -147,6 +150,7 @@ export const dashboardViewMethods = {
 
       this.dashboard.update({
         sessions: dashSessions,
+        overseerSessions,
         services: dashServices,
         worktreeGroups,
         hasWorktrees,
