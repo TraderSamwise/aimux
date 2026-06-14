@@ -20,6 +20,7 @@ export type RuntimeTopologySessionState = {
   status?: RuntimeTopologySessionStatus;
   lifecycle?: "live" | "offline";
   createdAt?: string;
+  updatedAt?: string;
   backendSessionId?: string;
   team?: unknown;
   worktreePath?: string;
@@ -167,6 +168,7 @@ export function topologySessionToSessionState(
     status: session.status,
     lifecycle: lifecycleFromStatus(session.status),
     createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
     backendSessionId: session.backendSessionId,
     team: session.team,
     worktreePath: session.worktreePath ?? node?.cwd,
@@ -312,6 +314,42 @@ export function removeTopologySessionsForWorktree(
     topology.exchangeRefs = topology.exchangeRefs.filter(
       (ref) =>
         (!ref.sessionId || !removingSessionIds.has(ref.sessionId)) && (!ref.nodeId || !removingNodeIds.has(ref.nodeId)),
+    );
+    return topology;
+  });
+  return removed;
+}
+
+export function removeTopologySession(
+  sessionId: string,
+  input?: { store?: RuntimeTopologyStore; now?: string },
+): RuntimeTopologySessionState | undefined {
+  const store = input?.store ?? createRuntimeTopologyStore();
+  const now = input?.now ?? new Date().toISOString();
+  let removed: RuntimeTopologySessionState | undefined;
+  store.update((topology) => {
+    const existing = topology.sessions.find((session) => session.id === sessionId);
+    if (!existing) return topology;
+    removed = topologySessionToSessionState(existing, topology);
+    topology.generatedAt = now;
+    topology.sessions = topology.sessions.filter((session) => session.id !== sessionId);
+    topology.bindings = topology.bindings.filter((binding) => binding.nodeId !== existing.nodeId);
+    topology.nodes = topology.nodes.filter((node) => node.id !== existing.nodeId);
+    topology.edges = topology.edges.filter(
+      (edge) => edge.sourceNodeId !== existing.nodeId && edge.targetNodeId !== existing.nodeId,
+    );
+    topology.teamRoles = topology.teamRoles.filter(
+      (role) => role.nodeId !== existing.nodeId && role.parentNodeId !== existing.nodeId,
+    );
+    topology.remoteClients = topology.remoteClients.map((client) => ({
+      ...client,
+      ownsSessionIds: client.ownsSessionIds?.filter((id) => id !== sessionId),
+    }));
+    topology.lifecycleOperations = topology.lifecycleOperations.filter(
+      (operation) => !(operation.targetKind === "session" && operation.targetId === sessionId),
+    );
+    topology.exchangeRefs = topology.exchangeRefs.filter(
+      (ref) => ref.sessionId !== sessionId && ref.nodeId !== existing.nodeId,
     );
     return topology;
   });
