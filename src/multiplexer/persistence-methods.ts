@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import type { PendingWorktreeActionKind } from "../pending-actions.js";
@@ -13,7 +13,8 @@ import { type DashboardScreen } from "../dashboard/state.js";
 import { loadDaemonInfo } from "../daemon.js";
 import { type DashboardService, type DashboardSession } from "../dashboard/index.js";
 import { getProjectStateDir, getStatePath } from "../paths.js";
-import { writeJsonAtomic } from "../atomic-write.js";
+import { writeJsonAtomic, writeTextAtomic } from "../atomic-write.js";
+import { debug } from "../debug.js";
 import { loadMetadataState } from "../metadata-store.js";
 import { createRuntimeExchangeStore } from "../runtime-core/exchange-store.js";
 import { renderCurrentDashboardView as renderCurrentDashboardViewImpl } from "./runtime-state.js";
@@ -120,7 +121,6 @@ export const persistenceMethods = {
       this.refreshDesktopStateSnapshot();
       const dir = getProjectStateDir();
       const filePath = join(dir, "statusline.json");
-      const tmpPath = `${filePath}.tmp`;
       const data = this.buildStatuslineSnapshot();
       const { updatedAt: _updatedAt, ...stableData } = data;
       const snapshotKey = JSON.stringify(stableData);
@@ -128,8 +128,7 @@ export const persistenceMethods = {
         return;
       }
       this.lastStatuslineSnapshotKey = snapshotKey;
-      writeFileSync(tmpPath, JSON.stringify(data) + "\n");
-      renameSync(tmpPath, filePath);
+      writeTextAtomic(filePath, JSON.stringify(data) + "\n");
       this.writePrecomputedTmuxStatuslineFiles(data);
       this.tmuxRuntimeManager.refreshStatus();
     } catch {}
@@ -168,11 +167,16 @@ export const persistenceMethods = {
   },
 
   writeStatuslineTextFile(this: any, name: string, content: string): void {
-    const dir = this.getTmuxStatuslineDir();
-    const filePath = join(dir, name);
-    const tmpPath = `${filePath}.tmp`;
-    writeFileSync(tmpPath, `${content}\n`);
-    renameSync(tmpPath, filePath);
+    // Cosmetic per-window statusline text, written concurrently from the refresh
+    // path: unique-temp atomic write (never a shared ".tmp"), and never fatal.
+    try {
+      writeTextAtomic(join(this.getTmuxStatuslineDir(), name), `${content}\n`);
+    } catch (error) {
+      debug(
+        `statusline write failed for ${name}: ${error instanceof Error ? error.message : String(error)}`,
+        "statusline",
+      );
+    }
   },
 
   writePrecomputedTmuxStatuslineFiles(this: any, data: ReturnType<any["buildStatuslineSnapshot"]>): void {
