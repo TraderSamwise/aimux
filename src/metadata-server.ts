@@ -373,16 +373,20 @@ function parseObjectString(value: unknown): Record<string, unknown> | undefined 
   }
 }
 
-function questionRecordFromSource(source: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+function questionRecordsFromSource(source: Record<string, unknown> | undefined): Record<string, unknown>[] {
   const questions = Array.isArray(source?.questions) ? source.questions : undefined;
-  return objectRecord(questions?.[0]) ?? source;
+  if (questions)
+    return questions.map(objectRecord).filter((question): question is Record<string, unknown> => Boolean(question));
+  const question = objectRecord(source);
+  return question ? [question] : [];
 }
 
-function firstQuestionRecord(payload: InteractionPayload, summary?: string): Record<string, unknown> | undefined {
-  const payloadQuestion = questionRecordFromSource(objectRecord(payload));
-  if (trimmedString(payloadQuestion?.question)) return payloadQuestion;
-  const summaryQuestion = questionRecordFromSource(parseObjectString(summary));
-  return trimmedString(summaryQuestion?.question) ? summaryQuestion : payloadQuestion;
+function questionRecords(payload: InteractionPayload, summary?: string): Record<string, unknown>[] {
+  const payloadQuestions = questionRecordsFromSource(objectRecord(payload)).filter((question) =>
+    trimmedString(question.question),
+  );
+  if (payloadQuestions.length > 0) return payloadQuestions;
+  return questionRecordsFromSource(parseObjectString(summary)).filter((question) => trimmedString(question.question));
 }
 
 function questionOptionLabels(question: Record<string, unknown>): string[] {
@@ -395,6 +399,13 @@ function questionOptionLabels(question: Record<string, unknown>): string[] {
     .filter((label): label is string => Boolean(label));
 }
 
+function formatQuestionText(question: Record<string, unknown>, index: number, total: number): string {
+  const prompt = trimmedString(question.question) ?? "";
+  const prefix = total > 1 ? `${index + 1}. ` : "";
+  const labels = questionOptionLabels(question);
+  return labels.length > 0 ? `${prefix}${prompt}\nOptions: ${labels.join("; ")}` : `${prefix}${prompt}`;
+}
+
 function summarizeInteractionForDisplay(input: {
   sessionId: string;
   type: InteractionType;
@@ -402,14 +413,15 @@ function summarizeInteractionForDisplay(input: {
   summary?: string;
 }): InteractionDisplay {
   if (input.type === "question") {
-    const question = firstQuestionRecord(input.payload, input.summary);
-    const prompt = question ? trimmedString(question.question) : undefined;
-    if (question && prompt) {
-      const labels = questionOptionLabels(question);
+    const questions = questionRecords(input.payload, input.summary);
+    if (questions.length > 0) {
+      const prompts = questions
+        .map((question) => trimmedString(question.question))
+        .filter((prompt): prompt is string => Boolean(prompt));
       return {
         title: "AskUserQuestion",
-        message: labels.length > 0 ? `${prompt}\n\nOptions: ${labels.join("; ")}` : prompt,
-        summary: prompt,
+        message: questions.map((question, index) => formatQuestionText(question, index, questions.length)).join("\n\n"),
+        summary: prompts.join("; "),
       };
     }
   }
