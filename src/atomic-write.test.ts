@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -53,15 +53,19 @@ describe("atomicWrite", () => {
     expect(existsSync(target)).toBe(true);
   });
 
-  it("survives many concurrent writers to the same path (unique temp names)", async () => {
-    const target = join(dir, "statusline", "bottom-dashboard.txt");
-    // Racing writers must not ENOENT on rename (the failure mode of a shared ".tmp"),
-    // must leave a valid final value, and must not litter temp files.
-    await Promise.all(
-      Array.from({ length: 50 }, (_, i) => Promise.resolve().then(() => writeTextAtomic(target, `line-${i}\n`))),
+  it("uses a unique temp path, not a shared <file>.tmp (race-safe)", () => {
+    const statusDir = join(dir, "statusline");
+    mkdirSync(statusDir, { recursive: true });
+    const target = join(statusDir, "bottom-dashboard.txt");
+    // Occupy the shared "<file>.tmp" path a racy writer would reuse. A fixed-".tmp"
+    // implementation would fail here (EISDIR / collision); the unique-temp writer
+    // must not, and must leave a valid result with no leftover temp files.
+    mkdirSync(`${target}.tmp`, { recursive: true });
+    expect(() => writeTextAtomic(target, "ok\n")).not.toThrow();
+    expect(readFileSync(target, "utf8")).toBe("ok\n");
+    expect(readdirSync(statusDir).filter((n) => n.endsWith(".tmp") && statSync(join(statusDir, n)).isFile())).toEqual(
+      [],
     );
-    expect(/^line-\d+\n$/.test(readFileSync(target, "utf8"))).toBe(true);
-    expect(readdirSync(join(dir, "statusline")).filter((n) => n.includes(".tmp"))).toEqual([]);
   });
 
   it("quarantines a corrupt file aside instead of dropping it", () => {
