@@ -92,6 +92,11 @@ import {
 } from "./notifications.js";
 import { notifyAlert } from "./notify.js";
 import {
+  buildDesktopNotifierDoctorReport,
+  renderDesktopNotifierDoctorReport,
+  sendDesktopNotification,
+} from "./desktop-notifier.js";
+import {
   parseClaudeHookPayload,
   permissionRequestHookOutput,
   summarizeClaudeNotification,
@@ -3284,6 +3289,7 @@ program
 const statuslineCmd = program.command("statusline").description("Manage Claude Code statusline integration");
 
 const doctorCmd = program.command("doctor").description("Inspect aimux runtime state");
+const notificationsCmd = program.command("notifications").description("Manage desktop notification delivery");
 const repairCmd = program.command("repair").description("Repair the current project runtime in place");
 
 program
@@ -3365,6 +3371,19 @@ logsCmd
   });
 
 doctorCmd
+  .command("notifications")
+  .description("Inspect desktop notification delivery")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const report = await buildDesktopNotifierDoctorReport();
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(renderDesktopNotifierDoctorReport(report));
+  });
+
+doctorCmd
   .command("tmux")
   .description("Inspect managed tmux runtime state")
   .option("--project-root <path>", "Project root", process.cwd())
@@ -3384,6 +3403,25 @@ doctorCmd
       return;
     }
     console.log(renderTmuxDoctorReport(report));
+  });
+
+notificationsCmd
+  .command("test")
+  .description("Send a desktop notification test")
+  .option("--title <title>", "Notification title", "Aimux notification test")
+  .option("--body <body>", "Notification body", "Desktop notification delivery is working.")
+  .option("--json", "Emit JSON")
+  .action((opts: { title: string; body: string; json?: boolean }) => {
+    const attempt = sendDesktopNotification({
+      title: opts.title.trim() || "Aimux notification test",
+      message: opts.body.trim() || "Desktop notification delivery is working.",
+      sound: true,
+    });
+    if (opts.json) {
+      console.log(JSON.stringify({ ok: true, attempt }, null, 2));
+      return;
+    }
+    console.log(`Sent notification via ${attempt.transport}${attempt.helperPath ? ` (${attempt.helperPath})` : ""}.`);
   });
 
 repairCmd

@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import UserNotifications
 
 struct Options {
   var title = ""
@@ -58,6 +57,18 @@ func parseArgs(_ args: [String]) -> Options {
   return options
 }
 
+// This helper is executed directly from the app bundle by the CLI. The modern
+// UserNotifications API rejects that launch mode; this is the same legacy API
+// shape used by terminal-notifier, but under Aimux's bundle identity.
+final class NotificationDelegate: NSObject, NSUserNotificationCenterDelegate {
+  func userNotificationCenter(
+    _ center: NSUserNotificationCenter,
+    shouldPresent notification: NSUserNotification
+  ) -> Bool {
+    return true
+  }
+}
+
 func postNotification(_ options: Options) -> Int32 {
   guard !options.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
     stderr("missing --title")
@@ -70,49 +81,23 @@ func postNotification(_ options: Options) -> Int32 {
 
   NSApplication.shared.setActivationPolicy(.accessory)
 
-  let center = UNUserNotificationCenter.current()
-  let semaphore = DispatchSemaphore(value: 0)
-  var exitCode: Int32 = 0
+  let center = NSUserNotificationCenter.default
+  let delegate = NotificationDelegate()
+  center.delegate = delegate
 
-  center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-    if let error {
-      stderr("notification authorization failed: \(error.localizedDescription)")
-      exitCode = 1
-      semaphore.signal()
-      return
-    }
-
-    guard granted else {
-      stderr("notification authorization denied")
-      exitCode = 2
-      semaphore.signal()
-      return
-    }
-
-    let content = UNMutableNotificationContent()
-    content.title = options.title
-    content.subtitle = options.subtitle
-    content.body = options.message
-    if options.sound {
-      content.sound = .default
-    }
-
-    let request = UNNotificationRequest(identifier: "aimux-\(UUID().uuidString)", content: content, trigger: nil)
-    center.add(request) { error in
-      if let error {
-        stderr("notification delivery failed: \(error.localizedDescription)")
-        exitCode = 1
-      }
-      semaphore.signal()
-    }
+  let notification = NSUserNotification()
+  notification.identifier = "aimux-\(UUID().uuidString)"
+  notification.title = options.title
+  notification.subtitle = options.subtitle.isEmpty ? nil : options.subtitle
+  notification.informativeText = options.message
+  if options.sound {
+    notification.soundName = NSUserNotificationDefaultSoundName
   }
 
-  if semaphore.wait(timeout: .now() + 10) == .timedOut {
-    stderr("notification delivery timed out")
-    return 1
-  }
-
-  return exitCode
+  center.deliver(notification)
+  Thread.sleep(forTimeInterval: 0.2)
+  _ = delegate
+  return 0
 }
 
 let options = parseArgs(Array(CommandLine.arguments.dropFirst()))

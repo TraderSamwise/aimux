@@ -30,9 +30,9 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$SRC_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
 swiftc \
+  -suppress-warnings \
   "$SRC_DIR/main.swift" \
   -framework AppKit \
-  -framework UserNotifications \
   -o "$MACOS_DIR/aimux-notifier"
 
 ICON_SRC="$ROOT_DIR/app/assets/images/icon.png"

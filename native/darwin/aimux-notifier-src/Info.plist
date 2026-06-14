@@ -28,5 +28,7 @@
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSUserNotificationAlertStyle</key>
+  <string>alert</string>
 </dict>
 </plist>

@@ -1,18 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
 import type { execFile as NodeExecFile } from "node:child_process";
 import {
+  buildDesktopNotifierDoctorReport,
   findMacNotifierHelper,
   macNotifierCandidates,
+  renderDesktopNotifierDoctorReport,
   sendDesktopNotification,
   type DesktopNotifierDeps,
 } from "./desktop-notifier.js";
 
 type ExecFile = typeof NodeExecFile;
 
-function execFileMock(error: Error | null = null): ExecFile {
-  return vi.fn((_file: string, _args: readonly string[], callback?: (error: Error | null) => void) => {
-    callback?.(error);
-  }) as unknown as ExecFile;
+function execFileMock(error: Error | null = null, stdout = "", stderr = ""): ExecFile {
+  return vi.fn(
+    (
+      _file: string,
+      _args: readonly string[],
+      optionsOrCallback?: { timeout?: number } | ((error: Error | null, stdout?: string, stderr?: string) => void),
+      callback?: (error: Error | null, stdout?: string, stderr?: string) => void,
+    ) => {
+      const cb = typeof optionsOrCallback === "function" ? optionsOrCallback : callback;
+      cb?.(error, stdout, stderr);
+    },
+  ) as unknown as ExecFile;
 }
 
 function deps(overrides: Partial<DesktopNotifierDeps> = {}): DesktopNotifierDeps {
@@ -125,5 +135,39 @@ describe("desktop notifier", () => {
     expect(result).toEqual({ transport: "node-notifier" });
     expect(execFile).not.toHaveBeenCalled();
     expect(nodeNotifier.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("builds a macOS doctor report with helper check output", async () => {
+    const report = await buildDesktopNotifierDoctorReport(
+      deps({
+        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier" },
+        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier"),
+        execFile: execFileMock(null, "Aimux notifier ready (app.aimux.notifier)\n"),
+      }),
+    );
+
+    expect(report).toMatchObject({
+      platform: "darwin",
+      transport: "mac-helper",
+      helperPath: "/tmp/aimux-notifier",
+      helperCheck: {
+        ok: true,
+        exitCode: 0,
+        stdout: "Aimux notifier ready (app.aimux.notifier)",
+        stderr: "",
+      },
+    });
+  });
+
+  it("renders missing helper candidates in the doctor report", () => {
+    const output = renderDesktopNotifierDoctorReport({
+      platform: "darwin",
+      transport: "node-notifier",
+      helperPath: null,
+      helperCandidates: ["/tmp/one", "/tmp/two"],
+    });
+
+    expect(output).toContain("Helper: not found");
+    expect(output).toContain("Checked:\n  /tmp/one\n  /tmp/two");
   });
 });
