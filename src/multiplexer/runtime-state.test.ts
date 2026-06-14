@@ -15,8 +15,83 @@ import {
   reconcileOrphanedTopologySessions,
   restoreTmuxSessionsFromTopology,
   resumeOfflineSession,
+  startStatusRefresh,
+  stopStatusRefresh,
   stopSessionToOffline,
 } from "./runtime-state.js";
+
+describe("startStatusRefresh", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not notify immediately when an agent briefly becomes idle", () => {
+    vi.useFakeTimers();
+    const host: any = {
+      statusInterval: null,
+      sessions: [{ id: "codex-1", status: "idle" }],
+      prevStatuses: new Map([["codex-1", "running"]]),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => false) },
+      mode: "agent",
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    vi.advanceTimersByTime(1000);
+    stopStatusRefresh(host);
+
+    expect(host.publishAlert).not.toHaveBeenCalled();
+    expect(host.prevStatuses.get("codex-1")).toBe("idle");
+  });
+
+  it("notifies when an agent stays idle after finishing a turn", () => {
+    vi.useFakeTimers();
+    const host: any = {
+      statusInterval: null,
+      sessions: [{ id: "codex-1", status: "idle" }],
+      prevStatuses: new Map([["codex-1", "running"]]),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => false) },
+      mode: "agent",
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    vi.advanceTimersByTime(11_000);
+    stopStatusRefresh(host);
+
+    expect(host.publishAlert).toHaveBeenCalledTimes(1);
+    expect(host.publishAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "needs_input",
+        sessionId: "codex-1",
+        dedupeKey: "idle-needs-input:codex-1",
+      }),
+    );
+  });
+
+  it("cancels idle notification when the agent resumes work before settling", () => {
+    vi.useFakeTimers();
+    const session = { id: "codex-1", status: "idle" };
+    const host: any = {
+      statusInterval: null,
+      sessions: [session],
+      prevStatuses: new Map([["codex-1", "running"]]),
+      dashboardFeedback: { tickFlashVisibilityChanged: vi.fn(() => false) },
+      mode: "agent",
+      publishAlert: vi.fn(),
+    };
+
+    startStatusRefresh(host);
+    vi.advanceTimersByTime(5_000);
+    session.status = "running";
+    vi.advanceTimersByTime(1_000);
+    session.status = "idle";
+    vi.advanceTimersByTime(5_000);
+    stopStatusRefresh(host);
+
+    expect(host.publishAlert).not.toHaveBeenCalled();
+  });
+});
 
 describe("resumeOfflineSession", () => {
   let repoRoot = "";

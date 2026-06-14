@@ -7,6 +7,16 @@ import {
   type RuntimeExchangeMessage,
   type RuntimeExchangeThread,
 } from "./runtime-core/exchange-store.js";
+import type { InteractionType } from "./interaction-requests.js";
+
+export interface NotificationInteractionRecord {
+  id: string;
+  type: InteractionType;
+  summary?: string;
+  telemetry?: boolean;
+  toolName?: string;
+  toolInputJSON?: string;
+}
 
 export interface NotificationRecord {
   id: string;
@@ -17,11 +27,19 @@ export interface NotificationRecord {
   targetKey?: string;
   targetKind?: "session" | "generic";
   kind?: string;
+  projectName?: string;
+  projectRoot?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
   unread: boolean;
   cleared: boolean;
   createdAt: string;
   updatedAt: string;
   dedupeKey?: string;
+  interaction?: NotificationInteractionRecord;
 }
 
 const PROJECT_NOTIFICATION_PARTICIPANT = "project";
@@ -49,6 +67,22 @@ function metadataString(message: RuntimeExchangeMessage | undefined, key: string
 
 function metadataBoolean(message: RuntimeExchangeMessage | undefined, key: string): boolean {
   return message?.metadata?.[key] === true;
+}
+
+function notificationInteraction(
+  message: RuntimeExchangeMessage | undefined,
+): NotificationInteractionRecord | undefined {
+  const id = metadataString(message, "notificationInteractionId");
+  const type = metadataString(message, "notificationInteractionType") as InteractionType | undefined;
+  if (!id || !type) return undefined;
+  return {
+    id,
+    type,
+    summary: metadataString(message, "notificationInteractionSummary"),
+    telemetry: metadataBoolean(message, "notificationInteractionTelemetry"),
+    toolName: metadataString(message, "notificationInteractionToolName"),
+    toolInputJSON: metadataString(message, "notificationInteractionToolInputJSON"),
+  };
 }
 
 function notificationThreadId(targetKey?: string): string {
@@ -87,11 +121,19 @@ function notificationRecord(
     targetKey,
     targetKind,
     kind: metadataString(message, "notificationKind"),
+    projectName: metadataString(message, "notificationProjectName"),
+    projectRoot: metadataString(message, "notificationProjectRoot"),
+    worktreePath: metadataString(message, "notificationWorktreePath"),
+    worktreeName: metadataString(message, "notificationWorktreeName"),
+    branch: metadataString(message, "notificationBranch"),
+    categoryLabel: metadataString(message, "notificationCategoryLabel"),
+    reasonLabel: metadataString(message, "notificationReasonLabel"),
     unread: Boolean(entry && entry.state !== "done"),
     cleared: metadataBoolean(message, "notificationCleared"),
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     dedupeKey: metadataString(message, "notificationDedupeKey"),
+    interaction: notificationInteraction(message),
   };
 }
 
@@ -114,10 +156,18 @@ function writeNotification(input: {
   targetKey?: string;
   targetKind?: "session" | "generic";
   kind?: string;
+  projectName?: string;
+  projectRoot?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
   dedupeKey?: string;
   createdAt?: string;
   unread?: boolean;
   replaceTarget?: boolean;
+  interaction?: NotificationInteractionRecord;
 }): NotificationRecord {
   const now = input.createdAt ?? new Date().toISOString();
   const sessionId = input.sessionId?.trim() || undefined;
@@ -153,8 +203,21 @@ function writeNotification(input: {
       notificationTargetKey: targetKey ?? null,
       notificationTargetKind: targetKind ?? null,
       notificationKind: input.kind?.trim() || null,
+      notificationProjectName: input.projectName?.trim() || null,
+      notificationProjectRoot: input.projectRoot?.trim() || null,
+      notificationWorktreePath: input.worktreePath?.trim() || null,
+      notificationWorktreeName: input.worktreeName?.trim() || null,
+      notificationBranch: input.branch?.trim() || null,
+      notificationCategoryLabel: input.categoryLabel?.trim() || null,
+      notificationReasonLabel: input.reasonLabel?.trim() || null,
       notificationDedupeKey: input.dedupeKey?.trim() || null,
       notificationCleared: false,
+      notificationInteractionId: input.interaction?.id.trim() || null,
+      notificationInteractionType: input.interaction?.type ?? null,
+      notificationInteractionSummary: input.interaction?.summary?.trim() || null,
+      notificationInteractionTelemetry: input.interaction?.telemetry === true,
+      notificationInteractionToolName: input.interaction?.toolName?.trim() || null,
+      notificationInteractionToolInputJSON: input.interaction?.toolInputJSON?.trim() || null,
     },
   };
   let record: NotificationRecord | undefined;
@@ -189,9 +252,17 @@ export function addNotification(input: {
   targetKey?: string;
   targetKind?: "session" | "generic";
   kind?: string;
+  projectName?: string;
+  projectRoot?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
   dedupeKey?: string;
   createdAt?: string;
   unread?: boolean;
+  interaction?: NotificationInteractionRecord;
 }): NotificationRecord {
   return writeNotification(input);
 }
@@ -204,9 +275,17 @@ export function upsertNotification(input: {
   targetKey?: string;
   targetKind?: "session" | "generic";
   kind?: string;
+  projectName?: string;
+  projectRoot?: string;
+  worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
   dedupeKey?: string;
   createdAt?: string;
   unread?: boolean;
+  interaction?: NotificationInteractionRecord;
 }): NotificationRecord {
   return writeNotification({ ...input, replaceTarget: Boolean(normalizeTargetKey(input)) });
 }

@@ -11,7 +11,17 @@ export type AlertKind =
   | "message_waiting"
   | "handoff_waiting"
   | "task_assigned"
-  | "review_waiting";
+  | "review_waiting"
+  | "interaction_request";
+
+export interface AlertInteraction {
+  id: string;
+  type: "permission" | "exit_plan" | "question" | "input";
+  summary?: string;
+  telemetry?: boolean;
+  toolName?: string;
+  toolInputJSON?: string;
+}
 
 export interface ReadyEvent {
   type: "ready";
@@ -30,11 +40,19 @@ export interface AlertEvent {
   title: string;
   message: string;
   ts: string;
+  notificationId?: string;
+  projectName?: string;
+  projectRoot?: string;
   threadId?: string;
   taskId?: string;
   worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
   dedupeKey?: string;
   forceNotify?: boolean;
+  interaction?: AlertInteraction;
 }
 
 export interface ParsedAgentOutput {

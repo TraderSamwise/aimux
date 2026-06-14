@@ -23,9 +23,16 @@ export interface AlertEvent {
   title: string;
   message: string;
   ts: string;
+  notificationId?: string;
+  projectName?: string;
+  projectRoot?: string;
   threadId?: string;
   taskId?: string;
   worktreePath?: string;
+  worktreeName?: string;
+  branch?: string;
+  categoryLabel?: string;
+  reasonLabel?: string;
   dedupeKey?: string;
   forceNotify?: boolean;
   /** Present on actionable interaction_request alerts so clients can resolve them.
@@ -80,31 +87,47 @@ export class ProjectEventBus {
       this.alertCooldowns.set(dedupeKey, now + cooldownMs);
     }
 
+    const ts = new Date().toISOString();
+    const notification = upsertNotification({
+      title: alert.title,
+      body: alert.message,
+      sessionId: alert.sessionId,
+      kind: alert.kind,
+      projectName: alert.projectName,
+      projectRoot: alert.projectRoot,
+      worktreePath: alert.worktreePath,
+      worktreeName: alert.worktreeName,
+      branch: alert.branch,
+      categoryLabel: alert.categoryLabel,
+      reasonLabel: alert.reasonLabel,
+      dedupeKey,
+      createdAt: ts,
+      unread: !alert.sessionId || alert.forceNotify ? true : !isSessionNotificationFocused(alert.sessionId),
+      interaction: alert.interaction,
+    });
+
     const event = {
       type: "alert",
       projectId: getProjectId(),
-      ts: new Date().toISOString(),
+      ts,
       kind: alert.kind,
       sessionId: alert.sessionId,
       title: alert.title,
       message: alert.message,
+      notificationId: notification.id,
+      projectName: alert.projectName,
+      projectRoot: alert.projectRoot,
       threadId: alert.threadId,
       taskId: alert.taskId,
       worktreePath: alert.worktreePath,
+      worktreeName: alert.worktreeName,
+      branch: alert.branch,
+      categoryLabel: alert.categoryLabel,
+      reasonLabel: alert.reasonLabel,
       dedupeKey,
       forceNotify: alert.forceNotify,
       interaction: alert.interaction,
     } satisfies AlertEvent;
-
-    upsertNotification({
-      title: event.title,
-      body: event.message,
-      sessionId: event.sessionId,
-      kind: event.kind,
-      dedupeKey: event.dedupeKey,
-      createdAt: event.ts,
-      unread: !event.sessionId || event.forceNotify ? true : !isSessionNotificationFocused(event.sessionId),
-    });
 
     this.publish(event);
     return true;
