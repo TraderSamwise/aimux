@@ -86,6 +86,7 @@ export interface RuntimeTopologySession {
   createdAt: string;
   updatedAt: string;
   lastSeenAt?: string;
+  graveyardedAt?: string;
 }
 
 export interface RuntimeTopologyService {
@@ -379,6 +380,7 @@ function coerceRuntimeTopology(raw: unknown): RuntimeTopology {
         createdAt: asString(row.createdAt, `sessions[${index}].createdAt`),
         updatedAt: asString(row.updatedAt, `sessions[${index}].updatedAt`),
         lastSeenAt: asOptionalString(row.lastSeenAt),
+        graveyardedAt: asOptionalString(row.graveyardedAt),
       };
     }),
     services: asArray(record.services).map((entry, index) => {

@@ -127,6 +127,7 @@ import {
   listTopologyWorktreeGraveyard,
   listTopologyWorktreeGraveyardPaths,
 } from "./runtime-core/topology-worktrees.js";
+import { buildGraveyardCleanupPlan, runGraveyardCleanup, type GraveyardCleanupRunResult } from "./graveyard-cleanup.js";
 import {
   buildRuntimeMigrationReport,
   importRuntimeMigration,
@@ -1782,6 +1783,24 @@ function printGraveyard(input: { entries?: any[]; worktrees?: any[] }): void {
   }
 }
 
+function printGraveyardCleanup(result: GraveyardCleanupRunResult): void {
+  if (!result.plan.enabled) {
+    console.log("Graveyard cleanup is disabled.");
+    return;
+  }
+  const removed = result.results.filter((item) => item.status === "removed").length;
+  const dryRun = result.results.filter((item) => item.status === "dry-run").length;
+  const failed = result.results.filter((item) => item.status === "failed").length;
+  const action = result.dryRun ? "would remove" : "removed";
+  console.log(
+    `Graveyard cleanup ${action} ${result.dryRun ? dryRun : removed} item(s); ${failed} failed. Retention: ${result.plan.retentionDays} day(s).`,
+  );
+  for (const item of result.results) {
+    const status = item.status === "failed" ? `failed: ${item.error}` : item.status;
+    console.log(`${item.kind} ${item.id}: ${status}`);
+  }
+}
+
 const worktreeCmd = program.command("worktree").description("Manage git worktrees");
 
 async function ensureDaemonProjectReadyForFallback(projectRoot: string): Promise<void> {
@@ -3091,6 +3110,44 @@ graveyardCmd
         return;
       }
       console.log(`resurrected ${result.sessionId}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+graveyardCmd
+  .command("cleanup")
+  .description("Remove expired graveyard agents, worktrees, and their stored assets")
+  .option("--project <path>", "Project path")
+  .option("--dry-run", "Show what would be removed without deleting anything")
+  .option("--json", "Emit JSON")
+  .action(async (opts: { project?: string; dryRun?: boolean; json?: boolean }) => {
+    try {
+      const projectRoot = await prepareProjectContext(opts.project);
+      await ensureDaemonProjectReadyForFallback(projectRoot);
+      const result = await postLiveProjectServiceJsonOrLocal(
+        projectRoot,
+        "/graveyard/cleanup",
+        { dryRun: opts.dryRun === true },
+        async () => {
+          const mux = new Multiplexer();
+          return runGraveyardCleanup(
+            buildGraveyardCleanupPlan(),
+            {
+              deleteWorktree: (path) => mux.deleteGraveyardWorktree(path),
+            },
+            { dryRun: opts.dryRun === true },
+          );
+        },
+      );
+      const cleanupResult = (result.result ?? result) as GraveyardCleanupRunResult;
+      if (opts.json) {
+        console.log(JSON.stringify({ ok: true, projectRoot, ...cleanupResult }, null, 2));
+        return;
+      }
+      printGraveyardCleanup(cleanupResult);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);

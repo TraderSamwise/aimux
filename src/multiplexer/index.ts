@@ -226,6 +226,8 @@ export class Multiplexer {
   private dashboardState = new DashboardState();
   private dashboardUiStateStore = new DashboardUiStateStore();
   private statusInterval: ReturnType<typeof setInterval> | null = null;
+  private graveyardCleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private graveyardCleanupRunning = false;
   private dashboardViewportPollInterval: ReturnType<typeof setInterval> | null = null;
   private dashboardLastViewportKey: string | null = null;
   private dashboardLastViewportSize: { cols: number; rows: number } | null = null;
