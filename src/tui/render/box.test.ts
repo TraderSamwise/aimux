@@ -20,9 +20,22 @@ describe("renderOverlayBox", () => {
     expect(out).toContain("\x1b[31m");
   });
 
-  it("preserves ANSI styling in body content without breaking width", () => {
+  it("preserves ANSI styling in body content", () => {
     const styled = "\x1b[1mbold\x1b[0m plain";
     const out = renderOverlayBox([styled], 80, 24);
     expect(stripAnsi(out)).toContain("bold plain");
+  });
+
+  it("pads and truncates every row to a uniform box width", () => {
+    const out = renderOverlayBox(["short", "x".repeat(300)], 80, 24);
+    // Each row is emitted after a cursor-position escape; split on it and measure.
+    const rows = out
+      .split(/\x1b\[\d+;\d+H/)
+      .slice(1)
+      .map((segment) => stripAnsi(segment.replace(/\x1b8$/, "")).length)
+      .filter((length) => length > 0);
+    expect(rows.length).toBeGreaterThan(2);
+    expect(new Set(rows).size).toBe(1);
+    expect(rows[0]).toBeLessThanOrEqual(80);
   });
 });
