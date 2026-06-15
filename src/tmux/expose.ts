@@ -5,7 +5,8 @@ import { loadConfig } from "../config.js";
 import type { FastControlContext, FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { TerminalHost } from "../terminal-host.js";
-import { stripAnsi, truncateAnsi, truncatePlain } from "../tui/render/text.js";
+import { stripAnsi, truncateAnsi } from "../tui/render/text.js";
+import { renderAgentStatusChip } from "../tui/render/agent-status.js";
 import {
   initialExposeScope,
   loadExposeScopeItems,
@@ -153,11 +154,17 @@ function drawTile(
   const sub = sublabel ? `  ${sublabel}` : "";
   const here = item.target.windowId === options.currentWindowId ? " (here)" : "";
   const badgeLabel = badge <= 9 ? String(badge) : "·";
-  const header = truncatePlain(`${badgeLabel} ${item.label}${sub}${here}`, textW);
+  const chip = renderAgentStatusChip(item.metadata);
+  const ident = `${item.label}${sub}${here}`;
+  const header = chip
+    ? `${headerStyle}${badgeLabel}${RESET} ${chip} ${headerStyle}${ident}${RESET}`
+    : `${headerStyle}${badgeLabel} ${ident}${RESET}`;
+  const headerTrunc = truncateAnsi(header, textW);
+  const headerPad = Math.max(0, textW - stripAnsi(headerTrunc).length);
 
   const rows: string[] = [];
   rows.push(`${border}┌${"─".repeat(innerW)}┐${RESET}`);
-  rows.push(`${border}│${RESET}${headerStyle} ${header.padEnd(textW)}${RESET}${border}│${RESET}`);
+  rows.push(`${border}│${RESET} ${headerTrunc}${" ".repeat(headerPad)}${RESET}${border}│${RESET}`);
   for (let b = 0; b < layout.bodyLines; b += 1) {
     const text = truncateAnsi(preview[b] ?? "", textW);
     const pad = Math.max(0, textW - stripAnsi(text).length);
