@@ -235,7 +235,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const layout = computeLayout(items.length, cols, rows);
     tileCols = layout.tileCols;
     visibleCount = layout.visibleCount;
-    if (index >= visibleCount) index = visibleCount - 1;
+    if (index >= visibleCount) index = Math.max(0, visibleCount - 1);
 
     const title = `\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`;
     const hidden = items.length - visibleCount;
