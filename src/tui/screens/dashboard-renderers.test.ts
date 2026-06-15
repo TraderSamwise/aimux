@@ -426,6 +426,50 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(stripAnsi(without.frame)).not.toContain("v1.2.3");
   });
 
+  it("numbers agents within a worktree group for quick jump", () => {
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        sessions: [
+          {
+            index: 0,
+            id: "claude-0",
+            command: "claude",
+            worktreePath: "/repo/.aimux/worktrees/wt",
+            worktreeName: "wt",
+            status: "offline",
+            active: false,
+            semantic: deriveSessionSemantics({ status: "offline" }),
+          },
+          {
+            index: 1,
+            id: "codex-1",
+            command: "codex",
+            worktreePath: "/repo/.aimux/worktrees/wt",
+            worktreeName: "wt",
+            status: "offline",
+            active: false,
+            semantic: deriveSessionSemantics({ status: "offline" }),
+          },
+        ],
+        worktreeGroups: [
+          {
+            name: "wt",
+            branch: "feat/x",
+            path: "/repo/.aimux/worktrees/wt",
+            status: "offline",
+            sessions: [],
+            services: [],
+          },
+        ],
+      }),
+      120,
+      40,
+    );
+    const plain = stripAnsi(frame);
+    expect(plain).toMatch(/\[1\]\s+(claude|codex)/);
+    expect(plain).toMatch(/\[2\]\s+(claude|codex)/);
+  });
+
   it("renders pending teammate labels even when semantic state is stale", () => {
     const { frame } = renderDashboardFrame(
       baseDashboardViewModel({
