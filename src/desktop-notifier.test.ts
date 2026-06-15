@@ -108,7 +108,7 @@ describe("desktop notifier", () => {
     });
   });
 
-  it("falls back to node-notifier when the macOS helper fails", () => {
+  it("does not fall back to node-notifier when the macOS helper reports failure", () => {
     const nodeNotifier = { notify: vi.fn() };
 
     sendDesktopNotification(
@@ -121,11 +121,7 @@ describe("desktop notifier", () => {
       }),
     );
 
-    expect(nodeNotifier.notify).toHaveBeenCalledWith({
-      title: "aimux",
-      message: "agent waiting",
-      sound: true,
-    });
+    expect(nodeNotifier.notify).not.toHaveBeenCalled();
   });
 
   it("uses node-notifier directly on non-macOS platforms", () => {
@@ -166,6 +162,28 @@ describe("desktop notifier", () => {
         exitCode: 0,
         stdout: "Aimux notifier ready (app.aimux.notifier)",
         stderr: "",
+      },
+    });
+  });
+
+  it("builds a macOS doctor report for denied helper authorization", async () => {
+    const error = Object.assign(new Error("Command failed: notifications are denied"), { code: 77 });
+    const report = await buildDesktopNotifierDoctorReport(
+      deps({
+        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier" },
+        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier"),
+        execFile: execFileMock(error, "Aimux notifier ready (app.aimux.notifier); authorization=denied\n"),
+      }),
+    );
+
+    expect(report).toMatchObject({
+      platform: "darwin",
+      transport: "mac-helper",
+      helperPath: "/tmp/aimux-notifier",
+      helperCheck: {
+        ok: false,
+        exitCode: 77,
+        stdout: "Aimux notifier ready (app.aimux.notifier); authorization=denied",
       },
     });
   });
