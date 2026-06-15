@@ -23,6 +23,32 @@ describe("session semantics", () => {
     expect(sessionSemanticAttentionScore(semantic)).toBe(4);
   });
 
+  it("distinguishes plain response waits from formal input prompts", () => {
+    const semantic = deriveSessionSemantics({
+      status: "idle",
+      attention: "needs_response",
+    });
+
+    expect(semantic.user.label).toBe("needs_response");
+    expect(semantic.user.attention).toBe("needs_response");
+    expect(sessionSemanticStatusLabel(semantic, "idle")).toBe("needs answer");
+    expect(sessionSemanticCompactHint(semantic)).toBe("answer");
+    expect(sessionSemanticAttentionScore(semantic)).toBe(4);
+  });
+
+  it("labels idle assigned-task sessions as needing a next step", () => {
+    const semantic = deriveSessionSemantics({
+      status: "idle",
+      attention: "normal",
+      hasActiveTask: true,
+    });
+
+    expect(semantic.user.label).toBe("next_step");
+    expect(semantic.user.attention).toBe("none");
+    expect(sessionSemanticStatusLabel(semantic, "idle")).toBe("next step");
+    expect(sessionSemanticCompactHint(semantic)).toBe("on you");
+  });
+
   it("keeps blocked workflow as orchestration pressure instead of primary user state", () => {
     const semantic = deriveSessionSemantics({
       status: "idle",
