@@ -5,7 +5,7 @@ import { loadConfig } from "../config.js";
 import type { FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { TerminalHost } from "../terminal-host.js";
-import { truncatePlain } from "../tui/render/text.js";
+import { stripAnsi, truncateAnsi, truncatePlain } from "../tui/render/text.js";
 import { listExposeAgentItems } from "./expose-model.js";
 import { listAllProjectsExposeItems } from "../meta-dashboard-model.js";
 import { isMetaDashboardWindowName, TmuxRuntimeManager } from "./runtime-manager.js";
@@ -34,7 +34,6 @@ const MIN_TILE_WIDTH = 30;
 const MIN_TILE_HEIGHT = 5;
 
 const RESET = "\x1b[0m";
-const BODY_STYLE = "\x1b[38;5;245m";
 
 function shortWorktree(item: FastControlItem, projectRoot: string): string {
   const wt = item.metadata.worktreePath;
@@ -42,10 +41,16 @@ function shortWorktree(item: FastControlItem, projectRoot: string): string {
   return basename(wt);
 }
 
-// Strip escape sequences and stray control bytes from captured agent output so a
-// rogue pane can't inject escapes into the host terminal or misalign tile borders.
+// Keep SGR color/style sequences from captured agent output so previews render in
+// their real colors, but strip everything else dangerous (cursor moves, OSC, other
+// control bytes) so a rogue pane can't hijack the host terminal or misalign borders.
 function sanitizeLine(line: string): string {
-  return line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+  return line
+    .replace(/\x1b\[[0-9;:?]*[ -/]*[@-~]/g, (m) => (m.endsWith("m") ? m : ""))
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b[^[]/g, "")
+    .replace(/\x1b$/, "")
+    .replace(/[\x00-\x09\x0b-\x1a\x1c-\x1f\x7f-\x9f]/g, " ");
 }
 
 function tilePreview(raw: string, count: number): string[] {
@@ -138,8 +143,9 @@ function drawTile(
   rows.push(`${border}┌${"─".repeat(innerW)}┐${RESET}`);
   rows.push(`${border}│${RESET}${headerStyle} ${header.padEnd(textW)}${RESET}${border}│${RESET}`);
   for (let b = 0; b < layout.bodyLines; b += 1) {
-    const text = truncatePlain(preview[b] ?? "", textW);
-    rows.push(`${border}│${RESET}${BODY_STYLE} ${text.padEnd(textW)}${RESET}${border}│${RESET}`);
+    const text = truncateAnsi(preview[b] ?? "", textW);
+    const pad = Math.max(0, textW - stripAnsi(text).length);
+    rows.push(`${border}│${RESET} ${text}${" ".repeat(pad)}${RESET}${border}│${RESET}`);
   }
   rows.push(`${border}└${"─".repeat(innerW)}┘${RESET}`);
 
@@ -234,7 +240,10 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   const refreshCaptures = () => {
     for (const item of items) {
       try {
-        captures.set(item.target.windowId, tmux.captureTarget(item.target, { startLine: -CAPTURE_LINES }));
+        captures.set(
+          item.target.windowId,
+          tmux.captureTarget(item.target, { startLine: -CAPTURE_LINES, includeEscapes: true }),
+        );
       } catch {
         captures.set(item.target.windowId, captures.get(item.target.windowId) ?? "");
       }
