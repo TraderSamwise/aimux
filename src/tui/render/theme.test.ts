@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { stripAnsi } from "./text.js";
-import { card, chip, cols, divider, keycap, padVisible, pill, statusDot, style, visibleWidth } from "./theme.js";
+import {
+  card,
+  chip,
+  cols,
+  divider,
+  keycap,
+  padVisible,
+  pill,
+  statusDot,
+  style,
+  tmuxInvert,
+  tmuxStyle,
+  visibleWidth,
+} from "./theme.js";
 
 describe("theme tokens", () => {
   it("style wraps in SGR + reset and passes through the text tone", () => {
@@ -150,5 +163,24 @@ describe("theme primitive branches", () => {
   it("pads shorter content up to the target width", () => {
     expect(stripAnsi(padVisible("ab", 5))).toBe("ab   ");
     expect(stripAnsi(divider(0))).toBe("");
+  });
+});
+
+describe("tmux tokens", () => {
+  it("wraps fg color directives by tone", () => {
+    expect(tmuxStyle("x", "work")).toBe("#[fg=cyan]x#[default]");
+    expect(tmuxStyle("x", "done")).toBe("#[fg=green]x#[default]");
+    expect(tmuxStyle("x", "attn")).toBe("#[fg=yellow]x#[default]");
+    expect(tmuxStyle("x", "danger")).toBe("#[fg=red]x#[default]");
+  });
+
+  it("passes text through for tones without a tmux color", () => {
+    expect(tmuxStyle("x", "text")).toBe("x");
+    expect(tmuxStyle("x", "strong")).toBe("x");
+  });
+
+  it("renders inverse highlights", () => {
+    expect(tmuxInvert(" x ", "attn")).toBe("#[fg=black,bg=yellow] x #[default]");
+    expect(tmuxInvert(" x ", "work")).toBe("#[fg=black,bg=cyan] x #[default]");
   });
 });
