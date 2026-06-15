@@ -1117,14 +1117,14 @@ export class TmuxRuntimeManager {
     const override = process.env.AIMUX_CLIENT_KEY?.trim();
     if (override) return this.normalizeClientSuffix(override);
     if (insideTmux) {
+      // Prefer the real client's tty (passed explicitly) over the ambient
+      // client, which from inside a display-popup would be the popup's own.
+      if (clientTtyOverride) return this.normalizeClientSuffix(clientTtyOverride);
       const currentSession = this.currentClientSession();
       if (currentSession) {
         const match = currentSession.match(/-client-([a-f0-9]{8})$/);
         if (match) return match[1]!;
       }
-      // Prefer the real client's tty (passed explicitly) over display-message,
-      // which from inside a display-popup would resolve the popup's own client.
-      if (clientTtyOverride) return this.normalizeClientSuffix(clientTtyOverride);
       const clientTty = this.displayMessage("#{client_tty}");
       const clientPid = this.displayMessage("#{client_pid}");
       if (clientTty || clientPid) return this.normalizeClientSuffix(`${clientTty ?? "tty"}:${clientPid ?? "pid"}`);

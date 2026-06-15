@@ -67,7 +67,7 @@ function rowGlyph(row: MetaRow): string {
 // Strip escape sequences + control bytes from metadata-sourced strings so a
 // rogue agent label/worktree name can't inject escapes into the frame.
 function sanitizeMeta(text: string): string {
-  return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f]/g, " ");
+  return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
 }
 
 /** Pure renderer: returns the full ANSI frame for the meta dashboard. */

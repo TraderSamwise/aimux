@@ -45,7 +45,7 @@ function shortWorktree(item: FastControlItem, projectRoot: string): string {
 // Strip escape sequences and stray control bytes from captured agent output so a
 // rogue pane can't inject escapes into the host terminal or misalign tile borders.
 function sanitizeLine(line: string): string {
-  return line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f]/g, " ");
+  return line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
 }
 
 function tilePreview(raw: string, count: number): string[] {
