@@ -59,6 +59,7 @@ export function notifyAlert(event: AlertEvent): boolean {
   if (
     (event.kind === "notification" ||
       event.kind === "needs_input" ||
+      event.kind === "next_step" ||
       event.kind === "message_waiting" ||
       event.kind === "handoff_waiting" ||
       event.kind === "task_assigned" ||

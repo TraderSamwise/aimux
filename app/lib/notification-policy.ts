@@ -43,6 +43,7 @@ const COMPLETED_KINDS = new Set(["completed", "task_done"]);
 const ACTIVITY_KINDS = new Set(["activity", "notification", "notify"]);
 const NEEDS_INPUT_KINDS = new Set([
   "needs_input",
+  "next_step",
   "interaction_request",
   "message_waiting",
   "handoff_waiting",

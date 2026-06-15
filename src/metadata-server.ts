@@ -2330,31 +2330,35 @@ export class MetadataServer {
             ? "notification"
             : requestedKind === "task_done" || requestedKind === "complete"
               ? "task_done"
-              : requestedKind === "task_failed" || requestedKind === "error"
-                ? "task_failed"
-                : requestedKind === "blocked"
-                  ? "blocked"
-                  : requestedKind === "message_waiting"
-                    ? "message_waiting"
-                    : requestedKind === "handoff_waiting"
-                      ? "handoff_waiting"
-                      : requestedKind === "task_assigned"
-                        ? "task_assigned"
-                        : requestedKind === "review_waiting"
-                          ? "review_waiting"
-                          : "needs_input";
+              : requestedKind === "next_step"
+                ? "next_step"
+                : requestedKind === "task_failed" || requestedKind === "error"
+                  ? "task_failed"
+                  : requestedKind === "blocked"
+                    ? "blocked"
+                    : requestedKind === "message_waiting"
+                      ? "message_waiting"
+                      : requestedKind === "handoff_waiting"
+                        ? "handoff_waiting"
+                        : requestedKind === "task_assigned"
+                          ? "task_assigned"
+                          : requestedKind === "review_waiting"
+                            ? "review_waiting"
+                            : "needs_input";
         const sessionId = body.sessionId?.trim() || undefined;
         const dedupeKey = body.force
           ? undefined
           : kind === "needs_input" && sessionId
             ? `needs_input:${sessionId}`
-            : kind === "blocked" && sessionId
-              ? `blocked:${sessionId}`
-              : kind === "task_failed" && sessionId
-                ? `error:${sessionId}`
-                : kind === "task_done"
-                  ? `notify:complete:${body.title ?? body.message ?? "aimux"}`
-                  : undefined;
+            : kind === "next_step" && sessionId
+              ? `idle-needs-input:${sessionId}`
+              : kind === "blocked" && sessionId
+                ? `blocked:${sessionId}`
+                : kind === "task_failed" && sessionId
+                  ? `error:${sessionId}`
+                  : kind === "task_done"
+                    ? `notify:complete:${body.title ?? body.message ?? "aimux"}`
+                    : undefined;
         this.emitAlert({
           kind,
           sessionId,

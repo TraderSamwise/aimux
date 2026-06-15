@@ -76,6 +76,7 @@ export function alertCategoryLabel(input: Pick<AlertPublishInput, "kind" | "inte
     return "Interaction";
   }
   if (input.kind === "needs_input") return "Needs input";
+  if (input.kind === "next_step") return "Next step";
   if (input.kind === "task_done") return "Done";
   if (input.kind === "task_failed") return "Error";
   if (input.kind === "blocked") return "Blocked";
@@ -98,6 +99,7 @@ export function alertReasonLabel(input: Pick<AlertPublishInput, "kind" | "dedupe
     if (input.dedupeKey?.startsWith("idle-needs-input:")) return "Agent stopped after a turn";
     return "Agent is waiting for input";
   }
+  if (input.kind === "next_step") return "Agent stopped after a turn";
   if (input.kind === "task_done") return "Agent or service finished";
   if (input.kind === "task_failed") return "Agent or service errored";
   if (input.kind === "blocked") return "Agent is blocked";
@@ -112,14 +114,18 @@ function alertLocationTitle(input: AlertPublishInput, context?: SessionAlertDisp
   const project = projectDisplayContext(input);
   const projectName = project.projectName ?? "aimux";
   const worktree = input.worktreeName?.trim() || (context ? displayWorktreeLabel(context) : undefined);
-  return worktree ? `${projectName} / ${worktree}` : projectName;
+  const branch = input.branch?.trim() || context?.branch?.trim();
+  const worktreeWithBranch = worktree && branch && branch !== worktree ? `${worktree} (${branch})` : worktree;
+  return worktreeWithBranch ? `${projectName} / ${worktreeWithBranch}` : projectName;
 }
 
 function alertMessageBody(reason: string, subjectTitle: string, message: string): string {
   const detail = message.trim();
   const subject = subjectTitle.trim();
   const parts = [reason, subject].filter(Boolean).join(": ");
-  if (!detail || detail === subject || detail === parts) return parts || detail || "aimux";
+  const comparableDetail = detail.replace(/[.!?]+$/, "");
+  if (!detail || comparableDetail === reason || detail === subject || detail === parts)
+    return parts || detail || "aimux";
   return `${parts} - ${detail}`;
 }
 
@@ -143,6 +149,7 @@ export function sessionAlertTitle(
   const subject = sessionAlertSubject(sessionId, context);
   if (!subject) return title || "aimux";
   if (kind === "needs_input") return `${subject} needs input`;
+  if (kind === "next_step") return `${subject} ready for next step`;
   if (kind === "blocked") {
     if (!title || (sessionId && title === `${sessionId} is blocked`)) return `${subject} is blocked`;
     return title;
