@@ -11,6 +11,7 @@ export interface RestorableSessionLike {
   id?: string;
   command?: string;
   tool?: string;
+  toolConfigKey?: string;
   status?: string;
   backendSessionId?: string;
   restoreState?: SessionRestoreState;
@@ -42,7 +43,7 @@ export function describeSessionRestorability(
   }
   if (session.restoreState === "ready") return { restoreState: "ready" };
   if (session.status && session.status !== "offline") return undefined;
-  const toolKey = session.tool ?? session.command;
+  const toolKey = session.toolConfigKey ?? session.tool ?? session.command;
   const toolCfg = toolKey ? tools[toolKey] : undefined;
   if (!toolKey || !toolCfg) {
     return { restoreState: "blocked", restoreBlockedReason: "unknown agent tool" };

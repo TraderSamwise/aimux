@@ -626,6 +626,47 @@ describe("resumeOfflineSession", () => {
     );
   });
 
+  it("lets a live runtime replace a stale topology backend id during fresh relaunch", () => {
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-stale",
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+    });
+    const runtime = {
+      id: "claude-racy",
+      command: "claude",
+      backendSessionId: undefined,
+    };
+    const host: any = {
+      sessions: [runtime],
+      offlineSessions: [],
+      syncTmuxWindowMetadata: vi.fn(),
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+    };
+
+    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-new")).toEqual({
+      sessionId: "claude-racy",
+      backendSessionId: "backend-new",
+    });
+
+    expect(runtime.backendSessionId).toBe("backend-new");
+    const topologySession = listTopologySessionStates().find((session) => session.id === "claude-racy");
+    expect(topologySession?.backendSessionId).toBe("backend-new");
+    expect(topologySession?.status).toBe("running");
+    expect(host.syncTmuxWindowMetadata).toHaveBeenCalledWith("claude-racy");
+  });
+
   it("does not replace an existing backend session id", () => {
     seedTopologySessions([
       {

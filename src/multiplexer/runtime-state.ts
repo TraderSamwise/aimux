@@ -627,13 +627,34 @@ export function recordSessionBackendSessionId(
   sessionId: string,
   backendSessionId: string,
 ): { sessionId: string; backendSessionId: string } {
-  const recorded = recordTopologyBackendSessionId({
-    projectRoot: getRepoRoot(),
-    sessionId,
-    backendSessionId,
-  });
+  const normalizedBackendSessionId = backendSessionId.trim();
+  if (!normalizedBackendSessionId) throw new Error("backendSessionId is required");
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
   const offline = host.offlineSessions.find((session: any) => session.id === sessionId);
+  let recorded: { sessionId: string; backendSessionId: string };
+  if (runtime) {
+    if (runtime.backendSessionId && runtime.backendSessionId !== normalizedBackendSessionId) {
+      throw new Error(
+        `Agent "${sessionId}" already has backend session "${runtime.backendSessionId}", cannot replace with "${normalizedBackendSessionId}"`,
+      );
+    }
+    const topologySession = listTopologySessionStates().find((session) => session.id === sessionId);
+    if (!topologySession) {
+      throw new Error(`Agent "${sessionId}" is not managed in runtime topology`);
+    }
+    upsertTopologySession(
+      { ...topologySession, backendSessionId: normalizedBackendSessionId },
+      "running",
+      { projectRoot: getRepoRoot() },
+    );
+    recorded = { sessionId, backendSessionId: normalizedBackendSessionId };
+  } else {
+    recorded = recordTopologyBackendSessionId({
+      projectRoot: getRepoRoot(),
+      sessionId,
+      backendSessionId: normalizedBackendSessionId,
+    });
+  }
   if (runtime) {
     runtime.backendSessionId = recorded.backendSessionId;
     host.syncTmuxWindowMetadata?.(sessionId);
