@@ -31,6 +31,7 @@ import type {
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { setPendingDashboardServiceAction, setPendingDashboardSessionAction } from "./dashboard-ops.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
 import { assertSessionRestorable } from "../session-restorability.js";
 
 type DashboardModelHost = any;
@@ -354,9 +355,25 @@ async function resumeOfflineAgentWithPending(
     "starting",
     () => {
       reconcileSessionsForLifecycleAction(host);
-      const offline = resolveOfflineSessionForAction(host, sessionId);
+      let offline = resolveOfflineSessionForAction(host, sessionId);
       if (!offline) {
         throw new Error(`Agent "${sessionId}" not found`);
+      }
+      if (!offline.backendSessionId) {
+        let reconciledBackendSessionId: string | null = null;
+        try {
+          reconciledBackendSessionId = reconcileBackendSessionIdForSession(offline);
+        } catch {
+          reconciledBackendSessionId = null;
+        }
+        if (reconciledBackendSessionId) {
+          reconcileSessionsForLifecycleAction(host);
+          const reconciledOffline = resolveOfflineSessionForAction(host, sessionId);
+          offline =
+            reconciledOffline?.backendSessionId === reconciledBackendSessionId
+              ? reconciledOffline
+              : { ...offline, backendSessionId: reconciledBackendSessionId };
+        }
       }
       assertSessionRestorable(offline, loadConfig().tools);
       host.resumeOfflineSession(offline);

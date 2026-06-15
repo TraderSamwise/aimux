@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { initPaths } from "../paths.js";
+import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import {
   applyDashboardModel,
   buildDashboardWorktreeGroups,
@@ -219,7 +220,10 @@ describe("metadata pending actions", () => {
       stopService: vi.fn(),
       resumeOfflineServiceById: vi.fn(),
       removeOfflineService: vi.fn(),
-      resumeOfflineSession: vi.fn(),
+      resumeOfflineSession: vi.fn((session: any) => {
+        host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== session.id);
+        host.sessions.push({ ...session, lifecycle: "live", exited: false });
+      }),
       listGraveyardEntries: vi.fn(),
       resurrectGraveyardSession: vi.fn(),
       sendOrchestrationMessage: vi.fn(),
@@ -545,7 +549,10 @@ describe("metadata pending actions", () => {
       stopService: vi.fn(),
       resumeOfflineServiceById: vi.fn(),
       removeOfflineService: vi.fn(),
-      resumeOfflineSession: vi.fn(),
+      resumeOfflineSession: vi.fn((session: any) => {
+        host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== session.id);
+        host.sessions.push({ ...session, lifecycle: "live", exited: false });
+      }),
       listGraveyardEntries: vi.fn(),
       resurrectGraveyardSession: vi.fn(),
       sendOrchestrationMessage: vi.fn(),
@@ -573,6 +580,109 @@ describe("metadata pending actions", () => {
     } finally {
       host.metadataServer?.stop?.();
       rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("backfills a recoverable backend id before project-service agent resume checks", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-resume-backfill-"));
+    const claudeHome = mkdtempSync(join(tmpdir(), "aimux-dashboard-resume-claude-"));
+    const previousClaudeDir = process.env.CLAUDE_CONFIG_DIR;
+    const backendSessionId = "0710a963-a473-430f-9f9a-e27dd4546328";
+    const cwd = join(repoRoot, "wt", "recoverable");
+    const host: any = {
+      dashboardPendingActions: new DashboardPendingActions(() => {}),
+      reapplyDashboardPendingActions: vi.fn(),
+      eventBus: undefined,
+      buildDesktopState: vi.fn(),
+      listProjectedDesktopWorktrees: vi.fn(),
+      dashboardSessionsCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      sessions: [],
+      services: [],
+      offlineSessions: [
+        {
+          id: "claude-recoverable",
+          command: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: cwd,
+        },
+      ],
+      offlineServices: [],
+      sessionWorktreePaths: new Map(),
+      sessionTmuxTargets: new Map(),
+      getSessionLabel: vi.fn(),
+      serviceLabelForCommand: vi.fn(),
+      refreshProjectStatusline: vi.fn(),
+      createDesktopWorktree: vi.fn(),
+      removeDesktopWorktree: vi.fn(),
+      graveyardDesktopWorktree: vi.fn(),
+      listWorktreeGraveyardEntries: vi.fn(),
+      resurrectGraveyardWorktree: vi.fn(),
+      deleteGraveyardWorktree: vi.fn(),
+      createService: vi.fn(),
+      stopService: vi.fn(),
+      resumeOfflineServiceById: vi.fn(),
+      removeOfflineService: vi.fn(),
+      resumeOfflineSession: vi.fn((session: any) => {
+        host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== session.id);
+        host.sessions.push({ ...session, lifecycle: "live", exited: false });
+      }),
+      listGraveyardEntries: vi.fn(),
+      resurrectGraveyardSession: vi.fn(),
+      sendOrchestrationMessage: vi.fn(),
+      sendHandoffMessage: vi.fn(),
+      spawnAgent: vi.fn(),
+      createTeammateAgent: vi.fn(),
+      forkAgent: vi.fn(),
+      stopAgent: vi.fn(),
+      interruptAgent: vi.fn(),
+      renameAgent: vi.fn(),
+      migrateAgent: vi.fn(),
+      killAgent: vi.fn(),
+      readAgentOutput: vi.fn(),
+    };
+
+    try {
+      process.env.CLAUDE_CONFIG_DIR = claudeHome;
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      await initPaths(repoRoot);
+      saveRuntimeTopologySessions({
+        projectRoot: repoRoot,
+        sessions: [
+          {
+            id: "claude-recoverable",
+            command: "claude",
+            tool: "claude",
+            toolConfigKey: "claude",
+            args: [],
+            lifecycle: "offline",
+            worktreePath: cwd,
+          },
+        ],
+      });
+      const transcriptDir = join(claudeHome, "projects", cwd.replace(/[/.]/g, "-"));
+      mkdirSync(transcriptDir, { recursive: true });
+      writeFileSync(join(transcriptDir, `${backendSessionId}.jsonl`), "{}\n");
+      await startProjectServices(host);
+      const desktop = (host.metadataServer as any).options.desktop;
+
+      await expect(desktop.resumeAgent({ sessionId: "claude-recoverable" })).resolves.toEqual({
+        sessionId: "claude-recoverable",
+        status: "running",
+      });
+
+      expect(host.resumeOfflineSession).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "claude-recoverable", backendSessionId }),
+      );
+    } finally {
+      host.metadataServer?.stop?.();
+      if (previousClaudeDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousClaudeDir;
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(claudeHome, { recursive: true, force: true });
     }
   });
 

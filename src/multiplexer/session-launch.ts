@@ -428,17 +428,15 @@ export function createSession(
   const toolCfg = toolConfigKey ? config.tools[toolConfigKey] : undefined;
   // A launch override may swap the binary; aimux flags/preamble only apply to the tool's own command.
   const isConfiguredToolCommand = Boolean(toolCfg && toolCfg.command === command);
-  const isClaudeResumeStyleLaunch =
-    Boolean(toolCfg && toolConfigKey === "claude" && toolCfg.command === command) &&
-    shouldSkipClaudeSessionIdInjection(args);
-  const explicitClaudeBackendSessionId =
-    toolCfg && toolConfigKey === "claude" && toolCfg.command === command
-      ? extractClaudeBackendSessionIdFromArgs(args)
-      : undefined;
-  const explicitCodexBackendSessionId =
-    toolCfg && toolConfigKey === "codex" && toolCfg.command === command
-      ? extractCodexBackendSessionIdFromArgs(args)
-      : undefined;
+  const isConfiguredClaudeCommand = Boolean(toolCfg && toolCfg.command === command && command === "claude");
+  const isConfiguredCodexCommand = Boolean(toolCfg && toolCfg.command === command && command === "codex");
+  const isClaudeResumeStyleLaunch = isConfiguredClaudeCommand && shouldSkipClaudeSessionIdInjection(args);
+  const explicitClaudeBackendSessionId = isConfiguredClaudeCommand
+    ? extractClaudeBackendSessionIdFromArgs(args)
+    : undefined;
+  const explicitCodexBackendSessionId = isConfiguredCodexCommand
+    ? extractCodexBackendSessionIdFromArgs(args)
+    : undefined;
   const effectiveSuppressStartupPreamble = suppressStartupPreamble;
   const effectiveSessionIdFlag = isConfiguredToolCommand && !isClaudeResumeStyleLaunch ? sessionIdFlag : undefined;
   const backendSessionId =
@@ -491,7 +489,7 @@ export function createSession(
   clearSessionTranscriptPath(sessionId);
   clearSessionTranscriptPath(sessionId, projectRoot);
 
-  if (toolCfg && toolConfigKey === "claude" && toolCfg.command === command && toolCfg.wrapperEnabled !== false) {
+  if (toolCfg && isConfiguredClaudeCommand && toolCfg.wrapperEnabled !== false) {
     finalArgs = injectClaudeHookArgs(finalArgs, {
       sessionId,
       projectRoot,
@@ -509,7 +507,7 @@ export function createSession(
     });
     launchCommand = wrapped.command;
     finalArgs = wrapped.args;
-  } else if (toolCfg && toolConfigKey === "codex" && toolCfg.command === command && toolCfg.wrapperEnabled !== false) {
+  } else if (toolCfg && isConfiguredCodexCommand && toolCfg.wrapperEnabled !== false) {
     try {
       installCodexHooks();
     } catch (error) {
