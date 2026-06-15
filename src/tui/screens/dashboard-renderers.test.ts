@@ -197,40 +197,52 @@ describe("renderDashboardFrame worktree progress", () => {
   });
 
   it("renders pending session labels even when semantic state is stale", () => {
-    const { frame } = renderDashboardFrame(
-      baseDashboardViewModel({
-        navLevel: "sessions",
-        selectedSessionId: "claude-1",
-        sessions: [
-          {
-            index: 0,
-            id: "claude-1",
-            command: "claude",
-            status: "running",
-            active: true,
-            pendingAction: "starting",
-            optimistic: true,
-            semantic: deriveSessionSemantics({
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-05-09T12:00:30.000Z"));
+    try {
+      const { frame } = renderDashboardFrame(
+        baseDashboardViewModel({
+          navLevel: "sessions",
+          selectedSessionId: "claude-1",
+          sessions: [
+            {
+              index: 0,
+              id: "claude-1",
+              command: "claude",
               status: "running",
-              attention: "needs_input",
-            }),
-          },
-        ],
-        worktreeGroups: [
-          {
-            name: "Main Checkout",
-            branch: "master",
-            status: "active",
-            sessions: [],
-            services: [],
-          },
-        ],
-      }),
-      120,
-      40,
-    );
+              active: true,
+              pendingAction: "starting",
+              optimistic: true,
+              lastUsedAt: "2026-05-09T12:00:00.000Z",
+              becameIdleAt: "2026-05-09T12:00:25.000Z",
+              semantic: deriveSessionSemantics({
+                status: "running",
+                attention: "needs_input",
+              }),
+            },
+          ],
+          worktreeGroups: [
+            {
+              name: "Main Checkout",
+              branch: "master",
+              status: "active",
+              sessions: [],
+              services: [],
+            },
+          ],
+        }),
+        120,
+        40,
+      );
 
-    expect(frame).toContain("claude \x1b[33mStarting");
+      expect(frame).toContain("claude \x1b[33mStarting");
+      expect(frame).toContain("starting 30s ago");
+      expect(frame).toContain("1 starting");
+      expect(frame).not.toContain("prompted");
+      expect(frame).not.toContain("idle now");
+      expect(frame).not.toContain("1 needs input");
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("renders selected parent teammates in the details pane only", () => {

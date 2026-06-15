@@ -22,8 +22,10 @@ const RECENT_IDLE_MS = 2 * 60 * 1000;
 const STATE_LABEL_WIDTH = 15;
 
 type SessionUserLabel = NonNullable<DashboardSession["semantic"]>["user"]["label"];
+type SessionPendingAction = NonNullable<DashboardSession["pendingAction"]>;
+type SessionRowState = SessionUserLabel | SessionPendingAction;
 
-const USER_STATE_LABELS: Record<SessionUserLabel, string> = {
+const ROW_STATE_LABELS: Record<SessionRowState, string> = {
   working: "Working",
   needs_input: "Needs input",
   needs_response: "Needs response",
@@ -37,6 +39,10 @@ const USER_STATE_LABELS: Record<SessionUserLabel, string> = {
   graveyarding: "Removing",
   done: "Done",
   interrupted: "Interrupted",
+  creating: "Creating",
+  forking: "Forking",
+  migrating: "Migrating",
+  renaming: "Renaming",
 };
 
 function parseTimestamp(value: string | undefined): number | null {
@@ -46,7 +52,8 @@ function parseTimestamp(value: string | undefined): number | null {
 }
 
 function isRecentlyIdle(session: DashboardSession, now = Date.now()): boolean {
-  const label = session.semantic?.user.label;
+  if (session.pendingAction) return false;
+  const label = effectiveSessionRowState(session);
   if (label === "working" || label === "offline" || label === "error") return false;
   const becameIdleAt = parseTimestamp(session.becameIdleAt);
   return becameIdleAt !== null && now - becameIdleAt >= 0 && now - becameIdleAt <= RECENT_IDLE_MS;
@@ -58,20 +65,27 @@ function padVisible(value: string, width: number): string {
   return `${value}${" ".repeat(width - visibleLength)}`;
 }
 
+function effectiveSessionRowState(session: DashboardSession): SessionRowState | undefined {
+  return session.pendingAction ?? session.semantic?.user.label;
+}
+
 function sessionUserStateLabel(session: DashboardSession, fallback: string): string {
-  if (session.pendingAction) return session.pendingAction.charAt(0).toUpperCase() + session.pendingAction.slice(1);
-  const label = session.semantic?.user.label;
-  if (label) return USER_STATE_LABELS[label];
+  const label = effectiveSessionRowState(session);
+  if (label) return ROW_STATE_LABELS[label];
   if (fallback === "thinking") return "Working";
   return fallback.charAt(0).toUpperCase() + fallback.slice(1);
 }
 
 function sessionTimeAnchor(session: DashboardSession): { label: string; value?: string } | null {
-  const userLabel = session.semantic?.user.label;
+  const userLabel = effectiveSessionRowState(session);
   const latestUnreadAt = session.semantic?.notifications.latestUnread?.createdAt;
   const lastOutputAt =
     session.lastOutputAt ??
     (session.lastEvent && isAgentOutputEventKind(session.lastEvent.kind) ? session.lastEvent.ts : undefined);
+
+  if (session.pendingAction) {
+    return { label: session.pendingAction, value: session.lastUsedAt ?? session.becameIdleAt ?? lastOutputAt };
+  }
 
   if (userLabel === "needs_input" || userLabel === "needs_response") {
     return { label: "prompted", value: latestUnreadAt ?? lastOutputAt ?? session.becameIdleAt ?? session.lastUsedAt };
@@ -97,9 +111,6 @@ function sessionTimeAnchor(session: DashboardSession): { label: string; value?: 
   }
   if (userLabel === "error") {
     return { label: "failed", value: latestUnreadAt ?? session.becameIdleAt ?? lastOutputAt ?? session.lastUsedAt };
-  }
-  if (session.pendingAction) {
-    return { label: session.pendingAction, value: session.lastUsedAt };
   }
   return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
 }
@@ -134,16 +145,16 @@ function sessionActivityBadges(session: DashboardSession): string {
 }
 
 function worktreeSemanticSummary(worktree: { sessions: DashboardSession[] }): string {
-  const counts = new Map<SessionUserLabel, number>();
+  const counts = new Map<SessionRowState, number>();
   for (const session of worktree.sessions) {
-    const label = session.semantic?.user.label;
+    const label = effectiveSessionRowState(session);
     if (!label) continue;
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
 
   const parts: string[] = [];
   const append = (
-    label: SessionUserLabel,
+    label: SessionRowState,
     text: string,
     color: (value: string) => string = (value) => `\x1b[2m${value}\x1b[0m`,
   ) => {
@@ -160,12 +171,19 @@ function worktreeSemanticSummary(worktree: { sessions: DashboardSession[] }): st
   append("idle", "idle");
   append("done", "done", (value) => `\x1b[32m${value}\x1b[0m`);
   append("offline", "offline");
+  append("creating", "creating", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("forking", "forking", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("migrating", "migrating", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("starting", "starting", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("stopping", "stopping", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("graveyarding", "removing", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("renaming", "renaming", (value) => `\x1b[33m${value}\x1b[0m`);
 
   return parts.length > 0 ? ` \x1b[2m·\x1b[0m ${parts.join(" \x1b[2m·\x1b[0m ")}` : "";
 }
 
 function colorSessionIcon(session: DashboardSession): string {
-  const label = session.semantic?.user.label;
+  const label = effectiveSessionRowState(session);
   const attention = session.semantic?.user.attention;
   if (session.pendingAction) return "\x1b[33m●\x1b[0m";
   if (attention === "error" || label === "error") return "\x1b[31m●\x1b[0m";
@@ -181,7 +199,7 @@ function colorSessionIcon(session: DashboardSession): string {
 }
 
 function colorSessionStatus(session: DashboardSession, statusLabel: string): string {
-  const label = session.semantic?.user.label;
+  const label = effectiveSessionRowState(session);
   const attention = session.semantic?.user.attention;
   if (session.pendingAction) return `\x1b[33m${statusLabel}\x1b[0m`;
   if (attention === "error" || label === "error") return `\x1b[31m${statusLabel}\x1b[0m`;
