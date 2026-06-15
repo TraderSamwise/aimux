@@ -3747,6 +3747,7 @@ program
           const kind = (opts.kind?.trim() || "notification") as
             | "notification"
             | "needs_input"
+            | "next_step"
             | "task_done"
             | "task_failed"
             | "blocked"

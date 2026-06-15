@@ -36,6 +36,30 @@ describe("alert display context", () => {
     });
   });
 
+  it("labels idle turn-end alerts as next-step notifications with branch context", () => {
+    expect(
+      contextualizeAlertInput(
+        {
+          kind: "next_step",
+          sessionId: "codex-rmq9pv",
+          title: "codex-rmq9pv ready for next step",
+          message: "Agent stopped after a turn.",
+          projectName: "aimux",
+          projectRoot: "/repo",
+          dedupeKey: "idle-needs-input:codex-rmq9pv",
+        },
+        { label: "codex", worktreeName: "notifications", branch: "notification-taxonomy" },
+      ),
+    ).toMatchObject({
+      title: "[Next step] aimux / notifications (notification-taxonomy)",
+      message: "Agent stopped after a turn: codex @ notifications ready for next step",
+      categoryLabel: "Next step",
+      reasonLabel: "Agent stopped after a turn",
+      worktreeName: "notifications",
+      branch: "notification-taxonomy",
+    });
+  });
+
   it("normalizes raw failure titles from direct publishers", () => {
     expect(
       sessionAlertTitle("task_failed", "codex-xzl7jp", "codex-xzl7jp failed", {

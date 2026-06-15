@@ -63,7 +63,7 @@ describe("startStatusRefresh", () => {
     expect(host.publishAlert).toHaveBeenCalledTimes(1);
     expect(host.publishAlert).toHaveBeenCalledWith(
       expect.objectContaining({
-        kind: "needs_input",
+        kind: "next_step",
         sessionId: "codex-1",
         dedupeKey: "idle-needs-input:codex-1",
       }),
