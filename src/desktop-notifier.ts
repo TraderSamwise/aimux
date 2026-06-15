@@ -108,8 +108,7 @@ function sendViaMacHelper(
   const execFile = deps.execFile ?? nodeExecFile;
   execFile(helperPath, macHelperArgs(payload), (error) => {
     if (!error) return;
-    debug(`mac notification helper fallback: ${error.message}`, "notify");
-    sendViaNodeNotifier(payload, deps);
+    debug(`mac notification helper failed: ${error.message}`, "notify");
   });
   return { transport: "mac-helper", helperPath };
 }
