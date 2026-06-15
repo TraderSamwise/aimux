@@ -43,4 +43,11 @@ describe("computeLayout grid shape on a roomy terminal", () => {
   it("keeps a single full-width tile for one item", () => {
     expect(computeLayout(1, WIDE, TALL).tileCols).toBe(1);
   });
+
+  it("returns a finite layout for an empty rung", () => {
+    const layout = computeLayout(0, WIDE, TALL);
+    expect(layout.visibleCount).toBe(0);
+    expect(Number.isFinite(layout.tileHeight)).toBe(true);
+    expect(Number.isFinite(layout.bodyLines)).toBe(true);
+  });
 });

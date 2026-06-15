@@ -121,7 +121,7 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
   const tileCols = Math.max(1, Math.min(balancedCols(itemCount), fitCols));
   const neededRows = Math.ceil(itemCount / tileCols);
   const maxTileRows = Math.max(1, Math.floor(gridHeight / MIN_TILE_HEIGHT));
-  const tileRows = Math.min(neededRows, maxTileRows);
+  const tileRows = Math.max(1, Math.min(neededRows, maxTileRows));
   const tileWidth = Math.max(4, Math.floor((cols - (tileCols - 1) * GAP) / tileCols));
   const tileHeight = Math.floor(gridHeight / tileRows);
   return {
