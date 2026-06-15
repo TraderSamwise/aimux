@@ -131,6 +131,30 @@ export function statusDot(kind: StatusKind): string {
   return style(STATE_GLYPH[kind], STATE_TONE[kind]);
 }
 
+// tmux format-code equivalents of the color tokens, for surfaces rendered via
+// `#[fg=...]` directives (the tmux statusline) rather than ANSI.
+const TMUX_COLOR: Partial<Record<Tone, string>> = {
+  muted: "colour244",
+  accent: "yellow",
+  work: "cyan",
+  attn: "yellow",
+  done: "green",
+  danger: "red",
+  blocked: "magenta",
+  info: "cyan",
+  idle: "green",
+};
+
+export function tmuxStyle(text: string, tone: Tone): string {
+  const color = TMUX_COLOR[tone];
+  return color ? `#[fg=${color}]${text}#[default]` : text;
+}
+
+export function tmuxInvert(text: string, tone: Tone): string {
+  const color = TMUX_COLOR[tone] ?? "white";
+  return `#[fg=black,bg=${color}]${text}#[default]`;
+}
+
 export function divider(width: number, tone: Tone = "muted"): string {
   return style("─".repeat(Math.max(0, width)), tone);
 }
