@@ -2,7 +2,20 @@ import { readFileSync } from "node:fs";
 import { TerminalHost } from "../terminal-host.js";
 import { parseKeys } from "../key-parser.js";
 import { requestJson } from "../http-client.js";
+import { keycap, padVisible, statusDot, style } from "../tui/render/theme.js";
 import { TmuxRuntimeManager } from "./runtime-manager.js";
+
+function styleInboxHelp(line: string): string {
+  return line
+    .split(/\s{2,}/)
+    .filter(Boolean)
+    .map((group) => {
+      const splitAt = group.indexOf(" ");
+      if (splitAt < 0) return keycap(group);
+      return `${keycap(group.slice(0, splitAt))} ${style(group.slice(splitAt + 1), "muted")}`;
+    })
+    .join("  ");
+}
 
 export interface TmuxInboxPopupOptions {
   projectRoot: string;
@@ -173,43 +186,49 @@ function renderPopup(entries: InboxPopupEntry[], index: number, message: string 
   const visible = entries.slice(0, listHeight);
 
   let output = "\x1b[2J\x1b[H";
-  output += `\x1b[1;${startCol}H\x1b[1maimux\x1b[0m — inbox`;
-  output += `\x1b[1;${rightCol}H${message ? `\x1b[33m${message}\x1b[0m` : `${entries.length} items`}`;
+  output += `\x1b[1;${startCol}H${style("aimux", "strong")} ${style("— inbox", "muted")}`;
+  output += `\x1b[1;${rightCol}H${message ? style(message, "attn") : style(`${entries.length} items`, "muted")}`;
 
   for (let i = 0; i < visible.length; i += 1) {
     const entry = visible[i]!;
     const row = listStartRow + i;
     const isSelected = i === index;
-    const bullet = entry.unread ? "●" : "○";
-    const summary = `${bullet} ${entry.title} · ${stateLabel(entry.targetState)} · ${formatRelative(entry.createdAt)}`;
     output += `\x1b[${row};${startCol}H`;
-    if (isSelected) output += "\x1b[30;43m";
-    output += summary.slice(0, leftWidth).padEnd(leftWidth);
-    if (isSelected) output += "\x1b[0m";
+    if (isSelected) {
+      const bullet = entry.unread ? "●" : "○";
+      const plain = `${bullet} ${entry.title} · ${stateLabel(entry.targetState)} · ${formatRelative(entry.createdAt)}`;
+      output += `\x1b[30;43m${padVisible(plain, leftWidth)}\x1b[0m`;
+    } else {
+      const dot = entry.unread ? statusDot("needs") : statusDot("offline");
+      const titleTone = entry.unread ? "strong" : "muted";
+      const meta = style(`· ${stateLabel(entry.targetState)} · ${formatRelative(entry.createdAt)}`, "muted");
+      const summary = `${dot} ${style(entry.title, titleTone)} ${meta}`;
+      output += padVisible(summary, leftWidth);
+    }
   }
 
   for (let row = 2; row < rows - 2; row += 1) {
-    output += `\x1b[${row};${startCol + leftWidth + 1}H│`;
+    output += `\x1b[${row};${startCol + leftWidth + 1}H${style("│", "muted")}`;
   }
 
   const details: string[] = [];
   if (selected) {
-    details.push(`Target: ${selected.targetLabel ?? "n/a"}`);
-    details.push(`State: ${stateLabel(selected.targetState)}`);
-    details.push(`When: ${formatRelative(selected.createdAt)}`);
-    if (selected.subtitle) details.push(`Subtitle: ${selected.subtitle}`);
+    details.push(`${style("Target:", "muted")} ${selected.targetLabel ?? "n/a"}`);
+    details.push(`${style("State:", "muted")} ${stateLabel(selected.targetState)}`);
+    details.push(`${style("When:", "muted")} ${formatRelative(selected.createdAt)}`);
+    if (selected.subtitle) details.push(`${style("Subtitle:", "muted")} ${selected.subtitle}`);
     details.push("");
     details.push(...wrapText(selected.body, rightWidth));
   } else {
-    details.push("No inbox items.");
+    details.push(style("No inbox items.", "muted"));
   }
 
   for (let i = 0; i < Math.min(details.length, contentHeight - 1); i += 1) {
-    output += `\x1b[${listStartRow + i};${rightCol}H${(details[i] ?? "").slice(0, rightWidth).padEnd(rightWidth)}`;
+    output += `\x1b[${listStartRow + i};${rightCol}H${padVisible(details[i] ?? "", rightWidth)}`;
   }
 
   const help = "j/k move  Enter jump  r read  R read-all  c clear  C clear-all  q/Esc close";
-  output += `\x1b[${rows - 1};${startCol}H${help.slice(0, cols - 4).padEnd(cols - 4)}`;
+  output += `\x1b[${rows - 1};${startCol}H${padVisible(styleInboxHelp(help), cols - 4)}`;
   process.stdout.write(output);
 }
 
