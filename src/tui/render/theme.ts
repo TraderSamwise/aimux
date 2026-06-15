@@ -147,6 +147,10 @@ export function statusDot(kind: StatusKind): string {
   return style(STATE_GLYPH[kind], STATE_TONE[kind]);
 }
 
+export function statusTone(kind: StatusKind): Tone {
+  return STATE_TONE[kind];
+}
+
 // tmux format-code equivalents of the color tokens, for surfaces rendered via
 // `#[fg=...]` directives (the tmux statusline) rather than ANSI.
 const TMUX_COLOR: Partial<Record<Tone, string>> = {
