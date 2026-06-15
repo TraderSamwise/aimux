@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
+import { updateSessionMetadata } from "../metadata-store.js";
 import { initPaths } from "../paths.js";
 import { saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import {
@@ -577,6 +578,79 @@ describe("metadata pending actions", () => {
         'Cannot restore session "claude-blocked": missing exact resumable backend session id',
       );
       expect(host.resumeOfflineSession).not.toHaveBeenCalled();
+    } finally {
+      host.metadataServer?.stop?.();
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("allows project-service agent resume without an exact backend id for error-state fresh relaunch", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-dashboard-resume-relaunch-"));
+    const host: any = {
+      dashboardPendingActions: new DashboardPendingActions(() => {}),
+      reapplyDashboardPendingActions: vi.fn(),
+      eventBus: undefined,
+      buildDesktopState: vi.fn(),
+      listProjectedDesktopWorktrees: vi.fn(),
+      dashboardSessionsCache: [],
+      dashboardServicesCache: [],
+      dashboardWorktreeGroupsCache: [],
+      sessions: [],
+      services: [],
+      offlineSessions: [
+        { id: "claude-error", command: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline" },
+      ],
+      offlineServices: [],
+      sessionWorktreePaths: new Map(),
+      sessionTmuxTargets: new Map(),
+      getSessionLabel: vi.fn(),
+      serviceLabelForCommand: vi.fn(),
+      refreshProjectStatusline: vi.fn(),
+      createDesktopWorktree: vi.fn(),
+      removeDesktopWorktree: vi.fn(),
+      graveyardDesktopWorktree: vi.fn(),
+      listWorktreeGraveyardEntries: vi.fn(),
+      resurrectGraveyardWorktree: vi.fn(),
+      deleteGraveyardWorktree: vi.fn(),
+      createService: vi.fn(),
+      stopService: vi.fn(),
+      resumeOfflineServiceById: vi.fn(),
+      removeOfflineService: vi.fn(),
+      resumeOfflineSession: vi.fn((session: any) => {
+        host.offlineSessions = host.offlineSessions.filter((entry: any) => entry.id !== session.id);
+        host.sessions.push({ ...session, lifecycle: "live", exited: false });
+      }),
+      listGraveyardEntries: vi.fn(),
+      resurrectGraveyardSession: vi.fn(),
+      sendOrchestrationMessage: vi.fn(),
+      sendHandoffMessage: vi.fn(),
+      spawnAgent: vi.fn(),
+      createTeammateAgent: vi.fn(),
+      forkAgent: vi.fn(),
+      stopAgent: vi.fn(),
+      interruptAgent: vi.fn(),
+      renameAgent: vi.fn(),
+      migrateAgent: vi.fn(),
+      killAgent: vi.fn(),
+      readAgentOutput: vi.fn(),
+    };
+
+    try {
+      await initPaths(repoRoot);
+      updateSessionMetadata("claude-error", (current) => ({
+        ...current,
+        derived: { ...(current.derived ?? {}), activity: "error", attention: "error" },
+      }));
+      await startProjectServices(host);
+      const desktop = (host.metadataServer as any).options.desktop;
+
+      await expect(desktop.resumeAgent({ sessionId: "claude-error" })).resolves.toEqual({
+        sessionId: "claude-error",
+        status: "running",
+      });
+
+      expect(host.resumeOfflineSession).toHaveBeenCalledWith(expect.objectContaining({ id: "claude-error" }));
+      expect(host.resumeOfflineSession.mock.calls[0]?.[0]).not.toHaveProperty("backendSessionId");
     } finally {
       host.metadataServer?.stop?.();
       rmSync(repoRoot, { recursive: true, force: true });
