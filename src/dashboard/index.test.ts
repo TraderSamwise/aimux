@@ -86,8 +86,8 @@ describe("Dashboard", () => {
       derivedStatusLabel: (session) => session.status,
     });
 
-    const rendered = dashboard.render(120, 40);
-    expect(rendered).toContain("Details");
+    const rendered = dashboard.render(140, 40);
+    expect(rendered).toContain("DETAILS");
     expect(rendered).toContain("Worktree: mobile");
     expect(rendered).toContain("feat/mobile-auth");
     expect(rendered).toContain("PR #123: Fix mobile auth flow");
