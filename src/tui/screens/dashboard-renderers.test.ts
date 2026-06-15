@@ -105,9 +105,9 @@ describe("renderDashboardFrame worktree progress", () => {
       40,
     );
 
-    expect(frame).toContain("\x1b[1;33mneeds input\x1b[0m");
-    expect(frame).toContain("\x1b[1;33mon you\x1b[0m");
-    expect(frame).toContain("\x1b[36mworking\x1b[0m");
+    expect(frame).toContain("\x1b[1;33mNeeds input");
+    expect(frame).toContain("\x1b[36m1 unread\x1b[0m");
+    expect(frame).toContain("\x1b[36mWorking");
   });
 
   it("renders output recency instead of last-used recency and highlights recently idle sessions", () => {
@@ -196,41 +196,119 @@ describe("renderDashboardFrame worktree progress", () => {
     }
   });
 
-  it("renders pending session labels even when semantic state is stale", () => {
-    const { frame } = renderDashboardFrame(
-      baseDashboardViewModel({
-        navLevel: "sessions",
-        selectedSessionId: "claude-1",
-        sessions: [
-          {
-            index: 0,
-            id: "claude-1",
-            command: "claude",
-            status: "running",
-            active: true,
-            pendingAction: "starting",
-            optimistic: true,
-            semantic: deriveSessionSemantics({
+  it("does not label last-used timestamps as output recency", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-05-09T12:00:30.000Z"));
+    try {
+      const { frame } = renderDashboardFrame(
+        baseDashboardViewModel({
+          navLevel: "sessions",
+          selectedSessionId: "codex-1",
+          sessions: [
+            {
+              index: 0,
+              id: "codex-1",
+              command: "codex",
               status: "running",
-              attention: "needs_input",
-            }),
-          },
-        ],
-        worktreeGroups: [
-          {
-            name: "Main Checkout",
-            branch: "master",
-            status: "active",
-            sessions: [],
-            services: [],
-          },
-        ],
-      }),
-      120,
-      40,
-    );
+              active: true,
+              lastUsedAt: "2026-05-09T12:00:00.000Z",
+              semantic: deriveSessionSemantics({
+                status: "running",
+                activity: "running",
+              }),
+            },
+          ],
+          worktreeGroups: [
+            {
+              name: "Main Checkout",
+              branch: "master",
+              status: "active",
+              sessions: [],
+              services: [],
+            },
+          ],
+        }),
+        120,
+        40,
+      );
 
-    expect(frame).toContain("claude — \x1b[1;33mstarting\x1b[0m");
+      expect(frame).toContain("\x1b[36mWorking");
+      expect(frame).not.toContain("output 30s ago");
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("renders pending session labels even when semantic state is stale", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-05-09T12:00:30.000Z"));
+    try {
+      const { frame } = renderDashboardFrame(
+        baseDashboardViewModel({
+          navLevel: "sessions",
+          selectedSessionId: "claude-1",
+          sessions: [
+            {
+              index: 0,
+              id: "claude-1",
+              command: "claude",
+              status: "running",
+              active: true,
+              pendingAction: "starting",
+              optimistic: true,
+              pendingStartedAt: "2026-05-09T12:00:00.000Z",
+              lastUsedAt: "2026-05-09T11:00:00.000Z",
+              becameIdleAt: "2026-05-09T12:00:25.000Z",
+              semantic: deriveSessionSemantics({
+                status: "running",
+                attention: "needs_input",
+              }),
+            },
+            {
+              index: 1,
+              id: "codex-1",
+              command: "codex",
+              status: "running",
+              active: false,
+              pendingAction: "graveyarding",
+              optimistic: true,
+              pendingStartedAt: "2026-05-09T12:00:00.000Z",
+              semantic: deriveSessionSemantics({
+                status: "running",
+                attention: "needs_input",
+              }),
+            },
+          ],
+          worktreeGroups: [
+            {
+              name: "Main Checkout",
+              branch: "master",
+              status: "active",
+              sessions: [],
+              services: [],
+            },
+          ],
+        }),
+        120,
+        40,
+      );
+
+      expect(frame).toContain("claude \x1b[33mStarting");
+      expect(frame).toContain("starting 30s ago");
+      expect(frame).toContain("1 starting");
+      expect(frame).toContain("codex \x1b[33mRemoving");
+      expect(frame).toContain("removing 30s ago");
+      expect(frame).toContain("1 removing");
+      expect(frame).toContain("State: Starting");
+      expect(frame).toContain("Started: 30s ago");
+      expect(frame).not.toContain("State: needs input");
+      expect(frame).not.toContain("Attention: needs_input");
+      expect(frame).not.toContain("prompted");
+      expect(frame).not.toContain("idle now");
+      expect(frame).not.toContain("1 needs input");
+      expect(frame).not.toContain("graveyarding");
+      expect(frame).not.toContain("1h ago");
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("renders selected parent teammates in the details pane only", () => {

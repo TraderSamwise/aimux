@@ -67,6 +67,7 @@ export interface DashboardSession {
   latestNotificationText?: string;
   semantic?: SessionSemanticState;
   pendingAction?: SessionPendingAction;
+  pendingStartedAt?: string;
   pending?: boolean;
   optimistic?: boolean;
 }
@@ -92,6 +93,7 @@ export interface DashboardService {
   pid?: number;
   previewLine?: string;
   pendingAction?: PendingDashboardActionKind;
+  pendingStartedAt?: string;
   pending?: boolean;
   optimistic?: boolean;
 }
@@ -107,6 +109,7 @@ export interface WorktreeGroup {
   pending?: boolean;
   removing?: boolean;
   pendingAction?: PendingWorktreeActionKind;
+  pendingStartedAt?: string;
   operationFailure?: DashboardOperationFailure;
   optimistic?: boolean;
   sessions: DashboardSession[];

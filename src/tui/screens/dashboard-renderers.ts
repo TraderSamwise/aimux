@@ -19,6 +19,31 @@ const SERVICE_ICONS: Record<DashboardService["status"], string> = {
 };
 
 const RECENT_IDLE_MS = 2 * 60 * 1000;
+const STATE_LABEL_WIDTH = 15;
+
+type SessionUserLabel = NonNullable<DashboardSession["semantic"]>["user"]["label"];
+type SessionPendingAction = NonNullable<DashboardSession["pendingAction"]>;
+type SessionRowState = SessionUserLabel | SessionPendingAction;
+
+const ROW_STATE_LABELS: Record<SessionRowState, string> = {
+  working: "Working",
+  needs_input: "Needs input",
+  needs_response: "Needs response",
+  next_step: "Next step",
+  blocked: "Blocked",
+  error: "Error",
+  idle: "Idle",
+  offline: "Offline",
+  starting: "Starting",
+  stopping: "Stopping",
+  graveyarding: "Removing",
+  done: "Done",
+  interrupted: "Interrupted",
+  creating: "Creating",
+  forking: "Forking",
+  migrating: "Migrating",
+  renaming: "Renaming",
+};
 
 function parseTimestamp(value: string | undefined): number | null {
   if (!value) return null;
@@ -27,15 +52,144 @@ function parseTimestamp(value: string | undefined): number | null {
 }
 
 function isRecentlyIdle(session: DashboardSession, now = Date.now()): boolean {
-  const label = session.semantic?.user.label;
+  if (session.pendingAction) return false;
+  const label = effectiveSessionRowState(session);
   if (label === "working" || label === "offline" || label === "error") return false;
   const becameIdleAt = parseTimestamp(session.becameIdleAt);
   return becameIdleAt !== null && now - becameIdleAt >= 0 && now - becameIdleAt <= RECENT_IDLE_MS;
 }
 
+function padVisible(value: string, width: number): string {
+  const visibleLength = stripAnsi(value).length;
+  if (visibleLength >= width) return value;
+  return `${value}${" ".repeat(width - visibleLength)}`;
+}
+
+function effectiveSessionRowState(session: DashboardSession): SessionRowState | undefined {
+  return session.pendingAction ?? session.semantic?.user.label;
+}
+
+function sessionUserStateLabel(session: DashboardSession, fallback: string): string {
+  const label = effectiveSessionRowState(session);
+  if (label) return ROW_STATE_LABELS[label];
+  if (fallback === "thinking") return "Working";
+  return fallback.charAt(0).toUpperCase() + fallback.slice(1);
+}
+
+function sessionTimeAnchor(session: DashboardSession): { label: string; value?: string } | null {
+  const userLabel = effectiveSessionRowState(session);
+  const latestUnreadAt = session.semantic?.notifications.latestUnread?.createdAt;
+  const lastOutputAt =
+    session.lastOutputAt ??
+    (session.lastEvent && isAgentOutputEventKind(session.lastEvent.kind) ? session.lastEvent.ts : undefined);
+
+  if (session.pendingAction) {
+    return {
+      label: ROW_STATE_LABELS[session.pendingAction].toLowerCase(),
+      value:
+        session.pendingStartedAt ?? session.createdAt ?? session.lastUsedAt ?? session.becameIdleAt ?? lastOutputAt,
+    };
+  }
+
+  if (userLabel === "needs_input" || userLabel === "needs_response") {
+    return { label: "prompted", value: latestUnreadAt ?? lastOutputAt ?? session.becameIdleAt ?? session.lastUsedAt };
+  }
+  if (userLabel === "next_step" || userLabel === "idle" || userLabel === "interrupted") {
+    return lastOutputAt
+      ? { label: "output", value: lastOutputAt }
+      : { label: "idle", value: session.becameIdleAt ?? session.lastUsedAt };
+  }
+  if (userLabel === "working") {
+    return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
+  }
+  if (userLabel === "done") {
+    return lastOutputAt
+      ? { label: "output", value: lastOutputAt }
+      : { label: "done", value: session.becameIdleAt ?? session.lastUsedAt };
+  }
+  if (userLabel === "offline") {
+    return lastOutputAt ? { label: "output", value: lastOutputAt } : { label: "offline", value: session.lastUsedAt };
+  }
+  if (userLabel === "blocked") {
+    return { label: "blocked", value: latestUnreadAt ?? session.becameIdleAt ?? lastOutputAt ?? session.lastUsedAt };
+  }
+  if (userLabel === "error") {
+    return { label: "failed", value: latestUnreadAt ?? session.becameIdleAt ?? lastOutputAt ?? session.lastUsedAt };
+  }
+  return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
+}
+
+function sessionTimeHint(session: DashboardSession): string {
+  const anchor = sessionTimeAnchor(session);
+  if (!anchor?.value) return "";
+  const recency = formatRelativeRecency(anchor.value);
+  return recency ? ` \x1b[2m· ${anchor.label} ${recency}\x1b[0m` : "";
+}
+
+function sessionActivityBadges(session: DashboardSession): string {
+  const badges: string[] = [];
+  const notificationUnread = session.semantic?.notifications.unreadCount ?? session.notificationUnreadCount ?? 0;
+  const activityNew = session.semantic?.activityNewCount ?? session.unseenCount ?? 0;
+  const threadUnread = session.threadUnreadCount ?? 0;
+  const threadWaitingOnMe = session.threadWaitingOnMeCount ?? 0;
+  const threadWaitingOnThem = session.threadWaitingOnThemCount ?? 0;
+  const threadPending = session.threadPendingCount ?? 0;
+
+  if (notificationUnread > 0) badges.push(`\x1b[36m${Math.min(notificationUnread, 99)} unread\x1b[0m`);
+  if (activityNew > 0) badges.push(`\x1b[34m${Math.min(activityNew, 99)} unseen\x1b[0m`);
+  if (threadUnread > 0 || threadWaitingOnMe > 0 || threadWaitingOnThem > 0) {
+    badges.push(`\x1b[2;34mthread ${threadUnread}/${threadWaitingOnMe}/${threadWaitingOnThem}\x1b[0m`);
+  }
+  if (threadPending > 0) badges.push(`\x1b[2;31m${threadPending} pending\x1b[0m`);
+  if ((session.workflowOnMeCount ?? 0) > 0) badges.push(`\x1b[1;33mworkflow on you\x1b[0m`);
+  if ((session.workflowBlockedCount ?? 0) > 0) badges.push(`\x1b[31mworkflow blocked\x1b[0m`);
+  if ((session.workflowFamilyCount ?? 0) > 0) badges.push(`\x1b[2;35mworkflow ${session.workflowFamilyCount}\x1b[0m`);
+
+  return badges.length > 0 ? ` \x1b[2m·\x1b[0m ${badges.join(" \x1b[2m·\x1b[0m ")}` : "";
+}
+
+function worktreeSemanticSummary(worktree: { sessions: DashboardSession[] }): string {
+  const counts = new Map<SessionRowState, number>();
+  for (const session of worktree.sessions) {
+    const label = effectiveSessionRowState(session);
+    if (!label) continue;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+
+  const parts: string[] = [];
+  const append = (
+    label: SessionRowState,
+    text: string,
+    color: (value: string) => string = (value) => `\x1b[2m${value}\x1b[0m`,
+  ) => {
+    const count = counts.get(label) ?? 0;
+    if (count > 0) parts.push(color(`${count} ${text}`));
+  };
+
+  append("needs_input", "needs input", (value) => `\x1b[1;33m${value}\x1b[0m`);
+  append("needs_response", "needs response", (value) => `\x1b[1;33m${value}\x1b[0m`);
+  append("next_step", "next step", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("blocked", "blocked", (value) => `\x1b[35m${value}\x1b[0m`);
+  append("error", "error", (value) => `\x1b[31m${value}\x1b[0m`);
+  append("working", "working", (value) => `\x1b[36m${value}\x1b[0m`);
+  append("idle", "idle");
+  append("done", "done", (value) => `\x1b[32m${value}\x1b[0m`);
+  append("offline", "offline");
+  append("creating", "creating", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("forking", "forking", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("migrating", "migrating", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("starting", "starting", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("stopping", "stopping", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("graveyarding", "removing", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("renaming", "renaming", (value) => `\x1b[33m${value}\x1b[0m`);
+
+  return parts.length > 0 ? ` \x1b[2m·\x1b[0m ${parts.join(" \x1b[2m·\x1b[0m ")}` : "";
+}
+
 function colorSessionIcon(session: DashboardSession): string {
-  const label = session.semantic?.user.label;
+  const label = effectiveSessionRowState(session);
   const attention = session.semantic?.user.attention;
+  if (session.pendingAction) return "\x1b[33m●\x1b[0m";
   if (attention === "error" || label === "error") return "\x1b[31m●\x1b[0m";
   if (attention === "blocked" || label === "blocked") return "\x1b[35m●\x1b[0m";
   if (attention === "needs_input" || label === "needs_input") return "\x1b[1;33m◉\x1b[0m";
@@ -49,8 +203,9 @@ function colorSessionIcon(session: DashboardSession): string {
 }
 
 function colorSessionStatus(session: DashboardSession, statusLabel: string): string {
-  const label = session.semantic?.user.label;
+  const label = effectiveSessionRowState(session);
   const attention = session.semantic?.user.attention;
+  if (session.pendingAction) return `\x1b[33m${statusLabel}\x1b[0m`;
   if (attention === "error" || label === "error") return `\x1b[31m${statusLabel}\x1b[0m`;
   if (attention === "blocked" || label === "blocked") return `\x1b[35m${statusLabel}\x1b[0m`;
   if (attention === "needs_input" || label === "needs_input") return `\x1b[1;33m${statusLabel}\x1b[0m`;
@@ -62,16 +217,6 @@ function colorSessionStatus(session: DashboardSession, statusLabel: string): str
   if (label === "offline") return `\x1b[2m${statusLabel}\x1b[0m`;
   if (session.pendingAction) return `\x1b[33m${statusLabel}\x1b[0m`;
   return statusLabel;
-}
-
-function colorSessionHint(value: string): string {
-  if (/\bon you\b/i.test(value)) return `\x1b[1;33m${value}\x1b[0m`;
-  if (/\bformal prompt|answer\b/i.test(value)) return `\x1b[1;33m${value}\x1b[0m`;
-  if (/\bunread\b/i.test(value)) return `\x1b[36m${value}\x1b[0m`;
-  if (/\bnew\b/i.test(value)) return `\x1b[34m${value}\x1b[0m`;
-  if (/\bblocked|error\b/i.test(value)) return `\x1b[31m${value}\x1b[0m`;
-  if (/\bon them|pending\b/i.test(value)) return `\x1b[35m${value}\x1b[0m`;
-  return `\x1b[2m${value}\x1b[0m`;
 }
 
 function summarizeTeammate(
@@ -120,47 +265,21 @@ export function renderDashboardFrame(
     const prefix = isSelected ? "\x1b[33m▸\x1b[0m " : "  ";
     const numberBadge = quickDigit ? `[${quickDigit}] ` : "";
     const taskBadge = session.taskDescription ? ` \x1b[2;35m⧫ ${truncate(session.taskDescription, 40)}\x1b[0m` : "";
-    const threadBadge =
-      (session.threadUnreadCount ?? 0) > 0 ||
-      (session.threadWaitingOnMeCount ?? 0) > 0 ||
-      (session.threadWaitingOnThemCount ?? 0) > 0
-        ? ` \x1b[2;34m💬 ${session.threadUnreadCount ?? 0}/${session.threadWaitingOnMeCount ?? 0}/${session.threadWaitingOnThemCount ?? 0}\x1b[0m`
-        : "";
-    const pendingBadge =
-      (session.threadPendingCount ?? 0) > 0 ? ` \x1b[2;31m⇢ ${session.threadPendingCount}\x1b[0m` : "";
-    const workflowBadge =
-      (session.workflowOnMeCount ?? 0) > 0 ||
-      (session.workflowBlockedCount ?? 0) > 0 ||
-      (session.workflowFamilyCount ?? 0) > 0
-        ? ` \x1b[2;35mwf ${session.workflowOnMeCount ?? 0}/${session.workflowBlockedCount ?? 0}/${session.workflowFamilyCount ?? 0}\x1b[0m`
-        : "";
     const workflowHint = session.workflowNextAction
       ? ` \x1b[2;33m→ ${truncate(session.workflowNextAction, 24)}\x1b[0m`
       : "";
-    const lastOutputAt =
-      session.lastOutputAt ??
-      (session.lastEvent && isAgentOutputEventKind(session.lastEvent.kind) ? session.lastEvent.ts : undefined);
-    const lastOutputHint = lastOutputAt ? ` \x1b[2m· ${formatRelativeRecency(lastOutputAt)}\x1b[0m` : "";
     const recentIdleHint = isRecentlyIdle(session) ? ` \x1b[1;33m· idle now\x1b[0m` : "";
 
     const icon = colorSessionIcon(session);
-    const statusLabel = state.derivedStatusLabel(session);
+    const fallbackStatusLabel = state.derivedStatusLabel(session);
+    const statusLabel = padVisible(sessionUserStateLabel(session, fallbackStatusLabel), STATE_LABEL_WIDTH);
     const coloredStatusLabel = colorSessionStatus(session, statusLabel);
-    const compactHintValue = session.semantic?.presentation.compactHint ?? null;
-    const compactHint =
-      compactHintValue && compactHintValue !== statusLabel
-        ? ` \x1b[2m·\x1b[0m ${colorSessionHint(compactHintValue)}`
-        : "";
-    const notificationBadge =
-      session.semantic &&
-      session.semantic.notifications.unreadCount > 0 &&
-      !(compactHintValue && /\bunread\b/i.test(compactHintValue))
-        ? ` \x1b[36m${Math.min(session.semantic.notifications.unreadCount, 99)}\x1b[0m`
-        : "";
+    const timeHint = sessionTimeHint(session);
+    const activityBadges = sessionActivityBadges(session);
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} ${numberBadge}${identity}${roleTag} — ${coloredStatusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${notificationBadge}${lastOutputHint}${recentIdleHint}`;
+    return `${indent}${prefix}${icon} ${numberBadge}${identity}${roleTag} ${coloredStatusLabel}${timeHint}${activityBadges}${headlineText}${taskBadge}${workflowHint}${recentIdleHint}`;
   };
 
   const renderService = (service: DashboardService, indent: string, quickDigit?: number): string => {
@@ -207,8 +326,9 @@ export function renderDashboardFrame(
       const worktreeBadge = worktree.digit ? `[${worktree.digit}] ` : "";
       const branchSuffix = worktree.branch ? ` \x1b[2m${worktree.branch}\x1b[0m` : "";
       const worktreeLabel = `${worktreeBadge}${worktree.name}${branchSuffix}`;
+      const semanticSummary = worktreeSemanticSummary(worktree);
       if (worktree.sessions.length > 0 || worktree.services.length > 0) {
-        lines.push(`${prefix} ${highlight}${worktreeLabel}\x1b[0m${pending}`);
+        lines.push(`${prefix} ${highlight}${worktreeLabel}\x1b[0m${semanticSummary}${pending}`);
         for (const [sessionIndex, session] of worktree.sessions.entries()) {
           lines.push(renderSession(session, "    ", sessionIndex < 9 ? sessionIndex + 1 : undefined));
         }
@@ -438,7 +558,13 @@ export function renderDashboardFrame(
       lines.push(...wrapKeyValue("Repo", `${selected.repoOwner ?? "?"}/${selected.repoName ?? "?"}`, width));
     if (selected.repoRemote) lines.push(...wrapKeyValue("Remote", selected.repoRemote, width));
     if (selected.previewLine) lines.push(...wrapKeyValue("Preview", selected.previewLine, width));
-    if (selected.semantic) {
+    if (selected.pendingAction) {
+      lines.push(...wrapKeyValue("State", ROW_STATE_LABELS[selected.pendingAction], width));
+      if (selected.pendingStartedAt) {
+        const startedRecency = formatRelativeRecency(selected.pendingStartedAt);
+        if (startedRecency) lines.push(...wrapKeyValue("Started", startedRecency, width));
+      }
+    } else if (selected.semantic) {
       lines.push(...wrapKeyValue("State", selected.semantic.presentation.statusLabel, width));
       if (selected.semantic.user.attention !== "none") {
         lines.push(...wrapKeyValue("Attention", selected.semantic.user.attention, width));

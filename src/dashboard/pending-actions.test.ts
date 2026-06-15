@@ -19,33 +19,40 @@ describe("DashboardPendingActions", () => {
   });
 
   it("synthesizes optimistic session rows for creating sessions that do not exist yet", () => {
-    const pending = new DashboardPendingActions(() => {});
-    pending.setSessionAction("claude-new", "creating", {
-      sessionSeed: {
-        index: -1,
-        id: "claude-new",
-        command: "claude",
-        label: "claude",
-        status: "waiting",
-        active: false,
-        worktreePath: "/repo/.aimux/worktrees/demo",
-      },
-    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-09T12:00:00.000Z"));
+    try {
+      const pending = new DashboardPendingActions(() => {});
+      pending.setSessionAction("claude-new", "creating", {
+        sessionSeed: {
+          index: -1,
+          id: "claude-new",
+          command: "claude",
+          label: "claude",
+          status: "waiting",
+          active: false,
+          worktreePath: "/repo/.aimux/worktrees/demo",
+        },
+      });
 
-    const sessions = pending.applyToSessions([]);
+      const sessions = pending.applyToSessions([]);
 
-    expect(sessions).toEqual([
-      expect.objectContaining({
-        id: "claude-new",
-        command: "claude",
-        label: "claude",
-        status: "waiting",
-        worktreePath: "/repo/.aimux/worktrees/demo",
-        pending: true,
-        pendingAction: "creating",
-        optimistic: true,
-      }),
-    ]);
+      expect(sessions).toEqual([
+        expect.objectContaining({
+          id: "claude-new",
+          command: "claude",
+          label: "claude",
+          status: "waiting",
+          worktreePath: "/repo/.aimux/worktrees/demo",
+          pending: true,
+          pendingAction: "creating",
+          pendingStartedAt: "2026-05-09T12:00:00.000Z",
+          optimistic: true,
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not synthesize teammate session rows into normal session lists", () => {
