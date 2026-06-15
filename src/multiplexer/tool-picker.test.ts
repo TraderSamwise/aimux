@@ -55,7 +55,14 @@ describe("defaultsLaunchOverride", () => {
 });
 
 describe("buildToolOptionsOverlayOutput", () => {
-  it("re-asserts the box color after the active field so padding keeps the modal background", async () => {
+  function stripAnsi(s: string): string {
+    return s
+      .replace(/\x1b\[[0-9;]*m/g, "")
+      .replace(/\x1b\[\d+;\d+H/g, "")
+      .replace(/\x1b[78]/g, "");
+  }
+
+  it("renders a centered title-band modal with the launch fields", async () => {
     await initPaths(mkdtempSync(join(tmpdir(), "aimux-toolpicker-")));
     const host = {
       pickerMode: "launch",
@@ -69,11 +76,30 @@ describe("buildToolOptionsOverlayOutput", () => {
     };
 
     const out = buildToolOptionsOverlayOutput(host);
-    const row = out.split(/(?=\x1b\[\d+;\d+H)/).find((r) => r.includes("Extra args"));
-    expect(row).toBeDefined();
-    // The reverse-video cursor makes truncateAnsi append \x1b[0m; the box must
-    // re-assert its color before the trailing padding, otherwise the padding
-    // renders with the terminal's default background instead of the modal's.
-    expect(row).toMatch(/\x1b\[0m\x1b\[44;97m {2,}\x1b\[0m$/);
+    const plain = stripAnsi(out);
+    // Title-band chrome: rounded top, band title, separator.
+    expect(plain).toContain("╭");
+    expect(plain).toContain("├");
+    expect(plain).toContain("CLAUDE: LAUNCH OPTIONS");
+    expect(plain).toContain("Extra args:");
+    expect(plain).toContain("Env vars:");
+  });
+
+  it("switches to the danger variant when a field fails to parse", async () => {
+    await initPaths(mkdtempSync(join(tmpdir(), "aimux-toolpicker-")));
+    const host = {
+      pickerMode: "launch",
+      launchOptionsState: {
+        toolKey: "claude",
+        args: createLineState("'unterminated"),
+        env: createLineState(""),
+        activeField: "args" as const,
+        error: null,
+      },
+    };
+
+    const out = buildToolOptionsOverlayOutput(host);
+    expect(out).toContain("\x1b[31m");
+    expect(stripAnsi(out)).toContain("Error:");
   });
 });
