@@ -1,3 +1,4 @@
+import type { AgentActivityState } from "../../agent-events.js";
 import { statusDot, statusTone, style, type StatusKind } from "./theme.js";
 
 export interface AgentStatusInput {
@@ -19,17 +20,26 @@ const ATTENTION: Record<string, AgentStatusChip> = {
   needs_response: { kind: "needs", label: "Needs reply" },
 };
 
-const ACTIVITY: Record<string, AgentStatusChip> = {
+// Typed against AgentActivityState so a new activity state is a compile error here.
+const ACTIVITY: Record<AgentActivityState, AgentStatusChip> = {
   running: { kind: "working", label: "Working" },
   waiting: { kind: "needs", label: "Waiting" },
   done: { kind: "done", label: "Done" },
   idle: { kind: "idle", label: "Idle" },
+  error: { kind: "error", label: "Error" },
+  interrupted: { kind: "idle", label: "Interrupted" },
 };
 
 /** Map an agent's activity/attention semantics to a presentation status chip. */
 export function agentStatusChip(input: AgentStatusInput): AgentStatusChip | null {
-  if (input.attention && ATTENTION[input.attention]) return ATTENTION[input.attention]!;
-  if (input.activity && ACTIVITY[input.activity]) return ACTIVITY[input.activity]!;
+  if (input.attention) {
+    const chip = ATTENTION[input.attention];
+    if (chip) return chip;
+  }
+  if (input.activity) {
+    const chip = ACTIVITY[input.activity as AgentActivityState];
+    if (chip) return chip;
+  }
   return null;
 }
 
