@@ -4,7 +4,8 @@ import { parseEnvAssignments, parseShellArgs, type LaunchOverride } from "../she
 import { applyLineEdit, createLineState, renderLineWindow, type LineState } from "../line-editor.js";
 import { truncateAnsi } from "../tui/render/text.js";
 import { renderOverlayBox } from "../tui/render/box.js";
-import { keycap, style } from "../tui/render/theme.js";
+import { hints } from "../tui/screens/overlay-renderers.js";
+import { style } from "../tui/render/theme.js";
 import { forkDashboardAgentWithFeedback, spawnDashboardAgentWithFeedback } from "./dashboard-ops.js";
 import { findMainRepo } from "../worktree.js";
 import { setSessionOverseer } from "../metadata-store.js";
@@ -87,10 +88,6 @@ function fieldWidth(cols: number): number {
   return Math.max(12, cols - 28);
 }
 
-function footer(pairs: [string, string][]): string {
-  return `  ${pairs.map(([key, label]) => `${keycap(key)} ${style(label, "muted")}`).join("  ")}`;
-}
-
 function redrawOverlay(
   host: ToolPickerHost,
   build: (host: ToolPickerHost, cols: number, rows: number) => string,
@@ -114,7 +111,7 @@ export function buildToolPickerOverlayOutput(host: ToolPickerHost, cols: number,
   if (tools.length === 0) {
     body.push(`  ${style("No enabled tools", "muted")}`);
     body.push("");
-    body.push(footer([["Esc", "cancel"]]));
+    body.push(hints([["Esc", "cancel"]]));
     return renderOverlayBox({ title, body, cols, rows, variant: "red" });
   }
   for (let i = 0; i < tools.length; i++) {
@@ -126,7 +123,7 @@ export function buildToolPickerOverlayOutput(host: ToolPickerHost, cols: number,
   }
   body.push("");
   body.push(
-    footer([
+    hints([
       ["⏎/1-9", "start"],
       ["o", "options"],
       ["Esc", "cancel"],
@@ -143,7 +140,7 @@ export function buildToolOptionsOverlayOutput(host: ToolPickerHost, cols: number
   if (!state || !selected) {
     return renderOverlayBox({
       title: "Launch options",
-      body: [`  ${style("No enabled tools", "muted")}`, "", footer([["Esc", "back"]])],
+      body: [`  ${style("No enabled tools", "muted")}`, "", hints([["Esc", "back"]])],
       cols,
       rows,
       variant: "red",
@@ -194,7 +191,7 @@ export function buildToolOptionsOverlayOutput(host: ToolPickerHost, cols: number
   }
   body.push("");
   body.push(
-    footer([
+    hints([
       ["Tab", "switch field"],
       ["Enter", "start"],
       ["Esc", "back"],
