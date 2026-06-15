@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { MetadataServer } from "./metadata-server.js";
 import { initPaths } from "./paths.js";
+import { ProjectEventBus, type AlertEvent } from "./project-events.js";
 
 async function postJson(url: string, body: unknown): Promise<{ status: number; json: any }> {
   const res = await fetch(url, {
@@ -131,6 +132,32 @@ describe("interaction endpoints", () => {
     expect(notification.body).toContain("2. Which base branch should this come from?");
     expect(notification.body).toContain("Options: origin/master; current HEAD");
     expect(notification.body).not.toContain('"questions"');
+  });
+
+  it("dedupes repeated interaction alerts with the same session and payload", async () => {
+    const bus = new ProjectEventBus();
+    const events: AlertEvent[] = [];
+    bus.subscribe((event) => {
+      if (event.type === "alert") events.push(event);
+    });
+    server.stop();
+    server = new MetadataServer({ events: { bus }, desktop: { getState: () => ({ sessions: [] }) } });
+    await server.start();
+    const addr = server.getAddress();
+    if (!addr) throw new Error("server has no address");
+    base = `http://127.0.0.1:${addr.port}`;
+
+    const payload = { toolName: "Bash", input: { command: "ls" } };
+    const body = {
+      session: "s4",
+      type: "permission",
+      payload,
+      summary: "Run ls",
+    };
+    expect((await postJson(`${base}/agents/interaction/register`, body)).json.ok).toBe(true);
+    expect((await postJson(`${base}/agents/interaction/register`, body)).json.ok).toBe(true);
+
+    expect(events.filter((event) => event.kind === "interaction_request")).toHaveLength(1);
   });
 
   it("returns 409 for unknown respond and 400 for invalid register", async () => {
