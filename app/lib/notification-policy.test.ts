@@ -4,6 +4,7 @@ import { defaultNotificationSettings } from "@/lib/notification-settings";
 import {
   evaluateAgentNotification,
   evaluateAlertEvent,
+  evaluateNotificationRecordBatch,
   evaluateNotificationRecord,
   isRecentNotificationRecord,
   snapshotSessionForNotifications,
@@ -315,6 +316,80 @@ describe("notification policy", () => {
         sessionId: "codex-p4bb3m",
       },
     });
+  });
+
+  it("caps polled notification catch-up to the newest unobserved browser notification", () => {
+    const result = evaluateNotificationRecordBatch(
+      [
+        {
+          id: "notice-newest",
+          title: "Newest",
+          body: "Respond here",
+          sessionId: "codex-2",
+          kind: "needs_input",
+          unread: true,
+          cleared: false,
+          createdAt: "2026-05-23T00:00:09.000Z",
+          updatedAt: "2026-05-23T00:00:09.000Z",
+        },
+        {
+          id: "notice-older",
+          title: "Older",
+          body: "Also respond",
+          sessionId: "codex-1",
+          kind: "needs_input",
+          unread: true,
+          cleared: false,
+          createdAt: "2026-05-23T00:00:08.000Z",
+          updatedAt: "2026-05-23T00:00:08.000Z",
+        },
+      ],
+      enabledSettings,
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({
+      id: "notice-newest",
+      title: "Newest",
+      target: { sessionId: "codex-2" },
+    });
+    expect(result.observedIds).toEqual(["notice-newest", "notice-older"]);
+  });
+
+  it("skips durable records already delivered by the live alert stream", () => {
+    const result = evaluateNotificationRecordBatch(
+      [
+        {
+          id: "notice-live",
+          title: "Already live",
+          body: "SSE handled this",
+          sessionId: "codex-2",
+          kind: "needs_input",
+          unread: true,
+          cleared: false,
+          createdAt: "2026-05-23T00:00:09.000Z",
+          updatedAt: "2026-05-23T00:00:09.000Z",
+        },
+        {
+          id: "notice-polled",
+          title: "Polled",
+          body: "Fallback delivery",
+          sessionId: "codex-1",
+          kind: "needs_input",
+          unread: true,
+          cleared: false,
+          createdAt: "2026-05-23T00:00:08.000Z",
+          updatedAt: "2026-05-23T00:00:08.000Z",
+        },
+      ],
+      enabledSettings,
+      {},
+      new Set(["notice-live"]),
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({ id: "notice-polled" });
+    expect(result.observedIds).toEqual(["notice-polled"]);
   });
 
   it("does not emit read, cleared, or disabled daemon records", () => {
