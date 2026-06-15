@@ -37,9 +37,15 @@ function refreshDelayMs(count: number): number {
   return 250;
 }
 const GAP = 1;
-const MAX_TILE_COLS = 5;
 const MIN_TILE_WIDTH = 30;
 const MIN_TILE_HEIGHT = 5;
+
+// Balanced grid: keep a single row up to 3 tiles, then grow toward a near-square
+// (4→2x2, 5-6→2x3, 7-9→3x3, 10-12→3x4, …). Width/height limits narrow it further.
+export function balancedCols(count: number): number {
+  if (count <= 3) return Math.max(1, count);
+  return Math.ceil(Math.sqrt(count));
+}
 
 const RESET = "\x1b[0m";
 
@@ -107,11 +113,12 @@ interface GridLayout {
   gridTopRow: number;
 }
 
-function computeLayout(itemCount: number, cols: number, rows: number): GridLayout {
+export function computeLayout(itemCount: number, cols: number, rows: number): GridLayout {
   const gridTopRow = 3;
   const footerRow = rows;
   const gridHeight = Math.max(1, footerRow - gridTopRow);
-  const tileCols = Math.max(1, Math.min(MAX_TILE_COLS, itemCount, Math.floor((cols + GAP) / (MIN_TILE_WIDTH + GAP))));
+  const fitCols = Math.max(1, Math.floor((cols + GAP) / (MIN_TILE_WIDTH + GAP)));
+  const tileCols = Math.max(1, Math.min(balancedCols(itemCount), fitCols));
   const neededRows = Math.ceil(itemCount / tileCols);
   const maxTileRows = Math.max(1, Math.floor(gridHeight / MIN_TILE_HEIGHT));
   const tileRows = Math.min(neededRows, maxTileRows);
