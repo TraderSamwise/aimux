@@ -987,11 +987,13 @@ export class MetadataServer {
     summary?: string;
     id?: string;
   }): InteractionRequest {
+    const dedupeKey = this.interactionDedupeKey(input);
     const request = this.interactions.register({
       sessionId: input.sessionId,
       type: input.type,
       payload: input.payload,
       projectRoot: process.cwd(),
+      dedupeKey,
       id: input.id,
     });
     this.tracker.setAttention(input.sessionId, "needs_response");
@@ -1002,7 +1004,7 @@ export class MetadataServer {
       title: display.title,
       message: display.message,
       interaction: { id: request.id, type: input.type, summary: display.summary },
-      dedupeKey: this.interactionDedupeKey(input),
+      dedupeKey,
       cooldownMs: 60_000,
       forceNotify: true,
     });
