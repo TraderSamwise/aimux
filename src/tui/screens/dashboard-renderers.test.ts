@@ -155,6 +155,47 @@ describe("renderDashboardFrame worktree progress", () => {
     }
   });
 
+  it("does not render prompt-only event timestamps as output recency", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-05-09T12:00:30.000Z"));
+    try {
+      const { frame } = renderDashboardFrame(
+        baseDashboardViewModel({
+          navLevel: "sessions",
+          selectedSessionId: "codex-1",
+          sessions: [
+            {
+              index: 0,
+              id: "codex-1",
+              command: "codex",
+              status: "running",
+              active: true,
+              lastEvent: { kind: "prompt", message: "next task", ts: "2026-05-09T12:00:15.000Z" },
+              semantic: deriveSessionSemantics({
+                status: "running",
+                activity: "running",
+              }),
+            },
+          ],
+          worktreeGroups: [
+            {
+              name: "Main Checkout",
+              branch: "master",
+              status: "active",
+              sessions: [],
+              services: [],
+            },
+          ],
+        }),
+        120,
+        40,
+      );
+
+      expect(frame).not.toContain("15s ago");
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("renders pending session labels even when semantic state is stale", () => {
     const { frame } = renderDashboardFrame(
       baseDashboardViewModel({

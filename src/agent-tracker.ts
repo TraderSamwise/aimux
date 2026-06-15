@@ -1,4 +1,10 @@
-import type { AgentActivityState, AgentAttentionState, AgentEvent, SessionDerivedState } from "./agent-events.js";
+import {
+  isAgentOutputEventKind,
+  type AgentActivityState,
+  type AgentEvent,
+  type SessionDerivedState,
+} from "./agent-events.js";
+import type { AgentAttentionState } from "./agent-events.js";
 import { updateSessionMetadata, type SessionMetadata } from "./metadata-store.js";
 import { isSessionNotificationFocused } from "./notification-context.js";
 
@@ -126,7 +132,7 @@ export class AgentTracker {
           derived: {
             ...derivedCurrent,
             ...nextState,
-            lastOutputAt: normalized.ts,
+            lastOutputAt: isAgentOutputEventKind(normalized.kind) ? normalized.ts : derivedCurrent?.lastOutputAt,
             threadId: normalized.threadId ?? derivedCurrent?.threadId,
             threadName: normalized.threadName ?? derivedCurrent?.threadName,
             lastEvent: normalized,
