@@ -30,7 +30,7 @@ export function renderOverlayBox({ title, body, cols, rows, variant = "blue", ic
   const bandLabel = `${bandIcon ? `${bandIcon}  ` : ""}${title.toUpperCase()}`;
 
   const maxContentWidth = Math.max(10, cols - 8);
-  const measuredContentWidth = Math.max(bandLabel.length + 1, 0, ...body.map((line) => visibleWidth(line)));
+  const measuredContentWidth = Math.max(visibleWidth(bandLabel) + 1, 0, ...body.map((line) => visibleWidth(line)));
   const contentWidth = Math.max(20, Math.min(maxContentWidth, measuredContentWidth));
   const boxWidth = Math.max(24, Math.min(cols - 2, contentWidth + 4));
   const innerWidth = boxWidth - 4;

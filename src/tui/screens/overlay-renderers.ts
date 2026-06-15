@@ -179,8 +179,9 @@ export function buildNotificationPanelOverlayOutput(ctx: any): string | null {
       ]
     : [style("Details", "strong"), "", `  ${style("No notification selected.", "muted")}`];
 
+  if (rows < 10) return null;
   const lines = [...header, ...items];
-  const height = Math.min(rows - 6, Math.max(12, Math.min(24, lines.length + 4)));
+  const height = Math.max(8, Math.min(rows - 6, Math.max(12, Math.min(24, lines.length + 4))));
   const width = Math.min(cols - 8, 100);
   const leftWidth = Math.max(28, Math.floor((width - 7) * 0.5));
   const rightWidth = Math.max(20, width - 7 - leftWidth);
