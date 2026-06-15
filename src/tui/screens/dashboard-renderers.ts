@@ -84,7 +84,11 @@ function sessionTimeAnchor(session: DashboardSession): { label: string; value?: 
     (session.lastEvent && isAgentOutputEventKind(session.lastEvent.kind) ? session.lastEvent.ts : undefined);
 
   if (session.pendingAction) {
-    return { label: session.pendingAction, value: session.lastUsedAt ?? session.becameIdleAt ?? lastOutputAt };
+    return {
+      label: ROW_STATE_LABELS[session.pendingAction].toLowerCase(),
+      value:
+        session.pendingStartedAt ?? session.createdAt ?? session.lastUsedAt ?? session.becameIdleAt ?? lastOutputAt,
+    };
   }
 
   if (userLabel === "needs_input" || userLabel === "needs_response") {
