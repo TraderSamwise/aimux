@@ -124,6 +124,68 @@ describe("config", () => {
     expect(config.tools.codex.resumeFallback).toEqual(["resume", "codex-explicit"]);
   });
 
+  it("preserves explicit exact-resume opt-outs on built-in tools", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          tools: {
+            claude: {
+              command: "claude",
+              enabled: true,
+              resumeArgs: ["--continue"],
+              resumeByBackendSessionId: false,
+            },
+            codex: {
+              command: "codex",
+              enabled: true,
+              resumeArgs: ["resume", "--last"],
+              resumeByBackendSessionId: false,
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    const config = loadConfig({ includeGlobal: false });
+    expect(config.tools.claude.resumeArgs).toEqual(["--continue"]);
+    expect(config.tools.claude.resumeByBackendSessionId).toBe(false);
+    expect(config.tools.codex.resumeArgs).toEqual(["resume", "--last"]);
+    expect(config.tools.codex.resumeByBackendSessionId).toBe(false);
+  });
+
+  it("preserves unknown built-in non-placeholder resume args", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          tools: {
+            claude: {
+              command: "claude",
+              enabled: true,
+              resumeArgs: ["--custom-continue"],
+            },
+            codex: {
+              command: "codex",
+              enabled: true,
+              resumeArgs: ["resume", "custom"],
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    const config = loadConfig({ includeGlobal: false });
+    expect(config.tools.claude.resumeArgs).toEqual(["--custom-continue"]);
+    expect(config.tools.codex.resumeArgs).toEqual(["resume", "custom"]);
+  });
+
   it("does not normalize stale resume args for custom tool configs", () => {
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(
