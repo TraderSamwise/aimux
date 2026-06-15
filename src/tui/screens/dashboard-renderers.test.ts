@@ -470,6 +470,48 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(plain).toMatch(/\[2\]\s+(claude|codex)/);
   });
 
+  it("scrolls to reveal the whole focused last card, not just its title", () => {
+    const groups = [];
+    const sessions = [];
+    for (let i = 0; i < 12; i++) {
+      const path = `/repo/.aimux/worktrees/wt${i}`;
+      groups.push({ name: `wt${i}`, branch: `b${i}`, path, status: "offline" as const, sessions: [], services: [] });
+      const agents = i === 11 ? 3 : 1;
+      for (let a = 0; a < agents; a++) {
+        sessions.push({
+          index: i * 10 + a,
+          id: `s${i}_${a}`,
+          command: "claude",
+          worktreePath: path,
+          worktreeName: `wt${i}`,
+          status: "offline" as const,
+          active: false,
+          semantic: deriveSessionSemantics({ status: "offline" }),
+        });
+      }
+    }
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        sessions,
+        worktreeGroups: groups,
+        focusedWorktreePath: "/repo/.aimux/worktrees/wt11",
+        navLevel: "worktrees",
+        detailsPaneVisible: false,
+      }),
+      120,
+      40,
+    );
+    const left = stripAnsi(frame)
+      .split("\n")
+      .map((l) => l.trimEnd());
+    const titleIdx = left.findIndex((l) => l.includes("wt11"));
+    expect(titleIdx).toBeGreaterThanOrEqual(0);
+    // The focused card's third agent and bottom border must both be visible.
+    const after = left.slice(titleIdx).join("\n");
+    expect(after).toMatch(/\[3\]\s+claude/);
+    expect(after).toContain("╰");
+  });
+
   it("renders pending teammate labels even when semantic state is stale", () => {
     const { frame } = renderDashboardFrame(
       baseDashboardViewModel({
