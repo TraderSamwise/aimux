@@ -4,7 +4,8 @@ import { parseEnvAssignments, parseShellArgs, type LaunchOverride } from "../she
 import { applyLineEdit, createLineState, renderLineWindow, type LineState } from "../line-editor.js";
 import { truncateAnsi } from "../tui/render/text.js";
 import { renderOverlayBox } from "../tui/render/box.js";
-import { keycap, style } from "../tui/render/theme.js";
+import { hints } from "../tui/screens/overlay-renderers.js";
+import { style } from "../tui/render/theme.js";
 import { forkDashboardAgentWithFeedback, spawnDashboardAgentWithFeedback } from "./dashboard-ops.js";
 import { findMainRepo } from "../worktree.js";
 import { setSessionOverseer } from "../metadata-store.js";
@@ -83,25 +84,23 @@ function envPrefix(env: Record<string, string>): string {
   return `env ${keys.map((k) => `${k}=${quoteShellArg(env[k])}`).join(" ")} `;
 }
 
-function fieldWidth(): number {
-  return Math.max(12, (process.stdout.columns ?? 80) - 28);
+function fieldWidth(cols: number): number {
+  return Math.max(12, cols - 28);
 }
 
-function footer(pairs: [string, string][]): string {
-  return `  ${pairs.map(([key, label]) => `${keycap(key)} ${style(label, "muted")}`).join("  ")}`;
-}
-
-function redrawOverlay(host: ToolPickerHost, build: (host: ToolPickerHost) => string): void {
+function redrawOverlay(
+  host: ToolPickerHost,
+  build: (host: ToolPickerHost, cols: number, rows: number) => string,
+): void {
   if (typeof host.redrawDashboardWithOverlay === "function") {
     host.redrawDashboardWithOverlay();
   } else {
-    process.stdout.write(build(host));
+    const { cols, rows } = host.getViewportSize();
+    process.stdout.write(build(host, cols, rows));
   }
 }
 
-export function buildToolPickerOverlayOutput(host: ToolPickerHost): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+export function buildToolPickerOverlayOutput(host: ToolPickerHost, cols: number, rows: number): string {
   const tools = enabledTools();
   const selectedIndex = clampPickerIndex(host, tools);
 
@@ -112,7 +111,7 @@ export function buildToolPickerOverlayOutput(host: ToolPickerHost): string {
   if (tools.length === 0) {
     body.push(`  ${style("No enabled tools", "muted")}`);
     body.push("");
-    body.push(footer([["Esc", "cancel"]]));
+    body.push(hints([["Esc", "cancel"]]));
     return renderOverlayBox({ title, body, cols, rows, variant: "red" });
   }
   for (let i = 0; i < tools.length; i++) {
@@ -124,7 +123,7 @@ export function buildToolPickerOverlayOutput(host: ToolPickerHost): string {
   }
   body.push("");
   body.push(
-    footer([
+    hints([
       ["⏎/1-9", "start"],
       ["o", "options"],
       ["Esc", "cancel"],
@@ -134,16 +133,14 @@ export function buildToolPickerOverlayOutput(host: ToolPickerHost): string {
   return renderOverlayBox({ title, body, cols, rows });
 }
 
-export function buildToolOptionsOverlayOutput(host: ToolPickerHost): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+export function buildToolOptionsOverlayOutput(host: ToolPickerHost, cols: number, rows: number): string {
   const tools = enabledTools();
   const state: LaunchOptionsState | null = host.launchOptionsState;
   const selected = state ? tools.find(([key]) => key === state.toolKey) : undefined;
   if (!state || !selected) {
     return renderOverlayBox({
       title: "Launch options",
-      body: [`  ${style("No enabled tools", "muted")}`, "", footer([["Esc", "back"]])],
+      body: [`  ${style("No enabled tools", "muted")}`, "", hints([["Esc", "back"]])],
       cols,
       rows,
       variant: "red",
@@ -151,7 +148,7 @@ export function buildToolOptionsOverlayOutput(host: ToolPickerHost): string {
   }
 
   const [toolKey, tool] = selected;
-  const width = fieldWidth();
+  const width = fieldWidth(cols);
 
   let extraArgs: string[] = [];
   let env: Record<string, string> = {};
@@ -194,7 +191,7 @@ export function buildToolOptionsOverlayOutput(host: ToolPickerHost): string {
   }
   body.push("");
   body.push(
-    footer([
+    hints([
       ["Tab", "switch field"],
       ["Enter", "start"],
       ["Esc", "back"],

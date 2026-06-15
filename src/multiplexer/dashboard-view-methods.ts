@@ -119,12 +119,7 @@ export const dashboardViewMethods = {
         this.writeStatuslineFile();
       }
 
-      const { cols, rows } = renderOptions?.fastViewport
-        ? {
-            cols: process.stdout.columns ?? 80,
-            rows: process.stdout.rows ?? 24,
-          }
-        : this.getViewportSize();
+      const { cols, rows } = this.getViewportSize();
       const allDashSessions = this.dashboardSessionsCache;
       const overseerSessions = allDashSessions.filter((session: any) => isOverseerSession(session));
       const dashSessions = allDashSessions.filter((session: any) => !isOverseerSession(session));

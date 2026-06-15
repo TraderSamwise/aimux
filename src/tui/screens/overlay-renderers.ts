@@ -2,13 +2,11 @@ import { renderOverlayBox } from "../render/box.js";
 import { keycap, modalBand, padVisible, statusDot, style } from "../render/theme.js";
 
 /** Render footer-style key hints as keycaps: hints([["Enter","create"],["Esc","cancel"]]). */
-function hints(pairs: [string, string][]): string {
+export function hints(pairs: [string, string][]): string {
   return `  ${pairs.map(([key, label]) => `${keycap(key)} ${style(label, "muted")}`).join("  ")}`;
 }
 
-export function buildServiceInputOverlayOutput(ctx: any): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+export function buildServiceInputOverlayOutput(ctx: any, cols: number, rows: number): string {
   const body = [
     `  ${style("Command:", "muted")} ${ctx.serviceInputBuffer}_`,
     "",
@@ -23,12 +21,11 @@ export function buildServiceInputOverlayOutput(ctx: any): string {
 }
 
 export function renderServiceInputOverlay(ctx: any): void {
-  process.stdout.write(buildServiceInputOverlayOutput(ctx));
+  const { cols, rows } = ctx.getViewportSize();
+  process.stdout.write(buildServiceInputOverlayOutput(ctx, cols, rows));
 }
 
-export function buildLabelInputOverlayOutput(ctx: any): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+export function buildLabelInputOverlayOutput(ctx: any, cols: number, rows: number): string {
   const body = [
     `  ${style("Name:", "muted")} ${ctx.labelInputBuffer}_`,
     "",
@@ -41,13 +38,11 @@ export function buildLabelInputOverlayOutput(ctx: any): string {
 }
 
 export function renderLabelInputOverlay(ctx: any): void {
-  process.stdout.write(buildLabelInputOverlayOutput(ctx));
+  const { cols, rows } = ctx.getViewportSize();
+  process.stdout.write(buildLabelInputOverlayOutput(ctx, cols, rows));
 }
 
-export function buildWorktreeListOverlayOutput(ctx: any): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
-
+export function buildWorktreeListOverlayOutput(ctx: any, cols: number, rows: number): string {
   let worktrees: Array<{ name: string; branch: string; path: string }> = [];
   try {
     worktrees = ctx.listAllWorktrees().filter((wt: any) => !wt.isBare);
@@ -69,14 +64,13 @@ export function buildWorktreeListOverlayOutput(ctx: any): string {
 }
 
 export function renderWorktreeListOverlay(ctx: any): void {
-  process.stdout.write(buildWorktreeListOverlayOutput(ctx));
+  const { cols, rows } = ctx.getViewportSize();
+  process.stdout.write(buildWorktreeListOverlayOutput(ctx, cols, rows));
 }
 
-export function buildWorktreeRemoveConfirmOverlayOutput(ctx: any): string | null {
+export function buildWorktreeRemoveConfirmOverlayOutput(ctx: any, cols: number, rows: number): string | null {
   const confirm = ctx.worktreeRemoveConfirm;
   if (!confirm) return null;
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const body = [
     `  ${style(`"${confirm.name}"`, "strong")}`,
     `  ${style("Path:", "muted")} ${confirm.path}`,
@@ -91,15 +85,14 @@ export function buildWorktreeRemoveConfirmOverlayOutput(ctx: any): string | null
 }
 
 export function renderWorktreeRemoveConfirmOverlay(ctx: any): void {
-  const output = buildWorktreeRemoveConfirmOverlayOutput(ctx);
+  const { cols, rows } = ctx.getViewportSize();
+  const output = buildWorktreeRemoveConfirmOverlayOutput(ctx, cols, rows);
   if (output) process.stdout.write(output);
 }
 
-export function buildDashboardBusyOverlayOutput(ctx: any): string | null {
+export function buildDashboardBusyOverlayOutput(ctx: any, cols: number, rows: number): string | null {
   const busy = ctx.dashboardBusyState;
   if (!busy) return null;
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][busy.spinnerFrame % 10];
   const elapsed = ((Date.now() - busy.startedAt) / 1000).toFixed(1);
   const body = [
@@ -113,15 +106,14 @@ export function buildDashboardBusyOverlayOutput(ctx: any): string | null {
 }
 
 export function renderDashboardBusyOverlay(ctx: any): void {
-  const output = buildDashboardBusyOverlayOutput(ctx);
+  const { cols, rows } = ctx.getViewportSize();
+  const output = buildDashboardBusyOverlayOutput(ctx, cols, rows);
   if (output) process.stdout.write(output);
 }
 
-export function buildDashboardErrorOverlayOutput(ctx: any): string | null {
+export function buildDashboardErrorOverlayOutput(ctx: any, cols: number, rows: number): string | null {
   const error = ctx.dashboardErrorState;
   if (!error) return null;
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const bodyWidth = Math.max(24, Math.min(cols - 12, 84));
   const wrap = (label: string, value: string): string[] => {
     const wrapped = ctx.wrapText(ctx.stripAnsi(String(value ?? "")), Math.max(12, bodyWidth - label.length - 2));
@@ -135,16 +127,15 @@ export function buildDashboardErrorOverlayOutput(ctx: any): string | null {
 }
 
 export function renderDashboardErrorOverlay(ctx: any): void {
-  const output = buildDashboardErrorOverlayOutput(ctx);
+  const { cols, rows } = ctx.getViewportSize();
+  const output = buildDashboardErrorOverlayOutput(ctx, cols, rows);
   if (output) process.stdout.write(output);
 }
 
-export function buildNotificationPanelOverlayOutput(ctx: any): string | null {
+export function buildNotificationPanelOverlayOutput(ctx: any, cols: number, rows: number): string | null {
   const panel = ctx.notificationPanelState;
   if (!panel) return null;
 
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const header = [
     hints([
       ["↑↓", "select"],
@@ -225,16 +216,15 @@ export function buildNotificationPanelOverlayOutput(ctx: any): string | null {
 }
 
 export function renderNotificationPanel(ctx: any): void {
-  const output = buildNotificationPanelOverlayOutput(ctx);
+  const { cols, rows } = ctx.getViewportSize();
+  const output = buildNotificationPanelOverlayOutput(ctx, cols, rows);
   if (output) process.stdout.write(output);
 }
 
-export function buildTeammatePickerOverlayOutput(ctx: any): string | null {
+export function buildTeammatePickerOverlayOutput(ctx: any, cols: number, rows: number): string | null {
   const teammates = ctx.getTeammatePickerEntries?.() ?? [];
   if (teammates.length === 0) return null;
 
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const visible = teammates.slice(0, Math.max(3, rows - 10));
   const selectedIndex = Math.max(0, Math.min(ctx.teammatePickerState?.index ?? 0, visible.length - 1));
   const statusLabel =
@@ -271,13 +261,12 @@ export function buildTeammatePickerOverlayOutput(ctx: any): string | null {
 }
 
 export function renderTeammatePickerOverlay(ctx: any): void {
-  const output = buildTeammatePickerOverlayOutput(ctx);
+  const { cols, rows } = ctx.getViewportSize();
+  const output = buildTeammatePickerOverlayOutput(ctx, cols, rows);
   if (output) process.stdout.write(output);
 }
 
-export function buildHelpOverlayOutput(_ctx: any): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+export function buildHelpOverlayOutput(_ctx: any, cols: number, rows: number): string {
   const allLines = [
     "Tmux mode",
     "  Dashboard lives in a managed tmux dashboard window",
@@ -331,12 +320,11 @@ function styleHelpLine(line: string): string {
 }
 
 export function renderHelpOverlay(ctx: any): void {
-  process.stdout.write(buildHelpOverlayOutput(ctx));
+  const { cols, rows } = ctx.getViewportSize();
+  process.stdout.write(buildHelpOverlayOutput(ctx, cols, rows));
 }
 
-export function buildSwitcherOverlayOutput(ctx: any): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+export function buildSwitcherOverlayOutput(ctx: any, cols: number, rows: number): string {
   const list = ctx.getSwitcherList();
 
   const body: string[] = [];
@@ -361,12 +349,11 @@ export function buildSwitcherOverlayOutput(ctx: any): string {
 }
 
 export function renderSwitcherOverlay(ctx: any): void {
-  process.stdout.write(buildSwitcherOverlayOutput(ctx));
+  const { cols, rows } = ctx.getViewportSize();
+  process.stdout.write(buildSwitcherOverlayOutput(ctx, cols, rows));
 }
 
-export function buildMigratePickerOverlayOutput(ctx: any): string | null {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+export function buildMigratePickerOverlayOutput(ctx: any, cols: number, rows: number): string | null {
   const session = ctx.sessions[ctx.activeIndex];
   if (!session) return null;
 
@@ -385,6 +372,7 @@ export function buildMigratePickerOverlayOutput(ctx: any): string | null {
 }
 
 export function renderMigratePickerOverlay(ctx: any): void {
-  const output = buildMigratePickerOverlayOutput(ctx);
+  const { cols, rows } = ctx.getViewportSize();
+  const output = buildMigratePickerOverlayOutput(ctx, cols, rows);
   if (output) process.stdout.write(output);
 }
