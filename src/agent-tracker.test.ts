@@ -22,13 +22,15 @@ describe("AgentTracker", () => {
 
   it("derives running prompt and done response state", () => {
     const tracker = new AgentTracker();
-    tracker.emit("s1", { kind: "prompt", message: "do the work" }, repoRoot);
-    tracker.emit("s1", { kind: "task_done", message: "Done: auth" }, repoRoot);
+    tracker.emit("s1", { kind: "prompt", message: "do the work", ts: "2026-05-09T12:00:00.000Z" }, repoRoot);
+    tracker.emit("s1", { kind: "task_done", message: "Done: auth", ts: "2026-05-09T12:00:10.000Z" }, repoRoot);
 
     const derived = loadMetadataState(repoRoot).sessions.s1?.derived;
     expect(derived?.activity).toBe("done");
     expect(derived?.attention).toBe("normal");
     expect(derived?.unseenCount).toBe(1);
+    expect(derived?.lastOutputAt).toBe("2026-05-09T12:00:10.000Z");
+    expect(derived?.becameIdleAt).toBe("2026-05-09T12:00:10.000Z");
     expect(derived?.lastEvent?.kind).toBe("task_done");
   });
 

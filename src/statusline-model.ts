@@ -176,6 +176,7 @@ export function renderSemanticBadge(semantic: SessionSemanticState | undefined):
   if (!semantic) return null;
   if (semantic.user.attention === "error") return "✗";
   if (semantic.user.attention === "needs_input") return "?";
+  if (semantic.user.attention === "needs_response") return "?";
   if (semantic.user.attention === "blocked") return "!";
   if (semantic.user.label === "done") return "✓";
   if (semantic.user.label === "working") return "↻";

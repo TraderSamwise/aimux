@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { derivedStatusLabel, type DashboardViewModel } from "../../dashboard/index.js";
 import { deriveSessionSemantics } from "../../session-semantics.js";
 import { renderDashboardFrame } from "./dashboard-renderers.js";
@@ -108,6 +108,51 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(frame).toContain("\x1b[1;33mneeds input\x1b[0m");
     expect(frame).toContain("\x1b[1;33mon you\x1b[0m");
     expect(frame).toContain("\x1b[36mworking\x1b[0m");
+  });
+
+  it("renders output recency instead of last-used recency and highlights recently idle sessions", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-05-09T12:00:30.000Z"));
+    try {
+      const { frame } = renderDashboardFrame(
+        baseDashboardViewModel({
+          navLevel: "sessions",
+          selectedSessionId: "codex-1",
+          sessions: [
+            {
+              index: 0,
+              id: "codex-1",
+              command: "codex",
+              status: "idle",
+              active: true,
+              lastUsedAt: "2026-05-09T11:00:00.000Z",
+              lastOutputAt: "2026-05-09T12:00:15.000Z",
+              becameIdleAt: "2026-05-09T12:00:20.000Z",
+              semantic: deriveSessionSemantics({
+                status: "idle",
+                activity: "idle",
+              }),
+            },
+          ],
+          worktreeGroups: [
+            {
+              name: "Main Checkout",
+              branch: "master",
+              status: "active",
+              sessions: [],
+              services: [],
+            },
+          ],
+        }),
+        120,
+        40,
+      );
+
+      expect(frame).toContain("15s ago");
+      expect(frame).toContain("idle now");
+      expect(frame).not.toContain("1h ago");
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("renders pending session labels even when semantic state is stale", () => {

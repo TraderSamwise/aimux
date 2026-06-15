@@ -17,14 +17,31 @@ const SERVICE_ICONS: Record<DashboardService["status"], string> = {
   offline: "\x1b[2m◇\x1b[0m",
 };
 
+const RECENT_IDLE_MS = 2 * 60 * 1000;
+
+function parseTimestamp(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isRecentlyIdle(session: DashboardSession, now = Date.now()): boolean {
+  const label = session.semantic?.user.label;
+  if (label === "working" || label === "offline" || label === "error") return false;
+  const becameIdleAt = parseTimestamp(session.becameIdleAt);
+  return becameIdleAt !== null && now - becameIdleAt >= 0 && now - becameIdleAt <= RECENT_IDLE_MS;
+}
+
 function colorSessionIcon(session: DashboardSession): string {
   const label = session.semantic?.user.label;
   const attention = session.semantic?.user.attention;
   if (attention === "error" || label === "error") return "\x1b[31m●\x1b[0m";
   if (attention === "blocked" || label === "blocked") return "\x1b[35m●\x1b[0m";
   if (attention === "needs_input" || label === "needs_input") return "\x1b[1;33m◉\x1b[0m";
+  if (attention === "needs_response" || label === "needs_response") return "\x1b[1;33m?\x1b[0m";
   if (label === "working") return "\x1b[36m●\x1b[0m";
   if (label === "done") return "\x1b[32m●\x1b[0m";
+  if (label === "next_step") return "\x1b[33m●\x1b[0m";
   if (label === "idle") return "\x1b[2;32m●\x1b[0m";
   if (label === "offline") return "\x1b[2m○\x1b[0m";
   return STATUS_ICONS[session.status];
@@ -36,8 +53,10 @@ function colorSessionStatus(session: DashboardSession, statusLabel: string): str
   if (attention === "error" || label === "error") return `\x1b[31m${statusLabel}\x1b[0m`;
   if (attention === "blocked" || label === "blocked") return `\x1b[35m${statusLabel}\x1b[0m`;
   if (attention === "needs_input" || label === "needs_input") return `\x1b[1;33m${statusLabel}\x1b[0m`;
+  if (attention === "needs_response" || label === "needs_response") return `\x1b[1;33m${statusLabel}\x1b[0m`;
   if (label === "working") return `\x1b[36m${statusLabel}\x1b[0m`;
   if (label === "done") return `\x1b[32m${statusLabel}\x1b[0m`;
+  if (label === "next_step") return `\x1b[33m${statusLabel}\x1b[0m`;
   if (label === "idle") return `\x1b[2;32m${statusLabel}\x1b[0m`;
   if (label === "offline") return `\x1b[2m${statusLabel}\x1b[0m`;
   if (session.pendingAction) return `\x1b[33m${statusLabel}\x1b[0m`;
@@ -46,6 +65,7 @@ function colorSessionStatus(session: DashboardSession, statusLabel: string): str
 
 function colorSessionHint(value: string): string {
   if (/\bon you\b/i.test(value)) return `\x1b[1;33m${value}\x1b[0m`;
+  if (/\bformal prompt|answer\b/i.test(value)) return `\x1b[1;33m${value}\x1b[0m`;
   if (/\bunread\b/i.test(value)) return `\x1b[36m${value}\x1b[0m`;
   if (/\bnew\b/i.test(value)) return `\x1b[34m${value}\x1b[0m`;
   if (/\bblocked|error\b/i.test(value)) return `\x1b[31m${value}\x1b[0m`;
@@ -116,7 +136,9 @@ export function renderDashboardFrame(
     const workflowHint = session.workflowNextAction
       ? ` \x1b[2;33m→ ${truncate(session.workflowNextAction, 24)}\x1b[0m`
       : "";
-    const lastUsedHint = session.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(session.lastUsedAt)}\x1b[0m` : "";
+    const lastOutputAt = session.lastOutputAt ?? session.lastEvent?.ts;
+    const lastOutputHint = lastOutputAt ? ` \x1b[2m· ${formatRelativeRecency(lastOutputAt)}\x1b[0m` : "";
+    const recentIdleHint = isRecentlyIdle(session) ? ` \x1b[1;33m· idle now\x1b[0m` : "";
 
     const icon = colorSessionIcon(session);
     const statusLabel = state.derivedStatusLabel(session);
@@ -135,7 +157,7 @@ export function renderDashboardFrame(
     const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
     const identity = session.label ?? session.command;
     const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} ${numberBadge}${identity}${roleTag} — ${coloredStatusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${notificationBadge}${lastUsedHint}`;
+    return `${indent}${prefix}${icon} ${numberBadge}${identity}${roleTag} — ${coloredStatusLabel}${compactHint}${headlineText}${taskBadge}${threadBadge}${pendingBadge}${workflowBadge}${workflowHint}${notificationBadge}${lastOutputHint}${recentIdleHint}`;
   };
 
   const renderService = (service: DashboardService, indent: string, quickDigit?: number): string => {

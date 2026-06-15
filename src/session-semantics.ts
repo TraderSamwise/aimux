@@ -17,6 +17,8 @@ export type SessionLifecycleState =
 export type SessionUserLabel =
   | "working"
   | "needs_input"
+  | "needs_response"
+  | "next_step"
   | "blocked"
   | "error"
   | "idle"
@@ -26,7 +28,7 @@ export type SessionUserLabel =
   | "graveyarding"
   | "done"
   | "interrupted";
-export type SessionUserAttention = "none" | "needs_input" | "blocked" | "error";
+export type SessionUserAttention = "none" | "needs_input" | "needs_response" | "blocked" | "error";
 export type SessionWorkflowPressure = "none" | "pending" | "waiting_on_user" | "waiting_on_them" | "blocked";
 
 export interface SessionRuntimeState {
@@ -132,6 +134,8 @@ function deriveWorkflowPressure(input: {
 
 function statusLabelFor(label: SessionUserLabel): string {
   if (label === "needs_input") return "needs input";
+  if (label === "needs_response") return "needs answer";
+  if (label === "next_step") return "next step";
   if (label === "working") return "working";
   return label;
 }
@@ -188,6 +192,8 @@ export function deriveSessionSemantics(input: DeriveSessionSemanticsInput): Sess
     user = { label: "blocked", attention: "blocked", source: "tool" };
   } else if (attention === "needs_input") {
     user = { label: "needs_input", attention: "needs_input", source: "tool" };
+  } else if (attention === "needs_response") {
+    user = { label: "needs_response", attention: "needs_response", source: "tool" };
   } else if (input.activity === "done") {
     user = { label: "done", attention: "none", source: "tool" };
   } else if (input.activity === "interrupted") {
@@ -204,7 +210,9 @@ export function deriveSessionSemantics(input: DeriveSessionSemanticsInput): Sess
       source: "runtime",
     };
   } else {
-    user = { label: "idle", attention: "none", source: "runtime" };
+    user = hasActiveTask
+      ? { label: "next_step", attention: "none", source: "runtime", reason: "task still assigned" }
+      : { label: "idle", attention: "none", source: "runtime" };
   }
   const orchestration: SessionOrchestrationState = {
     pressure,
@@ -259,6 +267,7 @@ function sessionSemanticAttentionScoreFromParts(input: {
 }): number {
   if (input.user.attention === "error") return 5;
   if (input.user.attention === "needs_input") return 4;
+  if (input.user.attention === "needs_response") return 4;
   if (input.user.attention === "blocked") return 3;
   if (input.notifications.unreadCount > 0 || input.pendingDeliveryCount > 0) return 2;
   if (input.activityNewCount > 0 || input.user.label === "done") return 1;
@@ -279,6 +288,8 @@ function sessionSemanticCompactHintFromParts(input: {
   if (input.user.attention === "error") return "error";
   if (input.user.attention === "blocked") return "blocked";
   if (input.user.attention === "needs_input") return "on you";
+  if (input.user.attention === "needs_response") return "answer";
+  if (input.user.label === "next_step") return "on you";
   if (input.notifications.unreadCount > 0) return `${Math.min(input.notifications.unreadCount, 99)} unread`;
   if (input.waitingOnMeCount > 0) return "on you";
   if (input.blockedCount > 0) return "blocked task";

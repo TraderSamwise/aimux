@@ -30,6 +30,8 @@ export interface SessionDerivedState {
   activity?: AgentActivityState;
   attention?: AgentAttentionState;
   unseenCount?: number;
+  lastOutputAt?: string;
+  becameIdleAt?: string;
   lastEvent?: AgentEvent;
   events?: AgentEvent[];
 }
