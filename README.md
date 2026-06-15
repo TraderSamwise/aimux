@@ -451,10 +451,10 @@ Dashboard hotkeys use the `Ctrl+A` leader prefix:
 | `Ctrl+A v` | Request code review for active agent |
 | `Ctrl+A 1-9` | Focus agent by number from the dashboard |
 | `Ctrl+A d` | Return to dashboard window |
-| `Ctrl+A g` | Exposé: tile live previews of agents; press `1`-`9` to jump |
+| `Ctrl+A g` | Exposé: tile live previews of agents; press `1`-`9` to jump, `g` to zoom out |
 | `Ctrl+A Ctrl+A` | Send literal Ctrl+A inside the dashboard |
 
-When you are inside an agent window, tmux owns the terminal. Use normal tmux window navigation or run `aimux` again to return to the dashboard window. `Ctrl+A g` (Exposé) also works inside an agent window, where it scopes to that agent's worktree instead of all worktrees (configurable via `expose.forceGlobalScope`).
+When you are inside an agent window, tmux owns the terminal. Use normal tmux window navigation or run `aimux` again to return to the dashboard window. `Ctrl+A g` (Exposé) also works inside an agent window, where it scopes to that agent's worktree instead of all worktrees (configurable via `expose.forceGlobalScope`). With Exposé open, pressing `g` zooms the scope out one level — worktree → project (all worktrees) → all projects — so you can widen the view without leaving the overlay; the zoom is per-session and resets next time you open it.
 
 Main dashboard orchestration shortcuts:
 
