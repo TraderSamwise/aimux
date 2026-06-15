@@ -405,6 +405,11 @@ export function restoreTmuxSessionsFromTopology(host: RuntimeStateHost): Managed
       rows,
     );
     host.sessionTmuxTargets.set(metadata.sessionId, target);
+    const saved = savedById.get(metadata.sessionId);
+    const backendSessionId = metadata.backendSessionId ?? saved?.backendSessionId;
+    if (backendSessionId) {
+      transport.backendSessionId = backendSessionId;
+    }
     host.registerManagedSession(
       transport,
       metadata.args,
@@ -415,7 +420,10 @@ export function restoreTmuxSessionsFromTopology(host: RuntimeStateHost): Managed
       metadata.team,
     );
 
-    const saved = savedById.get(metadata.sessionId);
+    if (backendSessionId) {
+      const runtime = host.sessions.find((session: any) => session.id === metadata.sessionId);
+      if (runtime) runtime.backendSessionId = backendSessionId;
+    }
     const label = metadata.label ?? saved?.label;
     if (label) {
       host.sessionLabels.set(metadata.sessionId, label);
