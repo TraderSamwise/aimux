@@ -83,6 +83,13 @@ describe("notifyAlert mobile choke point", () => {
     expect(forward).not.toHaveBeenCalled();
   });
 
+  it("gates next-step alerts as prompt notifications", () => {
+    notificationsConfig.onPrompt = false;
+    resetNotifyConfig();
+    expect(notifyAlert(alert({ kind: "next_step" }))).toBe(false);
+    expect(forward).not.toHaveBeenCalled();
+  });
+
   it("does not forward telemetry-only interaction requests", () => {
     expect(
       notifyAlert(

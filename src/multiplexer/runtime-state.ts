@@ -146,10 +146,11 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
         idleCandidates.set(session.id, { idleSince: Date.now(), notified: false });
       } else if (candidate && !candidate.notified && Date.now() - candidate.idleSince >= IDLE_NOTIFICATION_SETTLE_MS) {
         host.publishAlert({
-          kind: "needs_input",
+          kind: "next_step",
           sessionId: session.id,
-          title: `${session.id} needs input`,
-          message: "Agent is waiting for input.",
+          title: `${session.id} ready for next step`,
+          message: "Agent stopped after a turn.",
+          // Keep the legacy prefix so renamed idle alerts dedupe with prior needs-input alerts.
           dedupeKey: `idle-needs-input:${session.id}`,
           cooldownMs: 15_000,
         });
