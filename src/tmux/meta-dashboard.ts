@@ -107,7 +107,7 @@ export function renderMetaDashboard(
         const idx = selectable;
         selectable += 1;
         const selected = idx === selectedIndex;
-        const tool = sanitizeMeta(row.tool);
+        const tool = truncatePlain(sanitizeMeta(row.tool), Math.max(4, Math.floor((width - 12) / 2)));
         const name = truncatePlain(sanitizeMeta(row.label), Math.max(4, width - 8 - tool.length - 2));
         const label = `${name}  ${style(tool, "muted")}`;
         const text = `    ${rowGlyph(row)} ${label}`;
