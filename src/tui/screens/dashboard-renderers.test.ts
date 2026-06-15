@@ -212,8 +212,23 @@ describe("renderDashboardFrame worktree progress", () => {
               active: true,
               pendingAction: "starting",
               optimistic: true,
-              lastUsedAt: "2026-05-09T12:00:00.000Z",
+              pendingStartedAt: "2026-05-09T12:00:00.000Z",
+              lastUsedAt: "2026-05-09T11:00:00.000Z",
               becameIdleAt: "2026-05-09T12:00:25.000Z",
+              semantic: deriveSessionSemantics({
+                status: "running",
+                attention: "needs_input",
+              }),
+            },
+            {
+              index: 1,
+              id: "codex-1",
+              command: "codex",
+              status: "running",
+              active: false,
+              pendingAction: "graveyarding",
+              optimistic: true,
+              pendingStartedAt: "2026-05-09T12:00:00.000Z",
               semantic: deriveSessionSemantics({
                 status: "running",
                 attention: "needs_input",
@@ -237,9 +252,14 @@ describe("renderDashboardFrame worktree progress", () => {
       expect(frame).toContain("claude \x1b[33mStarting");
       expect(frame).toContain("starting 30s ago");
       expect(frame).toContain("1 starting");
+      expect(frame).toContain("codex \x1b[33mRemoving");
+      expect(frame).toContain("removing 30s ago");
+      expect(frame).toContain("1 removing");
       expect(frame).not.toContain("prompted");
       expect(frame).not.toContain("idle now");
       expect(frame).not.toContain("1 needs input");
+      expect(frame).not.toContain("graveyarding");
+      expect(frame).not.toContain("1h ago");
     } finally {
       now.mockRestore();
     }
