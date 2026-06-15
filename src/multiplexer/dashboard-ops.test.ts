@@ -289,7 +289,7 @@ describe("dashboard-ops", () => {
     expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
-  it("blocks dashboard restore when an offline row lacks an exact backend id", async () => {
+  it("delegates dashboard restore to the project service even when cached restorability is blocked", async () => {
     const session = {
       id: "sess-1",
       command: "claude",
@@ -297,24 +297,38 @@ describe("dashboard-ops", () => {
       restoreState: "blocked",
       restoreBlockedReason: "missing exact resumable backend session id",
     };
+    const sessions = [[session], [{ ...session, status: "waiting", tmuxWindowId: "@21" }]];
+    let sessionIndex = 0;
     const host = {
       mode: "dashboard",
       dashboardPendingActions: makePendingActionsFake(),
-      setPendingDashboardSessionAction: vi.fn(),
+      setPendingDashboardSessionAction(sessionId: string, kind: string | null) {
+        if (kind === null) this.dashboardPendingActions.clearSessionAction(sessionId);
+        else this.dashboardPendingActions.setSessionAction(sessionId, kind);
+      },
+      footerFlash: "",
+      footerFlashTicks: 0,
       renderDashboard: vi.fn(),
-      postToProjectService: vi.fn(),
-      refreshDashboardModelFromService: vi.fn(),
+      postToProjectService: vi.fn(async () => undefined),
+      refreshDashboardModelFromService: vi.fn(async () => {
+        sessionIndex = Math.min(sessionIndex + 1, sessions.length - 1);
+        return true;
+      }),
       waitForSessionStart: vi.fn(),
-      getDashboardSessions: vi.fn(() => [session]),
+      getDashboardSessions: vi.fn(() => sessions[sessionIndex]),
       showDashboardError: vi.fn(),
     };
 
     await resumeOfflineSessionWithFeedback(host, session);
 
-    expect(host.postToProjectService).not.toHaveBeenCalled();
-    expect(host.showDashboardError).toHaveBeenCalledWith("Cannot restore \"claude\"", [
-      "missing exact resumable backend session id",
-    ]);
+    expect(host.postToProjectService).toHaveBeenCalledWith(
+      "/agents/resume",
+      { sessionId: "sess-1" },
+      { timeoutMs: 60_000 },
+    );
+    expect(host.dashboardPendingActions.getSessionAction("sess-1")).toBeNull();
+    expect(host.footerFlash).toBe("Restored claude");
+    expect(host.showDashboardError).not.toHaveBeenCalled();
   });
 
   it("serializes concurrent dashboard agent restores", async () => {

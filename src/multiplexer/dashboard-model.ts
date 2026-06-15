@@ -64,6 +64,11 @@ function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: str
   return listOfflineSessionsForAction(host).find((session: any) => session.id === sessionId);
 }
 
+function shouldRelaunchFreshSession(sessionId: string): boolean {
+  const derived = loadMetadataState().sessions[sessionId]?.derived;
+  return derived?.activity === "error" || derived?.attention === "error";
+}
+
 function findDashboardSessionSeed(
   host: DashboardModelHost,
   sessionId: string,
@@ -375,7 +380,9 @@ async function resumeOfflineAgentWithPending(
               : { ...offline, backendSessionId: reconciledBackendSessionId };
         }
       }
-      assertSessionRestorable(offline, loadConfig().tools);
+      if (!shouldRelaunchFreshSession(sessionId)) {
+        assertSessionRestorable(offline, loadConfig().tools);
+      }
       host.resumeOfflineSession(offline);
       return { sessionId, status: "running" as const };
     },
