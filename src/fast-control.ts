@@ -47,6 +47,7 @@ export function navigationUrgencyScore(input: {
     const semanticAttention = input.semantic.user?.attention;
     if (semanticAttention === "error") return 5;
     if (semanticAttention === "needs_input") return 4;
+    if (semanticAttention === "needs_response") return 4;
     if (semanticAttention === "blocked") return 3;
     if ((input.semantic.notifications?.unreadCount ?? 0) > 0) return 2;
     if ((input.semantic.activityNewCount ?? 0) > 0 || input.semantic.user?.label === "done") return 1;

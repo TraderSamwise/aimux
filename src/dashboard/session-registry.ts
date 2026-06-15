@@ -41,6 +41,8 @@ export interface DashboardSessionRegistryOptions {
         activity?: import("../agent-events.js").AgentActivityState;
         attention?: import("../agent-events.js").AgentAttentionState;
         unseenCount?: number;
+        lastOutputAt?: string;
+        becameIdleAt?: string;
         lastEvent?: import("../agent-events.js").AgentEvent;
         services?: import("../metadata-store.js").SessionServiceMetadata[];
         threadId?: string;
@@ -97,6 +99,8 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       activity: options.getSessionDerived(session.id)?.activity,
       attention: options.getSessionDerived(session.id)?.attention,
       unseenCount: options.getSessionDerived(session.id)?.unseenCount,
+      lastOutputAt: options.getSessionDerived(session.id)?.lastOutputAt,
+      becameIdleAt: options.getSessionDerived(session.id)?.becameIdleAt,
       lastEvent: options.getSessionDerived(session.id)?.lastEvent,
       services: options.getSessionDerived(session.id)?.services,
       threadId: options.getSessionDerived(session.id)?.threadId,
@@ -144,6 +148,8 @@ export function buildDashboardSessions(options: DashboardSessionRegistryOptions)
       activity: options.getSessionDerived(offline.id)?.activity,
       attention: options.getSessionDerived(offline.id)?.attention,
       unseenCount: options.getSessionDerived(offline.id)?.unseenCount,
+      lastOutputAt: options.getSessionDerived(offline.id)?.lastOutputAt,
+      becameIdleAt: options.getSessionDerived(offline.id)?.becameIdleAt,
       lastEvent: options.getSessionDerived(offline.id)?.lastEvent,
       services: options.getSessionDerived(offline.id)?.services,
       threadId: options.getSessionDerived(offline.id)?.threadId,
