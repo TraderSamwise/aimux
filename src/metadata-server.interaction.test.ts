@@ -154,10 +154,15 @@ describe("interaction endpoints", () => {
       payload,
       summary: "Run ls",
     };
-    expect((await postJson(`${base}/agents/interaction/register`, body)).json.ok).toBe(true);
-    expect((await postJson(`${base}/agents/interaction/register`, body)).json.ok).toBe(true);
+    const first = (await postJson(`${base}/agents/interaction/register`, body)).json;
+    const second = (await postJson(`${base}/agents/interaction/register`, body)).json;
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
 
     expect(events.filter((event) => event.kind === "interaction_request")).toHaveLength(1);
+    expect(second.request.id).toBe(first.request.id);
+    const pending = await (await fetch(`${base}/agents/interaction/pending?sessionId=s4`)).json();
+    expect(pending.requests).toHaveLength(1);
   });
 
   it("returns 409 for unknown respond and 400 for invalid register", async () => {
