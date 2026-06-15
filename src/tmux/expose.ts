@@ -2,12 +2,17 @@ import { spawnSync } from "node:child_process";
 import { basename, resolve as pathResolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
-import type { FastControlItem } from "../fast-control.js";
+import type { FastControlContext, FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { TerminalHost } from "../terminal-host.js";
 import { stripAnsi, truncateAnsi, truncatePlain } from "../tui/render/text.js";
-import { listExposeAgentItems } from "./expose-model.js";
-import { listAllProjectsExposeItems } from "../meta-dashboard-model.js";
+import {
+  initialExposeScope,
+  loadExposeScopeItems,
+  nextExposeScope,
+  type ExposeScopeItem,
+  type ExposeSublabel,
+} from "./expose-model.js";
 import { isMetaDashboardWindowName, TmuxRuntimeManager } from "./runtime-manager.js";
 
 export interface TmuxExposeOptions {
@@ -22,9 +27,6 @@ export interface TmuxExposeOptions {
   /** Baked AIMUX_HOME so cross-project Exposé reads the right project registry. */
   aimuxHome?: string;
 }
-
-/** A tile's agent item; cross-project items also carry their project. */
-type ExposeItem = FastControlItem & { projectRoot?: string; projectName?: string };
 
 const CAPTURE_LINES = 40;
 const REFRESH_MS = 1000;
@@ -120,7 +122,7 @@ function computeLayout(itemCount: number, cols: number, rows: number): GridLayou
 }
 
 function drawTile(
-  item: ExposeItem,
+  item: ExposeScopeItem,
   preview: string[],
   badge: number,
   selected: boolean,
@@ -161,38 +163,34 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   if (options.aimuxHome) process.env.AIMUX_HOME = options.aimuxHome;
   const tmux = new TmuxRuntimeManager();
 
-  // On the meta-dashboard window, Exposé tiles agents across EVERY project;
-  // otherwise it is scoped to the current project (all worktrees or one).
+  // On the meta-dashboard window Exposé starts cross-project (global); otherwise it
+  // starts scoped to the launch context. Pressing `g` zooms out along the ladder
+  // worktree → project → global; the rung is ephemeral (never persisted).
   const crossProject = isMetaDashboardWindowName(options.currentWindow ?? "");
-  let items: ExposeItem[];
-  let scopeLabel: string;
-  let showWorktree = false;
-  if (crossProject) {
-    items = listAllProjectsExposeItems({ tmux });
-    scopeLabel = "all projects";
-  } else {
-    // Resolve config for the explicit project root without write side effects — a
-    // popup must never register the project or rewrite state, which would refresh
-    // the dashboard and move its selection cursor.
-    const config = loadConfig({ projectRoot: options.projectRoot });
-    const result = listExposeAgentItems(
-      {
-        projectRoot: options.projectRoot,
-        currentPath: options.currentPath,
-        currentWindow: options.currentWindow,
-        currentWindowId: options.currentWindowId,
-        currentClientSession: options.currentClientSession,
-      },
-      config,
-      tmux,
-    );
-    items = result.items;
-    scopeLabel = result.scope === "all" ? "all worktrees" : "this worktree";
-    showWorktree = result.scope === "all";
-  }
+  const context: FastControlContext = {
+    projectRoot: options.projectRoot,
+    currentPath: options.currentPath,
+    currentWindow: options.currentWindow,
+    currentWindowId: options.currentWindowId,
+    currentClientSession: options.currentClientSession,
+  };
+  // Resolve config for the explicit project root without write side effects — a
+  // popup must never register the project or rewrite state, which would refresh
+  // the dashboard and move its selection cursor.
+  const config = loadConfig({ projectRoot: options.projectRoot });
 
-  const tileSublabel = (item: ExposeItem): string =>
-    crossProject ? (item.projectName ?? "") : showWorktree ? shortWorktree(item, options.projectRoot) : "";
+  let scope = initialExposeScope(crossProject, context, config);
+  let view = loadExposeScopeItems(scope, context, { tmux });
+  let items = view.items;
+  let scopeLabel = view.scopeLabel;
+  let sublabel: ExposeSublabel = view.sublabel;
+
+  const tileSublabel = (item: ExposeScopeItem): string =>
+    sublabel === "project"
+      ? (item.projectName ?? "")
+      : sublabel === "worktree"
+        ? shortWorktree(item, options.projectRoot)
+        : "";
 
   const terminal = new TerminalHost();
   terminal.enterRawMode();
@@ -211,31 +209,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   const onFatalSignal = () => process.exit(exit(0));
   process.once("SIGINT", onFatalSignal);
   process.once("SIGTERM", onFatalSignal);
-
-  if (items.length === 0) {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    const msg = `No active agents in ${scopeLabel}.  q/Esc to close`;
-    process.stdout.write(
-      `\x1b[2J\x1b[H\x1b[${Math.floor(rows / 2)};${Math.max(1, Math.floor((cols - msg.length) / 2))}H${msg}`,
-    );
-    return await new Promise<number>((resolve) => {
-      const onData = (data: Buffer) => {
-        try {
-          const event = parseKeys(data)[0];
-          const key = event?.name || event?.char || "";
-          if (key === "q" || key === "escape" || (event?.ctrl && key === "c")) {
-            process.stdin.off("data", onData);
-            resolve(exit(0));
-          }
-        } catch {
-          process.stdin.off("data", onData);
-          resolve(exit(1));
-        }
-      };
-      process.stdin.on("data", onData);
-    });
-  }
 
   const captures = new Map<string, string>();
   const refreshCaptures = () => {
@@ -262,12 +235,21 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const layout = computeLayout(items.length, cols, rows);
     tileCols = layout.tileCols;
     visibleCount = layout.visibleCount;
-    if (index >= visibleCount) index = visibleCount - 1;
+    if (index >= visibleCount) index = Math.max(0, visibleCount - 1);
 
     const title = `\x1b[1mExposé · ${scopeLabel} (${items.length})${RESET}`;
     const hidden = items.length - visibleCount;
     const more = hidden > 0 ? `   +${hidden} more (use ^A s)` : "";
-    const help = `\x1b[2m1-9 jump · ↑↓←→/n/p move · Enter open · q/Esc close${more}${RESET}`;
+    const zoom = scope === "global" ? "" : " · g zoom out";
+    const help = `\x1b[2m1-9 jump · ↑↓←→/n/p move · Enter open${zoom} · q/Esc close${more}${RESET}`;
+
+    if (visibleCount === 0) {
+      const msg = `No active agents in ${scopeLabel}.`;
+      const col = Math.max(1, Math.floor((cols - msg.length) / 2));
+      const out = `\x1b[2J\x1b[H\x1b[1;2H${title}\x1b[${Math.floor(rows / 2)};${col}H\x1b[2m${msg}${RESET}\x1b[${rows};2H${help}`;
+      process.stdout.write(out);
+      return;
+    }
 
     let out = `\x1b[2J\x1b[H\x1b[1;2H${title}`;
     for (let i = 0; i < visibleCount; i += 1) {
@@ -293,6 +275,19 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     process.stdout.write(out);
   };
 
+  // Reload tiles for the current rung after a zoom: swap items/labels, drop stale
+  // captures, re-seek the selection to the current window, and re-capture.
+  const reload = () => {
+    view = loadExposeScopeItems(scope, context, { tmux });
+    items = view.items;
+    scopeLabel = view.scopeLabel;
+    sublabel = view.sublabel;
+    captures.clear();
+    const idx = items.findIndex((item) => item.target.windowId === options.currentWindowId);
+    index = idx >= 0 ? idx : 0;
+    refreshCaptures();
+  };
+
   refreshCaptures();
   render();
 
@@ -305,13 +300,14 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
     const selectTile = (i: number) => {
       const item = items[i];
       if (!item) return;
-      if (crossProject) {
-        // Popup client is ephemeral, so switch the real client (by tty) into the
-        // target project's per-client session via openTarget's explicit-client path.
+      if (item.projectRoot) {
+        // Cross-project tile: the popup client is ephemeral, so switch the real
+        // client (by tty) into the target project's per-client session via
+        // openTarget's explicit-client path.
         const suffix = options.currentClientSession?.match(/-client-([a-f0-9]{8})$/)?.[1];
         try {
           tmux.openTarget(
-            { ...item.target, sessionName: tmux.getProjectSession(item.projectRoot!).sessionName },
+            { ...item.target, sessionName: tmux.getProjectSession(item.projectRoot).sessionName },
             {
               insideTmux: true,
               clientTty: options.clientTty,
@@ -338,6 +334,15 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           finish(0);
           return;
         }
+        if (key === "g") {
+          const next = nextExposeScope(scope);
+          if (next !== scope) {
+            scope = next;
+            reload();
+            render();
+          }
+          return;
+        }
         if (key >= "1" && key <= "9") {
           const target = Number.parseInt(key, 10) - 1;
           if (target < visibleCount) selectTile(target);
@@ -347,6 +352,7 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
           selectTile(index);
           return;
         }
+        if (visibleCount === 0) return;
         if (key === "right" || key === "l" || key === "n" || key === "tab") {
           index = (index + 1) % visibleCount;
           render();
