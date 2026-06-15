@@ -105,9 +105,9 @@ describe("renderDashboardFrame worktree progress", () => {
       40,
     );
 
-    expect(frame).toContain("\x1b[1;33mneeds input\x1b[0m");
-    expect(frame).toContain("\x1b[1;33mon you\x1b[0m");
-    expect(frame).toContain("\x1b[36mworking\x1b[0m");
+    expect(frame).toContain("\x1b[1;33mNeeds input");
+    expect(frame).toContain("\x1b[36m1 unread\x1b[0m");
+    expect(frame).toContain("\x1b[36mWorking");
   });
 
   it("renders output recency instead of last-used recency and highlights recently idle sessions", () => {
@@ -230,7 +230,7 @@ describe("renderDashboardFrame worktree progress", () => {
       40,
     );
 
-    expect(frame).toContain("claude — \x1b[1;33mstarting\x1b[0m");
+    expect(frame).toContain("claude \x1b[33mStarting");
   });
 
   it("renders selected parent teammates in the details pane only", () => {
