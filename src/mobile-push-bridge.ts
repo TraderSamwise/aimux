@@ -1,4 +1,5 @@
 import { requestDaemonJson } from "./daemon.js";
+import { externalNotificationsDisabled } from "./external-notifications.js";
 import type { AlertEvent } from "./project-events.js";
 
 /**
@@ -8,6 +9,8 @@ import type { AlertEvent } from "./project-events.js";
  * never blocks the alert path on push delivery.
  */
 export function forwardAlertToMobilePush(event: AlertEvent): void {
+  if (externalNotificationsDisabled()) return;
+
   void requestDaemonJson("/internal/push", {
     method: "POST",
     body: JSON.stringify({

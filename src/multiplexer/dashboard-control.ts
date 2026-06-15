@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { DashboardService, DashboardSession, DashboardWorktreeEntry } from "../dashboard/index.js";
 import type { DashboardScreen } from "../dashboard/state.js";
 import { updateNotificationContext } from "../notification-context.js";
+import { markSessionViewed } from "../session-viewed.js";
 import { requestJson } from "../http-client.js";
 import { markLastUsed } from "../last-used.js";
 import { loadMetadataState, removeMetadataEndpoint, resolveProjectServiceEndpoint } from "../metadata-store.js";
@@ -331,12 +332,12 @@ export function openLiveTmuxWindowForEntry(
     if (!target) return "missing";
     primeLiveTmuxFooter(host, target);
     void host.postToProjectService("/statusline/refresh", { sessionId: entry.id }).catch(() => {});
-    host.agentTracker.markSeen(entry.id);
     updateNotificationContext("tui", {
       focused: true,
       sessionId: entry.id,
       panelOpen: false,
     });
+    markSessionViewed(entry.id);
     noteLastUsedItem(host, entry.id);
     return "opened";
   } catch (error) {

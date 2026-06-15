@@ -16,7 +16,7 @@ import { wrapCommandWithManagedLaunchEnv } from "../managed-launch-env.js";
 import { wrapCommandWithShellIntegration } from "../shell-hooks.js";
 import { debug, log } from "../debug.js";
 import { updateNotificationContext } from "../notification-context.js";
-import { markNotificationsRead } from "../notifications.js";
+import { markSessionViewed } from "../session-viewed.js";
 import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } from "../metadata-store.js";
 import type { SessionTeamMetadata } from "../team.js";
 import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
@@ -730,7 +730,6 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
   const session = host.sessions[index];
   const sid = session.id;
   host.sessionMRU = [sid, ...host.sessionMRU.filter((id: string) => id !== sid)];
-  host.agentTracker.markSeen(sid);
   updateNotificationContext("tui", {
     focused: true,
     screen: "agent",
@@ -738,7 +737,7 @@ export function focusSession(host: SessionLaunchHost, index: number): void {
     panelOpen: false,
   });
   host.noteLastUsedItem(sid);
-  markNotificationsRead({ sessionId: sid });
+  markSessionViewed(sid);
   host.syncTuiNotificationContext(false);
   const target = host.sessionTmuxTargets.get(sid);
   if (target) {
