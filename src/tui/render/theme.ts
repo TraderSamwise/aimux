@@ -110,6 +110,7 @@ export function modalBand(label: string, tone: BandTone, width: number): string 
 /** Presentation-level status kinds (distinct from runtime SessionStatus). */
 export type StatusKind =
   | "working"
+  | "ready"
   | "idle"
   | "offline"
   | "needs"
@@ -121,6 +122,7 @@ export type StatusKind =
 
 const STATE_GLYPH: Record<StatusKind, string> = {
   working: "●",
+  ready: "●",
   idle: "●",
   offline: "○",
   needs: "◉",
@@ -133,6 +135,7 @@ const STATE_GLYPH: Record<StatusKind, string> = {
 
 const STATE_TONE: Record<StatusKind, Tone> = {
   working: "work",
+  ready: "muted",
   idle: "idle",
   offline: "muted",
   needs: "attn",
