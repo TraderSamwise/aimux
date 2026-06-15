@@ -779,12 +779,21 @@ export function renderDashboardFrame(
   const viewportHeight = rows - header.length - footer.length;
   let scrollOffset = state.scrollOffset;
   const focusLine = findFocusLine(content);
+  // The focused card spans from its marker line to the next blank separator;
+  // scroll to reveal its whole body, not just the marker line, so the bottom
+  // of the last (possibly tall) card is always reachable.
+  let focusEnd = focusLine;
+  while (focusEnd >= 0 && focusEnd + 1 < content.length && stripAnsi(content[focusEnd + 1]).trim() !== "") {
+    focusEnd++;
+  }
   const maxScroll = Math.max(0, content.length - viewportHeight);
   if (focusLine >= 0) {
     if (focusLine < scrollOffset + 1) {
       scrollOffset = Math.max(0, focusLine - 1);
-    } else if (focusLine >= scrollOffset + viewportHeight - 1) {
-      scrollOffset = Math.min(maxScroll, focusLine - viewportHeight + 2);
+    } else if (focusEnd >= scrollOffset + viewportHeight - 1) {
+      scrollOffset = Math.min(maxScroll, focusEnd - viewportHeight + 2);
+      // If the card is taller than the viewport, keep its top edge in view.
+      if (focusLine < scrollOffset + 1) scrollOffset = Math.max(0, focusLine - 1);
     }
   }
   scrollOffset = Math.min(scrollOffset, maxScroll);
