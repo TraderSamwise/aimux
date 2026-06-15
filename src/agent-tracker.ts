@@ -14,13 +14,14 @@ function deriveFromEvent(
   sessionId: string,
   current: SessionDerivedState | undefined,
   event: AgentEvent,
-): Pick<SessionDerivedState, "activity" | "attention" | "unseenCount"> {
+): Pick<SessionDerivedState, "activity" | "attention" | "unseenCount" | "becameIdleAt"> {
   const message = event.message?.toLowerCase() ?? "";
   const tone = event.tone;
   const suppressUnseen = isSessionNotificationFocused(sessionId);
   let activity: AgentActivityState | undefined = current?.activity;
   let attention: AgentAttentionState | undefined = current?.attention ?? "normal";
   let unseenCount = current?.unseenCount ?? 0;
+  let becameIdleAt = current?.becameIdleAt;
 
   switch (event.kind) {
     case "prompt":
@@ -94,10 +95,17 @@ function deriveFromEvent(
       break;
   }
 
+  if (activity === "running") {
+    becameIdleAt = undefined;
+  } else if (current?.activity === "running" && activity) {
+    becameIdleAt = event.ts ?? nowIso();
+  }
+
   return {
     activity,
     attention,
     unseenCount,
+    becameIdleAt,
   };
 }
 
@@ -118,6 +126,7 @@ export class AgentTracker {
           derived: {
             ...derivedCurrent,
             ...nextState,
+            lastOutputAt: normalized.ts,
             threadId: normalized.threadId ?? derivedCurrent?.threadId,
             threadName: normalized.threadName ?? derivedCurrent?.threadName,
             lastEvent: normalized,
@@ -146,13 +155,20 @@ export class AgentTracker {
   setActivity(sessionId: string, activity: AgentActivityState, projectRoot?: string): void {
     updateSessionMetadata(
       sessionId,
-      (current) => ({
-        ...current,
-        derived: {
-          ...(current.derived ?? {}),
-          activity,
-        },
-      }),
+      (current) => {
+        const derived = current.derived ?? {};
+        const now = nowIso();
+        const becameIdleAt =
+          activity === "running" ? undefined : derived.activity === "running" ? now : derived.becameIdleAt;
+        return {
+          ...current,
+          derived: {
+            ...derived,
+            activity,
+            becameIdleAt,
+          },
+        };
+      },
       projectRoot,
     );
   }
