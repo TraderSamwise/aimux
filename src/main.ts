@@ -107,6 +107,7 @@ import { parseCodexHookPayload } from "./codex-hooks.js";
 import { requestJson } from "./http-client.js";
 import { runTmuxSwitcher } from "./tmux/switcher.js";
 import { runTmuxExpose } from "./tmux/expose.js";
+import { runTmuxMetaDashboard } from "./tmux/meta-dashboard.js";
 import { runTmuxInboxPopup } from "./tmux/inbox-popup.js";
 import { buildDebugStateReport, renderDebugStateReport } from "./debug-state.js";
 import { getDashboardCommandSpec } from "./dashboard/command-spec.js";
@@ -3245,6 +3246,7 @@ program
   .option("--current-window-id <id>", "Current window id")
   .option("--current-path <path>", "Current path")
   .option("--pane-id <id>", "Current pane id")
+  .option("--aimux-home <path>", "AIMUX_HOME to scope cross-project Exposé")
   .action(
     async (opts: {
       projectRoot: string;
@@ -3255,6 +3257,7 @@ program
       currentWindowId?: string;
       currentPath?: string;
       paneId?: string;
+      aimuxHome?: string;
     }) => {
       const code = await runTmuxExpose({
         projectRoot: pathResolve(opts.projectRoot),
@@ -3265,6 +3268,46 @@ program
         currentWindowId: opts.currentWindowId,
         currentPath: opts.currentPath,
         paneId: opts.paneId,
+        aimuxHome: opts.aimuxHome,
+      });
+      process.exit(code);
+    },
+  );
+
+program
+  .command("meta-dashboard")
+  .description("Internal cross-project meta dashboard window")
+  .requiredOption("--project-root <path>", "Project root")
+  .requiredOption("--project-state-dir <path>", "Project state dir")
+  .option("--current-client-session <name>", "Current client session")
+  .option("--client-tty <tty>", "Client tty")
+  .option("--current-window <name>", "Current window name")
+  .option("--current-window-id <id>", "Current window id")
+  .option("--current-path <path>", "Current path")
+  .option("--pane-id <id>", "Current pane id")
+  .option("--aimux-home <path>", "AIMUX_HOME to scope the project registry")
+  .action(
+    async (opts: {
+      projectRoot: string;
+      projectStateDir: string;
+      currentClientSession?: string;
+      clientTty?: string;
+      currentWindow?: string;
+      currentWindowId?: string;
+      currentPath?: string;
+      paneId?: string;
+      aimuxHome?: string;
+    }) => {
+      const code = await runTmuxMetaDashboard({
+        projectRoot: pathResolve(opts.projectRoot),
+        projectStateDir: pathResolve(opts.projectStateDir),
+        currentClientSession: opts.currentClientSession,
+        clientTty: opts.clientTty,
+        currentWindow: opts.currentWindow,
+        currentWindowId: opts.currentWindowId,
+        currentPath: opts.currentPath,
+        paneId: opts.paneId,
+        aimuxHome: opts.aimuxHome,
       });
       process.exit(code);
     },

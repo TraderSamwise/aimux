@@ -7,7 +7,8 @@ import { parseKeys } from "../key-parser.js";
 import { TerminalHost } from "../terminal-host.js";
 import { truncatePlain } from "../tui/render/text.js";
 import { listExposeAgentItems } from "./expose-model.js";
-import { TmuxRuntimeManager } from "./runtime-manager.js";
+import { listAllProjectsExposeItems } from "../meta-dashboard-model.js";
+import { isMetaDashboardWindowName, TmuxRuntimeManager } from "./runtime-manager.js";
 
 export interface TmuxExposeOptions {
   projectRoot: string;
@@ -18,7 +19,12 @@ export interface TmuxExposeOptions {
   currentWindowId?: string;
   currentPath?: string;
   paneId?: string;
+  /** Baked AIMUX_HOME so cross-project Exposé reads the right project registry. */
+  aimuxHome?: string;
 }
+
+/** A tile's agent item; cross-project items also carry their project. */
+type ExposeItem = FastControlItem & { projectRoot?: string; projectName?: string };
 
 const CAPTURE_LINES = 40;
 const REFRESH_MS = 1000;
@@ -39,7 +45,7 @@ function shortWorktree(item: FastControlItem, projectRoot: string): string {
 // Strip escape sequences and stray control bytes from captured agent output so a
 // rogue pane can't inject escapes into the host terminal or misalign tile borders.
 function sanitizeLine(line: string): string {
-  return line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f]/g, " ");
+  return line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
 }
 
 function tilePreview(raw: string, count: number): string[] {
@@ -108,7 +114,7 @@ function computeLayout(itemCount: number, cols: number, rows: number): GridLayou
 }
 
 function drawTile(
-  item: FastControlItem,
+  item: ExposeItem,
   preview: string[],
   badge: number,
   selected: boolean,
@@ -116,17 +122,17 @@ function drawTile(
   left: number,
   width: number,
   layout: GridLayout,
-  scope: string,
+  sublabel: string,
   options: TmuxExposeOptions,
 ): string {
   const innerW = Math.max(1, width - 2);
   const textW = Math.max(0, innerW - 1);
   const border = selected ? "\x1b[38;5;39m" : "\x1b[38;5;240m";
   const headerStyle = selected ? "\x1b[1;38;5;39m" : "\x1b[1m";
-  const wt = scope === "all" ? `  ${shortWorktree(item, options.projectRoot)}` : "";
+  const sub = sublabel ? `  ${sublabel}` : "";
   const here = item.target.windowId === options.currentWindowId ? " (here)" : "";
   const badgeLabel = badge <= 9 ? String(badge) : "·";
-  const header = truncatePlain(`${badgeLabel} ${item.label}${wt}${here}`, textW);
+  const header = truncatePlain(`${badgeLabel} ${item.label}${sub}${here}`, textW);
 
   const rows: string[] = [];
   rows.push(`${border}┌${"─".repeat(innerW)}┐${RESET}`);
@@ -145,22 +151,41 @@ function drawTile(
 }
 
 export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number> {
-  // Resolve config for the explicit project root without write side effects — a
-  // popup must never register the project or rewrite state, which would refresh
-  // the dashboard and move its selection cursor.
-  const config = loadConfig({ projectRoot: options.projectRoot });
+  if (options.aimuxHome) process.env.AIMUX_HOME = options.aimuxHome;
   const tmux = new TmuxRuntimeManager();
-  const { scope, items } = listExposeAgentItems(
-    {
-      projectRoot: options.projectRoot,
-      currentPath: options.currentPath,
-      currentWindow: options.currentWindow,
-      currentWindowId: options.currentWindowId,
-      currentClientSession: options.currentClientSession,
-    },
-    config,
-    tmux,
-  );
+
+  // On the meta-dashboard window, Exposé tiles agents across EVERY project;
+  // otherwise it is scoped to the current project (all worktrees or one).
+  const crossProject = isMetaDashboardWindowName(options.currentWindow ?? "");
+  let items: ExposeItem[];
+  let scopeLabel: string;
+  let showWorktree = false;
+  if (crossProject) {
+    items = listAllProjectsExposeItems({ tmux });
+    scopeLabel = "all projects";
+  } else {
+    // Resolve config for the explicit project root without write side effects — a
+    // popup must never register the project or rewrite state, which would refresh
+    // the dashboard and move its selection cursor.
+    const config = loadConfig({ projectRoot: options.projectRoot });
+    const result = listExposeAgentItems(
+      {
+        projectRoot: options.projectRoot,
+        currentPath: options.currentPath,
+        currentWindow: options.currentWindow,
+        currentWindowId: options.currentWindowId,
+        currentClientSession: options.currentClientSession,
+      },
+      config,
+      tmux,
+    );
+    items = result.items;
+    scopeLabel = result.scope === "all" ? "all worktrees" : "this worktree";
+    showWorktree = result.scope === "all";
+  }
+
+  const tileSublabel = (item: ExposeItem): string =>
+    crossProject ? (item.projectName ?? "") : showWorktree ? shortWorktree(item, options.projectRoot) : "";
 
   const terminal = new TerminalHost();
   terminal.enterRawMode();
@@ -179,8 +204,6 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   const onFatalSignal = () => process.exit(exit(0));
   process.once("SIGINT", onFatalSignal);
   process.once("SIGTERM", onFatalSignal);
-
-  const scopeLabel = scope === "all" ? "all worktrees" : "this worktree";
 
   if (items.length === 0) {
     const cols = process.stdout.columns ?? 80;
@@ -243,7 +266,18 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       const top = layout.gridTopRow + r * layout.tileHeight;
       const left = 1 + c * (layout.tileWidth + GAP);
       const preview = tilePreview(captures.get(items[i]!.target.windowId) ?? "", layout.bodyLines);
-      out += drawTile(items[i]!, preview, i + 1, i === index, top, left, layout.tileWidth, layout, scope, options);
+      out += drawTile(
+        items[i]!,
+        preview,
+        i + 1,
+        i === index,
+        top,
+        left,
+        layout.tileWidth,
+        layout,
+        tileSublabel(items[i]!),
+        options,
+      );
     }
     out += `\x1b[${rows};2H${help}`;
     process.stdout.write(out);
@@ -258,6 +292,32 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       resolve(exit(code));
     };
 
+    const selectTile = (i: number) => {
+      const item = items[i];
+      if (!item) return;
+      if (crossProject) {
+        // Popup client is ephemeral, so switch the real client (by tty) into the
+        // target project's per-client session via openTarget's explicit-client path.
+        const suffix = options.currentClientSession?.match(/-client-([a-f0-9]{8})$/)?.[1];
+        try {
+          tmux.openTarget(
+            { ...item.target, sessionName: tmux.getProjectSession(item.projectRoot!).sessionName },
+            {
+              insideTmux: true,
+              clientTty: options.clientTty,
+              clientSuffix: suffix,
+              returnSessionName: options.currentClientSession,
+            },
+          );
+        } catch {
+          /* target vanished mid-jump; close Exposé regardless */
+        }
+        finish(0);
+        return;
+      }
+      finish(runWindowSwitch(options, item.target.windowId));
+    };
+
     function onData(data: Buffer) {
       try {
         const event = parseKeys(data)[0];
@@ -270,11 +330,11 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
         }
         if (key >= "1" && key <= "9") {
           const target = Number.parseInt(key, 10) - 1;
-          if (target < visibleCount) finish(runWindowSwitch(options, items[target]!.target.windowId));
+          if (target < visibleCount) selectTile(target);
           return;
         }
         if (key === "enter" || key === "return") {
-          finish(runWindowSwitch(options, items[index]!.target.windowId));
+          selectTile(index);
           return;
         }
         if (key === "right" || key === "l" || key === "n" || key === "tab") {
