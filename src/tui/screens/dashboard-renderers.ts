@@ -152,7 +152,7 @@ function sessionTimeText(session: DashboardSession): string {
  *  as active. */
 function isSessionOffline(session: DashboardSession): boolean {
   if (session.pendingAction) return false;
-  return effectiveSessionRowState(session) === "offline" || session.status === "offline";
+  return effectiveSessionRowState(session) === "offline" || session.status === "offline" || session.status === "exited";
 }
 
 function sessionActivityChips(session: DashboardSession): string {
