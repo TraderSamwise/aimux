@@ -1,15 +1,24 @@
 import { renderOverlayBox } from "../render/box.js";
+import { keycap, padVisible, statusDot, style } from "../render/theme.js";
+
+/** Render footer-style key hints as keycaps: hints([["Enter","create"],["Esc","cancel"]]). */
+function hints(pairs: [string, string][]): string {
+  return `  ${pairs.map(([key, label]) => `${keycap(key)} ${style(label, "muted")}`).join("  ")}`;
+}
 
 export function buildServiceInputOverlayOutput(ctx: any): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const lines = [
-    "Create service:",
+    style("Create service", "strong"),
     "",
-    `  Command: ${ctx.serviceInputBuffer}_`,
+    `  ${style("Command:", "muted")} ${ctx.serviceInputBuffer}_`,
     "",
-    "  Empty command opens an interactive shell",
-    "  [Enter] create  [Esc] cancel",
+    `  ${style("Empty command opens an interactive shell", "muted")}`,
+    hints([
+      ["Enter", "create"],
+      ["Esc", "cancel"],
+    ]),
   ];
   return renderOverlayBox(lines, cols, rows, "blue");
 }
@@ -21,7 +30,16 @@ export function renderServiceInputOverlay(ctx: any): void {
 export function buildLabelInputOverlayOutput(ctx: any): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
-  const lines = ["Name agent:", "", `  Name: ${ctx.labelInputBuffer}_`, "", "  [Enter] save  [Esc] cancel"];
+  const lines = [
+    style("Name agent", "strong"),
+    "",
+    `  ${style("Name:", "muted")} ${ctx.labelInputBuffer}_`,
+    "",
+    hints([
+      ["Enter", "save"],
+      ["Esc", "cancel"],
+    ]),
+  ];
   return renderOverlayBox(lines, cols, rows, "blue");
 }
 
@@ -38,18 +56,18 @@ export function buildWorktreeListOverlayOutput(ctx: any): string {
     worktrees = ctx.listAllWorktrees().filter((wt: any) => !wt.isBare);
   } catch {}
 
-  const lines = ["Worktree Management:", ""];
+  const lines = [style("Worktree Management", "strong"), ""];
   if (worktrees.length === 0) {
-    lines.push("  No worktrees found.");
+    lines.push(`  ${style("No worktrees found.", "muted")}`);
   } else {
     for (let i = 0; i < worktrees.length; i++) {
       const wt = worktrees[i];
-      const isMain = i === 0 ? " \x1b[2m(main)\x1b[0m" : "";
-      lines.push(`  ${wt.name} (${wt.branch})${isMain}`);
+      const isMain = i === 0 ? ` ${style("(main)", "muted")}` : "";
+      lines.push(`  ${style(wt.name, "strong")} ${style(`(${wt.branch})`, "muted")}${isMain}`);
     }
   }
   lines.push("");
-  lines.push("  [Esc] back");
+  lines.push(hints([["Esc", "back"]]));
   return renderOverlayBox(lines, cols, rows, "blue");
 }
 
@@ -63,12 +81,15 @@ export function buildWorktreeRemoveConfirmOverlayOutput(ctx: any): string | null
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
   const lines = [
-    `Graveyard worktree "${confirm.name}"?`,
+    style(`Graveyard worktree "${confirm.name}"?`, "strong"),
     "",
-    `  Path: ${confirm.path}`,
-    "  This offlines attached agents and moves the checkout to the graveyard",
+    `  ${style("Path:", "muted")} ${confirm.path}`,
+    `  ${style("This offlines attached agents and moves the checkout to the graveyard", "muted")}`,
     "",
-    "  [Enter/y] yes  [n/Esc] cancel",
+    hints([
+      ["Enter/y", "yes"],
+      ["n/Esc", "cancel"],
+    ]),
   ];
   return renderOverlayBox(lines, cols, rows, "red");
 }
@@ -85,7 +106,15 @@ export function buildDashboardBusyOverlayOutput(ctx: any): string | null {
   const rows = process.stdout.rows ?? 24;
   const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][busy.spinnerFrame % 10];
   const elapsed = ((Date.now() - busy.startedAt) / 1000).toFixed(1);
-  const lines = [`${spinner} ${busy.title}`, "", ...busy.lines, "", `  Elapsed: ${elapsed}s`, "", "  Please wait"];
+  const lines = [
+    `${style(spinner, "accent")} ${style(busy.title, "strong")}`,
+    "",
+    ...busy.lines,
+    "",
+    `  ${style(`Elapsed: ${elapsed}s`, "muted")}`,
+    "",
+    `  ${style("Please wait", "muted")}`,
+  ];
   return renderOverlayBox(lines, cols, rows, "blue");
 }
 
@@ -107,7 +136,13 @@ export function buildDashboardErrorOverlayOutput(ctx: any): string | null {
     );
   };
   const messageLines = error.lines.flatMap((line: string) => wrap(" ", line)).slice(0, Math.max(4, rows - 10));
-  const lines = [ctx.stripAnsi(error.title), "", ...messageLines, "", "[Esc/Enter] dismiss"];
+  const lines = [
+    style(ctx.stripAnsi(error.title), "danger"),
+    "",
+    ...messageLines,
+    "",
+    hints([["Esc/Enter", "dismiss"]]),
+  ];
   return renderOverlayBox(lines, cols, rows, "red");
 }
 
@@ -122,22 +157,33 @@ export function buildNotificationPanelOverlayOutput(ctx: any): string | null {
 
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
-  const title = "Notifications";
-  const header = [`${title}`, "", "  [↑↓] select  [r] read  [c] clear  [C] clear all  [Esc] close", ""];
+  const header = [
+    style("Notifications", "strong"),
+    "",
+    hints([
+      ["↑↓", "select"],
+      ["r", "read"],
+      ["c", "clear"],
+      ["C", "clear all"],
+      ["Esc", "close"],
+    ]),
+    "",
+  ];
   const items =
     panel.entries.length === 0
-      ? ["  No inbox items."]
+      ? [`  ${style("No inbox items.", "muted")}`]
       : panel.entries.map((entry: any, index: number) => {
-          const marker = index === panel.index ? "▸" : " ";
-          const state = entry.unread ? "unread" : "read";
-          const session = entry.sessionId ? ` (${entry.sessionId})` : "";
+          const marker = index === panel.index ? style("▸", "accent") : " ";
+          const dot = entry.unread ? statusDot("needs") : statusDot("offline");
+          const session = entry.sessionId ? style(` (${entry.sessionId})`, "muted") : "";
           const time = entry.createdAt.replace("T", " ").slice(5, 16);
-          return `  ${marker} ${entry.title}${session} · ${state} · ${time}`;
+          const titleTone = entry.unread ? "strong" : "muted";
+          return `  ${marker} ${dot} ${style(entry.title, titleTone)}${session} ${style(`· ${time}`, "muted")}`;
         });
   const selected = panel.entries[panel.index];
   const details = selected
     ? [
-        "Details",
+        style("Details", "strong"),
         "",
         ...ctx.wrapKeyValue("Title", selected.title, 56),
         ...(selected.subtitle ? ctx.wrapKeyValue("Subtitle", selected.subtitle, 56) : []),
@@ -145,31 +191,38 @@ export function buildNotificationPanelOverlayOutput(ctx: any): string | null {
         ...(selected.sessionId ? ctx.wrapKeyValue("Session", selected.sessionId, 56) : []),
         ...(selected.kind ? ctx.wrapKeyValue("Kind", selected.kind, 56) : []),
       ]
-    : ["Details", "", "  No notification selected."];
+    : [style("Details", "strong"), "", `  ${style("No notification selected.", "muted")}`];
 
   const lines = [...header, ...items];
   const height = Math.min(rows - 6, Math.max(10, Math.min(22, lines.length + 2)));
   const width = Math.min(cols - 8, 100);
-  const leftWidth = Math.max(34, Math.floor(width * 0.5));
-  const rightWidth = Math.max(24, width - leftWidth - 3);
+  const leftWidth = Math.max(28, Math.floor((width - 7) * 0.5));
+  const rightWidth = Math.max(20, width - 7 - leftWidth);
+  const boxWidth = leftWidth + rightWidth + 7;
   const startRow = Math.max(1, Math.floor((rows - height) / 2));
-  const startCol = Math.max(2, Math.floor((cols - width) / 2));
+  const startCol = Math.max(2, Math.floor((cols - boxWidth) / 2));
   const listHeight = height - 2;
   const listVisible = lines.slice(0, listHeight);
   while (listVisible.length < listHeight) listVisible.push("");
   const detailVisible = details.slice(0, listHeight);
   while (detailVisible.length < listHeight) detailVisible.push("");
+  const border = (segment: string): string => style(segment, "info");
+  const divider = style("│", "muted");
 
   let output = "\x1b7";
   for (let i = 0; i < height; i++) {
     output += `\x1b[${startRow + i};${startCol}H`;
-    if (i === 0 || i === height - 1) {
-      output += `\x1b[48;5;236;38;5;255m${" ".repeat(width)}\x1b[0m`;
+    if (i === 0) {
+      output += border(`╭${"─".repeat(boxWidth - 2)}╮`);
       continue;
     }
-    const left = ctx.truncatePlain(ctx.stripAnsi(listVisible[i - 1] ?? ""), leftWidth).padEnd(leftWidth);
-    const right = ctx.truncatePlain(ctx.stripAnsi(detailVisible[i - 1] ?? ""), rightWidth).padEnd(rightWidth);
-    output += `\x1b[48;5;236;38;5;255m ${left} │ ${right} \x1b[0m`;
+    if (i === height - 1) {
+      output += border(`╰${"─".repeat(boxWidth - 2)}╯`);
+      continue;
+    }
+    const left = padVisible(listVisible[i - 1] ?? "", leftWidth);
+    const right = padVisible(detailVisible[i - 1] ?? "", rightWidth);
+    output += `${border("│")} ${left} ${divider} ${right} ${border("│")}`;
   }
   output += "\x1b8";
   return output;
@@ -198,19 +251,26 @@ export function buildTeammatePickerOverlayOutput(ctx: any): string | null {
     return role ? `${label} (${role})` : label;
   };
   const formatLine = (entry: any, index: number): string => {
-    const marker = index === selectedIndex ? ">" : " ";
-    const number = index < 9 ? `[${index + 1}]` : "   ";
+    const marker = index === selectedIndex ? style("▸", "accent") : " ";
+    const number = index < 9 ? keycap(String(index + 1)) : "   ";
     const status = statusLabel(entry);
     const summary = entry.headline ?? entry.previewLine ?? entry.lastEvent?.message;
-    const suffix = summary ? ` - ${summary}` : "";
-    return `  ${marker} ${number} ${labelFor(entry)} - ${status}${suffix}`;
+    const suffix = summary ? style(` - ${summary}`, "muted") : "";
+    return `  ${marker} ${number} ${style(labelFor(entry), "strong")} ${style(`- ${status}`, "muted")}${suffix}`;
   };
 
-  const lines = ["Team", "", ...visible.map(formatLine)];
+  const lines = [style("Team", "strong"), "", ...visible.map(formatLine)];
   if (teammates.length > visible.length) {
-    lines.push(`  ${teammates.length - visible.length} more`);
+    lines.push(`  ${style(`${teammates.length - visible.length} more`, "muted")}`);
   }
-  lines.push("", "  [↑↓] select  [1-9/Enter] open  [Esc] back");
+  lines.push(
+    "",
+    hints([
+      ["↑↓", "select"],
+      ["1-9/Enter", "open"],
+      ["Esc", "back"],
+    ]),
+  );
   return renderOverlayBox(lines, cols, rows, "blue");
 }
 
@@ -255,40 +315,25 @@ export function buildHelpOverlayOutput(_ctx: any): string {
     "Esc, Enter, or ? to close",
   ];
 
-  const visibleRows = rows;
-  const maxContentRows = Math.max(6, visibleRows - 2);
+  const maxContentRows = Math.max(6, rows - 2);
   let lines = [...allLines];
   if (lines.length > maxContentRows) {
     const closeLine = lines[lines.length - 1];
     const available = Math.max(4, maxContentRows - 2);
     lines = [...lines.slice(0, available), "...", closeLine];
   }
+  return renderOverlayBox(lines.map(styleHelpLine), cols, rows, "blue");
+}
 
-  const ellipsizeEnd = (s: string, max: number) => {
-    if (max <= 0) return "";
-    if (s.length <= max) return s;
-    if (max <= 1) return "…";
-    return `${s.slice(0, max - 1)}…`;
-  };
-
-  const contentWidth = Math.max(36, Math.min(cols - 6, Math.max(...lines.map((line) => line.length))));
-  const boxWidth = contentWidth + 4;
-  const boxHeight = lines.length + 2;
-  const startRow = Math.max(1, Math.floor((visibleRows - boxHeight) / 2));
-  const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
-  let output = "\x1b7";
-  for (let i = 0; i < boxHeight; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === boxHeight - 1) {
-      output += `\x1b[44;97m${" ".repeat(boxWidth)}\x1b[0m`;
-    } else {
-      const line = ellipsizeEnd(lines[i - 1] ?? "", contentWidth);
-      output += `\x1b[44;97m  ${line.padEnd(contentWidth)}  \x1b[0m`;
-    }
-  }
-  output += "\x1b8";
-  return output;
+// Style a help line: section headers bold, "key  description" rows as keycap + muted.
+function styleHelpLine(line: string): string {
+  if (line === "") return line;
+  const indented = line.startsWith("  ");
+  const text = line.trim();
+  if (!indented) return style(text, "strong");
+  const match = text.match(/^(\S+(?:\s\S+)*)\s{2,}(.*)$/);
+  if (match) return `  ${keycap(match[1])} ${style(match[2], "muted")}`;
+  return `  ${style(text, "muted")}`;
 }
 
 export function renderHelpOverlay(ctx: any): void {
@@ -300,43 +345,25 @@ export function buildSwitcherOverlayOutput(ctx: any): string {
   const rows = process.stdout.rows ?? 24;
   const list = ctx.getSwitcherList();
 
-  const ellipsizeEnd = (s: string, max: number) => {
-    if (max <= 0) return "";
-    if (s.length <= max) return s;
-    if (max <= 1) return "…";
-    return `${s.slice(0, max - 1)}…`;
-  };
-
-  const lines: string[] = ["Switch Agent:"];
+  const lines: string[] = [style("Switch Agent", "strong"), ""];
   for (let i = 0; i < list.length; i++) {
     const s = list[i];
     const wtPath = ctx.sessionWorktreePaths.get(s.id);
-    const wtLabel = wtPath ? ` (${wtPath.split("/").pop()})` : "";
-    const current = s.id === ctx.sessions[ctx.activeIndex]?.id ? " (current)" : "";
-    const pointer = i === ctx.switcherIndex ? "▸ " : "  ";
-    lines.push(`${pointer}${s.command}:${s.id}${wtLabel}${current}`);
+    const wtLabel = wtPath ? style(` (${wtPath.split("/").pop()})`, "muted") : "";
+    const current = s.id === ctx.sessions[ctx.activeIndex]?.id ? style(" (current)", "muted") : "";
+    const pointer = i === ctx.switcherIndex ? style("▸", "accent") : " ";
+    lines.push(`  ${pointer} ${style(`${s.command}:${s.id}`, "strong")}${wtLabel}${current}`);
   }
   lines.push("");
-  lines.push("  [s] cycle  Enter confirm  [x] stop  Esc cancel");
-
-  const contentWidth = Math.max(20, Math.min(cols - 6, Math.max(...lines.map((l) => l.length))));
-  const boxWidth = contentWidth + 4;
-  const startRow = Math.max(1, Math.floor((rows - lines.length - 2) / 2));
-  const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
-
-  let output = "\x1b7";
-  for (let i = 0; i < lines.length + 2; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === lines.length + 1) {
-      output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-    } else {
-      const line = ellipsizeEnd(lines[i - 1], contentWidth);
-      output += `\x1b[44;97m  ${line.padEnd(contentWidth)}  \x1b[0m`;
-    }
-  }
-  output += "\x1b8";
-  return output;
+  lines.push(
+    hints([
+      ["s", "cycle"],
+      ["Enter", "confirm"],
+      ["x", "stop"],
+      ["Esc", "cancel"],
+    ]),
+  );
+  return renderOverlayBox(lines, cols, rows, "blue");
 }
 
 export function renderSwitcherOverlay(ctx: any): void {
@@ -350,15 +377,15 @@ export function buildMigratePickerOverlayOutput(ctx: any): string | null {
   if (!session) return null;
 
   const currentWt = ctx.sessionWorktreePaths.get(session.id);
-  const lines = [`Migrate "${session.id}" to:`, ""];
+  const lines = [style(`Migrate "${session.id}" to:`, "strong"), ""];
   for (let i = 0; i < ctx.migratePickerWorktrees.length; i++) {
     const wt = ctx.migratePickerWorktrees[i];
     const isCurrent = wt.path === currentWt || (!currentWt && wt.name === "(main)");
-    const marker = isCurrent ? " (current)" : "";
-    lines.push(`  [${i + 1}] ${wt.name}${marker}`);
+    const marker = isCurrent ? style(" (current)", "muted") : "";
+    lines.push(`  ${keycap(String(i + 1))} ${style(wt.name, "strong")}${marker}`);
   }
   lines.push("");
-  lines.push("  [Esc] cancel");
+  lines.push(hints([["Esc", "cancel"]]));
 
   return renderOverlayBox(lines, cols, rows, "blue");
 }

@@ -1,35 +1,39 @@
-function stripAnsi(input: string): string {
-  return input.replace(/\x1b\[[0-9;]*m/g, "");
-}
+import { padVisible, style, visibleWidth, type Tone } from "./theme.js";
 
-function truncatePlain(input: string, max: number): string {
-  if (max <= 0) return "";
-  const plain = stripAnsi(input);
-  if (plain.length <= max) return plain;
-  if (max === 1) return "…";
-  return `${plain.slice(0, max - 1)}…`;
-}
+const VARIANT_TONE: Record<"blue" | "red", Tone> = { blue: "info", red: "danger" };
 
-export function renderOverlayBox(lines: string[], cols: number, rows: number, style: "blue" | "red" = "blue"): string {
+/**
+ * Draw a centered, rounded, tinted modal box over the current screen. Each row is
+ * positioned and written in full so it paints over whatever is behind it. Body lines
+ * may contain ANSI styling; they are padded/truncated by visible width.
+ */
+export function renderOverlayBox(
+  lines: string[],
+  cols: number,
+  rows: number,
+  variant: "blue" | "red" = "blue",
+): string {
+  const tone = VARIANT_TONE[variant];
+  const border = (segment: string): string => style(segment, tone);
   const maxContentWidth = Math.max(10, cols - 8);
-  const measuredContentWidth = Math.max(0, ...lines.map((line) => stripAnsi(line).length));
+  const measuredContentWidth = Math.max(0, ...lines.map((line) => visibleWidth(line)));
   const contentWidth = Math.max(20, Math.min(maxContentWidth, measuredContentWidth));
   const boxWidth = Math.max(24, Math.min(cols - 2, contentWidth + 4));
+  const innerWidth = boxWidth - 4;
   const boxHeight = Math.min(rows - 2, lines.length + 2);
   const visibleLines = lines.slice(0, Math.max(0, boxHeight - 2));
   const startRow = Math.max(1, Math.floor((rows - boxHeight) / 2));
   const startCol = Math.max(1, Math.floor((cols - boxWidth) / 2));
-  const borderStyle = style === "red" ? "\x1b[41;97m" : "\x1b[44;97m";
 
   let output = "\x1b7";
   for (let i = 0; i < boxHeight; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === boxHeight - 1) {
-      output += `${borderStyle}${"─".repeat(boxWidth)}\x1b[0m`;
+    output += `\x1b[${startRow + i};${startCol}H`;
+    if (i === 0) {
+      output += border(`╭${"─".repeat(boxWidth - 2)}╮`);
+    } else if (i === boxHeight - 1) {
+      output += border(`╰${"─".repeat(boxWidth - 2)}╯`);
     } else {
-      const line = truncatePlain(visibleLines[i - 1] ?? "", boxWidth - 4);
-      output += `${borderStyle}  ${line.padEnd(boxWidth - 4)}  \x1b[0m`;
+      output += `${border("│")} ${padVisible(visibleLines[i - 1] ?? "", innerWidth)} ${border("│")}`;
     }
   }
   output += "\x1b8";
