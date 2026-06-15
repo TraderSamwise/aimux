@@ -57,6 +57,10 @@ function packageRoot(moduleDir: string): string {
   return dirname(moduleDir);
 }
 
+function isMacNotifierAppExecutable(candidate: string): boolean {
+  return /aimux-notifier\.app\/Contents\/MacOS\/aimux-notifier$/.test(candidate);
+}
+
 export function macNotifierCandidates(deps: Pick<DesktopNotifierDeps, "arch" | "env" | "moduleDir"> = {}): string[] {
   const env = deps.env ?? process.env;
   const override = env.AIMUX_NOTIFIER_HELPER?.trim();
@@ -66,13 +70,12 @@ export function macNotifierCandidates(deps: Pick<DesktopNotifierDeps, "arch" | "
     override,
     join(root, "native", "darwin", "aimux-notifier.app", "Contents", "MacOS", "aimux-notifier"),
     join(root, "native", `darwin-${arch}`, "aimux-notifier.app", "Contents", "MacOS", "aimux-notifier"),
-    join(root, "native", "darwin", "aimux-notifier"),
-    join(root, "native", `darwin-${arch}`, "aimux-notifier"),
   ];
 
   return candidates
     .filter((candidate): candidate is string => Boolean(candidate))
-    .map((candidate) => resolve(candidate));
+    .map((candidate) => resolve(candidate))
+    .filter(isMacNotifierAppExecutable);
 }
 
 export function findMacNotifierHelper(
@@ -139,7 +142,7 @@ export function checkMacNotifierHelper(
   const execFile = deps.execFile ?? nodeExecFile;
 
   return new Promise((resolveCheck) => {
-    execFile(helperPath, ["--check"], { timeout: 5000 }, (error, stdout, stderr) => {
+    execFile(helperPath, ["--check"], { timeout: 10000 }, (error, stdout, stderr) => {
       resolveCheck({
         ok: !error,
         exitCode: exitCodeFromError(error),
