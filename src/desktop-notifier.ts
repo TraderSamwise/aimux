@@ -35,6 +35,14 @@ export interface DesktopNotificationAttempt {
   helperPath?: string;
 }
 
+export interface DesktopNotificationDeliveryResult extends DesktopNotificationAttempt {
+  ok: boolean;
+  exitCode?: number | null;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+}
+
 export interface MacNotifierHelperCheck {
   ok: boolean;
   exitCode: number | null;
@@ -116,6 +124,28 @@ function sendViaMacHelper(
   return { transport: "mac-helper", helperPath };
 }
 
+function sendViaMacHelperAndWait(
+  helperPath: string,
+  payload: DesktopNotificationPayload,
+  deps: DesktopNotifierDeps,
+): Promise<DesktopNotificationDeliveryResult> {
+  const execFile = deps.execFile ?? nodeExecFile;
+
+  return new Promise((resolveSend) => {
+    execFile(helperPath, macHelperArgs(payload), { timeout: 10000 }, (error, stdout, stderr) => {
+      resolveSend({
+        transport: "mac-helper",
+        helperPath,
+        ok: !error,
+        exitCode: exitCodeFromError(error),
+        stdout: typeof stdout === "string" ? stdout.trim() : "",
+        stderr: typeof stderr === "string" ? stderr.trim() : "",
+        error: error?.message,
+      });
+    });
+  });
+}
+
 export function sendDesktopNotification(
   payload: DesktopNotificationPayload,
   deps: DesktopNotifierDeps = {},
@@ -127,6 +157,19 @@ export function sendDesktopNotification(
   const helperPath = findMacNotifierHelper(deps);
   if (!helperPath) return sendViaNodeNotifier(payload, deps);
   return sendViaMacHelper(helperPath, payload, deps);
+}
+
+export async function sendDesktopNotificationAndWait(
+  payload: DesktopNotificationPayload,
+  deps: DesktopNotifierDeps = {},
+): Promise<DesktopNotificationDeliveryResult> {
+  if ((deps.platform ?? process.platform) !== "darwin") {
+    return { ...sendViaNodeNotifier(payload, deps), ok: true };
+  }
+
+  const helperPath = findMacNotifierHelper(deps);
+  if (!helperPath) return { ...sendViaNodeNotifier(payload, deps), ok: true };
+  return sendViaMacHelperAndWait(helperPath, payload, deps);
 }
 
 function exitCodeFromError(error: Error | null): number | null {
