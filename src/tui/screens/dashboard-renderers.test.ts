@@ -91,6 +91,17 @@ describe("renderDashboardFrame worktree progress", () => {
               activity: "running",
             }),
           },
+          {
+            index: 2,
+            id: "codex-ready",
+            command: "codex",
+            status: "running",
+            active: false,
+            role: "coder",
+            semantic: deriveSessionSemantics({
+              status: "running",
+            }),
+          },
         ],
         worktreeGroups: [
           {
@@ -109,6 +120,7 @@ describe("renderDashboardFrame worktree progress", () => {
     const plain = stripAnsi(frame);
     expect(plain).toContain("NEEDS INPUT");
     expect(plain).toContain("WORKING");
+    expect(plain).toContain("Ready");
     expect(plain).toContain("1 unread");
     expect(frame).toContain("\x1b[1;33;7m NEEDS INPUT \x1b[0m");
     expect(frame).toContain("\x1b[36;7m WORKING \x1b[0m");
