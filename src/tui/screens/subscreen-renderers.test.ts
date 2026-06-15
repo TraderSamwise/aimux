@@ -4,22 +4,9 @@ import { keycap, statusDot } from "../render/theme.js";
 import { stripAnsi } from "../render/text.js";
 import { renderGraveyardScreen } from "./subscreen-renderers.js";
 
-function renderGraveyard(graveyardIndex = 0): string {
-  const ago = (days: number): string => new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
-  const vm = buildGraveyardViewModel({
-    worktrees: [
-      {
-        path: "/x/test6",
-        name: "test6",
-        branch: "test6",
-        graveyardedAt: ago(8),
-        agents: [{ id: "claude-ifc0xo", command: "claude", tool: "claude", backendSessionId: "c64917c2aa" }],
-        services: [],
-      },
-    ] as never,
-    agents: [{ id: "codex-mrh12h", command: "codex", tool: "codex", worktreePath: "/x/chat-parser" }] as never,
-    lastUsedById: { "claude-ifc0xo": { lastUsedAt: ago(8) } } as never,
-  });
+const ago = (days: number): string => new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+
+function render(vm: ReturnType<typeof buildGraveyardViewModel>, graveyardIndex = 0): string {
   let out = "";
   const ctx = {
     getViewportSize: () => ({ cols: 120, rows: 40 }),
@@ -37,6 +24,24 @@ function renderGraveyard(graveyardIndex = 0): string {
   };
   renderGraveyardScreen(ctx as never);
   return out;
+}
+
+function renderGraveyard(graveyardIndex = 0): string {
+  const vm = buildGraveyardViewModel({
+    worktrees: [
+      {
+        path: "/x/test6",
+        name: "test6",
+        branch: "test6",
+        graveyardedAt: ago(8),
+        agents: [{ id: "claude-ifc0xo", command: "claude", tool: "claude", backendSessionId: "c64917c2aa" }],
+        services: [],
+      },
+    ] as never,
+    agents: [{ id: "codex-mrh12h", command: "codex", tool: "codex", worktreePath: "/x/chat-parser" }] as never,
+    lastUsedById: { "claude-ifc0xo": { lastUsedAt: ago(8) } } as never,
+  });
+  return render(vm, graveyardIndex);
 }
 
 describe("renderGraveyardScreen", () => {
@@ -64,5 +69,20 @@ describe("renderGraveyardScreen", () => {
   it("shows recency as a count chip in the card summary", () => {
     const plain = stripAnsi(renderGraveyard());
     expect(plain).toContain("1w ago");
+  });
+
+  it("renders orphan agents as loose selectable rows, not blank-titled cards", () => {
+    const vm = buildGraveyardViewModel({
+      worktrees: [] as never,
+      agents: [{ id: "claude-orphan", command: "claude", tool: "claude" }] as never,
+      lastUsedById: {} as never,
+    });
+    const frame = render(vm);
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("Orphaned Agents");
+    expect(plain).toContain("claude:claude-orphan");
+    expect(frame).toContain(keycap("1"));
+    // No card chrome is drawn around a group-less orphan agent.
+    expect(frame).not.toContain("╭");
   });
 });

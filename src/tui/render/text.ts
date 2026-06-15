@@ -69,8 +69,14 @@ export function wrapKeyValue(key: string, value: string, width: number): string[
   return wrapped.map((line, idx) => (idx === 0 ? `${prefix}${line}` : `${" ".repeat(prefix.length)}${line}`));
 }
 
+/** Visible width of the left (list) pane in the shared two-pane layout. Card/list
+ *  builders size their content to this so it never clips against composeTwoPane. */
+export function twoPaneLeftWidth(cols: number): number {
+  return Math.max(32, Math.floor(cols * 0.58));
+}
+
 export function composeTwoPane(left: string[], right: string[], cols: number, separator = " │ "): string[] {
-  const leftWidth = Math.max(32, Math.floor(cols * 0.58));
+  const leftWidth = twoPaneLeftWidth(cols);
   const separatorWidth = stripAnsi(separator).length;
   const rightWidth = Math.max(20, cols - leftWidth - separatorWidth - 1);
   const height = Math.max(left.length, right.length);
