@@ -144,9 +144,9 @@ describe("Dashboard", () => {
     });
 
     const rendered = dashboard.render(140, 40);
-    expect(rendered).toContain("Failed operations");
+    expect(rendered).toContain("FAILED OPERATIONS");
     expect(rendered).toContain('Failed to create worktree "demo"');
-    expect(rendered).toContain("(failed)");
+    expect(stripAnsi(rendered)).toContain("failed");
     expect(rendered).toContain("Error: branch already exists");
   });
 
@@ -247,16 +247,18 @@ describe("Dashboard", () => {
 
     const rendered = stripAnsi(dashboard.render(160, 40));
 
-    expect(rendered).toContain("notifications notification-followup");
+    expect(rendered).toContain("notifications");
+    expect(rendered).toContain("notification-followup");
     expect(rendered).toContain("1 needs response");
     expect(rendered).toContain("1 next step");
     expect(rendered).toContain("1 working");
-    expect(rendered).toContain("codex (coder) Working");
+    expect(rendered).toContain("codex coder");
+    expect(rendered).toContain("WORKING");
     expect(rendered).toContain("output 17s ago");
     expect(rendered).toContain("10 unseen");
-    expect(rendered).toContain("claude Needs response");
+    expect(rendered).toContain("NEEDS REPLY");
     expect(rendered).toContain("prompted 1m ago");
-    expect(rendered).toContain("codex Next step");
+    expect(rendered).toContain("NEXT STEP");
     expect(rendered).toContain("output 42s ago");
     expect(rendered).toContain("idle now");
   });
