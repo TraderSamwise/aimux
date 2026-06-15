@@ -1,10 +1,17 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildToolOptionsOverlayOutput, defaultsLaunchOverride, formatEnvDefaults } from "./tool-picker.js";
+import { getGlobalConfigPath } from "../paths.js";
+
+import {
+  buildToolOptionsOverlayOutput,
+  buildToolPickerOverlayOutput,
+  defaultsLaunchOverride,
+  formatEnvDefaults,
+} from "./tool-picker.js";
 import { createLineState } from "../line-editor.js";
 import { initPaths } from "../paths.js";
 import type { ToolConfig } from "../config.js";
@@ -83,6 +90,23 @@ describe("buildToolOptionsOverlayOutput", () => {
     expect(plain).toContain("CLAUDE: LAUNCH OPTIONS");
     expect(plain).toContain("Extra args:");
     expect(plain).toContain("Env vars:");
+  });
+
+  it("explains the empty state when no tools are enabled", async () => {
+    await initPaths(mkdtempSync(join(tmpdir(), "aimux-toolpicker-")));
+    // The global config path is shared across this file's tests, so restore it.
+    writeFileSync(
+      getGlobalConfigPath(),
+      JSON.stringify({ tools: { claude: { enabled: false }, codex: { enabled: false }, aider: { enabled: false } } }),
+    );
+    try {
+      const out = buildToolPickerOverlayOutput({ pickerMode: "create" });
+      const plain = stripAnsi(out);
+      expect(plain).toContain("SELECT TOOL");
+      expect(plain).toContain("No enabled tools");
+    } finally {
+      rmSync(getGlobalConfigPath(), { force: true });
+    }
   });
 
   it("switches to the danger variant when a field fails to parse", async () => {

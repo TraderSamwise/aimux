@@ -109,6 +109,12 @@ export function buildToolPickerOverlayOutput(host: ToolPickerHost): string {
     host.pickerMode === "fork" && host.forkSourceSessionId ? `Fork from ${host.forkSourceSessionId}` : "Select tool";
 
   const body: string[] = [];
+  if (tools.length === 0) {
+    body.push(`  ${style("No enabled tools", "muted")}`);
+    body.push("");
+    body.push(footer([["Esc", "cancel"]]));
+    return renderOverlayBox({ title, body, cols, rows, variant: "red" });
+  }
   for (let i = 0; i < tools.length; i++) {
     const selected = i === selectedIndex;
     const marker = selected ? style("▸", "accent") : " ";

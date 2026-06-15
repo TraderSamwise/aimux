@@ -104,11 +104,7 @@ const BAND_SGR: Record<BandTone, string> = {
  * background tint runs the whole width (leading gutter through trailing padding).
  */
 export function modalBand(label: string, tone: BandTone, width: number): string {
-  const text = ` ${label}`;
-  const w = Math.max(0, width);
-  const visible = visibleWidth(text);
-  const filled = visible >= w ? truncateAnsi(text, w) : `${text}${" ".repeat(w - visible)}`;
-  return `${BAND_SGR[tone]}${filled}${RESET}`;
+  return `${BAND_SGR[tone]}${padVisible(` ${label}`, Math.max(0, width))}${RESET}`;
 }
 
 /** Presentation-level status kinds (distinct from runtime SessionStatus). */
