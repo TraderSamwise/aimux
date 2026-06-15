@@ -5,6 +5,7 @@
 export type AlertKind =
   | "notification"
   | "needs_input"
+  | "next_step"
   | "task_done"
   | "task_failed"
   | "blocked"

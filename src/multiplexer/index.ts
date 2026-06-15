@@ -308,6 +308,8 @@ export class Multiplexer {
         this.footerFlash = `◌ ${event.title}`;
       } else if (event.kind === "needs_input") {
         this.footerFlash = `◉ ${event.sessionId ?? "agent"} needs input`;
+      } else if (event.kind === "next_step") {
+        this.footerFlash = `◉ ${event.sessionId ?? "agent"} ready for next step`;
       } else if (event.kind === "message_waiting") {
         this.footerFlash = `✉ Message waiting → ${event.sessionId ?? "agent"}`;
       } else if (event.kind === "handoff_waiting") {

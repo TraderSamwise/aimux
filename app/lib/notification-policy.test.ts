@@ -194,6 +194,36 @@ describe("notification policy", () => {
     });
   });
 
+  it("maps next-step live alert events to needs-input browser notifications", () => {
+    const event = evaluateAlertEvent(
+      {
+        type: "alert",
+        projectId: "aimux-123",
+        kind: "next_step",
+        sessionId: "codex-p4bb3m",
+        title: "[Next step] aimux / notifications",
+        message: "Agent stopped after a turn: codex @ notifications ready for next step.",
+        ts: now.toISOString(),
+        notificationId: "notice-next-step",
+      },
+      enabledSettings,
+      { projectName: "aimux", projectPath: "/Users/sam/cs/aimux" },
+    );
+
+    expect(event).toMatchObject({
+      id: "notice-next-step",
+      category: "agent",
+      kind: "needs_input",
+      title: "[Next step] aimux / notifications",
+      body: "Agent stopped after a turn: codex @ notifications ready for next step.",
+      dedupeKey: "notification:notice-next-step",
+      target: {
+        projectPath: "/Users/sam/cs/aimux",
+        sessionId: "codex-p4bb3m",
+      },
+    });
+  });
+
   it("does not notify stale records discovered by delayed polling", () => {
     vi.setSystemTime(new Date("2026-05-23T00:01:00.000Z"));
     expect(
@@ -231,6 +261,7 @@ describe("notification policy", () => {
 
   it("maps prompt-like daemon records to needs-input browser notifications", () => {
     for (const kind of [
+      "next_step",
       "interaction_request",
       "message_waiting",
       "handoff_waiting",
@@ -254,6 +285,36 @@ describe("notification policy", () => {
         ),
       ).toMatchObject({ kind: "needs_input" });
     }
+  });
+
+  it("maps next-step daemon records through needs-input settings", () => {
+    const event = evaluateNotificationRecord(
+      {
+        id: "notice-next-step",
+        title: "[Next step] aimux / notifications",
+        body: "Agent stopped after a turn.",
+        sessionId: "codex-p4bb3m",
+        kind: "next_step",
+        unread: true,
+        cleared: false,
+        createdAt: "2026-05-23T00:00:00.000Z",
+        updatedAt: "2026-05-23T00:00:00.000Z",
+      },
+      enabledSettings,
+      { projectName: "aimux", projectPath: "/Users/sam/cs/aimux" },
+    );
+
+    expect(event).toMatchObject({
+      id: "notice-next-step",
+      category: "agent",
+      kind: "needs_input",
+      title: "[Next step] aimux / notifications",
+      dedupeKey: "notification:notice-next-step",
+      target: {
+        projectPath: "/Users/sam/cs/aimux",
+        sessionId: "codex-p4bb3m",
+      },
+    });
   });
 
   it("does not emit read, cleared, or disabled daemon records", () => {
