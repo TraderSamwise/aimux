@@ -479,15 +479,14 @@ export function renderThreadReply(host: SubscreenHost): void {
     host.redrawDashboardWithOverlay();
     return;
   }
-  const output = buildThreadReplyOverlayOutput(host);
+  const { cols, rows } = host.getViewportSize();
+  const output = buildThreadReplyOverlayOutput(host, cols, rows);
   if (output) process.stdout.write(output);
 }
 
-export function buildThreadReplyOverlayOutput(host: SubscreenHost): string | null {
+export function buildThreadReplyOverlayOutput(host: SubscreenHost, cols: number, rows: number): string | null {
   const entry = host.threadEntries[host.threadIndex];
   if (!entry) return null;
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const targets =
     entry.thread.waitingOn?.length && entry.thread.waitingOn.length > 0
       ? entry.thread.waitingOn

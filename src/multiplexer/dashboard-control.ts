@@ -197,54 +197,62 @@ export function renderActiveDashboardOverlay(host: DashboardControlHost): boolea
   return true;
 }
 
-export function buildActiveDashboardOverlayOutput(host: DashboardControlHost): string | null {
+export function buildActiveDashboardOverlayOutput(
+  host: DashboardControlHost,
+  viewport?: { cols: number; rows: number },
+): string | null {
+  // Overlays must be sized to the same viewport the dashboard renders at (the tmux
+  // pane), not process.stdout (the controlling tty, which reports 80 in tmux). The
+  // caller passes the viewport it already computed for this frame; fall back only
+  // when invoked outside the render path.
+  const { cols, rows } = viewport ?? host.getViewportSize();
   if (host.dashboardOverlayState.kind === "worktree-remove-confirm") {
-    return buildWorktreeRemoveConfirmOverlayOutput(host);
+    return buildWorktreeRemoveConfirmOverlayOutput(host, cols, rows);
   }
   if (host.dashboardErrorState) {
-    return buildDashboardErrorOverlayOutput(host);
+    return buildDashboardErrorOverlayOutput(host, cols, rows);
   }
   if (host.dashboardBusyState) {
-    return buildDashboardBusyOverlayOutput(host);
+    return buildDashboardBusyOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "switcher") {
-    return buildSwitcherOverlayOutput(host);
+    return buildSwitcherOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "notification-panel") {
-    return buildNotificationPanelOverlayOutput(host);
+    return buildNotificationPanelOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "teammate-picker") {
-    return buildTeammatePickerOverlayOutput(host);
+    return buildTeammatePickerOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "thread-reply") {
-    return buildThreadReplyOverlayOutput(host);
+    return buildThreadReplyOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "orchestration-input") {
-    return buildOrchestrationInputOverlayOutput(host);
+    return buildOrchestrationInputOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "migrate-picker") {
-    return buildMigratePickerOverlayOutput(host);
+    return buildMigratePickerOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "worktree-list") {
-    return buildWorktreeListOverlayOutput(host);
+    return buildWorktreeListOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "label-input") {
-    return buildLabelInputOverlayOutput(host);
+    return buildLabelInputOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "worktree-input") {
-    return buildWorktreeInputOverlayOutput(host);
+    return buildWorktreeInputOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "service-input") {
-    return buildServiceInputOverlayOutput(host);
+    return buildServiceInputOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "tool-picker") {
-    return buildToolPickerOverlayOutput(host);
+    return buildToolPickerOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "tool-options") {
-    return buildToolOptionsOverlayOutput(host);
+    return buildToolOptionsOverlayOutput(host, cols, rows);
   }
   if (host.dashboardOverlayState.kind === "orchestration-route-picker") {
-    return buildOrchestrationRoutePickerOverlayOutput(host);
+    return buildOrchestrationRoutePickerOverlayOutput(host, cols, rows);
   }
   return null;
 }
@@ -505,12 +513,14 @@ export function showOrchestrationInput(
   host.renderOrchestrationInput();
 }
 
-export function buildOrchestrationInputOverlayOutput(host: DashboardControlHost): string | null {
+export function buildOrchestrationInputOverlayOutput(
+  host: DashboardControlHost,
+  cols: number,
+  rows: number,
+): string | null {
   const target = host.orchestrationInputTarget;
   const mode = host.orchestrationInputMode;
   if (!target || !mode) return null;
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Handoff" : "Assign task";
   const actionLabel = mode === "task" ? "assign" : "send";
   const worktreeLine = target.worktreePath ? `  Worktree: ${target.worktreePath}` : null;
@@ -555,15 +565,18 @@ export function renderOrchestrationInput(host: DashboardControlHost): void {
     host.redrawDashboardWithOverlay();
     return;
   }
-  const output = buildOrchestrationInputOverlayOutput(host);
+  const { cols, rows } = host.getViewportSize();
+  const output = buildOrchestrationInputOverlayOutput(host, cols, rows);
   if (output) process.stdout.write(output);
 }
 
-export function buildOrchestrationRoutePickerOverlayOutput(host: DashboardControlHost): string | null {
+export function buildOrchestrationRoutePickerOverlayOutput(
+  host: DashboardControlHost,
+  cols: number,
+  rows: number,
+): string | null {
   const mode = host.orchestrationRouteMode;
   if (!mode) return null;
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Send handoff" : "Assign task";
   const lines = [`${modeLabel}: choose target`, ""];
   for (let i = 0; i < Math.min(host.orchestrationRouteOptions.length, 9); i++) {
@@ -598,7 +611,8 @@ export function renderOrchestrationRoutePicker(host: DashboardControlHost): void
     host.redrawDashboardWithOverlay();
     return;
   }
-  const output = buildOrchestrationRoutePickerOverlayOutput(host);
+  const { cols, rows } = host.getViewportSize();
+  const output = buildOrchestrationRoutePickerOverlayOutput(host, cols, rows);
   if (output) process.stdout.write(output);
 }
 

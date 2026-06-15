@@ -297,7 +297,7 @@ describe("dashboardStateMethods.writeFrame", () => {
       lastRenderedFrame: null,
       lastRenderedBaseFrame: null,
       lastRenderedFrameKey: null,
-      getViewportKey: vi.fn(() => "120x40"),
+      getViewportSize: vi.fn(() => ({ cols: 120, rows: 40 })),
       dashboardModelVersion: 3,
       dashboardPendingActions: { getVersion: vi.fn(() => 7) },
       dashboardOverlayState: { version: 2 },

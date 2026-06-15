@@ -83,25 +83,27 @@ function envPrefix(env: Record<string, string>): string {
   return `env ${keys.map((k) => `${k}=${quoteShellArg(env[k])}`).join(" ")} `;
 }
 
-function fieldWidth(): number {
-  return Math.max(12, (process.stdout.columns ?? 80) - 28);
+function fieldWidth(cols: number): number {
+  return Math.max(12, cols - 28);
 }
 
 function footer(pairs: [string, string][]): string {
   return `  ${pairs.map(([key, label]) => `${keycap(key)} ${style(label, "muted")}`).join("  ")}`;
 }
 
-function redrawOverlay(host: ToolPickerHost, build: (host: ToolPickerHost) => string): void {
+function redrawOverlay(
+  host: ToolPickerHost,
+  build: (host: ToolPickerHost, cols: number, rows: number) => string,
+): void {
   if (typeof host.redrawDashboardWithOverlay === "function") {
     host.redrawDashboardWithOverlay();
   } else {
-    process.stdout.write(build(host));
+    const { cols, rows } = host.getViewportSize();
+    process.stdout.write(build(host, cols, rows));
   }
 }
 
-export function buildToolPickerOverlayOutput(host: ToolPickerHost): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+export function buildToolPickerOverlayOutput(host: ToolPickerHost, cols: number, rows: number): string {
   const tools = enabledTools();
   const selectedIndex = clampPickerIndex(host, tools);
 
@@ -134,9 +136,7 @@ export function buildToolPickerOverlayOutput(host: ToolPickerHost): string {
   return renderOverlayBox({ title, body, cols, rows });
 }
 
-export function buildToolOptionsOverlayOutput(host: ToolPickerHost): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
+export function buildToolOptionsOverlayOutput(host: ToolPickerHost, cols: number, rows: number): string {
   const tools = enabledTools();
   const state: LaunchOptionsState | null = host.launchOptionsState;
   const selected = state ? tools.find(([key]) => key === state.toolKey) : undefined;
@@ -151,7 +151,7 @@ export function buildToolOptionsOverlayOutput(host: ToolPickerHost): string {
   }
 
   const [toolKey, tool] = selected;
-  const width = fieldWidth();
+  const width = fieldWidth(cols);
 
   let extraArgs: string[] = [];
   let env: Record<string, string> = {};

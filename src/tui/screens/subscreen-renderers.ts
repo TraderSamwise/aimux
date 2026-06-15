@@ -441,7 +441,7 @@ export function renderGraveyardScreen(ctx: any): void {
   );
   let frame = "\x1b[2J\x1b[H" + [...header, ...body, rule(ctx, cols, 52), footer].join("\r\n");
   if (ctx.graveyardWorktreeDeleteConfirm) {
-    frame += buildGraveyardWorktreeDeleteConfirmOverlay(ctx);
+    frame += buildGraveyardWorktreeDeleteConfirmOverlay(ctx, cols, rows);
   }
   ctx.writeFrame(frame);
 }
@@ -510,11 +510,9 @@ export function renderGraveyardDetails(ctx: any, width: number, height: number):
   return lines.slice(0, height);
 }
 
-function buildGraveyardWorktreeDeleteConfirmOverlay(ctx: any): string {
+function buildGraveyardWorktreeDeleteConfirmOverlay(ctx: any, cols: number, rows: number): string {
   const confirm = ctx.graveyardWorktreeDeleteConfirm;
   if (!confirm) return "";
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
   const body = [
     `  ${style(`"${confirm.name}"`, "strong")}`,
     `  ${style("Path:", "muted")} ${confirm.path}`,
