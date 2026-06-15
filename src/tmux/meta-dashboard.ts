@@ -2,6 +2,7 @@ import { buildMetaDashboardModel, type MetaDashboardModel, type MetaRow } from "
 import { parseKeys } from "../key-parser.js";
 import { TerminalHost } from "../terminal-host.js";
 import { truncatePlain } from "../tui/render/text.js";
+import { style } from "../tui/render/theme.js";
 import { TmuxRuntimeManager, type TmuxTarget } from "./runtime-manager.js";
 
 export interface TmuxMetaDashboardOptions {
@@ -58,10 +59,10 @@ export function resolveJumpTarget(
 }
 
 function rowGlyph(row: MetaRow): string {
-  if (row.attention === "error") return "\x1b[31m●\x1b[0m";
-  if (row.attention === "needs_input" || row.activity === "waiting") return "\x1b[33m◍\x1b[0m";
-  if (row.activity === "running") return "\x1b[32m▶\x1b[0m";
-  return "\x1b[38;5;244m○\x1b[0m";
+  if (row.attention === "error") return style("●", "danger");
+  if (row.attention === "needs_input" || row.activity === "waiting") return style("◍", "attn");
+  if (row.activity === "running") return style("▶", "done");
+  return style("○", "muted");
 }
 
 // Strip escape sequences + control bytes from metadata-sourced strings so a
@@ -78,8 +79,8 @@ export function renderMetaDashboard(
   rows: number,
 ): string {
   const width = Math.max(20, cols);
-  const title = `\x1b[1maimux · all projects${RESET}`;
-  const help = `\x1b[2m↑↓/jk move · Enter/1-9 open · q/Esc close${RESET}`;
+  const title = style("aimux · all projects", "strong");
+  const help = style("↑↓/jk move · Enter/1-9 open · q/Esc close", "muted");
 
   // Build content lines, tracking which terminal line holds each selectable row.
   const lines: string[] = [];
@@ -87,26 +88,28 @@ export function renderMetaDashboard(
   let selectable = 0;
 
   if (model.projects.length === 0) {
-    lines.push("\x1b[2mNo projects registered.\x1b[0m");
+    lines.push(style("No projects registered.", "muted"));
   }
 
   for (const project of model.projects) {
-    const state = project.running ? "" : " \x1b[2m(stopped)\x1b[0m";
+    const state = project.running ? "" : ` ${style("(stopped)", "muted")}`;
     lines.push("");
-    lines.push(`\x1b[1;36m▌ ${truncatePlain(sanitizeMeta(project.name), width - 4)}\x1b[0m${state}`);
+    lines.push(`${style(`▌ ${truncatePlain(sanitizeMeta(project.name), width - 4)}`, "work")}${state}`);
     if (!project.running) continue;
     if (project.worktreeGroups.length === 0) {
-      lines.push("  \x1b[2m(no active agents)\x1b[0m");
+      lines.push(`  ${style("(no active agents)", "muted")}`);
       continue;
     }
     for (const group of project.worktreeGroups) {
-      const branch = group.branch ? ` \x1b[2m${sanitizeMeta(group.branch)}\x1b[0m` : "";
-      lines.push(`  \x1b[38;5;180m${truncatePlain(sanitizeMeta(group.name), width - 6)}\x1b[0m${branch}`);
+      const branch = group.branch ? ` ${style(sanitizeMeta(group.branch), "muted")}` : "";
+      lines.push(`  ${style(truncatePlain(sanitizeMeta(group.name), width - 6), "accent")}${branch}`);
       for (const row of group.rows) {
         const idx = selectable;
         selectable += 1;
         const selected = idx === selectedIndex;
-        const label = truncatePlain(`${sanitizeMeta(row.label)}  \x1b[2m${sanitizeMeta(row.tool)}\x1b[0m`, width - 8);
+        const tool = truncatePlain(sanitizeMeta(row.tool), Math.max(4, Math.floor((width - 12) / 2)));
+        const name = truncatePlain(sanitizeMeta(row.label), Math.max(4, width - 8 - tool.length - 2));
+        const label = `${name}  ${style(tool, "muted")}`;
         const text = `    ${rowGlyph(row)} ${label}`;
         selectableLineByIndex[idx] = lines.length;
         lines.push(selected ? `\x1b[7m${text}${RESET}` : text);
@@ -116,7 +119,7 @@ export function renderMetaDashboard(
 
   if (selectable === 0 && model.projects.length > 0) {
     lines.push("");
-    lines.push("\x1b[2mNo running projects.\x1b[0m");
+    lines.push(style("No running projects.", "muted"));
   }
 
   // Scroll so the selected row stays visible (reserve 2 rows: title + help).
