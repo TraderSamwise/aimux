@@ -1278,6 +1278,55 @@ describe("resumeOfflineSession", () => {
     );
   });
 
+  it("preserves backend ids when adopting live tmux agent windows after restart", () => {
+    seedTopologySessions([
+      {
+        id: "codex-live",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "live",
+        backendSessionId: "backend-live",
+        worktreePath: repoRoot,
+      },
+    ]);
+    const host: any = {
+      sessions: [],
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: {
+              sessionName: "aimux-test",
+              windowId: "@1",
+              windowIndex: 1,
+              windowName: "codex",
+            },
+            metadata: {
+              kind: "agent",
+              sessionId: "codex-live",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: repoRoot,
+              createdAt: "2026-04-21T00:00:00.000Z",
+            },
+          },
+        ]),
+      },
+      registerManagedSession: vi.fn((session: any) => host.sessions.push(session)),
+      sessionLabels: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      updateContextWatcherSessions: vi.fn(),
+    };
+
+    restoreTmuxSessionsFromTopology(host);
+
+    expect(host.sessions[0].backendSessionId).toBe("backend-live");
+    expect(host.syncTmuxWindowMetadata).toHaveBeenCalledWith("codex-live");
+  });
+
   it("evicts in-memory runtimes that no longer have matching live tmux metadata", () => {
     const host: any = {
       sessions: [{ id: "codex-stale", command: "codex", transport: {} }],
