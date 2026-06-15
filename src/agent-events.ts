@@ -16,6 +16,10 @@ export type AgentEventKind =
   | "interrupted"
   | "notify";
 
+export function isAgentOutputEventKind(kind: AgentEventKind): boolean {
+  return kind !== "prompt" && kind !== "task_assigned";
+}
+
 export interface AgentEvent {
   kind: AgentEventKind;
   ts?: string;

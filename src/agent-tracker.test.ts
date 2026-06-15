@@ -51,6 +51,25 @@ describe("AgentTracker", () => {
     expect(derived?.threadName).toBe("Approval");
   });
 
+  it("does not replace last output time with later prompt input", () => {
+    const tracker = new AgentTracker();
+    tracker.emit("s1", { kind: "response", message: "Done.", ts: "2026-05-09T12:00:00.000Z" }, repoRoot);
+    tracker.emit("s1", { kind: "prompt", message: "next task", ts: "2026-05-09T12:05:00.000Z" }, repoRoot);
+
+    const derived = loadMetadataState(repoRoot).sessions.s1?.derived;
+    expect(derived?.lastOutputAt).toBe("2026-05-09T12:00:00.000Z");
+    expect(derived?.lastEvent?.kind).toBe("prompt");
+  });
+
+  it("does not treat task assignment as agent output recency", () => {
+    const tracker = new AgentTracker();
+    tracker.emit("s1", { kind: "task_assigned", message: "Task assigned", ts: "2026-05-09T12:00:00.000Z" }, repoRoot);
+
+    const derived = loadMetadataState(repoRoot).sessions.s1?.derived;
+    expect(derived?.lastOutputAt).toBeUndefined();
+    expect(derived?.lastEvent?.kind).toBe("task_assigned");
+  });
+
   it("tracks failed tasks as error attention", () => {
     const tracker = new AgentTracker();
     tracker.emit("s1", { kind: "task_failed", message: "Failed: tests", tone: "error" }, repoRoot);

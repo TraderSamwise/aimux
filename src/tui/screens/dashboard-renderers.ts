@@ -1,4 +1,5 @@
 import type { DashboardService, DashboardSession, DashboardViewModel, WorktreeGroup } from "../../dashboard/index.js";
+import { isAgentOutputEventKind } from "../../agent-events.js";
 import { buildDashboardQuickJumpWorktrees } from "../../dashboard/quick-jump.js";
 import { formatRelativeRecency } from "../../recency.js";
 import { center, composeTwoPane, stripAnsi, truncate, wrapKeyValue } from "../render/text.js";
@@ -136,7 +137,9 @@ export function renderDashboardFrame(
     const workflowHint = session.workflowNextAction
       ? ` \x1b[2;33m→ ${truncate(session.workflowNextAction, 24)}\x1b[0m`
       : "";
-    const lastOutputAt = session.lastOutputAt ?? session.lastEvent?.ts;
+    const lastOutputAt =
+      session.lastOutputAt ??
+      (session.lastEvent && isAgentOutputEventKind(session.lastEvent.kind) ? session.lastEvent.ts : undefined);
     const lastOutputHint = lastOutputAt ? ` \x1b[2m· ${formatRelativeRecency(lastOutputAt)}\x1b[0m` : "";
     const recentIdleHint = isRecentlyIdle(session) ? ` \x1b[1;33m· idle now\x1b[0m` : "";
 
