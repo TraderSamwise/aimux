@@ -1,5 +1,5 @@
 export function stripAnsi(text: string): string {
-  return text.replace(/\x1b\[[0-9;]*m/g, "");
+  return text.replace(/\x1b\[[0-9;:]*m/g, "");
 }
 
 export function center(text: string, width: number): string {
@@ -27,7 +27,7 @@ export function truncateAnsi(text: string, max: number): string {
   let out = "";
   for (let i = 0; i < text.length; i++) {
     if (text[i] === "\x1b") {
-      const match = text.slice(i).match(/^\x1b\[[0-9;]*m/);
+      const match = text.slice(i).match(/^\x1b\[[0-9;:]*m/);
       if (match) {
         out += match[0];
         i += match[0].length - 1;
