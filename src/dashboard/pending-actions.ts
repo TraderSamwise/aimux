@@ -12,6 +12,7 @@ interface PendingActionEntry {
   target: PendingActionTarget;
   kind: PendingDashboardActionKind;
   token: number;
+  startedAt: string;
   timeoutId?: ReturnType<typeof setTimeout>;
   sessionSeed?: DashboardSession;
   serviceSeed?: DashboardService;
@@ -177,15 +178,20 @@ export class DashboardPendingActions {
         }
       }, opts.timeoutMs);
     }
-    this.actions.set(key, {
+    const nextEntry: PendingActionEntry = {
       target,
       kind,
       token,
+      startedAt: existing?.startedAt ?? new Date().toISOString(),
       timeoutId,
       sessionSeed: opts?.sessionSeed,
       serviceSeed: opts?.serviceSeed,
       worktreeSeed: opts?.worktreeSeed,
-    });
+    };
+    if (previousVisibleKey !== visibleEntryKey(nextEntry)) {
+      nextEntry.startedAt = new Date().toISOString();
+    }
+    this.actions.set(key, nextEntry);
     const changed = previousVisibleKey !== visibleEntryKey(this.actions.get(key));
     if (changed) {
       this.version += 1;
@@ -226,12 +232,13 @@ export class DashboardPendingActions {
     const seen = new Set<string>();
     const applied = sessions.map((session) => {
       seen.add(session.id);
-      const pendingAction = this.getSessionAction(session.id);
-      if (!pendingAction) return session;
+      const entry = this.actions.get(DashboardPendingActions.actionKey("session", session.id));
+      if (entry?.target !== "session") return session;
       return {
         ...session,
         pending: true,
-        pendingAction,
+        pendingAction: entry.kind as PendingSessionActionKind,
+        pendingStartedAt: entry.startedAt,
         optimistic: true,
       };
     });
@@ -248,6 +255,7 @@ export class DashboardPendingActions {
         id: sessionId,
         pending: true,
         pendingAction: entry.kind,
+        pendingStartedAt: entry.startedAt,
         optimistic: true,
       });
     }
@@ -259,9 +267,15 @@ export class DashboardPendingActions {
     const seen = new Set<string>();
     const applied = services.map((service) => {
       seen.add(service.id);
-      const pendingAction = this.getServiceAction(service.id);
-      if (!pendingAction) return service;
-      return { ...service, pending: true, pendingAction, optimistic: true };
+      const entry = this.actions.get(DashboardPendingActions.actionKey("service", service.id));
+      if (entry?.target !== "service") return service;
+      return {
+        ...service,
+        pending: true,
+        pendingAction: entry.kind as PendingServiceActionKind,
+        pendingStartedAt: entry.startedAt,
+        optimistic: true,
+      };
     });
     for (const [entryKey, entry] of this.actions.entries()) {
       if (entry.target !== "service") continue;
@@ -274,6 +288,7 @@ export class DashboardPendingActions {
         id: serviceId,
         pending: true,
         pendingAction: entry.kind,
+        pendingStartedAt: entry.startedAt,
         optimistic: true,
       });
     }
@@ -285,8 +300,11 @@ export class DashboardPendingActions {
     const seen = new Set<string>();
     const applied = worktrees.map((worktree) => {
       seen.add(DashboardPendingActions.worktreeKey(worktree.path));
-      const pendingAction = this.getWorktreeAction(worktree.path);
-      if (!pendingAction) return worktree;
+      const entry = this.actions.get(
+        DashboardPendingActions.actionKey("worktree", DashboardPendingActions.worktreeKey(worktree.path)),
+      );
+      if (entry?.target !== "worktree") return worktree;
+      const pendingAction = entry.kind as PendingWorktreeActionKind;
       return {
         ...worktree,
         pending: true,
@@ -295,6 +313,7 @@ export class DashboardPendingActions {
           pendingAction === "removing" || pendingAction === "creating" || pendingAction === "graveyarding"
             ? pendingAction
             : undefined,
+        pendingStartedAt: entry.startedAt,
         optimistic: true,
       };
     });
@@ -308,6 +327,7 @@ export class DashboardPendingActions {
         ...entry.worktreeSeed,
         pending: true,
         pendingAction: entry.kind,
+        pendingStartedAt: entry.startedAt,
         optimistic: true,
       });
     }

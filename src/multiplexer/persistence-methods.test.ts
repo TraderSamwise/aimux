@@ -562,6 +562,7 @@ describe("persistenceMethods", () => {
           active: false,
           pending: true,
           pendingAction: "stopping",
+          pendingStartedAt: "2026-05-09T12:00:00.000Z",
           optimistic: true,
         },
       ],
@@ -575,6 +576,7 @@ describe("persistenceMethods", () => {
           team: { teamId: "team-1", parentSessionId: "claude-1", role: "reviewer" },
           pending: true,
           pendingAction: "stopping",
+          pendingStartedAt: "2026-05-09T12:00:00.000Z",
           optimistic: true,
         },
       ],
@@ -587,6 +589,7 @@ describe("persistenceMethods", () => {
           active: false,
           pending: true,
           pendingAction: "removing",
+          pendingStartedAt: "2026-05-09T12:00:00.000Z",
           optimistic: true,
         },
       ],
@@ -598,13 +601,16 @@ describe("persistenceMethods", () => {
 
     expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pending");
     expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pendingAction");
+    expect(host.dashboardSessionsCache[0]).not.toHaveProperty("pendingStartedAt");
     expect(host.dashboardSessionsCache[0]).not.toHaveProperty("optimistic");
     expect(host.dashboardTeammatesCache.map((session: any) => session.id)).toEqual(["teammate-1"]);
     expect(host.dashboardTeammatesCache[0]).not.toHaveProperty("pending");
     expect(host.dashboardTeammatesCache[0]).not.toHaveProperty("pendingAction");
+    expect(host.dashboardTeammatesCache[0]).not.toHaveProperty("pendingStartedAt");
     expect(host.dashboardTeammatesCache[0]).not.toHaveProperty("optimistic");
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("pending");
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("pendingAction");
+    expect(host.dashboardServicesCache[0]).not.toHaveProperty("pendingStartedAt");
     expect(host.dashboardServicesCache[0]).not.toHaveProperty("optimistic");
   });
 
@@ -635,6 +641,7 @@ describe("persistenceMethods", () => {
     ]);
     expect(worktrees[0]).not.toHaveProperty("pending");
     expect(worktrees[0]).not.toHaveProperty("pendingAction");
+    expect(worktrees[0]).not.toHaveProperty("pendingStartedAt");
     expect(worktrees[0]).not.toHaveProperty("removing");
   });
 

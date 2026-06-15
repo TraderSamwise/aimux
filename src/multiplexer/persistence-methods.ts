@@ -447,20 +447,38 @@ export const persistenceMethods = {
   reapplyDashboardPendingActions(this: any): void {
     this.dashboardSessionsCache = this.dashboardPendingActions.applyToSessions(
       this.dashboardSessionsCache.map(
-        ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...session }: any) => session,
+        ({
+          pending: _pending,
+          pendingAction: _pendingAction,
+          pendingStartedAt: _pendingStartedAt,
+          optimistic: _optimistic,
+          ...session
+        }: any) => session,
       ),
     );
     this.dashboardTeammatesCache = this.dashboardPendingActions
       .applyToSessions(
         (this.dashboardTeammatesCache ?? []).map(
-          ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...session }: any) => session,
+          ({
+            pending: _pending,
+            pendingAction: _pendingAction,
+            pendingStartedAt: _pendingStartedAt,
+            optimistic: _optimistic,
+            ...session
+          }: any) => session,
         ),
         { includeTeammates: true },
       )
       .filter((session: DashboardSession) => isTeammateSession(session));
     this.dashboardServicesCache = this.dashboardPendingActions.applyToServices(
       this.dashboardServicesCache.map(
-        ({ pending: _pending, pendingAction: _pendingAction, optimistic: _optimistic, ...service }: any) => service,
+        ({
+          pending: _pending,
+          pendingAction: _pendingAction,
+          pendingStartedAt: _pendingStartedAt,
+          optimistic: _optimistic,
+          ...service
+        }: any) => service,
       ),
     );
     this.dashboardWorktreeGroupsCache = this.dashboardUiStateStore.orderWorktreeGroups(
@@ -469,6 +487,7 @@ export const persistenceMethods = {
           this.dashboardWorktreeGroupsCache.map(
             ({
               pendingAction: _pendingAction,
+              pendingStartedAt: _pendingStartedAt,
               optimistic: _optimistic,
               pending: _pending,
               removing: _removing,
