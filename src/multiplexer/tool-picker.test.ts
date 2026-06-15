@@ -82,7 +82,7 @@ describe("buildToolOptionsOverlayOutput", () => {
       },
     };
 
-    const out = buildToolOptionsOverlayOutput(host);
+    const out = buildToolOptionsOverlayOutput(host, 80, 24);
     const plain = stripAnsi(out);
     // Title-band chrome: rounded top, band title, separator.
     expect(plain).toContain("╭");
@@ -100,7 +100,7 @@ describe("buildToolOptionsOverlayOutput", () => {
       JSON.stringify({ tools: { claude: { enabled: false }, codex: { enabled: false }, aider: { enabled: false } } }),
     );
     try {
-      const out = buildToolPickerOverlayOutput({ pickerMode: "create" });
+      const out = buildToolPickerOverlayOutput({ pickerMode: "create" }, 80, 24);
       const plain = stripAnsi(out);
       expect(plain).toContain("SELECT TOOL");
       expect(plain).toContain("No enabled tools");
@@ -122,7 +122,7 @@ describe("buildToolOptionsOverlayOutput", () => {
       },
     };
 
-    const out = buildToolOptionsOverlayOutput(host);
+    const out = buildToolOptionsOverlayOutput(host, 80, 24);
     expect(out).toContain("\x1b[31m");
     expect(stripAnsi(out)).toContain("Error:");
   });
