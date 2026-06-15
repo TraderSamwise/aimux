@@ -38,23 +38,33 @@ function deps(overrides: Partial<DesktopNotifierDeps> = {}): DesktopNotifierDeps
 }
 
 describe("desktop notifier", () => {
-  it("resolves a macOS helper override before bundled candidates", () => {
+  it("resolves an app-bundled macOS helper override before bundled candidates", () => {
+    const override = "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier";
     const found = findMacNotifierHelper(
       deps({
-        env: { AIMUX_NOTIFIER_HELPER: "/tmp/Aimux Notifier" },
-        existsSync: vi.fn((candidate) => candidate === "/tmp/Aimux Notifier"),
+        env: { AIMUX_NOTIFIER_HELPER: override },
+        existsSync: vi.fn((candidate) => candidate === override),
       }),
     );
 
-    expect(found).toBe("/tmp/Aimux Notifier");
+    expect(found).toBe(override);
+  });
+
+  it("ignores raw macOS helper overrides without an app bundle identity", () => {
+    const found = findMacNotifierHelper(
+      deps({
+        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier" },
+        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier"),
+      }),
+    );
+
+    expect(found).toBeNull();
   });
 
   it("derives bundled macOS helper candidates from the package root", () => {
     expect(macNotifierCandidates(deps())).toEqual([
       "/tmp/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier",
       `/tmp/aimux/native/darwin-${process.arch}/aimux-notifier.app/Contents/MacOS/aimux-notifier`,
-      "/tmp/aimux/native/darwin/aimux-notifier",
-      `/tmp/aimux/native/darwin-${process.arch}/aimux-notifier`,
     ]);
   });
 
@@ -62,8 +72,6 @@ describe("desktop notifier", () => {
     expect(macNotifierCandidates(deps({ arch: "x64" }))).toEqual([
       "/tmp/aimux/native/darwin/aimux-notifier.app/Contents/MacOS/aimux-notifier",
       "/tmp/aimux/native/darwin-x64/aimux-notifier.app/Contents/MacOS/aimux-notifier",
-      "/tmp/aimux/native/darwin/aimux-notifier",
-      "/tmp/aimux/native/darwin-x64/aimux-notifier",
     ]);
   });
 
@@ -74,16 +82,19 @@ describe("desktop notifier", () => {
     const result = sendDesktopNotification(
       { title: "aimux", message: "agent waiting", sound: true },
       deps({
-        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier" },
-        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier"),
+        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"),
         execFile,
         nodeNotifier,
       }),
     );
 
-    expect(result).toEqual({ transport: "mac-helper", helperPath: "/tmp/aimux-notifier" });
+    expect(result).toEqual({
+      transport: "mac-helper",
+      helperPath: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+    });
     expect(execFile).toHaveBeenCalledWith(
-      "/tmp/aimux-notifier",
+      "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
       ["--title", "aimux", "--message", "agent waiting", "--sound"],
       expect.any(Function),
     );
@@ -114,8 +125,8 @@ describe("desktop notifier", () => {
     sendDesktopNotification(
       { title: "aimux", message: "agent waiting", sound: true },
       deps({
-        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier" },
-        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier"),
+        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"),
         execFile: execFileMock(new Error("boom")),
         nodeNotifier,
       }),
@@ -147,8 +158,8 @@ describe("desktop notifier", () => {
   it("builds a macOS doctor report with helper check output", async () => {
     const report = await buildDesktopNotifierDoctorReport(
       deps({
-        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier" },
-        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier"),
+        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"),
         execFile: execFileMock(null, "Aimux notifier ready (app.aimux.notifier)\n"),
       }),
     );
@@ -156,7 +167,7 @@ describe("desktop notifier", () => {
     expect(report).toMatchObject({
       platform: "darwin",
       transport: "mac-helper",
-      helperPath: "/tmp/aimux-notifier",
+      helperPath: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
       helperCheck: {
         ok: true,
         exitCode: 0,
@@ -170,8 +181,8 @@ describe("desktop notifier", () => {
     const error = Object.assign(new Error("Command failed: notifications are denied"), { code: 77 });
     const report = await buildDesktopNotifierDoctorReport(
       deps({
-        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier" },
-        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier"),
+        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"),
         execFile: execFileMock(error, "Aimux notifier ready (app.aimux.notifier); authorization=denied\n"),
       }),
     );
@@ -179,7 +190,7 @@ describe("desktop notifier", () => {
     expect(report).toMatchObject({
       platform: "darwin",
       transport: "mac-helper",
-      helperPath: "/tmp/aimux-notifier",
+      helperPath: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
       helperCheck: {
         ok: false,
         exitCode: 77,
