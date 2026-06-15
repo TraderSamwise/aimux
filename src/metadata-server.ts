@@ -968,6 +968,19 @@ export class MetadataServer {
     this.eventBus.publishAlert(contextualizeAlertInput(input, displayContext));
   }
 
+  private interactionDedupeKey(input: {
+    sessionId: string;
+    type: InteractionType;
+    payload: InteractionPayload;
+    summary?: string;
+  }): string {
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({ type: input.type, summary: input.summary ?? "", payload: input.payload }))
+      .digest("base64url")
+      .slice(0, 12);
+    return `interaction:${input.sessionId}:${input.type}:${fingerprint}`;
+  }
+
   private beginInteraction(input: {
     sessionId: string;
     type: InteractionType;
@@ -990,7 +1003,8 @@ export class MetadataServer {
       title: display.title,
       message: display.message,
       interaction: { id: request.id, type: input.type, summary: display.summary },
-      dedupeKey: `interaction:${request.id}`,
+      dedupeKey: this.interactionDedupeKey(input),
+      cooldownMs: 60_000,
       forceNotify: true,
     });
     this.options.onChange?.();
@@ -2154,6 +2168,13 @@ export class MetadataServer {
             toolName,
             toolInputJSON: JSON.stringify(input),
           },
+          dedupeKey: this.interactionDedupeKey({
+            sessionId,
+            type: "permission",
+            summary,
+            payload: { toolName, input, cwd },
+          }),
+          cooldownMs: 60_000,
         });
         this.options.onChange?.();
         send(res, 200, { ok: true, telemetry: true });
