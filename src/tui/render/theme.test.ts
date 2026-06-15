@@ -6,6 +6,9 @@ import {
   cols,
   divider,
   keycap,
+  keycapHint,
+  keycapHintLines,
+  keycapHints,
   padVisible,
   pill,
   statusDot,
@@ -67,6 +70,25 @@ describe("theme primitives", () => {
 
   it("renders a divider of exact width", () => {
     expect(stripAnsi(divider(5))).toBe("─────");
+  });
+
+  it("renders keycap hints as a keycap plus muted label", () => {
+    expect(stripAnsi(keycapHint("q", "quit"))).toBe(" q  quit");
+    expect(stripAnsi(keycapHint("Esc"))).toBe(" Esc ");
+    expect(keycapHint("q", "quit")).toContain(keycap("q"));
+  });
+
+  it("styles a footer line into keycap groups, supporting [key] and key forms", () => {
+    const rendered = keycapHints("[↑↓] select  q quit");
+    expect(stripAnsi(rendered)).toBe(" ↑↓  select   q  quit");
+    expect(rendered).toContain(keycap("↑↓"));
+    expect(rendered).toContain(keycap("q"));
+  });
+
+  it("wraps keycap hint groups to a width budget across lines", () => {
+    const lines = keycapHintLines("[a] alpha  [b] bravo  [c] charlie", 14);
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(14);
   });
 });
 
