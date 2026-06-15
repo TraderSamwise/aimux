@@ -114,8 +114,15 @@ export function buildMetaDashboardModel(deps: MetaDashboardDeps = {}): MetaDashb
       return { id: project.id, name: project.name, repoRoot: project.repoRoot, running: false, worktreeGroups: [] };
     }
     const context: FastControlContext = { projectRoot: project.repoRoot };
-    const items = listItemsFn(context, tmux, { scope: "all" });
-    const worktreeGroups = groupItemsByWorktree(project.repoRoot, items, listWorktreesFn(project.repoRoot));
+    // A project's session can vanish between the snapshot and listing; degrade
+    // that one project to empty rather than failing the whole build.
+    let worktreeGroups: MetaWorktreeGroup[] = [];
+    try {
+      const items = listItemsFn(context, tmux, { scope: "all" });
+      worktreeGroups = groupItemsByWorktree(project.repoRoot, items, listWorktreesFn(project.repoRoot));
+    } catch {
+      worktreeGroups = [];
+    }
     return { id: project.id, name: project.name, repoRoot: project.repoRoot, running: true, worktreeGroups };
   });
 
@@ -140,7 +147,12 @@ export function listAllProjectsExposeItems(deps: MetaDashboardDeps = {}): MetaEx
   const result: MetaExposeItem[] = [];
   for (const project of projects) {
     if (!isProjectRunning(tmux, project.repoRoot, sessionNames)) continue;
-    const items = listItemsFn({ projectRoot: project.repoRoot }, tmux, { scope: "all" });
+    let items: FastControlItem[];
+    try {
+      items = listItemsFn({ projectRoot: project.repoRoot }, tmux, { scope: "all" });
+    } catch {
+      continue;
+    }
     for (const item of items) {
       result.push({ ...item, projectId: project.id, projectName: project.name, projectRoot: project.repoRoot });
     }

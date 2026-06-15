@@ -103,4 +103,40 @@ describe("renderMetaDashboard", () => {
   it("does not throw on a tiny terminal", () => {
     expect(() => renderMetaDashboard(model, 2, 10, 4)).not.toThrow();
   });
+
+  it("strips escape sequences from metadata-sourced labels", () => {
+    const evil: MetaDashboardModel = {
+      projects: [
+        {
+          id: "x",
+          name: "proj\x1b[31mEVIL",
+          repoRoot: "/r",
+          running: true,
+          worktreeGroups: [
+            {
+              worktreePath: null,
+              name: "main",
+              branch: "b",
+              isMainCheckout: true,
+              rows: [
+                {
+                  kind: "agent",
+                  sessionId: "s",
+                  label: "lbl\x1b[2Jwipe",
+                  tool: "t",
+                  urgency: 0,
+                  target: target("r", "@1"),
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const frame = renderMetaDashboard(evil, 0, 100, 40);
+    // injected color + clear-screen sequences are stripped (text is joined back together)
+    expect(frame).not.toContain("\x1b[31m");
+    expect(stripAnsi(frame)).toContain("projEVIL");
+    expect(stripAnsi(frame)).toContain("lblwipe");
+  });
 });

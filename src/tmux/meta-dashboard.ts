@@ -64,6 +64,12 @@ function rowGlyph(row: MetaRow): string {
   return "\x1b[38;5;244m○\x1b[0m";
 }
 
+// Strip escape sequences + control bytes from metadata-sourced strings so a
+// rogue agent label/worktree name can't inject escapes into the frame.
+function sanitizeMeta(text: string): string {
+  return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f]/g, " ");
+}
+
 /** Pure renderer: returns the full ANSI frame for the meta dashboard. */
 export function renderMetaDashboard(
   model: MetaDashboardModel,
@@ -87,20 +93,20 @@ export function renderMetaDashboard(
   for (const project of model.projects) {
     const state = project.running ? "" : " \x1b[2m(stopped)\x1b[0m";
     lines.push("");
-    lines.push(`\x1b[1;36m▌ ${truncatePlain(project.name, width - 4)}\x1b[0m${state}`);
+    lines.push(`\x1b[1;36m▌ ${truncatePlain(sanitizeMeta(project.name), width - 4)}\x1b[0m${state}`);
     if (!project.running) continue;
     if (project.worktreeGroups.length === 0) {
       lines.push("  \x1b[2m(no active agents)\x1b[0m");
       continue;
     }
     for (const group of project.worktreeGroups) {
-      const branch = group.branch ? ` \x1b[2m${group.branch}\x1b[0m` : "";
-      lines.push(`  \x1b[38;5;180m${truncatePlain(group.name, width - 6)}\x1b[0m${branch}`);
+      const branch = group.branch ? ` \x1b[2m${sanitizeMeta(group.branch)}\x1b[0m` : "";
+      lines.push(`  \x1b[38;5;180m${truncatePlain(sanitizeMeta(group.name), width - 6)}\x1b[0m${branch}`);
       for (const row of group.rows) {
         const idx = selectable;
         selectable += 1;
         const selected = idx === selectedIndex;
-        const label = truncatePlain(`${row.label}  \x1b[2m${row.tool}\x1b[0m`, width - 8);
+        const label = truncatePlain(`${sanitizeMeta(row.label)}  \x1b[2m${sanitizeMeta(row.tool)}\x1b[0m`, width - 8);
         const text = `    ${rowGlyph(row)} ${label}`;
         selectableLineByIndex[idx] = lines.length;
         lines.push(selected ? `\x1b[7m${text}${RESET}` : text);
@@ -131,6 +137,16 @@ export function renderMetaDashboard(
 export async function runTmuxMetaDashboard(options: TmuxMetaDashboardOptions): Promise<number> {
   if (options.aimuxHome) process.env.AIMUX_HOME = options.aimuxHome;
 
+  // Build the first model BEFORE touching the terminal, so a startup failure
+  // can't leave it stuck in raw/alternate-screen mode.
+  const tmux = new TmuxRuntimeManager();
+  let model: MetaDashboardModel;
+  try {
+    model = buildMetaDashboardModel({ tmux });
+  } catch {
+    return 1;
+  }
+
   const terminal = new TerminalHost();
   terminal.enterRawMode();
   terminal.enterAlternateScreen(true);
@@ -147,8 +163,6 @@ export async function runTmuxMetaDashboard(options: TmuxMetaDashboardOptions): P
   process.once("SIGINT", onFatalSignal);
   process.once("SIGTERM", onFatalSignal);
 
-  const tmux = new TmuxRuntimeManager();
-  let model = buildMetaDashboardModel({ tmux });
   let selectedIndex = 0;
 
   const render = () => {
@@ -170,8 +184,15 @@ export async function runTmuxMetaDashboard(options: TmuxMetaDashboardOptions): P
     const performJump = (i: number) => {
       const jump = resolveJumpTarget(model, i, (root) => tmux.getProjectSession(root).sessionName);
       if (!jump) return;
+      // Switch the real client explicitly (robust with multiple attached clients).
+      const suffix = options.currentClientSession?.match(/-client-([a-f0-9]{8})$/)?.[1];
       try {
-        tmux.openTarget(jump.target, { insideTmux: true });
+        tmux.openTarget(jump.target, {
+          insideTmux: true,
+          clientTty: options.clientTty,
+          clientSuffix: suffix,
+          returnSessionName: options.currentClientSession,
+        });
       } catch {
         /* target vanished mid-jump; close the meta dashboard regardless */
       }
