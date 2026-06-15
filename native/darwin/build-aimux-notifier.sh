@@ -44,6 +44,7 @@ swiftc \
   -target "$SWIFT_TARGET" \
   "$SRC_DIR/main.swift" \
   -framework AppKit \
+  -framework UserNotifications \
   -o "$MACOS_DIR/aimux-notifier"
 
 ICON_SRC="$ROOT_DIR/app/assets/images/icon.png"
