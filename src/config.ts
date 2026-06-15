@@ -227,8 +227,35 @@ function hasSessionPlaceholder(args?: string[]): boolean {
   return Boolean(args?.some((arg) => arg.includes("{sessionId}")));
 }
 
+function stringArrayEquals(a: string[] | undefined, b: string[]): boolean {
+  return Boolean(a && a.length === b.length && a.every((value, index) => value === b[index]));
+}
+
 function normalizeConfig(config: AimuxConfig): AimuxConfig {
+  const codex = config.tools.codex;
+  if (
+    codex?.command === "codex" &&
+    codex.resumeByBackendSessionId !== false &&
+    stringArrayEquals(codex.resumeArgs, ["resume", "--last"])
+  ) {
+    // Older generated project configs used broad "resume --last" args. Keep that
+    // behavior as the fallback, but do not let it shadow the exact-resume default
+    // now that topology restore requires a backend session id.
+    codex.resumeFallback ??= codex.resumeArgs;
+    codex.resumeArgs = ["resume", "{sessionId}"];
+    codex.resumeByBackendSessionId = true;
+  }
+
   const claude = config.tools.claude;
+  if (
+    claude?.command === "claude" &&
+    claude.resumeByBackendSessionId !== false &&
+    stringArrayEquals(claude.resumeArgs, ["--continue"])
+  ) {
+    // Same migration for older Claude configs that used --continue as resumeArgs.
+    claude.resumeFallback ??= claude.resumeArgs;
+    claude.resumeArgs = ["--resume", "{sessionId}"];
+  }
   if (
     claude?.command === "claude" &&
     hasSessionPlaceholder(claude.sessionIdFlag) &&
