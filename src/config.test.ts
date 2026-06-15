@@ -55,6 +55,65 @@ describe("config", () => {
     expect(loadConfig({ includeGlobal: false }).tools.claude.resumeByBackendSessionId).toBe(true);
   });
 
+  it("normalizes stale built-in resume args to exact backend resume while preserving fallbacks", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          tools: {
+            claude: {
+              command: "claude",
+              args: ["--dangerously-skip-permissions"],
+              enabled: true,
+              preambleFlag: ["--append-system-prompt"],
+              resumeArgs: ["--continue"],
+            },
+            codex: {
+              command: "codex",
+              args: [],
+              enabled: true,
+              resumeArgs: ["resume", "--last"],
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    const config = loadConfig({ includeGlobal: false });
+    expect(config.tools.claude.resumeArgs).toEqual(["--resume", "{sessionId}"]);
+    expect(config.tools.claude.resumeByBackendSessionId).toBe(true);
+    expect(config.tools.claude.resumeFallback).toEqual(["--continue"]);
+    expect(config.tools.codex.resumeArgs).toEqual(["resume", "{sessionId}"]);
+    expect(config.tools.codex.resumeByBackendSessionId).toBe(true);
+    expect(config.tools.codex.resumeFallback).toEqual(["resume", "--last"]);
+  });
+
+  it("does not normalize stale resume args for custom tool configs", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          tools: {
+            "codex-custom": {
+              command: "codex",
+              args: [],
+              enabled: true,
+              resumeArgs: ["resume", "--last"],
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    expect(loadConfig({ includeGlobal: false }).tools["codex-custom"].resumeArgs).toEqual(["resume", "--last"]);
+  });
+
   it("ships a default claude config that assigns a backend session id at launch", () => {
     // Guards the proactive durability guarantee: aimux must launch claude with
     // its own --session-id so the backend id is known and persisted at spawn,
