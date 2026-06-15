@@ -5,7 +5,10 @@ import { addDashboardOperationFailure } from "../dashboard/operation-failures.js
 import {
   buildWorktreeListOverlayOutput,
   buildWorktreeRemoveConfirmOverlayOutput,
+  hints,
 } from "../tui/screens/overlay-renderers.js";
+import { renderOverlayBox } from "../tui/render/box.js";
+import { style } from "../tui/render/theme.js";
 import { postToProjectService } from "./dashboard-control.js";
 import type { PendingWorktreeActionKind } from "../pending-actions.js";
 import { dashboardCreatedSortKey } from "../dashboard/sort.js";
@@ -210,25 +213,15 @@ export function showWorktreeCreatePrompt(host: WorktreeHost): void {
 }
 
 export function buildWorktreeInputOverlayOutput(host: WorktreeHost, cols: number, rows: number): string {
-  const lines = ["Create worktree:", "", `  Name: ${host.worktreeInputBuffer}_`, "", "  [Enter] create  [Esc] cancel"];
-
-  const boxWidth = Math.max(...lines.map((l: string) => l.length)) + 4;
-  const startRow = Math.floor((rows - lines.length - 2) / 2);
-  const startCol = Math.floor((cols - boxWidth) / 2);
-
-  let output = "\x1b7";
-  for (let i = 0; i < lines.length + 2; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === lines.length + 1) {
-      output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-    } else {
-      const line = lines[i - 1];
-      output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-    }
-  }
-  output += "\x1b8";
-  return output;
+  const body = [
+    `  ${style("Name:", "muted")} ${host.worktreeInputBuffer}_`,
+    "",
+    hints([
+      ["Enter", "create"],
+      ["Esc", "cancel"],
+    ]),
+  ];
+  return renderOverlayBox({ title: "Create worktree", body, cols, rows });
 }
 
 export function renderWorktreeInput(host: WorktreeHost): void {
