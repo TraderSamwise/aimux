@@ -171,9 +171,10 @@ export function card({ tone, title, summary, rows = [], width }: CardSpec): stri
     titleMax = w - frame;
   }
   const fittedTitle = visibleWidth(title) > titleMax ? truncateAnsi(title, Math.max(0, titleMax)) : title;
-  const used = 2 + visibleWidth(fittedTitle) + 1 + summaryCost + 1;
+  const titleSep = visibleWidth(fittedTitle) > 0 ? " " : "";
+  const used = 2 + visibleWidth(fittedTitle) + titleSep.length + summaryCost + 1;
   const dashes = Math.max(2, w - used);
-  let top = `${border("╭ ")}${fittedTitle} ${border("─".repeat(dashes))}`;
+  let top = `${border("╭ ")}${fittedTitle}${titleSep}${border("─".repeat(dashes))}`;
   if (summaryText) top += ` ${summaryText} `;
   top += border("╮");
   lines.push(padVisible(top, w));
