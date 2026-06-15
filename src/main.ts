@@ -18,6 +18,7 @@ import {
   getRuntimeTopologyPath,
 } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
+import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import {
@@ -756,13 +757,10 @@ function readLastLogLines(path: string, lines: number): string {
   return allLines.slice(-lines).join("\n");
 }
 
-const pkgJsonPath = pathJoin(pathDirname(fileURLToPath(import.meta.url)), "..", "package.json");
-const pkgVersion = (JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string }).version;
-
 program
   .name("aimux")
   .description("Native CLI agent multiplexer")
-  .version(pkgVersion)
+  .version(AIMUX_VERSION)
   .argument("[tool]", "Tool to run (e.g. claude, codex, aider)")
   .argument("[args...]", "Arguments to pass to the tool")
   .option("--resume", "Resume previous sessions using native tool resume")
