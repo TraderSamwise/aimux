@@ -3,11 +3,13 @@ import { agentStatusChip, renderAgentStatusChip } from "./agent-status.js";
 import { stripAnsi } from "./text.js";
 
 describe("agentStatusChip", () => {
-  it("maps activity to a chip", () => {
+  it("maps every activity state to a chip", () => {
     expect(agentStatusChip({ activity: "running" })).toEqual({ kind: "working", label: "Working" });
     expect(agentStatusChip({ activity: "waiting" })).toEqual({ kind: "needs", label: "Waiting" });
     expect(agentStatusChip({ activity: "done" })).toEqual({ kind: "done", label: "Done" });
     expect(agentStatusChip({ activity: "idle" })).toEqual({ kind: "idle", label: "Idle" });
+    expect(agentStatusChip({ activity: "error" })).toEqual({ kind: "error", label: "Error" });
+    expect(agentStatusChip({ activity: "interrupted" })).toEqual({ kind: "idle", label: "Interrupted" });
   });
 
   it("prefers attention over activity", () => {
