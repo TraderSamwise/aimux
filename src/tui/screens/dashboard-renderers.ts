@@ -100,7 +100,7 @@ function sessionTimeAnchor(session: DashboardSession): { label: string; value?: 
       : { label: "idle", value: session.becameIdleAt ?? session.lastUsedAt };
   }
   if (userLabel === "working") {
-    return { label: "output", value: lastOutputAt ?? session.lastUsedAt };
+    return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
   }
   if (userLabel === "done") {
     return lastOutputAt
@@ -558,7 +558,13 @@ export function renderDashboardFrame(
       lines.push(...wrapKeyValue("Repo", `${selected.repoOwner ?? "?"}/${selected.repoName ?? "?"}`, width));
     if (selected.repoRemote) lines.push(...wrapKeyValue("Remote", selected.repoRemote, width));
     if (selected.previewLine) lines.push(...wrapKeyValue("Preview", selected.previewLine, width));
-    if (selected.semantic) {
+    if (selected.pendingAction) {
+      lines.push(...wrapKeyValue("State", ROW_STATE_LABELS[selected.pendingAction], width));
+      if (selected.pendingStartedAt) {
+        const startedRecency = formatRelativeRecency(selected.pendingStartedAt);
+        if (startedRecency) lines.push(...wrapKeyValue("Started", startedRecency, width));
+      }
+    } else if (selected.semantic) {
       lines.push(...wrapKeyValue("State", selected.semantic.presentation.statusLabel, width));
       if (selected.semantic.user.attention !== "none") {
         lines.push(...wrapKeyValue("Attention", selected.semantic.user.attention, width));

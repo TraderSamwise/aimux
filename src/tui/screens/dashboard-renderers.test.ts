@@ -196,6 +196,48 @@ describe("renderDashboardFrame worktree progress", () => {
     }
   });
 
+  it("does not label last-used timestamps as output recency", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-05-09T12:00:30.000Z"));
+    try {
+      const { frame } = renderDashboardFrame(
+        baseDashboardViewModel({
+          navLevel: "sessions",
+          selectedSessionId: "codex-1",
+          sessions: [
+            {
+              index: 0,
+              id: "codex-1",
+              command: "codex",
+              status: "running",
+              active: true,
+              lastUsedAt: "2026-05-09T12:00:00.000Z",
+              semantic: deriveSessionSemantics({
+                status: "running",
+                activity: "running",
+              }),
+            },
+          ],
+          worktreeGroups: [
+            {
+              name: "Main Checkout",
+              branch: "master",
+              status: "active",
+              sessions: [],
+              services: [],
+            },
+          ],
+        }),
+        120,
+        40,
+      );
+
+      expect(frame).toContain("\x1b[36mWorking");
+      expect(frame).not.toContain("output 30s ago");
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("renders pending session labels even when semantic state is stale", () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-05-09T12:00:30.000Z"));
     try {
@@ -255,6 +297,10 @@ describe("renderDashboardFrame worktree progress", () => {
       expect(frame).toContain("codex \x1b[33mRemoving");
       expect(frame).toContain("removing 30s ago");
       expect(frame).toContain("1 removing");
+      expect(frame).toContain("State: Starting");
+      expect(frame).toContain("Started: 30s ago");
+      expect(frame).not.toContain("State: needs input");
+      expect(frame).not.toContain("Attention: needs_input");
       expect(frame).not.toContain("prompted");
       expect(frame).not.toContain("idle now");
       expect(frame).not.toContain("1 needs input");
