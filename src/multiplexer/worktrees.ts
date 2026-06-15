@@ -209,10 +209,7 @@ export function showWorktreeCreatePrompt(host: WorktreeHost): void {
   renderWorktreeInput(host);
 }
 
-export function buildWorktreeInputOverlayOutput(host: WorktreeHost): string {
-  const cols = process.stdout.columns ?? 80;
-  const rows = process.stdout.rows ?? 24;
-
+export function buildWorktreeInputOverlayOutput(host: WorktreeHost, cols: number, rows: number): string {
   const lines = ["Create worktree:", "", `  Name: ${host.worktreeInputBuffer}_`, "", "  [Enter] create  [Esc] cancel"];
 
   const boxWidth = Math.max(...lines.map((l: string) => l.length)) + 4;
@@ -239,7 +236,8 @@ export function renderWorktreeInput(host: WorktreeHost): void {
     host.redrawDashboardWithOverlay();
     return;
   }
-  process.stdout.write(buildWorktreeInputOverlayOutput(host));
+  const { cols, rows } = host.getViewportSize();
+  process.stdout.write(buildWorktreeInputOverlayOutput(host, cols, rows));
 }
 
 export function handleWorktreeInputKey(host: WorktreeHost, data: Buffer): void {
@@ -320,7 +318,8 @@ export function renderWorktreeList(host: WorktreeHost): void {
     host.redrawDashboardWithOverlay();
     return;
   }
-  process.stdout.write(buildWorktreeListOverlayOutput(host));
+  const { cols, rows } = host.getViewportSize();
+  process.stdout.write(buildWorktreeListOverlayOutput(host, cols, rows));
 }
 
 export function renderWorktreeRemoveConfirm(host: WorktreeHost): void {
@@ -328,7 +327,8 @@ export function renderWorktreeRemoveConfirm(host: WorktreeHost): void {
     host.redrawDashboardWithOverlay();
     return;
   }
-  const output = buildWorktreeRemoveConfirmOverlayOutput(host);
+  const { cols, rows } = host.getViewportSize();
+  const output = buildWorktreeRemoveConfirmOverlayOutput(host, cols, rows);
   if (output) process.stdout.write(output);
 }
 
