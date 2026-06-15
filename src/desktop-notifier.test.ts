@@ -198,6 +198,44 @@ describe("desktop notifier", () => {
     expect(nodeNotifier.notify).toHaveBeenCalledTimes(1);
   });
 
+  it("does not use an external transport when notifications are disabled", () => {
+    const execFile = execFileMock();
+    const nodeNotifier = { notify: vi.fn() };
+
+    const result = sendDesktopNotification(
+      { title: "aimux", message: "agent waiting", sound: true },
+      deps({
+        env: { AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS: "1" },
+        existsSync: vi.fn(() => true),
+        execFile,
+        nodeNotifier,
+      }),
+    );
+
+    expect(result).toEqual({ transport: "disabled" });
+    expect(execFile).not.toHaveBeenCalled();
+    expect(nodeNotifier.notify).not.toHaveBeenCalled();
+  });
+
+  it("reports disabled for awaited diagnostic sends when notifications are disabled", async () => {
+    const execFile = execFileMock();
+    const nodeNotifier = { notify: vi.fn() };
+
+    const result = await sendDesktopNotificationAndWait(
+      { title: "aimux", message: "agent waiting", sound: true },
+      deps({
+        env: { AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS: "1" },
+        existsSync: vi.fn(() => true),
+        execFile,
+        nodeNotifier,
+      }),
+    );
+
+    expect(result).toEqual({ transport: "disabled", ok: false, error: "disabled" });
+    expect(execFile).not.toHaveBeenCalled();
+    expect(nodeNotifier.notify).not.toHaveBeenCalled();
+  });
+
   it("builds a macOS doctor report with helper check output", async () => {
     const report = await buildDesktopNotifierDoctorReport(
       deps({

@@ -83,6 +83,29 @@ describe("session semantics", () => {
     expect(sessionSemanticAttentionScore(semantic)).toBe(0);
   });
 
+  it("labels alive sessions without active work as ready", () => {
+    const semantic = deriveSessionSemantics({
+      status: "running",
+      attention: "normal",
+    });
+
+    expect(semantic.user.label).toBe("ready");
+    expect(semantic.user.attention).toBe("none");
+    expect(sessionSemanticStatusLabel(semantic, "running")).toBe("ready");
+    expect(sessionSemanticAttentionScore(semantic)).toBe(0);
+  });
+
+  it("keeps explicit activity as working", () => {
+    const semantic = deriveSessionSemantics({
+      status: "running",
+      activity: "running",
+      attention: "normal",
+    });
+
+    expect(semantic.user.label).toBe("working");
+    expect(sessionSemanticStatusLabel(semantic, "running")).toBe("working");
+  });
+
   it("separates notification unread from raw new activity", () => {
     const notificationSemantic = deriveSessionSemantics({
       status: "idle",

@@ -23,6 +23,7 @@ type SessionRowState = SessionUserLabel | SessionPendingAction;
 
 const ROW_STATE_LABELS: Record<SessionRowState, string> = {
   working: "Working",
+  ready: "Ready",
   needs_input: "Needs input",
   needs_response: "Needs response",
   next_step: "Next step",
@@ -123,6 +124,9 @@ function sessionTimeAnchor(session: DashboardSession): { label: string; value?: 
   if (userLabel === "working") {
     return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
   }
+  if (userLabel === "ready") {
+    return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
+  }
   if (userLabel === "done") {
     return lastOutputAt
       ? { label: "output", value: lastOutputAt }
@@ -197,6 +201,8 @@ function sessionStateRank(state: SessionRowState | undefined): StateRank {
       return { rank: 4, tone: "blocked" };
     case "working":
       return { rank: 3, tone: "work" };
+    case "ready":
+      return { rank: 1, tone: "muted" };
     case "next_step":
       return { rank: 3, tone: "attn" };
     case "done":
@@ -231,6 +237,7 @@ function semanticCountParts(worktree: { sessions: DashboardSession[] }): string[
   append("blocked", "blocked", "blocked");
   append("error", "error", "danger");
   append("working", "working", "work");
+  append("ready", "ready");
   append("idle", "idle");
   append("done", "done", "done");
   append("offline", "offline");
@@ -283,6 +290,7 @@ function sessionStatusDot(session: DashboardSession): string {
   if (attention === "needs_input" || label === "needs_input") return statusDot("needs");
   if (attention === "needs_response" || label === "needs_response") return statusDot("needs");
   if (label === "working") return statusDot("working");
+  if (label === "ready") return statusDot("ready");
   if (label === "done") return statusDot("done");
   if (label === "next_step") return style("●", "attn");
   if (label === "idle") return statusDot("idle");
@@ -301,13 +309,10 @@ function sessionStatusCell(session: DashboardSession, fallback: string): string 
     const pillLabel = PILL_LABEL[rowState] ?? label.toUpperCase();
     return pill(pillLabel, PILL_TONE[rowState] ?? "attn");
   }
-  const tone: Tone = session.pendingAction
-    ? "attn"
-    : rowState === "done"
-      ? "done"
-      : rowState === "idle"
-        ? "idle"
-        : "muted";
+  let tone: Tone = "muted";
+  if (session.pendingAction) tone = "attn";
+  if (rowState === "done") tone = "done";
+  if (rowState === "idle") tone = "idle";
   return style(label, tone);
 }
 

@@ -44,6 +44,8 @@ function alert(overrides: Partial<AlertEvent> = {}): AlertEvent {
 describe("notifyAlert mobile choke point", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS;
+    delete process.env.AIMUX_DISABLE_DESKTOP_NOTIFICATIONS;
     notificationsConfig = { enabled: true, onPrompt: true, onError: true, onComplete: true };
     suppress.mockReturnValue(false);
     resetNotifyConfig();
@@ -60,6 +62,12 @@ describe("notifyAlert mobile choke point", () => {
     notificationsConfig.enabled = false;
     resetNotifyConfig();
     expect(notifyAlert(alert())).toBe(false);
+    expect(forward).not.toHaveBeenCalled();
+  });
+
+  it("does not forward externally when the test/runtime guard is enabled", () => {
+    process.env.AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS = "1";
+    expect(notifyAlert(alert())).toBe(true);
     expect(forward).not.toHaveBeenCalled();
   });
 
