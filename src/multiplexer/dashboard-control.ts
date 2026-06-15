@@ -27,7 +27,10 @@ import {
   buildTeammatePickerOverlayOutput,
   buildWorktreeListOverlayOutput,
   buildWorktreeRemoveConfirmOverlayOutput,
+  hints,
 } from "../tui/screens/overlay-renderers.js";
+import { renderOverlayBox } from "../tui/render/box.js";
+import { keycap, style } from "../tui/render/theme.js";
 import { buildWorktreeInputOverlayOutput } from "./worktrees.js";
 import { buildToolOptionsOverlayOutput, buildToolPickerOverlayOutput } from "./tool-picker.js";
 import { buildThreadReplyOverlayOutput } from "./subscreens.js";
@@ -523,41 +526,26 @@ export function buildOrchestrationInputOverlayOutput(
   if (!target || !mode) return null;
   const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Handoff" : "Assign task";
   const actionLabel = mode === "task" ? "assign" : "send";
-  const worktreeLine = target.worktreePath ? `  Worktree: ${target.worktreePath}` : null;
+  const worktreeLine = target.worktreePath ? `  ${style("Worktree:", "muted")} ${target.worktreePath}` : null;
   const recipientCount = target.sessionId ? 1 : (target.recipientIds?.length ?? 0);
   const recipientPreview =
     target.sessionId || recipientCount === 0
       ? null
       : mode === "task"
-        ? `  Route: best match from ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}`
-        : `  Recipients: ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}${target.recipientIds && target.recipientIds.length > 0 ? ` (${target.recipientIds.slice(0, 3).join(", ")}${target.recipientIds.length > 3 ? ", ..." : ""})` : ""}`;
-  const lines = [
-    `${modeLabel}:`,
-    "",
-    `  To: ${target.label}`,
+        ? `  ${style("Route:", "muted")} best match from ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}`
+        : `  ${style("Recipients:", "muted")} ${recipientCount} live ${recipientCount === 1 ? "agent" : "agents"}${target.recipientIds && target.recipientIds.length > 0 ? ` (${target.recipientIds.slice(0, 3).join(", ")}${target.recipientIds.length > 3 ? ", ..." : ""})` : ""}`;
+  const body = [
+    `  ${style("To:", "muted")} ${target.label}`,
     ...(worktreeLine ? [worktreeLine] : []),
     ...(recipientPreview ? [recipientPreview] : []),
-    `  Text: ${host.orchestrationInputBuffer}_`,
+    `  ${style("Text:", "muted")} ${host.orchestrationInputBuffer}_`,
     "",
-    `  [Enter] ${actionLabel}  [Esc] cancel`,
+    hints([
+      ["Enter", actionLabel],
+      ["Esc", "cancel"],
+    ]),
   ];
-
-  const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-  const startRow = Math.floor((rows - lines.length - 2) / 2);
-  const startCol = Math.floor((cols - boxWidth) / 2);
-  let output = "\x1b7";
-  for (let i = 0; i < lines.length + 2; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === lines.length + 1) {
-      output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-    } else {
-      const line = lines[i - 1]!;
-      output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-    }
-  }
-  output += "\x1b8";
-  return output;
+  return renderOverlayBox({ title: modeLabel, body, cols, rows });
 }
 
 export function renderOrchestrationInput(host: DashboardControlHost): void {
@@ -578,32 +566,16 @@ export function buildOrchestrationRoutePickerOverlayOutput(
   const mode = host.orchestrationRouteMode;
   if (!mode) return null;
   const modeLabel = mode === "message" ? "Send message" : mode === "handoff" ? "Send handoff" : "Assign task";
-  const lines = [`${modeLabel}: choose target`, ""];
+  const body: string[] = [];
   for (let i = 0; i < Math.min(host.orchestrationRouteOptions.length, 9); i++) {
-    lines.push(`  [${i + 1}] ${host.orchestrationRouteOptions[i]!.label}`);
+    body.push(`  ${keycap(String(i + 1))} ${host.orchestrationRouteOptions[i]!.label}`);
   }
   if (host.orchestrationRouteOptions.length > 9) {
-    lines.push("  ...");
+    body.push(`  ${style("...", "muted")}`);
   }
-  lines.push("");
-  lines.push("  [Esc] cancel");
-
-  const boxWidth = Math.max(...lines.map((l) => l.length)) + 4;
-  const startRow = Math.floor((rows - lines.length - 2) / 2);
-  const startCol = Math.floor((cols - boxWidth) / 2);
-  let output = "\x1b7";
-  for (let i = 0; i < lines.length + 2; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === lines.length + 1) {
-      output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-    } else {
-      const line = lines[i - 1]!;
-      output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-    }
-  }
-  output += "\x1b8";
-  return output;
+  body.push("");
+  body.push(hints([["Esc", "cancel"]]));
+  return renderOverlayBox({ title: `${modeLabel}: choose target`, body, cols, rows });
 }
 
 export function renderOrchestrationRoutePicker(host: DashboardControlHost): void {

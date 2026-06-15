@@ -2,7 +2,7 @@ import { renderOverlayBox } from "../render/box.js";
 import { keycap, modalBand, padVisible, statusDot, style } from "../render/theme.js";
 
 /** Render footer-style key hints as keycaps: hints([["Enter","create"],["Esc","cancel"]]). */
-function hints(pairs: [string, string][]): string {
+export function hints(pairs: [string, string][]): string {
   return `  ${pairs.map(([key, label]) => `${keycap(key)} ${style(label, "muted")}`).join("  ")}`;
 }
 

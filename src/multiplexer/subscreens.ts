@@ -32,6 +32,9 @@ import {
   showNotifications as showNotificationsImpl,
 } from "./notifications.js";
 import { navigationUrgencyScore } from "../fast-control.js";
+import { hints } from "../tui/screens/overlay-renderers.js";
+import { renderOverlayBox } from "../tui/render/box.js";
+import { style } from "../tui/render/theme.js";
 
 type SubscreenHost = any;
 
@@ -493,32 +496,18 @@ export function buildThreadReplyOverlayOutput(host: SubscreenHost, cols: number,
       : entry.thread.participants.filter((participant: string) => participant !== "user");
   const title = host.truncatePlain(entry.displayTitle, Math.max(16, cols - 24));
   const buffer = host.truncatePlain(host.threadReplyBuffer, Math.max(12, cols - 24));
-  const lines = [
-    "Reply in thread:",
+  const body = [
+    `  ${style("Thread:", "muted")} ${title}`,
+    `  ${style("To:", "muted")} ${targets.join(", ") || "participants"}`,
     "",
-    `  Thread: ${title}`,
-    `  To: ${targets.join(", ") || "participants"}`,
+    `  ${style("Message:", "muted")} ${buffer}_`,
     "",
-    `  Message: ${buffer}_`,
-    "",
-    "  [Enter] send  [Esc] cancel",
+    hints([
+      ["Enter", "send"],
+      ["Esc", "cancel"],
+    ]),
   ];
-  const boxWidth = Math.max(...lines.map((line) => host.stripAnsi(line).length)) + 4;
-  const startRow = Math.floor((rows - lines.length - 2) / 2);
-  const startCol = Math.floor((cols - boxWidth) / 2);
-  let output = "\x1b7";
-  for (let i = 0; i < lines.length + 2; i++) {
-    const row = startRow + i;
-    output += `\x1b[${row};${startCol}H`;
-    if (i === 0 || i === lines.length + 1) {
-      output += `\x1b[44;97m${"─".repeat(boxWidth)}\x1b[0m`;
-    } else {
-      const line = lines[i - 1]!;
-      output += `\x1b[44;97m  ${line.padEnd(boxWidth - 2)}\x1b[0m`;
-    }
-  }
-  output += "\x1b8";
-  return output;
+  return renderOverlayBox({ title: "Reply in thread", body, cols, rows });
 }
 
 export function describeHandoffState(_host: SubscreenHost, thread: OrchestrationThread): string {
