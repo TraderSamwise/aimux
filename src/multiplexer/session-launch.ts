@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 
 import { initProject, loadConfig } from "../config.js";
 import { buildContextPreamble } from "../context/context-bridge.js";
@@ -20,6 +21,7 @@ import { clearSessionTranscriptPath, findOverseerSessionId, loadMetadataState } 
 import type { SessionTeamMetadata } from "../team.js";
 import { extractCodexBackendSessionIdFromArgs } from "./session-capture.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { reconcileOfflineBackendSessionIds } from "../runtime-core/backend-id-reconcile.js";
 
 type SessionLaunchHost = any;
 
@@ -30,6 +32,11 @@ function listLaunchableTopologySessions(toolFilter?: string): any[] {
 
 function reconcileLaunchableTopology(host: SessionLaunchHost): void {
   host.syncSessionsFromTopology?.();
+  const backendReconcile = reconcileOfflineBackendSessionIds();
+  if (backendReconcile.reconciled.length > 0) {
+    debug(`reconciled backend session id for ${backendReconcile.reconciled.length} offline agent(s)`, "session");
+    host.syncSessionsFromTopology?.();
+  }
   host.saveState?.();
 }
 
@@ -257,7 +264,7 @@ export async function runDashboard(host: SessionLaunchHost): Promise<number> {
 export async function runProjectService(host: SessionLaunchHost): Promise<number> {
   initProject();
   host.mode = "project-service";
-  host.syncSessionsFromTopology();
+  reconcileLaunchableTopology(host);
   host.writeInstructionFiles();
   await host.startProjectServices();
   host.startStatusRefresh();
@@ -414,7 +421,8 @@ export function createSession(
   launchEnv?: Record<string, string>,
 ): any {
   const cols = process.stdout.columns ?? 80;
-  const sessionId = sessionIdOverride ?? `${command}-${Math.random().toString(36).slice(2, 8)}`;
+  const commandExecutable = basename(command) || command;
+  const sessionId = sessionIdOverride ?? `${commandExecutable}-${Math.random().toString(36).slice(2, 8)}`;
   if (host.sessions.some((session: any) => session.id === sessionId)) {
     throw new Error(`Session "${sessionId}" already exists`);
   }
@@ -422,17 +430,16 @@ export function createSession(
   const toolCfg = toolConfigKey ? config.tools[toolConfigKey] : undefined;
   // A launch override may swap the binary; aimux flags/preamble only apply to the tool's own command.
   const isConfiguredToolCommand = Boolean(toolCfg && toolCfg.command === command);
-  const isClaudeResumeStyleLaunch =
-    Boolean(toolCfg && toolConfigKey === "claude" && toolCfg.command === command) &&
-    shouldSkipClaudeSessionIdInjection(args);
-  const explicitClaudeBackendSessionId =
-    toolCfg && toolConfigKey === "claude" && toolCfg.command === command
-      ? extractClaudeBackendSessionIdFromArgs(args)
-      : undefined;
-  const explicitCodexBackendSessionId =
-    toolCfg && toolConfigKey === "codex" && toolCfg.command === command
-      ? extractCodexBackendSessionIdFromArgs(args)
-      : undefined;
+  const configuredToolExecutable = toolCfg ? basename(toolCfg.command) || toolCfg.command : undefined;
+  const isConfiguredClaudeCommand = isConfiguredToolCommand && configuredToolExecutable === "claude";
+  const isConfiguredCodexCommand = isConfiguredToolCommand && configuredToolExecutable === "codex";
+  const isClaudeResumeStyleLaunch = isConfiguredClaudeCommand && shouldSkipClaudeSessionIdInjection(args);
+  const explicitClaudeBackendSessionId = isConfiguredClaudeCommand
+    ? extractClaudeBackendSessionIdFromArgs(args)
+    : undefined;
+  const explicitCodexBackendSessionId = isConfiguredCodexCommand
+    ? extractCodexBackendSessionIdFromArgs(args)
+    : undefined;
   const effectiveSuppressStartupPreamble = suppressStartupPreamble;
   const effectiveSessionIdFlag = isConfiguredToolCommand && !isClaudeResumeStyleLaunch ? sessionIdFlag : undefined;
   const backendSessionId =
@@ -457,9 +464,8 @@ export function createSession(
   );
   const shouldInjectCodexDeveloperInstructions = Boolean(
     !effectiveSuppressStartupPreamble &&
-    toolCfg?.command === command &&
-    command === "codex" &&
-    toolCfg.developerInstructionsConfigKey &&
+    isConfiguredCodexCommand &&
+    toolCfg?.developerInstructionsConfigKey &&
     preamble.trim(),
   );
 
@@ -485,7 +491,7 @@ export function createSession(
   clearSessionTranscriptPath(sessionId);
   clearSessionTranscriptPath(sessionId, projectRoot);
 
-  if (toolCfg && toolConfigKey === "claude" && toolCfg.command === command && toolCfg.wrapperEnabled !== false) {
+  if (toolCfg && isConfiguredClaudeCommand && toolCfg.wrapperEnabled !== false) {
     finalArgs = injectClaudeHookArgs(finalArgs, {
       sessionId,
       projectRoot,
@@ -503,7 +509,7 @@ export function createSession(
     });
     launchCommand = wrapped.command;
     finalArgs = wrapped.args;
-  } else if (toolCfg && toolConfigKey === "codex" && toolCfg.command === command && toolCfg.wrapperEnabled !== false) {
+  } else if (toolCfg && isConfiguredCodexCommand && toolCfg.wrapperEnabled !== false) {
     try {
       installCodexHooks();
     } catch (error) {

@@ -124,6 +124,7 @@ import { configureLogging, debug, log, resolveLoggingRuntimeConfig, type Logging
 import { writeTextAtomic } from "./atomic-write.js";
 import { createRuntimeTopologyStore } from "./runtime-core/topology-store.js";
 import { listTopologySessionStates } from "./runtime-core/topology-sessions.js";
+import { recordTopologyBackendSessionId } from "./runtime-core/backend-session-ids.js";
 import { reconcileOfflineBackendSessionIds } from "./runtime-core/backend-id-reconcile.js";
 import {
   listTopologyWorktreeGraveyard,
@@ -418,7 +419,7 @@ async function resolvePermissionRequestOutput(
     // The hook runs in the agent's working dir, which is the worktree (or the
     // project root if no worktree). Carry it so clients can show project/worktree.
     const cwd = (typeof payload.cwd === "string" && payload.cwd) || process.cwd();
-    const result = await postLiveProjectServiceJsonOrLocal(
+    const result = await postHookProjectServiceJsonOrLocal(
       projectRoot,
       "/agents/interaction/request",
       { session: sessionId, type: "permission", payload: { toolName, input, cwd }, summary, timeoutMs: 115_000 },
@@ -438,6 +439,7 @@ async function postLiveProjectServiceJsonOrLocal(
   path: string,
   body: unknown,
   fallback: () => any,
+  options: { fallbackOnRequestError?: boolean } = {},
 ): Promise<any> {
   let endpoint;
   try {
@@ -448,11 +450,18 @@ async function postLiveProjectServiceJsonOrLocal(
   if (!endpoint) {
     return fallback();
   }
-  const { status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body,
-  });
+  let status: number;
+  let json: any;
+  try {
+    ({ status, json } = await requestJson(`http://${endpoint.host}:${endpoint.port}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    }));
+  } catch (error) {
+    if (!options.fallbackOnRequestError) throw error;
+    return fallback();
+  }
   if (status === 404 || status === 405 || status === 501) {
     return fallback();
   }
@@ -460,6 +469,15 @@ async function postLiveProjectServiceJsonOrLocal(
     throw new Error(json?.error || `request failed: ${status}`);
   }
   return json;
+}
+
+async function postHookProjectServiceJsonOrLocal(
+  projectRoot: string,
+  path: string,
+  body: unknown,
+  fallback: () => any,
+): Promise<any> {
+  return postLiveProjectServiceJsonOrLocal(projectRoot, path, body, fallback, { fallbackOnRequestError: true });
 }
 
 async function getLiveProjectServiceJsonOrLocal(projectRoot: string, path: string, fallback: () => any): Promise<any> {
@@ -494,6 +512,37 @@ async function resolveClaudeHookSessionId(explicitSessionId: string, payloadSess
   if (!payloadSessionId) return explicitSessionId;
   const match = listTopologySessionStates().find((session) => session.backendSessionId === payloadSessionId);
   return match?.id ?? explicitSessionId;
+}
+
+function recordBackendSessionIdInTopology(
+  projectRoot: string,
+  sessionId: string,
+  backendSessionId: string,
+): { ok: true; sessionId: string; backendSessionId: string } {
+  return {
+    ok: true,
+    ...recordTopologyBackendSessionId({ projectRoot, sessionId, backendSessionId }),
+  };
+}
+
+async function recordBackendSessionIdForHook(
+  projectRoot: string,
+  sessionId: string,
+  backendSessionId: string,
+): Promise<{ ok: boolean; sessionId: string; backendSessionId?: string; error?: string }> {
+  try {
+    const result = await postHookProjectServiceJsonOrLocal(
+      projectRoot,
+      "/agents/record-backend-session",
+      { sessionId, backendSessionId },
+      () => recordBackendSessionIdInTopology(projectRoot, sessionId, backendSessionId),
+    );
+    return { ok: true, sessionId: result.sessionId ?? sessionId, backendSessionId: result.backendSessionId };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    debug(`backend session id capture failed for ${sessionId}: ${message}`, "session");
+    return { ok: false, sessionId, backendSessionId, error: message };
+  }
 }
 
 async function resolveProjectServiceEndpoint(projectRoot = resolveProjectRoot(process.cwd())): Promise<{
@@ -3776,41 +3825,36 @@ program
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     if (payload.session_id) {
       result.backendSessionId = payload.session_id;
-      // No local fallback: this hook is a short-lived CLI process, not the
-      // runtime that owns the session, so it cannot record into topology
-      // directly. A service-down capture gap is closed by reconcile-on-restart.
-      await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/agents/record-backend-session",
-        { sessionId, backendSessionId: payload.session_id },
-        () => ({ ok: true }),
-      ).catch(() => {});
+      // Prefer the live runtime so in-memory state updates immediately; fall
+      // back to a strict topology latch only when the live service is absent.
+      const recorded = await recordBackendSessionIdForHook(projectRoot, sessionId, payload.session_id);
+      if (!recorded.ok) result.backendSessionRecordError = recorded.error;
     }
 
     const setActivity = async (activity: AgentActivityState) =>
-      postLiveProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+      postHookProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
         metadataTracker.setActivity(sessionId, activity, projectRoot),
       );
     const setAttention = async (attention: AgentAttentionState) =>
-      postLiveProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+      postHookProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
         metadataTracker.setAttention(sessionId, attention, projectRoot),
       );
     const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
-      postLiveProjectServiceJsonOrLocal(
+      postHookProjectServiceJsonOrLocal(
         projectRoot,
         "/event",
         { session: sessionId, event: { kind, message, tone } },
         () => metadataTracker.emit(sessionId, { kind, message, tone }, projectRoot),
       );
     const clearSessionNotifications = async () =>
-      postLiveProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
+      postHookProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
         ok: true,
         cleared: clearNotifications({ sessionId }),
       }));
     const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path.trim() : "";
     if (transcriptPath) {
       const context: SessionContextMetadata = { transcriptPath };
-      await postLiveProjectServiceJsonOrLocal(projectRoot, "/set-context", { session: sessionId, context }, () => {
+      await postHookProjectServiceJsonOrLocal(projectRoot, "/set-context", { session: sessionId, context }, () => {
         updateSessionMetadata(
           sessionId,
           (current) => ({
@@ -3836,7 +3880,7 @@ program
         await clearSessionNotifications();
         await setActivity("running");
         await setAttention("normal");
-        await postLiveProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+        await postHookProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
           metadataTracker.markSeen(sessionId, projectRoot),
         );
         break;
@@ -3884,22 +3928,22 @@ program
 
     const result: Record<string, unknown> = { ok: true, action, sessionId };
     const setActivity = async (activity: AgentActivityState) =>
-      postLiveProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
+      postHookProjectServiceJsonOrLocal(projectRoot, "/set-activity", { session: sessionId, activity }, () =>
         metadataTracker.setActivity(sessionId, activity, projectRoot),
       );
     const setAttention = async (attention: AgentAttentionState) =>
-      postLiveProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
+      postHookProjectServiceJsonOrLocal(projectRoot, "/set-attention", { session: sessionId, attention }, () =>
         metadataTracker.setAttention(sessionId, attention, projectRoot),
       );
     const emitEvent = async (kind: AgentEventKind, message?: string, tone?: MetadataTone) =>
-      postLiveProjectServiceJsonOrLocal(
+      postHookProjectServiceJsonOrLocal(
         projectRoot,
         "/event",
         { session: sessionId, event: { kind, message, tone } },
         () => metadataTracker.emit(sessionId, { kind, message, tone }, projectRoot),
       );
     const clearSessionNotifications = async () =>
-      postLiveProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
+      postHookProjectServiceJsonOrLocal(projectRoot, "/notifications/clear", { sessionId }, () => ({
         ok: true,
         cleared: clearNotifications({ sessionId }),
       }));
@@ -3907,12 +3951,8 @@ program
     const backendSessionId = typeof payload.session_id === "string" ? payload.session_id.trim() : "";
     if (backendSessionId) {
       result.backendSessionId = backendSessionId;
-      await postLiveProjectServiceJsonOrLocal(
-        projectRoot,
-        "/agents/record-backend-session",
-        { sessionId, backendSessionId },
-        () => ({ ok: true }),
-      ).catch(() => {});
+      const recorded = await recordBackendSessionIdForHook(projectRoot, sessionId, backendSessionId);
+      if (!recorded.ok) result.backendSessionRecordError = recorded.error;
     }
 
     switch (action) {
@@ -3922,7 +3962,7 @@ program
         await clearSessionNotifications();
         await setActivity("running");
         await setAttention("normal");
-        await postLiveProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
+        await postHookProjectServiceJsonOrLocal(projectRoot, "/mark-seen", { session: sessionId }, () =>
           metadataTracker.markSeen(sessionId, projectRoot),
         );
         break;
@@ -3936,7 +3976,7 @@ program
         const { toolName, input, summary } = summarizeClaudePermissionRequest(payload);
         // Best-effort: a telemetry transport failure must never break the hook —
         // it always falls through to `console.log({})` and the native prompt.
-        await postLiveProjectServiceJsonOrLocal(
+        await postHookProjectServiceJsonOrLocal(
           projectRoot,
           "/agents/interaction/notify",
           { session: sessionId, summary, payload: { toolName, input, cwd: process.cwd() } },

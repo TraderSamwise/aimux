@@ -31,6 +31,8 @@ import type {
 import { listWorktreeGraveyardPaths } from "./worktree-graveyard.js";
 import { setPendingDashboardServiceAction, setPendingDashboardSessionAction } from "./dashboard-ops.js";
 import { listTopologySessionStates } from "../runtime-core/topology-sessions.js";
+import { reconcileBackendSessionIdForSession } from "../runtime-core/backend-id-reconcile.js";
+import { assertSessionRestorable } from "../session-restorability.js";
 
 type DashboardModelHost = any;
 type MetadataPendingSettle<T> = (result: T) => Promise<boolean> | boolean;
@@ -60,6 +62,11 @@ function reconcileSessionsForLifecycleAction(host: DashboardModelHost): void {
 
 function resolveOfflineSessionForAction(host: DashboardModelHost, sessionId: string): any | undefined {
   return listOfflineSessionsForAction(host).find((session: any) => session.id === sessionId);
+}
+
+function shouldRelaunchFreshSession(sessionId: string): boolean {
+  const derived = loadMetadataState().sessions[sessionId]?.derived;
+  return derived?.activity === "error" || derived?.attention === "error";
 }
 
 function findDashboardSessionSeed(
@@ -97,6 +104,8 @@ function toDashboardSessionSeed(seed: any): DashboardSession | undefined {
     worktreePath: seed.worktreePath,
     createdAt: seed.createdAt,
     backendSessionId: seed.backendSessionId,
+    restoreState: seed.restoreState,
+    restoreBlockedReason: seed.restoreBlockedReason,
     headline: seed.headline,
     team: seed.team,
   };
@@ -351,9 +360,28 @@ async function resumeOfflineAgentWithPending(
     "starting",
     () => {
       reconcileSessionsForLifecycleAction(host);
-      const offline = resolveOfflineSessionForAction(host, sessionId);
+      let offline = resolveOfflineSessionForAction(host, sessionId);
       if (!offline) {
         throw new Error(`Agent "${sessionId}" not found`);
+      }
+      if (!offline.backendSessionId) {
+        let reconciledBackendSessionId: string | null = null;
+        try {
+          reconciledBackendSessionId = reconcileBackendSessionIdForSession(offline);
+        } catch {
+          reconciledBackendSessionId = null;
+        }
+        if (reconciledBackendSessionId) {
+          reconcileSessionsForLifecycleAction(host);
+          const reconciledOffline = resolveOfflineSessionForAction(host, sessionId);
+          offline =
+            reconciledOffline?.backendSessionId === reconciledBackendSessionId
+              ? reconciledOffline
+              : { ...offline, backendSessionId: reconciledBackendSessionId };
+        }
+      }
+      if (!shouldRelaunchFreshSession(sessionId)) {
+        assertSessionRestorable(offline, loadConfig().tools);
       }
       host.resumeOfflineSession(offline);
       return { sessionId, status: "running" as const };

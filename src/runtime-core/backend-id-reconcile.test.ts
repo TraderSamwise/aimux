@@ -10,7 +10,9 @@ import { listTopologySessionStates, saveRuntimeTopologySessions } from "./topolo
 describe("reconcileOfflineBackendSessionIds", () => {
   let repoRoot = "";
   let claudeHome = "";
+  let codexHome = "";
   let prevClaudeDir: string | undefined;
+  let prevCodexHome: string | undefined;
   const UUID = "0710a963-a473-430f-9f9a-e27dd4546328";
 
   beforeEach(async () => {
@@ -20,24 +22,36 @@ describe("reconcileOfflineBackendSessionIds", () => {
     claudeHome = mkdtempSync(join(tmpdir(), "aimux-claude-home-"));
     prevClaudeDir = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = claudeHome;
+    codexHome = mkdtempSync(join(tmpdir(), "aimux-codex-home-"));
+    prevCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
   });
 
   afterEach(() => {
     if (prevClaudeDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = prevClaudeDir;
+    if (prevCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = prevCodexHome;
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(claudeHome, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
   });
 
-  function seedOfflineClaude(id: string, cwd: string, backendSessionId?: string): void {
+  function seedOfflineSession(
+    toolConfigKey: string,
+    id: string,
+    cwd?: string,
+    backendSessionId?: string,
+    command = toolConfigKey,
+  ): void {
     saveRuntimeTopologySessions({
       projectRoot: repoRoot,
       sessions: [
         {
           id,
-          tool: "claude",
-          toolConfigKey: "claude",
-          command: "claude",
+          tool: toolConfigKey,
+          toolConfigKey,
+          command,
           args: [],
           lifecycle: "offline",
           worktreePath: cwd,
@@ -47,10 +61,23 @@ describe("reconcileOfflineBackendSessionIds", () => {
     });
   }
 
+  function seedOfflineClaude(id: string, cwd: string, backendSessionId?: string): void {
+    seedOfflineSession("claude", id, cwd, backendSessionId);
+  }
+
   function writeTranscript(cwd: string, uuid: string): void {
     const dir = join(claudeHome, "projects", cwd.replace(/[/.]/g, "-"));
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, `${uuid}.jsonl`), "{}\n");
+  }
+
+  function writeCodexTranscript(cwd: string, uuid: string): void {
+    const dir = join(codexHome, "sessions", "2026", "06", "14");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `rollout-2026-06-14T00-00-00-${uuid}.jsonl`),
+      `${JSON.stringify({ type: "session_meta", payload: { id: uuid, cwd } })}\n`,
+    );
   }
 
   it("backfills a missing backend id from the on-disk transcript into topology", () => {
@@ -65,6 +92,18 @@ describe("reconcileOfflineBackendSessionIds", () => {
     expect(offline?.backendSessionId).toBe(UUID);
   });
 
+  it("backfills a custom Claude tool config from Claude transcripts", () => {
+    const cwd = join(repoRoot, "wt", "custom-claude");
+    seedOfflineSession("claude-custom", "claude-custom-1", cwd, undefined, "claude");
+    writeTranscript(cwd, UUID);
+
+    const result = reconcileOfflineBackendSessionIds(repoRoot);
+
+    expect(result.reconciled).toEqual([{ id: "claude-custom-1", backendSessionId: UUID }]);
+    const offline = listTopologySessionStates({ statuses: ["offline"] }).find((s) => s.id === "claude-custom-1");
+    expect(offline?.backendSessionId).toBe(UUID);
+  });
+
   it("leaves sessions that already have a backend id untouched", () => {
     const cwd = join(repoRoot, "wt", "feature");
     seedOfflineClaude("claude-1", cwd, "existing-id");
@@ -75,6 +114,41 @@ describe("reconcileOfflineBackendSessionIds", () => {
     expect(result.reconciled).toEqual([]);
     const offline = listTopologySessionStates({ statuses: ["offline"] }).find((s) => s.id === "claude-1");
     expect(offline?.backendSessionId).toBe("existing-id");
+  });
+
+  it("backfills a missing codex backend id from the on-disk transcript into topology", () => {
+    const cwd = join(repoRoot, "wt", "codex-feature");
+    seedOfflineSession("codex", "codex-1", cwd);
+    writeCodexTranscript(cwd, UUID);
+
+    const result = reconcileOfflineBackendSessionIds(repoRoot);
+
+    expect(result.reconciled).toEqual([{ id: "codex-1", backendSessionId: UUID }]);
+    const offline = listTopologySessionStates({ statuses: ["offline"] }).find((s) => s.id === "codex-1");
+    expect(offline?.backendSessionId).toBe(UUID);
+  });
+
+  it("backfills a custom Codex tool config from Codex transcripts", () => {
+    const cwd = join(repoRoot, "wt", "custom-codex");
+    seedOfflineSession("codex-gpt5", "codex-custom-1", cwd, undefined, "codex");
+    writeCodexTranscript(cwd, UUID);
+
+    const result = reconcileOfflineBackendSessionIds(repoRoot);
+
+    expect(result.reconciled).toEqual([{ id: "codex-custom-1", backendSessionId: UUID }]);
+    const offline = listTopologySessionStates({ statuses: ["offline"] }).find((s) => s.id === "codex-custom-1");
+    expect(offline?.backendSessionId).toBe(UUID);
+  });
+
+  it("uses the project root as the discovery cwd for main-checkout sessions", () => {
+    seedOfflineSession("claude", "claude-main");
+    writeTranscript(repoRoot, UUID);
+
+    const result = reconcileOfflineBackendSessionIds(repoRoot);
+
+    expect(result.reconciled).toEqual([{ id: "claude-main", backendSessionId: UUID }]);
+    const offline = listTopologySessionStates({ statuses: ["offline"] }).find((s) => s.id === "claude-main");
+    expect(offline?.backendSessionId).toBe(UUID);
   });
 
   it("skips sessions with no discoverable transcript", () => {
