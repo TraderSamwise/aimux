@@ -29,7 +29,13 @@ export interface TmuxExposeOptions {
 }
 
 const CAPTURE_LINES = 40;
-const REFRESH_MS = 1000;
+// Preview refresh cadence scales with tile count: snappy for a few tiles, easier
+// on CPU when many panes are captured per tick (each tile is one capture-pane).
+function refreshDelayMs(count: number): number {
+  if (count > 8) return 1000;
+  if (count > 4) return 500;
+  return 250;
+}
 const GAP = 1;
 const MAX_TILE_COLS = 5;
 const MIN_TILE_WIDTH = 30;
@@ -197,9 +203,9 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   terminal.enterAlternateScreen(true);
   process.stdout.write("\x1b[?25l");
 
-  let interval: ReturnType<typeof setInterval> | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const exit = (code: number): number => {
-    if (interval) clearInterval(interval);
+    if (timer) clearTimeout(timer);
     process.stdout.write("\x1b[?25h");
     terminal.restoreTerminalState();
     return code;
@@ -378,14 +384,20 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
       }
     }
 
-    interval = setInterval(() => {
-      try {
-        refreshCaptures();
-        render();
-      } catch {
-        finish(1);
-      }
-    }, REFRESH_MS);
+    // Recursive timeout (not setInterval) so the cadence re-derives from the
+    // current tile count after a zoom changes how many panes are captured.
+    const scheduleRefresh = () => {
+      timer = setTimeout(() => {
+        try {
+          refreshCaptures();
+          render();
+          scheduleRefresh();
+        } catch {
+          finish(1);
+        }
+      }, refreshDelayMs(items.length));
+    };
+    scheduleRefresh();
 
     process.stdin.on("data", onData);
   });
