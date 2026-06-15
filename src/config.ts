@@ -18,6 +18,12 @@ export interface NotificationConfig {
   onError: boolean;
   /** Notify when an agent completes a task */
   onComplete: boolean;
+  /** Mark session notifications read when the user views that session. */
+  markReadOnView: boolean;
+  /** Clear generic needs-input attention when the user views that session. */
+  clearNeedsInputOnView: boolean;
+  /** Clear formal interaction attention on view; pending interactions still require an answer. */
+  clearFormalInteractionsOnView: boolean;
 }
 
 export interface WorktreeConfig {
@@ -156,6 +162,9 @@ const DEFAULT_CONFIG: AimuxConfig = {
     onPrompt: true,
     onError: true,
     onComplete: true,
+    markReadOnView: true,
+    clearNeedsInputOnView: true,
+    clearFormalInteractionsOnView: false,
   },
   statusline: {
     defaultPlugins: {
