@@ -642,11 +642,9 @@ export function recordSessionBackendSessionId(
     if (!topologySession) {
       throw new Error(`Agent "${sessionId}" is not managed in runtime topology`);
     }
-    upsertTopologySession(
-      { ...topologySession, backendSessionId: normalizedBackendSessionId },
-      "running",
-      { projectRoot: getRepoRoot() },
-    );
+    upsertTopologySession({ ...topologySession, backendSessionId: normalizedBackendSessionId }, "running", {
+      projectRoot: getRepoRoot(),
+    });
     recorded = { sessionId, backendSessionId: normalizedBackendSessionId };
   } else {
     recorded = recordTopologyBackendSessionId({

@@ -63,7 +63,10 @@ export function describeSessionRestorability(
   return { restoreState: "ready" };
 }
 
-export function assertSessionRestorable(session: RestorableSessionLike, tools: Record<string, RestoreToolConfig>): void {
+export function assertSessionRestorable(
+  session: RestorableSessionLike,
+  tools: Record<string, RestoreToolConfig>,
+): void {
   const restorability = describeSessionRestorability(session, tools);
   if (restorability?.restoreState === "blocked") {
     throw new Error(`Cannot restore session "${session.id ?? "unknown"}": ${restorability.restoreBlockedReason}`);

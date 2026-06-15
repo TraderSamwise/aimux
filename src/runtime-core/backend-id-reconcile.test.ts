@@ -38,10 +38,11 @@ describe("reconcileOfflineBackendSessionIds", () => {
   });
 
   function seedOfflineSession(
-    toolConfigKey: "claude" | "codex",
+    toolConfigKey: string,
     id: string,
     cwd?: string,
     backendSessionId?: string,
+    command = toolConfigKey,
   ): void {
     saveRuntimeTopologySessions({
       projectRoot: repoRoot,
@@ -50,7 +51,7 @@ describe("reconcileOfflineBackendSessionIds", () => {
           id,
           tool: toolConfigKey,
           toolConfigKey,
-          command: toolConfigKey,
+          command,
           args: [],
           lifecycle: "offline",
           worktreePath: cwd,
@@ -91,6 +92,18 @@ describe("reconcileOfflineBackendSessionIds", () => {
     expect(offline?.backendSessionId).toBe(UUID);
   });
 
+  it("backfills a custom Claude tool config from Claude transcripts", () => {
+    const cwd = join(repoRoot, "wt", "custom-claude");
+    seedOfflineSession("claude-custom", "claude-custom-1", cwd, undefined, "claude");
+    writeTranscript(cwd, UUID);
+
+    const result = reconcileOfflineBackendSessionIds(repoRoot);
+
+    expect(result.reconciled).toEqual([{ id: "claude-custom-1", backendSessionId: UUID }]);
+    const offline = listTopologySessionStates({ statuses: ["offline"] }).find((s) => s.id === "claude-custom-1");
+    expect(offline?.backendSessionId).toBe(UUID);
+  });
+
   it("leaves sessions that already have a backend id untouched", () => {
     const cwd = join(repoRoot, "wt", "feature");
     seedOfflineClaude("claude-1", cwd, "existing-id");
@@ -112,6 +125,18 @@ describe("reconcileOfflineBackendSessionIds", () => {
 
     expect(result.reconciled).toEqual([{ id: "codex-1", backendSessionId: UUID }]);
     const offline = listTopologySessionStates({ statuses: ["offline"] }).find((s) => s.id === "codex-1");
+    expect(offline?.backendSessionId).toBe(UUID);
+  });
+
+  it("backfills a custom Codex tool config from Codex transcripts", () => {
+    const cwd = join(repoRoot, "wt", "custom-codex");
+    seedOfflineSession("codex-gpt5", "codex-custom-1", cwd, undefined, "codex");
+    writeCodexTranscript(cwd, UUID);
+
+    const result = reconcileOfflineBackendSessionIds(repoRoot);
+
+    expect(result.reconciled).toEqual([{ id: "codex-custom-1", backendSessionId: UUID }]);
+    const offline = listTopologySessionStates({ statuses: ["offline"] }).find((s) => s.id === "codex-custom-1");
     expect(offline?.backendSessionId).toBe(UUID);
   });
 

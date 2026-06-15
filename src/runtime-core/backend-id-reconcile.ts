@@ -28,11 +28,27 @@ export function reconcileBackendSessionIdForSession(
 ): string | null {
   if (session.backendSessionId) return null;
   const cwd = session.worktreePath ?? projectRoot;
-  const discovered = discoverBackendSessionId(session.toolConfigKey, cwd);
+  const discovered = discoverBackendSessionId(discoveryToolKeyForSession(session), cwd);
   if (!discovered) return null;
   return recordTopologyBackendSessionId({
     projectRoot,
     sessionId: session.id,
     backendSessionId: discovered,
   }).backendSessionId;
+}
+
+function discoveryToolKeyForSession(session: RuntimeTopologySessionState): string | undefined {
+  return (
+    normalizeDiscoveryToolKey(session.toolConfigKey) ??
+    normalizeDiscoveryToolKey(session.tool) ??
+    normalizeDiscoveryToolKey(session.command)
+  );
+}
+
+function normalizeDiscoveryToolKey(value: string | undefined): "claude" | "codex" | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const command = trimmed.split(/[\\/]/).pop()?.toLowerCase();
+  if (command === "claude" || command === "codex") return command;
+  return undefined;
 }
