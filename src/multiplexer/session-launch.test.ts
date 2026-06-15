@@ -155,6 +155,127 @@ describe("createSession", () => {
     rmSync(repoRoot, { recursive: true, force: true });
   });
 
+  it("wraps custom claude tool configs through the managed env boundary", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-custom-claude-"));
+    gitInit(repoRoot);
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          tools: {
+            "claude-custom": {
+              command: "claude",
+              args: [],
+              enabled: true,
+              wrapperEnabled: true,
+              preambleFlag: ["--append-system-prompt"],
+              sessionIdFlag: ["--session-id", "{sessionId}"],
+              resumeArgs: ["--resume", "{sessionId}"],
+              resumeByBackendSessionId: true,
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "claude" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "claude" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    createSession(host, "claude", [], undefined, "claude-custom", undefined, undefined, repoRoot);
+
+    const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
+    expect(createWindowArgs[3]).toBe("env");
+    expect(createWindowArgs[4].join(" ")).toContain("AIMUX_SESSION_ID=claude-");
+    expect(createWindowArgs[4].join(" ")).toContain("AIMUX_TOOL=claude-custom");
+    expect(createWindowArgs[4]).toContain("claude");
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  it("wraps custom codex tool configs through the managed env boundary", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-custom-codex-"));
+    gitInit(repoRoot);
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          tools: {
+            "codex-gpt5": {
+              command: "codex",
+              args: [],
+              enabled: true,
+              resumeArgs: ["resume", "{sessionId}"],
+              resumeByBackendSessionId: true,
+              developerInstructionsConfigKey: "developer_instructions",
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    await initPaths(repoRoot);
+
+    const host: any = {
+      sessionBootstrap: {
+        buildSessionPreamble: vi.fn(() => ""),
+        ensurePlanFile: vi.fn(),
+        finalizePreamble: vi.fn(),
+      },
+      tmuxRuntimeManager: {
+        ensureProjectSession: vi.fn(() => ({ sessionName: "aimux-test" })),
+        createWindow: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        getTargetByWindowId: vi.fn(() => ({ sessionName: "aimux-test", windowId: "@1", windowName: "codex" })),
+        isWindowAlive: vi.fn(() => true),
+      },
+      sessionTmuxTargets: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      registerManagedSession: vi.fn(),
+      sessions: [],
+      getSessionLabel: vi.fn(),
+      startedInDashboard: false,
+      mode: "session",
+      saveState: vi.fn(),
+      activeIndex: 0,
+    };
+
+    createSession(host, "codex", [], undefined, "codex-gpt5", undefined, undefined, repoRoot);
+
+    const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
+    expect(createWindowArgs[3]).toBe("env");
+    expect(createWindowArgs[4].join(" ")).toContain("AIMUX_SESSION_ID=codex-");
+    expect(createWindowArgs[4].join(" ")).toContain("AIMUX_PROJECT_ROOT=");
+    expect(createWindowArgs[4].join(" ")).toContain("AIMUX_TOOL=codex-gpt5");
+    expect(createWindowArgs[4]).toContain("codex");
+
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+
   it("assigns, passes, and persists a backend session id for a fresh claude launch", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-claude-fresh-"));
     gitInit(repoRoot);
