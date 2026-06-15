@@ -150,6 +150,7 @@ export function startStatusRefresh(host: RuntimeStateHost): void {
           sessionId: session.id,
           title: `${session.id} ready for next step`,
           message: "Agent stopped after a turn.",
+          // Keep the legacy prefix so renamed idle alerts dedupe with prior needs-input alerts.
           dedupeKey: `idle-needs-input:${session.id}`,
           cooldownMs: 15_000,
         });
