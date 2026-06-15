@@ -158,6 +158,7 @@ describe("createSession", () => {
   it("wraps custom claude tool configs through the managed env boundary", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-custom-claude-"));
     gitInit(repoRoot);
+    const claudeBin = join(repoRoot, "bin", "claude");
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(
       join(repoRoot, ".aimux/config.json"),
@@ -165,7 +166,7 @@ describe("createSession", () => {
         {
           tools: {
             "claude-custom": {
-              command: "claude",
+              command: claudeBin,
               args: [],
               enabled: true,
               wrapperEnabled: true,
@@ -205,13 +206,13 @@ describe("createSession", () => {
       activeIndex: 0,
     };
 
-    createSession(host, "claude", [], undefined, "claude-custom", undefined, undefined, repoRoot);
+    createSession(host, claudeBin, [], undefined, "claude-custom", undefined, undefined, repoRoot);
 
     const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
     expect(createWindowArgs[3]).toBe("env");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_SESSION_ID=claude-");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_TOOL=claude-custom");
-    expect(createWindowArgs[4]).toContain("claude");
+    expect(createWindowArgs[4]).toContain(claudeBin);
 
     rmSync(repoRoot, { recursive: true, force: true });
   });
@@ -219,6 +220,7 @@ describe("createSession", () => {
   it("wraps custom codex tool configs through the managed env boundary", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aimux-session-launch-custom-codex-"));
     gitInit(repoRoot);
+    const codexBin = join(repoRoot, "bin", "codex");
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(
       join(repoRoot, ".aimux/config.json"),
@@ -226,7 +228,7 @@ describe("createSession", () => {
         {
           tools: {
             "codex-gpt5": {
-              command: "codex",
+              command: codexBin,
               args: [],
               enabled: true,
               resumeArgs: ["resume", "{sessionId}"],
@@ -264,14 +266,14 @@ describe("createSession", () => {
       activeIndex: 0,
     };
 
-    createSession(host, "codex", [], undefined, "codex-gpt5", undefined, undefined, repoRoot);
+    createSession(host, codexBin, [], undefined, "codex-gpt5", undefined, undefined, repoRoot);
 
     const createWindowArgs = host.tmuxRuntimeManager.createWindow.mock.calls[0];
     expect(createWindowArgs[3]).toBe("env");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_SESSION_ID=codex-");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_PROJECT_ROOT=");
     expect(createWindowArgs[4].join(" ")).toContain("AIMUX_TOOL=codex-gpt5");
-    expect(createWindowArgs[4]).toContain("codex");
+    expect(createWindowArgs[4]).toContain(codexBin);
 
     rmSync(repoRoot, { recursive: true, force: true });
   });

@@ -42,4 +42,24 @@ describe("describeSessionRestorability", () => {
       restoreBlockedReason: 'agent tool "claude-custom" does not support exact backend resume',
     });
   });
+
+  it("revalidates precomputed ready state against exact backend resume requirements", () => {
+    expect(
+      describeSessionRestorability(
+        {
+          id: "claude-stale-ready",
+          status: "offline",
+          command: "claude",
+          toolConfigKey: "claude",
+          restoreState: "ready",
+        },
+        {
+          claude: { resumeArgs: ["--resume", "{sessionId}"], resumeByBackendSessionId: true },
+        },
+      ),
+    ).toEqual({
+      restoreState: "blocked",
+      restoreBlockedReason: "missing exact resumable backend session id",
+    });
+  });
 });

@@ -58,7 +58,7 @@ function readFirstLine(path: string): string | null {
     const buffer = Buffer.alloc(16 * 1024);
     let position = 0;
     while (position < MAX_FIRST_LINE_BYTES) {
-      const bytesRead = readSync(fd, buffer, 0, buffer.length, position);
+      const bytesRead = readSync(fd, buffer, 0, Math.min(buffer.length, MAX_FIRST_LINE_BYTES - position), position);
       if (bytesRead <= 0) break;
       const chunk = Buffer.from(buffer.subarray(0, bytesRead));
       const newlineIndex = chunk.indexOf(0x0a);

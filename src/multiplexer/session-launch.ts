@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 
 import { initProject, loadConfig } from "../config.js";
 import { buildContextPreamble } from "../context/context-bridge.js";
@@ -420,7 +421,8 @@ export function createSession(
   launchEnv?: Record<string, string>,
 ): any {
   const cols = process.stdout.columns ?? 80;
-  const sessionId = sessionIdOverride ?? `${command}-${Math.random().toString(36).slice(2, 8)}`;
+  const commandExecutable = basename(command) || command;
+  const sessionId = sessionIdOverride ?? `${commandExecutable}-${Math.random().toString(36).slice(2, 8)}`;
   if (host.sessions.some((session: any) => session.id === sessionId)) {
     throw new Error(`Session "${sessionId}" already exists`);
   }
@@ -428,8 +430,9 @@ export function createSession(
   const toolCfg = toolConfigKey ? config.tools[toolConfigKey] : undefined;
   // A launch override may swap the binary; aimux flags/preamble only apply to the tool's own command.
   const isConfiguredToolCommand = Boolean(toolCfg && toolCfg.command === command);
-  const isConfiguredClaudeCommand = Boolean(toolCfg && toolCfg.command === command && command === "claude");
-  const isConfiguredCodexCommand = Boolean(toolCfg && toolCfg.command === command && command === "codex");
+  const configuredToolExecutable = toolCfg ? basename(toolCfg.command) || toolCfg.command : undefined;
+  const isConfiguredClaudeCommand = isConfiguredToolCommand && configuredToolExecutable === "claude";
+  const isConfiguredCodexCommand = isConfiguredToolCommand && configuredToolExecutable === "codex";
   const isClaudeResumeStyleLaunch = isConfiguredClaudeCommand && shouldSkipClaudeSessionIdInjection(args);
   const explicitClaudeBackendSessionId = isConfiguredClaudeCommand
     ? extractClaudeBackendSessionIdFromArgs(args)
@@ -461,9 +464,8 @@ export function createSession(
   );
   const shouldInjectCodexDeveloperInstructions = Boolean(
     !effectiveSuppressStartupPreamble &&
-    toolCfg?.command === command &&
-    command === "codex" &&
-    toolCfg.developerInstructionsConfigKey &&
+    isConfiguredCodexCommand &&
+    toolCfg?.developerInstructionsConfigKey &&
     preamble.trim(),
   );
 
