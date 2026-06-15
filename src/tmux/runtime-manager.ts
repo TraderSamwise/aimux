@@ -799,10 +799,10 @@ export class TmuxRuntimeManager {
     const shouldResolveManagedClient =
       insideTmux && this.isManagedSessionName(target.sessionName) && !this.isClientSessionName(target.sessionName);
     const sessionName = shouldResolveManagedClient
-      ? this.resolveOpenSessionName(target.sessionName, true, options.clientSuffix)
+      ? this.resolveOpenSessionName(target.sessionName, true, options.clientSuffix, options.clientTty)
       : options.alreadyResolved
         ? target.sessionName
-        : this.resolveOpenSessionName(target.sessionName, insideTmux, options.clientSuffix);
+        : this.resolveOpenSessionName(target.sessionName, insideTmux, options.clientSuffix, options.clientTty);
     const effectiveTarget =
       sessionName !== target.sessionName && !isDashboardWindowName(target.windowName)
         ? this.ensureLinkedWindow(sessionName, target)
@@ -1087,9 +1087,14 @@ export class TmuxRuntimeManager {
     this.exec(["set-option", "-as", "-t", sessionName, "terminal-features", `,${feature}`]);
   }
 
-  private resolveOpenSessionName(sessionName: string, insideTmux: boolean, suffixOverride?: string): string {
+  private resolveOpenSessionName(
+    sessionName: string,
+    insideTmux: boolean,
+    suffixOverride?: string,
+    clientTty?: string,
+  ): string {
     if (!this.isManagedSessionName(sessionName) || this.isClientSessionName(sessionName)) return sessionName;
-    const clientSuffix = suffixOverride ?? this.resolveClientSuffix(insideTmux);
+    const clientSuffix = suffixOverride ?? this.resolveClientSuffix(insideTmux, clientTty);
     if (!clientSuffix) return sessionName;
     const clientSessionName = this.getProjectClientSessionName(sessionName, clientSuffix);
     const projectRoot = this.getSessionOption(sessionName, "@aimux-project-root");
@@ -1108,7 +1113,7 @@ export class TmuxRuntimeManager {
     return createHash("sha1").update(value).digest("hex").slice(0, 8);
   }
 
-  private resolveClientSuffix(insideTmux: boolean): string | null {
+  private resolveClientSuffix(insideTmux: boolean, clientTtyOverride?: string): string | null {
     const override = process.env.AIMUX_CLIENT_KEY?.trim();
     if (override) return this.normalizeClientSuffix(override);
     if (insideTmux) {
@@ -1117,6 +1122,9 @@ export class TmuxRuntimeManager {
         const match = currentSession.match(/-client-([a-f0-9]{8})$/);
         if (match) return match[1]!;
       }
+      // Prefer the real client's tty (passed explicitly) over display-message,
+      // which from inside a display-popup would resolve the popup's own client.
+      if (clientTtyOverride) return this.normalizeClientSuffix(clientTtyOverride);
       const clientTty = this.displayMessage("#{client_tty}");
       const clientPid = this.displayMessage("#{client_pid}");
       if (clientTty || clientPid) return this.normalizeClientSuffix(`${clientTty ?? "tty"}:${clientPid ?? "pid"}`);
