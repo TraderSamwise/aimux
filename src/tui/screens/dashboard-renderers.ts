@@ -3,7 +3,17 @@ import { isAgentOutputEventKind } from "../../agent-events.js";
 import { buildDashboardQuickJumpWorktrees, DASHBOARD_QUICK_JUMP_LIMIT } from "../../dashboard/quick-jump.js";
 import { formatRelativeRecency } from "../../recency.js";
 import { center, composeTwoPane, stripAnsi, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
-import { card, chip, cols as gridCols, keycap, pill, statusDot, style, type Tone } from "../render/theme.js";
+import {
+  card,
+  chip,
+  type ChipTone,
+  cols as gridCols,
+  keycap,
+  pill,
+  statusDot,
+  style,
+  type Tone,
+} from "../render/theme.js";
 
 const RECENT_IDLE_MS = 2 * 60 * 1000;
 
@@ -137,6 +147,14 @@ function sessionTimeText(session: DashboardSession): string {
   return recency ? style(`${anchor.label} ${recency}`, "muted") : "";
 }
 
+/** An offline agent gets no accent colors — its chips/hints render muted so the
+ *  eye stays on live agents. Pending actions (creating/graveyarding) still count
+ *  as active. */
+function isSessionOffline(session: DashboardSession): boolean {
+  if (session.pendingAction) return false;
+  return effectiveSessionRowState(session) === "offline" || session.status === "offline";
+}
+
 function sessionActivityChips(session: DashboardSession): string {
   const chips: string[] = [];
   const notificationUnread = session.semantic?.notifications.unreadCount ?? session.notificationUnreadCount ?? 0;
@@ -146,14 +164,18 @@ function sessionActivityChips(session: DashboardSession): string {
   const threadWaitingOnThem = session.threadWaitingOnThemCount ?? 0;
   const threadPending = session.threadPendingCount ?? 0;
 
-  if (notificationUnread > 0) chips.push(chip(`${Math.min(notificationUnread, 99)} unread`, "work"));
-  if (activityNew > 0) chips.push(chip(`${Math.min(activityNew, 99)} unseen`, "info"));
+  // Offline rows lose all accent tones; colors are reserved for live agents.
+  const offline = isSessionOffline(session);
+  const tone = (active: ChipTone): ChipTone => (offline ? "muted" : active);
+
+  if (notificationUnread > 0) chips.push(chip(`${Math.min(notificationUnread, 99)} unread`, tone("work")));
+  if (activityNew > 0) chips.push(chip(`${Math.min(activityNew, 99)} unseen`, tone("info")));
   if (threadUnread > 0 || threadWaitingOnMe > 0 || threadWaitingOnThem > 0) {
     chips.push(chip(`thread ${threadUnread}/${threadWaitingOnMe}/${threadWaitingOnThem}`, "muted"));
   }
-  if (threadPending > 0) chips.push(chip(`${threadPending} pending`, "danger"));
-  if ((session.workflowOnMeCount ?? 0) > 0) chips.push(chip("workflow on you", "attn"));
-  if ((session.workflowBlockedCount ?? 0) > 0) chips.push(chip("workflow blocked", "danger"));
+  if (threadPending > 0) chips.push(chip(`${threadPending} pending`, tone("danger")));
+  if ((session.workflowOnMeCount ?? 0) > 0) chips.push(chip("workflow on you", tone("attn")));
+  if ((session.workflowBlockedCount ?? 0) > 0) chips.push(chip("workflow blocked", tone("danger")));
   if ((session.workflowFamilyCount ?? 0) > 0) chips.push(chip(`workflow ${session.workflowFamilyCount}`, "muted"));
 
   return chips.join(" ");
@@ -365,11 +387,13 @@ export function renderDashboardFrame(
       { content: sessionStatusCell(session, state.derivedStatusLabel(session)), width: COL_STATUS },
       { content: sessionTimeText(session), width: COL_TIME },
     ]);
+    const offline = isSessionOffline(session);
+    const hintTone = (active: Tone): Tone => (offline ? "muted" : active);
     const trailing = trailingHints([
       sessionActivityChips(session),
-      isRecentlyIdle(session) ? style("idle now", "attn") : "",
-      session.taskDescription ? style(`⧫ ${truncate(session.taskDescription, 40)}`, "blocked") : "",
-      session.workflowNextAction ? style(`→ ${truncate(session.workflowNextAction, 24)}`, "attn") : "",
+      isRecentlyIdle(session) ? style("idle now", hintTone("attn")) : "",
+      session.taskDescription ? style(`⧫ ${truncate(session.taskDescription, 40)}`, hintTone("blocked")) : "",
+      session.workflowNextAction ? style(`→ ${truncate(session.workflowNextAction, 24)}`, hintTone("attn")) : "",
       session.headline ? style(`· ${truncate(session.headline, 50)}`, "muted") : "",
     ]);
     return trailing ? `${grid} ${trailing}` : grid;
