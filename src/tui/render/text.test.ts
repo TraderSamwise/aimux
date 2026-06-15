@@ -14,4 +14,14 @@ describe("composeTwoPane", () => {
     expect(plain).toContain("left");
     expect(plain).toContain("right");
   });
+
+  it("keeps output within cols for a wider separator", () => {
+    const cols = 80;
+    const [line] = composeTwoPane(["left"], ["right"], cols, "  ||  ");
+    expect(stripAnsi(line).length).toBeLessThanOrEqual(cols);
+    const plain = stripAnsi(line);
+    expect(plain).toContain("||");
+    expect(plain).toContain("left");
+    expect(plain).toContain("right");
+  });
 });
