@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
+import { updateSessionMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import { upsertTopologyService } from "../runtime-core/topology-services.js";
@@ -380,6 +381,17 @@ describe("resumeOfflineSession", () => {
       mkdirSync(dir, { recursive: true });
       const uuid = "0710a963-a473-430f-9f9a-e27dd4546328";
       writeFileSync(join(dir, `${uuid}.jsonl`), "{}\n");
+      seedTopologySessions([
+        {
+          id: "claude-1",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: cwd,
+        },
+      ]);
 
       const createSession = vi.fn();
       const host: any = {
@@ -414,7 +426,61 @@ describe("resumeOfflineSession", () => {
     }
   });
 
+  it("marks fresh relaunches with the backend id they supersede", () => {
+    const restoredSession: any = {};
+    const createSession = vi.fn(() => restoredSession);
+    updateSessionMetadata("claude-error", (current) => ({
+      ...current,
+      derived: { activity: "error", attention: "error" },
+    }));
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "claude-error", backendSessionId: "backend-old" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: {
+        canResumeWithBackendSessionId: vi.fn(() => false),
+      },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession,
+    };
+
+    resumeOfflineSession(host, {
+      id: "claude-error",
+      command: "claude",
+      toolConfigKey: "claude",
+      backendSessionId: "backend-old",
+      args: [],
+      worktreePath: repoRoot,
+    });
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession.mock.calls[0][7]).toBeUndefined();
+    expect(createSession.mock.calls[0][10]).toBe(false);
+    expect(restoredSession.supersededBackendSessionId).toBe("backend-old");
+  });
+
   it("records backend session ids on live and offline sessions", () => {
+    seedTopologySessions([
+      {
+        id: "claude-1",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "live",
+      },
+      {
+        id: "claude-2",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "offline",
+      },
+    ]);
     const runtime = {
       id: "claude-1",
       command: "claude",
@@ -449,7 +515,48 @@ describe("resumeOfflineSession", () => {
     expect(host.saveState).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects hook-discovered backend ids when the runtime row is not loaded", () => {
+  it("rejects stale backend ids from a superseded launch before a fresh relaunch records its new id", () => {
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-stale",
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+    });
+    const runtime = {
+      id: "claude-racy",
+      command: "claude",
+      backendSessionId: undefined,
+      supersededBackendSessionId: "backend-stale",
+    };
+    const host: any = {
+      sessions: [runtime],
+      offlineSessions: [],
+      syncTmuxWindowMetadata: vi.fn(),
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+    };
+
+    expect(() => recordSessionBackendSessionId(host, "claude-racy", "backend-stale")).toThrow(
+      'Agent "claude-racy" ignored stale backend session "backend-stale" from a superseded launch',
+    );
+
+    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-new")).toEqual({
+      sessionId: "claude-racy",
+      backendSessionId: "backend-new",
+    });
+    expect(runtime.backendSessionId).toBe("backend-new");
+  });
+
+  it("records hook-discovered backend ids when topology exists but the host row is not loaded", () => {
     saveRuntimeTopologySessions({
       sessions: [
         {
@@ -468,16 +575,77 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [],
     };
 
-    expect(() => recordSessionBackendSessionId(host, "claude-racy", "backend-racy")).toThrow(
-      'Agent "claude-racy" is not managed by this runtime',
-    );
+    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-racy")).toEqual({
+      sessionId: "claude-racy",
+      backendSessionId: "backend-racy",
+    });
 
     expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
-      undefined,
+      "backend-racy",
     );
   });
 
-  it("does not accept hook fallback backend ids without a loaded row", () => {
+  it("recovers a missing backend id from the project root before restoring a main-checkout session", () => {
+    const claudeHome = mkdtempSync(join(tmpdir(), "aimux-runtime-state-claude-"));
+    const previousClaudeDir = process.env.CLAUDE_CONFIG_DIR;
+    try {
+      process.env.CLAUDE_CONFIG_DIR = claudeHome;
+      const backendSessionId = "0710a963-a473-430f-9f9a-e27dd4546328";
+      const transcriptDir = join(claudeHome, "projects", repoRoot.replace(/[/.]/g, "-"));
+      mkdirSync(transcriptDir, { recursive: true });
+      writeFileSync(join(transcriptDir, `${backendSessionId}.jsonl`), "{}\n");
+      seedTopologySessions([
+        {
+          id: "claude-main",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "offline",
+        },
+      ]);
+      const createSession = vi.fn();
+      const host: any = {
+        sessions: [],
+        offlineSessions: [{ id: "claude-main" }],
+        sessionLabels: new Map(),
+        sessionBootstrap: {
+          canResumeWithBackendSessionId: vi.fn((_toolCfg, id) => id === backendSessionId),
+        },
+        getSessionLabel: vi.fn(),
+        invalidateDesktopStateSnapshot: vi.fn(),
+        writeStatuslineFile: vi.fn(),
+        debug: vi.fn(),
+        createSession,
+      };
+
+      resumeOfflineSession(host, {
+        id: "claude-main",
+        command: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        createdAt: new Date().toISOString(),
+      });
+
+      expect(createSession).toHaveBeenCalledTimes(1);
+      const call = createSession.mock.calls[0];
+      expect(call[0]).toBe("claude");
+      expect(call[1]).toEqual(expect.arrayContaining(["--resume", backendSessionId]));
+      expect(call[3]).toBe("claude");
+      expect(call[6]).toBeUndefined();
+      expect(call[7]).toBe(backendSessionId);
+      expect(call[8]).toBe("claude-main");
+      expect(listTopologySessionStates().find((session) => session.id === "claude-main")?.backendSessionId).toBe(
+        backendSessionId,
+      );
+    } finally {
+      if (previousClaudeDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousClaudeDir;
+      rmSync(claudeHome, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept conflicting hook fallback backend ids without a loaded row", () => {
     saveRuntimeTopologySessions({
       sessions: [
         {
@@ -498,7 +666,7 @@ describe("resumeOfflineSession", () => {
     };
 
     expect(() => recordSessionBackendSessionId(host, "claude-racy", "backend-new")).toThrow(
-      'Agent "claude-racy" is not managed by this runtime',
+      'Agent "claude-racy" already has backend session "backend-saved"',
     );
 
     expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
@@ -506,7 +674,7 @@ describe("resumeOfflineSession", () => {
     );
   });
 
-  it("does not let metadata create hook fallback authority without a loaded row", () => {
+  it("accepts matching hook fallback backend ids from topology without a loaded row", () => {
     saveRuntimeTopologySessions({
       sessions: [
         {
@@ -526,16 +694,69 @@ describe("resumeOfflineSession", () => {
       offlineSessions: [],
     };
 
-    expect(() => recordSessionBackendSessionId(host, "claude-racy", "backend-saved")).toThrow(
-      'Agent "claude-racy" is not managed by this runtime',
-    );
+    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-saved")).toEqual({
+      sessionId: "claude-racy",
+      backendSessionId: "backend-saved",
+    });
 
     expect(listTopologySessionStates().find((session) => session.id === "claude-racy")?.backendSessionId).toBe(
       "backend-saved",
     );
   });
 
+  it("lets a live runtime replace a stale topology backend id during fresh relaunch", () => {
+    saveRuntimeTopologySessions({
+      sessions: [
+        {
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-stale",
+          lifecycle: "offline",
+          worktreePath: repoRoot,
+        },
+      ],
+    });
+    const runtime = {
+      id: "claude-racy",
+      command: "claude",
+      backendSessionId: undefined,
+    };
+    const host: any = {
+      sessions: [runtime],
+      offlineSessions: [],
+      syncTmuxWindowMetadata: vi.fn(),
+      saveState: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+    };
+
+    expect(recordSessionBackendSessionId(host, "claude-racy", "backend-new")).toEqual({
+      sessionId: "claude-racy",
+      backendSessionId: "backend-new",
+    });
+
+    expect(runtime.backendSessionId).toBe("backend-new");
+    const topologySession = listTopologySessionStates().find((session) => session.id === "claude-racy");
+    expect(topologySession?.backendSessionId).toBe("backend-new");
+    expect(topologySession?.status).toBe("running");
+    expect(host.syncTmuxWindowMetadata).toHaveBeenCalledWith("claude-racy");
+  });
+
   it("does not replace an existing backend session id", () => {
+    seedTopologySessions([
+      {
+        id: "claude-1",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        backendSessionId: "backend-original",
+        lifecycle: "live",
+      },
+    ]);
     const host: any = {
       sessions: [{ id: "claude-1", command: "claude", backendSessionId: "backend-original" }],
       offlineSessions: [],
@@ -547,6 +768,16 @@ describe("resumeOfflineSession", () => {
   });
 
   it("does not let stale metadata override a known runtime backend id", () => {
+    seedTopologySessions([
+      {
+        id: "claude-1",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "live",
+      },
+    ]);
     const runtime = { id: "claude-1", command: "claude", backendSessionId: "backend-current" };
     const host: any = {
       sessions: [runtime],
@@ -1045,6 +1276,55 @@ describe("resumeOfflineSession", () => {
       Date.parse("2026-04-21T00:00:00.000Z"),
       team,
     );
+  });
+
+  it("preserves backend ids when adopting live tmux agent windows after restart", () => {
+    seedTopologySessions([
+      {
+        id: "codex-live",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "live",
+        backendSessionId: "backend-live",
+        worktreePath: repoRoot,
+      },
+    ]);
+    const host: any = {
+      sessions: [],
+      sessionTmuxTargets: new Map(),
+      tmuxRuntimeManager: {
+        listProjectManagedWindows: vi.fn(() => [
+          {
+            target: {
+              sessionName: "aimux-test",
+              windowId: "@1",
+              windowIndex: 1,
+              windowName: "codex",
+            },
+            metadata: {
+              kind: "agent",
+              sessionId: "codex-live",
+              command: "codex",
+              args: [],
+              toolConfigKey: "codex",
+              worktreePath: repoRoot,
+              createdAt: "2026-04-21T00:00:00.000Z",
+            },
+          },
+        ]),
+      },
+      registerManagedSession: vi.fn((session: any) => host.sessions.push(session)),
+      sessionLabels: new Map(),
+      syncTmuxWindowMetadata: vi.fn(),
+      updateContextWatcherSessions: vi.fn(),
+    };
+
+    restoreTmuxSessionsFromTopology(host);
+
+    expect(host.sessions[0].backendSessionId).toBe("backend-live");
+    expect(host.syncTmuxWindowMetadata).toHaveBeenCalledWith("codex-live");
   });
 
   it("evicts in-memory runtimes that no longer have matching live tmux metadata", () => {

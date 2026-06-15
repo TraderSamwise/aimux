@@ -18,6 +18,8 @@ export interface DashboardSession {
   lastUsedAt?: string;
   createdAt?: string;
   backendSessionId?: string;
+  restoreState?: "ready" | "blocked";
+  restoreBlockedReason?: string;
   team?: SessionTeamMetadata;
   status: DashboardSessionStatus;
   active: boolean;

@@ -101,6 +101,8 @@ import {
   type RuntimeExchangeThread,
 } from "./runtime-core/exchange-store.js";
 import { listTopologySessionStates, type RuntimeTopologySessionState } from "./runtime-core/topology-sessions.js";
+import { loadConfig } from "./config.js";
+import { describeSessionRestorability } from "./session-restorability.js";
 
 const LIBRARY_DOC_ALLOWLIST = [
   { path: "AGENTS.md", kind: "instructions", title: "AGENTS.md" },
@@ -606,11 +608,19 @@ interface TeammateTaskBody {
 function topologyDesktopSessionList(
   statuses: Array<"running" | "idle" | "offline" | "graveyard">,
 ): DesktopSessionRecord[] {
-  return listTopologySessionStates({ statuses }).map((session: RuntimeTopologySessionState) => ({
-    ...session,
-    status: session.status ?? "offline",
-    team: session.team as SessionTeamMetadata | undefined,
-  }));
+  const tools = loadConfig().tools;
+  return listTopologySessionStates({ statuses }).map((session: RuntimeTopologySessionState) => {
+    const status = session.status ?? "offline";
+    const restorability =
+      status === "offline" ? describeSessionRestorability({ ...session, status }, tools) : undefined;
+    return {
+      ...session,
+      status,
+      restoreState: restorability?.restoreState,
+      restoreBlockedReason: restorability?.restoreBlockedReason,
+      team: session.team as SessionTeamMetadata | undefined,
+    };
+  });
 }
 
 function firstLine(value: string): string {
@@ -1317,6 +1327,8 @@ export class MetadataServer {
           tool: session.tool,
           role: session.team?.role,
           status: session.status,
+          restoreState: session.restoreState,
+          restoreBlockedReason: session.restoreBlockedReason,
           worktreePath: session.worktreePath,
           label: session.label,
           activity: meta?.derived?.activity,

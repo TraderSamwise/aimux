@@ -844,6 +844,15 @@ Run aimux in multiple terminal tabs or through the dashboard for the same projec
 - Remote/share presence belongs to relay/share transport state unless explicitly mirrored from topology.
 - `--resume` does not use instance-registry session refs for ownership decisions.
 - When a runtime exits, topology-backed offline rows keep agents visible to other clients.
+- `aimux` and `aimux-dev` are separate runtime lanes. They use different `AIMUX_HOME`
+  directories and daemon ports, so switching lanes stops the other lane's project
+  service for that checkout but does not delete its topology or graveyard state.
+  Agents from the inactive lane should disappear from the active lane and reappear
+  when that lane owns the project again.
+- A visible offline agent row must come from topology. If the row has an exact
+  backend session id, restore is marked ready. If that id is missing for a tool
+  that requires exact backend resume, the row remains visible but restore is
+  blocked with a reason instead of guessing a fallback session.
 
 ## Agent Lifecycle
 

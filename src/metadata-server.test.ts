@@ -58,6 +58,7 @@ describe("MetadataServer threads API", () => {
       team?: Record<string, unknown>;
       createdAt?: string;
       label?: string;
+      backendSessionId?: string;
     }>,
   ): void {
     saveRuntimeTopologySessions({
@@ -69,6 +70,7 @@ describe("MetadataServer threads API", () => {
         args: [],
         lifecycle: session.status === "running" || session.status === "idle" ? "live" : "offline",
         createdAt: session.createdAt,
+        backendSessionId: session.backendSessionId,
         team: session.team,
         label: session.label,
       })),
@@ -182,6 +184,31 @@ describe("MetadataServer threads API", () => {
       body: JSON.stringify({ sessionId: "codex-1" }),
     });
     expect(noActiveRes.status).toBe(400);
+  });
+
+  it("marks offline agents without exact backend ids as blocked in the agents API", async () => {
+    const endpoint = server?.getAddress();
+    expect(endpoint).toBeTruthy();
+    const base = `http://${endpoint!.host}:${endpoint!.port}`;
+
+    seedAgentTopology([
+      { id: "codex-ready", command: "codex", status: "offline", backendSessionId: "backend-codex" },
+      { id: "claude-blocked", command: "claude", status: "offline" },
+    ]);
+
+    const res = await fetch(`${base}/agents`);
+    const body = (await res.json()) as {
+      agents: Array<{ id: string; restoreState?: string; restoreBlockedReason?: string }>;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(body.agents.find((agent) => agent.id === "codex-ready")).toMatchObject({
+      restoreState: "ready",
+    });
+    expect(body.agents.find((agent) => agent.id === "claude-blocked")).toMatchObject({
+      restoreState: "blocked",
+      restoreBlockedReason: "missing exact resumable backend session id",
+    });
   });
 
   it("returns 400 for malformed encoded thread and task ids", async () => {
