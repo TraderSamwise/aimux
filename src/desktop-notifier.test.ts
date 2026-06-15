@@ -5,6 +5,7 @@ import {
   findMacNotifierHelper,
   macNotifierCandidates,
   renderDesktopNotifierDoctorReport,
+  sendDesktopNotificationAndWait,
   sendDesktopNotification,
   type DesktopNotifierDeps,
 } from "./desktop-notifier.js";
@@ -132,6 +133,48 @@ describe("desktop notifier", () => {
       }),
     );
 
+    expect(nodeNotifier.notify).not.toHaveBeenCalled();
+  });
+
+  it("awaits macOS helper delivery for diagnostic sends", async () => {
+    const result = await sendDesktopNotificationAndWait(
+      { title: "aimux", message: "agent waiting", sound: true },
+      deps({
+        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"),
+        execFile: execFileMock(null, "delivered\n"),
+      }),
+    );
+
+    expect(result).toMatchObject({
+      transport: "mac-helper",
+      helperPath: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+      ok: true,
+      exitCode: 0,
+      stdout: "delivered",
+    });
+  });
+
+  it("reports macOS helper delivery failures for diagnostic sends", async () => {
+    const error = Object.assign(new Error("Command failed: notifications are denied"), { code: 77 });
+    const nodeNotifier = { notify: vi.fn() };
+    const result = await sendDesktopNotificationAndWait(
+      { title: "aimux", message: "agent waiting", sound: true },
+      deps({
+        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"),
+        execFile: execFileMock(error, "authorization=denied\n"),
+        nodeNotifier,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      transport: "mac-helper",
+      helperPath: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+      ok: false,
+      exitCode: 77,
+      stdout: "authorization=denied",
+    });
     expect(nodeNotifier.notify).not.toHaveBeenCalled();
   });
 
