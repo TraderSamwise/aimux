@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { derivedStatusLabel, type DashboardViewModel } from "../../dashboard/index.js";
 import { deriveSessionSemantics } from "../../session-semantics.js";
+import { stripAnsi } from "../render/text.js";
 import { renderDashboardFrame } from "./dashboard-renderers.js";
 
 function baseDashboardViewModel(overrides: Partial<DashboardViewModel>): DashboardViewModel {
@@ -105,9 +106,12 @@ describe("renderDashboardFrame worktree progress", () => {
       40,
     );
 
-    expect(frame).toContain("\x1b[1;33mNeeds input");
-    expect(frame).toContain("\x1b[36m1 unread\x1b[0m");
-    expect(frame).toContain("\x1b[36mWorking");
+    const plain = stripAnsi(frame);
+    expect(plain).toContain("NEEDS INPUT");
+    expect(plain).toContain("WORKING");
+    expect(plain).toContain("1 unread");
+    expect(frame).toContain("\x1b[1;33;7m NEEDS INPUT \x1b[0m");
+    expect(frame).toContain("\x1b[36;7m WORKING \x1b[0m");
   });
 
   it("renders output recency instead of last-used recency and highlights recently idle sessions", () => {
@@ -231,7 +235,7 @@ describe("renderDashboardFrame worktree progress", () => {
         40,
       );
 
-      expect(frame).toContain("\x1b[36mWorking");
+      expect(stripAnsi(frame)).toContain("WORKING");
       expect(frame).not.toContain("output 30s ago");
     } finally {
       now.mockRestore();
@@ -291,21 +295,24 @@ describe("renderDashboardFrame worktree progress", () => {
         40,
       );
 
-      expect(frame).toContain("claude \x1b[33mStarting");
-      expect(frame).toContain("starting 30s ago");
-      expect(frame).toContain("1 starting");
-      expect(frame).toContain("codex \x1b[33mRemoving");
-      expect(frame).toContain("removing 30s ago");
-      expect(frame).toContain("1 removing");
-      expect(frame).toContain("State: Starting");
-      expect(frame).toContain("Started: 30s ago");
-      expect(frame).not.toContain("State: needs input");
-      expect(frame).not.toContain("Attention: needs_input");
-      expect(frame).not.toContain("prompted");
-      expect(frame).not.toContain("idle now");
-      expect(frame).not.toContain("1 needs input");
-      expect(frame).not.toContain("graveyarding");
-      expect(frame).not.toContain("1h ago");
+      const plain = stripAnsi(frame);
+      expect(plain).toContain("claude");
+      expect(plain).toContain("Starting");
+      expect(plain).toContain("starting 30s ago");
+      expect(plain).toContain("1 starting");
+      expect(plain).toContain("codex");
+      expect(plain).toContain("Removing");
+      expect(plain).toContain("removing 30s ago");
+      expect(plain).toContain("1 removing");
+      expect(plain).toContain("State: Starting");
+      expect(plain).toContain("Started: 30s ago");
+      expect(plain).not.toContain("State: needs input");
+      expect(plain).not.toContain("Attention: needs_input");
+      expect(plain).not.toContain("prompted");
+      expect(plain).not.toContain("idle now");
+      expect(plain).not.toContain("1 needs input");
+      expect(plain).not.toContain("graveyarding");
+      expect(plain).not.toContain("1h ago");
     } finally {
       now.mockRestore();
     }
@@ -361,7 +368,7 @@ describe("renderDashboardFrame worktree progress", () => {
     );
 
     expect(frame).toContain("Team");
-    expect(frame).toContain("[e] team");
+    expect(stripAnsi(frame)).toContain("team");
     expect(frame).toContain("review(reviewer)");
     expect(frame).toContain("working");
     expect(frame).toContain("scan(explorer)");
@@ -387,8 +394,8 @@ describe("renderDashboardFrame worktree progress", () => {
       120,
       40,
     );
-    expect(withOverseer.frame).toContain("\x1b[1;35mOverseer\x1b[0m");
-    expect(withOverseer.frame).toContain("(overseer)");
+    expect(withOverseer.frame).toContain("\x1b[35mOverseer\x1b[0m");
+    expect(stripAnsi(withOverseer.frame)).toContain("overseer");
 
     const withoutOverseer = renderDashboardFrame(
       baseDashboardViewModel({
