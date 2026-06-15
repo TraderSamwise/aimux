@@ -95,7 +95,7 @@ import { notifyAlert } from "./notify.js";
 import {
   buildDesktopNotifierDoctorReport,
   renderDesktopNotifierDoctorReport,
-  sendDesktopNotification,
+  sendDesktopNotificationAndWait,
 } from "./desktop-notifier.js";
 import {
   parseClaudeHookPayload,
@@ -3595,15 +3595,24 @@ notificationsCmd
   .option("--title <title>", "Notification title", "Aimux notification test")
   .option("--body <body>", "Notification body", "Desktop notification delivery is working.")
   .option("--json", "Emit JSON")
-  .action((opts: { title: string; body: string; json?: boolean }) => {
-    const attempt = sendDesktopNotification({
+  .action(async (opts: { title: string; body: string; json?: boolean }) => {
+    const attempt = await sendDesktopNotificationAndWait({
       title: opts.title.trim() || "Aimux notification test",
       message: opts.body.trim() || "Desktop notification delivery is working.",
       sound: true,
     });
     if (opts.json) {
-      console.log(JSON.stringify({ ok: true, attempt }, null, 2));
+      console.log(JSON.stringify({ ok: attempt.ok, attempt }, null, 2));
+      if (!attempt.ok) process.exit(1);
       return;
+    }
+    if (!attempt.ok) {
+      console.error(
+        `Failed to send notification via ${attempt.transport}${attempt.helperPath ? ` (${attempt.helperPath})` : ""}${
+          attempt.error ? `: ${attempt.error}` : ""
+        }.`,
+      );
+      process.exit(1);
     }
     console.log(`Sent notification via ${attempt.transport}${attempt.helperPath ? ` (${attempt.helperPath})` : ""}.`);
   });
