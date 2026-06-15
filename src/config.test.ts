@@ -91,6 +91,39 @@ describe("config", () => {
     expect(config.tools.codex.resumeFallback).toEqual(["resume", "--last"]);
   });
 
+  it("preserves explicit built-in resumeFallback overrides when normalizing stale resume args", () => {
+    mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(repoRoot, ".aimux/config.json"),
+      JSON.stringify(
+        {
+          tools: {
+            claude: {
+              command: "claude",
+              enabled: true,
+              resumeArgs: ["--continue"],
+              resumeFallback: ["--resume-fallback", "claude-explicit"],
+            },
+            codex: {
+              command: "codex",
+              enabled: true,
+              resumeArgs: ["resume", "--last"],
+              resumeFallback: ["resume", "codex-explicit"],
+            },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    const config = loadConfig({ includeGlobal: false });
+    expect(config.tools.claude.resumeArgs).toEqual(["--resume", "{sessionId}"]);
+    expect(config.tools.claude.resumeFallback).toEqual(["--resume-fallback", "claude-explicit"]);
+    expect(config.tools.codex.resumeArgs).toEqual(["resume", "{sessionId}"]);
+    expect(config.tools.codex.resumeFallback).toEqual(["resume", "codex-explicit"]);
+  });
+
   it("does not normalize stale resume args for custom tool configs", () => {
     mkdirSync(join(repoRoot, ".aimux"), { recursive: true });
     writeFileSync(
