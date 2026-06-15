@@ -512,6 +512,48 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(after).toContain("╰");
   });
 
+  it("mutes activity chips for offline agents but keeps them colored for live ones", () => {
+    const mk = (id: string, status: "offline" | "running") => ({
+      index: 0,
+      id,
+      command: "codex",
+      worktreePath: `/repo/.aimux/worktrees/${id}`,
+      worktreeName: id,
+      status,
+      active: status === "running",
+      unseenCount: 9,
+      threadPendingCount: 1,
+      semantic: deriveSessionSemantics(
+        status === "running" ? { status: "running", activity: "running" } : { status: "offline" },
+      ),
+    });
+    const { frame } = renderDashboardFrame(
+      baseDashboardViewModel({
+        sessions: [mk("off", "offline"), mk("on", "running")],
+        worktreeGroups: [
+          {
+            name: "off",
+            branch: "x",
+            path: "/repo/.aimux/worktrees/off",
+            status: "offline",
+            sessions: [],
+            services: [],
+          },
+          { name: "on", branch: "y", path: "/repo/.aimux/worktrees/on", status: "active", sessions: [], services: [] },
+        ],
+        detailsPaneVisible: false,
+      }),
+      140,
+      30,
+    );
+    const offlineRow = frame.split("\r\n").find((l) => l.includes("1 pending") && l.includes("Offline"))!;
+    const liveRow = frame.split("\r\n").find((l) => l.includes("1 pending") && l.includes("WORKING"))!;
+    // Offline chips use the muted 256-color fg (245); live chips keep accent fg.
+    expect(offlineRow).toContain("38;5;245");
+    expect(offlineRow).not.toContain("38;5;174"); // not the danger "pending" accent
+    expect(liveRow).toContain("38;5;174"); // danger "pending" accent retained
+  });
+
   it("renders pending teammate labels even when semantic state is stale", () => {
     const { frame } = renderDashboardFrame(
       baseDashboardViewModel({
