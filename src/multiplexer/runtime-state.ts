@@ -606,7 +606,8 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     `resuming offline session ${session.id} (${relaunchFresh ? "fresh" : useBackendResume ? `backend=${backendSessionId ?? "none"}` : "fallback"})`,
     "session",
   );
-  host.createSession(
+  const supersededBackendSessionId = relaunchFresh ? backendSessionId : undefined;
+  const restoredSession = host.createSession(
     session.command,
     args,
     toolCfg.preambleFlag,
@@ -620,6 +621,9 @@ export function resumeOfflineSession(host: RuntimeStateHost, session: any): void
     useBackendResume,
     session.team,
   );
+  if (supersededBackendSessionId && restoredSession) {
+    restoredSession.supersededBackendSessionId = supersededBackendSessionId;
+  }
 }
 
 export function recordSessionBackendSessionId(
@@ -633,6 +637,11 @@ export function recordSessionBackendSessionId(
   const offline = host.offlineSessions.find((session: any) => session.id === sessionId);
   let recorded: { sessionId: string; backendSessionId: string };
   if (runtime) {
+    if (!runtime.backendSessionId && runtime.supersededBackendSessionId === normalizedBackendSessionId) {
+      throw new Error(
+        `Agent "${sessionId}" ignored stale backend session "${normalizedBackendSessionId}" from a superseded launch`,
+      );
+    }
     if (runtime.backendSessionId && runtime.backendSessionId !== normalizedBackendSessionId) {
       throw new Error(
         `Agent "${sessionId}" already has backend session "${runtime.backendSessionId}", cannot replace with "${normalizedBackendSessionId}"`,

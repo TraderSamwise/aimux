@@ -1,10 +1,4 @@
-import { getRepoRoot } from "../paths.js";
-import {
-  listTopologySessionStates,
-  upsertTopologySession,
-  type RuntimeTopologySessionState,
-} from "./topology-sessions.js";
-import type { RuntimeTopologySessionStatus } from "./topology-store.js";
+import { createRuntimeTopologyStore } from "./topology-store.js";
 
 export interface RecordTopologyBackendSessionIdInput {
   projectRoot?: string;
@@ -15,10 +9,6 @@ export interface RecordTopologyBackendSessionIdInput {
 export interface RecordTopologyBackendSessionIdResult {
   sessionId: string;
   backendSessionId: string;
-}
-
-function statusForSession(session: RuntimeTopologySessionState): RuntimeTopologySessionStatus {
-  return session.status ?? (session.lifecycle === "offline" ? "offline" : "running");
 }
 
 /**
@@ -37,21 +27,26 @@ export function recordTopologyBackendSessionId(
   if (!sessionId) throw new Error("sessionId is required");
   if (!backendSessionId) throw new Error("backendSessionId is required");
 
-  const session = listTopologySessionStates().find((entry) => entry.id === sessionId);
-  if (!session) {
-    throw new Error(`Agent "${sessionId}" is not managed in runtime topology`);
-  }
-  if (session.backendSessionId && session.backendSessionId !== backendSessionId) {
-    throw new Error(
-      `Agent "${sessionId}" already has backend session "${session.backendSessionId}", cannot replace with "${backendSessionId}"`,
-    );
-  }
+  const store = createRuntimeTopologyStore();
+  const now = new Date().toISOString();
+  let result: RecordTopologyBackendSessionIdResult | undefined;
+  store.update((topology) => {
+    const session = topology.sessions.find((entry) => entry.id === sessionId);
+    if (!session) {
+      throw new Error(`Agent "${sessionId}" is not managed in runtime topology`);
+    }
+    if (session.backendSessionId && session.backendSessionId !== backendSessionId) {
+      throw new Error(
+        `Agent "${sessionId}" already has backend session "${session.backendSessionId}", cannot replace with "${backendSessionId}"`,
+      );
+    }
 
-  const selectedBackendSessionId = session.backendSessionId ?? backendSessionId;
-  upsertTopologySession(
-    { ...session, backendSessionId: selectedBackendSessionId },
-    statusForSession(session),
-    { projectRoot: input.projectRoot ?? getRepoRoot() },
-  );
-  return { sessionId, backendSessionId: selectedBackendSessionId };
+    const selectedBackendSessionId = session.backendSessionId ?? backendSessionId;
+    session.backendSessionId = selectedBackendSessionId;
+    session.updatedAt = now;
+    topology.generatedAt = now;
+    result = { sessionId, backendSessionId: selectedBackendSessionId };
+    return topology;
+  });
+  return result!;
 }
