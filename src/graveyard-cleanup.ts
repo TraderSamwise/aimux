@@ -215,7 +215,10 @@ export async function runGraveyardCleanup(
     try {
       const deleteWorktree = operations.deleteWorktree;
       if (!deleteWorktree) throw new Error("worktree cleanup operation is not configured");
-      await deleteWorktree(worktree.path);
+      const outcome = await deleteWorktree(worktree.path);
+      if (outcome.status !== "removed") {
+        throw new Error(`worktree cleanup returned non-removed status "${outcome.status}"`);
+      }
       removedWorktreePaths.add(worktree.path);
       results.push({ kind: "worktree", id: worktree.path, status: "removed" });
     } catch (error) {
