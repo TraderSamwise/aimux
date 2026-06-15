@@ -91,6 +91,22 @@ export function keycap(key: string): string {
   return `\x1b[48;5;238;38;5;253m ${key} ${RESET}`;
 }
 
+export type BandTone = "info" | "danger";
+
+const BAND_SGR: Record<BandTone, string> = {
+  info: "\x1b[1;48;5;24;38;5;195m",
+  danger: "\x1b[1;48;5;52;38;5;224m",
+};
+
+/**
+ * A modal title band: a tinted full-width header bar (` LABEL …`) filling `width`
+ * visible columns, used for the window-chrome title row of overlay dialogs. The
+ * background tint runs the whole width (leading gutter through trailing padding).
+ */
+export function modalBand(label: string, tone: BandTone, width: number): string {
+  return `${BAND_SGR[tone]}${padVisible(` ${label}`, Math.max(0, width))}${RESET}`;
+}
+
 /** Presentation-level status kinds (distinct from runtime SessionStatus). */
 export type StatusKind =
   | "working"

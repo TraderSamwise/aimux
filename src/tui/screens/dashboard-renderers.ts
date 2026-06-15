@@ -1,6 +1,6 @@
 import type { DashboardService, DashboardSession, DashboardViewModel, WorktreeGroup } from "../../dashboard/index.js";
 import { isAgentOutputEventKind } from "../../agent-events.js";
-import { buildDashboardQuickJumpWorktrees } from "../../dashboard/quick-jump.js";
+import { buildDashboardQuickJumpWorktrees, DASHBOARD_QUICK_JUMP_LIMIT } from "../../dashboard/quick-jump.js";
 import { formatRelativeRecency } from "../../recency.js";
 import { center, composeTwoPane, stripAnsi, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
 import { card, chip, cols as gridCols, keycap, pill, statusDot, style, type Tone } from "../render/theme.js";
@@ -57,6 +57,7 @@ const PILL_LABEL: Partial<Record<SessionRowState, string>> = {
 // Column widths for an agent/service row (before the trailing chips/hints region).
 const COL_SELECT = 2;
 const COL_DOT = 2;
+const COL_INDEX = 4;
 const COL_IDENTITY = 16;
 const COL_STATUS = 14;
 const COL_TIME = 16;
@@ -351,12 +352,15 @@ export function renderDashboardFrame(
 
   const trailingHints = (parts: string[]): string => parts.filter(Boolean).join(" ");
 
-  const agentRow = (session: DashboardSession, selected: boolean): string => {
+  const indexCell = (digit?: number): string => (digit ? style(`[${digit}]`, "muted") : "");
+
+  const agentRow = (session: DashboardSession, selected: boolean, digit?: number): string => {
     const role = session.role ? ` ${style(session.role, "muted")}` : "";
     const identity = `${style(session.label ?? session.command, "strong")}${role}`;
     const grid = gridCols([
       { content: selected ? `${style("▸", "accent")} ` : "  ", width: COL_SELECT },
       { content: `${sessionStatusDot(session)} `, width: COL_DOT },
+      { content: indexCell(digit), width: COL_INDEX },
       { content: identity, width: COL_IDENTITY },
       { content: sessionStatusCell(session, state.derivedStatusLabel(session)), width: COL_STATUS },
       { content: sessionTimeText(session), width: COL_TIME },
@@ -371,12 +375,13 @@ export function renderDashboardFrame(
     return trailing ? `${grid} ${trailing}` : grid;
   };
 
-  const serviceRow = (service: DashboardService, selected: boolean): string => {
+  const serviceRow = (service: DashboardService, selected: boolean, digit?: number): string => {
     const statusLabel = service.pendingAction ?? service.status;
     const statusTone: Tone = service.status === "running" ? "done" : service.status === "exited" ? "danger" : "muted";
     const grid = gridCols([
       { content: selected ? `${style("▸", "accent")} ` : "  ", width: COL_SELECT },
       { content: `${serviceStatusDot(service)} `, width: COL_DOT },
+      { content: indexCell(digit), width: COL_INDEX },
       { content: style(service.label ?? service.command, "strong"), width: COL_IDENTITY },
       { content: style(`[svc] ${statusLabel}`, statusTone), width: COL_STATUS },
       {
@@ -415,14 +420,15 @@ export function renderDashboardFrame(
       const summary = worktreeSummaryText(worktree);
       const tone = worktreeTone(worktree);
 
+      const digitById = new Map(worktree.entries.map((entry) => [entry.id, entry.digit]));
       const cardRows: string[] = [];
       for (const session of worktree.sessions) {
         const selected = state.navLevel === "sessions" && session.id === state.selectedSessionId;
-        cardRows.push(agentRow(session, selected));
+        cardRows.push(agentRow(session, selected, digitById.get(session.id)));
       }
       for (const service of worktree.services) {
         const selected = state.navLevel === "sessions" && service.id === state.selectedServiceId;
-        cardRows.push(serviceRow(service, selected));
+        cardRows.push(serviceRow(service, selected, digitById.get(service.id)));
       }
 
       for (const line of card({ tone, title, summary: summary || undefined, rows: cardRows, width: cardWidth })) {
@@ -761,10 +767,11 @@ export function renderDashboardFrame(
   } else if (state.hasWorktrees) {
     renderWorktreeGrouped(content);
   } else {
-    for (const session of state.sessions) {
+    state.sessions.forEach((session, index) => {
       const selected = state.navLevel === "sessions" && session.id === state.selectedSessionId;
-      content.push(`  ${agentRow(session, selected)}`);
-    }
+      const digit = index < DASHBOARD_QUICK_JUMP_LIMIT ? index + 1 : undefined;
+      content.push(`  ${agentRow(session, selected, digit)}`);
+    });
   }
 
   const helpLines = buildHelpLines(buildHelpLine());

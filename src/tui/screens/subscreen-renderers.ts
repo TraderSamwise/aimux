@@ -515,16 +515,15 @@ function buildGraveyardWorktreeDeleteConfirmOverlay(ctx: any): string {
   if (!confirm) return "";
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
-  const lines = [
-    style(`Delete graveyarded worktree "${confirm.name}"?`, "strong"),
-    "",
+  const body = [
+    `  ${style(`"${confirm.name}"`, "strong")}`,
     `  ${style("Path:", "muted")} ${confirm.path}`,
     `  ${style("This runs: git worktree remove --force", "muted")}`,
     `  ${style("Attached agents will be deleted directly.", "muted")}`,
     "",
     `  ${keycap("Enter/y")} ${style("yes", "muted")}  ${keycap("n/Esc")} ${style("cancel", "muted")}`,
   ];
-  return renderOverlayBox(lines, cols, rows, "red");
+  return renderOverlayBox({ title: "Delete graveyarded worktree", body, cols, rows, variant: "red" });
 }
 
 function buildPlanPreview(ctx: any, content: string, width: number, maxLines: number): string[] {
