@@ -1,6 +1,7 @@
 import type { GraveyardViewRow } from "../../multiplexer/graveyard-view-model.js";
 import { formatRelativeRecency } from "../../recency.js";
 import { renderOverlayBox } from "../render/box.js";
+import { twoPaneLeftWidth } from "../render/text.js";
 import { card, chip, keycapHint, keycapHints, statusDot, style, type Tone } from "../render/theme.js";
 
 // Shared subscreen chrome built from the design-language tokens.
@@ -350,14 +351,16 @@ interface GraveyardCardBlock {
   titleActionIndex?: number;
   rows: GraveyardCardRow[];
 }
-type GraveyardBlock = GraveyardCardBlock | { kind: "header"; label: string };
+type GraveyardLooseBlock = { kind: "loose"; rows: GraveyardCardRow[] };
+type GraveyardBlock = GraveyardCardBlock | GraveyardLooseBlock | { kind: "header"; label: string };
 
-// Group the flat graveyard view-model rows into design-language cards: one card per
-// graveyarded worktree (dead agents/services as body rows) and one per standalone
-// agent group. Everything is dead, so cards render in the muted tone.
+// Group the flat graveyard view-model rows into design-language blocks: a card per
+// graveyarded worktree (dead agents/services as body rows) and per standalone-agent
+// worktree group; loose selectable rows for orphan agents/teammates that have no
+// group. Everything is dead, so cards render in the muted tone.
 function buildGraveyardCards(ctx: any, rows: GraveyardViewRow[]): GraveyardBlock[] {
   const blocks: GraveyardBlock[] = [];
-  let current: GraveyardCardBlock | null = null;
+  let current: GraveyardCardBlock | GraveyardLooseBlock | null = null;
 
   const flush = (): void => {
     if (current) {
@@ -366,7 +369,17 @@ function buildGraveyardCards(ctx: any, rows: GraveyardViewRow[]): GraveyardBlock
     }
   };
   const ensureCard = (): GraveyardCardBlock => {
-    if (!current) current = { kind: "card", title: "", rows: [] };
+    if (!current || current.kind !== "card") {
+      flush();
+      current = { kind: "card", title: "", rows: [] };
+    }
+    return current;
+  };
+  const ensureLoose = (): GraveyardLooseBlock => {
+    if (!current || current.kind !== "loose") {
+      flush();
+      current = { kind: "loose", rows: [] };
+    }
     return current;
   };
   const recencyChip = (at?: string): string => {
@@ -430,7 +443,7 @@ function buildGraveyardCards(ctx: any, rows: GraveyardViewRow[]): GraveyardBlock
         const identity = teammate.label ? ` — ${teammate.label}` : "";
         const headline = teammate.headline ? ` · ${ctx.truncatePlain(teammate.headline, 36)}` : "";
         const text = `  ${statusDot("offline")} ${style(`${teammate.command}:${teammate.id}${identity} · missing parent ${row.parentSessionId}${headline}`, "muted")}`;
-        ensureCard().rows.push({ text: withChip(text, recencyChip(row.lastUsedAt)) });
+        ensureLoose().rows.push({ text: withChip(text, recencyChip(row.lastUsedAt)) });
         break;
       }
       default: {
@@ -441,7 +454,10 @@ function buildGraveyardCards(ctx: any, rows: GraveyardViewRow[]): GraveyardBlock
         const headline = agent.headline ? ` · ${agent.headline}` : "";
         const unrecoverable = agent.graveyardReason ? ` ${style("· unrecoverable", "danger")}` : "";
         const text = `${marker(selected)}${keycapHint(String(row.actionNumber))} ${statusDot("offline")} ${style(`${agent.command}:${agent.id}${bsid}${identity}${headline}`, "muted")}${unrecoverable}`;
-        ensureCard().rows.push({ text: withChip(text, recencyChip(row.lastUsedAt)), actionIndex: row.actionIndex });
+        // Standalone agents under an "agent-worktree" land in its card; orphan agents
+        // with no group render as loose selectable rows beneath the section header.
+        const target = current && current.kind === "card" ? current : ensureLoose();
+        target.rows.push({ text: withChip(text, recencyChip(row.lastUsedAt)), actionIndex: row.actionIndex });
         break;
       }
     }
@@ -461,7 +477,7 @@ export function renderGraveyardScreen(ctx: any): void {
   );
   const viewportHeight = rows - header.length - 2;
   const twoPane = cols >= 110 && ctx.dashboardState.detailsSidebarVisible;
-  const cardWidth = twoPane ? Math.max(32, Math.floor(cols * 0.58)) : Math.max(40, cols - 2);
+  const cardWidth = twoPane ? twoPaneLeftWidth(cols) : Math.max(40, cols - 2);
   const listLines: string[] = [];
   const lineByItemIndex = new Map<number, number>();
   const view = ctx.graveyardViewModel ?? { rows: [], selectableRows: [] };
@@ -479,6 +495,13 @@ export function renderGraveyardScreen(ctx: any): void {
       first = false;
       if (block.kind === "header") {
         listLines.push(`  ${style(block.label, "strong")}`);
+        continue;
+      }
+      if (block.kind === "loose") {
+        for (const looseRow of block.rows) {
+          if (looseRow.actionIndex !== undefined) lineByItemIndex.set(looseRow.actionIndex, listLines.length);
+          listLines.push(`  ${looseRow.text}`);
+        }
         continue;
       }
       const startLine = listLines.length;
