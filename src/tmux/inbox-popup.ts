@@ -227,7 +227,8 @@ function renderPopup(entries: InboxPopupEntry[], index: number, message: string 
     output += `\x1b[${listStartRow + i};${rightCol}H${padVisible(details[i] ?? "", rightWidth)}`;
   }
 
-  const help = "j/k move  Enter jump  r read  R read-all  c clear  C clear-all  q/Esc close";
+  // Keep compact: keycaps add width, so combine read/clear pairs to fit 80-col terminals.
+  const help = "j/k move  ⏎ jump  r/R read  c/C clear  q/Esc close";
   output += `\x1b[${rows - 1};${startCol}H${padVisible(styleInboxHelp(help), cols - 4)}`;
   process.stdout.write(output);
 }
