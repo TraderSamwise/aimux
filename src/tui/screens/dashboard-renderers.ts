@@ -722,7 +722,8 @@ export function renderDashboardFrame(
   };
 
   const devBadge = state.isDevRuntime ? "\x1b[1;30;43m DEV \x1b[0m " : "";
-  const title = `${devBadge}\x1b[1maimux\x1b[0m — agent multiplexer${state.runtimeLabel ? `  \x1b[32m● ${state.runtimeLabel}\x1b[0m` : ""}`;
+  const versionTag = state.version ? ` ${style(`v${state.version}`, "muted")}` : "";
+  const title = `${devBadge}\x1b[1maimux\x1b[0m${versionTag} — agent multiplexer${state.runtimeLabel ? `  \x1b[32m● ${state.runtimeLabel}\x1b[0m` : ""}`;
   const divider = state.isDevRuntime
     ? `\x1b[33m${"─".repeat(Math.max(0, cols))}\x1b[0m`
     : "─".repeat(Math.max(0, cols));

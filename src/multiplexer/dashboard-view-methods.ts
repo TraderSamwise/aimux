@@ -26,6 +26,7 @@ import {
 import { derivedStatusLabel } from "../dashboard/index.js";
 import { isOverseerSession } from "../team.js";
 import { isDevelopmentRuntime } from "../connection-targets.js";
+import { AIMUX_VERSION } from "../version.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
 
@@ -161,6 +162,7 @@ export const dashboardViewMethods = {
         selectedTeammates: selectDashboardTeammates(dashTeammates, selectedSessionEntry),
         runtimeLabel: "tmux",
         isDevRuntime: isDevelopmentRuntime(),
+        version: AIMUX_VERSION,
         mainCheckout: mainCheckoutInfo,
         operationFailures: this.dashboardOperationFailuresCache ?? [],
         worktreeRemoval: this.worktreeRemovalJob

@@ -418,6 +418,14 @@ describe("renderDashboardFrame worktree progress", () => {
     expect(dev.frame).toContain("\x1b[33m───");
   });
 
+  it("renders the version next to the title when provided", () => {
+    const { frame } = renderDashboardFrame(baseDashboardViewModel({ version: "1.2.3" }), 120, 40);
+    expect(stripAnsi(frame)).toContain("aimux v1.2.3 — agent multiplexer");
+
+    const without = renderDashboardFrame(baseDashboardViewModel({ version: undefined }), 120, 40);
+    expect(stripAnsi(without.frame)).not.toContain("v1.2.3");
+  });
+
   it("renders pending teammate labels even when semantic state is stale", () => {
     const { frame } = renderDashboardFrame(
       baseDashboardViewModel({
