@@ -24,6 +24,7 @@ import {
   notificationFeedErrorFamily,
   notificationFeedFamily,
   kickNotificationFeedRefreshAtom,
+  markNotificationRecordsObservedAtom,
   notificationFeedRefreshNonceAtom,
 } from "@/stores/notifications";
 import {
@@ -55,6 +56,7 @@ export default function MainLayout() {
   const notificationSettings = useAtomValue(notificationSettingsAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const kickNotificationFeedRefresh = useSetAtom(kickNotificationFeedRefreshAtom);
+  const markNotificationRecordsObserved = useSetAtom(markNotificationRecordsObservedAtom);
   const store = useStore();
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
@@ -306,6 +308,9 @@ export default function MainLayout() {
           token,
           onEvent: (event) => {
             if (event.type !== "alert") return;
+            if (event.notificationId) {
+              markNotificationRecordsObserved({ projectPath, ids: [event.notificationId] });
+            }
             kickNotificationFeedRefresh();
             const notification = evaluateAlertEvent(event, notificationSettings, {
               projectName: effectiveProject?.name,
@@ -348,6 +353,7 @@ export default function MainLayout() {
     effectiveProjectPath,
     endpointKey,
     kickNotificationFeedRefresh,
+    markNotificationRecordsObserved,
     notificationSettings,
     relayUrl,
     relayReadyForRequests,

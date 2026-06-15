@@ -37,6 +37,11 @@ export interface SessionNotificationContext {
   projectPath?: string;
 }
 
+export interface NotificationRecordBatchEvaluation {
+  events: ClientNotificationEvent[];
+  observedIds: string[];
+}
+
 const ACTIVE_ATTENTIONS = new Set(["needs_input", "blocked", "error"]);
 const ERROR_KINDS = new Set(["error", "task_failed"]);
 const COMPLETED_KINDS = new Set(["completed", "task_done"]);
@@ -126,6 +131,28 @@ export function evaluateNotificationRecord(
       sessionId: record.sessionId,
     },
   };
+}
+
+export function evaluateNotificationRecordBatch(
+  records: NotificationRecord[],
+  settings: NotificationSettings,
+  context: SessionNotificationContext = {},
+  observedIds: ReadonlySet<string> = new Set(),
+  maxEvents = 1,
+): NotificationRecordBatchEvaluation {
+  const nextObservedIds: string[] = [];
+  const events: ClientNotificationEvent[] = [];
+  const eventLimit = Math.max(0, maxEvents);
+
+  for (const record of records) {
+    if (observedIds.has(record.id)) continue;
+    nextObservedIds.push(record.id);
+    if (events.length >= eventLimit) continue;
+    const event = evaluateNotificationRecord(record, settings, context);
+    if (event) events.push(event);
+  }
+
+  return { events, observedIds: nextObservedIds };
 }
 
 export function evaluateAlertEvent(
