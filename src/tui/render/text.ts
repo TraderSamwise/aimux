@@ -69,11 +69,12 @@ export function wrapKeyValue(key: string, value: string, width: number): string[
   return wrapped.map((line, idx) => (idx === 0 ? `${prefix}${line}` : `${" ".repeat(prefix.length)}${line}`));
 }
 
-export function composeTwoPane(left: string[], right: string[], cols: number): string[] {
+export function composeTwoPane(left: string[], right: string[], cols: number, separator = " │ "): string[] {
   const leftWidth = Math.max(32, Math.floor(cols * 0.58));
   const rightWidth = Math.max(20, cols - leftWidth - 4);
   const height = Math.max(left.length, right.length);
-  const totalWidth = leftWidth + 3 + rightWidth;
+  const separatorWidth = stripAnsi(separator).length;
+  const totalWidth = leftWidth + separatorWidth + rightWidth;
   const outerPad = Math.max(0, Math.floor((cols - totalWidth) / 2));
   const out: string[] = [];
   for (let i = 0; i < height; i++) {
@@ -81,7 +82,7 @@ export function composeTwoPane(left: string[], right: string[], cols: number): s
     const rightLine = truncateAnsi(right[i] ?? "", rightWidth);
     const leftPad = Math.max(0, leftWidth - stripAnsi(leftLine).length);
     const rightPad = Math.max(0, rightWidth - stripAnsi(rightLine).length);
-    out.push(`${" ".repeat(outerPad)}${leftLine}${" ".repeat(leftPad)} │ ${rightLine}${" ".repeat(rightPad)}`);
+    out.push(`${" ".repeat(outerPad)}${leftLine}${" ".repeat(leftPad)}${separator}${rightLine}${" ".repeat(rightPad)}`);
   }
   return out;
 }

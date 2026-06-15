@@ -2,8 +2,8 @@ import type { DashboardService, DashboardSession, DashboardViewModel, WorktreeGr
 import { isAgentOutputEventKind } from "../../agent-events.js";
 import { buildDashboardQuickJumpWorktrees } from "../../dashboard/quick-jump.js";
 import { formatRelativeRecency } from "../../recency.js";
-import { center, composeTwoPane, stripAnsi, truncate, wrapKeyValue } from "../render/text.js";
-import { card, chip, cols as gridCols, pill, statusDot, style, type Tone } from "../render/theme.js";
+import { center, composeTwoPane, stripAnsi, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
+import { card, chip, cols as gridCols, keycap, pill, statusDot, style, type Tone } from "../render/theme.js";
 
 const RECENT_IDLE_MS = 2 * 60 * 1000;
 
@@ -317,12 +317,23 @@ export function renderDashboardFrame(
   const leftWidth = Math.max(32, Math.floor(contentWidth * 0.58));
   const cardWidth = twoPane ? leftWidth : contentWidth;
   const padBlockLine = (line: string): string => line;
-  const centerInBlock = (line: string): string => center(line, contentWidth).slice(0, cols);
-  const wrapCommandGroups = (line: string): string[] => {
+  const centerInBlock = (line: string): string => truncateAnsi(center(line, contentWidth), cols);
+  const styleHelpGroup = (group: string): string => {
+    const bracket = group.match(/^\[(.+?)\]\s*(.*)$/);
+    if (bracket) {
+      return bracket[2] ? `${keycap(bracket[1])} ${style(bracket[2], "muted")}` : keycap(bracket[1]);
+    }
+    const splitAt = group.indexOf(" ");
+    if (splitAt < 0) return keycap(group);
+    return `${keycap(group.slice(0, splitAt))} ${style(group.slice(splitAt + 1), "muted")}`;
+  };
+
+  const buildHelpLines = (line: string): string[] => {
     const groups = line
       .trim()
       .split(/\s{2,}/)
-      .filter(Boolean);
+      .filter(Boolean)
+      .map(styleHelpGroup);
     const lines: string[] = [];
     let current = "";
     for (const group of groups) {
@@ -468,7 +479,14 @@ export function renderDashboardFrame(
     return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
   };
 
-  const renderSelectedDetailsPanel = (width: number, height: number): string[] => {
+  const renderSelectedDetailsPanel = (panelWidth: number, height: number): string[] => {
+    const width = Math.max(8, panelWidth - 4);
+    const finish = (titleText: string, tone: Tone, rows: string[]): string[] => {
+      const bodyRows = rows.slice(0, Math.max(0, height - 2));
+      const out = card({ tone, title: style(titleText, tone), rows: bodyRows, width: panelWidth });
+      while (out.length < height) out.push("");
+      return out.slice(0, height);
+    };
     const selectedSession = state.selectedSessionId
       ? state.sessions.find((session) => session.id === state.selectedSessionId)
       : undefined;
@@ -503,7 +521,7 @@ export function renderDashboardFrame(
               );
             })();
 
-      const lines: string[] = ["\x1b[1mWorktree\x1b[0m"];
+      const lines: string[] = [];
       lines.push(...wrapKeyValue("Name", worktree.name, width));
       if (worktree.branch) lines.push(...wrapKeyValue("Branch", worktree.branch, width));
       lines.push(...wrapKeyValue("Path", worktree.path, width));
@@ -567,11 +585,10 @@ export function renderDashboardFrame(
           ),
         );
       }
-      while (lines.length < height) lines.push("");
-      return lines.slice(0, height);
+      return finish("WORKTREE", "accent", lines);
     }
 
-    const lines: string[] = ["\x1b[1mDetails\x1b[0m"];
+    const lines: string[] = [];
     if (selectedService) {
       lines.push(
         ...wrapKeyValue(
@@ -605,8 +622,7 @@ export function renderDashboardFrame(
       if (selectedService.cwd) lines.push(...wrapKeyValue("CWD", selectedService.cwd, width));
       lines.push(...wrapKeyValue("Status", selectedService.status, width));
       if (selectedService.previewLine) lines.push(...wrapKeyValue("Preview", selectedService.previewLine, width));
-      while (lines.length < height) lines.push("");
-      return lines.slice(0, height);
+      return finish("DETAILS", "info", lines);
     }
 
     const selected = selectedSession!;
@@ -694,7 +710,7 @@ export function renderDashboardFrame(
     }
     if (state.selectedTeammates.length > 0) {
       lines.push("");
-      lines.push("\x1b[1mTeam\x1b[0m");
+      lines.push(style("Team", "strong"));
       for (const teammate of state.selectedTeammates.slice(0, 5)) {
         lines.push(...wrapKeyValue("-", summarizeTeammate(teammate, state.derivedStatusLabel), width));
       }
@@ -702,8 +718,7 @@ export function renderDashboardFrame(
         lines.push(...wrapKeyValue("-", `${state.selectedTeammates.length - 5} more`, width));
       }
     }
-    while (lines.length < height) lines.push("");
-    return lines.slice(0, height);
+    return finish("DETAILS", "info", lines);
   };
 
   const devBadge = state.isDevRuntime ? "\x1b[1;30;43m DEV \x1b[0m " : "";
@@ -751,7 +766,7 @@ export function renderDashboardFrame(
     }
   }
 
-  const helpLines = wrapCommandGroups(buildHelpLine());
+  const helpLines = buildHelpLines(buildHelpLine());
   const footer: string[] = ["─".repeat(Math.max(0, cols)), ...helpLines.map((line) => centerInBlock(line))];
   const viewportHeight = rows - header.length - footer.length;
   let scrollOffset = state.scrollOffset;
@@ -775,11 +790,9 @@ export function renderDashboardFrame(
 
   let bodyLines = visibleContent;
   if (twoPane) {
-    const rightPanel = renderSelectedDetailsPanel(
-      Math.max(24, contentWidth - Math.max(32, Math.floor(contentWidth * 0.58)) - 3),
-      viewportHeight,
-    );
-    bodyLines = composeTwoPane(visibleContent, rightPanel, contentWidth).map(padBlockLine);
+    const panelWidth = Math.max(20, contentWidth - leftWidth - 4);
+    const rightPanel = renderSelectedDetailsPanel(panelWidth, viewportHeight);
+    bodyLines = composeTwoPane(visibleContent, rightPanel, contentWidth, "   ").map(padBlockLine);
   } else {
     bodyLines = visibleContent.map((line) => padBlockLine(line));
   }
