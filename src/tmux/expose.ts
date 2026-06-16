@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
 import type { FastControlContext, FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
+import { formatRelativeRecency } from "../recency.js";
 import { TerminalHost } from "../terminal-host.js";
 import { truncateAnsi, wrapText } from "../tui/render/text.js";
 import { agentStatusKind, renderAgentStatusPill } from "../tui/render/agent-status.js";
@@ -158,7 +159,11 @@ export function buildTileHeader(
   titleLeft: string,
   context: string,
   pillStr: string,
+  detail: string,
+  inset: number,
 ): { ruleTitle: string; headerRows: string[] } {
+  const pad = " ".repeat(Math.max(0, inset));
+  const contentW = Math.max(1, textW - inset);
   const titleMax = Math.max(0, width - 6);
   const headerRows: string[] = [];
   let ruleTitle = titleLeft;
@@ -167,11 +172,14 @@ export function buildTileHeader(
     if (visibleWidth(wide) <= titleMax) {
       ruleTitle = wide;
     } else {
-      for (const line of wrapText(context, textW)) headerRows.push(style(line, "muted"));
+      for (const line of wrapText(context, contentW)) headerRows.push(`${pad}${style(line, "muted")}`);
     }
   }
   ruleTitle = truncateAnsi(ruleTitle, titleMax);
-  if (pillStr) headerRows.push(pillStr);
+  // The status row carries the pill plus the agent's status text (the dashboard's
+  // "last message" semantics), inset to line up under the title text in the rule.
+  const statusRow = [pillStr, detail ? style(detail, "muted") : ""].filter(Boolean).join("  ");
+  if (statusRow) headerRows.push(`${pad}${statusRow}`);
   return { ruleTitle, headerRows };
 }
 
@@ -203,6 +211,11 @@ export function drawTile(
   const kind = agentStatusKind(item.metadata);
   const palette = (kind && STATE_BORDER[kind]) || NEUTRAL_BORDER;
   const bd = `\x1b[${selected ? palette.on : palette.off}m`;
+  // Focus is shown by a bolder (heavy-line) outline, not a distinct color, so the
+  // border always reflects the agent's state.
+  const box = selected
+    ? { tl: "┏", tr: "┓", bl: "┗", br: "┛", h: "━", v: "┃" }
+    : { tl: "╭", tr: "╮", bl: "╰", br: "╯", h: "─", v: "│" };
 
   const badgeLabel = badge <= 9 ? String(badge) : "·";
   // Reserve the marker slot whether or not selected so the title (and thus the
@@ -211,10 +224,17 @@ export function drawTile(
   const here = item.target.windowId === options.currentWindowId ? style(" (here)", "muted") : "";
   const titleLeft = `${marker}${style(badgeLabel, selected ? "accent" : "strong")} ${style(item.label, "strong")}${here}`;
   const pillStr = renderAgentStatusPill(item.metadata);
-  const { ruleTitle, headerRows } = buildTileHeader(textW, width, titleLeft, sublabel, pillStr);
+  const recency = formatRelativeRecency(item.metadata.lastActivityAt) ?? "";
+  const statusText = (item.metadata.statusText ?? "").replace(/[\r\n]+/g, " ").trim();
+  const detail = [recency, statusText].filter(Boolean).join(" · ");
+  // Inset the header rows by the marker width so they line up under the title text.
+  const inset = visibleWidth(marker);
+  const { ruleTitle, headerRows } = buildTileHeader(textW, width, titleLeft, sublabel, pillStr, detail, inset);
 
   const bodyCapacity = Math.max(1, layout.tileHeight - 2);
-  const header = fitHeaderRows(headerRows, bodyCapacity, pillStr !== "");
+  // The status row is the last header row; preserve it under capacity pressure when
+  // it carries either the pill or the recency/status detail.
+  const header = fitHeaderRows(headerRows, bodyCapacity, pillStr !== "" || detail !== "");
   const previewRows = preview.slice(0, Math.max(0, bodyCapacity - header.length));
   const bodyRows = [...header, ...previewRows];
   while (bodyRows.length < bodyCapacity) bodyRows.push("");
@@ -222,13 +242,13 @@ export function drawTile(
   const titleSep = visibleWidth(ruleTitle) > 0 ? " " : "";
   const dashCount = Math.max(0, width - 3 - visibleWidth(ruleTitle) - titleSep.length);
   const rows: string[] = [];
-  rows.push(`${bd}╭ ${RESET}${ruleTitle}${titleSep}${bd}${"─".repeat(dashCount)}╮${RESET}`);
+  rows.push(`${bd}${box.tl} ${RESET}${ruleTitle}${titleSep}${bd}${box.h.repeat(dashCount)}${box.tr}${RESET}`);
   for (const content of bodyRows) {
     const text = truncateAnsi(content, textW);
     const pad = Math.max(0, textW - visibleWidth(text));
-    rows.push(`${bd}│${RESET} ${text}${" ".repeat(pad)}${bd}│${RESET}`);
+    rows.push(`${bd}${box.v}${RESET} ${text}${" ".repeat(pad)}${bd}${box.v}${RESET}`);
   }
-  rows.push(`${bd}╰${"─".repeat(innerW)}╯${RESET}`);
+  rows.push(`${bd}${box.bl}${box.h.repeat(innerW)}${box.br}${RESET}`);
 
   let out = "";
   for (let k = 0; k < rows.length; k += 1) {
