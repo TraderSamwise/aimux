@@ -10,6 +10,7 @@ import {
 import { MetadataServer } from "../metadata-server.js";
 import { PluginRuntime } from "../plugin-runtime.js";
 import { LoopWatcher } from "../loop-watcher.js";
+import { TranscriptReconciler } from "./transcript-reconciler.js";
 import { loadConfig } from "../config.js";
 import { findMainRepo } from "../worktree.js";
 import { listThreadSummaries, readMessages } from "../threads.js";
@@ -1234,6 +1235,18 @@ export async function startProjectServices(host: DashboardModelHost): Promise<vo
     });
     host.loopWatcher.start();
   }
+  // The reconciler talks to host.metadataServer in-process, so it must start with
+  // the project service regardless of whether the HTTP endpoint bound — it is not
+  // gated on `endpoint` like the plugin runtime and loop watcher above.
+  host.transcriptReconciler = new TranscriptReconciler({
+    loadMetadata: () => loadMetadataState(),
+    loadSessions: () => listTopologySessionStates({ statuses: ["running", "idle", "starting"] }),
+    hasPendingInteraction: (sessionId: string) =>
+      (host.metadataServer?.listPendingInteractions(sessionId)?.length ?? 0) > 0,
+    settleActivity: (sessionId: string) => host.metadataServer?.reconcileSettleActivity(sessionId),
+    clearStaleResponse: (sessionId: string) => host.metadataServer?.reconcileClearResponse(sessionId),
+  });
+  host.transcriptReconciler.start();
   host.projectServiceStartupMetadataSettling = false;
   if (host.projectServiceUiRefreshPending) {
     host.projectServiceUiRefreshPending = false;
@@ -1257,6 +1270,8 @@ export async function stopProjectServices(host: DashboardModelHost): Promise<voi
   }
   host.loopWatcher?.stop?.();
   host.loopWatcher = null;
+  host.transcriptReconciler?.stop?.();
+  host.transcriptReconciler = null;
   await host.pluginRuntime?.stop?.();
   host.pluginRuntime = null;
 }
