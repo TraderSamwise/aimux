@@ -12,6 +12,7 @@ import {
   padVisible,
   pill,
   statusDot,
+  statusTone,
   style,
   tmuxInvert,
   tmuxStyle,
@@ -31,6 +32,16 @@ describe("theme tokens", () => {
     expect(stripAnsi(statusDot("needs"))).toBe("◉");
     expect(stripAnsi(statusDot("service"))).toBe("◆");
     expect(statusDot("error")).toContain("\x1b[31m");
+  });
+
+  it("gives ready a distinct online color, not the offline gray", () => {
+    expect(statusTone("ready")).toBe("ready");
+    expect(statusTone("ready")).not.toBe(statusTone("offline"));
+    // ready paints sky blue (256-color 75); offline stays dim gray (\x1b[2m).
+    expect(style("x", "ready")).toContain("38;5;75");
+    expect(statusDot("ready")).toContain("38;5;75");
+    expect(statusDot("offline")).toContain("\x1b[2m");
+    expect(statusDot("ready")).not.toContain("\x1b[2m");
   });
 });
 
@@ -156,12 +167,14 @@ describe("theme primitive branches", () => {
       "danger",
       "blocked",
       "info",
+      "ready",
       "idle",
     ] as const) {
       expect(visibleWidth(style("abc", tone))).toBe(3);
     }
     for (const kind of [
       "working",
+      "ready",
       "idle",
       "offline",
       "needs",
