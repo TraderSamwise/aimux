@@ -1,9 +1,9 @@
 import { renderOverlayBox } from "../render/box.js";
-import { keycap, modalBand, padVisible, statusDot, style } from "../render/theme.js";
+import { keycap, keycapHint, modalBand, padVisible, statusDot, style } from "../render/theme.js";
 
 /** Render footer-style key hints as keycaps: hints([["Enter","create"],["Esc","cancel"]]). */
 export function hints(pairs: [string, string][]): string {
-  return `  ${pairs.map(([key, label]) => `${keycap(key)} ${style(label, "muted")}`).join("  ")}`;
+  return `  ${pairs.map(([key, label]) => keycapHint(key, label)).join("  ")}`;
 }
 
 export function buildServiceInputOverlayOutput(ctx: any, cols: number, rows: number): string {
@@ -315,7 +315,7 @@ function styleHelpLine(line: string): string {
   const text = line.trim();
   if (!indented) return style(text, "strong");
   const match = text.match(/^(\S+(?:\s\S+)*)\s{2,}(.*)$/);
-  if (match) return `  ${keycap(match[1])} ${style(match[2], "muted")}`;
+  if (match) return `  ${keycapHint(match[1], match[2])}`;
   return `  ${style(text, "muted")}`;
 }
 

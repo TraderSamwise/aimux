@@ -91,6 +91,52 @@ export function keycap(key: string): string {
   return `\x1b[48;5;238;38;5;253m ${key} ${RESET}`;
 }
 
+/** A footer/help hint: a keycap plus a muted label (label optional). */
+export function keycapHint(key: string, label = ""): string {
+  return label ? `${keycap(key)} ${style(label, "muted")}` : keycap(key);
+}
+
+// Style one "[key] label" or "key label" help group into a keycap + muted label.
+function styleHintGroup(group: string): string {
+  const bracket = group.match(/^\[(.+?)\]\s*(.*)$/);
+  if (bracket) return keycapHint(bracket[1], bracket[2]);
+  const splitAt = group.indexOf(" ");
+  if (splitAt < 0) return keycap(group);
+  return keycapHint(group.slice(0, splitAt), group.slice(splitAt + 1));
+}
+
+/** Style a help/footer line ("[a] x  [b] y" or "a x  b y") into joined keycap hints. */
+export function keycapHints(line: string): string {
+  return line
+    .trim()
+    .split(/\s{2,}/)
+    .filter(Boolean)
+    .map(styleHintGroup)
+    .join("  ");
+}
+
+/** Like keycapHints, but wraps the keycap groups to `width` visible columns. */
+export function keycapHintLines(line: string, width: number): string[] {
+  const groups = line
+    .trim()
+    .split(/\s{2,}/)
+    .filter(Boolean)
+    .map(styleHintGroup);
+  const lines: string[] = [];
+  let current = "";
+  for (const group of groups) {
+    const next = current ? `${current}  ${group}` : group;
+    if (visibleWidth(next) <= width) {
+      current = next;
+    } else {
+      if (current) lines.push(current);
+      current = group;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
 export type BandTone = "info" | "danger";
 
 const BAND_SGR: Record<BandTone, string> = {

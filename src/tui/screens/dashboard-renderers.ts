@@ -8,7 +8,7 @@ import {
   chip,
   type ChipTone,
   cols as gridCols,
-  keycap,
+  keycapHintLines,
   pill,
   statusDot,
   style,
@@ -346,36 +346,7 @@ export function renderDashboardFrame(
   const cardWidth = twoPane ? leftWidth : contentWidth;
   const padBlockLine = (line: string): string => line;
   const centerInBlock = (line: string): string => truncateAnsi(center(line, contentWidth), cols);
-  const styleHelpGroup = (group: string): string => {
-    const bracket = group.match(/^\[(.+?)\]\s*(.*)$/);
-    if (bracket) {
-      return bracket[2] ? `${keycap(bracket[1])} ${style(bracket[2], "muted")}` : keycap(bracket[1]);
-    }
-    const splitAt = group.indexOf(" ");
-    if (splitAt < 0) return keycap(group);
-    return `${keycap(group.slice(0, splitAt))} ${style(group.slice(splitAt + 1), "muted")}`;
-  };
-
-  const buildHelpLines = (line: string): string[] => {
-    const groups = line
-      .trim()
-      .split(/\s{2,}/)
-      .filter(Boolean)
-      .map(styleHelpGroup);
-    const lines: string[] = [];
-    let current = "";
-    for (const group of groups) {
-      const next = current ? `${current}  ${group}` : group;
-      if (stripAnsi(next).length <= contentWidth) {
-        current = next;
-      } else {
-        if (current) lines.push(current);
-        current = group;
-      }
-    }
-    if (current) lines.push(current);
-    return lines;
-  };
+  const buildHelpLines = (line: string): string[] => keycapHintLines(line, contentWidth);
 
   const trailingHints = (parts: string[]): string => parts.filter(Boolean).join(" ");
 
