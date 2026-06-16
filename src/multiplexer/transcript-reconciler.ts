@@ -36,9 +36,11 @@ export class TranscriptReconciler {
   // Sessions seen "complete" once, with the transcript stat at that moment, so we
   // only settle after confirming the file stayed quiescent across a full tick.
   private readonly pending = new Map<string, { size: number; mtimeMs: number }>();
-  private readonly codexPathCache = new Map<string, string>();
-  // Sessions whose Codex transcript lookup missed, with the tick to retry at.
-  private readonly codexMissUntil = new Map<string, number>();
+  // Resolved Codex paths and miss-backoff state, keyed by session id but tagged
+  // with the backendSessionId they were resolved for so a backend-id rewrite on a
+  // live session re-resolves instead of serving a stale path.
+  private readonly codexPathCache = new Map<string, { backendSessionId: string; path: string }>();
+  private readonly codexMiss = new Map<string, { backendSessionId: string; until: number }>();
   // Sessions seen needing a needs_response clear once, awaiting a second tick so a
   // fast daemon restart can't clear a still-re-registering interaction.
   private readonly pendingClear = new Set<string>();
@@ -60,7 +62,7 @@ export class TranscriptReconciler {
     }
     this.pending.clear();
     this.codexPathCache.clear();
-    this.codexMissUntil.clear();
+    this.codexMiss.clear();
     this.pendingClear.clear();
   }
 
@@ -70,16 +72,18 @@ export class TranscriptReconciler {
     const cwd = session.worktreePath ?? metadata.sessions[session.id]?.context?.worktreePath;
     if (!session.backendSessionId) return null;
     if (session.toolConfigKey === "codex") {
+      const backendSessionId = session.backendSessionId;
       const cached = this.codexPathCache.get(session.id);
-      if (cached) return cached;
-      const retryAt = this.codexMissUntil.get(session.id);
-      if (retryAt !== undefined && this.tick < retryAt) return null;
-      const found = (this.deps.findCodexPath ?? findCodexTranscriptPath)(session.backendSessionId);
+      if (cached?.backendSessionId === backendSessionId) return cached.path;
+      const miss = this.codexMiss.get(session.id);
+      if (miss?.backendSessionId === backendSessionId && this.tick < miss.until) return null;
+      const found = (this.deps.findCodexPath ?? findCodexTranscriptPath)(backendSessionId);
       if (found) {
-        this.codexPathCache.set(session.id, found);
-        this.codexMissUntil.delete(session.id);
+        this.codexPathCache.set(session.id, { backendSessionId, path: found });
+        this.codexMiss.delete(session.id);
       } else {
-        this.codexMissUntil.set(session.id, this.tick + CODEX_MISS_BACKOFF_TICKS);
+        this.codexPathCache.delete(session.id);
+        this.codexMiss.set(session.id, { backendSessionId, until: this.tick + CODEX_MISS_BACKOFF_TICKS });
       }
       return found;
     }
@@ -151,8 +155,8 @@ export class TranscriptReconciler {
       for (const id of [...this.codexPathCache.keys()]) {
         if (!live.has(id)) this.codexPathCache.delete(id);
       }
-      for (const id of [...this.codexMissUntil.keys()]) {
-        if (!live.has(id)) this.codexMissUntil.delete(id);
+      for (const id of [...this.codexMiss.keys()]) {
+        if (!live.has(id)) this.codexMiss.delete(id);
       }
       for (const id of [...this.pendingClear]) {
         if (!live.has(id)) this.pendingClear.delete(id);

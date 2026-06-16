@@ -169,6 +169,26 @@ describe("TranscriptReconciler — stranded needs_response", () => {
   });
 });
 
+describe("TranscriptReconciler — codex cache keyed by backend id", () => {
+  it("re-resolves when the backendSessionId changes on a live session", () => {
+    const findCodexPath = vi.fn((id: string) => `/codex/${id}.jsonl`);
+    let backendSessionId = "be-1";
+    const { reconciler } = makeReconciler({
+      findCodexPath,
+      loadMetadata: () => metadata("a", { activity: "running", attention: "normal" }, {}),
+      loadSessions: () => [session("a", { toolConfigKey: "codex", backendSessionId })],
+      probe: () => ({ turn: "in_progress" as const, size: 10, mtimeMs: 1 }),
+    });
+    reconciler.scan();
+    reconciler.scan();
+    expect(findCodexPath).toHaveBeenCalledTimes(1); // cached for be-1
+    backendSessionId = "be-2"; // backend id rewritten
+    reconciler.scan();
+    expect(findCodexPath).toHaveBeenLastCalledWith("be-2"); // stale path not reused
+    expect(findCodexPath).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("TranscriptReconciler — codex miss backoff", () => {
   it("does not re-scan the codex tree every tick after a miss", () => {
     const findCodexPath = vi.fn(() => null);
