@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
 import type { FastControlContext, FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
+import { formatRelativeRecency } from "../recency.js";
 import { TerminalHost } from "../terminal-host.js";
 import { truncateAnsi, wrapText } from "../tui/render/text.js";
 import { agentStatusKind, renderAgentStatusPill } from "../tui/render/agent-status.js";
@@ -223,7 +224,9 @@ export function drawTile(
   const here = item.target.windowId === options.currentWindowId ? style(" (here)", "muted") : "";
   const titleLeft = `${marker}${style(badgeLabel, selected ? "accent" : "strong")} ${style(item.label, "strong")}${here}`;
   const pillStr = renderAgentStatusPill(item.metadata);
-  const detail = (item.metadata.statusText ?? "").replace(/[\r\n]+/g, " ").trim();
+  const recency = formatRelativeRecency(item.metadata.lastActivityAt) ?? "";
+  const statusText = (item.metadata.statusText ?? "").replace(/[\r\n]+/g, " ").trim();
+  const detail = [recency, statusText].filter(Boolean).join(" · ");
   // Inset the header rows by the marker width so they line up under the title text.
   const inset = visibleWidth(marker);
   const { ruleTitle, headerRows } = buildTileHeader(textW, width, titleLeft, sublabel, pillStr, detail, inset);

@@ -108,6 +108,19 @@ describe("drawTile", () => {
     expect(stripAnsi(out)).toContain("wrapping it up");
   });
 
+  it("shows relative recency from lastActivityAt next to the pill", () => {
+    const lastActivityAt = new Date(Date.now() - 41_000).toISOString();
+    const out = renderTile(
+      60,
+      true,
+      { ...needs, lastActivityAt, statusText: "wrapping it up" },
+      "aimux / beautify-tui",
+    );
+    const plain = stripAnsi(out);
+    expect(plain).toContain("41s ago");
+    expect(plain).toContain("41s ago · wrapping it up");
+  });
+
   it("inlines the worktree/project context in the top rule when wide", () => {
     const out = renderTile(60, true, needs, "aimux / beautify-tui");
     const topRule = out.split(/\x1b\[\d+;\d+H/).filter(Boolean)[0]!;
