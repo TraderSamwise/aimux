@@ -242,7 +242,7 @@ export function renderThreadDetails(ctx: any, width: number, height: number): st
   if (entry.thread.worktreePath) lines.push(...ctx.wrapKeyValue("Worktree", entry.thread.worktreePath, width));
   lines.push("");
   lines.push(style("Messages", "strong"));
-  const messages = ctx.readMessages(entry.thread.id).slice(-Math.max(3, height - lines.length));
+  const messages = (entry.messages ?? []).slice(-Math.max(3, height - lines.length));
   for (const message of messages) {
     const prefix = `${message.from}${message.to?.length ? ` → ${message.to.join(", ")}` : ""} [${message.kind}]`;
     const delivered = message.deliveredTo ?? [];
