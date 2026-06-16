@@ -46,7 +46,7 @@ const SCOPE_LADDER: ExposeScope[] = ["worktree", "project", "global"];
 /** A tile's agent item; global-scope items also carry their project. */
 export type ExposeScopeItem = FastControlItem & { projectRoot?: string; projectName?: string };
 
-export type ExposeSublabel = "none" | "worktree" | "project";
+export type ExposeSublabel = "none" | "worktree" | "project-worktree";
 
 export interface ExposeScopeView {
   scope: ExposeScope;
@@ -88,7 +88,7 @@ export function loadExposeScopeItems(
   const listAll = deps.listAllFn ?? listAllProjectsExposeItems;
 
   if (scope === "global") {
-    return { scope, items: listAll({ tmux }), scopeLabel: "all projects", sublabel: "project" };
+    return { scope, items: listAll({ tmux }), scopeLabel: "all projects", sublabel: "project-worktree" };
   }
   const agentScope: AgentListScope = scope === "project" ? "all" : "worktree";
   return {

@@ -5,8 +5,9 @@ import { loadConfig } from "../config.js";
 import type { FastControlContext, FastControlItem } from "../fast-control.js";
 import { parseKeys } from "../key-parser.js";
 import { TerminalHost } from "../terminal-host.js";
-import { stripAnsi, truncateAnsi } from "../tui/render/text.js";
-import { renderAgentStatusChip } from "../tui/render/agent-status.js";
+import { truncateAnsi, wrapText } from "../tui/render/text.js";
+import { agentStatusKind, renderAgentStatusPill } from "../tui/render/agent-status.js";
+import { style, visibleWidth, type StatusKind } from "../tui/render/theme.js";
 import {
   initialExposeScope,
   loadExposeScopeItems,
@@ -135,7 +136,57 @@ export function computeLayout(itemCount: number, cols: number, rows: number): Gr
   };
 }
 
-function drawTile(
+// 256-color tile borders tinted to the agent's state, with a bright (selected) and
+// dimmed (unselected) variant. This is Exposé's selection model — distinct from the
+// chip/pill tone, which carries the label color via the shared status vocabulary.
+const STATE_BORDER: Partial<Record<StatusKind, { on: string; off: string }>> = {
+  working: { on: "38;5;38", off: "38;5;24" },
+  idle: { on: "38;5;108", off: "38;5;65" },
+  needs: { on: "38;5;179", off: "38;5;94" },
+  error: { on: "38;5;174", off: "38;5;88" },
+  done: { on: "38;5;71", off: "38;5;28" },
+  blocked: { on: "38;5;176", off: "38;5;97" },
+};
+const NEUTRAL_BORDER = { on: "38;5;39", off: "38;5;240" };
+
+// Inline title in the top rule when the worktree/project context fits; otherwise drop
+// the context onto its own wrapped row(s). The status pill always gets its own row, so
+// the state signal stays legible no matter how narrow the tile is.
+export function buildTileHeader(
+  textW: number,
+  width: number,
+  titleLeft: string,
+  context: string,
+  pillStr: string,
+): { ruleTitle: string; headerRows: string[] } {
+  const titleMax = Math.max(0, width - 6);
+  const headerRows: string[] = [];
+  let ruleTitle = titleLeft;
+  if (context) {
+    const wide = `${titleLeft} ${style(`· ${context}`, "muted")}`;
+    if (visibleWidth(wide) <= titleMax) {
+      ruleTitle = wide;
+    } else {
+      for (const line of wrapText(context, textW)) headerRows.push(style(line, "muted"));
+    }
+  }
+  ruleTitle = truncateAnsi(ruleTitle, titleMax);
+  if (pillStr) headerRows.push(pillStr);
+  return { ruleTitle, headerRows };
+}
+
+// Clamp header rows to the tile's body capacity so a wrapped header can never push
+// the tile past its height (which would overwrite the tile below). Context rows are
+// dropped first; the status pill (the last row) is preserved.
+export function fitHeaderRows(headerRows: string[], capacity: number, hasPill: boolean): string[] {
+  if (headerRows.length <= capacity) return headerRows;
+  if (!hasPill) return headerRows.slice(0, capacity);
+  const pillRow = headerRows[headerRows.length - 1]!;
+  const contextRows = headerRows.slice(0, headerRows.length - 1);
+  return [...contextRows.slice(0, Math.max(0, capacity - 1)), pillRow];
+}
+
+export function drawTile(
   item: ExposeScopeItem,
   preview: string[],
   badge: number,
@@ -149,28 +200,35 @@ function drawTile(
 ): string {
   const innerW = Math.max(1, width - 2);
   const textW = Math.max(0, innerW - 1);
-  const border = selected ? "\x1b[38;5;39m" : "\x1b[38;5;240m";
-  const headerStyle = selected ? "\x1b[1;38;5;39m" : "\x1b[1m";
-  const sub = sublabel ? `  ${sublabel}` : "";
-  const here = item.target.windowId === options.currentWindowId ? " (here)" : "";
-  const badgeLabel = badge <= 9 ? String(badge) : "·";
-  const chip = renderAgentStatusChip(item.metadata);
-  const ident = `${item.label}${sub}${here}`;
-  const header = chip
-    ? `${headerStyle}${badgeLabel}${RESET} ${chip} ${headerStyle}${ident}${RESET}`
-    : `${headerStyle}${badgeLabel} ${ident}${RESET}`;
-  const headerTrunc = truncateAnsi(header, textW);
-  const headerPad = Math.max(0, textW - stripAnsi(headerTrunc).length);
+  const kind = agentStatusKind(item.metadata);
+  const palette = (kind && STATE_BORDER[kind]) || NEUTRAL_BORDER;
+  const bd = `\x1b[${selected ? palette.on : palette.off}m`;
 
+  const badgeLabel = badge <= 9 ? String(badge) : "·";
+  // Reserve the marker slot whether or not selected so the title (and thus the
+  // wide/narrow header breakpoint) doesn't shift as selection moves between tiles.
+  const marker = selected ? `${style("▸", "accent")} ` : "  ";
+  const here = item.target.windowId === options.currentWindowId ? style(" (here)", "muted") : "";
+  const titleLeft = `${marker}${style(badgeLabel, selected ? "accent" : "strong")} ${style(item.label, "strong")}${here}`;
+  const pillStr = renderAgentStatusPill(item.metadata);
+  const { ruleTitle, headerRows } = buildTileHeader(textW, width, titleLeft, sublabel, pillStr);
+
+  const bodyCapacity = Math.max(1, layout.tileHeight - 2);
+  const header = fitHeaderRows(headerRows, bodyCapacity, pillStr !== "");
+  const previewRows = preview.slice(0, Math.max(0, bodyCapacity - header.length));
+  const bodyRows = [...header, ...previewRows];
+  while (bodyRows.length < bodyCapacity) bodyRows.push("");
+
+  const titleSep = visibleWidth(ruleTitle) > 0 ? " " : "";
+  const dashCount = Math.max(0, width - 3 - visibleWidth(ruleTitle) - titleSep.length);
   const rows: string[] = [];
-  rows.push(`${border}┌${"─".repeat(innerW)}┐${RESET}`);
-  rows.push(`${border}│${RESET} ${headerTrunc}${" ".repeat(headerPad)}${RESET}${border}│${RESET}`);
-  for (let b = 0; b < layout.bodyLines; b += 1) {
-    const text = truncateAnsi(preview[b] ?? "", textW);
-    const pad = Math.max(0, textW - stripAnsi(text).length);
-    rows.push(`${border}│${RESET} ${text}${" ".repeat(pad)}${RESET}${border}│${RESET}`);
+  rows.push(`${bd}╭ ${RESET}${ruleTitle}${titleSep}${bd}${"─".repeat(dashCount)}╮${RESET}`);
+  for (const content of bodyRows) {
+    const text = truncateAnsi(content, textW);
+    const pad = Math.max(0, textW - visibleWidth(text));
+    rows.push(`${bd}│${RESET} ${text}${" ".repeat(pad)}${bd}│${RESET}`);
   }
-  rows.push(`${border}└${"─".repeat(innerW)}┘${RESET}`);
+  rows.push(`${bd}╰${"─".repeat(innerW)}╯${RESET}`);
 
   let out = "";
   for (let k = 0; k < rows.length; k += 1) {
@@ -205,12 +263,14 @@ export async function runTmuxExpose(options: TmuxExposeOptions): Promise<number>
   let scopeLabel = view.scopeLabel;
   let sublabel: ExposeSublabel = view.sublabel;
 
-  const tileSublabel = (item: ExposeScopeItem): string =>
-    sublabel === "project"
-      ? (item.projectName ?? "")
-      : sublabel === "worktree"
-        ? shortWorktree(item, options.projectRoot)
-        : "";
+  const tileSublabel = (item: ExposeScopeItem): string => {
+    if (sublabel === "worktree") return shortWorktree(item, options.projectRoot);
+    if (sublabel === "project-worktree") {
+      const worktree = shortWorktree(item, item.projectRoot ?? options.projectRoot);
+      return item.projectName ? `${item.projectName} / ${worktree}` : worktree;
+    }
+    return "";
+  };
 
   const terminal = new TerminalHost();
   terminal.enterRawMode();
