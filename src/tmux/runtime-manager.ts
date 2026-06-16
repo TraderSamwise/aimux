@@ -88,6 +88,8 @@ export interface TmuxWindowMetadata {
   attention?: string;
   unseenCount?: number;
   statusText?: string;
+  /** Timestamp of the agent's last event/activity, for relative-recency display. */
+  lastActivityAt?: string;
 }
 
 export function isDashboardWindowName(name: string): boolean {
