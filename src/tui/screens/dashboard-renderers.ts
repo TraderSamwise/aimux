@@ -179,7 +179,7 @@ function sessionStateRank(state: SessionRowState | undefined): StateRank {
     case "working":
       return { rank: 3, tone: "work" };
     case "ready":
-      return { rank: 1, tone: "muted" };
+      return { rank: 1, tone: "ready" };
     case "next_step":
       return { rank: 3, tone: "attn" };
     case "done":
@@ -214,7 +214,7 @@ function semanticCountParts(worktree: { sessions: DashboardSession[] }): string[
   append("blocked", "blocked", "blocked");
   append("error", "error", "danger");
   append("working", "working", "work");
-  append("ready", "ready");
+  append("ready", "ready", "ready");
   append("idle", "idle");
   append("done", "done", "done");
   append("offline", "offline");
@@ -288,6 +288,7 @@ function sessionStatusCell(session: DashboardSession, fallback: string): string 
   }
   let tone: Tone = "muted";
   if (session.pendingAction) tone = "attn";
+  if (rowState === "ready") tone = "ready";
   if (rowState === "done") tone = "done";
   if (rowState === "idle") tone = "idle";
   return style(label, tone);
@@ -344,7 +345,7 @@ export function renderDashboardFrame(
     const hintTone = (active: Tone): Tone => (offline ? "muted" : active);
     const trailing = trailingHints([
       sessionActivityChips(session),
-      isRecentlyIdle(session) ? style("idle now", hintTone("attn")) : "",
+      isRecentlyIdle(session) ? style("idle now", hintTone("ready")) : "",
       session.taskDescription ? style(`⧫ ${truncate(session.taskDescription, 40)}`, hintTone("blocked")) : "",
       session.workflowNextAction ? style(`→ ${truncate(session.workflowNextAction, 24)}`, hintTone("attn")) : "",
       session.headline ? style(`· ${truncate(session.headline, 50)}`, "muted") : "",
