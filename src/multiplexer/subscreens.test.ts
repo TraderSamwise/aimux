@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initPaths } from "../paths.js";
-import { createThread } from "../threads.js";
+import { appendMessage, createThread } from "../threads.js";
+import { renderThreadDetails } from "../tui/screens/subscreen-renderers.js";
+import { buildThreadEntries } from "../workflow.js";
 import { handleThreadsKey } from "./subscreens.js";
 
 describe("thread subscreen navigation", () => {
@@ -51,5 +53,33 @@ describe("thread subscreen navigation", () => {
     handleThreadsKey(host, Buffer.from("\r"));
 
     expect(host.activateDashboardEntry).toHaveBeenCalledWith(teammate, { preserveDashboardSelection: true });
+  });
+
+  it("renders thread details from thread entry messages without a host reader", () => {
+    const thread = createThread({
+      id: "thread-1",
+      title: "Review",
+      kind: "review",
+      createdBy: "parent-1",
+      participants: ["teammate-1", "user"],
+      owner: "teammate-1",
+    });
+    appendMessage(thread.id, {
+      id: "message-1",
+      from: "parent-1",
+      to: ["user"],
+      kind: "note",
+      body: "Please check this thread.",
+    });
+
+    const host: any = {
+      threadEntries: buildThreadEntries(),
+      threadIndex: 0,
+      describeHandoffState: vi.fn(),
+      wrapKeyValue: (_key: string, value: string) => [value],
+    };
+
+    expect(() => renderThreadDetails(host, 80, 20)).not.toThrow();
+    expect(renderThreadDetails(host, 80, 20).join("\n")).toContain("Please check this thread.");
   });
 });

@@ -1,8 +1,9 @@
 import { normalizeReviewStatus, readAllTasks, type Task } from "./tasks.js";
-import { listThreadSummaries, readMessages, type ThreadSummary } from "./threads.js";
+import { listThreadSummaries, readMessages, type OrchestrationMessage, type ThreadSummary } from "./threads.js";
 
 export interface ThreadEntry extends ThreadSummary {
   displayTitle: string;
+  messages: OrchestrationMessage[];
   pendingDeliveries: number;
   latestPendingRecipients: string[];
 }
@@ -33,6 +34,7 @@ export function buildThreadEntries(): ThreadEntry[] {
       return {
         ...summary,
         displayTitle: summary.thread.title || `${summary.thread.kind} ${summary.thread.id}`,
+        messages,
         pendingDeliveries: pending.length,
         latestPendingRecipients,
       };
