@@ -8,6 +8,7 @@ import { loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
+import { deriveSessionSemantics } from "../session-semantics.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
 import { captureGitContext } from "../context/context-bridge.js";
@@ -384,6 +385,14 @@ export function buildTmuxWindowMetadata(
 ): any {
   const sessionMetadata = loadMetadataState().sessions[sessionId];
   const runtime = host.sessions.find((session: any) => session.id === sessionId);
+  // Compute the same semantic user label the dashboard shows, from the single source
+  // of truth, so Exposé and the dashboard never disagree on an agent's state.
+  const semantic = deriveSessionSemantics({
+    status: runtime?.status ?? "running",
+    activity: sessionMetadata?.derived?.activity,
+    attention: sessionMetadata?.derived?.attention,
+    unseenCount: sessionMetadata?.derived?.unseenCount,
+  });
   return {
     kind: "agent",
     sessionId,
@@ -400,6 +409,7 @@ export function buildTmuxWindowMetadata(
     unseenCount: sessionMetadata?.derived?.unseenCount,
     statusText: sessionMetadata?.status?.text,
     lastActivityAt: sessionMetadata?.derived?.lastEvent?.ts ?? sessionMetadata?.updatedAt,
+    userLabel: semantic.user.label,
   };
 }
 

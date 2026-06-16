@@ -30,6 +30,18 @@ describe("agentStatusChip", () => {
     expect(agentStatusChip({})).toBeNull();
     expect(agentStatusChip({ activity: "bogus" })).toBeNull();
   });
+
+  it("prefers the dashboard-semantic user label over raw activity/attention", () => {
+    // The dashboard reinterprets activity:"waiting" as "working" and alive-idle as "ready";
+    // the user label wins so Exposé matches the dashboard.
+    expect(agentStatusChip({ activity: "waiting", userLabel: "working" })).toEqual({
+      kind: "working",
+      label: "Working",
+    });
+    expect(agentStatusChip({ activity: "idle", userLabel: "ready" })).toEqual({ kind: "ready", label: "Ready" });
+    expect(agentStatusChip({ userLabel: "next_step" })).toEqual({ kind: "needs", label: "Next step" });
+    expect(agentStatusChip({ userLabel: "offline" })).toEqual({ kind: "offline", label: "Offline" });
+  });
 });
 
 describe("renderAgentStatusChip", () => {
