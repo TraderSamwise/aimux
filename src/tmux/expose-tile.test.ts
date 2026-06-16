@@ -103,6 +103,14 @@ describe("drawTile", () => {
     expect(stripAnsi(out)).not.toContain("▸");
   });
 
+  it("renders the dashboard-semantic user label (not the raw activity) as the pill", () => {
+    // Raw activity "waiting" would read "WAITING"; the semantic label "working" wins.
+    const out = renderTile(56, true, { activity: "waiting", userLabel: "working", worktreePath: "/x/wt" }, "p / wt");
+    const plain = stripAnsi(out);
+    expect(plain).toContain("WORKING");
+    expect(plain).not.toContain("WAITING");
+  });
+
   it("shows the agent status text (last message) on the pill row", () => {
     const out = renderTile(56, true, { ...needs, statusText: "wrapping it up" }, "aimux / beautify-tui");
     expect(stripAnsi(out)).toContain("wrapping it up");
