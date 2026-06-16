@@ -21,11 +21,12 @@ export interface TranscriptProbe {
 // `assistant` record is always in view, then scan backward to it.
 const TAIL_BYTES = 256 * 1024;
 
-/** Read up to the last `maxBytes` of a file as UTF-8. Null on any error. */
-export function readFileTail(path: string, maxBytes = TAIL_BYTES): string | null {
+/** Read up to the last `maxBytes` of a file as UTF-8. Null on any error.
+ *  Pass `knownSize` to skip a redundant stat when the caller already has it. */
+export function readFileTail(path: string, maxBytes = TAIL_BYTES, knownSize?: number): string | null {
   let fd: number | undefined;
   try {
-    const size = statSync(path).size;
+    const size = knownSize ?? statSync(path).size;
     const start = Math.max(0, size - maxBytes);
     const length = size - start;
     if (length <= 0) return "";
@@ -71,14 +72,25 @@ function parseJsonl(tail: string): Array<Record<string, unknown>> {
  */
 export function claudeTurnState(tail: string): TurnState {
   const records = parseJsonl(tail);
+  // A user record appearing *after* the last assistant means a new turn has begun
+  // (the agent is generating a reply, even if it hasn't written tokens yet).
+  let sawUserAfterAssistant = false;
   for (let i = records.length - 1; i >= 0; i--) {
     const record = records[i];
+    if (record.type === "user") {
+      sawUserAfterAssistant = true;
+      continue;
+    }
     if (record.type !== "assistant") continue;
     const message = record.message as { stop_reason?: unknown } | undefined;
     const stop = message?.stop_reason;
-    if (stop === "end_turn" || stop === "stop_sequence") return "complete";
-    if (stop === "tool_use") return "in_progress";
-    return "unknown";
+    // tool_use / pause_turn mean the model will keep going within this turn.
+    if (stop === "tool_use" || stop === "pause_turn") return "in_progress";
+    if (typeof stop !== "string") return "unknown";
+    // Any other (terminal) stop_reason — end_turn, stop_sequence, max_tokens,
+    // refusal, … — means the turn is done, unless a newer prompt already started
+    // the next one.
+    return sawUserAfterAssistant ? "in_progress" : "complete";
   }
   return "unknown";
 }
@@ -115,7 +127,7 @@ export function probeTranscript(toolConfigKey: string, path: string): Transcript
   } catch {
     return null;
   }
-  const tail = readFileTail(path);
+  const tail = readFileTail(path, TAIL_BYTES, stat.size);
   if (tail === null) return null;
   return { turn: turnStateFromTail(toolConfigKey, tail), size: stat.size, mtimeMs: stat.mtimeMs };
 }
@@ -128,8 +140,12 @@ function codexSessionsDir(): string {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Codex transcript files are nested by date and named with the session uuid
-// (e.g. .../2026/06/16/rollout-<ts>-<uuid>.jsonl). Find the file for a known id.
-function findCodexFile(dir: string, backendSessionId: string): string | null {
+// (e.g. .../2026/06/16/rollout-<ts>-<uuid>.jsonl), so the tree is shallow. Cap
+// recursion depth as a guard against a pathological/symlinked directory.
+const CODEX_MAX_DEPTH = 6;
+
+function findCodexFile(dir: string, backendSessionId: string, depth = 0): string | null {
+  if (depth > CODEX_MAX_DEPTH) return null;
   let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -139,7 +155,7 @@ function findCodexFile(dir: string, backendSessionId: string): string | null {
   for (const entry of entries) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      const found = findCodexFile(path, backendSessionId);
+      const found = findCodexFile(path, backendSessionId, depth + 1);
       if (found) return found;
     } else if (entry.isFile() && entry.name.endsWith(`${backendSessionId}.jsonl`)) {
       return path;
