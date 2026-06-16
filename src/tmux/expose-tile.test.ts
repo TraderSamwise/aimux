@@ -109,7 +109,8 @@ describe("drawTile", () => {
   });
 
   it("shows relative recency from lastActivityAt next to the pill", () => {
-    const lastActivityAt = new Date(Date.now() - 41_000).toISOString();
+    // A minutes-bucket delta keeps the assertion stable against sub-second drift.
+    const lastActivityAt = new Date(Date.now() - 7 * 60_000).toISOString();
     const out = renderTile(
       60,
       true,
@@ -117,8 +118,17 @@ describe("drawTile", () => {
       "aimux / beautify-tui",
     );
     const plain = stripAnsi(out);
-    expect(plain).toContain("41s ago");
-    expect(plain).toContain("41s ago · wrapping it up");
+    expect(plain).toContain("7m ago");
+    expect(plain).toContain("7m ago · wrapping it up");
+  });
+
+  it("keeps the recency/status row on a short tile even with no status pill", () => {
+    const lastActivityAt = new Date(Date.now() - 7 * 60_000).toISOString();
+    // No activity/attention → no pill; the row carries only recency, and must survive.
+    const out = renderTile(34, true, { worktreePath: "/x/wt", lastActivityAt }, "proj / a-long-worktree-name", 4);
+    const lines = out.split(/\x1b\[\d+;\d+H/).filter(Boolean);
+    expect(lines.length).toBe(4);
+    expect(stripAnsi(out)).toContain("7m ago");
   });
 
   it("inlines the worktree/project context in the top rule when wide", () => {
