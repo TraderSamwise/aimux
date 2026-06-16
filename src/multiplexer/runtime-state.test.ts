@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initPaths } from "../paths.js";
-import { updateSessionMetadata } from "../metadata-store.js";
+import { loadMetadataState, updateSessionMetadata } from "../metadata-store.js";
 import { DashboardPendingActions } from "../dashboard/pending-actions.js";
 import { listTopologySessionStates, saveRuntimeTopologySessions } from "../runtime-core/topology-sessions.js";
 import { upsertTopologyService } from "../runtime-core/topology-services.js";
@@ -188,6 +188,68 @@ describe("resumeOfflineSession", () => {
       true,
       team,
     ]);
+  });
+
+  it("settles a stale running activity to idle on backend resume", () => {
+    updateSessionMetadata("codex-1", (current) => ({
+      ...current,
+      derived: { ...(current.derived ?? {}), activity: "running", attention: "normal" },
+    }));
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-1" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: { canResumeWithBackendSessionId: vi.fn(() => true) },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      saveState: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession: vi.fn(),
+    };
+
+    resumeOfflineSession(host, {
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      backendSessionId: "native-session",
+      args: [],
+      worktreePath: repoRoot,
+    });
+
+    expect(loadMetadataState().sessions["codex-1"]?.derived?.activity).toBe("idle");
+  });
+
+  it("preserves a needs_input agent's waiting activity on resume", () => {
+    updateSessionMetadata("codex-1", (current) => ({
+      ...current,
+      derived: { ...(current.derived ?? {}), activity: "waiting", attention: "needs_input" },
+    }));
+    const host: any = {
+      sessions: [],
+      offlineSessions: [{ id: "codex-1" }],
+      sessionLabels: new Map(),
+      sessionBootstrap: { canResumeWithBackendSessionId: vi.fn(() => true) },
+      getSessionLabel: vi.fn(),
+      invalidateDesktopStateSnapshot: vi.fn(),
+      saveState: vi.fn(),
+      writeStatuslineFile: vi.fn(),
+      debug: vi.fn(),
+      createSession: vi.fn(),
+    };
+
+    resumeOfflineSession(host, {
+      id: "codex-1",
+      command: "codex",
+      toolConfigKey: "codex",
+      backendSessionId: "native-session",
+      args: [],
+      worktreePath: repoRoot,
+    });
+
+    const derived = loadMetadataState().sessions["codex-1"]?.derived;
+    expect(derived?.activity).toBe("waiting");
+    expect(derived?.attention).toBe("needs_input");
   });
 
   it("does not use display metadata when resuming an incomplete offline row", () => {
