@@ -8,6 +8,8 @@ import { loadTeamConfig } from "../team.js";
 import { SessionRuntime } from "../session-runtime.js";
 import { TmuxSessionTransport } from "../tmux/session-transport.js";
 import { loadMetadataState } from "../metadata-store.js";
+import { isAgentOutputEventKind } from "../agent-events.js";
+import { sessionRecencyAnchor } from "../session-recency.js";
 import { deriveSessionSemantics } from "../session-semantics.js";
 import { parseAgentOutput } from "../agent-output-parser.js";
 import { normalizeSubmittedPrompt, waitForTmuxPromptSubmit } from "../agent-prompt-delivery.js";
@@ -393,6 +395,15 @@ export function buildTmuxWindowMetadata(
     attention: sessionMetadata?.derived?.attention,
     unseenCount: sessionMetadata?.derived?.unseenCount,
   });
+  const derived = sessionMetadata?.derived;
+  const lastOutputAt =
+    derived?.lastOutputAt ??
+    (derived?.lastEvent && isAgentOutputEventKind(derived.lastEvent.kind) ? derived.lastEvent.ts : undefined);
+  const anchor = sessionRecencyAnchor({
+    label: semantic.user.label,
+    lastOutputAt,
+    becameIdleAt: derived?.becameIdleAt,
+  });
   return {
     kind: "agent",
     sessionId,
@@ -408,8 +419,9 @@ export function buildTmuxWindowMetadata(
     attention: sessionMetadata?.derived?.attention,
     unseenCount: sessionMetadata?.derived?.unseenCount,
     statusText: sessionMetadata?.status?.text,
-    lastActivityAt: sessionMetadata?.derived?.lastEvent?.ts ?? sessionMetadata?.updatedAt,
     userLabel: semantic.user.label,
+    recencyAt: anchor?.value,
+    recencyLabel: anchor?.label,
   };
 }
 

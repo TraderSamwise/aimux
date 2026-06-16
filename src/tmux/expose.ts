@@ -226,7 +226,8 @@ export function drawTile(
   const here = item.target.windowId === options.currentWindowId ? style(" (here)", "muted") : "";
   const titleLeft = `${marker}${style(badgeLabel, selected ? "accent" : "strong")} ${style(item.label, "strong")}${here}`;
   const pillStr = renderAgentStatusPill(item.metadata);
-  const recency = formatRelativeRecency(item.metadata.lastActivityAt) ?? "";
+  const rel = formatRelativeRecency(item.metadata.recencyAt) ?? "";
+  const recency = rel && item.metadata.recencyLabel ? `${item.metadata.recencyLabel} ${rel}` : rel;
   const statusText = (item.metadata.statusText ?? "").replace(/[\r\n]+/g, " ").trim();
   const detail = [recency, statusText].filter(Boolean).join(" · ");
   // Inset the header rows by the marker width so they line up under the title text.
