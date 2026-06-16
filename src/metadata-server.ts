@@ -834,6 +834,21 @@ export class MetadataServer {
     return this.interactions.listPending(sessionId);
   }
 
+  // Settle a session the transcript reconciler found stuck "working": drop the
+  // stale activity to idle so it derives "ready". Not a task_done — this is a
+  // correction, so it must not bump unseen counts or fire a completion alert.
+  reconcileSettleActivity(sessionId: string): void {
+    this.tracker.setActivity(sessionId, "idle");
+    this.options.onChange?.();
+  }
+
+  // Clear a needs_response attention stranded by a lost in-memory interaction
+  // registry (e.g. after a daemon restart) once no live interaction remains.
+  reconcileClearResponse(sessionId: string): void {
+    this.tracker.setAttention(sessionId, "normal");
+    this.options.onChange?.();
+  }
+
   notifyChange(): void {
     this.options.onChange?.();
   }
