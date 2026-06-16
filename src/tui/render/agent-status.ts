@@ -1,5 +1,5 @@
 import type { AgentActivityState } from "../../agent-events.js";
-import { statusDot, statusTone, style, type StatusKind } from "./theme.js";
+import { pill, statusDot, statusTone, style, type StatusKind } from "./theme.js";
 
 export interface AgentStatusInput {
   activity?: string;
@@ -48,4 +48,16 @@ export function renderAgentStatusChip(input: AgentStatusInput): string {
   const chip = agentStatusChip(input);
   if (!chip) return "";
   return `${statusDot(chip.kind)} ${style(chip.label, statusTone(chip.kind))}`;
+}
+
+/** The presentation status kind for an agent, or null when unknown. */
+export function agentStatusKind(input: AgentStatusInput): StatusKind | null {
+  return agentStatusChip(input)?.kind ?? null;
+}
+
+/** Status as an uppercase state-tinted pill (e.g. ` NEEDS INPUT `). "" if unknown. */
+export function renderAgentStatusPill(input: AgentStatusInput): string {
+  const chip = agentStatusChip(input);
+  if (!chip) return "";
+  return pill(chip.label.toUpperCase(), statusTone(chip.kind));
 }

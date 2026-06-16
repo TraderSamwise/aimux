@@ -207,7 +207,7 @@ describe("loadExposeScopeItems", () => {
     const view = loadExposeScopeItems("global", context, { tmux, listItemsFn, listAllFn });
     expect(listAllFn).toHaveBeenCalledWith({ tmux });
     expect(listItemsFn).not.toHaveBeenCalled();
-    expect(view).toMatchObject({ scope: "global", scopeLabel: "all projects", sublabel: "project" });
+    expect(view).toMatchObject({ scope: "global", scopeLabel: "all projects", sublabel: "project-worktree" });
     expect(view.items.map((i) => i.id)).toEqual(["other"]);
   });
 });
