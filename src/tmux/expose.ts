@@ -232,7 +232,9 @@ export function drawTile(
   const { ruleTitle, headerRows } = buildTileHeader(textW, width, titleLeft, sublabel, pillStr, detail, inset);
 
   const bodyCapacity = Math.max(1, layout.tileHeight - 2);
-  const header = fitHeaderRows(headerRows, bodyCapacity, pillStr !== "");
+  // The status row is the last header row; preserve it under capacity pressure when
+  // it carries either the pill or the recency/status detail.
+  const header = fitHeaderRows(headerRows, bodyCapacity, pillStr !== "" || detail !== "");
   const previewRows = preview.slice(0, Math.max(0, bodyCapacity - header.length));
   const bodyRows = [...header, ...previewRows];
   while (bodyRows.length < bodyCapacity) bodyRows.push("");
