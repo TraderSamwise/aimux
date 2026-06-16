@@ -174,6 +174,7 @@ describe("theme primitive branches", () => {
     }
     for (const kind of [
       "working",
+      "ready",
       "idle",
       "offline",
       "needs",
