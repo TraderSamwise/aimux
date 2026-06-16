@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stripAnsi } from "../tui/render/text.js";
-import { buildTileHeader, drawTile } from "./expose.js";
+import { buildTileHeader, drawTile, fitHeaderRows } from "./expose.js";
 
 const PILL = "[PILL]";
 
@@ -24,8 +24,36 @@ describe("buildTileHeader", () => {
   });
 });
 
-function renderTile(width: number, selected: boolean, meta: Record<string, unknown>, sublabel: string): string {
-  const layout = { tileCols: 1, tileWidth: width, tileHeight: 6, bodyLines: 3, visibleCount: 1, gridTopRow: 3 };
+describe("fitHeaderRows", () => {
+  it("returns rows unchanged when they fit the capacity", () => {
+    expect(fitHeaderRows(["a", "b"], 3, true)).toEqual(["a", "b"]);
+  });
+
+  it("drops context rows but keeps the pill when over capacity", () => {
+    expect(fitHeaderRows(["ctx1", "ctx2", "PILL"], 2, true)).toEqual(["ctx1", "PILL"]);
+    expect(fitHeaderRows(["ctx1", "ctx2", "PILL"], 1, true)).toEqual(["PILL"]);
+  });
+
+  it("truncates from the end when there is no pill", () => {
+    expect(fitHeaderRows(["a", "b", "c"], 2, false)).toEqual(["a", "b"]);
+  });
+});
+
+function renderTile(
+  width: number,
+  selected: boolean,
+  meta: Record<string, unknown>,
+  sublabel: string,
+  tileHeight = 6,
+): string {
+  const layout = {
+    tileCols: 1,
+    tileWidth: width,
+    tileHeight,
+    bodyLines: tileHeight - 3,
+    visibleCount: 1,
+    gridTopRow: 3,
+  };
   const item = { id: "x", label: "claude(coder)", target: { windowId: "@1" }, metadata: meta, activity: 0 };
   return drawTile(
     item as never,
@@ -65,5 +93,23 @@ describe("drawTile", () => {
     const out = renderTile(60, true, needs, "aimux / beautify-tui");
     const topRule = out.split(/\x1b\[\d+;\d+H/).filter(Boolean)[0]!;
     expect(stripAnsi(topRule)).toContain("aimux / beautify-tui");
+  });
+
+  it("never exceeds the tile height even when the header would overflow a short tile", () => {
+    const out = renderTile(34, true, needs, "some-project / a-rather-long-worktree-name", 4);
+    const lines = out.split(/\x1b\[\d+;\d+H/).filter(Boolean);
+    expect(lines.length).toBe(4);
+    // The status pill survives even when context rows are dropped for space.
+    expect(stripAnsi(out)).toContain("NEEDS INPUT");
+  });
+
+  it("keeps every rendered line the same visible width (aligned borders)", () => {
+    const out = renderTile(40, false, needs, "aimux / beautify-tui");
+    const widths = out
+      .split(/\x1b\[\d+;\d+H/)
+      .filter(Boolean)
+      .map((line) => stripAnsi(line).length);
+    expect(new Set(widths).size).toBe(1);
+    expect(widths[0]).toBe(40);
   });
 });

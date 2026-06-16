@@ -175,6 +175,17 @@ export function buildTileHeader(
   return { ruleTitle, headerRows };
 }
 
+// Clamp header rows to the tile's body capacity so a wrapped header can never push
+// the tile past its height (which would overwrite the tile below). Context rows are
+// dropped first; the status pill (the last row) is preserved.
+export function fitHeaderRows(headerRows: string[], capacity: number, hasPill: boolean): string[] {
+  if (headerRows.length <= capacity) return headerRows;
+  if (!hasPill) return headerRows.slice(0, capacity);
+  const pillRow = headerRows[headerRows.length - 1]!;
+  const contextRows = headerRows.slice(0, headerRows.length - 1);
+  return [...contextRows.slice(0, Math.max(0, capacity - 1)), pillRow];
+}
+
 export function drawTile(
   item: ExposeScopeItem,
   preview: string[],
@@ -194,19 +205,22 @@ export function drawTile(
   const bd = `\x1b[${selected ? palette.on : palette.off}m`;
 
   const badgeLabel = badge <= 9 ? String(badge) : "·";
-  const marker = selected ? `${style("▸", "accent")} ` : "";
+  // Reserve the marker slot whether or not selected so the title (and thus the
+  // wide/narrow header breakpoint) doesn't shift as selection moves between tiles.
+  const marker = selected ? `${style("▸", "accent")} ` : "  ";
   const here = item.target.windowId === options.currentWindowId ? style(" (here)", "muted") : "";
   const titleLeft = `${marker}${style(badgeLabel, selected ? "accent" : "strong")} ${style(item.label, "strong")}${here}`;
   const pillStr = renderAgentStatusPill(item.metadata);
   const { ruleTitle, headerRows } = buildTileHeader(textW, width, titleLeft, sublabel, pillStr);
 
   const bodyCapacity = Math.max(1, layout.tileHeight - 2);
-  const previewRows = preview.slice(0, Math.max(0, bodyCapacity - headerRows.length));
-  const bodyRows = [...headerRows, ...previewRows];
+  const header = fitHeaderRows(headerRows, bodyCapacity, pillStr !== "");
+  const previewRows = preview.slice(0, Math.max(0, bodyCapacity - header.length));
+  const bodyRows = [...header, ...previewRows];
   while (bodyRows.length < bodyCapacity) bodyRows.push("");
 
   const titleSep = visibleWidth(ruleTitle) > 0 ? " " : "";
-  const dashCount = Math.max(2, width - 3 - visibleWidth(ruleTitle) - titleSep.length);
+  const dashCount = Math.max(0, width - 3 - visibleWidth(ruleTitle) - titleSep.length);
   const rows: string[] = [];
   rows.push(`${bd}╭ ${RESET}${ruleTitle}${titleSep}${bd}${"─".repeat(dashCount)}╮${RESET}`);
   for (const content of bodyRows) {
