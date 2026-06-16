@@ -230,6 +230,14 @@ describe("config", () => {
     });
   });
 
+  it("defaults notification view acknowledgement behavior", () => {
+    expect(loadConfig({ includeGlobal: false }).notifications).toMatchObject({
+      markReadOnView: true,
+      clearNeedsInputOnView: true,
+      clearFormalInteractionsOnView: false,
+    });
+  });
+
   it("defaults exposé scope to per-worktree (forceGlobalScope disabled)", () => {
     expect(loadConfig({ includeGlobal: false }).expose).toEqual({ forceGlobalScope: false });
   });

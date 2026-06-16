@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import notifier from "node-notifier";
 import { debug } from "./debug.js";
+import { externalNotificationsDisabled } from "./external-notifications.js";
 
 export interface DesktopNotificationPayload {
   title: string;
@@ -28,11 +29,19 @@ export interface DesktopNotifierDeps {
   nodeNotifier?: NodeNotifierLike;
 }
 
-export type DesktopNotificationTransport = "mac-helper" | "node-notifier";
+export type DesktopNotificationTransport = "mac-helper" | "node-notifier" | "disabled";
 
 export interface DesktopNotificationAttempt {
   transport: DesktopNotificationTransport;
   helperPath?: string;
+}
+
+export interface DesktopNotificationDeliveryResult extends DesktopNotificationAttempt {
+  ok: boolean;
+  exitCode?: number | null;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
 }
 
 export interface MacNotifierHelperCheck {
@@ -57,6 +66,10 @@ function packageRoot(moduleDir: string): string {
   return dirname(moduleDir);
 }
 
+function isMacNotifierAppExecutable(candidate: string): boolean {
+  return /aimux-notifier\.app\/Contents\/MacOS\/aimux-notifier$/.test(candidate);
+}
+
 export function macNotifierCandidates(deps: Pick<DesktopNotifierDeps, "arch" | "env" | "moduleDir"> = {}): string[] {
   const env = deps.env ?? process.env;
   const override = env.AIMUX_NOTIFIER_HELPER?.trim();
@@ -66,13 +79,12 @@ export function macNotifierCandidates(deps: Pick<DesktopNotifierDeps, "arch" | "
     override,
     join(root, "native", "darwin", "aimux-notifier.app", "Contents", "MacOS", "aimux-notifier"),
     join(root, "native", `darwin-${arch}`, "aimux-notifier.app", "Contents", "MacOS", "aimux-notifier"),
-    join(root, "native", "darwin", "aimux-notifier"),
-    join(root, "native", `darwin-${arch}`, "aimux-notifier"),
   ];
 
   return candidates
     .filter((candidate): candidate is string => Boolean(candidate))
-    .map((candidate) => resolve(candidate));
+    .map((candidate) => resolve(candidate))
+    .filter(isMacNotifierAppExecutable);
 }
 
 export function findMacNotifierHelper(
@@ -108,16 +120,39 @@ function sendViaMacHelper(
   const execFile = deps.execFile ?? nodeExecFile;
   execFile(helperPath, macHelperArgs(payload), (error) => {
     if (!error) return;
-    debug(`mac notification helper fallback: ${error.message}`, "notify");
-    sendViaNodeNotifier(payload, deps);
+    debug(`mac notification helper failed: ${error.message}`, "notify");
   });
   return { transport: "mac-helper", helperPath };
+}
+
+function sendViaMacHelperAndWait(
+  helperPath: string,
+  payload: DesktopNotificationPayload,
+  deps: DesktopNotifierDeps,
+): Promise<DesktopNotificationDeliveryResult> {
+  const execFile = deps.execFile ?? nodeExecFile;
+
+  return new Promise((resolveSend) => {
+    execFile(helperPath, macHelperArgs(payload), { timeout: 10000 }, (error, stdout, stderr) => {
+      resolveSend({
+        transport: "mac-helper",
+        helperPath,
+        ok: !error,
+        exitCode: exitCodeFromError(error),
+        stdout: typeof stdout === "string" ? stdout.trim() : "",
+        stderr: typeof stderr === "string" ? stderr.trim() : "",
+        error: error?.message,
+      });
+    });
+  });
 }
 
 export function sendDesktopNotification(
   payload: DesktopNotificationPayload,
   deps: DesktopNotifierDeps = {},
 ): DesktopNotificationAttempt {
+  if (externalNotificationsDisabled(deps.env)) return { transport: "disabled" };
+
   if ((deps.platform ?? process.platform) !== "darwin") {
     return sendViaNodeNotifier(payload, deps);
   }
@@ -125,6 +160,21 @@ export function sendDesktopNotification(
   const helperPath = findMacNotifierHelper(deps);
   if (!helperPath) return sendViaNodeNotifier(payload, deps);
   return sendViaMacHelper(helperPath, payload, deps);
+}
+
+export async function sendDesktopNotificationAndWait(
+  payload: DesktopNotificationPayload,
+  deps: DesktopNotifierDeps = {},
+): Promise<DesktopNotificationDeliveryResult> {
+  if (externalNotificationsDisabled(deps.env)) return { transport: "disabled", ok: false, error: "disabled" };
+
+  if ((deps.platform ?? process.platform) !== "darwin") {
+    return { ...sendViaNodeNotifier(payload, deps), ok: true };
+  }
+
+  const helperPath = findMacNotifierHelper(deps);
+  if (!helperPath) return { ...sendViaNodeNotifier(payload, deps), ok: true };
+  return sendViaMacHelperAndWait(helperPath, payload, deps);
 }
 
 function exitCodeFromError(error: Error | null): number | null {
@@ -140,7 +190,7 @@ export function checkMacNotifierHelper(
   const execFile = deps.execFile ?? nodeExecFile;
 
   return new Promise((resolveCheck) => {
-    execFile(helperPath, ["--check"], { timeout: 5000 }, (error, stdout, stderr) => {
+    execFile(helperPath, ["--check"], { timeout: 10000 }, (error, stdout, stderr) => {
       resolveCheck({
         ok: !error,
         exitCode: exitCodeFromError(error),

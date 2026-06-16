@@ -83,11 +83,12 @@ export function dismissHelp(host: NavigationHost): void {
 }
 
 export function renderHelp(host: NavigationHost): void {
+  const { cols, rows } = host.getViewportSize();
   if (host.mode === "dashboard" && typeof host.writeFrame === "function") {
-    host.writeFrame(`\x1b[2J\x1b[H${buildHelpOverlayOutput(host)}`, true);
+    host.writeFrame(`\x1b[2J\x1b[H${buildHelpOverlayOutput(host, cols, rows)}`, true);
     return;
   }
-  process.stdout.write(buildHelpOverlayOutput(host));
+  process.stdout.write(buildHelpOverlayOutput(host, cols, rows));
 }
 
 export function handleHelpKey(host: NavigationHost, data: Buffer): void {
@@ -139,7 +140,8 @@ export function renderSwitcher(host: NavigationHost): void {
     host.redrawDashboardWithOverlay();
     return;
   }
-  process.stdout.write(buildSwitcherOverlayOutput(host));
+  const { cols, rows } = host.getViewportSize();
+  process.stdout.write(buildSwitcherOverlayOutput(host, cols, rows));
 }
 
 export function handleSwitcherKey(host: NavigationHost, data: Buffer): void {
@@ -203,7 +205,8 @@ export function renderMigratePicker(host: NavigationHost): void {
     host.redrawDashboardWithOverlay();
     return;
   }
-  const output = buildMigratePickerOverlayOutput(host);
+  const { cols, rows } = host.getViewportSize();
+  const output = buildMigratePickerOverlayOutput(host, cols, rows);
   if (output) process.stdout.write(output);
 }
 

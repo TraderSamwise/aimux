@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UserNotifications
 
 struct Options {
   var title = ""
@@ -57,16 +58,78 @@ func parseArgs(_ args: [String]) -> Options {
   return options
 }
 
-// This helper is executed directly from the app bundle by the CLI. The modern
-// UserNotifications API rejects that launch mode; this is the same legacy API
-// shape used by terminal-notifier, but under Aimux's bundle identity.
-final class NotificationDelegate: NSObject, NSUserNotificationCenterDelegate {
+final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
   func userNotificationCenter(
-    _ center: NSUserNotificationCenter,
-    shouldPresent notification: NSUserNotification
-  ) -> Bool {
-    return true
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    if #available(macOS 11.0, *) {
+      completionHandler([.banner, .list, .sound])
+    } else {
+      completionHandler([.alert, .sound])
+    }
   }
+}
+
+func authorizationStatusName(_ status: UNAuthorizationStatus) -> String {
+  switch status {
+  case .notDetermined:
+    return "notDetermined"
+  case .denied:
+    return "denied"
+  case .authorized:
+    return "authorized"
+  case .provisional:
+    return "provisional"
+  case .ephemeral:
+    return "ephemeral"
+  @unknown default:
+    return "unknown"
+  }
+}
+
+func notificationSettings(_ center: UNUserNotificationCenter) -> UNNotificationSettings? {
+  let semaphore = DispatchSemaphore(value: 0)
+  var result: UNNotificationSettings?
+  center.getNotificationSettings { settings in
+    result = settings
+    semaphore.signal()
+  }
+  if semaphore.wait(timeout: .now() + 5) == .timedOut {
+    return nil
+  }
+  return result
+}
+
+func requestAuthorization(_ center: UNUserNotificationCenter) -> Bool {
+  let semaphore = DispatchSemaphore(value: 0)
+  var granted = false
+  var requestError: Error?
+  center.requestAuthorization(options: [.alert, .sound]) { ok, error in
+    granted = ok
+    requestError = error
+    semaphore.signal()
+  }
+  if semaphore.wait(timeout: .now() + 10) == .timedOut {
+    stderr("notification authorization timed out")
+    return false
+  }
+  if let requestError {
+    stderr("notification authorization failed: \(requestError.localizedDescription)")
+  }
+  return granted
+}
+
+func checkNotifier() -> Int32 {
+  let bundleId = Bundle.main.bundleIdentifier ?? "unknown"
+  let center = UNUserNotificationCenter.current()
+  guard let settings = notificationSettings(center) else {
+    stderr("Aimux notifier check failed (\(bundleId)): notification settings timed out")
+    return 75
+  }
+  stdout("Aimux notifier ready (\(bundleId)); authorization=\(authorizationStatusName(settings.authorizationStatus))")
+  return settings.authorizationStatus == .denied ? 77 : 0
 }
 
 func postNotification(_ options: Options) -> Int32 {
@@ -81,21 +144,51 @@ func postNotification(_ options: Options) -> Int32 {
 
   NSApplication.shared.setActivationPolicy(.accessory)
 
-  let center = NSUserNotificationCenter.default
+  let center = UNUserNotificationCenter.current()
   let delegate = NotificationDelegate()
   center.delegate = delegate
 
-  let notification = NSUserNotification()
-  notification.identifier = "aimux-\(UUID().uuidString)"
-  notification.title = options.title
-  notification.subtitle = options.subtitle.isEmpty ? nil : options.subtitle
-  notification.informativeText = options.message
-  if options.sound {
-    notification.soundName = NSUserNotificationDefaultSoundName
+  if let settings = notificationSettings(center) {
+    if settings.authorizationStatus == .denied {
+      stderr("notifications are denied for \(Bundle.main.bundleIdentifier ?? "unknown")")
+      return 77
+    }
+    if settings.authorizationStatus == .notDetermined && !requestAuthorization(center) {
+      stderr("notifications are not authorized for \(Bundle.main.bundleIdentifier ?? "unknown")")
+      return 77
+    }
+  } else {
+    stderr("notification settings timed out")
+    return 75
   }
 
-  center.deliver(notification)
-  Thread.sleep(forTimeInterval: 0.2)
+  let content = UNMutableNotificationContent()
+  content.title = options.title
+  if !options.subtitle.isEmpty {
+    content.subtitle = options.subtitle
+  }
+  content.body = options.message
+  if options.sound {
+    content.sound = .default
+  }
+
+  let request = UNNotificationRequest(identifier: "aimux-\(UUID().uuidString)", content: content, trigger: nil)
+  let semaphore = DispatchSemaphore(value: 0)
+  var deliveryError: Error?
+  center.add(request) { error in
+    deliveryError = error
+    semaphore.signal()
+  }
+  if semaphore.wait(timeout: .now() + 5) == .timedOut {
+    stderr("notification delivery timed out")
+    return 75
+  }
+  if let deliveryError {
+    stderr("notification delivery failed: \(deliveryError.localizedDescription)")
+    return 70
+  }
+
+  Thread.sleep(forTimeInterval: 1.0)
   _ = delegate
   return 0
 }
@@ -103,9 +196,7 @@ func postNotification(_ options: Options) -> Int32 {
 let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
 
 if options.check {
-  let bundleId = Bundle.main.bundleIdentifier ?? "unknown"
-  stdout("Aimux notifier ready (\(bundleId))")
-  exit(0)
+  exit(checkNotifier())
 }
 
 exit(postNotification(options))

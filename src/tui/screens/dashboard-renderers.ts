@@ -1,25 +1,21 @@
 import type { DashboardService, DashboardSession, DashboardViewModel, WorktreeGroup } from "../../dashboard/index.js";
 import { isAgentOutputEventKind } from "../../agent-events.js";
-import { buildDashboardQuickJumpWorktrees } from "../../dashboard/quick-jump.js";
+import { buildDashboardQuickJumpWorktrees, DASHBOARD_QUICK_JUMP_LIMIT } from "../../dashboard/quick-jump.js";
 import { formatRelativeRecency } from "../../recency.js";
-import { center, composeTwoPane, stripAnsi, truncate, wrapKeyValue } from "../render/text.js";
-
-const STATUS_ICONS: Record<DashboardSession["status"], string> = {
-  running: "\x1b[33m●\x1b[0m",
-  idle: "\x1b[32m●\x1b[0m",
-  waiting: "\x1b[36m◉\x1b[0m",
-  exited: "\x1b[31m○\x1b[0m",
-  offline: "\x1b[2m○\x1b[0m",
-};
-
-const SERVICE_ICONS: Record<DashboardService["status"], string> = {
-  running: "\x1b[32m◆\x1b[0m",
-  exited: "\x1b[31m◇\x1b[0m",
-  offline: "\x1b[2m◇\x1b[0m",
-};
+import { center, composeTwoPane, stripAnsi, truncate, truncateAnsi, wrapKeyValue } from "../render/text.js";
+import {
+  card,
+  chip,
+  type ChipTone,
+  cols as gridCols,
+  keycapHintLines,
+  pill,
+  statusDot,
+  style,
+  type Tone,
+} from "../render/theme.js";
 
 const RECENT_IDLE_MS = 2 * 60 * 1000;
-const STATE_LABEL_WIDTH = 15;
 
 type SessionUserLabel = NonNullable<DashboardSession["semantic"]>["user"]["label"];
 type SessionPendingAction = NonNullable<DashboardSession["pendingAction"]>;
@@ -27,6 +23,7 @@ type SessionRowState = SessionUserLabel | SessionPendingAction;
 
 const ROW_STATE_LABELS: Record<SessionRowState, string> = {
   working: "Working",
+  ready: "Ready",
   needs_input: "Needs input",
   needs_response: "Needs response",
   next_step: "Next step",
@@ -45,6 +42,37 @@ const ROW_STATE_LABELS: Record<SessionRowState, string> = {
   renaming: "Renaming",
 };
 
+// Status cells render as attention pills; the rest use plain colored/dim text.
+const PILL_STATES = new Set<SessionRowState>([
+  "needs_input",
+  "needs_response",
+  "error",
+  "blocked",
+  "working",
+  "next_step",
+]);
+
+const PILL_TONE: Partial<Record<SessionRowState, Tone>> = {
+  needs_input: "attn",
+  needs_response: "attn",
+  error: "danger",
+  blocked: "blocked",
+  working: "work",
+  next_step: "attn",
+};
+
+const PILL_LABEL: Partial<Record<SessionRowState, string>> = {
+  needs_response: "NEEDS REPLY",
+};
+
+// Column widths for an agent/service row (before the trailing chips/hints region).
+const COL_SELECT = 2;
+const COL_DOT = 2;
+const COL_INDEX = 4;
+const COL_IDENTITY = 16;
+const COL_STATUS = 14;
+const COL_TIME = 16;
+
 function parseTimestamp(value: string | undefined): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -57,12 +85,6 @@ function isRecentlyIdle(session: DashboardSession, now = Date.now()): boolean {
   if (label === "working" || label === "offline" || label === "error") return false;
   const becameIdleAt = parseTimestamp(session.becameIdleAt);
   return becameIdleAt !== null && now - becameIdleAt >= 0 && now - becameIdleAt <= RECENT_IDLE_MS;
-}
-
-function padVisible(value: string, width: number): string {
-  const visibleLength = stripAnsi(value).length;
-  if (visibleLength >= width) return value;
-  return `${value}${" ".repeat(width - visibleLength)}`;
 }
 
 function effectiveSessionRowState(session: DashboardSession): SessionRowState | undefined {
@@ -102,6 +124,9 @@ function sessionTimeAnchor(session: DashboardSession): { label: string; value?: 
   if (userLabel === "working") {
     return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
   }
+  if (userLabel === "ready") {
+    return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
+  }
   if (userLabel === "done") {
     return lastOutputAt
       ? { label: "output", value: lastOutputAt }
@@ -119,15 +144,23 @@ function sessionTimeAnchor(session: DashboardSession): { label: string; value?: 
   return lastOutputAt ? { label: "output", value: lastOutputAt } : null;
 }
 
-function sessionTimeHint(session: DashboardSession): string {
+function sessionTimeText(session: DashboardSession): string {
   const anchor = sessionTimeAnchor(session);
   if (!anchor?.value) return "";
   const recency = formatRelativeRecency(anchor.value);
-  return recency ? ` \x1b[2m· ${anchor.label} ${recency}\x1b[0m` : "";
+  return recency ? style(`${anchor.label} ${recency}`, "muted") : "";
 }
 
-function sessionActivityBadges(session: DashboardSession): string {
-  const badges: string[] = [];
+/** An offline agent gets no accent colors — its chips/hints render muted so the
+ *  eye stays on live agents. Pending actions (creating/graveyarding) still count
+ *  as active. */
+function isSessionOffline(session: DashboardSession): boolean {
+  if (session.pendingAction) return false;
+  return effectiveSessionRowState(session) === "offline" || session.status === "offline" || session.status === "exited";
+}
+
+function sessionActivityChips(session: DashboardSession): string {
+  const chips: string[] = [];
   const notificationUnread = session.semantic?.notifications.unreadCount ?? session.notificationUnreadCount ?? 0;
   const activityNew = session.semantic?.activityNewCount ?? session.unseenCount ?? 0;
   const threadUnread = session.threadUnreadCount ?? 0;
@@ -135,20 +168,56 @@ function sessionActivityBadges(session: DashboardSession): string {
   const threadWaitingOnThem = session.threadWaitingOnThemCount ?? 0;
   const threadPending = session.threadPendingCount ?? 0;
 
-  if (notificationUnread > 0) badges.push(`\x1b[36m${Math.min(notificationUnread, 99)} unread\x1b[0m`);
-  if (activityNew > 0) badges.push(`\x1b[34m${Math.min(activityNew, 99)} unseen\x1b[0m`);
-  if (threadUnread > 0 || threadWaitingOnMe > 0 || threadWaitingOnThem > 0) {
-    badges.push(`\x1b[2;34mthread ${threadUnread}/${threadWaitingOnMe}/${threadWaitingOnThem}\x1b[0m`);
-  }
-  if (threadPending > 0) badges.push(`\x1b[2;31m${threadPending} pending\x1b[0m`);
-  if ((session.workflowOnMeCount ?? 0) > 0) badges.push(`\x1b[1;33mworkflow on you\x1b[0m`);
-  if ((session.workflowBlockedCount ?? 0) > 0) badges.push(`\x1b[31mworkflow blocked\x1b[0m`);
-  if ((session.workflowFamilyCount ?? 0) > 0) badges.push(`\x1b[2;35mworkflow ${session.workflowFamilyCount}\x1b[0m`);
+  // Offline rows lose all accent tones; colors are reserved for live agents.
+  const offline = isSessionOffline(session);
+  const tone = (active: ChipTone): ChipTone => (offline ? "muted" : active);
 
-  return badges.length > 0 ? ` \x1b[2m·\x1b[0m ${badges.join(" \x1b[2m·\x1b[0m ")}` : "";
+  if (notificationUnread > 0) chips.push(chip(`${Math.min(notificationUnread, 99)} unread`, tone("work")));
+  if (activityNew > 0) chips.push(chip(`${Math.min(activityNew, 99)} unseen`, tone("info")));
+  if (threadUnread > 0 || threadWaitingOnMe > 0 || threadWaitingOnThem > 0) {
+    chips.push(chip(`thread ${threadUnread}/${threadWaitingOnMe}/${threadWaitingOnThem}`, "muted"));
+  }
+  if (threadPending > 0) chips.push(chip(`${threadPending} pending`, tone("danger")));
+  if ((session.workflowOnMeCount ?? 0) > 0) chips.push(chip("workflow on you", tone("attn")));
+  if ((session.workflowBlockedCount ?? 0) > 0) chips.push(chip("workflow blocked", tone("danger")));
+  if ((session.workflowFamilyCount ?? 0) > 0) chips.push(chip(`workflow ${session.workflowFamilyCount}`, "muted"));
+
+  return chips.join(" ");
 }
 
-function worktreeSemanticSummary(worktree: { sessions: DashboardSession[] }): string {
+interface StateRank {
+  rank: number;
+  tone: Tone;
+}
+
+function sessionStateRank(state: SessionRowState | undefined): StateRank {
+  switch (state) {
+    case "error":
+      return { rank: 6, tone: "danger" };
+    case "needs_input":
+    case "needs_response":
+      return { rank: 5, tone: "attn" };
+    case "blocked":
+      return { rank: 4, tone: "blocked" };
+    case "working":
+      return { rank: 3, tone: "work" };
+    case "ready":
+      return { rank: 1, tone: "muted" };
+    case "next_step":
+      return { rank: 3, tone: "attn" };
+    case "done":
+      return { rank: 2, tone: "done" };
+    case "idle":
+      return { rank: 1, tone: "idle" };
+    case undefined:
+    case "offline":
+      return { rank: 0, tone: "muted" };
+    default:
+      return { rank: 3, tone: "attn" };
+  }
+}
+
+function semanticCountParts(worktree: { sessions: DashboardSession[] }): string[] {
   const counts = new Map<SessionRowState, number>();
   for (const session of worktree.sessions) {
     const label = effectiveSessionRowState(session);
@@ -157,66 +226,100 @@ function worktreeSemanticSummary(worktree: { sessions: DashboardSession[] }): st
   }
 
   const parts: string[] = [];
-  const append = (
-    label: SessionRowState,
-    text: string,
-    color: (value: string) => string = (value) => `\x1b[2m${value}\x1b[0m`,
-  ) => {
+  const append = (label: SessionRowState, text: string, tone: Tone = "muted") => {
     const count = counts.get(label) ?? 0;
-    if (count > 0) parts.push(color(`${count} ${text}`));
+    if (count > 0) parts.push(style(`${count} ${text}`, tone));
   };
 
-  append("needs_input", "needs input", (value) => `\x1b[1;33m${value}\x1b[0m`);
-  append("needs_response", "needs response", (value) => `\x1b[1;33m${value}\x1b[0m`);
-  append("next_step", "next step", (value) => `\x1b[33m${value}\x1b[0m`);
-  append("blocked", "blocked", (value) => `\x1b[35m${value}\x1b[0m`);
-  append("error", "error", (value) => `\x1b[31m${value}\x1b[0m`);
-  append("working", "working", (value) => `\x1b[36m${value}\x1b[0m`);
+  append("needs_input", "needs input", "attn");
+  append("needs_response", "needs response", "attn");
+  append("next_step", "next step", "attn");
+  append("blocked", "blocked", "blocked");
+  append("error", "error", "danger");
+  append("working", "working", "work");
+  append("ready", "ready");
   append("idle", "idle");
-  append("done", "done", (value) => `\x1b[32m${value}\x1b[0m`);
+  append("done", "done", "done");
   append("offline", "offline");
-  append("creating", "creating", (value) => `\x1b[33m${value}\x1b[0m`);
-  append("forking", "forking", (value) => `\x1b[33m${value}\x1b[0m`);
-  append("migrating", "migrating", (value) => `\x1b[33m${value}\x1b[0m`);
-  append("starting", "starting", (value) => `\x1b[33m${value}\x1b[0m`);
-  append("stopping", "stopping", (value) => `\x1b[33m${value}\x1b[0m`);
-  append("graveyarding", "removing", (value) => `\x1b[33m${value}\x1b[0m`);
-  append("renaming", "renaming", (value) => `\x1b[33m${value}\x1b[0m`);
+  append("creating", "creating", "attn");
+  append("forking", "forking", "attn");
+  append("migrating", "migrating", "attn");
+  append("starting", "starting", "attn");
+  append("stopping", "stopping", "attn");
+  append("graveyarding", "removing", "attn");
+  append("renaming", "renaming", "attn");
 
-  return parts.length > 0 ? ` \x1b[2m·\x1b[0m ${parts.join(" \x1b[2m·\x1b[0m ")}` : "";
+  return parts;
 }
 
-function colorSessionIcon(session: DashboardSession): string {
-  const label = effectiveSessionRowState(session);
-  const attention = session.semantic?.user.attention;
-  if (session.pendingAction) return "\x1b[33m●\x1b[0m";
-  if (attention === "error" || label === "error") return "\x1b[31m●\x1b[0m";
-  if (attention === "blocked" || label === "blocked") return "\x1b[35m●\x1b[0m";
-  if (attention === "needs_input" || label === "needs_input") return "\x1b[1;33m◉\x1b[0m";
-  if (attention === "needs_response" || label === "needs_response") return "\x1b[1;33m?\x1b[0m";
-  if (label === "working") return "\x1b[36m●\x1b[0m";
-  if (label === "done") return "\x1b[32m●\x1b[0m";
-  if (label === "next_step") return "\x1b[33m●\x1b[0m";
-  if (label === "idle") return "\x1b[2;32m●\x1b[0m";
-  if (label === "offline") return "\x1b[2m○\x1b[0m";
-  return STATUS_ICONS[session.status];
+interface WorktreeLike {
+  sessions: DashboardSession[];
+  services: DashboardService[];
+  operationFailure?: unknown;
+  pendingAction?: string;
+  removing?: boolean;
+  pending?: boolean;
 }
 
-function colorSessionStatus(session: DashboardSession, statusLabel: string): string {
+function worktreeTone(worktree: WorktreeLike): Tone {
+  if (worktree.operationFailure) return "danger";
+  let best: StateRank = { rank: 0, tone: "muted" };
+  for (const session of worktree.sessions) {
+    const ranked = sessionStateRank(effectiveSessionRowState(session));
+    if (ranked.rank > best.rank) best = ranked;
+  }
+  return best.tone;
+}
+
+function worktreeSummaryText(worktree: WorktreeLike): string {
+  if (worktree.operationFailure) return style("failed", "danger");
+  if (worktree.pendingAction === "creating") return style("(creating...)", "attn");
+  if (worktree.pendingAction === "graveyarding") return style("(graveyarding...)", "attn");
+  if (worktree.removing || worktree.pending) return style("(removing...)", "attn");
+  const parts = semanticCountParts(worktree);
+  if (parts.length > 0) return parts.join(style(" · ", "muted"));
+  return worktree.sessions.length + worktree.services.length === 0 ? style("no agents", "muted") : "";
+}
+
+function sessionStatusDot(session: DashboardSession): string {
+  if (session.pendingAction) return style("●", "attn");
   const label = effectiveSessionRowState(session);
   const attention = session.semantic?.user.attention;
-  if (session.pendingAction) return `\x1b[33m${statusLabel}\x1b[0m`;
-  if (attention === "error" || label === "error") return `\x1b[31m${statusLabel}\x1b[0m`;
-  if (attention === "blocked" || label === "blocked") return `\x1b[35m${statusLabel}\x1b[0m`;
-  if (attention === "needs_input" || label === "needs_input") return `\x1b[1;33m${statusLabel}\x1b[0m`;
-  if (attention === "needs_response" || label === "needs_response") return `\x1b[1;33m${statusLabel}\x1b[0m`;
-  if (label === "working") return `\x1b[36m${statusLabel}\x1b[0m`;
-  if (label === "done") return `\x1b[32m${statusLabel}\x1b[0m`;
-  if (label === "next_step") return `\x1b[33m${statusLabel}\x1b[0m`;
-  if (label === "idle") return `\x1b[2;32m${statusLabel}\x1b[0m`;
-  if (label === "offline") return `\x1b[2m${statusLabel}\x1b[0m`;
-  if (session.pendingAction) return `\x1b[33m${statusLabel}\x1b[0m`;
-  return statusLabel;
+  if (attention === "error" || label === "error") return statusDot("error");
+  if (attention === "blocked" || label === "blocked") return statusDot("blocked");
+  if (attention === "needs_input" || label === "needs_input") return statusDot("needs");
+  if (attention === "needs_response" || label === "needs_response") return statusDot("needs");
+  if (label === "working") return statusDot("working");
+  if (label === "ready") return statusDot("ready");
+  if (label === "done") return statusDot("done");
+  if (label === "next_step") return style("●", "attn");
+  if (label === "idle") return statusDot("idle");
+  if (label === "offline") return statusDot("offline");
+  if (session.status === "offline") return statusDot("offline");
+  if (session.status === "waiting") return statusDot("needs");
+  if (session.status === "exited") return style("○", "danger");
+  if (session.status === "idle") return statusDot("done");
+  return style("●", "attn");
+}
+
+function sessionStatusCell(session: DashboardSession, fallback: string): string {
+  const label = sessionUserStateLabel(session, fallback);
+  const rowState = effectiveSessionRowState(session);
+  if (rowState && PILL_STATES.has(rowState)) {
+    const pillLabel = PILL_LABEL[rowState] ?? label.toUpperCase();
+    return pill(pillLabel, PILL_TONE[rowState] ?? "attn");
+  }
+  let tone: Tone = "muted";
+  if (session.pendingAction) tone = "attn";
+  if (rowState === "done") tone = "done";
+  if (rowState === "idle") tone = "idle";
+  return style(label, tone);
+}
+
+function serviceStatusDot(service: DashboardService): string {
+  if (service.status === "running") return statusDot("service");
+  if (service.status === "exited") return style("◇", "danger");
+  return statusDot("serviceOff");
 }
 
 function summarizeTeammate(
@@ -238,71 +341,68 @@ export function renderDashboardFrame(
   rows: number,
 ): { frame: string; scrollOffset: number } {
   const contentWidth = Math.max(72, cols);
+  const twoPane = cols >= 72 && state.detailsPaneVisible;
+  const leftWidth = Math.max(32, Math.floor(contentWidth * 0.58));
+  const cardWidth = twoPane ? leftWidth : contentWidth;
   const padBlockLine = (line: string): string => line;
-  const centerInBlock = (line: string): string => center(line, contentWidth).slice(0, cols);
-  const wrapCommandGroups = (line: string): string[] => {
-    const groups = line
-      .trim()
-      .split(/\s{2,}/)
-      .filter(Boolean);
-    const lines: string[] = [];
-    let current = "";
-    for (const group of groups) {
-      const next = current ? `${current}  ${group}` : group;
-      if (stripAnsi(next).length <= contentWidth) {
-        current = next;
-      } else {
-        if (current) lines.push(current);
-        current = group;
-      }
-    }
-    if (current) lines.push(current);
-    return lines;
+  const centerInBlock = (line: string): string => truncateAnsi(center(line, contentWidth), cols);
+  const buildHelpLines = (line: string): string[] => keycapHintLines(line, contentWidth);
+
+  const trailingHints = (parts: string[]): string => parts.filter(Boolean).join(" ");
+
+  const indexCell = (digit?: number): string => (digit ? style(`[${digit}]`, "muted") : "");
+
+  const agentRow = (session: DashboardSession, selected: boolean, digit?: number): string => {
+    const role = session.role ? ` ${style(session.role, "muted")}` : "";
+    const identity = `${style(session.label ?? session.command, "strong")}${role}`;
+    const grid = gridCols([
+      { content: selected ? `${style("▸", "accent")} ` : "  ", width: COL_SELECT },
+      { content: `${sessionStatusDot(session)} `, width: COL_DOT },
+      { content: indexCell(digit), width: COL_INDEX },
+      { content: identity, width: COL_IDENTITY },
+      { content: sessionStatusCell(session, state.derivedStatusLabel(session)), width: COL_STATUS },
+      { content: sessionTimeText(session), width: COL_TIME },
+    ]);
+    const offline = isSessionOffline(session);
+    const hintTone = (active: Tone): Tone => (offline ? "muted" : active);
+    const trailing = trailingHints([
+      sessionActivityChips(session),
+      isRecentlyIdle(session) ? style("idle now", hintTone("attn")) : "",
+      session.taskDescription ? style(`⧫ ${truncate(session.taskDescription, 40)}`, hintTone("blocked")) : "",
+      session.workflowNextAction ? style(`→ ${truncate(session.workflowNextAction, 24)}`, hintTone("attn")) : "",
+      session.headline ? style(`· ${truncate(session.headline, 50)}`, "muted") : "",
+    ]);
+    return trailing ? `${grid} ${trailing}` : grid;
   };
 
-  const renderSession = (session: DashboardSession, indent: string, quickDigit?: number): string => {
-    const isSelected = state.navLevel === "sessions" && session.id === state.selectedSessionId;
-    const prefix = isSelected ? "\x1b[33m▸\x1b[0m " : "  ";
-    const numberBadge = quickDigit ? `[${quickDigit}] ` : "";
-    const taskBadge = session.taskDescription ? ` \x1b[2;35m⧫ ${truncate(session.taskDescription, 40)}\x1b[0m` : "";
-    const workflowHint = session.workflowNextAction
-      ? ` \x1b[2;33m→ ${truncate(session.workflowNextAction, 24)}\x1b[0m`
-      : "";
-    const recentIdleHint = isRecentlyIdle(session) ? ` \x1b[1;33m· idle now\x1b[0m` : "";
-
-    const icon = colorSessionIcon(session);
-    const fallbackStatusLabel = state.derivedStatusLabel(session);
-    const statusLabel = padVisible(sessionUserStateLabel(session, fallbackStatusLabel), STATE_LABEL_WIDTH);
-    const coloredStatusLabel = colorSessionStatus(session, statusLabel);
-    const timeHint = sessionTimeHint(session);
-    const activityBadges = sessionActivityBadges(session);
-    const roleTag = session.role ? ` \x1b[36m(${session.role})\x1b[0m` : "";
-    const identity = session.label ?? session.command;
-    const headlineText = session.headline ? ` \x1b[2m· ${truncate(session.headline, 50)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} ${numberBadge}${identity}${roleTag} ${coloredStatusLabel}${timeHint}${activityBadges}${headlineText}${taskBadge}${workflowHint}${recentIdleHint}`;
-  };
-
-  const renderService = (service: DashboardService, indent: string, quickDigit?: number): string => {
-    const isSelected = state.navLevel === "sessions" && service.id === state.selectedServiceId;
-    const prefix = isSelected ? "\x1b[33m▸\x1b[0m " : "  ";
-    const icon = SERVICE_ICONS[service.status];
-    const numberBadge = quickDigit ? `[${quickDigit}] ` : "";
-    const identity = service.label ?? service.command;
+  const serviceRow = (service: DashboardService, selected: boolean, digit?: number): string => {
     const statusLabel = service.pendingAction ?? service.status;
+    const statusTone: Tone = service.status === "running" ? "done" : service.status === "exited" ? "danger" : "muted";
+    const grid = gridCols([
+      { content: selected ? `${style("▸", "accent")} ` : "  ", width: COL_SELECT },
+      { content: `${serviceStatusDot(service)} `, width: COL_DOT },
+      { content: indexCell(digit), width: COL_INDEX },
+      { content: style(service.label ?? service.command, "strong"), width: COL_IDENTITY },
+      { content: style(`[svc] ${statusLabel}`, statusTone), width: COL_STATUS },
+      {
+        content: service.lastUsedAt ? style(formatRelativeRecency(service.lastUsedAt) ?? "", "muted") : "",
+        width: COL_TIME,
+      },
+    ]);
     const commandHint = service.shellCommand
-      ? ` \x1b[2m· ${truncate(service.shellCommand, 36)}\x1b[0m`
+      ? style(`· ${truncate(service.shellCommand, 36)}`, "muted")
       : service.foregroundCommand
-        ? ` \x1b[2m· ${truncate(service.foregroundCommand, 22)}\x1b[0m`
+        ? style(`· ${truncate(service.foregroundCommand, 22)}`, "muted")
         : "";
-    const pidHint = service.pid ? ` \x1b[2m(pid ${service.pid})\x1b[0m` : "";
-    const previewHint = service.previewLine ? ` \x1b[2m· ${truncate(service.previewLine, 40)}\x1b[0m` : "";
-    const lastUsedHint = service.lastUsedAt ? ` \x1b[2m· ${formatRelativeRecency(service.lastUsedAt)}\x1b[0m` : "";
-    return `${indent}${prefix}${icon} ${numberBadge}${identity} \x1b[2m[service]\x1b[0m — ${statusLabel}${commandHint}${pidHint}${previewHint}${lastUsedHint}`;
+    const trailing = trailingHints([
+      commandHint,
+      service.pid ? style(`(pid ${service.pid})`, "muted") : "",
+      service.previewLine ? style(`· ${truncate(service.previewLine, 40)}`, "muted") : "",
+    ]);
+    return trailing ? `${grid} ${trailing}` : grid;
   };
 
   const renderWorktreeGrouped = (lines: string[]): void => {
-    const isFocused = (wtPath: string | undefined) => wtPath === state.focusedWorktreePath;
-    const wtCursor = "\x1b[33m▸\x1b[0m";
     const quickJumpWorktrees = buildDashboardQuickJumpWorktrees({
       sessions: state.sessions,
       services: state.services,
@@ -311,37 +411,30 @@ export function renderDashboardFrame(
     });
 
     for (const worktree of quickJumpWorktrees) {
-      const focused = isFocused(worktree.path);
-      const prefix = focused && state.navLevel === "worktrees" ? ` ${wtCursor}` : "  ";
-      const highlight = focused ? "\x1b[1;33m" : "\x1b[1m";
-      const pending = worktree.operationFailure
-        ? " \x1b[31m(failed)\x1b[0m"
-        : worktree.pendingAction === "creating"
-          ? " \x1b[2;33m(creating...)\x1b[0m"
-          : worktree.pendingAction === "graveyarding"
-            ? " \x1b[2;33m(graveyarding...)\x1b[0m"
-            : worktree.removing || worktree.pending
-              ? " \x1b[2;33m(removing...)\x1b[0m"
-              : "";
-      const worktreeBadge = worktree.digit ? `[${worktree.digit}] ` : "";
-      const branchSuffix = worktree.branch ? ` \x1b[2m${worktree.branch}\x1b[0m` : "";
-      const worktreeLabel = `${worktreeBadge}${worktree.name}${branchSuffix}`;
-      const semanticSummary = worktreeSemanticSummary(worktree);
-      if (worktree.sessions.length > 0 || worktree.services.length > 0) {
-        lines.push(`${prefix} ${highlight}${worktreeLabel}\x1b[0m${semanticSummary}${pending}`);
-        for (const [sessionIndex, session] of worktree.sessions.entries()) {
-          lines.push(renderSession(session, "    ", sessionIndex < 9 ? sessionIndex + 1 : undefined));
-        }
-        for (const [serviceIndex, service] of worktree.services.entries()) {
-          const quickDigit =
-            worktree.sessions.length + serviceIndex < 9 ? worktree.sessions.length + serviceIndex + 1 : undefined;
-          lines.push(renderService(service, "    ", quickDigit));
-        }
-        lines.push("");
-      } else {
-        const dim = worktree.path === undefined ? "" : "\x1b[2m";
-        lines.push(`${prefix} ${dim}${highlight}${worktreeLabel}\x1b[0m${pending}`);
+      const focused = worktree.path === state.focusedWorktreePath;
+      const focusMark = focused && state.navLevel === "worktrees" ? `${style("▸", "accent")} ` : "";
+      const nameTone: Tone = focused ? "accent" : "strong";
+      const badge = worktree.digit ? `[${worktree.digit}] ` : "";
+      let title = `${focusMark}${style(`${badge}${worktree.name}`, nameTone)}`;
+      if (worktree.branch) title += ` ${style(`· ${worktree.branch}`, "muted")}`;
+      const summary = worktreeSummaryText(worktree);
+      const tone = worktreeTone(worktree);
+
+      const digitById = new Map(worktree.entries.map((entry) => [entry.id, entry.digit]));
+      const cardRows: string[] = [];
+      for (const session of worktree.sessions) {
+        const selected = state.navLevel === "sessions" && session.id === state.selectedSessionId;
+        cardRows.push(agentRow(session, selected, digitById.get(session.id)));
       }
+      for (const service of worktree.services) {
+        const selected = state.navLevel === "sessions" && service.id === state.selectedServiceId;
+        cardRows.push(serviceRow(service, selected, digitById.get(service.id)));
+      }
+
+      for (const line of card({ tone, title, summary: summary || undefined, rows: cardRows, width: cardWidth })) {
+        lines.push(line);
+      }
+      lines.push("");
     }
   };
 
@@ -392,7 +485,14 @@ export function renderDashboardFrame(
     return " [u] attention  [a] activity  [t] threads  [i] inbox  [Tab] details  [c] new agent  [v] service  [f] fork  [S] msg  [H] handoff  [T] task  [o] thread  [R] reply  [w] worktree  [p] plans  [g] graveyard  [?] help  [q] quit ";
   };
 
-  const renderSelectedDetailsPanel = (width: number, height: number): string[] => {
+  const renderSelectedDetailsPanel = (panelWidth: number, height: number): string[] => {
+    const width = Math.max(8, panelWidth - 4);
+    const finish = (titleText: string, tone: Tone, rows: string[]): string[] => {
+      const bodyRows = rows.slice(0, Math.max(0, height - 2));
+      const out = card({ tone, title: style(titleText, tone), rows: bodyRows, width: panelWidth });
+      while (out.length < height) out.push("");
+      return out.slice(0, height);
+    };
     const selectedSession = state.selectedSessionId
       ? state.sessions.find((session) => session.id === state.selectedSessionId)
       : undefined;
@@ -427,7 +527,7 @@ export function renderDashboardFrame(
               );
             })();
 
-      const lines: string[] = ["\x1b[1mWorktree\x1b[0m"];
+      const lines: string[] = [];
       lines.push(...wrapKeyValue("Name", worktree.name, width));
       if (worktree.branch) lines.push(...wrapKeyValue("Branch", worktree.branch, width));
       lines.push(...wrapKeyValue("Path", worktree.path, width));
@@ -491,11 +591,10 @@ export function renderDashboardFrame(
           ),
         );
       }
-      while (lines.length < height) lines.push("");
-      return lines.slice(0, height);
+      return finish("WORKTREE", "accent", lines);
     }
 
-    const lines: string[] = ["\x1b[1mDetails\x1b[0m"];
+    const lines: string[] = [];
     if (selectedService) {
       lines.push(
         ...wrapKeyValue(
@@ -529,8 +628,7 @@ export function renderDashboardFrame(
       if (selectedService.cwd) lines.push(...wrapKeyValue("CWD", selectedService.cwd, width));
       lines.push(...wrapKeyValue("Status", selectedService.status, width));
       if (selectedService.previewLine) lines.push(...wrapKeyValue("Preview", selectedService.previewLine, width));
-      while (lines.length < height) lines.push("");
-      return lines.slice(0, height);
+      return finish("DETAILS", "info", lines);
     }
 
     const selected = selectedSession!;
@@ -618,7 +716,7 @@ export function renderDashboardFrame(
     }
     if (state.selectedTeammates.length > 0) {
       lines.push("");
-      lines.push("\x1b[1mTeam\x1b[0m");
+      lines.push(style("Team", "strong"));
       for (const teammate of state.selectedTeammates.slice(0, 5)) {
         lines.push(...wrapKeyValue("-", summarizeTeammate(teammate, state.derivedStatusLabel), width));
       }
@@ -626,12 +724,12 @@ export function renderDashboardFrame(
         lines.push(...wrapKeyValue("-", `${state.selectedTeammates.length - 5} more`, width));
       }
     }
-    while (lines.length < height) lines.push("");
-    return lines.slice(0, height);
+    return finish("DETAILS", "info", lines);
   };
 
   const devBadge = state.isDevRuntime ? "\x1b[1;30;43m DEV \x1b[0m " : "";
-  const title = `${devBadge}\x1b[1maimux\x1b[0m — agent multiplexer${state.runtimeLabel ? `  \x1b[32m● ${state.runtimeLabel}\x1b[0m` : ""}`;
+  const versionTag = state.version ? ` ${style(`v${state.version}`, "muted")}` : "";
+  const title = `${devBadge}\x1b[1maimux\x1b[0m${versionTag} — agent multiplexer${state.runtimeLabel ? `  \x1b[32m● ${state.runtimeLabel}\x1b[0m` : ""}`;
   const divider = state.isDevRuntime
     ? `\x1b[33m${"─".repeat(Math.max(0, cols))}\x1b[0m`
     : "─".repeat(Math.max(0, cols));
@@ -639,22 +737,29 @@ export function renderDashboardFrame(
   const content: string[] = [];
   const operationFailures = state.operationFailures ?? [];
   if (operationFailures.length > 0) {
-    content.push("  \x1b[31mFailed operations\x1b[0m");
-    for (const failure of operationFailures.slice(0, 3)) {
+    const failureRows = operationFailures.slice(0, 3).map((failure) => {
       const recency = formatRelativeRecency(failure.createdAt) ?? failure.createdAt;
       const target = failure.worktreeName ?? failure.targetId ?? failure.worktreePath;
-      const targetHint = target ? ` \x1b[2m· ${truncate(target, 24)}\x1b[0m` : "";
-      content.push(`    \x1b[31m!\x1b[0m ${truncate(failure.title, 48)}${targetHint} \x1b[2m· ${recency}\x1b[0m`);
-    }
+      const targetHint = target ? style(` · ${truncate(target, 24)}`, "muted") : "";
+      return `${truncate(failure.title, 48)}${targetHint}${style(` · ${recency}`, "muted")}`;
+    });
     if (operationFailures.length > 3) {
-      content.push(`    \x1b[2m${operationFailures.length - 3} more failures\x1b[0m`);
+      failureRows.push(style(`${operationFailures.length - 3} more failures`, "muted"));
+    }
+    for (const line of card({
+      tone: "danger",
+      title: style("⚠ FAILED OPERATIONS", "danger"),
+      rows: failureRows,
+      width: cardWidth,
+    })) {
+      content.push(line);
     }
     content.push("");
   }
   const overseerSessions = state.overseerSessions ?? [];
   if (overseerSessions.length > 0) {
-    content.push("  \x1b[1;35mOverseer\x1b[0m");
-    for (const session of overseerSessions) content.push(renderSession(session, "    "));
+    content.push(`  ${style("Overseer", "blocked")}`);
+    for (const session of overseerSessions) content.push(`    ${agentRow(session, false)}`);
     content.push("");
   }
   if (state.sessions.length === 0 && state.worktreeGroups.length === 0) {
@@ -662,21 +767,33 @@ export function renderDashboardFrame(
   } else if (state.hasWorktrees) {
     renderWorktreeGrouped(content);
   } else {
-    for (const session of state.sessions) content.push(renderSession(session, "  "));
+    state.sessions.forEach((session, index) => {
+      const selected = state.navLevel === "sessions" && session.id === state.selectedSessionId;
+      const digit = index < DASHBOARD_QUICK_JUMP_LIMIT ? index + 1 : undefined;
+      content.push(`  ${agentRow(session, selected, digit)}`);
+    });
   }
 
-  const helpLines = wrapCommandGroups(buildHelpLine());
+  const helpLines = buildHelpLines(buildHelpLine());
   const footer: string[] = ["─".repeat(Math.max(0, cols)), ...helpLines.map((line) => centerInBlock(line))];
   const viewportHeight = rows - header.length - footer.length;
-  const twoPane = cols >= 72 && state.detailsPaneVisible;
   let scrollOffset = state.scrollOffset;
   const focusLine = findFocusLine(content);
+  // The focused card spans from its marker line to the next blank separator;
+  // scroll to reveal its whole body, not just the marker line, so the bottom
+  // of the last (possibly tall) card is always reachable.
+  let focusEnd = focusLine;
+  while (focusEnd >= 0 && focusEnd + 1 < content.length && stripAnsi(content[focusEnd + 1]).trim() !== "") {
+    focusEnd++;
+  }
   const maxScroll = Math.max(0, content.length - viewportHeight);
   if (focusLine >= 0) {
     if (focusLine < scrollOffset + 1) {
       scrollOffset = Math.max(0, focusLine - 1);
-    } else if (focusLine >= scrollOffset + viewportHeight - 1) {
-      scrollOffset = Math.min(maxScroll, focusLine - viewportHeight + 2);
+    } else if (focusEnd >= scrollOffset + viewportHeight - 1) {
+      scrollOffset = Math.min(maxScroll, focusEnd - viewportHeight + 2);
+      // If the card is taller than the viewport, keep its top edge in view.
+      if (focusLine < scrollOffset + 1) scrollOffset = Math.max(0, focusLine - 1);
     }
   }
   scrollOffset = Math.min(scrollOffset, maxScroll);
@@ -690,11 +807,9 @@ export function renderDashboardFrame(
 
   let bodyLines = visibleContent;
   if (twoPane) {
-    const rightPanel = renderSelectedDetailsPanel(
-      Math.max(24, contentWidth - Math.max(32, Math.floor(contentWidth * 0.58)) - 3),
-      viewportHeight,
-    );
-    bodyLines = composeTwoPane(visibleContent, rightPanel, contentWidth).map(padBlockLine);
+    const panelWidth = Math.max(20, contentWidth - leftWidth - 4);
+    const rightPanel = renderSelectedDetailsPanel(panelWidth, viewportHeight);
+    bodyLines = composeTwoPane(visibleContent, rightPanel, contentWidth, "   ").map(padBlockLine);
   } else {
     bodyLines = visibleContent.map((line) => padBlockLine(line));
   }

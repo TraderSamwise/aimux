@@ -1,7 +1,16 @@
 import { basename } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { getProjectStateDirFor } from "../paths.js";
+import { tmuxInvert, tmuxStyle, type Tone } from "../tui/render/theme.js";
 import { isDashboardWindowName } from "./runtime-manager.js";
+
+// Map statusline plugin segment tones to the shared color tokens.
+const SEGMENT_TONE: Record<string, Tone> = {
+  info: "work",
+  success: "done",
+  warn: "attn",
+  error: "danger",
+};
 import {
   compactSessionTitle,
   currentPathContext,
@@ -65,12 +74,8 @@ function renderControlPlane(data: StatuslineData): string {
 
 function renderPluginSegment(segment: { text: string; tone?: string }): string {
   const text = trim(segment.text, 18);
-  if (!segment.tone || segment.tone === "neutral") return text;
-  if (segment.tone === "info") return `#[fg=cyan]${text}#[default]`;
-  if (segment.tone === "success") return `#[fg=green]${text}#[default]`;
-  if (segment.tone === "warn") return `#[fg=yellow]${text}#[default]`;
-  if (segment.tone === "error") return `#[fg=red]${text}#[default]`;
-  return text;
+  const tone = segment.tone ? SEGMENT_TONE[segment.tone] : undefined;
+  return tone ? tmuxStyle(text, tone) : text;
 }
 
 function renderPluginSegments(
@@ -253,7 +258,7 @@ function renderSessionChip(session: ReturnType<typeof resolveScopedSessions>[num
   const hint = renderSessionCompactHint(session);
   const badge = hint?.includes(" unread") || hint?.includes(" new") ? null : renderSemanticBadge(session.semantic);
   const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 28);
-  return session.isCurrent ? `#[fg=black,bg=yellow] ${label} #[default]` : label;
+  return session.isCurrent ? tmuxInvert(` ${label} `, "attn") : label;
 }
 
 function teammateLabel(session: ReturnType<typeof resolveFocusedTeammateGroup>[number]): string {
@@ -267,7 +272,7 @@ function renderTeammateChip(session: ReturnType<typeof resolveFocusedTeammateGro
   const hint = renderSessionCompactHint(session);
   const badge = hint?.includes(" unread") || hint?.includes(" new") ? null : renderSemanticBadge(session.semantic);
   const label = trim(`${identity}${hint ? ` ${hint}` : ""}${badge ? ` ${badge}` : ""}`, 28);
-  return session.isCurrent ? `#[fg=black,bg=cyan] ${label} #[default]` : `#[fg=cyan]${label}#[default]`;
+  return session.isCurrent ? tmuxInvert(` ${label} `, "work") : tmuxStyle(label, "work");
 }
 
 function renderTeammateSegment(teammates: ReturnType<typeof resolveCurrentTeammates>): string | null {
@@ -325,7 +330,7 @@ function renderBottomLine(
     : resolveScopedSessions(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
   const headline = renderExactHeadline(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath);
   const teammateSegment = focusedTeammate
-    ? `#[fg=cyan]team plane#[default]`
+    ? tmuxStyle("team plane", "work")
     : renderTeammateSegment(
         resolveCurrentTeammates(data, projectRoot, currentSession, currentWindow, currentWindowId, currentPath),
       );

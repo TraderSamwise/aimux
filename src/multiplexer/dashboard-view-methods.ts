@@ -26,6 +26,7 @@ import {
 import { derivedStatusLabel } from "../dashboard/index.js";
 import { isOverseerSession } from "../team.js";
 import { isDevelopmentRuntime } from "../connection-targets.js";
+import { AIMUX_VERSION } from "../version.js";
 import { selectDashboardTeammates } from "../dashboard/session-registry.js";
 import { hasRuntimeEvidence, isAttachableDashboardSessionEntry } from "../dashboard/runtime-evidence.js";
 
@@ -118,12 +119,7 @@ export const dashboardViewMethods = {
         this.writeStatuslineFile();
       }
 
-      const { cols, rows } = renderOptions?.fastViewport
-        ? {
-            cols: process.stdout.columns ?? 80,
-            rows: process.stdout.rows ?? 24,
-          }
-        : this.getViewportSize();
+      const { cols, rows } = this.getViewportSize();
       const allDashSessions = this.dashboardSessionsCache;
       const overseerSessions = allDashSessions.filter((session: any) => isOverseerSession(session));
       const dashSessions = allDashSessions.filter((session: any) => !isOverseerSession(session));
@@ -161,6 +157,7 @@ export const dashboardViewMethods = {
         selectedTeammates: selectDashboardTeammates(dashTeammates, selectedSessionEntry),
         runtimeLabel: "tmux",
         isDevRuntime: isDevelopmentRuntime(),
+        version: AIMUX_VERSION,
         mainCheckout: mainCheckoutInfo,
         operationFailures: this.dashboardOperationFailuresCache ?? [],
         worktreeRemoval: this.worktreeRemovalJob

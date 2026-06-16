@@ -31,6 +31,7 @@ import {
   unreadNotificationCount,
 } from "./notifications.js";
 import { updateNotificationContext } from "./notification-context.js";
+import { markSessionViewed } from "./session-viewed.js";
 import { AgentTracker } from "./agent-tracker.js";
 import type { AgentActivityState, AgentAttentionState, AgentEvent } from "./agent-events.js";
 import { InteractionRegistry } from "./interaction-requests.js";
@@ -481,7 +482,6 @@ function markActiveWindowFocused(
   currentClientSession: string | undefined,
   currentWindow: string | undefined,
   currentWindowId: string | undefined,
-  tracker: AgentTracker,
 ): boolean {
   if (currentWindow && /^dashboard/.test(currentWindow)) {
     updateNotificationContext("tui", {
@@ -502,8 +502,7 @@ function markActiveWindowFocused(
     panelOpen: false,
   });
   if (match.metadata.kind === "agent") {
-    tracker.markSeen(match.metadata.sessionId);
-    markNotificationsRead({ sessionId: match.metadata.sessionId });
+    markSessionViewed(match.metadata.sessionId);
   }
   markTargetUsed(tmux, projectRoot, match.target, currentClientSession, match.metadata.sessionId);
   return true;
@@ -968,6 +967,19 @@ export class MetadataServer {
     this.eventBus.publishAlert(contextualizeAlertInput(input, displayContext));
   }
 
+  private interactionDedupeKey(input: {
+    sessionId: string;
+    type: InteractionType;
+    payload: InteractionPayload;
+    summary?: string;
+  }): string {
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({ type: input.type, summary: input.summary ?? "", payload: input.payload }))
+      .digest("base64url")
+      .slice(0, 12);
+    return `interaction:${input.sessionId}:${input.type}:${fingerprint}`;
+  }
+
   private beginInteraction(input: {
     sessionId: string;
     type: InteractionType;
@@ -975,11 +987,13 @@ export class MetadataServer {
     summary?: string;
     id?: string;
   }): InteractionRequest {
+    const dedupeKey = this.interactionDedupeKey(input);
     const request = this.interactions.register({
       sessionId: input.sessionId,
       type: input.type,
       payload: input.payload,
       projectRoot: process.cwd(),
+      dedupeKey,
       id: input.id,
     });
     this.tracker.setAttention(input.sessionId, "needs_response");
@@ -990,7 +1004,8 @@ export class MetadataServer {
       title: display.title,
       message: display.message,
       interaction: { id: request.id, type: input.type, summary: display.summary },
-      dedupeKey: `interaction:${request.id}`,
+      dedupeKey,
+      cooldownMs: 60_000,
       forceNotify: true,
     });
     this.options.onChange?.();
@@ -1701,6 +1716,9 @@ export class MetadataServer {
             return;
           }
           openTargetForClient(tmux, target, currentClientSession, clientTty);
+          if (itemId && session?.id === itemId) {
+            markSessionViewed(itemId);
+          }
           markTargetUsed(tmux, process.cwd(), target, currentClientSession, itemId);
           send(res, 200, { ok: true });
         };
@@ -1745,6 +1763,7 @@ export class MetadataServer {
             return;
           }
           openTargetForClient(tmux, match.target, currentClientSession, clientTty);
+          markSessionViewed(session.id);
           markTargetUsed(tmux, process.cwd(), match.target, currentClientSession, session.id);
           send(res, 200, { ok: true });
           return;
@@ -1780,6 +1799,12 @@ export class MetadataServer {
           return;
         }
         openTargetForClient(tmux, target, currentClientSession, clientTty);
+        const match = tmux
+          .listProjectManagedWindows(process.cwd())
+          .find((entry) => entry.target.windowId === target.windowId);
+        if (match?.metadata.kind === "agent") {
+          markSessionViewed(match.metadata.sessionId);
+        }
         markTargetUsed(tmux, process.cwd(), target, currentClientSession);
         send(res, 200, { ok: true });
         return;
@@ -1800,14 +1825,7 @@ export class MetadataServer {
         const currentWindowId =
           body.currentWindowId?.trim() || url.searchParams.get("currentWindowId")?.trim() || undefined;
         const tmux = new TmuxRuntimeManager();
-        const ok = markActiveWindowFocused(
-          tmux,
-          process.cwd(),
-          currentClientSession,
-          currentWindow,
-          currentWindowId,
-          this.tracker,
-        );
+        const ok = markActiveWindowFocused(tmux, process.cwd(), currentClientSession, currentWindow, currentWindowId);
         if (!ok) {
           send(res, 404, { ok: false, error: "window not found" });
           return;
@@ -1848,6 +1866,7 @@ export class MetadataServer {
         }
         const tmux = new TmuxRuntimeManager();
         openTargetForClient(tmux, item.target, currentClientSession, clientTty);
+        markSessionViewed(item.metadata.sessionId);
         markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
         send(res, 200, { ok: true });
         return;
@@ -1884,6 +1903,7 @@ export class MetadataServer {
         }
         const tmux = new TmuxRuntimeManager();
         openTargetForClient(tmux, item.target, currentClientSession, clientTty);
+        markSessionViewed(item.metadata.sessionId);
         markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
         send(res, 200, { ok: true });
         return;
@@ -1920,6 +1940,7 @@ export class MetadataServer {
         }
         const tmux = new TmuxRuntimeManager();
         openTargetForClient(tmux, item.target, currentClientSession, clientTty);
+        markSessionViewed(item.metadata.sessionId);
         markTargetUsed(tmux, process.cwd(), item.target, currentClientSession, item.metadata.sessionId);
         send(res, 200, { ok: true });
         return;
@@ -2044,7 +2065,7 @@ export class MetadataServer {
 
       if (req.method === "POST" && url.pathname === "/mark-seen") {
         const body = (await readJson(req)) as { session: string };
-        this.tracker.markSeen(body.session);
+        markSessionViewed(body.session);
         this.options.onChange?.();
         send(res, 200, { ok: true });
         return;
@@ -2154,6 +2175,13 @@ export class MetadataServer {
             toolName,
             toolInputJSON: JSON.stringify(input),
           },
+          dedupeKey: this.interactionDedupeKey({
+            sessionId,
+            type: "permission",
+            summary,
+            payload: { toolName, input, cwd },
+          }),
+          cooldownMs: 60_000,
         });
         this.options.onChange?.();
         send(res, 200, { ok: true, telemetry: true });

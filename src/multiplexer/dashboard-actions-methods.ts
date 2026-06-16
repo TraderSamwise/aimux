@@ -183,8 +183,8 @@ export const dashboardActionMethods = {
   renderActiveDashboardOverlay(this: any): boolean {
     return renderActiveDashboardOverlayImpl(this);
   },
-  buildActiveDashboardOverlayOutput(this: any): string | null {
-    return buildActiveDashboardOverlayOutputImpl(this);
+  buildActiveDashboardOverlayOutput(this: any, viewport?: { cols: number; rows: number }): string | null {
+    return buildActiveDashboardOverlayOutputImpl(this, viewport);
   },
   handleDashboardSubscreenNavigationKey(this: any, key: string, currentScreen: any): boolean {
     return handleDashboardSubscreenNavigationKeyImpl(this, key, currentScreen);

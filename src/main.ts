@@ -18,6 +18,7 @@ import {
   getRuntimeTopologyPath,
 } from "./paths.js";
 import { loadTeamConfig, saveTeamConfig, getDefaultTeamConfig } from "./team.js";
+import { AIMUX_VERSION } from "./version.js";
 import { findMainRepo, listWorktrees, type WorktreeInfo } from "./worktree.js";
 import { TmuxRuntimeManager } from "./tmux/runtime-manager.js";
 import {
@@ -94,7 +95,7 @@ import { notifyAlert } from "./notify.js";
 import {
   buildDesktopNotifierDoctorReport,
   renderDesktopNotifierDoctorReport,
-  sendDesktopNotification,
+  sendDesktopNotificationAndWait,
 } from "./desktop-notifier.js";
 import {
   parseClaudeHookPayload,
@@ -756,13 +757,10 @@ function readLastLogLines(path: string, lines: number): string {
   return allLines.slice(-lines).join("\n");
 }
 
-const pkgJsonPath = pathJoin(pathDirname(fileURLToPath(import.meta.url)), "..", "package.json");
-const pkgVersion = (JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string }).version;
-
 program
   .name("aimux")
   .description("Native CLI agent multiplexer")
-  .version(pkgVersion)
+  .version(AIMUX_VERSION)
   .argument("[tool]", "Tool to run (e.g. claude, codex, aider)")
   .argument("[args...]", "Arguments to pass to the tool")
   .option("--resume", "Resume previous sessions using native tool resume")
@@ -3597,15 +3595,24 @@ notificationsCmd
   .option("--title <title>", "Notification title", "Aimux notification test")
   .option("--body <body>", "Notification body", "Desktop notification delivery is working.")
   .option("--json", "Emit JSON")
-  .action((opts: { title: string; body: string; json?: boolean }) => {
-    const attempt = sendDesktopNotification({
+  .action(async (opts: { title: string; body: string; json?: boolean }) => {
+    const attempt = await sendDesktopNotificationAndWait({
       title: opts.title.trim() || "Aimux notification test",
       message: opts.body.trim() || "Desktop notification delivery is working.",
       sound: true,
     });
     if (opts.json) {
-      console.log(JSON.stringify({ ok: true, attempt }, null, 2));
+      console.log(JSON.stringify({ ok: attempt.ok, attempt }, null, 2));
+      if (!attempt.ok) process.exit(1);
       return;
+    }
+    if (!attempt.ok) {
+      console.error(
+        `Failed to send notification via ${attempt.transport}${attempt.helperPath ? ` (${attempt.helperPath})` : ""}${
+          attempt.error ? `: ${attempt.error}` : ""
+        }.`,
+      );
+      process.exit(1);
     }
     console.log(`Sent notification via ${attempt.transport}${attempt.helperPath ? ` (${attempt.helperPath})` : ""}.`);
   });
